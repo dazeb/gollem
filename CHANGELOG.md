@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Phase 12: Ten Innovations from Pydantic-AI & LangChain/LangGraph
+
+#### Innovation 1: Agent Lifecycle Hooks
+- `Hook` struct with 6 event callbacks: `OnRunStart`, `OnRunEnd`, `OnModelRequest`, `OnModelResponse`, `OnToolStart`, `OnToolEnd`
+- `WithHooks` agent option for registering multiple hooks in order
+- All hooks fire at correct points in the agent run loop
+
+#### Innovation 2: Prompt Templates
+- `PromptTemplate` with Go `text/template` syntax (`{{.VarName}}`)
+- `NewPromptTemplate`, `MustTemplate`, `Format`, `Partial`, `Variables` API
+- `WithSystemPromptTemplate` agent option for template-based system prompts
+- `TemplateVars` interface for custom deps types
+
+#### Innovation 3: Input Guardrails
+- `InputGuardrailFunc` validates/transforms prompts before the agent loop
+- `TurnGuardrailFunc` validates messages before each model request
+- `GuardrailError` distinct error type with guardrail name
+- Built-in guardrails: `MaxPromptLength`, `ContentFilter`, `MaxTurns`
+
+#### Innovation 4: Batch Execution
+- `RunBatch` executes multiple prompts concurrently with ordered results
+- `WithBatchConcurrency` controls parallel execution limit
+- Context cancellation aborts all in-flight runs
+
+#### Innovation 5: Model Router
+- `ModelRouter` interface and `RouterModel` implementing `Model`
+- `ClassifierRouter` for function-based routing
+- `ThresholdRouter` for prompt-length-based model selection
+- `RoundRobinRouter` for even distribution across models
+
+#### Innovation 6: Conversation Memory Strategies
+- `SlidingWindowMemory` keeps last N message pairs
+- `TokenBudgetMemory` drops oldest messages to fit token budget
+- `SummaryMemory` uses a model to summarize older messages
+- All implement `HistoryProcessor` for use with `WithHistoryProcessor`
+
+#### Innovation 7: Output Auto-Repair
+- `RepairFunc[T]` intercepts parse failures before retry flow
+- `WithOutputRepair` agent option for custom repair logic
+- `ModelRepair[T]` helper uses a model to fix malformed JSON
+- Repaired output still runs through validators
+
+#### Innovation 8: Agent Composition
+- `Clone` creates independent agent copies with additional options
+- `ChainRun` pipes agents: first output transforms to second prompt
+- `ChainRunFull` returns both intermediate and final results with combined usage
+
+#### Innovation 9: Structured Run Traces
+- `RunTrace` captures all execution steps with timestamps and durations
+- `TraceStep` with kinds: `model_request`, `model_response`, `tool_call`, `tool_result`
+- `WithTracing` agent option; trace available on `RunResult.Trace`
+- JSON-serializable for debugging, replay, and compliance auditing
+
+#### Innovation 10: Tool Result Validators
+- `ToolResultValidatorFunc` validates tool results before passing to model
+- Per-tool validators via `WithToolResultValidator` tool option
+- Agent-wide validators via `WithGlobalToolResultValidator`
+- Invalid results become `RetryPromptPart` with validation error
+
 ### Phase 11: Ten Innovations
 
 #### Innovation 1: KnowledgeBase Interface

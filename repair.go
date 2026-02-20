@@ -3,6 +3,7 @@ package gollem
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -46,7 +47,7 @@ func ModelRepair[T any](model Model) RepairFunc[T] {
 
 		text := resp.TextContent()
 		if text == "" {
-			return zero, fmt.Errorf("repair model returned empty response")
+			return zero, errors.New("repair model returned empty response")
 		}
 
 		var result T

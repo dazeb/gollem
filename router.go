@@ -2,6 +2,7 @@ package gollem
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 )
@@ -112,7 +113,7 @@ func RoundRobinRouter(models ...Model) ModelRouter {
 
 func (r *roundRobinRouter) Route(_ context.Context, _ string) (Model, error) {
 	if len(r.models) == 0 {
-		return nil, fmt.Errorf("round robin: no models configured")
+		return nil, errors.New("round robin: no models configured")
 	}
 	idx := r.idx.Add(1) - 1
 	return r.models[idx%uint64(len(r.models))], nil
