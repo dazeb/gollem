@@ -150,6 +150,14 @@ func TestRetryModel_ContextCancel(t *testing.T) {
 	}
 }
 
+func TestRetryModel_ModelName(t *testing.T) {
+	fm := &retryFailingModel{successMsg: "ok"}
+	rm := NewRetryModel(fm, DefaultRetryConfig())
+	if rm.ModelName() != "failing-model" {
+		t.Errorf("expected 'failing-model', got %q", rm.ModelName())
+	}
+}
+
 func TestRetryModel_StreamRetry(t *testing.T) {
 	fm := &retryFailingModel{
 		failCount:  1,

@@ -146,6 +146,13 @@ func TestEventBus_ConcurrentSafe(t *testing.T) {
 	wg.Wait()
 }
 
+func TestEventBus_NoSubscribers(t *testing.T) {
+	bus := NewEventBus()
+	// Publishing without subscribers should not panic.
+	Publish(bus, testEvent{Value: "no one listening"})
+	PublishAsync(bus, testEvent{Value: "async no one"})
+}
+
 func TestEventBus_AgentIntegration(t *testing.T) {
 	bus := NewEventBus()
 

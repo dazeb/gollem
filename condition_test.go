@@ -129,6 +129,26 @@ func TestRunCondition_NoneTriggered(t *testing.T) {
 	}
 }
 
+func TestResponseContains(t *testing.T) {
+	cond := ResponseContains(func(resp *ModelResponse) bool {
+		return len(resp.ToolCalls()) > 0
+	})
+
+	respWithTool := &ModelResponse{Parts: []ModelResponsePart{
+		ToolCallPart{ToolName: "test", ArgsJSON: "{}"},
+	}}
+	stop, _ := cond(context.Background(), nil, respWithTool)
+	if !stop {
+		t.Error("expected ResponseContains to match tool call response")
+	}
+
+	respText := &ModelResponse{Parts: []ModelResponsePart{TextPart{Content: "text"}}}
+	stop2, _ := cond(context.Background(), nil, respText)
+	if stop2 {
+		t.Error("expected ResponseContains to not match text-only response")
+	}
+}
+
 func TestRunCondition_StopsRun(t *testing.T) {
 	type Params struct {
 		N int `json:"n"`

@@ -127,6 +127,16 @@ func TestCachedModel_ThreadSafe(t *testing.T) {
 	wg.Wait()
 }
 
+func TestCachedModel_ModelName(t *testing.T) {
+	model := NewTestModel(TextResponse("name"))
+	cache := NewMemoryCache()
+	cached := NewCachedModel(model, cache)
+
+	if cached.ModelName() != "test-model" {
+		t.Errorf("expected 'test-model', got %q", cached.ModelName())
+	}
+}
+
 func TestCachedModel_DifferentSettings(t *testing.T) {
 	model := NewTestModel(TextResponse("low"), TextResponse("high"))
 	cache := NewMemoryCache()
