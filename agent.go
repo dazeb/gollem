@@ -49,6 +49,8 @@ type Agent[T any] struct {
 	modelSettings        *ModelSettings
 	toolApprovalFunc     ToolApprovalFunc
 	maxConcurrency       int
+	knowledgeBase        KnowledgeBase
+	kbAutoStore          bool
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -424,6 +426,15 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			return nil, err
 		}
 		if result != nil {
+			// Auto-store successful response in knowledge base.
+			if a.kbAutoStore && a.knowledgeBase != nil {
+				responseText := resp.TextContent()
+				if responseText != "" {
+					if storeErr := a.knowledgeBase.Store(ctx, responseText); storeErr != nil {
+						return nil, fmt.Errorf("knowledge base store failed: %w", storeErr)
+					}
+				}
+			}
 			return &RunResult[T]{
 				Output:   result.output,
 				Messages: state.messages,
@@ -886,6 +897,20 @@ func (a *Agent[T]) buildInitialRequestWithDynamic(ctx context.Context, prompt st
 		if content != "" {
 			parts = append(parts, SystemPromptPart{
 				Content:   content,
+				Timestamp: time.Now(),
+			})
+		}
+	}
+
+	// Retrieve knowledge base context.
+	if a.knowledgeBase != nil {
+		kbContent, err := a.knowledgeBase.Retrieve(ctx, prompt)
+		if err != nil {
+			return ModelRequest{}, fmt.Errorf("knowledge base retrieve failed: %w", err)
+		}
+		if kbContent != "" {
+			parts = append(parts, SystemPromptPart{
+				Content:   "[Knowledge Context] " + kbContent,
 				Timestamp: time.Now(),
 			})
 		}

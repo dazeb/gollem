@@ -1,6 +1,7 @@
 package gollem
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"time"
 )
@@ -54,6 +55,41 @@ type RetryPromptPart struct {
 }
 
 func (p RetryPromptPart) requestPartKind() string { return "retry-prompt" }
+
+// ImagePart represents an image input in a user message.
+type ImagePart struct {
+	URL       string // image URL (https or data: URI with base64)
+	MIMEType  string // e.g., "image/png", "image/jpeg"
+	Detail    string // "auto", "low", "high" (optional)
+	Timestamp time.Time
+}
+
+func (p ImagePart) requestPartKind() string { return "image" }
+
+// AudioPart represents an audio input in a user message.
+type AudioPart struct {
+	URL       string // audio URL or data: URI
+	MIMEType  string // e.g., "audio/mp3", "audio/wav"
+	Timestamp time.Time
+}
+
+func (p AudioPart) requestPartKind() string { return "audio" }
+
+// DocumentPart represents a document input (PDF, etc.) in a user message.
+type DocumentPart struct {
+	URL       string // document URL or data: URI
+	MIMEType  string // e.g., "application/pdf"
+	Title     string // optional display title
+	Timestamp time.Time
+}
+
+func (p DocumentPart) requestPartKind() string { return "document" }
+
+// BinaryContent creates a data: URI from raw bytes and MIME type.
+func BinaryContent(data []byte, mimeType string) string {
+	encoded := base64.StdEncoding.EncodeToString(data)
+	return "data:" + mimeType + ";base64," + encoded
+}
 
 // --- Response Parts ---
 
