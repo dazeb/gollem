@@ -1,0 +1,216 @@
+package gollem
+
+import (
+	"encoding/json"
+	"time"
+)
+
+// ModelMessage is the interface for all messages in a conversation.
+// A message is either a ModelRequest (sent to the model) or a ModelResponse
+// (received from the model).
+type ModelMessage interface {
+	messageKind() string
+}
+
+// --- Request Parts ---
+
+// ModelRequestPart is the interface for all parts of a model request.
+type ModelRequestPart interface {
+	requestPartKind() string
+}
+
+// SystemPromptPart provides system-level instructions to the model.
+type SystemPromptPart struct {
+	Content   string
+	Timestamp time.Time
+}
+
+func (p SystemPromptPart) requestPartKind() string { return "system-prompt" }
+
+// UserPromptPart contains the user's input.
+type UserPromptPart struct {
+	Content   string
+	Timestamp time.Time
+}
+
+func (p UserPromptPart) requestPartKind() string { return "user-prompt" }
+
+// ToolReturnPart is the result of a tool call sent back to the model.
+type ToolReturnPart struct {
+	ToolName   string
+	Content    any // string or structured data (serialized to JSON)
+	ToolCallID string
+	Timestamp  time.Time
+}
+
+func (p ToolReturnPart) requestPartKind() string { return "tool-return" }
+
+// RetryPromptPart tells the model to retry with feedback about what went wrong.
+type RetryPromptPart struct {
+	Content    string // error message or validation feedback
+	ToolName   string // the tool that should be retried (empty for result retry)
+	ToolCallID string // the tool call ID being retried
+	Timestamp  time.Time
+}
+
+func (p RetryPromptPart) requestPartKind() string { return "retry-prompt" }
+
+// --- Response Parts ---
+
+// ModelResponsePart is the interface for all parts of a model response.
+type ModelResponsePart interface {
+	responsePartKind() string
+}
+
+// TextPart contains text content from the model.
+type TextPart struct {
+	Content string
+}
+
+func (p TextPart) responsePartKind() string { return "text" }
+
+// ToolCallPart represents the model requesting a tool call.
+type ToolCallPart struct {
+	ToolName   string
+	ArgsJSON   string // raw JSON arguments
+	ToolCallID string
+}
+
+func (p ToolCallPart) responsePartKind() string { return "tool-call" }
+
+// ArgsAsMap deserializes the tool call arguments into a map.
+func (p ToolCallPart) ArgsAsMap() (map[string]any, error) {
+	var m map[string]any
+	if p.ArgsJSON == "" || p.ArgsJSON == "{}" {
+		return map[string]any{}, nil
+	}
+	err := json.Unmarshal([]byte(p.ArgsJSON), &m)
+	return m, err
+}
+
+// ThinkingPart contains the model's chain-of-thought reasoning.
+type ThinkingPart struct {
+	Content   string
+	Signature string // provider-specific signature
+}
+
+func (p ThinkingPart) responsePartKind() string { return "thinking" }
+
+// --- Containers ---
+
+// FinishReason indicates why the model stopped generating.
+type FinishReason string
+
+const (
+	FinishReasonStop          FinishReason = "stop"
+	FinishReasonLength        FinishReason = "length"
+	FinishReasonContentFilter FinishReason = "content_filter"
+	FinishReasonToolCall      FinishReason = "tool_call"
+	FinishReasonError         FinishReason = "error"
+)
+
+// ModelRequest is a request message sent to the model.
+type ModelRequest struct {
+	Parts     []ModelRequestPart
+	Timestamp time.Time
+}
+
+func (m ModelRequest) messageKind() string { return "request" }
+
+// ModelResponse is the model's reply.
+type ModelResponse struct {
+	Parts        []ModelResponsePart
+	Usage        Usage
+	ModelName    string
+	FinishReason FinishReason
+	Timestamp    time.Time
+}
+
+func (m ModelResponse) messageKind() string { return "response" }
+
+// ToolCalls returns all ToolCallParts from the response.
+func (m ModelResponse) ToolCalls() []ToolCallPart {
+	var calls []ToolCallPart
+	for _, p := range m.Parts {
+		if tc, ok := p.(ToolCallPart); ok {
+			calls = append(calls, tc)
+		}
+	}
+	return calls
+}
+
+// TextContent returns the concatenated text content from the response.
+func (m ModelResponse) TextContent() string {
+	var sb []string
+	for _, p := range m.Parts {
+		if tp, ok := p.(TextPart); ok {
+			sb = append(sb, tp.Content)
+		}
+	}
+	if len(sb) == 0 {
+		return ""
+	}
+	result := sb[0]
+	for _, s := range sb[1:] {
+		result += s
+	}
+	return result
+}
+
+// --- Stream Events ---
+
+// ModelResponseStreamEvent is the interface for streaming events.
+type ModelResponseStreamEvent interface {
+	streamEventKind() string
+}
+
+// PartStartEvent signals that a new response part has started streaming.
+type PartStartEvent struct {
+	Index int
+	Part  ModelResponsePart
+}
+
+func (e PartStartEvent) streamEventKind() string { return "part-start" }
+
+// PartDeltaEvent signals an incremental update to a response part.
+type PartDeltaEvent struct {
+	Index int
+	Delta ModelResponsePartDelta
+}
+
+func (e PartDeltaEvent) streamEventKind() string { return "part-delta" }
+
+// PartEndEvent signals that a response part has finished streaming.
+type PartEndEvent struct {
+	Index int
+}
+
+func (e PartEndEvent) streamEventKind() string { return "part-end" }
+
+// --- Deltas ---
+
+// ModelResponsePartDelta is the interface for incremental part updates.
+type ModelResponsePartDelta interface {
+	deltaKind() string
+}
+
+// TextPartDelta is an incremental text chunk.
+type TextPartDelta struct {
+	ContentDelta string
+}
+
+func (d TextPartDelta) deltaKind() string { return "text" }
+
+// ToolCallPartDelta is an incremental tool call argument chunk.
+type ToolCallPartDelta struct {
+	ArgsJSONDelta string
+}
+
+func (d ToolCallPartDelta) deltaKind() string { return "tool-call" }
+
+// ThinkingPartDelta is an incremental thinking chunk.
+type ThinkingPartDelta struct {
+	ContentDelta string
+}
+
+func (d ThinkingPartDelta) deltaKind() string { return "thinking" }

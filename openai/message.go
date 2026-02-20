@@ -1,0 +1,296 @@
+package openai
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/trevorprater/gollem"
+)
+
+// --- API request types ---
+
+type apiRequest struct {
+	Model            string             `json:"model"`
+	Messages         []apiMessage       `json:"messages"`
+	Tools            []apiToolDef       `json:"tools,omitempty"`
+	Stream           bool               `json:"stream,omitempty"`
+	StreamOptions    *apiStreamOptions  `json:"stream_options,omitempty"`
+	MaxTokens        int                `json:"max_completion_tokens,omitempty"`
+	Temperature      *float64           `json:"temperature,omitempty"`
+	TopP             *float64           `json:"top_p,omitempty"`
+	ResponseFormat   *apiResponseFormat `json:"response_format,omitempty"`
+}
+
+type apiStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+type apiMessage struct {
+	Role       string          `json:"role"` // system, user, assistant, tool
+	Content    string          `json:"content,omitempty"`
+	ToolCalls  []apiToolCall   `json:"tool_calls,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+}
+
+type apiToolCall struct {
+	ID       string          `json:"id"`
+	Type     string          `json:"type"` // "function"
+	Function apiToolFunction `json:"function"`
+}
+
+type apiToolFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type apiToolDef struct {
+	Type     string          `json:"type"` // "function"
+	Function apiToolDefFunc  `json:"function"`
+}
+
+type apiToolDefFunc struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters"`
+	Strict      *bool           `json:"strict,omitempty"`
+}
+
+type apiResponseFormat struct {
+	Type       string          `json:"type"` // "json_schema" or "json_object"
+	JSONSchema *apiJSONSchema  `json:"json_schema,omitempty"`
+}
+
+type apiJSONSchema struct {
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema"`
+	Strict bool            `json:"strict,omitempty"`
+}
+
+// --- API response types ---
+
+type apiResponse struct {
+	ID      string      `json:"id"`
+	Object  string      `json:"object"`
+	Created int64       `json:"created"`
+	Model   string      `json:"model"`
+	Choices []apiChoice `json:"choices"`
+	Usage   apiUsage    `json:"usage"`
+}
+
+type apiChoice struct {
+	Index        int        `json:"index"`
+	Message      apiChatMsg `json:"message"`
+	FinishReason string     `json:"finish_reason"`
+}
+
+type apiChatMsg struct {
+	Role      string        `json:"role"`
+	Content   string        `json:"content"`
+	ToolCalls []apiToolCall `json:"tool_calls,omitempty"`
+	Refusal   string        `json:"refusal,omitempty"`
+}
+
+type apiUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+// buildRequest converts gollem messages into an OpenAI Chat Completions API request.
+func buildRequest(messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters, model string, defaultMaxTokens int, stream bool) (*apiRequest, error) {
+	req := &apiRequest{
+		Model:     model,
+		MaxTokens: defaultMaxTokens,
+		Stream:    stream,
+	}
+
+	if stream {
+		req.StreamOptions = &apiStreamOptions{IncludeUsage: true}
+	}
+
+	if settings != nil {
+		if settings.MaxTokens != nil {
+			req.MaxTokens = *settings.MaxTokens
+		}
+		req.Temperature = settings.Temperature
+		req.TopP = settings.TopP
+	}
+
+	// Convert tool definitions.
+	if params != nil {
+		allTools := params.AllToolDefs()
+		for _, td := range allTools {
+			schemaJSON, err := json.Marshal(td.ParametersSchema)
+			if err != nil {
+				return nil, err
+			}
+			toolDef := apiToolDef{
+				Type: "function",
+				Function: apiToolDefFunc{
+					Name:        td.Name,
+					Description: td.Description,
+					Parameters:  schemaJSON,
+				},
+			}
+			if td.Strict != nil && *td.Strict {
+				strict := true
+				toolDef.Function.Strict = &strict
+			}
+			req.Tools = append(req.Tools, toolDef)
+		}
+
+		// Handle native structured output via response_format.
+		if params.OutputMode == gollem.OutputModeNative && params.OutputObject != nil {
+			schemaJSON, err := json.Marshal(params.OutputObject.JSONSchema)
+			if err != nil {
+				return nil, err
+			}
+			strict := true
+			if params.OutputObject.Strict != nil {
+				strict = *params.OutputObject.Strict
+			}
+			req.ResponseFormat = &apiResponseFormat{
+				Type: "json_schema",
+				JSONSchema: &apiJSONSchema{
+					Name:   params.OutputObject.Name,
+					Schema: schemaJSON,
+					Strict: strict,
+				},
+			}
+		}
+	}
+
+	// Convert messages.
+	var apiMsgs []apiMessage
+
+	for _, msg := range messages {
+		switch m := msg.(type) {
+		case gollem.ModelRequest:
+			for _, part := range m.Parts {
+				switch p := part.(type) {
+				case gollem.SystemPromptPart:
+					apiMsgs = append(apiMsgs, apiMessage{
+						Role:    "system",
+						Content: p.Content,
+					})
+				case gollem.UserPromptPart:
+					apiMsgs = append(apiMsgs, apiMessage{
+						Role:    "user",
+						Content: p.Content,
+					})
+				case gollem.ToolReturnPart:
+					content := ""
+					switch v := p.Content.(type) {
+					case string:
+						content = v
+					default:
+						b, _ := json.Marshal(v)
+						content = string(b)
+					}
+					apiMsgs = append(apiMsgs, apiMessage{
+						Role:       "tool",
+						Content:    content,
+						ToolCallID: p.ToolCallID,
+					})
+				case gollem.RetryPromptPart:
+					if p.ToolCallID != "" {
+						apiMsgs = append(apiMsgs, apiMessage{
+							Role:       "tool",
+							Content:    p.Content,
+							ToolCallID: p.ToolCallID,
+						})
+					} else {
+						apiMsgs = append(apiMsgs, apiMessage{
+							Role:    "user",
+							Content: p.Content,
+						})
+					}
+				}
+			}
+
+		case gollem.ModelResponse:
+			assistantMsg := apiMessage{Role: "assistant"}
+			for _, part := range m.Parts {
+				switch p := part.(type) {
+				case gollem.TextPart:
+					assistantMsg.Content += p.Content
+				case gollem.ToolCallPart:
+					assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, apiToolCall{
+						ID:   p.ToolCallID,
+						Type: "function",
+						Function: apiToolFunction{
+							Name:      p.ToolName,
+							Arguments: p.ArgsJSON,
+						},
+					})
+				}
+			}
+			apiMsgs = append(apiMsgs, assistantMsg)
+		}
+	}
+
+	req.Messages = apiMsgs
+	return req, nil
+}
+
+// parseResponse converts an OpenAI API response to a gollem.ModelResponse.
+func parseResponse(resp *apiResponse, modelName string) *gollem.ModelResponse {
+	var parts []gollem.ModelResponsePart
+
+	if len(resp.Choices) > 0 {
+		choice := resp.Choices[0]
+
+		if choice.Message.Refusal != "" {
+			parts = append(parts, gollem.TextPart{Content: choice.Message.Refusal})
+		} else if choice.Message.Content != "" {
+			parts = append(parts, gollem.TextPart{Content: choice.Message.Content})
+		}
+
+		for _, tc := range choice.Message.ToolCalls {
+			argsJSON := tc.Function.Arguments
+			if argsJSON == "" {
+				argsJSON = "{}"
+			}
+			parts = append(parts, gollem.ToolCallPart{
+				ToolName:   tc.Function.Name,
+				ArgsJSON:   argsJSON,
+				ToolCallID: tc.ID,
+			})
+		}
+	}
+
+	return &gollem.ModelResponse{
+		Parts:        parts,
+		Usage:        mapUsage(resp.Usage),
+		ModelName:    modelName,
+		FinishReason: mapFinishReason(resp),
+		Timestamp:    time.Now(),
+	}
+}
+
+// mapFinishReason maps OpenAI finish reasons to gollem FinishReasons.
+func mapFinishReason(resp *apiResponse) gollem.FinishReason {
+	if len(resp.Choices) == 0 {
+		return gollem.FinishReasonStop
+	}
+	switch resp.Choices[0].FinishReason {
+	case "stop":
+		return gollem.FinishReasonStop
+	case "length":
+		return gollem.FinishReasonLength
+	case "tool_calls":
+		return gollem.FinishReasonToolCall
+	case "content_filter":
+		return gollem.FinishReasonContentFilter
+	default:
+		return gollem.FinishReasonStop
+	}
+}
+
+// mapUsage converts OpenAI usage to gollem Usage.
+func mapUsage(u apiUsage) gollem.Usage {
+	return gollem.Usage{
+		InputTokens:  u.PromptTokens,
+		OutputTokens: u.CompletionTokens,
+	}
+}

@@ -1,0 +1,72 @@
+// Package middleware provides a middleware chain for intercepting and
+// wrapping gollem model requests, enabling cross-cutting concerns like
+// logging, metrics, and tracing.
+package middleware
+
+import (
+	"context"
+
+	"github.com/trevorprater/gollem"
+)
+
+// RequestFunc is the type for a model request handler.
+type RequestFunc func(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (*gollem.ModelResponse, error)
+
+// Middleware intercepts model requests.
+type Middleware interface {
+	// WrapRequest wraps a request handler with middleware logic.
+	WrapRequest(next RequestFunc) RequestFunc
+}
+
+// MiddlewareFunc is a function adapter for Middleware.
+type MiddlewareFunc func(next RequestFunc) RequestFunc
+
+// WrapRequest implements Middleware.
+func (f MiddlewareFunc) WrapRequest(next RequestFunc) RequestFunc {
+	return f(next)
+}
+
+// wrappedModel applies a middleware chain to a gollem.Model.
+type wrappedModel struct {
+	inner       gollem.Model
+	middlewares []Middleware
+}
+
+// Wrap creates a new model that applies the given middleware chain to all requests.
+// Middlewares are applied in order: first middleware is outermost (executes first).
+func Wrap(model gollem.Model, middlewares ...Middleware) gollem.Model {
+	if len(middlewares) == 0 {
+		return model
+	}
+	return &wrappedModel{
+		inner:       model,
+		middlewares: middlewares,
+	}
+}
+
+// ModelName returns the underlying model's name.
+func (m *wrappedModel) ModelName() string {
+	return m.inner.ModelName()
+}
+
+// Request sends a request through the middleware chain.
+func (m *wrappedModel) Request(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (*gollem.ModelResponse, error) {
+	handler := RequestFunc(func(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (*gollem.ModelResponse, error) {
+		return m.inner.Request(ctx, messages, settings, params)
+	})
+
+	// Apply middlewares in reverse order so first middleware is outermost.
+	for i := len(m.middlewares) - 1; i >= 0; i-- {
+		handler = m.middlewares[i].WrapRequest(handler)
+	}
+
+	return handler(ctx, messages, settings, params)
+}
+
+// RequestStream delegates to the underlying model (middleware is not applied to streaming).
+func (m *wrappedModel) RequestStream(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (gollem.StreamedResponse, error) {
+	return m.inner.RequestStream(ctx, messages, settings, params)
+}
+
+// Verify wrappedModel implements gollem.Model.
+var _ gollem.Model = (*wrappedModel)(nil)

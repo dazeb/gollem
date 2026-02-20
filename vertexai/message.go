@@ -1,0 +1,276 @@
+package vertexai
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/trevorprater/gollem"
+)
+
+// --- Gemini API request types ---
+
+type geminiRequest struct {
+	Contents         []geminiContent         `json:"contents"`
+	Tools            []geminiToolDecl        `json:"tools,omitempty"`
+	SystemInstruction *geminiContent         `json:"systemInstruction,omitempty"`
+	GenerationConfig *geminiGenerationConfig `json:"generationConfig,omitempty"`
+}
+
+type geminiContent struct {
+	Role  string       `json:"role"`
+	Parts []geminiPart `json:"parts"`
+}
+
+type geminiPart struct {
+	// Text part.
+	Text string `json:"text,omitempty"`
+	// Function call from model.
+	FunctionCall *geminiFunctionCall `json:"functionCall,omitempty"`
+	// Function response from user.
+	FunctionResponse *geminiFunctionResponse `json:"functionResponse,omitempty"`
+}
+
+type geminiFunctionCall struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args,omitempty"`
+}
+
+type geminiFunctionResponse struct {
+	Name     string         `json:"name"`
+	Response map[string]any `json:"response"`
+}
+
+type geminiToolDecl struct {
+	FunctionDeclarations []geminiFunction `json:"functionDeclarations"`
+}
+
+type geminiFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+type geminiGenerationConfig struct {
+	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
+	Temperature      *float64 `json:"temperature,omitempty"`
+	TopP             *float64 `json:"topP,omitempty"`
+	ResponseMimeType string   `json:"responseMimeType,omitempty"`
+	ResponseSchema   any      `json:"responseSchema,omitempty"`
+}
+
+// --- Gemini API response types ---
+
+type geminiResponse struct {
+	Candidates    []geminiCandidate `json:"candidates"`
+	UsageMetadata geminiUsage       `json:"usageMetadata"`
+	ModelVersion  string            `json:"modelVersion"`
+}
+
+type geminiCandidate struct {
+	Content       geminiContent `json:"content"`
+	FinishReason  string        `json:"finishReason"`
+	SafetyRatings []any         `json:"safetyRatings,omitempty"`
+}
+
+type geminiUsage struct {
+	PromptTokenCount     int `json:"promptTokenCount"`
+	CandidatesTokenCount int `json:"candidatesTokenCount"`
+	TotalTokenCount      int `json:"totalTokenCount"`
+}
+
+// buildRequest converts gollem messages into a Gemini API request.
+func buildRequest(messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (*geminiRequest, error) {
+	req := &geminiRequest{}
+
+	// Generation config.
+	genConfig := &geminiGenerationConfig{}
+	hasGenConfig := false
+
+	if settings != nil {
+		if settings.MaxTokens != nil {
+			genConfig.MaxOutputTokens = *settings.MaxTokens
+			hasGenConfig = true
+		}
+		if settings.Temperature != nil {
+			genConfig.Temperature = settings.Temperature
+			hasGenConfig = true
+		}
+		if settings.TopP != nil {
+			genConfig.TopP = settings.TopP
+			hasGenConfig = true
+		}
+	}
+
+	// Handle native structured output.
+	if params != nil && params.OutputMode == gollem.OutputModeNative && params.OutputObject != nil {
+		genConfig.ResponseMimeType = "application/json"
+		genConfig.ResponseSchema = params.OutputObject.JSONSchema
+		hasGenConfig = true
+	}
+
+	if hasGenConfig {
+		req.GenerationConfig = genConfig
+	}
+
+	// Convert tool definitions.
+	if params != nil {
+		allTools := params.AllToolDefs()
+		if len(allTools) > 0 {
+			var funcs []geminiFunction
+			for _, td := range allTools {
+				schemaJSON, err := json.Marshal(td.ParametersSchema)
+				if err != nil {
+					return nil, err
+				}
+				funcs = append(funcs, geminiFunction{
+					Name:        td.Name,
+					Description: td.Description,
+					Parameters:  schemaJSON,
+				})
+			}
+			req.Tools = []geminiToolDecl{{FunctionDeclarations: funcs}}
+		}
+	}
+
+	// Convert messages.
+	for _, msg := range messages {
+		switch m := msg.(type) {
+		case gollem.ModelRequest:
+			var userParts []geminiPart
+
+			for _, part := range m.Parts {
+				switch p := part.(type) {
+				case gollem.SystemPromptPart:
+					req.SystemInstruction = &geminiContent{
+						Role:  "user",
+						Parts: []geminiPart{{Text: p.Content}},
+					}
+				case gollem.UserPromptPart:
+					userParts = append(userParts, geminiPart{Text: p.Content})
+				case gollem.ToolReturnPart:
+					content := make(map[string]any)
+					switch v := p.Content.(type) {
+					case string:
+						content["result"] = v
+					default:
+						b, _ := json.Marshal(v)
+						json.Unmarshal(b, &content)
+					}
+					userParts = append(userParts, geminiPart{
+						FunctionResponse: &geminiFunctionResponse{
+							Name:     p.ToolName,
+							Response: content,
+						},
+					})
+				case gollem.RetryPromptPart:
+					if p.ToolName != "" {
+						userParts = append(userParts, geminiPart{
+							FunctionResponse: &geminiFunctionResponse{
+								Name:     p.ToolName,
+								Response: map[string]any{"error": p.Content},
+							},
+						})
+					} else {
+						userParts = append(userParts, geminiPart{Text: p.Content})
+					}
+				}
+			}
+
+			if len(userParts) > 0 {
+				req.Contents = append(req.Contents, geminiContent{
+					Role:  "user",
+					Parts: userParts,
+				})
+			}
+
+		case gollem.ModelResponse:
+			var modelParts []geminiPart
+			for _, part := range m.Parts {
+				switch p := part.(type) {
+				case gollem.TextPart:
+					modelParts = append(modelParts, geminiPart{Text: p.Content})
+				case gollem.ToolCallPart:
+					args := make(map[string]any)
+					if p.ArgsJSON != "" && p.ArgsJSON != "{}" {
+						json.Unmarshal([]byte(p.ArgsJSON), &args)
+					}
+					modelParts = append(modelParts, geminiPart{
+						FunctionCall: &geminiFunctionCall{
+							Name: p.ToolName,
+							Args: args,
+						},
+					})
+				}
+			}
+			if len(modelParts) > 0 {
+				req.Contents = append(req.Contents, geminiContent{
+					Role:  "model",
+					Parts: modelParts,
+				})
+			}
+		}
+	}
+
+	return req, nil
+}
+
+// parseResponse converts a Gemini API response to a gollem.ModelResponse.
+func parseResponse(resp *geminiResponse, modelName string) *gollem.ModelResponse {
+	var parts []gollem.ModelResponsePart
+
+	if len(resp.Candidates) > 0 {
+		candidate := resp.Candidates[0]
+		for _, p := range candidate.Content.Parts {
+			if p.Text != "" {
+				parts = append(parts, gollem.TextPart{Content: p.Text})
+			}
+			if p.FunctionCall != nil {
+				argsJSON := "{}"
+				if p.FunctionCall.Args != nil {
+					b, _ := json.Marshal(p.FunctionCall.Args)
+					argsJSON = string(b)
+				}
+				parts = append(parts, gollem.ToolCallPart{
+					ToolName:   p.FunctionCall.Name,
+					ArgsJSON:   argsJSON,
+					ToolCallID: p.FunctionCall.Name, // Gemini doesn't use tool call IDs
+				})
+			}
+		}
+	}
+
+	return &gollem.ModelResponse{
+		Parts:        parts,
+		Usage:        mapUsage(resp.UsageMetadata),
+		ModelName:    modelName,
+		FinishReason: mapFinishReason(resp),
+		Timestamp:    time.Now(),
+	}
+}
+
+// mapFinishReason maps Gemini finish reasons to gollem FinishReasons.
+func mapFinishReason(resp *geminiResponse) gollem.FinishReason {
+	if len(resp.Candidates) == 0 {
+		return gollem.FinishReasonStop
+	}
+	switch resp.Candidates[0].FinishReason {
+	case "STOP":
+		return gollem.FinishReasonStop
+	case "MAX_TOKENS":
+		return gollem.FinishReasonLength
+	case "SAFETY":
+		return gollem.FinishReasonContentFilter
+	case "RECITATION":
+		return gollem.FinishReasonContentFilter
+	default:
+		return gollem.FinishReasonStop
+	}
+}
+
+// mapUsage converts Gemini usage to gollem Usage.
+func mapUsage(u geminiUsage) gollem.Usage {
+	return gollem.Usage{
+		InputTokens:  u.PromptTokenCount,
+		OutputTokens: u.CandidatesTokenCount,
+	}
+}

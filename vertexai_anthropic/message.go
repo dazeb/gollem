@@ -1,0 +1,256 @@
+package vertexai_anthropic
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/trevorprater/gollem"
+)
+
+// Anthropic API types — identical format used via Vertex AI rawPredict.
+
+type apiRequest struct {
+	Model       string           `json:"model"`
+	MaxTokens   int              `json:"max_tokens"`
+	System      []apiSystemBlock `json:"system,omitempty"`
+	Messages    []apiMessage     `json:"messages"`
+	Tools       []apiTool        `json:"tools,omitempty"`
+	Stream      bool             `json:"stream,omitempty"`
+	Temperature *float64         `json:"temperature,omitempty"`
+	TopP        *float64         `json:"top_p,omitempty"`
+	// AnthropicVersion is sent in the request body for Vertex AI.
+	AnthropicVersion string `json:"anthropic_version"`
+}
+
+type apiSystemBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type apiMessage struct {
+	Role    string            `json:"role"`
+	Content []apiContentBlock `json:"content"`
+}
+
+type apiContentBlock struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+}
+
+type apiTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+type apiResponse struct {
+	ID         string            `json:"id"`
+	Type       string            `json:"type"`
+	Role       string            `json:"role"`
+	Content    []apiContentBlock `json:"content"`
+	Model      string            `json:"model"`
+	StopReason string            `json:"stop_reason"`
+	Usage      apiUsage          `json:"usage"`
+}
+
+type apiUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+}
+
+// buildRequest converts gollem messages into an Anthropic API request for Vertex AI.
+func buildRequest(messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters, model string, defaultMaxTokens int, stream bool) (*apiRequest, error) {
+	req := &apiRequest{
+		Model:            model,
+		MaxTokens:        defaultMaxTokens,
+		Stream:           stream,
+		AnthropicVersion: anthropicVersion,
+	}
+
+	if settings != nil {
+		if settings.MaxTokens != nil {
+			req.MaxTokens = *settings.MaxTokens
+		}
+		req.Temperature = settings.Temperature
+		req.TopP = settings.TopP
+	}
+
+	if params != nil {
+		allTools := params.AllToolDefs()
+		for _, td := range allTools {
+			schemaJSON, err := json.Marshal(td.ParametersSchema)
+			if err != nil {
+				return nil, err
+			}
+			req.Tools = append(req.Tools, apiTool{
+				Name:        td.Name,
+				Description: td.Description,
+				InputSchema: schemaJSON,
+			})
+		}
+	}
+
+	var systemBlocks []apiSystemBlock
+	var apiMsgs []apiMessage
+
+	for _, msg := range messages {
+		switch m := msg.(type) {
+		case gollem.ModelRequest:
+			var userBlocks []apiContentBlock
+			for _, part := range m.Parts {
+				switch p := part.(type) {
+				case gollem.SystemPromptPart:
+					systemBlocks = append(systemBlocks, apiSystemBlock{
+						Type: "text",
+						Text: p.Content,
+					})
+				case gollem.UserPromptPart:
+					userBlocks = append(userBlocks, apiContentBlock{
+						Type: "text",
+						Text: p.Content,
+					})
+				case gollem.ToolReturnPart:
+					content := ""
+					switch v := p.Content.(type) {
+					case string:
+						content = v
+					default:
+						b, _ := json.Marshal(v)
+						content = string(b)
+					}
+					userBlocks = append(userBlocks, apiContentBlock{
+						Type:      "tool_result",
+						ToolUseID: p.ToolCallID,
+						Content:   content,
+					})
+				case gollem.RetryPromptPart:
+					if p.ToolCallID != "" {
+						userBlocks = append(userBlocks, apiContentBlock{
+							Type:      "tool_result",
+							ToolUseID: p.ToolCallID,
+							Content:   p.Content,
+							IsError:   true,
+						})
+					} else {
+						userBlocks = append(userBlocks, apiContentBlock{
+							Type: "text",
+							Text: p.Content,
+						})
+					}
+				}
+			}
+			if len(userBlocks) > 0 {
+				apiMsgs = append(apiMsgs, apiMessage{
+					Role:    "user",
+					Content: userBlocks,
+				})
+			}
+
+		case gollem.ModelResponse:
+			var assistantBlocks []apiContentBlock
+			for _, part := range m.Parts {
+				switch p := part.(type) {
+				case gollem.TextPart:
+					assistantBlocks = append(assistantBlocks, apiContentBlock{
+						Type: "text",
+						Text: p.Content,
+					})
+				case gollem.ToolCallPart:
+					assistantBlocks = append(assistantBlocks, apiContentBlock{
+						Type:  "tool_use",
+						ID:    p.ToolCallID,
+						Name:  p.ToolName,
+						Input: json.RawMessage(p.ArgsJSON),
+					})
+				case gollem.ThinkingPart:
+					assistantBlocks = append(assistantBlocks, apiContentBlock{
+						Type:      "thinking",
+						Thinking:  p.Content,
+						Signature: p.Signature,
+					})
+				}
+			}
+			if len(assistantBlocks) > 0 {
+				apiMsgs = append(apiMsgs, apiMessage{
+					Role:    "assistant",
+					Content: assistantBlocks,
+				})
+			}
+		}
+	}
+
+	req.System = systemBlocks
+	req.Messages = apiMsgs
+	return req, nil
+}
+
+// parseResponse converts an Anthropic API response to a gollem.ModelResponse.
+func parseResponse(resp *apiResponse, modelName string) *gollem.ModelResponse {
+	var parts []gollem.ModelResponsePart
+
+	for _, block := range resp.Content {
+		switch block.Type {
+		case "text":
+			parts = append(parts, gollem.TextPart{Content: block.Text})
+		case "tool_use":
+			argsJSON := "{}"
+			if block.Input != nil {
+				argsJSON = string(block.Input)
+			}
+			parts = append(parts, gollem.ToolCallPart{
+				ToolName:   block.Name,
+				ArgsJSON:   argsJSON,
+				ToolCallID: block.ID,
+			})
+		case "thinking":
+			parts = append(parts, gollem.ThinkingPart{
+				Content:   block.Thinking,
+				Signature: block.Signature,
+			})
+		}
+	}
+
+	return &gollem.ModelResponse{
+		Parts:        parts,
+		Usage:        mapUsage(resp.Usage),
+		ModelName:    modelName,
+		FinishReason: mapStopReason(resp.StopReason),
+		Timestamp:    time.Now(),
+	}
+}
+
+// mapStopReason maps Anthropic stop reasons to gollem FinishReasons.
+func mapStopReason(reason string) gollem.FinishReason {
+	switch reason {
+	case "end_turn", "stop_sequence":
+		return gollem.FinishReasonStop
+	case "max_tokens":
+		return gollem.FinishReasonLength
+	case "tool_use":
+		return gollem.FinishReasonToolCall
+	case "refusal":
+		return gollem.FinishReasonContentFilter
+	default:
+		return gollem.FinishReasonStop
+	}
+}
+
+// mapUsage converts Anthropic usage to gollem Usage.
+func mapUsage(u apiUsage) gollem.Usage {
+	return gollem.Usage{
+		InputTokens:      u.InputTokens,
+		OutputTokens:     u.OutputTokens,
+		CacheWriteTokens: u.CacheCreationInputTokens,
+		CacheReadTokens:  u.CacheReadInputTokens,
+	}
+}
