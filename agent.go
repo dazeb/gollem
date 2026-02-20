@@ -220,11 +220,12 @@ func (a *Agent[T]) GetTools() []Tool {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	deps            any
-	modelSettings   *ModelSettings
-	usageLimits     *UsageLimits
-	messages        []ModelMessage
-	deferredResults []DeferredToolResult
+	deps             any
+	modelSettings    *ModelSettings
+	usageLimits      *UsageLimits
+	messages         []ModelMessage
+	deferredResults  []DeferredToolResult
+	batchConcurrency int
 }
 
 // WithRunDeps sets dependencies available to tools via RunContext.
