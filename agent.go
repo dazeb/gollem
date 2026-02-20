@@ -682,6 +682,42 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			}
 		}
 
+		// Check run conditions.
+		if len(a.runConditions) > 0 {
+			condRC := &RunContext{
+				Deps:     deps,
+				Usage:    state.usage,
+				Prompt:   prompt,
+				Messages: state.messages,
+				RunStep:  state.runStep,
+				RunID:    state.runID,
+			}
+			for _, cond := range a.runConditions {
+				if stop, reason := cond(ctx, condRC, resp); stop {
+					// Return the text output if available, otherwise error.
+					if hasText := resp.TextContent() != ""; hasText && a.outputSchema.AllowsText {
+						text := resp.TextContent()
+						output, parseErr := deserializeOutput[T](text, a.outputSchema.OuterTypedDictKey)
+						if parseErr != nil {
+							if a.outputSchema.Mode == OutputModeText {
+								output = any(text).(T)
+								parseErr = nil
+							}
+						}
+						if parseErr == nil {
+							return &RunResult[T]{
+								Output:   output,
+								Messages: state.messages,
+								Usage:    state.usage,
+								RunID:    state.runID,
+							}, nil
+						}
+					}
+					return nil, &RunConditionError{Reason: reason}
+				}
+			}
+		}
+
 		// Process the response.
 		result, nextParts, deferredReqs, err := a.processResponse(ctx, state, resp, toolMap, outputToolNames, deps, prompt)
 		if err != nil {
