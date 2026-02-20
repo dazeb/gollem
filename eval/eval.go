@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // Case represents a single evaluation test case.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // streamedResponse implements gollem.StreamedResponse for Anthropic SSE streams.

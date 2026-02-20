@@ -13,8 +13,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/trevorprater/gollem"
-	"github.com/trevorprater/gollem/temporal"
+	"github.com/fugue-labs/gollem"
+	"github.com/fugue-labs/gollem/temporal"
 )
 
 // TaskResult is the structured output type for the agent.

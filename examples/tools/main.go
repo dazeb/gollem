@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/trevorprater/gollem"
-	"github.com/trevorprater/gollem/anthropic"
+	"github.com/fugue-labs/gollem"
+	"github.com/fugue-labs/gollem/anthropic"
 )
 
 // WeatherParams defines the parameters for the weather tool.

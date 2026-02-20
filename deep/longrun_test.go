@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestLongRunAgent_Basic(t *testing.T) {

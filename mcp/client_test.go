@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestJSONRPCRequestSerialization(t *testing.T) {

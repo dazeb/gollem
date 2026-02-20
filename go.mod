@@ -1,4 +1,4 @@
-module github.com/trevorprater/gollem
+module github.com/fugue-labs/gollem
 
 go 1.24.0
 

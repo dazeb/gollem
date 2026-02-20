@@ -6,7 +6,7 @@ package middleware
 import (
 	"context"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // RequestFunc is the type for a model request handler.

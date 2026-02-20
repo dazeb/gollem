@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // --- Message mapping tests ---

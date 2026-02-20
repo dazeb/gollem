@@ -10,8 +10,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/trevorprater/gollem"
-	"github.com/trevorprater/gollem/tui"
+	"github.com/fugue-labs/gollem"
+	"github.com/fugue-labs/gollem/tui"
 )
 
 func main() {
@@ -100,7 +100,7 @@ func createModel(provider, modelName string) (gollem.Model, error) {
 	// Note: For real providers, users should import the appropriate provider package
 	// and use the TUI directly in their own code:
 	//
-	//   import "github.com/trevorprater/gollem/openai"
+	//   import "github.com/fugue-labs/gollem/openai"
 	//   model := openai.New(openai.WithModel("gpt-4o"))
 	//   result, err := tui.DebugUI(agent, prompt)
 }

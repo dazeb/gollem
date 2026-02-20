@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // ContextManager manages conversation context for long-running agents.

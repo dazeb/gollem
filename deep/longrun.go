@@ -3,7 +3,7 @@ package deep
 import (
 	"context"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // LongRunAgent wraps a gollem.Agent with deep capabilities for long-running tasks.

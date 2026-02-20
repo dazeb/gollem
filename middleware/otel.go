@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	instrumentationName = "github.com/trevorprater/gollem/middleware"
+	instrumentationName = "github.com/fugue-labs/gollem/middleware"
 )
 
 // OTelMiddleware provides OpenTelemetry tracing and metrics for model requests.

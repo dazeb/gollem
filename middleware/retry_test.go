@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestRetryMiddleware_SucceedsFirst(t *testing.T) {

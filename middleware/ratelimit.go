@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // rateLimiter implements a token bucket rate limiter using standard library primitives.

@@ -3,7 +3,7 @@ package deep
 import (
 	"fmt"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // TokenCounter estimates token counts for messages.

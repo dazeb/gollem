@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestTemporalAgent_Construction(t *testing.T) {

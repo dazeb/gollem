@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // mockModel is a simple test model.

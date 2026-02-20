@@ -7,9 +7,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/trevorprater/gollem/actions/workflows/ci.yml"><img src="https://github.com/trevorprater/gollem/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://pkg.go.dev/github.com/trevorprater/gollem"><img src="https://pkg.go.dev/badge/github.com/trevorprater/gollem.svg" alt="Go Reference"></a>
-  <a href="https://goreportcard.com/report/github.com/trevorprater/gollem"><img src="https://goreportcard.com/badge/github.com/trevorprater/gollem" alt="Go Report Card"></a>
+  <a href="https://github.com/fugue-labs/gollem/actions/workflows/ci.yml"><img src="https://github.com/fugue-labs/gollem/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pkg.go.dev/github.com/fugue-labs/gollem"><img src="https://pkg.go.dev/badge/github.com/fugue-labs/gollem.svg" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/fugue-labs/gollem"><img src="https://goreportcard.com/badge/github.com/fugue-labs/gollem" alt="Go Report Card"></a>
   <a href="https://codecov.io/gh/trevorprater/gollem"><img src="https://codecov.io/gh/trevorprater/gollem/branch/main/graph/badge.svg" alt="codecov"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
@@ -45,7 +45,7 @@
 ### Installation
 
 ```bash
-go get github.com/trevorprater/gollem
+go get github.com/fugue-labs/gollem
 ```
 
 ### Minimal Example (No API Key Required)
@@ -60,7 +60,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/trevorprater/gollem"
+    "github.com/fugue-labs/gollem"
 )
 
 // CityInfo is the structured output type the agent will produce.
@@ -96,7 +96,7 @@ func main() {
 ### With a Real Provider
 
 ```go
-import "github.com/trevorprater/gollem/anthropic"
+import "github.com/fugue-labs/gollem/anthropic"
 
 model := anthropic.New() // reads ANTHROPIC_API_KEY from environment
 agent := gollem.NewAgent[CityInfo](model,
@@ -240,10 +240,10 @@ Create providers with sensible defaults or explicit configuration:
 
 ```go
 import (
-    "github.com/trevorprater/gollem/anthropic"
-    "github.com/trevorprater/gollem/openai"
-    "github.com/trevorprater/gollem/vertexai"
-    "github.com/trevorprater/gollem/vertexai_anthropic"
+    "github.com/fugue-labs/gollem/anthropic"
+    "github.com/fugue-labs/gollem/openai"
+    "github.com/fugue-labs/gollem/vertexai"
+    "github.com/fugue-labs/gollem/vertexai_anthropic"
 )
 
 // Each provider reads credentials from environment variables by default.
@@ -317,7 +317,7 @@ graph TD
 The `deep` package provides tools for long-running agent tasks that may exceed context limits:
 
 ```go
-import "github.com/trevorprater/gollem/deep"
+import "github.com/fugue-labs/gollem/deep"
 
 // Three-tier context compression.
 cm := deep.NewContextManager(model,
@@ -371,7 +371,7 @@ result, _ := pipeline.Run(ctx, "Write an article about Go generics")
 Build typed state machines for complex multi-step workflows:
 
 ```go
-import "github.com/trevorprater/gollem/graph"
+import "github.com/fugue-labs/gollem/graph"
 
 type OrderState struct {
     OrderID string
@@ -406,7 +406,7 @@ finalState, _ := g.Run(ctx, OrderState{OrderID: "123", Total: 99.99})
 Wrap agents for fault-tolerant execution with automatic retries and checkpointing:
 
 ```go
-import "github.com/trevorprater/gollem/temporal"
+import "github.com/fugue-labs/gollem/temporal"
 
 ta := temporal.NewTemporalAgent(agent,
     temporal.WithName("my-agent"),
@@ -426,7 +426,7 @@ activities := ta.Activities()
 Test agent quality with datasets and composable evaluators:
 
 ```go
-import "github.com/trevorprater/gollem/eval"
+import "github.com/fugue-labs/gollem/eval"
 
 dataset := eval.Dataset[string]{
     Name: "geography",
@@ -447,7 +447,7 @@ fmt.Printf("Score: %.0f%% (%d/%d passed)\n",
 Connect to Model Context Protocol servers for external tool discovery:
 
 ```go
-import mcpclient "github.com/trevorprater/gollem/mcp"
+import mcpclient "github.com/fugue-labs/gollem/mcp"
 
 // Stdio transport.
 client, _ := mcpclient.NewStdioClient(ctx, "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp")
@@ -470,7 +470,7 @@ allTools, _ := mgr.Tools(ctx) // tools namespaced as "fs__toolname", "db__toolna
 Compose cross-cutting concerns around model requests:
 
 ```go
-import "github.com/trevorprater/gollem/middleware"
+import "github.com/fugue-labs/gollem/middleware"
 
 // Wrap a model with middleware.
 wrapped := middleware.Wrap(model,

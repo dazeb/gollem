@@ -7,7 +7,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/worker"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // TemporalAgent wraps a gollem.Agent for durable execution via Temporal.

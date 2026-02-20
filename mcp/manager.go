@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // ToolSource is the interface for any MCP client that can provide tools.

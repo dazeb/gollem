@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestTUI_ModelCreation(t *testing.T) {

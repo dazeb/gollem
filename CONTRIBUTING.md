@@ -15,7 +15,7 @@ Thank you for your interest in contributing to gollem. This guide covers the dev
 
 ```bash
 # Clone the repository.
-git clone https://github.com/trevorprater/gollem.git
+git clone https://github.com/fugue-labs/gollem.git
 cd gollem
 
 # Install dependencies.
@@ -55,7 +55,7 @@ make fmt
 Import groups should be ordered as:
 1. Standard library
 2. External dependencies
-3. Internal packages (`github.com/trevorprater/gollem/...`)
+3. Internal packages (`github.com/fugue-labs/gollem/...`)
 
 ### Linting
 

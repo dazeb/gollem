@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // LoggingMiddleware logs each model request and response using slog.

@@ -28,7 +28,7 @@ linters:
 
 linters-settings:
   goimports:
-    local-prefixes: github.com/trevorprater/gollem
+    local-prefixes: github.com/fugue-labs/gollem
   nakedret:
     max-func-lines: 30
   gosec:

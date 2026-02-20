@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestExactMatch(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // Memory is the interface for conversation memory stores.

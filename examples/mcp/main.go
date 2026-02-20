@@ -9,9 +9,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/trevorprater/gollem"
-	"github.com/trevorprater/gollem/anthropic"
-	mcpclient "github.com/trevorprater/gollem/mcp"
+	"github.com/fugue-labs/gollem"
+	"github.com/fugue-labs/gollem/anthropic"
+	mcpclient "github.com/fugue-labs/gollem/mcp"
 )
 
 func main() {

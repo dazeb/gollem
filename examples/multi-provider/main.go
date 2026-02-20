@@ -8,9 +8,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/trevorprater/gollem"
-	"github.com/trevorprater/gollem/anthropic"
-	"github.com/trevorprater/gollem/openai"
+	"github.com/fugue-labs/gollem"
+	"github.com/fugue-labs/gollem/anthropic"
+	"github.com/fugue-labs/gollem/openai"
 )
 
 // Answer is the structured output type.

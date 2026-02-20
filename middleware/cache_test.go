@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestCacheMiddleware_CacheHit(t *testing.T) {

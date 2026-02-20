@@ -19,7 +19,7 @@ lint: ## Run golangci-lint
 	golangci-lint run ./...
 
 fmt: ## Run goimports formatting
-	goimports -w -local github.com/trevorprater/gollem .
+	goimports -w -local github.com/fugue-labs/gollem .
 
 vet: ## Run go vet
 	go vet ./...

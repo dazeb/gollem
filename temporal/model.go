@@ -5,7 +5,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // TemporalModel wraps a gollem.Model, providing activity functions for Temporal.

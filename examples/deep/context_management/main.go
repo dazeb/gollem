@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/trevorprater/gollem"
-	"github.com/trevorprater/gollem/deep"
+	"github.com/fugue-labs/gollem"
+	"github.com/fugue-labs/gollem/deep"
 )
 
 // AnalysisResult is the structured output type.

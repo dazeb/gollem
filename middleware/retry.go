@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // retryConfig holds configuration for the retry middleware.

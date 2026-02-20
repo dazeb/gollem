@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // Checkpoint captures the state of an agent run at a point in time.

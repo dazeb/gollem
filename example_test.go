@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func ExampleNewAgent() {

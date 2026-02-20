@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/trevorprater/gollem"
-	"github.com/trevorprater/gollem/eval"
+	"github.com/fugue-labs/gollem"
+	"github.com/fugue-labs/gollem/eval"
 )
 
 func main() {

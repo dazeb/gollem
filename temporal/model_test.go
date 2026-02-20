@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestTemporalModel_PassThrough(t *testing.T) {

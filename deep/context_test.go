@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 func TestContextManager_NoCompression(t *testing.T) {

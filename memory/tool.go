@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // memoryToolParams defines the JSON arguments for the memory tool.

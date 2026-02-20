@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // Model constants for Anthropic Claude models.

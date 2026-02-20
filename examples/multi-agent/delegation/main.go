@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // ResearchResult is the output type for the specialist research agent.

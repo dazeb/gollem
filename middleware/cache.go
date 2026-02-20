@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // cacheEntry holds a cached response along with its creation time.

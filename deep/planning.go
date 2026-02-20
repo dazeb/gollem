@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // Plan represents the agent's current plan.

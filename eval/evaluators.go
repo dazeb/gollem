@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // exactMatch checks if output equals expected (using reflect.DeepEqual).

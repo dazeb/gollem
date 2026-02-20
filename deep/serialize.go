@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // requestPartEnvelope wraps a ModelRequestPart for JSON serialization.

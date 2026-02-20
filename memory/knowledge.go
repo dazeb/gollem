@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trevorprater/gollem"
+	"github.com/fugue-labs/gollem"
 )
 
 // storeKnowledgeBase wraps a Store as a gollem.KnowledgeBase.
