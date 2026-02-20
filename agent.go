@@ -63,6 +63,15 @@ type Agent[T any] struct {
 	runConditions              []RunCondition
 	traceExporters             []TraceExporter
 	eventBus                   *EventBus
+	deps                       any
+	usageQuota                 *UsageQuota
+	messageInterceptors        []MessageInterceptor
+	responseInterceptors       []ResponseInterceptor
+	costTracker                *CostTracker
+	autoContext                *AutoContextConfig
+	middleware                 []AgentMiddleware
+	toolChoice                 *ToolChoice
+	toolChoiceAutoReset        bool
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -77,6 +86,8 @@ type RunResult[T any] struct {
 	RunID string
 	// Trace is the execution trace when WithTracing is enabled. Nil otherwise.
 	Trace *RunTrace
+	// Cost is the estimated cost when a CostTracker is configured. Nil otherwise.
+	Cost *RunCost
 }
 
 // AgentOption configures the agent via functional options.
@@ -328,6 +339,12 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 		limits = *cfg.usageLimits
 	}
 
+	// Resolve deps: run-level deps override agent-level deps.
+	deps := a.deps
+	if cfg.deps != nil {
+		deps = cfg.deps
+	}
+
 	// Run input guardrails.
 	for _, g := range a.inputGuardrails {
 		var gErr error
@@ -342,7 +359,7 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 
 	// Fire OnRunStart hooks.
 	rc := &RunContext{
-		Deps:     cfg.deps,
+		Deps:     deps,
 		Usage:    state.usage,
 		Prompt:   prompt,
 		RunStep:  state.runStep,
@@ -363,10 +380,10 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	// Track start time for tracing.
 	startTime := time.Now()
 
-	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, cfg.deps, cfg.deferredResults)
+	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, deps, cfg.deferredResults)
 
 	endRC := &RunContext{
-		Deps:     cfg.deps,
+		Deps:     deps,
 		Usage:    state.usage,
 		Prompt:   prompt,
 		RunStep:  state.runStep,
@@ -413,6 +430,11 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 			// Exporter errors are non-fatal — don't break the run.
 			_ = exporter.Export(ctx, trace)
 		}
+	}
+
+	// Attach cost to result if cost tracker is configured.
+	if result != nil && a.costTracker != nil {
+		result.Cost = a.costTracker.buildRunCost()
 	}
 
 	return result, runErr
@@ -610,6 +632,11 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			}
 		}
 
+		// Check usage quota before request.
+		if err := checkQuota(a.usageQuota, state.usage); err != nil {
+			return nil, err
+		}
+
 		state.runStep++
 
 		// Apply prepare functions to filter/modify tools for this iteration.
@@ -617,6 +644,16 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 
 		// Build model request parameters with prepared tools.
 		params := buildModelRequestParams(preparedTools, a.outputSchema)
+
+		// Apply tool choice to settings.
+		if a.toolChoice != nil {
+			if settings == nil {
+				settings = &ModelSettings{}
+			}
+			if settings.ToolChoice == nil {
+				settings.ToolChoice = a.toolChoice
+			}
+		}
 
 		// Apply history processors.
 		messages := state.messages
@@ -626,6 +663,24 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 				return nil, fmt.Errorf("history processor failed: %w", procErr)
 			}
 			messages = processed
+		}
+
+		// Apply auto context compression.
+		if a.autoContext != nil {
+			compressed, compErr := autoCompressMessages(ctx, messages, a.autoContext, a.model)
+			if compErr == nil {
+				messages = compressed
+			}
+		}
+
+		// Run message interceptors.
+		if len(a.messageInterceptors) > 0 {
+			var dropped bool
+			messages, dropped = runMessageInterceptors(ctx, a.messageInterceptors, messages)
+			if dropped {
+				// Message dropped — return empty text response.
+				return nil, errors.New("message interceptor dropped the request")
+			}
 		}
 
 		// Run turn guardrails.
@@ -673,14 +728,42 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			})
 		}
 
-		// Call the model.
-		resp, err := a.model.Request(ctx, messages, settings, params)
+		// Call the model (through middleware chain if configured).
+		var resp *ModelResponse
+		if len(a.middleware) > 0 {
+			chain := buildMiddlewareChain(a.middleware, a.model)
+			resp, err = chain(ctx, messages, settings, params)
+		} else {
+			resp, err = a.model.Request(ctx, messages, settings, params)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("model request failed: %w", err)
 		}
 
 		// Track usage.
 		state.usage.IncrRequest(resp.Usage)
+
+		// Track cost.
+		if a.costTracker != nil {
+			singleUsage := RunUsage{}
+			singleUsage.Incr(resp.Usage)
+			a.costTracker.Record(a.model.ModelName(), singleUsage)
+		}
+
+		// Run response interceptors.
+		if len(a.responseInterceptors) > 0 {
+			if runResponseInterceptors(ctx, a.responseInterceptors, resp) {
+				// Response dropped — treat as empty and retry.
+				continue
+			}
+		}
+
+		// Reset tool choice to auto after first tool call if auto-reset is enabled.
+		if a.toolChoiceAutoReset && len(resp.ToolCalls()) > 0 && settings != nil && settings.ToolChoice != nil {
+			s := *settings
+			s.ToolChoice = ToolChoiceAuto()
+			settings = &s
+		}
 
 		// Append response to history.
 		state.messages = append(state.messages, *resp)
