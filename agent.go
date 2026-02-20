@@ -192,6 +192,16 @@ func NewAgent[T any](model Model, opts ...AgentOption[T]) *Agent[T] {
 	return a
 }
 
+// GetModel returns the agent's model.
+func (a *Agent[T]) GetModel() Model {
+	return a.model
+}
+
+// GetTools returns the agent's direct tools (not including toolset tools).
+func (a *Agent[T]) GetTools() []Tool {
+	return a.tools
+}
+
 // RunOption configures a specific run invocation.
 type RunOption func(*runConfig)
 
