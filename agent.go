@@ -51,6 +51,7 @@ type Agent[T any] struct {
 	maxConcurrency       int
 	knowledgeBase        KnowledgeBase
 	kbAutoStore          bool
+	toolsPrepareFunc     AgentToolsPrepareFunc
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -179,6 +180,14 @@ func WithToolsets[T any](toolsets ...*Toolset) AgentOption[T] {
 	}
 }
 
+// WithToolsPrepare sets an agent-wide function that filters/modifies all tool
+// definitions before each model request.
+func WithToolsPrepare[T any](fn AgentToolsPrepareFunc) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.toolsPrepareFunc = fn
+	}
+}
+
 // NewAgent creates a new Agent with the given model and options.
 func NewAgent[T any](model Model, opts ...AgentOption[T]) *Agent[T] {
 	a := &Agent[T]{
@@ -208,10 +217,11 @@ func (a *Agent[T]) GetTools() []Tool {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	deps          any
-	modelSettings *ModelSettings
-	usageLimits   *UsageLimits
-	messages      []ModelMessage
+	deps            any
+	modelSettings   *ModelSettings
+	usageLimits     *UsageLimits
+	messages        []ModelMessage
+	deferredResults []DeferredToolResult
 }
 
 // WithRunDeps sets dependencies available to tools via RunContext.
@@ -288,7 +298,7 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 		limits = *cfg.usageLimits
 	}
 
-	return a.runLoop(ctx, state, prompt, settings, limits, cfg.deps)
+	return a.runLoop(ctx, state, prompt, settings, limits, cfg.deps, cfg.deferredResults)
 }
 
 // RunStream executes the agent with streaming output.
@@ -344,8 +354,81 @@ func (a *Agent[T]) allTools() []Tool {
 	return all
 }
 
+// prepareTools applies per-tool and agent-wide prepare functions to filter/modify
+// the tool list before each model request.
+func (a *Agent[T]) prepareTools(ctx context.Context, state *agentRunState, tools []Tool, deps any, prompt string) []Tool {
+	// If no prepare functions are set, return tools as-is.
+	if a.toolsPrepareFunc == nil && !a.hasToolPrepareFuncs(tools) {
+		return tools
+	}
+
+	rc := &RunContext{
+		Deps:     deps,
+		Usage:    state.usage,
+		Prompt:   prompt,
+		Messages: state.messages,
+		RunStep:  state.runStep,
+		RunID:    state.runID,
+	}
+
+	// Apply per-tool prepare functions.
+	var prepared []Tool
+	for _, t := range tools {
+		if t.PrepareFunc != nil {
+			def := t.PrepareFunc(ctx, rc, t.Definition)
+			if def == nil {
+				// Tool excluded.
+				continue
+			}
+			// Use the (possibly modified) definition.
+			modified := t
+			modified.Definition = *def
+			prepared = append(prepared, modified)
+		} else {
+			prepared = append(prepared, t)
+		}
+	}
+
+	// Apply agent-wide prepare function.
+	if a.toolsPrepareFunc != nil {
+		defs := make([]ToolDefinition, len(prepared))
+		for i, t := range prepared {
+			defs[i] = t.Definition
+		}
+		filteredDefs := a.toolsPrepareFunc(ctx, rc, defs)
+
+		// Build a set of retained definition names for fast lookup.
+		retained := make(map[string]ToolDefinition, len(filteredDefs))
+		for _, d := range filteredDefs {
+			retained[d.Name] = d
+		}
+
+		var result []Tool
+		for _, t := range prepared {
+			if def, ok := retained[t.Definition.Name]; ok {
+				modified := t
+				modified.Definition = def
+				result = append(result, modified)
+			}
+		}
+		prepared = result
+	}
+
+	return prepared
+}
+
+// hasToolPrepareFuncs checks if any tool has a PrepareFunc set.
+func (a *Agent[T]) hasToolPrepareFuncs(tools []Tool) bool {
+	for _, t := range tools {
+		if t.PrepareFunc != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // runLoop is the core agent loop.
-func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt string, settings *ModelSettings, limits UsageLimits, deps any) (*RunResult[T], error) {
+func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt string, settings *ModelSettings, limits UsageLimits, deps any, deferredResults []DeferredToolResult) (*RunResult[T], error) {
 	// Build the initial request with dynamic system prompts.
 	req, err := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
 	if err != nil {
@@ -353,11 +436,32 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 	}
 	state.messages = append(state.messages, req)
 
+	// Inject deferred tool results as ToolReturnParts before the first model call.
+	if len(deferredResults) > 0 {
+		var deferredParts []ModelRequestPart
+		for _, dr := range deferredResults {
+			if dr.IsError {
+				deferredParts = append(deferredParts, RetryPromptPart{
+					Content:    dr.Content,
+					ToolCallID: dr.ToolCallID,
+					Timestamp:  time.Now(),
+				})
+			} else {
+				deferredParts = append(deferredParts, ToolReturnPart{
+					Content:    dr.Content,
+					ToolCallID: dr.ToolCallID,
+					Timestamp:  time.Now(),
+				})
+			}
+		}
+		state.messages = append(state.messages, ModelRequest{
+			Parts:     deferredParts,
+			Timestamp: time.Now(),
+		})
+	}
+
 	// Gather all tools (direct + toolsets).
 	allTools := a.allTools()
-
-	// Build model request parameters.
-	params := buildModelRequestParams(allTools, a.outputSchema)
 
 	// Build tool lookup map.
 	toolMap := make(map[string]*Tool)
@@ -391,6 +495,12 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 
 		state.runStep++
 
+		// Apply prepare functions to filter/modify tools for this iteration.
+		preparedTools := a.prepareTools(ctx, state, allTools, deps, prompt)
+
+		// Build model request parameters with prepared tools.
+		params := buildModelRequestParams(preparedTools, a.outputSchema)
+
 		// Apply history processors.
 		messages := state.messages
 		for _, proc := range a.historyProcessors {
@@ -421,9 +531,19 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 		}
 
 		// Process the response.
-		result, nextParts, err := a.processResponse(ctx, state, resp, toolMap, outputToolNames, deps, prompt)
+		result, nextParts, deferredReqs, err := a.processResponse(ctx, state, resp, toolMap, outputToolNames, deps, prompt)
 		if err != nil {
 			return nil, err
+		}
+		// If there are deferred tool calls, return ErrDeferred.
+		if len(deferredReqs) > 0 {
+			return nil, &ErrDeferred[T]{
+				Result: RunResultDeferred[T]{
+					DeferredRequests: deferredReqs,
+					Messages:         state.messages,
+					Usage:            state.usage,
+				},
+			}
 		}
 		if result != nil {
 			// Auto-store successful response in knowledge base.
@@ -460,6 +580,17 @@ type finalResult[T any] struct {
 	toolCallID string
 }
 
+// deferredToolPart is an internal sentinel type used to signal that a tool call
+// was deferred for external resolution. It implements ModelRequestPart but is
+// never added to actual messages.
+type deferredToolPart struct {
+	ToolName   string
+	ToolCallID string
+	ArgsJSON   string
+}
+
+func (d deferredToolPart) requestPartKind() string { return "deferred-tool" }
+
 // processResponse handles a model response: executes tool calls or extracts final result.
 //
 //nolint:cyclop
@@ -471,7 +602,7 @@ func (a *Agent[T]) processResponse(
 	outputToolNames map[string]bool,
 	deps any,
 	prompt string,
-) (*finalResult[T], []ModelRequestPart, error) {
+) (*finalResult[T], []ModelRequestPart, []DeferredToolRequest, error) {
 	toolCalls := resp.ToolCalls()
 	hasText := resp.TextContent() != ""
 
@@ -486,7 +617,7 @@ func (a *Agent[T]) processResponse(
 				// T should be string in text mode.
 				output = any(text).(T)
 			} else {
-				return nil, nil, fmt.Errorf("failed to parse text output: %w", err)
+				return nil, nil, nil, fmt.Errorf("failed to parse text output: %w", err)
 			}
 		}
 
@@ -503,26 +634,26 @@ func (a *Agent[T]) processResponse(
 			var retryErr *ModelRetryError
 			if errors.As(err, &retryErr) {
 				if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
-					return nil, nil, retryErr
+					return nil, nil, nil, retryErr
 				}
 				part := buildRetryParts(retryErr.Message, "", "")
-				return nil, []ModelRequestPart{part}, nil
+				return nil, []ModelRequestPart{part}, nil, nil
 			}
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
-		return &finalResult[T]{output: output}, nil, nil
+		return &finalResult[T]{output: output}, nil, nil, nil
 	}
 
 	// If no tool calls and no valid text, handle empty response.
 	if len(toolCalls) == 0 {
 		if resp.FinishReason == FinishReasonLength {
-			return nil, nil, &UnexpectedModelBehavior{
+			return nil, nil, nil, &UnexpectedModelBehavior{
 				Message: "model response ended due to token limit without producing a result",
 			}
 		}
 		if resp.FinishReason == FinishReasonContentFilter {
-			return nil, nil, &ContentFilterError{
+			return nil, nil, nil, &ContentFilterError{
 				UnexpectedModelBehavior: UnexpectedModelBehavior{
 					Message: "content filter triggered",
 				},
@@ -530,10 +661,10 @@ func (a *Agent[T]) processResponse(
 		}
 		// Retry on empty response.
 		if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
-			return nil, nil, retryErr
+			return nil, nil, nil, retryErr
 		}
 		part := buildRetryParts("empty response, please provide a result", "", "")
-		return nil, []ModelRequestPart{part}, nil
+		return nil, []ModelRequestPart{part}, nil, nil
 	}
 
 	// Process tool calls.
@@ -558,7 +689,7 @@ func (a *Agent[T]) processResponse(
 	// Handle unknown tools.
 	for _, tc := range unknownCalls {
 		if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
-			return nil, nil, retryErr
+			return nil, nil, nil, retryErr
 		}
 		part := buildRetryParts(
 			fmt.Sprintf("unknown tool %q, available tools: %s", tc.ToolName, a.availableToolNames()),
@@ -573,7 +704,7 @@ func (a *Agent[T]) processResponse(
 		output, err := deserializeOutput[T](tc.ArgsJSON, a.outputSchema.OuterTypedDictKey)
 		if err != nil {
 			if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
-				return nil, nil, retryErr
+				return nil, nil, nil, retryErr
 			}
 			part := buildRetryParts(
 				"failed to parse output: "+err.Error(),
@@ -599,13 +730,13 @@ func (a *Agent[T]) processResponse(
 			var retryErr *ModelRetryError
 			if errors.As(err, &retryErr) {
 				if incErr := incrementRetries(&state.retries, a.maxRetries, state.messages); incErr != nil {
-					return nil, nil, incErr
+					return nil, nil, nil, incErr
 				}
 				part := buildRetryParts(retryErr.Message, tc.ToolName, tc.ToolCallID)
 				resultParts = append(resultParts, part)
 				continue
 			}
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		if result == nil {
@@ -623,26 +754,39 @@ func (a *Agent[T]) processResponse(
 					Timestamp:  time.Now(),
 				})
 				// Skip remaining function calls in early mode.
-				return result, resultParts, nil
+				return result, resultParts, nil, nil
 			}
 		}
 	}
 
 	// Execute function tool calls.
+	var deferredReqs []DeferredToolRequest
 	if len(functionCalls) > 0 {
 		funcParts, err := a.executeFunctionTools(ctx, state, functionCalls, toolMap, deps, prompt)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		resultParts = append(resultParts, funcParts...)
+		// Separate deferred tool parts from normal parts.
+		for _, part := range funcParts {
+			if dp, ok := part.(deferredToolPart); ok {
+				deferredReqs = append(deferredReqs, DeferredToolRequest(dp))
+			} else {
+				resultParts = append(resultParts, part)
+			}
+		}
+	}
+
+	// If there are deferred requests, return them.
+	if len(deferredReqs) > 0 {
+		return result, resultParts, deferredReqs, nil
 	}
 
 	// If we found a result in exhaustive mode, return it.
 	if result != nil {
-		return result, resultParts, nil
+		return result, resultParts, nil, nil
 	}
 
-	return nil, resultParts, nil
+	return nil, resultParts, nil, nil
 }
 
 // executeFunctionTools executes function tool calls, running non-sequential
@@ -779,6 +923,16 @@ func (a *Agent[T]) executeSingleTool(
 
 	result, err := tool.Handler(ctx, rc, call.ArgsJSON)
 	if err != nil {
+		// Check for CallDeferred.
+		var deferredErr *CallDeferred
+		if errors.As(err, &deferredErr) {
+			return deferredToolPart{
+				ToolName:   call.ToolName,
+				ToolCallID: call.ToolCallID,
+				ArgsJSON:   call.ArgsJSON,
+			}
+		}
+
 		// Check for ModelRetryError.
 		var retryErr *ModelRetryError
 		if errors.As(err, &retryErr) {

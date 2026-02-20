@@ -125,11 +125,24 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 		}
 	}
 
-	result, nextParts, err := ar.agent.processResponse(ar.ctx, ar.state, resp, ar.toolMap, ar.outNames, ar.deps, ar.prompt)
+	result, nextParts, deferredReqs, err := ar.agent.processResponse(ar.ctx, ar.state, resp, ar.toolMap, ar.outNames, ar.deps, ar.prompt)
 	if err != nil {
 		ar.done = true
 		ar.err = err
 		return resp, err
+	}
+
+	// If there are deferred tool calls, signal via ErrDeferred.
+	if len(deferredReqs) > 0 {
+		ar.done = true
+		ar.err = &ErrDeferred[T]{
+			Result: RunResultDeferred[T]{
+				DeferredRequests: deferredReqs,
+				Messages:         ar.state.messages,
+				Usage:            ar.state.usage,
+			},
+		}
+		return resp, ar.err
 	}
 
 	if result != nil {

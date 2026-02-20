@@ -45,12 +45,29 @@ type RunContext struct {
 // ToolHandler is the function that executes a tool.
 type ToolHandler func(ctx context.Context, rc *RunContext, argsJSON string) (any, error)
 
+// ToolPrepareFunc is called before each model request to decide if a tool
+// should be included. Return the (possibly modified) definition to include it,
+// or nil to exclude.
+type ToolPrepareFunc func(ctx context.Context, rc *RunContext, def ToolDefinition) *ToolDefinition
+
+// AgentToolsPrepareFunc filters/modifies all tool definitions at once.
+type AgentToolsPrepareFunc func(ctx context.Context, rc *RunContext, tools []ToolDefinition) []ToolDefinition
+
+// StatefulTool is an optional interface that tools can implement to
+// persist and restore their internal state across checkpoints.
+type StatefulTool interface {
+	ExportState() (any, error)
+	RestoreState(state any) error
+}
+
 // Tool is a registered tool with its definition and handler.
 type Tool struct {
 	Definition       ToolDefinition
 	Handler          ToolHandler
-	MaxRetries       *int // nil = use agent default
-	RequiresApproval bool // if true, the agent's ToolApprovalFunc must approve before execution
+	MaxRetries       *int            // nil = use agent default
+	RequiresApproval bool            // if true, the agent's ToolApprovalFunc must approve before execution
+	PrepareFunc      ToolPrepareFunc // if set, called before each model request to filter/modify this tool
+	Stateful         StatefulTool    // if set, state is saved/restored with checkpoints
 }
 
 // ToolOption configures a tool via functional options.

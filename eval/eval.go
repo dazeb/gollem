@@ -26,6 +26,18 @@ type Evaluator[T any] interface {
 	Evaluate(ctx context.Context, output T, expected T) (*Score, error)
 }
 
+// StepEvaluator scores individual steps of an agent run.
+type StepEvaluator interface {
+	EvaluateStep(ctx context.Context, step *gollem.ModelResponse, stepIndex int, state *StepState) (*Score, error)
+}
+
+// StepState provides context about the run so far.
+type StepState struct {
+	Messages   []gollem.ModelMessage
+	TotalSteps int
+	ToolCalls  int
+}
+
 // Score represents an evaluation result.
 type Score struct {
 	Value   float64        // 0.0 to 1.0
@@ -35,29 +47,34 @@ type Score struct {
 
 // CaseResult contains the result of a single case.
 type CaseResult struct {
-	CaseName string
-	Scores   []Score
-	Output   any
-	Duration time.Duration
-	Usage    gollem.RunUsage
-	Error    error
+	CaseName   string
+	Scores     []Score
+	StepScores []Score
+	Output     any
+	Duration   time.Duration
+	Usage      gollem.RunUsage
+	Error      error
 }
 
 // Report contains evaluation results.
 type Report struct {
-	DatasetName string
-	TotalCases  int
-	PassedCases int
-	FailedCases int
-	AvgScore    float64
-	Results     []CaseResult
+	DatasetName    string
+	TotalCases     int
+	PassedCases    int
+	FailedCases    int
+	AvgScore       float64
+	StepPassRate   float64
+	StepFailRate   float64
+	TotalStepEvals int
+	Results        []CaseResult
 }
 
 // Runner executes evaluation datasets against agents.
 type Runner[T any] struct {
-	agent      *gollem.Agent[T]
-	evaluators []Evaluator[T]
-	passScore  float64
+	agent          *gollem.Agent[T]
+	evaluators     []Evaluator[T]
+	stepEvaluators []StepEvaluator
+	passScore      float64
 }
 
 // NewRunner creates an evaluation runner.
@@ -72,6 +89,12 @@ func NewRunner[T any](agent *gollem.Agent[T], evaluators ...Evaluator[T]) *Runne
 // WithPassScore sets the minimum average score to consider a case "passed" (default: 0.5).
 func (r *Runner[T]) WithPassScore(score float64) *Runner[T] {
 	r.passScore = score
+	return r
+}
+
+// WithStepEvaluators adds step evaluators that score individual steps of each agent run.
+func (r *Runner[T]) WithStepEvaluators(evaluators ...StepEvaluator) *Runner[T] {
+	r.stepEvaluators = append(r.stepEvaluators, evaluators...)
 	return r
 }
 
@@ -104,7 +127,7 @@ func (r *Runner[T]) Run(ctx context.Context, dataset Dataset[T]) (*Report, error
 		cr.Output = result.Output
 		cr.Usage = result.Usage
 
-		// Run evaluators.
+		// Run output evaluators.
 		var caseTotal float64
 		for _, evaluator := range r.evaluators {
 			score, evalErr := evaluator.Evaluate(ctx, result.Output, tc.Expected)
@@ -116,6 +139,11 @@ func (r *Runner[T]) Run(ctx context.Context, dataset Dataset[T]) (*Report, error
 			caseTotal += score.Value
 			totalScore += score.Value
 			totalEvals++
+		}
+
+		// Run step evaluators on each ModelResponse in the conversation.
+		if len(r.stepEvaluators) > 0 {
+			cr.StepScores = r.evaluateSteps(ctx, result.Messages)
 		}
 
 		if len(cr.Scores) > 0 {
@@ -136,5 +164,58 @@ func (r *Runner[T]) Run(ctx context.Context, dataset Dataset[T]) (*Report, error
 		report.AvgScore = totalScore / float64(totalEvals)
 	}
 
+	// Aggregate step-level pass/fail rates.
+	var totalStepEvals int
+	var passedStepEvals int
+	for _, cr := range report.Results {
+		for _, ss := range cr.StepScores {
+			totalStepEvals++
+			if ss.Value >= r.passScore {
+				passedStepEvals++
+			}
+		}
+	}
+	report.TotalStepEvals = totalStepEvals
+	if totalStepEvals > 0 {
+		report.StepPassRate = float64(passedStepEvals) / float64(totalStepEvals)
+		report.StepFailRate = float64(totalStepEvals-passedStepEvals) / float64(totalStepEvals)
+	}
+
 	return report, nil
+}
+
+// evaluateSteps runs step evaluators on each ModelResponse in the conversation history.
+func (r *Runner[T]) evaluateSteps(ctx context.Context, messages []gollem.ModelMessage) []Score {
+	var stepScores []Score
+
+	// Count total responses and tool calls for StepState.
+	var responses []*gollem.ModelResponse
+	var totalToolCalls int
+	for i := range messages {
+		if resp, ok := messages[i].(gollem.ModelResponse); ok {
+			responses = append(responses, &resp)
+			totalToolCalls += len(resp.ToolCalls())
+		}
+	}
+
+	for stepIdx, resp := range responses {
+		state := &StepState{
+			Messages:   messages,
+			TotalSteps: len(responses),
+			ToolCalls:  totalToolCalls,
+		}
+		for _, se := range r.stepEvaluators {
+			score, err := se.EvaluateStep(ctx, resp, stepIdx, state)
+			if err != nil {
+				stepScores = append(stepScores, Score{
+					Value:  0.0,
+					Reason: "step evaluator error: " + err.Error(),
+				})
+				continue
+			}
+			stepScores = append(stepScores, *score)
+		}
+	}
+
+	return stepScores
 }
