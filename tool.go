@@ -41,6 +41,7 @@ type RunContext struct {
 	Messages   []ModelMessage // conversation history (read-only)
 	RunStep    int            // current step number
 	RunID      string         // unique run ID
+	EventBus   *EventBus      // event bus for agent coordination (nil if not configured)
 }
 
 // ToolHandler is the function that executes a tool.

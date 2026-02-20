@@ -341,11 +341,17 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 
 	// Fire OnRunStart hooks.
 	rc := &RunContext{
-		Deps:    cfg.deps,
-		Usage:   state.usage,
-		Prompt:  prompt,
-		RunStep: state.runStep,
-		RunID:   state.runID,
+		Deps:     cfg.deps,
+		Usage:    state.usage,
+		Prompt:   prompt,
+		RunStep:  state.runStep,
+		RunID:    state.runID,
+		EventBus: a.eventBus,
+	}
+
+	// Publish RunStartedEvent.
+	if a.eventBus != nil {
+		Publish(a.eventBus, RunStartedEvent{RunID: state.runID, Prompt: prompt})
 	}
 	a.fireHook(func(h Hook) {
 		if h.OnRunStart != nil {
@@ -356,15 +362,24 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	// Track start time for tracing.
 	startTime := time.Now()
 
-	// Fire OnRunEnd hooks on return.
 	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, cfg.deps, cfg.deferredResults)
 
 	endRC := &RunContext{
-		Deps:    cfg.deps,
-		Usage:   state.usage,
-		Prompt:  prompt,
-		RunStep: state.runStep,
-		RunID:   state.runID,
+		Deps:     cfg.deps,
+		Usage:    state.usage,
+		Prompt:   prompt,
+		RunStep:  state.runStep,
+		RunID:    state.runID,
+		EventBus: a.eventBus,
+	}
+
+	// Publish RunCompletedEvent.
+	if a.eventBus != nil {
+		evt := RunCompletedEvent{RunID: state.runID, Success: runErr == nil}
+		if runErr != nil {
+			evt.Error = runErr.Error()
+		}
+		Publish(a.eventBus, evt)
 	}
 	a.fireHook(func(h Hook) {
 		if h.OnRunEnd != nil {
@@ -620,6 +635,7 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			Messages: messages,
 			RunStep:  state.runStep,
 			RunID:    state.runID,
+			EventBus: a.eventBus,
 		}
 		for _, g := range a.turnGuardrails {
 			if gErr := g.fn(ctx, turnRC, messages); gErr != nil {
@@ -638,6 +654,7 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			Messages: messages,
 			RunStep:  state.runStep,
 			RunID:    state.runID,
+			EventBus: a.eventBus,
 		}
 		a.fireHook(func(h Hook) {
 			if h.OnModelRequest != nil {
@@ -1105,8 +1122,14 @@ func (a *Agent[T]) executeSingleTool(
 		Messages:   state.messages,
 		RunStep:    state.runStep,
 		RunID:      state.runID,
+		EventBus:   a.eventBus,
 	}
 	state.mu.Unlock()
+
+	// Publish ToolCalledEvent.
+	if a.eventBus != nil {
+		Publish(a.eventBus, ToolCalledEvent{RunID: state.runID, ToolName: call.ToolName, ArgsJSON: call.ArgsJSON})
+	}
 
 	// Check tool approval if required.
 	if tool.RequiresApproval {
