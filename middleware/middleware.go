@@ -12,10 +12,22 @@ import (
 // RequestFunc is the type for a model request handler.
 type RequestFunc func(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (*gollem.ModelResponse, error)
 
+// StreamRequestFunc is the type for a streaming model request handler.
+type StreamRequestFunc func(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (gollem.StreamedResponse, error)
+
 // Middleware intercepts model requests.
 type Middleware interface {
 	// WrapRequest wraps a request handler with middleware logic.
 	WrapRequest(next RequestFunc) RequestFunc
+}
+
+// StreamMiddleware intercepts streaming model requests. Middleware
+// implementations that also implement StreamMiddleware will have their
+// WrapStreamRequest applied to streaming calls.
+type StreamMiddleware interface {
+	Middleware
+	// WrapStreamRequest wraps a streaming request handler with middleware logic.
+	WrapStreamRequest(next StreamRequestFunc) StreamRequestFunc
 }
 
 // Func is a function adapter for Middleware.
@@ -26,6 +38,30 @@ func (f Func) WrapRequest(next RequestFunc) RequestFunc {
 	return f(next)
 }
 
+// StreamFunc is a function adapter for StreamMiddleware.
+type StreamFunc struct {
+	// Request wraps a non-streaming request handler.
+	Request func(next RequestFunc) RequestFunc
+	// Stream wraps a streaming request handler.
+	Stream func(next StreamRequestFunc) StreamRequestFunc
+}
+
+// WrapRequest implements Middleware.
+func (f StreamFunc) WrapRequest(next RequestFunc) RequestFunc {
+	if f.Request != nil {
+		return f.Request(next)
+	}
+	return next
+}
+
+// WrapStreamRequest implements StreamMiddleware.
+func (f StreamFunc) WrapStreamRequest(next StreamRequestFunc) StreamRequestFunc {
+	if f.Stream != nil {
+		return f.Stream(next)
+	}
+	return next
+}
+
 // wrappedModel applies a middleware chain to a gollem.Model.
 type wrappedModel struct {
 	inner       gollem.Model
@@ -34,6 +70,8 @@ type wrappedModel struct {
 
 // Wrap creates a new model that applies the given middleware chain to all requests.
 // Middlewares are applied in order: first middleware is outermost (executes first).
+// If a middleware implements StreamMiddleware, it will also be applied to
+// streaming requests via RequestStream.
 func Wrap(model gollem.Model, middlewares ...Middleware) gollem.Model {
 	if len(middlewares) == 0 {
 		return model
@@ -63,9 +101,21 @@ func (m *wrappedModel) Request(ctx context.Context, messages []gollem.ModelMessa
 	return handler(ctx, messages, settings, params)
 }
 
-// RequestStream delegates to the underlying model (middleware is not applied to streaming).
+// RequestStream sends a streaming request through the middleware chain.
+// Only middlewares that implement StreamMiddleware are applied.
 func (m *wrappedModel) RequestStream(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (gollem.StreamedResponse, error) {
-	return m.inner.RequestStream(ctx, messages, settings, params)
+	handler := StreamRequestFunc(func(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (gollem.StreamedResponse, error) {
+		return m.inner.RequestStream(ctx, messages, settings, params)
+	})
+
+	// Apply stream middlewares in reverse order so first middleware is outermost.
+	for i := len(m.middlewares) - 1; i >= 0; i-- {
+		if sm, ok := m.middlewares[i].(StreamMiddleware); ok {
+			handler = sm.WrapStreamRequest(handler)
+		}
+	}
+
+	return handler(ctx, messages, settings, params)
 }
 
 // Verify wrappedModel implements gollem.Model.
