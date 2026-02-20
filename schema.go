@@ -49,10 +49,10 @@ func schemaForType(t reflect.Type, visited map[reflect.Type]bool) Schema {
 	}
 
 	// Handle special types.
-	switch {
-	case t == timeType:
+	switch t {
+	case timeType:
 		return Schema{"type": "string", "format": "date-time"}
-	case t == rawMessageType:
+	case rawMessageType:
 		return Schema{}
 	}
 

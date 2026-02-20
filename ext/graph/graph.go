@@ -237,19 +237,19 @@ func (g *Graph[S]) Mermaid() string {
 			if name == g.entryPoint {
 				label = name + " [Start, Fan-Out]"
 			}
-			sb.WriteString(fmt.Sprintf("    %s([\"%s\"])\n", name, label))
+			fmt.Fprintf(&sb, "    %s([\"%s\"])\n", name, label)
 		} else {
 			label := name
 			if name == g.entryPoint {
 				label = name + " [Start]"
 			}
-			sb.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", name, label))
+			fmt.Fprintf(&sb, "    %s[\"%s\"]\n", name, label)
 		}
 	}
 
 	// Add entry point arrow.
 	if g.entryPoint != "" {
-		sb.WriteString(fmt.Sprintf("    START(( )) --> %s\n", g.entryPoint))
+		fmt.Fprintf(&sb, "    START(( )) --> %s\n", g.entryPoint)
 	}
 
 	return sb.String()

@@ -3,6 +3,7 @@ package gollem
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -118,22 +119,27 @@ func SummaryMemory(summarizer Model, maxMessages int) HistoryProcessor {
 		}
 
 		// Build a summarization prompt.
-		var summaryText string
+		var sb strings.Builder
 		for _, msg := range toSummarize {
 			switch m := msg.(type) {
 			case ModelRequest:
 				for _, part := range m.Parts {
 					if up, ok := part.(UserPromptPart); ok {
-						summaryText += "User: " + up.Content + "\n"
+						sb.WriteString("User: ")
+						sb.WriteString(up.Content)
+						sb.WriteString("\n")
 					}
 				}
 			case ModelResponse:
 				text := m.TextContent()
 				if text != "" {
-					summaryText += "Assistant: " + text + "\n"
+					sb.WriteString("Assistant: ")
+					sb.WriteString(text)
+					sb.WriteString("\n")
 				}
 			}
 		}
+		summaryText := sb.String()
 
 		// Ask the summarizer model to summarize.
 		summaryReq := ModelRequest{

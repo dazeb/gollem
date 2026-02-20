@@ -254,7 +254,7 @@ func (cm *ContextManager) tier3Summarize(ctx context.Context, messages []gollem.
 					sb.WriteString("Tool ")
 					sb.WriteString(p.ToolName)
 					sb.WriteString(": ")
-					sb.WriteString(fmt.Sprintf("%v", p.Content))
+					fmt.Fprintf(&sb, "%v", p.Content)
 					sb.WriteString("\n")
 				}
 			}

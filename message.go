@@ -3,6 +3,7 @@ package gollem
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -177,20 +178,13 @@ func (m ModelResponse) ToolCalls() []ToolCallPart {
 
 // TextContent returns the concatenated text content from the response.
 func (m ModelResponse) TextContent() string {
-	var sb []string
+	var parts []string
 	for _, p := range m.Parts {
 		if tp, ok := p.(TextPart); ok {
-			sb = append(sb, tp.Content)
+			parts = append(parts, tp.Content)
 		}
 	}
-	if len(sb) == 0 {
-		return ""
-	}
-	result := sb[0]
-	for _, s := range sb[1:] {
-		result += s
-	}
-	return result
+	return strings.Join(parts, "")
 }
 
 // --- Stream Events ---

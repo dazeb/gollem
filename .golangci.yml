@@ -1,4 +1,7 @@
+version: "2"
+
 linters:
+  default: none
   enable:
     # Bug detection
     - bodyclose
@@ -25,40 +28,64 @@ linters:
     - intrange
     # Security
     - gosec
-
-linters-settings:
-  goimports:
-    local-prefixes: github.com/fugue-labs/gollem
-  nakedret:
-    max-func-lines: 30
-  gosec:
-    excludes:
-      - G404
-  revive:
+  settings:
+    nakedret:
+      max-func-lines: 30
+    gosec:
+      excludes:
+        - G104 # unhandled errors on deferred Close, fmt.Fprint — intentional
+        - G204 # subprocess with variable args — required for MCP stdio transport
+        - G301 # directory permissions 0755 — standard for trace export dirs
+        - G304 # file inclusion via variable — required for checkpoint store
+        - G404 # weak random — used for jitter, not crypto
+        - G704 # SSRF via taint — URLs constructed from trusted config
+        - G705 # XSS via taint — CLI stderr output, not web
+        - G706 # log injection via taint — CLI error messages, not web
+    revive:
+      rules:
+        - name: var-naming
+          disabled: true
+        - name: unused-parameter
+          disabled: true
+  exclusions:
     rules:
-      - name: var-naming
-        disabled: true
-      - name: unused-parameter
-        disabled: true
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - errorlint
+          - perfsprint
+      - path: example_test\.go
+        linters:
+          - errcheck
+          - unused
+      - path: examples/
+        linters:
+          - errcheck
+          - gosec
+      # Complex message builders are inherently complex.
+      - path: (message|stream|agent)\.go
+        linters:
+          - nestif
+      # Existing error type names are part of the public API.
+      - linters:
+          - errname
+        text: "should conform to the"
+      # Deferred Close/Cleanup calls — error is intentionally ignored.
+      - linters:
+          - errcheck
+        text: "Error return value of .*(Close|Cleanup).*is not checked"
+      # fmt.Fprintf to writers — errors handled by caller or intentionally ignored.
+      - linters:
+          - errcheck
+        text: "Error return value of `fmt.Fprint"
+      # SQL operations in setup/teardown don't need context.
+      - path: ext/memory/sqlitestore\.go
+        linters:
+          - noctx
+    max-same-issues: 50
 
-issues:
-  max-same-issues: 50
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
-        - errorlint
-        - perfsprint
-    - path: example_test\.go
-      linters:
-        - errcheck
-        - unused
-    # Complex message builders are inherently complex.
-    - path: (message|stream|agent)\.go
-      linters:
-        - nestif
-    # Existing error type names are part of the public API.
-    - linters:
-        - errname
-      text: "should conform to the"
+formatters:
+  settings:
+    goimports:
+      local-prefixes: github.com/fugue-labs/gollem

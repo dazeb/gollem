@@ -3,6 +3,7 @@ package gollem
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -46,21 +47,26 @@ func KeepLastN(n int) HandoffFilter {
 func SummarizeHistory(summarizer Model) HandoffFilter {
 	return func(ctx context.Context, messages []ModelMessage) ([]ModelMessage, error) {
 		// Build a summary prompt from the conversation.
-		var content string
+		var sb strings.Builder
 		for _, msg := range messages {
 			if req, ok := msg.(ModelRequest); ok {
 				for _, part := range req.Parts {
 					if up, ok := part.(UserPromptPart); ok {
-						content += "User: " + up.Content + "\n"
+						sb.WriteString("User: ")
+						sb.WriteString(up.Content)
+						sb.WriteString("\n")
 					}
 				}
 			} else if resp, ok := msg.(ModelResponse); ok {
 				text := resp.TextContent()
 				if text != "" {
-					content += "Assistant: " + text + "\n"
+					sb.WriteString("Assistant: ")
+					sb.WriteString(text)
+					sb.WriteString("\n")
 				}
 			}
 		}
+		content := sb.String()
 
 		if content == "" {
 			return messages, nil

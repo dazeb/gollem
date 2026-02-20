@@ -41,7 +41,7 @@ type RunUsage struct {
 
 // IncrRequest adds a single request's usage and increments the request count.
 func (u *RunUsage) IncrRequest(other Usage) {
-	u.Usage.Incr(other)
+	u.Incr(other)
 	u.Requests++
 }
 
@@ -52,7 +52,7 @@ func (u *RunUsage) IncrToolCall() {
 
 // IncrRun adds another RunUsage to this one.
 func (u *RunUsage) IncrRun(other RunUsage) {
-	u.Usage.Incr(other.Usage)
+	u.Incr(other.Usage)
 	u.Requests += other.Requests
 	u.ToolCalls += other.ToolCalls
 }
