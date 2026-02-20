@@ -56,6 +56,7 @@ type Agent[T any] struct {
 	inputGuardrails      []namedInputGuardrail
 	turnGuardrails       []namedTurnGuardrail
 	repairFunc           any // RepairFunc[T], stored as any to avoid generic field
+	tracingEnabled       bool
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -68,6 +69,8 @@ type RunResult[T any] struct {
 	Usage RunUsage
 	// RunID is the unique identifier for this run.
 	RunID string
+	// Trace is the execution trace when WithTracing is enabled. Nil otherwise.
+	Trace *RunTrace
 }
 
 // AgentOption configures the agent via functional options.
@@ -266,7 +269,8 @@ type agentRunState struct {
 	toolRetries map[string]int
 	runStep     int
 	runID       string
-	mu          sync.Mutex // protects usage and toolRetries during concurrent tool execution
+	mu          sync.Mutex // protects usage, toolRetries, and traceSteps during concurrent tool execution
+	traceSteps  []TraceStep
 }
 
 // Run executes the agent loop synchronously and returns the final result.
@@ -329,6 +333,9 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 		}
 	})
 
+	// Track start time for tracing.
+	startTime := time.Now()
+
 	// Fire OnRunEnd hooks on return.
 	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, cfg.deps, cfg.deferredResults)
 
@@ -344,6 +351,24 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 			h.OnRunEnd(ctx, endRC, state.messages, runErr)
 		}
 	})
+
+	// Build trace if enabled.
+	if a.tracingEnabled && result != nil {
+		endTime := time.Now()
+		result.Trace = &RunTrace{
+			RunID:     state.runID,
+			Prompt:    prompt,
+			StartTime: startTime,
+			EndTime:   endTime,
+			Duration:  endTime.Sub(startTime),
+			Steps:     state.traceSteps,
+			Usage:     state.usage,
+			Success:   runErr == nil,
+		}
+		if runErr != nil {
+			result.Trace.Error = runErr.Error()
+		}
+	}
 
 	return result, runErr
 }
@@ -591,6 +616,16 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			}
 		})
 
+		// Add trace step for model request.
+		modelReqStart := time.Now()
+		if a.tracingEnabled {
+			state.traceSteps = append(state.traceSteps, TraceStep{
+				Kind:      TraceModelRequest,
+				Timestamp: modelReqStart,
+				Data:      map[string]any{"message_count": len(messages)},
+			})
+		}
+
 		// Call the model.
 		resp, err := a.model.Request(ctx, messages, settings, params)
 		if err != nil {
@@ -609,6 +644,16 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 				h.OnModelResponse(ctx, modelRC, resp)
 			}
 		})
+
+		// Add trace step for model response.
+		if a.tracingEnabled {
+			state.traceSteps = append(state.traceSteps, TraceStep{
+				Kind:      TraceModelResponse,
+				Timestamp: time.Now(),
+				Duration:  time.Since(modelReqStart),
+				Data:      map[string]any{"text": resp.TextContent(), "tool_calls": len(resp.ToolCalls())},
+			})
+		}
 
 		// Check token limits.
 		if limits.HasTokenLimits() {
@@ -1034,6 +1079,18 @@ func (a *Agent[T]) executeSingleTool(
 		}
 	})
 
+	// Add trace step for tool call.
+	toolStart := time.Now()
+	if a.tracingEnabled {
+		state.mu.Lock()
+		state.traceSteps = append(state.traceSteps, TraceStep{
+			Kind:      TraceToolCall,
+			Timestamp: toolStart,
+			Data:      map[string]any{"tool_name": call.ToolName, "args": call.ArgsJSON},
+		})
+		state.mu.Unlock()
+	}
+
 	result, err := tool.Handler(ctx, rc, call.ArgsJSON)
 
 	// Fire OnToolEnd hooks with the result or error.
@@ -1047,6 +1104,22 @@ func (a *Agent[T]) executeSingleTool(
 				h.OnToolEnd(ctx, rc, call.ToolName, resultStr, err)
 			}
 		})
+
+		// Add trace step for tool result.
+		if a.tracingEnabled {
+			var errStr string
+			if err != nil {
+				errStr = err.Error()
+			}
+			state.mu.Lock()
+			state.traceSteps = append(state.traceSteps, TraceStep{
+				Kind:      TraceToolResult,
+				Timestamp: time.Now(),
+				Duration:  time.Since(toolStart),
+				Data:      map[string]any{"tool_name": call.ToolName, "result": resultStr, "error": errStr},
+			})
+			state.mu.Unlock()
+		}
 	}
 
 	if err != nil {
