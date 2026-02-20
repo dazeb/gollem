@@ -143,9 +143,9 @@ func TestHistoryProcessor(t *testing.T) {
 
 	agent := NewAgent[string](model,
 		WithTools[string](searchTool),
-		WithHistoryProcessor[string](func(messages []ModelMessage) []ModelMessage {
+		WithHistoryProcessor[string](func(_ context.Context, messages []ModelMessage) ([]ModelMessage, error) {
 			processedCount++
-			return messages
+			return messages, nil
 		}),
 	)
 
@@ -164,13 +164,13 @@ func TestHistoryProcessorChain(t *testing.T) {
 
 	var order []string
 	agent := NewAgent[string](model,
-		WithHistoryProcessor[string](func(msgs []ModelMessage) []ModelMessage {
+		WithHistoryProcessor[string](func(_ context.Context, msgs []ModelMessage) ([]ModelMessage, error) {
 			order = append(order, "proc1")
-			return msgs
+			return msgs, nil
 		}),
-		WithHistoryProcessor[string](func(msgs []ModelMessage) []ModelMessage {
+		WithHistoryProcessor[string](func(_ context.Context, msgs []ModelMessage) ([]ModelMessage, error) {
 			order = append(order, "proc2")
-			return msgs
+			return msgs, nil
 		}),
 	)
 
@@ -199,11 +199,11 @@ func TestHistoryProcessorTrimming(t *testing.T) {
 	// Processor that limits to last 2 messages.
 	agent := NewAgent[string](model,
 		WithTools[string](actionTool),
-		WithHistoryProcessor[string](func(msgs []ModelMessage) []ModelMessage {
+		WithHistoryProcessor[string](func(_ context.Context, msgs []ModelMessage) ([]ModelMessage, error) {
 			if len(msgs) > 2 {
-				return msgs[len(msgs)-2:]
+				return msgs[len(msgs)-2:], nil
 			}
-			return msgs
+			return msgs, nil
 		}),
 	)
 

@@ -25,7 +25,8 @@ const (
 type SystemPromptFunc func(ctx context.Context, runCtx *RunContext) (string, error)
 
 // HistoryProcessor transforms the message history before each model request.
-type HistoryProcessor func(messages []ModelMessage) []ModelMessage
+// It receives context for operations that may need I/O (e.g., LLM summarization).
+type HistoryProcessor func(ctx context.Context, messages []ModelMessage) ([]ModelMessage, error)
 
 // ToolApprovalFunc is called before executing a tool that requires approval.
 // Return true to approve, false to deny (sends denial message back to model).
@@ -380,7 +381,11 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 		// Apply history processors.
 		messages := state.messages
 		for _, proc := range a.historyProcessors {
-			messages = proc(messages)
+			processed, procErr := proc(ctx, messages)
+			if procErr != nil {
+				return nil, fmt.Errorf("history processor failed: %w", procErr)
+			}
+			messages = processed
 		}
 
 		// Call the model.
