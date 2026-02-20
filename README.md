@@ -1,8 +1,8 @@
 <p align="center">
   <h1 align="center">gollem</h1>
-  <p align="center"><strong>The Go Agent Framework</strong></p>
+  <p align="center"><strong>The production agent framework for Go</strong></p>
   <p align="center">
-    Build production-grade LLM agents with structured output, tool use, streaming, and multi-provider support — all with compile-time type safety.
+    Type-safe agents, structured output, multi-provider streaming, guardrails, observability, and multi-agent orchestration — with zero core dependencies and compile-time guarantees that Python frameworks can't offer.
   </p>
 </p>
 
@@ -10,47 +10,87 @@
   <a href="https://github.com/fugue-labs/gollem/actions/workflows/ci.yml"><img src="https://github.com/fugue-labs/gollem/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://pkg.go.dev/github.com/fugue-labs/gollem"><img src="https://pkg.go.dev/badge/github.com/fugue-labs/gollem.svg" alt="Go Reference"></a>
   <a href="https://goreportcard.com/report/github.com/fugue-labs/gollem"><img src="https://goreportcard.com/badge/github.com/fugue-labs/gollem" alt="Go Report Card"></a>
-  <a href="https://codecov.io/gh/trevorprater/gollem"><img src="https://codecov.io/gh/trevorprater/gollem/branch/main/graph/badge.svg" alt="codecov"></a>
+  <a href="https://codecov.io/gh/fugue-labs/gollem"><img src="https://codecov.io/gh/fugue-labs/gollem/branch/main/graph/badge.svg" alt="codecov"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://github.com/fugue-labs/gollem"><img src="https://img.shields.io/badge/tests-560+-brightgreen" alt="560+ tests"></a>
 </p>
 
 ---
 
-## Features
+## Why Gollem?
 
-- **Generic `Agent[T]` with compile-time type safety** -- Define your output type once; the agent handles schema generation, validation, and deserialization automatically
-- **4 LLM providers** -- Anthropic Claude, OpenAI GPT/O-series, Google Gemini via Vertex AI, and Claude via Vertex AI Anthropic
-- **`FuncTool` with reflection-based JSON Schema generation** -- Create tools from typed Go functions; parameter schemas are generated from struct tags
-- **Structured output via "final_result" tool pattern** -- Extract typed data from LLM responses using a synthetic tool call, ensuring reliable parsing
-- **Streaming with `iter.Seq2` iterators** -- Go 1.23+ range-over-function support for real-time token streaming
-- **Dynamic system prompts** -- Generate system prompts at runtime using `RunContext` for context-aware instructions
-- **History processors** -- Transform message history before each model request for context management
-- **Human-in-the-loop tool approval** -- Require user confirmation before executing sensitive tool calls
-- **Node-by-node agent iteration** -- Step through the agent loop one model call at a time with `Agent.Iter`
-- **Concurrency and tool call limits** -- Control parallel tool execution and enforce usage budgets
-- **Toolsets for grouped tool management** -- Organize tools into named groups for modular configuration
-- **Deep package: context compression, planning tool, checkpointing** -- Three-tier context compression, persistent planning, and checkpoint save/load for long-running agents
-- **Multi-agent: `AgentTool` delegation, `Handoff` pipelines** -- Compose agents as tools or chain them in sequential pipelines
-- **Graph engine for typed workflow state machines** -- Define directed graphs with conditional branching, cycle detection, and Mermaid diagram generation
-- **Temporal durable execution** -- Wrap agents for fault-tolerant execution with automatic checkpointing via Temporal
-- **MCP integration** -- Connect to Model Context Protocol servers via stdio and SSE transports with multi-server management
-- **Evaluation framework with LLM-as-judge** -- Test agent quality with datasets, built-in evaluators (ExactMatch, Contains, JSONMatch, Custom), and LLM-based scoring
-- **OpenTelemetry middleware** -- Distributed tracing and metrics for model requests out of the box
-- **Middleware chain** -- Composable middleware for logging, retry, caching, metrics, and custom cross-cutting concerns
-- **Memory system** -- Conversation memory for multi-turn agent interactions
-- **`TestModel` mock for testing** -- Test agents without real LLM calls using canned responses and call recording
+Python agent frameworks give you runtime validation and hope. Gollem gives you **compile-time type safety**, **zero-allocation streaming**, and a **single-binary deployment story** that eliminates the "works on my machine" class of production failures entirely.
 
-## Quick Start
-
-### Installation
+Go's type system isn't a limitation — it's a superpower. When your agent's output schema, tool parameters, guardrail signatures, and event bus subscriptions are all checked at compile time, entire categories of bugs simply cannot exist. No `pydantic.ValidationError` at 3am. No `TypeError: 'NoneType' is not subscriptable` in production. The compiler catches it before your code ever runs.
 
 ```bash
 go get github.com/fugue-labs/gollem
 ```
 
-### Minimal Example (No API Key Required)
+## Features at a Glance
 
-This example uses `TestModel` to demonstrate the agent framework without any LLM provider configuration:
+Gollem ships 40+ composable primitives in a single framework. Here's what you get:
+
+### Core Agent Framework
+- **Generic `Agent[T]`** — Define output type once; schema generation, validation, and deserialization happen automatically at compile time
+- **4 LLM providers** — Anthropic Claude, OpenAI GPT/O-series, Google Gemini (Vertex AI), Claude via Vertex AI
+- **`FuncTool[P]` with reflection-based JSON Schema** — Create tools from typed Go functions; parameter schemas generated from struct tags
+- **Structured output via "final_result" tool pattern** — Reliable typed extraction across all providers
+- **Streaming with `iter.Seq2`** — Go 1.23+ range-over-function iterators for real-time token streaming
+- **Node-by-node iteration** — Step through the agent loop one model call at a time with `Agent.Iter`
+
+### Guardrails & Validation
+- **Input guardrails** — Validate or transform prompts before the agent loop begins; built-in `MaxPromptLength`, `ContentFilter`
+- **Turn guardrails** — Validate message state before each model request; built-in `MaxTurns` limit
+- **Tool result validators** — Validate tool outputs before they reach the model; per-tool or agent-wide
+- **Output auto-repair** — Automatically fix malformed structured output using a repair model before retrying
+- **Output validators** — Custom validation functions on the final typed result
+
+### Observability & Tracing
+- **Structured run traces** — Full execution capture with timestamps, durations, and step-level detail
+- **Pluggable trace exporters** — `JSONFileExporter`, `ConsoleExporter`, `MultiExporter`, or implement your own
+- **Lifecycle hooks** — `OnRunStart`, `OnRunEnd`, `OnModelRequest`, `OnModelResponse`, `OnToolStart`, `OnToolEnd`
+- **OpenTelemetry middleware** — Distributed tracing and metrics for model requests out of the box
+- **Conversation state snapshots** — Serialize mid-run state for time-travel debugging and branching
+
+### Resilience & Performance
+- **Retry with exponential backoff** — `RetryModel` wrapper with jitter, configurable retries, and custom retryable predicates
+- **Rate limiting** — Token-bucket `RateLimitedModel` for API throttling with burst capacity
+- **Response caching** — `CachedModel` with SHA-256 key derivation and optional TTL
+- **Tool execution timeouts** — Per-tool and agent-level deadlines via `context.WithTimeout`
+- **Composable run conditions** — `MaxRunDuration`, `ToolCallCount`, `TextContains` with `And`/`Or` combinators
+- **Batch execution** — `RunBatch` for concurrent multi-prompt runs with ordered results
+
+### Composition & Multi-Agent
+- **Agent cloning** — `Clone()` creates independent copies with additional options
+- **Agent chaining** — `ChainRun` pipes one agent's output as the next agent's input with usage aggregation
+- **`AgentTool` delegation** — One agent calls another as a tool
+- **`Handoff` pipelines** — Sequential agent chains with context filters at boundaries
+- **Handoff context filters** — `StripSystemPrompts`, `KeepLastN`, `SummarizeHistory`, composable with `ChainFilters`
+- **Typed event bus** — Publish-subscribe coordination with `Subscribe[E]`, `Publish[E]`, and async variants
+
+### Intelligence & Routing
+- **Model router** — Route prompts to different models based on content, length, or custom logic
+- **Prompt templates** — Go `text/template` syntax with `Partial()` pre-filling and `TemplateVars` interface
+- **Conversation memory strategies** — `SlidingWindowMemory`, `TokenBudgetMemory`, `SummaryMemory`
+- **Dynamic system prompts** — Generate system prompts at runtime using `RunContext`
+
+### Extensions
+- **Graph workflow engine** — Typed state machines with conditional branching, cycle detection, and Mermaid export
+- **Deep context management** — Three-tier compression, planning tools, and checkpointing for long-running agents
+- **Temporal durable execution** — Fault-tolerant agents with automatic checkpointing via Temporal
+- **MCP integration** — Stdio and SSE transports with multi-server management and namespaced tools
+- **Evaluation framework** — Datasets, built-in evaluators (`ExactMatch`, `Contains`, `JSONMatch`, `Custom`), LLM-as-judge scoring
+- **Middleware chain** — Composable logging, retry, caching, metrics, and custom middleware
+
+### Testing
+- **`TestModel` mock** — Test agents without real LLM calls using canned responses and call recording
+- **`Override` / `WithTestModel`** — Swap models in tests without modifying the original agent
+- **560+ tests** across all packages with zero external test dependencies in core
+
+## Quick Start
+
+### Minimal Example (No API Key Required)
 
 ```go
 package main
@@ -63,7 +103,6 @@ import (
     "github.com/fugue-labs/gollem"
 )
 
-// CityInfo is the structured output type the agent will produce.
 type CityInfo struct {
     Name       string `json:"name" jsonschema:"description=City name"`
     Country    string `json:"country" jsonschema:"description=Country"`
@@ -71,13 +110,10 @@ type CityInfo struct {
 }
 
 func main() {
-    // Create a TestModel with a canned tool call response.
-    // The response calls the "final_result" tool with our structured output.
     model := gollem.NewTestModel(
         gollem.ToolCallResponse("final_result", `{"name":"Tokyo","country":"Japan","population":14000000}`),
     )
 
-    // Create an agent that returns structured CityInfo.
     agent := gollem.NewAgent[CityInfo](model,
         gollem.WithSystemPrompt[CityInfo]("You are a geography expert."),
     )
@@ -87,29 +123,109 @@ func main() {
         log.Fatal(err)
     }
 
-    fmt.Printf("City: %s\n", result.Output.Name)
-    fmt.Printf("Country: %s\n", result.Output.Country)
-    fmt.Printf("Population: %d\n", result.Output.Population)
+    fmt.Printf("City: %s\n", result.Output.Name)       // Tokyo
+    fmt.Printf("Country: %s\n", result.Output.Country)  // Japan
+    fmt.Printf("Population: %d\n", result.Output.Population) // 14000000
 }
 ```
 
-### With a Real Provider
+### Production Agent with Guardrails, Tracing, and Retry
 
 ```go
-import "github.com/fugue-labs/gollem/provider/anthropic"
-
-model := anthropic.New() // reads ANTHROPIC_API_KEY from environment
-agent := gollem.NewAgent[CityInfo](model,
-    gollem.WithSystemPrompt[CityInfo]("You are a geography expert."),
+import (
+    "github.com/fugue-labs/gollem"
+    "github.com/fugue-labs/gollem/provider/anthropic"
 )
-result, err := agent.Run(ctx, "Tell me about Tokyo")
+
+model := gollem.NewRetryModel(anthropic.New(), gollem.DefaultRetryConfig())
+
+agent := gollem.NewAgent[Analysis](model,
+    // Safety
+    gollem.WithInputGuardrail[Analysis]("length", gollem.MaxPromptLength(10000)),
+    gollem.WithInputGuardrail[Analysis]("content", gollem.ContentFilter("ignore previous instructions")),
+    gollem.WithTurnGuardrail[Analysis]("turns", gollem.MaxTurns(20)),
+
+    // Observability
+    gollem.WithTracing[Analysis](),
+    gollem.WithTraceExporter[Analysis](gollem.NewJSONFileExporter("./traces")),
+    gollem.WithHooks[Analysis](gollem.Hook{
+        OnToolStart: func(ctx context.Context, rc *gollem.RunContext, name, args string) {
+            log.Printf("tool: %s(%s)", name, args)
+        },
+    }),
+
+    // Control
+    gollem.WithRunCondition[Analysis](gollem.Or(
+        gollem.MaxRunDuration(2 * time.Minute),
+        gollem.ToolCallCount(50),
+    )),
+    gollem.WithDefaultToolTimeout[Analysis](30 * time.Second),
+)
+
+result, err := agent.Run(ctx, "Analyze Q4 earnings report")
+// result.Trace contains full execution trace
+```
+
+### Multi-Agent with Event Coordination
+
+```go
+bus := gollem.NewEventBus()
+
+type TaskAssigned struct {
+    AgentName string
+    Task      string
+}
+
+gollem.Subscribe[TaskAssigned](bus, func(e TaskAssigned) {
+    log.Printf("Agent %s received: %s", e.AgentName, e.Task)
+})
+
+researcher := gollem.NewAgent[ResearchResult](model,
+    gollem.WithEventBus[ResearchResult](bus),
+    gollem.WithSystemPrompt[ResearchResult]("You are a research specialist."),
+)
+
+orchestrator := gollem.NewAgent[FinalReport](model,
+    gollem.WithEventBus[FinalReport](bus),
+    gollem.WithTools[FinalReport](
+        gollem.AgentTool("research", "Delegate research tasks", researcher),
+    ),
+)
+
+result, _ := orchestrator.Run(ctx, "Research and summarize recent advances in robotics")
+```
+
+### Batch Processing with Model Routing
+
+```go
+// Route simple queries to a fast model, complex ones to a powerful model
+router := gollem.NewRouterModel(gollem.ThresholdRouter(
+    fastModel,    // short prompts
+    powerModel,   // long prompts
+    500,          // character threshold
+))
+
+agent := gollem.NewAgent[Summary](router)
+
+results := agent.RunBatch(ctx, []string{
+    "Summarize: Go is great.",
+    "Analyze the geopolitical implications of semiconductor supply chain disruptions across ASEAN nations...",
+}, gollem.WithBatchConcurrency(10))
+
+for _, r := range results {
+    if r.Err != nil {
+        log.Printf("prompt %d failed: %v", r.Index, r.Err)
+        continue
+    }
+    fmt.Println(r.Result.Output)
+}
 ```
 
 ## Core Concepts
 
 ### Agents
 
-The `Agent[T]` is the central type. It orchestrates the loop of sending messages to an LLM, processing tool calls, and extracting a typed result. The type parameter `T` determines the output type -- it can be a struct for structured data, or `string` for free-form text.
+The `Agent[T]` is the central type. It orchestrates the loop of sending messages to an LLM, processing tool calls, and extracting a typed result. The type parameter `T` determines the output type — a struct for structured data, or `string` for free-form text.
 
 ```go
 // Structured output agent.
@@ -123,27 +239,9 @@ textResult, _ := textAgent.Run(ctx, "prompt")
 fmt.Println(textResult.Output)
 ```
 
-Agents are configured via functional options:
-
-| Option | Description |
-|--------|-------------|
-| `WithSystemPrompt` | Static system prompt |
-| `WithDynamicSystemPrompt` | Runtime-generated system prompt |
-| `WithTools` | Register callable tools |
-| `WithToolsets` | Register grouped tool collections |
-| `WithToolApproval` | Human-in-the-loop approval function |
-| `WithHistoryProcessor` | Transform message history before requests |
-| `WithMaxRetries` | Maximum validation/retry attempts |
-| `WithMaxConcurrency` | Limit parallel tool execution |
-| `WithTemperature` | Model temperature setting |
-| `WithMaxTokens` | Maximum output tokens |
-| `WithUsageLimits` | Token and request budgets |
-| `WithEndStrategy` | Early (default) or exhaustive result handling |
-| `WithOutputValidator` | Custom output validation functions |
-
 ### Tools
 
-Tools give agents the ability to call Go functions. Use `FuncTool` to create type-safe tools from regular functions:
+Tools give agents the ability to call Go functions. Use `FuncTool` to create type-safe tools:
 
 ```go
 type SearchParams struct {
@@ -155,39 +253,42 @@ searchTool := gollem.FuncTool[SearchParams](
     "search",
     "Search the knowledge base",
     func(ctx context.Context, params SearchParams) (string, error) {
-        results := doSearch(params.Query, params.Limit)
-        return results, nil
+        return doSearch(params.Query, params.Limit), nil
     },
 )
-```
 
-The JSON Schema for the tool parameters is generated automatically from the struct tags. Tools can also accept a `*RunContext` parameter for access to agent state:
-
-```go
-gollem.FuncTool[Params]("name", "desc",
-    func(ctx context.Context, rc *gollem.RunContext, params Params) (string, error) {
-        fmt.Printf("Run step: %d, retries: %d\n", rc.RunStep, rc.Retry)
-        return "result", nil
-    },
+agent := gollem.NewAgent[string](model,
+    gollem.WithTools[string](searchTool),
+    gollem.WithToolResultValidator[string](func(_ context.Context, name, result string) error {
+        if result == "" {
+            return fmt.Errorf("empty result from %s", name)
+        }
+        return nil
+    }),
+    gollem.WithDefaultToolTimeout[string](10 * time.Second),
 )
 ```
-
-Tool options include `WithToolMaxRetries`, `WithToolSequential`, `WithToolStrict`, and `WithRequiresApproval`.
 
 ### Structured Output
 
-Gollem uses a "final_result" tool pattern to extract structured output from LLMs. When you create an `Agent[T]`, the framework automatically generates a JSON Schema from `T` and presents it as a tool the model must call to return its result. This approach works reliably across all providers.
+Gollem uses a "final_result" tool pattern to extract structured output from LLMs. The framework generates a JSON Schema from `T` and presents it as a tool the model must call. If parsing fails, the optional repair function attempts a fix before retrying:
 
 ```go
 type Analysis struct {
-    Sentiment  string   `json:"sentiment" jsonschema:"description=positive/negative/neutral,enum=positive|negative|neutral"`
-    Keywords   []string `json:"keywords" jsonschema:"description=Key topics identified"`
-    Confidence float64  `json:"confidence" jsonschema:"description=Confidence score 0-1"`
+    Sentiment  string   `json:"sentiment" jsonschema:"enum=positive|negative|neutral"`
+    Keywords   []string `json:"keywords" jsonschema:"description=Key topics"`
+    Confidence float64  `json:"confidence" jsonschema:"description=Confidence 0-1"`
 }
 
-agent := gollem.NewAgent[Analysis](model)
-result, _ := agent.Run(ctx, "Analyze: The product launch exceeded all expectations")
-fmt.Printf("Sentiment: %s (%.0f%% confidence)\n", result.Output.Sentiment, result.Output.Confidence*100)
+agent := gollem.NewAgent[Analysis](model,
+    gollem.WithOutputRepair[Analysis](gollem.ModelRepair[Analysis](repairModel)),
+    gollem.WithOutputValidator[Analysis](func(a Analysis) error {
+        if a.Confidence < 0 || a.Confidence > 1 {
+            return fmt.Errorf("confidence out of range: %f", a.Confidence)
+        }
+        return nil
+    }),
+)
 ```
 
 ### Streaming
@@ -208,35 +309,9 @@ output, _ := stream.GetOutput()
 fmt.Printf("\nTokens used: %d\n", output.Usage.TotalTokens())
 ```
 
-### Node-by-Node Iteration
-
-For fine-grained control, use `Iter` to step through the agent loop manually:
-
-```go
-run := agent.Iter(ctx, "prompt")
-for !run.Done() {
-    resp, err := run.Next()
-    if err != nil {
-        break
-    }
-    fmt.Printf("Step response: %s\n", resp.TextContent())
-}
-result, _ := run.Result()
-```
-
 ### Providers
 
-All providers implement the `Model` interface, making them interchangeable:
-
-```go
-type Model interface {
-    Request(ctx context.Context, messages []ModelMessage, settings *ModelSettings, params *ModelRequestParameters) (*ModelResponse, error)
-    RequestStream(ctx context.Context, messages []ModelMessage, settings *ModelSettings, params *ModelRequestParameters) (StreamedResponse, error)
-    ModelName() string
-}
-```
-
-Create providers with sensible defaults or explicit configuration:
+All providers implement the `Model` interface, making them interchangeable. Wrap any provider with resilience:
 
 ```go
 import (
@@ -246,12 +321,32 @@ import (
     "github.com/fugue-labs/gollem/provider/vertexai_anthropic"
 )
 
-// Each provider reads credentials from environment variables by default.
-claudeModel := anthropic.New()
-gptModel := openai.New()
-geminiModel := vertexai.New("my-project", "us-central1")
-vertexClaudeModel := vertexai_anthropic.New("my-project", "us-east5")
+// Raw providers — each reads credentials from environment.
+claude := anthropic.New()
+gpt := openai.New()
+gemini := vertexai.New("my-project", "us-central1")
+vertexClaude := vertexai_anthropic.New("my-project", "us-east5")
+
+// Wrap with retry, rate limiting, and caching.
+resilient := gollem.NewRetryModel(
+    gollem.NewRateLimitedModel(
+        gollem.NewCachedModel(claude, gollem.NewMemoryCacheWithTTL(5*time.Minute)),
+        10, // requests per second
+        20, // burst capacity
+    ),
+    gollem.DefaultRetryConfig(),
+)
 ```
+
+| Feature | Anthropic | OpenAI | Vertex AI | Vertex AI Anthropic |
+|---------|-----------|--------|-----------|---------------------|
+| Structured output | Yes | Yes | Yes | Yes |
+| Streaming | Yes | Yes | Yes | Yes |
+| Tool use | Yes | Yes | Yes | Yes |
+| Extended thinking | Yes | -- | -- | Yes |
+| Prompt caching | Yes | -- | -- | Yes |
+| Native JSON mode | -- | Yes | Yes | -- |
+| Auth | API key | API key | OAuth2 (GCP) | OAuth2 (GCP) |
 
 ## Architecture
 
@@ -262,6 +357,18 @@ graph TD
         Tools["FuncTool / Toolset"]
         Schema["JSON Schema Generator"]
         Output["OutputSchema (final_result)"]
+        Guardrails["Guardrails"]
+        Hooks["Lifecycle Hooks"]
+        Traces["Run Traces"]
+        EventBus["Event Bus"]
+        Conditions["Run Conditions"]
+    end
+
+    subgraph "Model Wrappers"
+        Retry["RetryModel"]
+        RateLimit["RateLimitedModel"]
+        Cache["CachedModel"]
+        Router["RouterModel"]
     end
 
     subgraph "Providers"
@@ -272,7 +379,7 @@ graph TD
     end
 
     subgraph "Extensions"
-        Middleware["middleware (logging, otel, retry)"]
+        Middleware["middleware (logging, otel)"]
         MCP["mcp (stdio, sse, manager)"]
         Memory["memory"]
         Deep["deep (context, planning, checkpoint)"]
@@ -285,10 +392,19 @@ graph TD
     Agent --> Tools
     Agent --> Schema
     Agent --> Output
-    Agent --> Anthropic
-    Agent --> OpenAI
-    Agent --> VertexAI
-    Agent --> VertexAnthropic
+    Agent --> Guardrails
+    Agent --> Hooks
+    Agent --> Traces
+    Agent --> EventBus
+    Agent --> Conditions
+    Retry --> Anthropic
+    Retry --> OpenAI
+    Retry --> VertexAI
+    Retry --> VertexAnthropic
+    RateLimit --> Retry
+    Cache --> RateLimit
+    Router --> Cache
+    Agent --> Router
     Middleware --> Agent
     MCP --> Tools
     Deep --> Agent
@@ -298,72 +414,93 @@ graph TD
     Eval --> Agent
 ```
 
-## Provider Comparison
-
-| Feature | Anthropic | OpenAI | Vertex AI | Vertex AI Anthropic |
-|---------|-----------|--------|-----------|---------------------|
-| Structured output | Yes | Yes | Yes | Yes |
-| Streaming | Yes | Yes | Yes | Yes |
-| Tool use | Yes | Yes | Yes | Yes |
-| Extended thinking | Yes | -- | -- | Yes |
-| Prompt caching | Yes | -- | -- | Yes |
-| Native JSON mode | -- | Yes | Yes | -- |
-| Auth | API key | API key | OAuth2 (GCP) | OAuth2 (GCP) |
-
 ## Advanced Features
 
-### Deep Package -- Context Management
+### Prompt Templates
 
-The `deep` package provides tools for long-running agent tasks that may exceed context limits:
+Use Go's `text/template` syntax for dynamic, reusable prompts:
 
 ```go
-import "github.com/fugue-labs/gollem/ext/deep"
+tmpl := gollem.MustTemplate("analyst", `You are a {{.Role}} specializing in {{.Domain}}.
+Analyze the following with {{.Depth}} depth.`)
 
-// Three-tier context compression.
-cm := deep.NewContextManager(model,
-    deep.WithMaxContextTokens(100000),
-    deep.WithOffloadThreshold(20000),
-    deep.WithCompressionThreshold(0.85),
+agent := gollem.NewAgent[Analysis](model,
+    gollem.WithSystemPromptTemplate[Analysis](tmpl),
 )
 
-// Use as a history processor.
+// Variables resolved from RunContext.Deps
+result, _ := agent.Run(ctx, "Analyze Q4 results",
+    gollem.WithDeps(map[string]string{
+        "Role": "senior analyst", "Domain": "fintech", "Depth": "comprehensive",
+    }),
+)
+```
+
+### Conversation Memory Strategies
+
+Manage context windows intelligently across long conversations:
+
+```go
+// Keep only the last 10 message pairs.
 agent := gollem.NewAgent[string](model,
-    gollem.WithHistoryProcessor[string](cm.AsHistoryProcessor()),
+    gollem.WithHistoryProcessor[string](gollem.SlidingWindowMemory(10)),
 )
 
-// Or use the all-in-one LongRunAgent.
-lra := deep.NewLongRunAgent[string](model,
-    deep.WithContextWindow[string](100000),
-    deep.WithPlanningEnabled[string](),
-)
-result, _ := lra.Run(ctx, "Analyze this large codebase...")
-```
-
-### Multi-Agent Patterns
-
-**Agent delegation** -- One agent calls another as a tool:
-
-```go
-researcher := gollem.NewAgent[ResearchResult](model,
-    gollem.WithSystemPrompt[ResearchResult]("You are a research specialist."),
+// Stay within a token budget.
+agent := gollem.NewAgent[string](model,
+    gollem.WithHistoryProcessor[string](gollem.TokenBudgetMemory(4000)),
 )
 
-orchestrator := gollem.NewAgent[FinalReport](model,
-    gollem.WithTools[FinalReport](
-        gollem.AgentTool("research", "Delegate research tasks", researcher),
-    ),
+// Summarize old messages using a model.
+agent := gollem.NewAgent[string](model,
+    gollem.WithHistoryProcessor[string](gollem.SummaryMemory(summaryModel, 20)),
 )
 ```
 
-**Handoff pipelines** -- Chain agents in sequence:
+### Agent Composition
+
+Clone agents for variant configurations, or chain them for multi-stage pipelines:
 
 ```go
-pipeline := gollem.NewHandoff[string]()
-pipeline.AddStep("draft", draftAgent, nil)
-pipeline.AddStep("review", reviewAgent, func(prev string) string {
-    return "Review this draft: " + prev
+// Clone with overrides — original is never modified.
+verbose := agent.Clone(
+    gollem.WithTemperature[Analysis](0.9),
+    gollem.WithMaxTokens[Analysis](4000),
+)
+
+// Chain agents — first output becomes second input.
+summary, _ := gollem.ChainRun(ctx, researcher, writer, "Topic: AI safety",
+    func(research ResearchResult) string {
+        return fmt.Sprintf("Write an article based on: %s", research.Summary)
+    },
+)
+```
+
+### State Snapshots & Time-Travel Debugging
+
+Capture and restore agent state for debugging, branching, or replay:
+
+```go
+var checkpoint *gollem.RunSnapshot
+
+agent := gollem.NewAgent[string](model,
+    gollem.WithHooks[string](gollem.Hook{
+        OnModelResponse: func(ctx context.Context, rc *gollem.RunContext, resp *gollem.ModelResponse) {
+            checkpoint = gollem.Snapshot(rc) // capture state
+        },
+    }),
+)
+
+agent.Run(ctx, "original prompt")
+
+// Branch from checkpoint and explore an alternative path.
+alt := checkpoint.Branch(func(snap *gollem.RunSnapshot) {
+    snap.Prompt = "alternative prompt"
 })
-result, _ := pipeline.Run(ctx, "Write an article about Go generics")
+
+// Serialize for storage or debugging.
+data, _ := gollem.MarshalSnapshot(checkpoint)
+restored, _ := gollem.UnmarshalSnapshot(data)
 ```
 
 ### Graph Workflow Engine
@@ -401,9 +538,34 @@ g.SetEntryPoint("validate")
 finalState, _ := g.Run(ctx, OrderState{OrderID: "123", Total: 99.99})
 ```
 
+### Deep Context Management
+
+Three-tier context compression for agents that handle massive context windows:
+
+```go
+import "github.com/fugue-labs/gollem/ext/deep"
+
+cm := deep.NewContextManager(model,
+    deep.WithMaxContextTokens(100000),
+    deep.WithOffloadThreshold(20000),
+    deep.WithCompressionThreshold(0.85),
+)
+
+agent := gollem.NewAgent[string](model,
+    gollem.WithHistoryProcessor[string](cm.AsHistoryProcessor()),
+)
+
+// Or use the all-in-one LongRunAgent.
+lra := deep.NewLongRunAgent[string](model,
+    deep.WithContextWindow[string](100000),
+    deep.WithPlanningEnabled[string](),
+)
+result, _ := lra.Run(ctx, "Analyze this large codebase...")
+```
+
 ### Temporal Durable Execution
 
-Wrap agents for fault-tolerant execution with automatic retries and checkpointing:
+Fault-tolerant agents with automatic retries and checkpointing:
 
 ```go
 import "github.com/fugue-labs/gollem/ext/temporal"
@@ -415,10 +577,6 @@ ta := temporal.NewTemporalAgent(agent,
         MaxRetries:          3,
     }),
 )
-
-// Register activities with a Temporal worker.
-activities := ta.Activities()
-// Each activity name -> function can be registered with worker.RegisterActivity.
 ```
 
 ### Evaluation Framework
@@ -449,20 +607,14 @@ Connect to Model Context Protocol servers for external tool discovery:
 ```go
 import mcpclient "github.com/fugue-labs/gollem/ext/mcp"
 
-// Stdio transport.
 client, _ := mcpclient.NewStdioClient(ctx, "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp")
 defer client.Close()
-tools, _ := client.Tools(ctx)
-
-// SSE transport.
-sseClient, _ := mcpclient.NewSSEClient(ctx, "http://localhost:8080/sse")
-defer sseClient.Close()
 
 // Multi-server manager with namespaced tools.
 mgr := mcpclient.NewManager()
 mgr.AddClient("fs", client)
 mgr.AddClient("db", sseClient)
-allTools, _ := mgr.Tools(ctx) // tools namespaced as "fs__toolname", "db__toolname"
+allTools, _ := mgr.Tools(ctx) // "fs__read", "db__query", etc.
 ```
 
 ### Middleware
@@ -472,13 +624,11 @@ Compose cross-cutting concerns around model requests:
 ```go
 import "github.com/fugue-labs/gollem/ext/middleware"
 
-// Wrap a model with middleware.
 wrapped := middleware.Wrap(model,
     middleware.NewLogging(logger),
     middleware.NewOTel("my-service"),
 )
 
-// Use the wrapped model exactly like the original.
 agent := gollem.NewAgent[string](wrapped)
 ```
 
@@ -499,7 +649,7 @@ agent := gollem.NewAgent[string](wrapped)
 
 ## Testing
 
-Gollem provides a built-in `TestModel` mock that enables testing agent logic without real LLM calls:
+Gollem provides `TestModel` and test helpers for verifying agent logic without real LLM calls:
 
 ```go
 func TestMyAgent(t *testing.T) {
@@ -517,9 +667,16 @@ func TestMyAgent(t *testing.T) {
     calls := model.Calls()
     assert.Len(t, calls, 1)
 }
-```
 
-`TestModel` supports multiple canned responses for multi-turn conversations and tool call flows. It records all calls for assertion, making it straightforward to verify that your agent sends the right messages.
+func TestWithOverride(t *testing.T) {
+    // Swap model in production agent without modifying original.
+    testAgent, testModel := gollem.WithTestModel[MyOutput](productionAgent,
+        gollem.ToolCallResponse("final_result", `{"status":"ok"}`),
+    )
+    result, _ := testAgent.Run(ctx, "test")
+    assert.Equal(t, 1, len(testModel.Calls()))
+}
+```
 
 ## Contributing
 
@@ -527,6 +684,6 @@ Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for dev
 
 ## License
 
-MIT License -- Copyright (c) 2026 [Trevor Prater](https://github.com/trevorprater)
+MIT License — Copyright (c) 2026 [Trevor Prater](https://github.com/trevorprater)
 
 See [LICENSE](LICENSE) for the full text.
