@@ -223,7 +223,8 @@ func WithRunUsageLimits(l UsageLimits) RunOption {
 	}
 }
 
-// WithMessages provides conversation history to continue from.
+// WithMessages sets initial conversation history for the run.
+// This is used to resume from checkpoints or continue conversations.
 func WithMessages(msgs ...ModelMessage) RunOption {
 	return func(c *runConfig) {
 		c.messages = msgs
