@@ -53,6 +53,8 @@ type Agent[T any] struct {
 	kbAutoStore          bool
 	toolsPrepareFunc     AgentToolsPrepareFunc
 	hooks                []Hook
+	inputGuardrails      []namedInputGuardrail
+	turnGuardrails       []namedTurnGuardrail
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -299,6 +301,18 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 		limits = *cfg.usageLimits
 	}
 
+	// Run input guardrails.
+	for _, g := range a.inputGuardrails {
+		var gErr error
+		prompt, gErr = g.fn(ctx, prompt)
+		if gErr != nil {
+			return nil, &GuardrailError{
+				GuardrailName: g.name,
+				Message:       gErr.Error(),
+			}
+		}
+	}
+
 	// Fire OnRunStart hooks.
 	rc := &RunContext{
 		Deps:    cfg.deps,
@@ -540,6 +554,24 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 				return nil, fmt.Errorf("history processor failed: %w", procErr)
 			}
 			messages = processed
+		}
+
+		// Run turn guardrails.
+		turnRC := &RunContext{
+			Deps:     deps,
+			Usage:    state.usage,
+			Prompt:   prompt,
+			Messages: messages,
+			RunStep:  state.runStep,
+			RunID:    state.runID,
+		}
+		for _, g := range a.turnGuardrails {
+			if gErr := g.fn(ctx, turnRC, messages); gErr != nil {
+				return nil, &GuardrailError{
+					GuardrailName: g.name,
+					Message:       gErr.Error(),
+				}
+			}
 		}
 
 		// Fire OnModelRequest hooks.
