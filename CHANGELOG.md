@@ -6,6 +6,72 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Phase 13: Ten Innovations from LangGraph, Pydantic-AI, OpenAI Agents SDK & AutoGen
+
+#### Innovation 1: Rate Limiter Model Wrapper
+- `RateLimitedModel` wraps any `Model` with token-bucket rate limiting
+- `NewRateLimitedModel` with configurable requests-per-second and burst
+- Requests exceeding rate are delayed, not rejected
+- Context cancellation stops waiting requests
+
+#### Innovation 2: Response Cache Model Wrapper
+- `CacheStore` interface with `MemoryCache` implementation
+- `NewMemoryCacheWithTTL` for TTL-based expiration
+- `CachedModel` wraps `Model` to cache `Request()` responses by SHA-256 hash
+- Streaming requests bypass cache
+
+#### Innovation 3: Tool Timeout / Deadline
+- `WithToolTimeout` per-tool execution deadline via `context.WithTimeout`
+- `WithDefaultToolTimeout` agent-level default for tools without explicit timeout
+- Per-tool timeout takes precedence over agent default
+
+#### Innovation 4: Composable Run Conditions
+- `RunCondition` predicate checked after each model response
+- `Or()` and `And()` combinators for composing conditions
+- Built-in conditions: `MaxRunDuration`, `TextContains`, `ToolCallCount`, `ResponseContains`
+- `WithRunCondition` agent option
+- `RunConditionError` error type when condition triggers
+
+#### Innovation 5: Handoff Context Filters
+- `HandoffFilter` transforms messages at agent handoff boundaries
+- Built-in filters: `StripSystemPrompts`, `KeepLastN`, `SummarizeHistory`
+- `ChainFilters` for composing multiple filters in sequence
+- `ChainRunWithFilter` for filtered agent chaining
+- `Handoff.AddStepWithFilter` for filtered handoff pipeline steps
+
+#### Innovation 6: Trace Exporter Interface
+- `TraceExporter` interface for pluggable trace export
+- `JSONFileExporter` writes JSON trace files to a directory
+- `ConsoleExporter` prints human-readable trace summaries
+- `MultiExporter` fans out to multiple exporters
+- `WithTraceExporter` agent option (implicitly enables tracing)
+
+#### Innovation 7: Agent Test Override
+- `Override()` creates independent agent with replaced model
+- `WithTestModel()` convenience returns agent + `TestModel` pair
+- Original agent is never modified
+
+#### Innovation 8: Retry with Exponential Backoff
+- `RetryModel` wraps `Model` with configurable retry for transient failures
+- `RetryConfig` with `MaxRetries`, `InitialBackoff`, `MaxBackoff`, `BackoffFactor`, `Jitter`
+- `DefaultRetryConfig` targets HTTP 429/500/502/503
+- Both `Request` and `RequestStream` retry
+
+#### Innovation 9: Conversation State Snapshot
+- `RunSnapshot` captures full run state (messages, usage, step)
+- `MarshalSnapshot` / `UnmarshalSnapshot` for JSON round-trip
+- `Branch()` creates independent copies for alternate-path exploration
+- `WithSnapshot` `RunOption` to resume from saved state
+- Hook-friendly capture via `Snapshot(rc)`
+
+#### Innovation 10: Typed Event Bus for Agent Coordination
+- `EventBus` with typed `Subscribe` / `Publish` / `PublishAsync` using generics
+- Type-safe: subscribers only receive matching event types
+- `Unsubscribe` via returned function from `Subscribe`
+- Built-in events: `RunStartedEvent`, `RunCompletedEvent`, `ToolCalledEvent`
+- `WithEventBus` agent option; bus accessible via `RunContext.EventBus`
+- Thread-safe under concurrent access
+
 ### Phase 12: Ten Innovations from Pydantic-AI & LangChain/LangGraph
 
 #### Innovation 1: Agent Lifecycle Hooks

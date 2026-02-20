@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
+	"net/http"
 	"time"
 )
 
@@ -34,7 +35,7 @@ func defaultIsRetryable(err error) bool {
 	var httpErr *ModelHTTPError
 	if errors.As(err, &httpErr) {
 		switch httpErr.StatusCode {
-		case 429, 500, 502, 503:
+		case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
 			return true
 		}
 	}

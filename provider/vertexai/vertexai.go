@@ -113,8 +113,12 @@ func (p *Provider) ModelName() string {
 
 // endpoint returns the base endpoint URL for the model.
 func (p *Provider) endpoint() string {
-	return fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s",
-		p.location, p.project, p.location, p.model)
+	host := p.location + "-aiplatform.googleapis.com"
+	if p.location == "global" {
+		host = "aiplatform.googleapis.com"
+	}
+	return fmt.Sprintf("https://%s/v1/projects/%s/locations/%s/publishers/google/models/%s",
+		host, p.project, p.location, p.model)
 }
 
 // getToken returns a valid OAuth2 access token for GCP.

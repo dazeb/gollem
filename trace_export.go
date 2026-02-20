@@ -38,7 +38,7 @@ func (e *JSONFileExporter) Export(_ context.Context, trace *RunTrace) error {
 		return fmt.Errorf("json exporter: marshal: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("json exporter: write: %w", err)
 	}
 	return nil
