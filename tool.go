@@ -60,6 +60,11 @@ type StatefulTool interface {
 	RestoreState(state any) error
 }
 
+// ToolResultValidatorFunc validates a tool's return value before it becomes
+// a ToolReturnPart in the conversation. Return error to retry the tool call
+// (the error message is sent to the model as a RetryPromptPart).
+type ToolResultValidatorFunc func(ctx context.Context, rc *RunContext, toolName string, result string) error
+
 // Tool is a registered tool with its definition and handler.
 type Tool struct {
 	Definition       ToolDefinition
@@ -68,6 +73,7 @@ type Tool struct {
 	RequiresApproval bool            // if true, the agent's ToolApprovalFunc must approve before execution
 	PrepareFunc      ToolPrepareFunc // if set, called before each model request to filter/modify this tool
 	Stateful         StatefulTool    // if set, state is saved/restored with checkpoints
+	ResultValidator  ToolResultValidatorFunc // if set, validates tool results before passing to model
 }
 
 // ToolOption configures a tool via functional options.
@@ -78,6 +84,7 @@ type toolConfig struct {
 	sequential       bool
 	strict           *bool
 	requiresApproval bool
+	resultValidator  ToolResultValidatorFunc
 }
 
 // WithToolMaxRetries sets the maximum retries for a tool.
@@ -105,6 +112,13 @@ func WithToolStrict(strict bool) ToolOption {
 func WithRequiresApproval() ToolOption {
 	return func(c *toolConfig) {
 		c.requiresApproval = true
+	}
+}
+
+// WithToolResultValidator sets a result validator on a tool.
+func WithToolResultValidator(fn ToolResultValidatorFunc) ToolOption {
+	return func(c *toolConfig) {
+		c.resultValidator = fn
 	}
 }
 
@@ -217,6 +231,7 @@ func FuncTool[P any](name, description string, fn any, opts ...ToolOption) Tool 
 		Handler:          handler,
 		MaxRetries:       cfg.maxRetries,
 		RequiresApproval: cfg.requiresApproval,
+		ResultValidator:  cfg.resultValidator,
 	}
 }
 

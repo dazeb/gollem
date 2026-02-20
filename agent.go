@@ -56,7 +56,8 @@ type Agent[T any] struct {
 	inputGuardrails      []namedInputGuardrail
 	turnGuardrails       []namedTurnGuardrail
 	repairFunc           any // RepairFunc[T], stored as any to avoid generic field
-	tracingEnabled       bool
+	tracingEnabled             bool
+	globalToolResultValidators []ToolResultValidatorFunc
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -192,6 +193,13 @@ func WithToolsets[T any](toolsets ...*Toolset) AgentOption[T] {
 func WithToolsPrepare[T any](fn AgentToolsPrepareFunc) AgentOption[T] {
 	return func(a *Agent[T]) {
 		a.toolsPrepareFunc = fn
+	}
+}
+
+// WithGlobalToolResultValidator adds a validator that runs on all tool results.
+func WithGlobalToolResultValidator[T any](fn ToolResultValidatorFunc) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.globalToolResultValidators = append(a.globalToolResultValidators, fn)
 	}
 }
 
@@ -1173,6 +1181,30 @@ func (a *Agent[T]) executeSingleTool(
 			Content:    "error serializing result: " + err.Error(),
 			ToolCallID: call.ToolCallID,
 			Timestamp:  time.Now(),
+		}
+	}
+
+	// Run per-tool result validator.
+	if tool.ResultValidator != nil {
+		if valErr := tool.ResultValidator(ctx, rc, call.ToolName, content); valErr != nil {
+			return RetryPromptPart{
+				Content:    "tool result validation failed: " + valErr.Error(),
+				ToolName:   call.ToolName,
+				ToolCallID: call.ToolCallID,
+				Timestamp:  time.Now(),
+			}
+		}
+	}
+
+	// Run global result validators.
+	for _, validator := range a.globalToolResultValidators {
+		if valErr := validator(ctx, rc, call.ToolName, content); valErr != nil {
+			return RetryPromptPart{
+				Content:    "tool result validation failed: " + valErr.Error(),
+				ToolName:   call.ToolName,
+				ToolCallID: call.ToolCallID,
+				Timestamp:  time.Now(),
+			}
 		}
 	}
 

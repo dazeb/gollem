@@ -66,6 +66,11 @@ func (a *Agent[T]) Clone(opts ...AgentOption[T]) *Agent[T] {
 	clone.kbAutoStore = a.kbAutoStore
 	clone.toolsPrepareFunc = a.toolsPrepareFunc
 	clone.repairFunc = a.repairFunc
+	clone.tracingEnabled = a.tracingEnabled
+	if len(a.globalToolResultValidators) > 0 {
+		clone.globalToolResultValidators = make([]ToolResultValidatorFunc, len(a.globalToolResultValidators))
+		copy(clone.globalToolResultValidators, a.globalToolResultValidators)
+	}
 
 	// Apply new options.
 	for _, opt := range opts {
