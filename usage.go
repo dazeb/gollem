@@ -63,6 +63,7 @@ type UsageLimits struct {
 	InputTokensLimit  *int
 	OutputTokensLimit *int
 	TotalTokensLimit  *int
+	ToolCallsLimit    *int // Maximum total tool calls per run.
 }
 
 // DefaultUsageLimits returns limits with RequestLimit=50.
@@ -96,6 +97,16 @@ func (l UsageLimits) CheckTokens(usage RunUsage) error {
 	if l.TotalTokensLimit != nil && usage.TotalTokens() > *l.TotalTokensLimit {
 		return &UsageLimitExceeded{
 			Message: fmt.Sprintf("total token limit of %d exceeded (used %d)", *l.TotalTokensLimit, usage.TotalTokens()),
+		}
+	}
+	return nil
+}
+
+// CheckToolCalls checks if tool call usage exceeds the configured limit.
+func (l UsageLimits) CheckToolCalls(usage RunUsage) error {
+	if l.ToolCallsLimit != nil && usage.ToolCalls > *l.ToolCallsLimit {
+		return &UsageLimitExceeded{
+			Message: fmt.Sprintf("tool call limit of %d exceeded (used %d)", *l.ToolCallsLimit, usage.ToolCalls),
 		}
 	}
 	return nil

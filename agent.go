@@ -21,18 +21,33 @@ const (
 	EndStrategyExhaustive EndStrategy = "exhaustive"
 )
 
+// SystemPromptFunc generates a system prompt dynamically using RunContext.
+type SystemPromptFunc func(ctx context.Context, runCtx *RunContext) (string, error)
+
+// HistoryProcessor transforms the message history before each model request.
+type HistoryProcessor func(messages []ModelMessage) []ModelMessage
+
+// ToolApprovalFunc is called before executing a tool that requires approval.
+// Return true to approve, false to deny (sends denial message back to model).
+type ToolApprovalFunc func(ctx context.Context, toolName string, argsJSON string) (bool, error)
+
 // Agent is the central type for running LLM interactions with structured output.
 type Agent[T any] struct {
-	model            Model
-	systemPrompts    []string
-	tools            []Tool
-	outputSchema     *OutputSchema
-	outputValidators []OutputValidatorFunc[T]
-	outputOpts       []OutputOption
-	maxRetries       int
-	endStrategy      EndStrategy
-	usageLimits      UsageLimits
-	modelSettings    *ModelSettings
+	model                Model
+	systemPrompts        []string
+	dynamicSystemPrompts []SystemPromptFunc
+	historyProcessors    []HistoryProcessor
+	tools                []Tool
+	toolsets             []*Toolset
+	outputSchema         *OutputSchema
+	outputValidators     []OutputValidatorFunc[T]
+	outputOpts           []OutputOption
+	maxRetries           int
+	endStrategy          EndStrategy
+	usageLimits          UsageLimits
+	modelSettings        *ModelSettings
+	toolApprovalFunc     ToolApprovalFunc
+	maxConcurrency       int
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -123,6 +138,41 @@ func WithOutputValidator[T any](fn OutputValidatorFunc[T]) AgentOption[T] {
 func WithOutputOptions[T any](opts ...OutputOption) AgentOption[T] {
 	return func(a *Agent[T]) {
 		a.outputOpts = append(a.outputOpts, opts...)
+	}
+}
+
+// WithDynamicSystemPrompt adds a function that generates system prompts at runtime.
+func WithDynamicSystemPrompt[T any](fn SystemPromptFunc) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.dynamicSystemPrompts = append(a.dynamicSystemPrompts, fn)
+	}
+}
+
+// WithHistoryProcessor adds a processor that transforms message history before each model request.
+func WithHistoryProcessor[T any](proc HistoryProcessor) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.historyProcessors = append(a.historyProcessors, proc)
+	}
+}
+
+// WithToolApproval sets the approval function for tools marked as requiring approval.
+func WithToolApproval[T any](fn ToolApprovalFunc) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.toolApprovalFunc = fn
+	}
+}
+
+// WithMaxConcurrency limits the number of tools that can execute concurrently.
+func WithMaxConcurrency[T any](n int) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.maxConcurrency = n
+	}
+}
+
+// WithToolsets adds one or more toolsets to the agent.
+func WithToolsets[T any](toolsets ...*Toolset) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.toolsets = append(a.toolsets, toolsets...)
 	}
 }
 
@@ -270,19 +320,35 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 	return newStreamResult[T](stream, a.outputSchema, a.outputValidators, state.messages), nil
 }
 
+// allTools returns all tools from both direct tools and toolsets.
+func (a *Agent[T]) allTools() []Tool {
+	all := make([]Tool, len(a.tools))
+	copy(all, a.tools)
+	for _, ts := range a.toolsets {
+		all = append(all, ts.Tools...)
+	}
+	return all
+}
+
 // runLoop is the core agent loop.
 func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt string, settings *ModelSettings, limits UsageLimits, deps any) (*RunResult[T], error) {
-	// Build the initial request.
-	req := a.buildInitialRequest(prompt)
+	// Build the initial request with dynamic system prompts.
+	req, err := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build initial request: %w", err)
+	}
 	state.messages = append(state.messages, req)
 
+	// Gather all tools (direct + toolsets).
+	allTools := a.allTools()
+
 	// Build model request parameters.
-	params := buildModelRequestParams(a.tools, a.outputSchema)
+	params := buildModelRequestParams(allTools, a.outputSchema)
 
 	// Build tool lookup map.
 	toolMap := make(map[string]*Tool)
-	for i := range a.tools {
-		toolMap[a.tools[i].Definition.Name] = &a.tools[i]
+	for i := range allTools {
+		toolMap[allTools[i].Definition.Name] = &allTools[i]
 	}
 
 	// Build output tool name set.
@@ -302,10 +368,23 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			return nil, err
 		}
 
+		// Check tool call limits before request.
+		if limits.ToolCallsLimit != nil {
+			if err := limits.CheckToolCalls(state.usage); err != nil {
+				return nil, err
+			}
+		}
+
 		state.runStep++
 
+		// Apply history processors.
+		messages := state.messages
+		for _, proc := range a.historyProcessors {
+			messages = proc(messages)
+		}
+
 		// Call the model.
-		resp, err := a.model.Request(ctx, state.messages, settings, params)
+		resp, err := a.model.Request(ctx, messages, settings, params)
 		if err != nil {
 			return nil, fmt.Errorf("model request failed: %w", err)
 		}
@@ -574,10 +653,20 @@ func (a *Agent[T]) executeFunctionTools(
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 
+		// Use a semaphore if max concurrency is set.
+		var sem chan struct{}
+		if a.maxConcurrency > 0 {
+			sem = make(chan struct{}, a.maxConcurrency)
+		}
+
 		for _, ic := range concurrentCalls {
 			wg.Add(1)
 			go func(ic indexedCall) {
 				defer wg.Done()
+				if sem != nil {
+					sem <- struct{}{}
+					defer func() { <-sem }()
+				}
 				part := a.executeSingleTool(ctx, state, ic.call, ic.tool, deps, prompt)
 				mu.Lock()
 				results[ic.idx] = part
@@ -631,6 +720,35 @@ func (a *Agent[T]) executeSingleTool(
 		RunID:      state.runID,
 	}
 	state.mu.Unlock()
+
+	// Check tool approval if required.
+	if tool.RequiresApproval {
+		if a.toolApprovalFunc == nil {
+			return RetryPromptPart{
+				Content:    fmt.Sprintf("tool %q requires approval but no approval function is configured", call.ToolName),
+				ToolName:   call.ToolName,
+				ToolCallID: call.ToolCallID,
+				Timestamp:  time.Now(),
+			}
+		}
+		approved, approvalErr := a.toolApprovalFunc(ctx, call.ToolName, call.ArgsJSON)
+		if approvalErr != nil {
+			return ToolReturnPart{
+				ToolName:   call.ToolName,
+				Content:    "error checking tool approval: " + approvalErr.Error(),
+				ToolCallID: call.ToolCallID,
+				Timestamp:  time.Now(),
+			}
+		}
+		if !approved {
+			return RetryPromptPart{
+				Content:    fmt.Sprintf("tool call %q was denied by the user", call.ToolName),
+				ToolName:   call.ToolName,
+				ToolCallID: call.ToolCallID,
+				Timestamp:  time.Now(),
+			}
+		}
+	}
 
 	result, err := tool.Handler(ctx, rc, call.ArgsJSON)
 	if err != nil {
@@ -700,7 +818,7 @@ func serializeToolResult(result any) (string, error) {
 	return string(b), nil
 }
 
-// buildInitialRequest constructs the initial ModelRequest with system prompts and user prompt.
+// buildInitialRequest constructs the initial ModelRequest with static system prompts and user prompt.
 func (a *Agent[T]) buildInitialRequest(prompt string) ModelRequest {
 	var parts []ModelRequestPart
 
@@ -722,6 +840,51 @@ func (a *Agent[T]) buildInitialRequest(prompt string) ModelRequest {
 		Parts:     parts,
 		Timestamp: time.Now(),
 	}
+}
+
+// buildInitialRequestWithDynamic constructs the initial request including dynamic system prompts.
+func (a *Agent[T]) buildInitialRequestWithDynamic(ctx context.Context, prompt string, state *agentRunState, deps any) (ModelRequest, error) {
+	var parts []ModelRequestPart
+
+	// Add static system prompts.
+	for _, sp := range a.systemPrompts {
+		parts = append(parts, SystemPromptPart{
+			Content:   sp,
+			Timestamp: time.Now(),
+		})
+	}
+
+	// Add dynamic system prompts.
+	for _, fn := range a.dynamicSystemPrompts {
+		rc := &RunContext{
+			Deps:    deps,
+			Usage:   state.usage,
+			Prompt:  prompt,
+			RunStep: state.runStep,
+			RunID:   state.runID,
+		}
+		content, err := fn(ctx, rc)
+		if err != nil {
+			return ModelRequest{}, fmt.Errorf("dynamic system prompt failed: %w", err)
+		}
+		if content != "" {
+			parts = append(parts, SystemPromptPart{
+				Content:   content,
+				Timestamp: time.Now(),
+			})
+		}
+	}
+
+	// Add user prompt.
+	parts = append(parts, UserPromptPart{
+		Content:   prompt,
+		Timestamp: time.Now(),
+	})
+
+	return ModelRequest{
+		Parts:     parts,
+		Timestamp: time.Now(),
+	}, nil
 }
 
 // newRunID generates a random run identifier.

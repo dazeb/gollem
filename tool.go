@@ -47,18 +47,20 @@ type ToolHandler func(ctx context.Context, rc *RunContext, argsJSON string) (any
 
 // Tool is a registered tool with its definition and handler.
 type Tool struct {
-	Definition ToolDefinition
-	Handler    ToolHandler
-	MaxRetries *int // nil = use agent default
+	Definition       ToolDefinition
+	Handler          ToolHandler
+	MaxRetries       *int // nil = use agent default
+	RequiresApproval bool // if true, the agent's ToolApprovalFunc must approve before execution
 }
 
 // ToolOption configures a tool via functional options.
 type ToolOption func(*toolConfig)
 
 type toolConfig struct {
-	maxRetries *int
-	sequential bool
-	strict     *bool
+	maxRetries       *int
+	sequential       bool
+	strict           *bool
+	requiresApproval bool
 }
 
 // WithToolMaxRetries sets the maximum retries for a tool.
@@ -79,6 +81,13 @@ func WithToolSequential(seq bool) ToolOption {
 func WithToolStrict(strict bool) ToolOption {
 	return func(c *toolConfig) {
 		c.strict = &strict
+	}
+}
+
+// WithRequiresApproval marks a tool as requiring human approval before execution.
+func WithRequiresApproval() ToolOption {
+	return func(c *toolConfig) {
+		c.requiresApproval = true
 	}
 }
 
@@ -187,8 +196,9 @@ func FuncTool[P any](name, description string, fn any, opts ...ToolOption) Tool 
 	}
 
 	return Tool{
-		Definition: def,
-		Handler:    handler,
-		MaxRetries: cfg.maxRetries,
+		Definition:       def,
+		Handler:          handler,
+		MaxRetries:       cfg.maxRetries,
+		RequiresApproval: cfg.requiresApproval,
 	}
 }
