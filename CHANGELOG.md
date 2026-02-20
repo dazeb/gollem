@@ -6,6 +6,74 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Phase 14: Ten Innovations from Pydantic-AI, LangChain 1.0, OpenAI Agents SDK, AutoGen & CrewAI
+
+#### Innovation 1: Typed Dependency Access
+- `GetDeps[D]` extracts typed dependencies from `RunContext` without manual type assertions
+- `TryGetDeps[D]` safe variant returning `(D, bool)`
+- `WithDeps` agent option for setting dependencies at agent level
+- Agent-level deps merge with run-level `WithRunDeps` (run-level takes precedence)
+
+#### Innovation 2: Model Capability Profiles
+- `ModelProfile` struct describes model capabilities (tool calls, vision, streaming, context window)
+- `Profiled` optional interface for models to self-declare capabilities
+- `GetProfile` returns profile or default (full capabilities) for non-Profiled models
+- `NewCapabilityRouter` selects first model matching required capabilities
+
+#### Innovation 3: Usage Quotas with Auto-Termination
+- `UsageQuota` with hard limits on requests, total/input/output tokens
+- `QuotaExceededError` returned when quota is breached
+- `WithUsageQuota` agent option; checked before each model request
+- Zero values mean unlimited (opt-in enforcement)
+
+#### Innovation 4: Message Interceptor
+- `MessageInterceptor` intercepts outgoing model requests (allow/drop/modify)
+- `ResponseInterceptor` intercepts incoming model responses
+- `RedactPII` built-in interceptor for regex-based PII redaction
+- `AuditLog` built-in interceptor for message logging
+- `WithMessageInterceptor` / `WithResponseInterceptor` agent options
+
+#### Innovation 5: Tool Choice Control
+- `ToolChoice` with modes: auto, required, none, force (specific tool)
+- `ToolChoiceAuto`, `ToolChoiceRequired`, `ToolChoiceNone`, `ToolChoiceForce` constructors
+- `WithToolChoice` agent option; `WithToolChoiceAutoReset` prevents infinite loops
+- `ToolChoice` field added to `ModelSettings` for provider pass-through
+
+#### Innovation 6: Cost Tracker
+- `CostTracker` with per-model `ModelPricing` (input/output/cached token costs)
+- `Record` accumulates costs; `TotalCost` and `CostBreakdown` for reporting
+- `RunCost` on `RunResult` for per-run cost visibility
+- `WithCostTracker` agent option; thread-safe for concurrent recording
+
+#### Innovation 7: Composable Pipeline
+- `Pipeline` chains `PipelineStep` functions sequentially
+- `AgentStep` wraps `Agent[string]` as a pipeline step
+- `TransformStep` for pure string transformations
+- `ParallelSteps` runs steps concurrently and joins results
+- `ConditionalStep` branches based on a predicate
+- `Then` appends steps immutably (returns new pipeline)
+
+#### Innovation 8: Auto Context Window Management
+- `AutoContextConfig` with token threshold, keep-last-N, optional summary model
+- `WithAutoContext` agent option for transparent overflow handling
+- Simple word-based token estimation (no external deps)
+- Summarizes old messages via model call when threshold exceeded
+
+#### Innovation 9: Streaming Text Options
+- `StreamText` with `StreamTextOptions` (delta mode, debounce window)
+- `StreamTextDelta` for raw incremental chunks
+- `StreamTextAccumulated` for growing accumulated text
+- `StreamTextDebounced` for grouped event delivery
+- Returns `iter.Seq2[string, error]` consistent with existing streaming API
+
+#### Innovation 10: Agent Middleware
+- `AgentMiddleware` wraps model calls with cross-cutting concerns
+- `WithAgentMiddleware` agent option; middleware compose in order (first = outermost)
+- `LoggingMiddleware` logs request/response summaries
+- `MaxTokensMiddleware` enforces token limits via ModelSettings
+- `TimingMiddleware` records request durations
+- Middleware can modify inputs, outputs, or skip the model call entirely
+
 ### Phase 13: Ten Innovations from LangGraph, Pydantic-AI, OpenAI Agents SDK & AutoGen
 
 #### Innovation 1: Rate Limiter Model Wrapper

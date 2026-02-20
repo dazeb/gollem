@@ -69,6 +69,12 @@ func (a *Agent[T]) Clone(opts ...AgentOption[T]) *Agent[T] {
 	clone.tracingEnabled = a.tracingEnabled
 	clone.defaultToolTimeout = a.defaultToolTimeout
 	clone.eventBus = a.eventBus
+	clone.deps = a.deps
+	clone.usageQuota = a.usageQuota
+	clone.costTracker = a.costTracker
+	clone.autoContext = a.autoContext
+	clone.toolChoice = a.toolChoice
+	clone.toolChoiceAutoReset = a.toolChoiceAutoReset
 	if len(a.globalToolResultValidators) > 0 {
 		clone.globalToolResultValidators = make([]ToolResultValidatorFunc, len(a.globalToolResultValidators))
 		copy(clone.globalToolResultValidators, a.globalToolResultValidators)
@@ -80,6 +86,18 @@ func (a *Agent[T]) Clone(opts ...AgentOption[T]) *Agent[T] {
 	if len(a.traceExporters) > 0 {
 		clone.traceExporters = make([]TraceExporter, len(a.traceExporters))
 		copy(clone.traceExporters, a.traceExporters)
+	}
+	if len(a.messageInterceptors) > 0 {
+		clone.messageInterceptors = make([]MessageInterceptor, len(a.messageInterceptors))
+		copy(clone.messageInterceptors, a.messageInterceptors)
+	}
+	if len(a.responseInterceptors) > 0 {
+		clone.responseInterceptors = make([]ResponseInterceptor, len(a.responseInterceptors))
+		copy(clone.responseInterceptors, a.responseInterceptors)
+	}
+	if len(a.middleware) > 0 {
+		clone.middleware = make([]AgentMiddleware, len(a.middleware))
+		copy(clone.middleware, a.middleware)
 	}
 
 	// Apply new options.
