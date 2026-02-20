@@ -373,9 +373,9 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	})
 
 	// Build trace if enabled.
-	if a.tracingEnabled && result != nil {
+	if a.tracingEnabled {
 		endTime := time.Now()
-		result.Trace = &RunTrace{
+		trace := &RunTrace{
 			RunID:     state.runID,
 			Prompt:    prompt,
 			StartTime: startTime,
@@ -386,7 +386,16 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 			Success:   runErr == nil,
 		}
 		if runErr != nil {
-			result.Trace.Error = runErr.Error()
+			trace.Error = runErr.Error()
+		}
+		if result != nil {
+			result.Trace = trace
+		}
+
+		// Export trace to all registered exporters.
+		for _, exporter := range a.traceExporters {
+			// Exporter errors are non-fatal — don't break the run.
+			_ = exporter.Export(ctx, trace)
 		}
 	}
 
