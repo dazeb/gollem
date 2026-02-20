@@ -8,7 +8,7 @@ import (
 	"log"
 
 	"github.com/fugue-labs/gollem"
-	"github.com/fugue-labs/gollem/anthropic"
+	"github.com/fugue-labs/gollem/provider/anthropic"
 )
 
 func main() {

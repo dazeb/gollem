@@ -10,7 +10,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/fugue-labs/gollem/graph"
+	"github.com/fugue-labs/gollem/ext/graph"
 )
 
 // OrderState represents the state of an order processing workflow.

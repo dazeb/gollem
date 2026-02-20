@@ -18,10 +18,10 @@
 // # Providers
 //
 // Gollem supports multiple LLM providers through the Model interface:
-//   - anthropic: Anthropic Claude models
-//   - openai: OpenAI GPT and O-series models
-//   - vertexai: Google Gemini via Vertex AI
-//   - vertexai_anthropic: Claude via Vertex AI
+//   - provider/anthropic: Anthropic Claude models
+//   - provider/openai: OpenAI GPT and O-series models
+//   - provider/vertexai: Google Gemini via Vertex AI
+//   - provider/vertexai_anthropic: Claude via Vertex AI
 //
 // # Tools
 //

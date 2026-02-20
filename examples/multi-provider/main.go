@@ -9,8 +9,8 @@ import (
 	"os"
 
 	"github.com/fugue-labs/gollem"
-	"github.com/fugue-labs/gollem/anthropic"
-	"github.com/fugue-labs/gollem/openai"
+	"github.com/fugue-labs/gollem/provider/anthropic"
+	"github.com/fugue-labs/gollem/provider/openai"
 )
 
 // Answer is the structured output type.

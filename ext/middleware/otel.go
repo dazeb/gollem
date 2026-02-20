@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	instrumentationName = "github.com/fugue-labs/gollem/middleware"
+	instrumentationName = "github.com/fugue-labs/gollem/ext/middleware"
 )
 
 // OTelMiddleware provides OpenTelemetry tracing and metrics for model requests.

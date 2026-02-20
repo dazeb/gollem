@@ -12,7 +12,7 @@ import (
 	"log"
 
 	"github.com/fugue-labs/gollem"
-	"github.com/fugue-labs/gollem/deep"
+	"github.com/fugue-labs/gollem/ext/deep"
 )
 
 // AnalysisResult is the structured output type.

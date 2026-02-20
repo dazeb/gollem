@@ -12,7 +12,7 @@ import (
 	"log"
 
 	"github.com/fugue-labs/gollem"
-	"github.com/fugue-labs/gollem/eval"
+	"github.com/fugue-labs/gollem/ext/eval"
 )
 
 func main() {

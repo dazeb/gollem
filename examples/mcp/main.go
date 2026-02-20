@@ -10,8 +10,8 @@ import (
 	"os"
 
 	"github.com/fugue-labs/gollem"
-	"github.com/fugue-labs/gollem/anthropic"
-	mcpclient "github.com/fugue-labs/gollem/mcp"
+	"github.com/fugue-labs/gollem/provider/anthropic"
+	mcpclient "github.com/fugue-labs/gollem/ext/mcp"
 )
 
 func main() {

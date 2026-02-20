@@ -96,7 +96,7 @@ func main() {
 ### With a Real Provider
 
 ```go
-import "github.com/fugue-labs/gollem/anthropic"
+import "github.com/fugue-labs/gollem/provider/anthropic"
 
 model := anthropic.New() // reads ANTHROPIC_API_KEY from environment
 agent := gollem.NewAgent[CityInfo](model,
@@ -240,10 +240,10 @@ Create providers with sensible defaults or explicit configuration:
 
 ```go
 import (
-    "github.com/fugue-labs/gollem/anthropic"
-    "github.com/fugue-labs/gollem/openai"
-    "github.com/fugue-labs/gollem/vertexai"
-    "github.com/fugue-labs/gollem/vertexai_anthropic"
+    "github.com/fugue-labs/gollem/provider/anthropic"
+    "github.com/fugue-labs/gollem/provider/openai"
+    "github.com/fugue-labs/gollem/provider/vertexai"
+    "github.com/fugue-labs/gollem/provider/vertexai_anthropic"
 )
 
 // Each provider reads credentials from environment variables by default.
@@ -317,7 +317,7 @@ graph TD
 The `deep` package provides tools for long-running agent tasks that may exceed context limits:
 
 ```go
-import "github.com/fugue-labs/gollem/deep"
+import "github.com/fugue-labs/gollem/ext/deep"
 
 // Three-tier context compression.
 cm := deep.NewContextManager(model,
@@ -371,7 +371,7 @@ result, _ := pipeline.Run(ctx, "Write an article about Go generics")
 Build typed state machines for complex multi-step workflows:
 
 ```go
-import "github.com/fugue-labs/gollem/graph"
+import "github.com/fugue-labs/gollem/ext/graph"
 
 type OrderState struct {
     OrderID string
@@ -406,7 +406,7 @@ finalState, _ := g.Run(ctx, OrderState{OrderID: "123", Total: 99.99})
 Wrap agents for fault-tolerant execution with automatic retries and checkpointing:
 
 ```go
-import "github.com/fugue-labs/gollem/temporal"
+import "github.com/fugue-labs/gollem/ext/temporal"
 
 ta := temporal.NewTemporalAgent(agent,
     temporal.WithName("my-agent"),
@@ -426,7 +426,7 @@ activities := ta.Activities()
 Test agent quality with datasets and composable evaluators:
 
 ```go
-import "github.com/fugue-labs/gollem/eval"
+import "github.com/fugue-labs/gollem/ext/eval"
 
 dataset := eval.Dataset[string]{
     Name: "geography",
@@ -447,7 +447,7 @@ fmt.Printf("Score: %.0f%% (%d/%d passed)\n",
 Connect to Model Context Protocol servers for external tool discovery:
 
 ```go
-import mcpclient "github.com/fugue-labs/gollem/mcp"
+import mcpclient "github.com/fugue-labs/gollem/ext/mcp"
 
 // Stdio transport.
 client, _ := mcpclient.NewStdioClient(ctx, "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp")
@@ -470,7 +470,7 @@ allTools, _ := mgr.Tools(ctx) // tools namespaced as "fs__toolname", "db__toolna
 Compose cross-cutting concerns around model requests:
 
 ```go
-import "github.com/fugue-labs/gollem/middleware"
+import "github.com/fugue-labs/gollem/ext/middleware"
 
 // Wrap a model with middleware.
 wrapped := middleware.Wrap(model,
