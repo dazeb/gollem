@@ -42,6 +42,7 @@ type handoffStep[T any] struct {
 	name     string
 	agent    *Agent[T]
 	promptFn func(prevOutput T) string
+	filter   HandoffFilter // optional context filter
 }
 
 // Handoff runs agents in sequence, passing each agent's output to the next.
@@ -66,6 +67,17 @@ func (h *Handoff[T]) AddStep(name string, agent *Agent[T], promptFn func(prevOut
 	return h
 }
 
+// AddStepWithFilter adds a step with a context filter applied before the agent sees messages.
+func (h *Handoff[T]) AddStepWithFilter(name string, agent *Agent[T], promptFn func(prevOutput T) string, filter HandoffFilter) *Handoff[T] {
+	h.steps = append(h.steps, handoffStep[T]{
+		name:     name,
+		agent:    agent,
+		promptFn: promptFn,
+		filter:   filter,
+	})
+	return h
+}
+
 // Run executes the pipeline with the initial prompt.
 func (h *Handoff[T]) Run(ctx context.Context, initialPrompt string) (*RunResult[T], error) {
 	if len(h.steps) == 0 {
@@ -85,8 +97,16 @@ func (h *Handoff[T]) Run(ctx context.Context, initialPrompt string) (*RunResult[
 
 		var opts []RunOption
 		if lastResult != nil {
-			// Pass accumulated messages from previous steps.
-			opts = append(opts, WithMessages(lastResult.Messages...))
+			msgs := lastResult.Messages
+			// Apply handoff filter if present.
+			if step.filter != nil {
+				var filterErr error
+				msgs, filterErr = step.filter(ctx, msgs)
+				if filterErr != nil {
+					return nil, fmt.Errorf("handoff step %q filter: %w", step.name, filterErr)
+				}
+			}
+			opts = append(opts, WithMessages(msgs...))
 		}
 
 		result, err := step.agent.Run(ctx, prompt, opts...)
