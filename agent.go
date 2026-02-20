@@ -52,6 +52,7 @@ type Agent[T any] struct {
 	knowledgeBase        KnowledgeBase
 	kbAutoStore          bool
 	toolsPrepareFunc     AgentToolsPrepareFunc
+	hooks                []Hook
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -298,7 +299,37 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 		limits = *cfg.usageLimits
 	}
 
-	return a.runLoop(ctx, state, prompt, settings, limits, cfg.deps, cfg.deferredResults)
+	// Fire OnRunStart hooks.
+	rc := &RunContext{
+		Deps:    cfg.deps,
+		Usage:   state.usage,
+		Prompt:  prompt,
+		RunStep: state.runStep,
+		RunID:   state.runID,
+	}
+	a.fireHook(func(h Hook) {
+		if h.OnRunStart != nil {
+			h.OnRunStart(ctx, rc, prompt)
+		}
+	})
+
+	// Fire OnRunEnd hooks on return.
+	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, cfg.deps, cfg.deferredResults)
+
+	endRC := &RunContext{
+		Deps:    cfg.deps,
+		Usage:   state.usage,
+		Prompt:  prompt,
+		RunStep: state.runStep,
+		RunID:   state.runID,
+	}
+	a.fireHook(func(h Hook) {
+		if h.OnRunEnd != nil {
+			h.OnRunEnd(ctx, endRC, state.messages, runErr)
+		}
+	})
+
+	return result, runErr
 }
 
 // RunStream executes the agent with streaming output.
@@ -511,6 +542,21 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			messages = processed
 		}
 
+		// Fire OnModelRequest hooks.
+		modelRC := &RunContext{
+			Deps:     deps,
+			Usage:    state.usage,
+			Prompt:   prompt,
+			Messages: messages,
+			RunStep:  state.runStep,
+			RunID:    state.runID,
+		}
+		a.fireHook(func(h Hook) {
+			if h.OnModelRequest != nil {
+				h.OnModelRequest(ctx, modelRC, messages)
+			}
+		})
+
 		// Call the model.
 		resp, err := a.model.Request(ctx, messages, settings, params)
 		if err != nil {
@@ -522,6 +568,13 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 
 		// Append response to history.
 		state.messages = append(state.messages, *resp)
+
+		// Fire OnModelResponse hooks.
+		a.fireHook(func(h Hook) {
+			if h.OnModelResponse != nil {
+				h.OnModelResponse(ctx, modelRC, resp)
+			}
+		})
 
 		// Check token limits.
 		if limits.HasTokenLimits() {
@@ -921,7 +974,28 @@ func (a *Agent[T]) executeSingleTool(
 		}
 	}
 
+	// Fire OnToolStart hooks.
+	a.fireHook(func(h Hook) {
+		if h.OnToolStart != nil {
+			h.OnToolStart(ctx, rc, call.ToolName, call.ArgsJSON)
+		}
+	})
+
 	result, err := tool.Handler(ctx, rc, call.ArgsJSON)
+
+	// Fire OnToolEnd hooks with the result or error.
+	{
+		var resultStr string
+		if err == nil {
+			resultStr, _ = serializeToolResult(result)
+		}
+		a.fireHook(func(h Hook) {
+			if h.OnToolEnd != nil {
+				h.OnToolEnd(ctx, rc, call.ToolName, resultStr, err)
+			}
+		})
+	}
+
 	if err != nil {
 		// Check for CallDeferred.
 		var deferredErr *CallDeferred
