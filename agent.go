@@ -55,6 +55,7 @@ type Agent[T any] struct {
 	hooks                []Hook
 	inputGuardrails      []namedInputGuardrail
 	turnGuardrails       []namedTurnGuardrail
+	repairFunc           any // RepairFunc[T], stored as any to avoid generic field
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -702,6 +703,14 @@ func (a *Agent[T]) processResponse(
 			if a.outputSchema.Mode == OutputModeText {
 				// T should be string in text mode.
 				output = any(text).(T)
+			} else if a.repairFunc != nil {
+				// Try repair before failing.
+				repairFn := a.repairFunc.(RepairFunc[T])
+				repaired, repairErr := repairFn(ctx, text, err)
+				if repairErr != nil {
+					return nil, nil, nil, fmt.Errorf("failed to parse text output: %w", err)
+				}
+				output = repaired
 			} else {
 				return nil, nil, nil, fmt.Errorf("failed to parse text output: %w", err)
 			}
@@ -788,6 +797,17 @@ func (a *Agent[T]) processResponse(
 	// Handle output tool calls.
 	for _, tc := range outputCalls {
 		output, err := deserializeOutput[T](tc.ArgsJSON, a.outputSchema.OuterTypedDictKey)
+		if err != nil {
+			// Try repair if available.
+			if a.repairFunc != nil {
+				repairFn := a.repairFunc.(RepairFunc[T])
+				repaired, repairErr := repairFn(ctx, tc.ArgsJSON, err)
+				if repairErr == nil {
+					output = repaired
+					err = nil
+				}
+			}
+		}
 		if err != nil {
 			if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
 				return nil, nil, nil, retryErr
