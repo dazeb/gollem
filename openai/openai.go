@@ -120,7 +120,7 @@ func (p *Provider) Request(ctx context.Context, messages []gollem.ModelMessage, 
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+chatCompletionsEndpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+chatCompletionsEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
 	}
@@ -135,7 +135,7 @@ func (p *Provider) Request(ctx context.Context, messages []gollem.ModelMessage, 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, &gollem.ModelHTTPError{
-			Message:    fmt.Sprintf("openai API error: %s", string(respBody)),
+			Message:    "openai API error: " + string(respBody),
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 			ModelName:  p.model,
@@ -162,7 +162,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []gollem.ModelMes
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+chatCompletionsEndpoint, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+chatCompletionsEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
 	}
@@ -177,7 +177,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []gollem.ModelMes
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, &gollem.ModelHTTPError{
-			Message:    fmt.Sprintf("openai API error: %s", string(respBody)),
+			Message:    "openai API error: " + string(respBody),
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 			ModelName:  p.model,

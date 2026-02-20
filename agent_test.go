@@ -117,7 +117,7 @@ func TestAgentRunWithToolCalls(t *testing.T) {
 	}
 
 	weatherTool := FuncTool[WeatherParams]("get_weather", "Get weather",
-		func(ctx context.Context, params WeatherParams) (string, error) {
+		func(_ context.Context, params WeatherParams) (string, error) {
 			return fmt.Sprintf("Sunny, 22C in %s", params.City), nil
 		},
 	)
@@ -158,13 +158,13 @@ func TestAgentRunWithMultipleToolCalls(t *testing.T) {
 	var callCount atomic.Int32
 
 	toolA := FuncTool[Params]("tool_a", "Tool A",
-		func(ctx context.Context, params Params) (string, error) {
+		func(_ context.Context, params Params) (string, error) {
 			callCount.Add(1)
 			return "a:" + params.X, nil
 		},
 	)
 	toolB := FuncTool[Params]("tool_b", "Tool B",
-		func(ctx context.Context, params Params) (string, error) {
+		func(_ context.Context, params Params) (string, error) {
 			callCount.Add(1)
 			return "b:" + params.X, nil
 		},
@@ -203,7 +203,7 @@ func TestAgentRunToolThenStructured(t *testing.T) {
 	)
 
 	analyzeTool := FuncTool[Params]("analyze", "Analyze text",
-		func(ctx context.Context, params Params) (string, error) {
+		func(_ context.Context, params Params) (string, error) {
 			return "analysis of: " + params.Text, nil
 		},
 	)
@@ -237,7 +237,7 @@ func TestAgentRunRetryOnValidation(t *testing.T) {
 
 	agent := NewAgent[CityInfo](model,
 		WithMaxRetries[CityInfo](3),
-		WithOutputValidator[CityInfo](func(ctx context.Context, rc *RunContext, output CityInfo) (CityInfo, error) {
+		WithOutputValidator[CityInfo](func(_ context.Context, _ *RunContext, output CityInfo) (CityInfo, error) {
 			callCount++
 			if output.Name == "" {
 				return output, NewModelRetryError("name cannot be empty")
@@ -268,7 +268,7 @@ func TestAgentRunMaxRetriesExceeded(t *testing.T) {
 
 	agent := NewAgent[CityInfo](model,
 		WithMaxRetries[CityInfo](1),
-		WithOutputValidator[CityInfo](func(ctx context.Context, rc *RunContext, output CityInfo) (CityInfo, error) {
+		WithOutputValidator[CityInfo](func(_ context.Context, _ *RunContext, output CityInfo) (CityInfo, error) {
 			return output, NewModelRetryError("invalid output")
 		}),
 	)
@@ -296,7 +296,7 @@ func TestAgentRunUsageLimitExceeded(t *testing.T) {
 	}
 
 	searchTool := FuncTool[Params]("search", "Search",
-		func(ctx context.Context, params Params) (string, error) {
+		func(_ context.Context, _ Params) (string, error) {
 			return "found", nil
 		},
 	)
@@ -373,7 +373,7 @@ func TestAgentRunToolRetry(t *testing.T) {
 	)
 
 	searchTool := FuncTool[Params]("search", "Search",
-		func(ctx context.Context, params Params) (string, error) {
+		func(_ context.Context, params Params) (string, error) {
 			callCount++
 			if params.Query == "bad" {
 				return "", NewModelRetryError("query too vague, be more specific")
@@ -484,7 +484,7 @@ func TestAgentRequestParameters(t *testing.T) {
 	}
 
 	searchTool := FuncTool[Params]("search", "Search",
-		func(ctx context.Context, params Params) (string, error) {
+		func(_ context.Context, _ Params) (string, error) {
 			return "found", nil
 		},
 	)
@@ -651,7 +651,7 @@ func TestAgentRunDeps(t *testing.T) {
 	)
 
 	searchTool := FuncTool[Params]("search", "Search",
-		func(ctx context.Context, rc *RunContext, params Params) (string, error) {
+		func(_ context.Context, rc *RunContext, _ Params) (string, error) {
 			deps := rc.Deps.(*MyDeps)
 			capturedKey = deps.APIKey
 			return "result", nil

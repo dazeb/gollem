@@ -2,11 +2,12 @@ package gollem
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"sync"
 	"time"
 )
+
 
 // TestModel is a mock Model for testing agents without real LLM calls.
 // It returns canned responses in sequence and records all calls for assertions.
@@ -48,7 +49,7 @@ func (m *TestModel) Request(ctx context.Context, messages []ModelMessage, settin
 	})
 
 	if len(m.responses) == 0 {
-		return nil, fmt.Errorf("test model: no responses configured")
+		return nil, errors.New("test model: no responses configured")
 	}
 
 	resp := m.responses[m.idx]

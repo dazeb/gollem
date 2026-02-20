@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"time"
 )
 
 // ToolKind classifies tool types.
@@ -60,7 +59,6 @@ type toolConfig struct {
 	maxRetries *int
 	sequential bool
 	strict     *bool
-	timeout    *time.Duration
 }
 
 // WithToolMaxRetries sets the maximum retries for a tool.

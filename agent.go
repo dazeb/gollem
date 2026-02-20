@@ -187,6 +187,7 @@ type agentRunState struct {
 	toolRetries map[string]int
 	runStep     int
 	runID       string
+	mu          sync.Mutex // protects usage and toolRetries during concurrent tool execution
 }
 
 // Run executes the agent loop synchronously and returns the final result.
@@ -354,6 +355,8 @@ type finalResult[T any] struct {
 }
 
 // processResponse handles a model response: executes tool calls or extracts final result.
+//
+//nolint:cyclop
 func (a *Agent[T]) processResponse(
 	ctx context.Context,
 	state *agentRunState,
@@ -373,15 +376,12 @@ func (a *Agent[T]) processResponse(
 		if err != nil {
 			// For text mode with T=string, the text IS the output.
 			// Try direct assignment.
-			var zero T
 			if a.outputSchema.Mode == OutputModeText {
 				// T should be string in text mode.
 				output = any(text).(T)
-				err = nil
 			} else {
 				return nil, nil, fmt.Errorf("failed to parse text output: %w", err)
 			}
-			_ = zero
 		}
 
 		// Validate output.
@@ -470,7 +470,7 @@ func (a *Agent[T]) processResponse(
 				return nil, nil, retryErr
 			}
 			part := buildRetryParts(
-				fmt.Sprintf("failed to parse output: %s", err.Error()),
+				"failed to parse output: "+err.Error(),
 				tc.ToolName,
 				tc.ToolCallID,
 			)
@@ -608,6 +608,8 @@ func (a *Agent[T]) executeSingleTool(
 	deps any,
 	prompt string,
 ) ModelRequestPart {
+	// Lock state for reading/writing shared fields.
+	state.mu.Lock()
 	state.usage.IncrToolCall()
 
 	// Determine max retries for this tool.
@@ -628,14 +630,18 @@ func (a *Agent[T]) executeSingleTool(
 		RunStep:    state.runStep,
 		RunID:      state.runID,
 	}
+	state.mu.Unlock()
 
 	result, err := tool.Handler(ctx, rc, call.ArgsJSON)
 	if err != nil {
 		// Check for ModelRetryError.
 		var retryErr *ModelRetryError
 		if errors.As(err, &retryErr) {
+			state.mu.Lock()
 			state.toolRetries[call.ToolName]++
-			if state.toolRetries[call.ToolName] > maxRetries {
+			retryCount := state.toolRetries[call.ToolName]
+			state.mu.Unlock()
+			if retryCount > maxRetries {
 				return RetryPromptPart{
 					Content:    fmt.Sprintf("tool %q exceeded maximum retries (%d): %s", call.ToolName, maxRetries, retryErr.Message),
 					ToolName:   call.ToolName,
@@ -654,7 +660,7 @@ func (a *Agent[T]) executeSingleTool(
 		// Other errors become tool return with error content.
 		return ToolReturnPart{
 			ToolName:   call.ToolName,
-			Content:    fmt.Sprintf("error: %s", err.Error()),
+			Content:    "error: " + err.Error(),
 			ToolCallID: call.ToolCallID,
 			Timestamp:  time.Now(),
 		}
@@ -665,7 +671,7 @@ func (a *Agent[T]) executeSingleTool(
 	if err != nil {
 		return ToolReturnPart{
 			ToolName:   call.ToolName,
-			Content:    fmt.Sprintf("error serializing result: %s", err.Error()),
+			Content:    "error serializing result: " + err.Error(),
 			ToolCallID: call.ToolCallID,
 			Timestamp:  time.Now(),
 		}

@@ -127,7 +127,7 @@ func schemaForStruct(t reflect.Type, visited map[reflect.Type]bool) Schema {
 
 // collectFields recursively collects struct fields, handling embedded structs.
 func collectFields(t reflect.Type, properties map[string]any, required *[]string, visited map[reflect.Type]bool) {
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		field := t.Field(i)
 
 		// Skip unexported fields.

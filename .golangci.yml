@@ -1,0 +1,64 @@
+linters:
+  enable:
+    # Bug detection
+    - bodyclose
+    - errcheck
+    - errorlint
+    - govet
+    - ineffassign
+    - nilerr
+    - noctx
+    - staticcheck
+    - unused
+    # Style
+    - asciicheck
+    - godot
+    - misspell
+    - nakedret
+    - nolintlint
+    - revive
+    - unconvert
+    - whitespace
+    # Performance
+    - perfsprint
+    - usestdlibvars
+    - intrange
+    # Security
+    - gosec
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/trevorprater/gollem
+  nakedret:
+    max-func-lines: 30
+  gosec:
+    excludes:
+      - G404
+  revive:
+    rules:
+      - name: var-naming
+        disabled: true
+      - name: unused-parameter
+        disabled: true
+
+issues:
+  max-same-issues: 50
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - errorlint
+        - perfsprint
+    - path: example_test\.go
+      linters:
+        - errcheck
+        - unused
+    # Complex message builders are inherently complex.
+    - path: (message|stream|agent)\.go
+      linters:
+        - nestif
+    # Existing error type names are part of the public API.
+    - linters:
+        - errname
+      text: "should conform to the"

@@ -89,12 +89,3 @@ func (e *ModelHTTPError) Error() string {
 	return fmt.Sprintf("%s (status %d)", e.Message, e.StatusCode)
 }
 
-// toolRetryError is an internal error type used to pass retry feedback
-// through the agent loop. It wraps a RetryPromptPart.
-type toolRetryError struct {
-	part any // RetryPromptPart; typed as any to avoid circular dependency
-}
-
-func (e *toolRetryError) Error() string {
-	return "tool retry"
-}

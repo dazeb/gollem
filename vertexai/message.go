@@ -154,7 +154,7 @@ func buildRequest(messages []gollem.ModelMessage, settings *gollem.ModelSettings
 						content["result"] = v
 					default:
 						b, _ := json.Marshal(v)
-						json.Unmarshal(b, &content)
+						_ = json.Unmarshal(b, &content)
 					}
 					userParts = append(userParts, geminiPart{
 						FunctionResponse: &geminiFunctionResponse{
@@ -192,7 +192,7 @@ func buildRequest(messages []gollem.ModelMessage, settings *gollem.ModelSettings
 				case gollem.ToolCallPart:
 					args := make(map[string]any)
 					if p.ArgsJSON != "" && p.ArgsJSON != "{}" {
-						json.Unmarshal([]byte(p.ArgsJSON), &args)
+						_ = json.Unmarshal([]byte(p.ArgsJSON), &args)
 					}
 					modelParts = append(modelParts, geminiPart{
 						FunctionCall: &geminiFunctionCall{

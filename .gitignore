@@ -1,0 +1,36 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+/bin/
+/dist/
+
+# Dependency directories
+/vendor/
+
+# XML dumps
+*.xml
+
+# Ralph prompt
+RALPH_PROMPT.md

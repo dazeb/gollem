@@ -476,16 +476,15 @@ data: {"type":"message_stop"}
 	body := io.NopCloser(strings.NewReader(sseData))
 	stream := newStreamedResponse(body, Claude4Sonnet)
 
-	var events []gollem.ModelResponseStreamEvent
+	// Drain the stream.
 	for {
-		event, err := stream.Next()
+		_, err := stream.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		events = append(events, event)
 	}
 
 	// Check final response has the tool call with accumulated args.
@@ -619,7 +618,7 @@ func TestRequestIntegration(t *testing.T) {
 }
 
 func TestRequestStreamIntegration(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 
@@ -683,7 +682,7 @@ data: {"type":"message_stop"}
 }
 
 func TestRequestHTTPError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		w.Write([]byte(`{"error":{"message":"rate limited"}}`))
 	}))
@@ -700,7 +699,7 @@ func TestRequestHTTPError(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected ModelHTTPError, got %T: %v", err, err)
 	}
-	if httpErr.StatusCode != 429 {
+	if httpErr.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("status = %d, want 429", httpErr.StatusCode)
 	}
 }

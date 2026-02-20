@@ -214,7 +214,7 @@ func TestRequestIntegration(t *testing.T) {
 }
 
 func TestRequestStreamIntegration(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 		events := []string{
@@ -280,7 +280,7 @@ func TestRequestStreamIntegration(t *testing.T) {
 }
 
 func TestRequestHTTPError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error":"Permission denied"}`))
 	}))

@@ -18,11 +18,11 @@ type Middleware interface {
 	WrapRequest(next RequestFunc) RequestFunc
 }
 
-// MiddlewareFunc is a function adapter for Middleware.
-type MiddlewareFunc func(next RequestFunc) RequestFunc
+// Func is a function adapter for Middleware.
+type Func func(next RequestFunc) RequestFunc
 
 // WrapRequest implements Middleware.
-func (f MiddlewareFunc) WrapRequest(next RequestFunc) RequestFunc {
+func (f Func) WrapRequest(next RequestFunc) RequestFunc {
 	return f(next)
 }
 

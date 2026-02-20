@@ -109,10 +109,10 @@ func TestJSONRPCErrorParsing(t *testing.T) {
 	}
 }
 
-func TestMCPToolParsing(t *testing.T) {
+func TestToolParsing(t *testing.T) {
 	data := `{"name":"get_weather","description":"Get weather for a location","inputSchema":{"type":"object","properties":{"city":{"type":"string"}}}}`
 
-	var tool MCPTool
+	var tool Tool
 	err := json.Unmarshal([]byte(data), &tool)
 	if err != nil {
 		t.Fatal(err)
@@ -129,9 +129,9 @@ func TestMCPToolParsing(t *testing.T) {
 	}
 }
 
-func TestMCPToolResultTextContent(t *testing.T) {
-	result := &MCPToolResult{
-		Content: []MCPContent{
+func TestToolResultTextContent(t *testing.T) {
+	result := &ToolResult{
+		Content: []Content{
 			{Type: "text", Text: "Hello"},
 			{Type: "text", Text: "World"},
 		},
@@ -141,15 +141,15 @@ func TestMCPToolResultTextContent(t *testing.T) {
 	}
 }
 
-func TestMCPToolResultEmpty(t *testing.T) {
-	result := &MCPToolResult{Content: []MCPContent{}}
+func TestToolResultEmpty(t *testing.T) {
+	result := &ToolResult{Content: []Content{}}
 	if result.TextContent() != "" {
 		t.Errorf("expected empty string, got '%s'", result.TextContent())
 	}
 }
 
 func TestConvertTool(t *testing.T) {
-	mcpTool := MCPTool{
+	mcpTool := Tool{
 		Name:        "get_weather",
 		Description: "Get weather for a city",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
@@ -179,7 +179,7 @@ func TestConvertTool(t *testing.T) {
 }
 
 func TestConvertToolNilSchema(t *testing.T) {
-	mcpTool := MCPTool{
+	mcpTool := Tool{
 		Name: "simple_tool",
 	}
 
@@ -194,7 +194,7 @@ func TestToolsListResultParsing(t *testing.T) {
 	data := `{"tools":[{"name":"tool1","description":"First tool","inputSchema":{"type":"object"}},{"name":"tool2","description":"Second tool","inputSchema":{"type":"object"}}]}`
 
 	var result struct {
-		Tools []MCPTool `json:"tools"`
+		Tools []Tool `json:"tools"`
 	}
 	err := json.Unmarshal([]byte(data), &result)
 	if err != nil {

@@ -3,7 +3,6 @@ package anthropic
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -280,6 +279,3 @@ func (s *streamedResponse) Close() error {
 
 // Verify streamedResponse implements gollem.StreamedResponse.
 var _ gollem.StreamedResponse = (*streamedResponse)(nil)
-
-// Ensure fmt is used (referenced in anthropic.go errors).
-var _ = fmt.Sprintf

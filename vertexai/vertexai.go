@@ -140,7 +140,7 @@ func (p *Provider) getToken(ctx context.Context) (string, error) {
 // createTokenSource creates an OAuth2 token source based on configuration.
 func (p *Provider) createTokenSource(ctx context.Context) (oauth2.TokenSource, error) {
 	if p.credentialsJSON != nil {
-		creds, err := google.CredentialsFromJSON(ctx, p.credentialsJSON, cloudScope)
+		creds, err := google.CredentialsFromJSON(ctx, p.credentialsJSON, cloudScope) //nolint:staticcheck // deprecated but still functional
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +151,7 @@ func (p *Provider) createTokenSource(ctx context.Context) (oauth2.TokenSource, e
 		if err != nil {
 			return nil, fmt.Errorf("failed to read credentials file: %w", err)
 		}
-		creds, err := google.CredentialsFromJSON(ctx, data, cloudScope)
+		creds, err := google.CredentialsFromJSON(ctx, data, cloudScope) //nolint:staticcheck // deprecated but still functional
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +178,7 @@ func (p *Provider) Request(ctx context.Context, messages []gollem.ModelMessage, 
 	}
 
 	url := p.endpoint() + ":generateContent"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("vertexai: failed to create HTTP request: %w", err)
 	}
@@ -195,7 +195,7 @@ func (p *Provider) Request(ctx context.Context, messages []gollem.ModelMessage, 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, &gollem.ModelHTTPError{
-			Message:    fmt.Sprintf("vertexai API error: %s", string(respBody)),
+			Message:    "vertexai API error: " + string(respBody),
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 			ModelName:  p.model,
@@ -223,7 +223,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []gollem.ModelMes
 	}
 
 	url := p.endpoint() + ":streamGenerateContent?alt=sse"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("vertexai: failed to create HTTP request: %w", err)
 	}
@@ -240,7 +240,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []gollem.ModelMes
 		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, &gollem.ModelHTTPError{
-			Message:    fmt.Sprintf("vertexai API error: %s", string(respBody)),
+			Message:    "vertexai API error: " + string(respBody),
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 			ModelName:  p.model,

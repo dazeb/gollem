@@ -95,7 +95,7 @@ func TestBufferMemoryOverflow(t *testing.T) {
 	ctx := context.Background()
 
 	// Add 5 messages.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		buf.Add(ctx, gollem.ModelRequest{
 			Parts: []gollem.ModelRequestPart{
 				gollem.UserPromptPart{Content: string(rune('A' + i))},
@@ -172,11 +172,11 @@ func TestBufferMemoryConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	// Concurrent writers.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
-		go func(n int) {
+		go func(_ int) {
 			defer wg.Done()
-			for j := 0; j < 10; j++ {
+			for range 10 {
 				buf.Add(ctx, gollem.ModelRequest{
 					Parts: []gollem.ModelRequestPart{
 						gollem.UserPromptPart{Content: "msg"},
@@ -187,11 +187,11 @@ func TestBufferMemoryConcurrent(t *testing.T) {
 	}
 
 	// Concurrent readers.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 10; j++ {
+			for range 10 {
 				buf.Get(ctx)
 			}
 		}()

@@ -1,6 +1,7 @@
 package gollem
 
 import (
+	"errors"
 	"io"
 	"iter"
 	"sync"
@@ -13,10 +14,8 @@ type StreamResult[T any] struct {
 	outputSchema *OutputSchema
 	validators   []OutputValidatorFunc[T]
 	messages     []ModelMessage
-	usage        RunUsage
 
-	mu   sync.Mutex
-	done bool
+	mu sync.Mutex
 }
 
 // newStreamResult creates a new StreamResult.
@@ -37,7 +36,7 @@ func (s *StreamResult[T]) StreamText(delta bool) iter.Seq2[string, error] {
 		var cumulative string
 		for {
 			event, err := s.stream.Next()
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return
 			}
 			if err != nil {
@@ -78,7 +77,7 @@ func (s *StreamResult[T]) StreamEvents() iter.Seq2[ModelResponseStreamEvent, err
 	return func(yield func(ModelResponseStreamEvent, error) bool) {
 		for {
 			event, err := s.stream.Next()
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return
 			}
 			if err != nil {
@@ -97,7 +96,7 @@ func (s *StreamResult[T]) GetOutput() (*ModelResponse, error) {
 	// Drain the stream.
 	for {
 		_, err := s.stream.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

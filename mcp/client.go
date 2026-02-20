@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -132,7 +133,7 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return nil, fmt.Errorf("mcp: client is closed")
+		return nil, errors.New("mcp: client is closed")
 	}
 	c.pending[id] = ch
 	c.mu.Unlock()
@@ -226,14 +227,14 @@ func (c *Client) readLoop() {
 }
 
 // ListTools discovers available tools from the MCP server.
-func (c *Client) ListTools(ctx context.Context) ([]MCPTool, error) {
+func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	result, err := c.call(ctx, "tools/list", nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: tools/list failed: %w", err)
 	}
 
 	var listResult struct {
-		Tools []MCPTool `json:"tools"`
+		Tools []Tool `json:"tools"`
 	}
 	if err := json.Unmarshal(result, &listResult); err != nil {
 		return nil, fmt.Errorf("mcp: failed to parse tools list: %w", err)
@@ -243,7 +244,7 @@ func (c *Client) ListTools(ctx context.Context) ([]MCPTool, error) {
 }
 
 // CallTool invokes a tool on the MCP server.
-func (c *Client) CallTool(ctx context.Context, name string, args map[string]any) (*MCPToolResult, error) {
+func (c *Client) CallTool(ctx context.Context, name string, args map[string]any) (*ToolResult, error) {
 	params := map[string]any{
 		"name":      name,
 		"arguments": args,
@@ -254,7 +255,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 		return nil, fmt.Errorf("mcp: tools/call failed: %w", err)
 	}
 
-	var toolResult MCPToolResult
+	var toolResult ToolResult
 	if err := json.Unmarshal(result, &toolResult); err != nil {
 		return nil, fmt.Errorf("mcp: failed to parse tool result: %w", err)
 	}
@@ -272,7 +273,7 @@ func (c *Client) Close() error {
 
 		c.stdin.Close()
 		if c.cmd.Process != nil {
-			c.cmd.Process.Kill()
+			_ = c.cmd.Process.Kill()
 		}
 		closeErr = c.cmd.Wait()
 	})

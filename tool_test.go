@@ -18,7 +18,7 @@ type SearchResult struct {
 
 func TestFuncToolBasic(t *testing.T) {
 	tool := FuncTool[SearchParams]("search", "Search the web",
-		func(ctx context.Context, params SearchParams) (*SearchResult, error) {
+		func(_ context.Context, _ SearchParams) (*SearchResult, error) {
 			return &SearchResult{
 				Items: []string{"result1", "result2"},
 				Total: 2,
@@ -69,7 +69,7 @@ func TestFuncToolWithRunContext(t *testing.T) {
 	var gotDeps any
 
 	tool := FuncTool[SearchParams]("search", "Search",
-		func(ctx context.Context, rc *RunContext, params SearchParams) (string, error) {
+		func(_ context.Context, rc *RunContext, params SearchParams) (string, error) {
 			gotDeps = rc.Deps
 			return "result for: " + params.Query, nil
 		},
@@ -94,7 +94,7 @@ func TestFuncToolWithEmptyArgs(t *testing.T) {
 	type NoParams struct{}
 
 	tool := FuncTool[NoParams]("ping", "Ping",
-		func(ctx context.Context, params NoParams) (string, error) {
+		func(_ context.Context, _ NoParams) (string, error) {
 			return "pong", nil
 		},
 	)
@@ -111,7 +111,7 @@ func TestFuncToolWithEmptyArgs(t *testing.T) {
 
 func TestFuncToolError(t *testing.T) {
 	tool := FuncTool[SearchParams]("search", "Search",
-		func(ctx context.Context, params SearchParams) (string, error) {
+		func(_ context.Context, _ SearchParams) (string, error) {
 			return "", NewModelRetryError("try again with different query")
 		},
 	)
@@ -132,7 +132,7 @@ func TestFuncToolError(t *testing.T) {
 
 func TestFuncToolInvalidJSON(t *testing.T) {
 	tool := FuncTool[SearchParams]("search", "Search",
-		func(ctx context.Context, params SearchParams) (string, error) {
+		func(_ context.Context, params SearchParams) (string, error) {
 			return params.Query, nil
 		},
 	)
@@ -146,7 +146,7 @@ func TestFuncToolInvalidJSON(t *testing.T) {
 
 func TestFuncToolOptions(t *testing.T) {
 	tool := FuncTool[SearchParams]("search", "Search",
-		func(ctx context.Context, params SearchParams) (string, error) {
+		func(_ context.Context, _ SearchParams) (string, error) {
 			return "", nil
 		},
 		WithToolSequential(true),
@@ -168,7 +168,7 @@ func TestFuncToolResultSerialization(t *testing.T) {
 	}
 
 	tool := FuncTool[SearchParams]("search", "Search",
-		func(ctx context.Context, params SearchParams) (*ComplexResult, error) {
+		func(_ context.Context, _ SearchParams) (*ComplexResult, error) {
 			return &ComplexResult{
 				Data: map[string][]int{"a": {1, 2, 3}},
 			}, nil

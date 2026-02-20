@@ -3,7 +3,7 @@ package middleware
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -23,7 +23,7 @@ func (m *mockModel) Request(_ context.Context, _ []gollem.ModelMessage, _ *golle
 	return m.response, m.err
 }
 func (m *mockModel) RequestStream(_ context.Context, _ []gollem.ModelMessage, _ *gollem.ModelSettings, _ *gollem.ModelRequestParameters) (gollem.StreamedResponse, error) {
-	return nil, fmt.Errorf("not implemented")
+	return nil, errors.New("not implemented")
 }
 
 func TestWrapNoMiddleware(t *testing.T) {
@@ -40,7 +40,7 @@ func TestWrapNoMiddleware(t *testing.T) {
 
 func TestWrapModelName(t *testing.T) {
 	model := &mockModel{response: &gollem.ModelResponse{ModelName: "test-model"}}
-	noop := MiddlewareFunc(func(next RequestFunc) RequestFunc {
+	noop := Func(func(next RequestFunc) RequestFunc {
 		return next
 	})
 	wrapped := Wrap(model, noop)
@@ -56,7 +56,7 @@ func TestMiddlewareChainOrder(t *testing.T) {
 		ModelName: "test",
 	}}
 
-	mw1 := MiddlewareFunc(func(next RequestFunc) RequestFunc {
+	mw1 := Func(func(next RequestFunc) RequestFunc {
 		return func(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (*gollem.ModelResponse, error) {
 			order = append(order, "mw1-before")
 			resp, err := next(ctx, messages, settings, params)
@@ -64,7 +64,7 @@ func TestMiddlewareChainOrder(t *testing.T) {
 			return resp, err
 		}
 	})
-	mw2 := MiddlewareFunc(func(next RequestFunc) RequestFunc {
+	mw2 := Func(func(next RequestFunc) RequestFunc {
 		return func(ctx context.Context, messages []gollem.ModelMessage, settings *gollem.ModelSettings, params *gollem.ModelRequestParameters) (*gollem.ModelResponse, error) {
 			order = append(order, "mw2-before")
 			resp, err := next(ctx, messages, settings, params)
@@ -127,7 +127,7 @@ func TestLoggingMiddlewareError(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	model := &mockModel{err: fmt.Errorf("API error")}
+	model := &mockModel{err: errors.New("API error")}
 	logging := NewLogging(logger, slog.LevelInfo)
 	wrapped := Wrap(model, logging)
 
@@ -180,7 +180,7 @@ func TestMetricsMiddleware(t *testing.T) {
 	wrapped := Wrap(model, mw)
 
 	// Make 3 requests.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		wrapped.Request(context.Background(), nil, nil, nil)
 	}
 
@@ -207,7 +207,7 @@ func TestMetricsMiddleware(t *testing.T) {
 
 func TestMetricsMiddlewareErrors(t *testing.T) {
 	metrics := &Metrics{}
-	model := &mockModel{err: fmt.Errorf("fail")}
+	model := &mockModel{err: errors.New("fail")}
 
 	mw := NewMetrics(metrics)
 	wrapped := Wrap(model, mw)
@@ -242,7 +242,7 @@ func TestMetricsAverageLatency(t *testing.T) {
 
 func TestRequestStreamDelegates(t *testing.T) {
 	model := &mockModel{}
-	noop := MiddlewareFunc(func(next RequestFunc) RequestFunc { return next })
+	noop := Func(func(next RequestFunc) RequestFunc { return next })
 	wrapped := Wrap(model, noop)
 
 	_, err := wrapped.RequestStream(context.Background(), nil, nil, nil)
