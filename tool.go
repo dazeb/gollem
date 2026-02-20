@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"time"
 )
 
 // ToolKind classifies tool types.
@@ -74,6 +75,7 @@ type Tool struct {
 	PrepareFunc      ToolPrepareFunc // if set, called before each model request to filter/modify this tool
 	Stateful         StatefulTool    // if set, state is saved/restored with checkpoints
 	ResultValidator  ToolResultValidatorFunc // if set, validates tool results before passing to model
+	Timeout          time.Duration   // if > 0, tool execution is limited to this duration
 }
 
 // ToolOption configures a tool via functional options.
@@ -85,6 +87,7 @@ type toolConfig struct {
 	strict           *bool
 	requiresApproval bool
 	resultValidator  ToolResultValidatorFunc
+	timeout          time.Duration
 }
 
 // WithToolMaxRetries sets the maximum retries for a tool.
@@ -119,6 +122,14 @@ func WithRequiresApproval() ToolOption {
 func WithToolResultValidator(fn ToolResultValidatorFunc) ToolOption {
 	return func(c *toolConfig) {
 		c.resultValidator = fn
+	}
+}
+
+// WithToolTimeout sets a maximum execution time for a tool.
+// If the tool exceeds the timeout, it returns context.DeadlineExceeded.
+func WithToolTimeout(d time.Duration) ToolOption {
+	return func(c *toolConfig) {
+		c.timeout = d
 	}
 }
 
@@ -232,6 +243,7 @@ func FuncTool[P any](name, description string, fn any, opts ...ToolOption) Tool 
 		MaxRetries:       cfg.maxRetries,
 		RequiresApproval: cfg.requiresApproval,
 		ResultValidator:  cfg.resultValidator,
+		Timeout:          cfg.timeout,
 	}
 }
 

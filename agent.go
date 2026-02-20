@@ -58,6 +58,10 @@ type Agent[T any] struct {
 	repairFunc           any // RepairFunc[T], stored as any to avoid generic field
 	tracingEnabled             bool
 	globalToolResultValidators []ToolResultValidatorFunc
+	defaultToolTimeout         time.Duration
+	runConditions              []RunCondition
+	traceExporters             []TraceExporter
+	eventBus                   *EventBus
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -200,6 +204,14 @@ func WithToolsPrepare[T any](fn AgentToolsPrepareFunc) AgentOption[T] {
 func WithGlobalToolResultValidator[T any](fn ToolResultValidatorFunc) AgentOption[T] {
 	return func(a *Agent[T]) {
 		a.globalToolResultValidators = append(a.globalToolResultValidators, fn)
+	}
+}
+
+// WithDefaultToolTimeout sets a default timeout for all tools that don't have
+// their own timeout configured.
+func WithDefaultToolTimeout[T any](d time.Duration) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.defaultToolTimeout = d
 	}
 }
 
@@ -1099,7 +1111,19 @@ func (a *Agent[T]) executeSingleTool(
 		state.mu.Unlock()
 	}
 
-	result, err := tool.Handler(ctx, rc, call.ArgsJSON)
+	// Apply tool timeout.
+	toolCtx := ctx
+	timeout := tool.Timeout
+	if timeout == 0 && a.defaultToolTimeout > 0 {
+		timeout = a.defaultToolTimeout
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		toolCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	result, err := tool.Handler(toolCtx, rc, call.ArgsJSON)
 
 	// Fire OnToolEnd hooks with the result or error.
 	{

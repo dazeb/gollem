@@ -67,9 +67,19 @@ func (a *Agent[T]) Clone(opts ...AgentOption[T]) *Agent[T] {
 	clone.toolsPrepareFunc = a.toolsPrepareFunc
 	clone.repairFunc = a.repairFunc
 	clone.tracingEnabled = a.tracingEnabled
+	clone.defaultToolTimeout = a.defaultToolTimeout
+	clone.eventBus = a.eventBus
 	if len(a.globalToolResultValidators) > 0 {
 		clone.globalToolResultValidators = make([]ToolResultValidatorFunc, len(a.globalToolResultValidators))
 		copy(clone.globalToolResultValidators, a.globalToolResultValidators)
+	}
+	if len(a.runConditions) > 0 {
+		clone.runConditions = make([]RunCondition, len(a.runConditions))
+		copy(clone.runConditions, a.runConditions)
+	}
+	if len(a.traceExporters) > 0 {
+		clone.traceExporters = make([]TraceExporter, len(a.traceExporters))
+		copy(clone.traceExporters, a.traceExporters)
 	}
 
 	// Apply new options.
