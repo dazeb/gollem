@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Phase 10: Innovations
+- Provider fallback chains — FallbackModel tries multiple models in order until one succeeds
+- Rate limiting middleware — token bucket rate limiter with configurable rps and burst
+- Retry middleware with exponential backoff — configurable max retries, delay caps, RetryIf predicates
+- Request/response caching middleware — SHA-256 hash-based cache with TTL expiration and stats
+- Reflection/self-correction pattern — RunWithReflection loops output through a validator with configurable iterations
+
 ### Phase 9: Documentation, README & Examples
 - Comprehensive README.md with quick start, architecture diagram, and feature documentation
 - CONTRIBUTING.md with development setup, code style, and PR process
