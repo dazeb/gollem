@@ -88,9 +88,10 @@ type textPartJSON struct {
 }
 
 type toolCallPartJSON struct {
-	ToolName   string `json:"tool_name"`
-	ArgsJSON   string `json:"args_json"`
-	ToolCallID string `json:"tool_call_id"`
+	ToolName   string            `json:"tool_name"`
+	ArgsJSON   string            `json:"args_json"`
+	ToolCallID string            `json:"tool_call_id"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 type thinkingPartJSON struct {
