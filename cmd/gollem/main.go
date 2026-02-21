@@ -28,8 +28,9 @@ import (
 )
 
 // Default thinking budget for Anthropic models with extended thinking.
-// Set high enough to give the model room to reason through complex tasks.
-const defaultThinkingBudget = 50000
+// Balanced for quality vs speed: allows deep reasoning without burning
+// too many seconds per turn on time-limited benchmark tasks.
+const defaultThinkingBudget = 16000
 
 func main() {
 	if len(os.Args) < 2 {
