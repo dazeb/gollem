@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+# Install Go
+GO_VERSION="1.25.6"
+curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz
+rm -rf /usr/local/go
+tar -C /usr/local -xzf /tmp/go.tar.gz
+rm /tmp/go.tar.gz
+
+export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
+
+# Verify Go installation
+go version
+
+# Install gollem from source
+{% if version %}
+go install github.com/fugue-labs/gollem/cmd/gollem@{{ version }}
+{% else %}
+go install github.com/fugue-labs/gollem/cmd/gollem@latest
+{% endif %}
+
+# Verify gollem installation
+which gollem
+echo "gollem installed successfully"
