@@ -27,27 +27,6 @@ Go's type system isn't a limitation — it's a superpower. When your agent's out
 go get github.com/fugue-labs/gollem
 ```
 
-### How Gollem Compares
-
-| Capability | Gollem (Go) | Pydantic-AI | LangChain | OpenAI Agents SDK | CrewAI |
-|---|---|---|---|---|---|
-| **Type safety** | Compile-time generics | Runtime (Pydantic) | Runtime (optional) | Runtime (Pydantic) | Runtime |
-| **Structured output** | Generic `Agent[T]` | `result_type` | OutputParser | `output_type` | Pydantic models |
-| **Streaming** | `iter.Seq2` (stdlib) | `async for` | `astream` | `async for` | N/A |
-| **Tool creation** | `FuncTool[P]` (reflection) | `@agent.tool` decorator | `@tool` decorator | `@function_tool` | `@tool` decorator |
-| **Multi-agent** | AgentTool, Handoff, Graph | Agent delegation | LangGraph | Handoffs | Crews, Flows |
-| **Guardrails** | Input, Turn, Output | Input validators | N/A | Guardrails | N/A |
-| **Middleware** | Agent middleware chain | N/A | Callbacks | N/A | N/A |
-| **Cost tracking** | Built-in CostTracker | N/A | LangSmith (paid) | N/A | N/A |
-| **Composable pipelines** | Pipeline, Then, Parallel | N/A | LCEL | N/A | Flows |
-| **Usage quotas** | Built-in with auto-stop | N/A | N/A | N/A | N/A |
-| **Message interceptors** | PII redaction, audit log | N/A | N/A | N/A | N/A |
-| **Code mode** | WASM Python sandbox (monty) | N/A | N/A | N/A | N/A |
-| **Context management** | Auto-compress, 3-tier deep | N/A | ConversationBuffer | N/A | Memory |
-| **Deployment** | Single binary | pip + venv | pip + venv | pip + venv | pip + venv |
-| **Core dependencies** | Zero | 15+ | 50+ | 5+ | 30+ |
-| **Test suite** | 561+ tests | N/A | N/A | N/A | N/A |
-
 ## Features at a Glance
 
 Gollem ships **50+ composable primitives** in a single framework. Here's what you get:
