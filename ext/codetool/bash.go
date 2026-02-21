@@ -12,6 +12,25 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
+// truncateOutput shortens long output by keeping the head and tail, connected
+// by a truncation notice. This preserves error summaries that appear at the
+// end of test or build output.
+func truncateOutput(s string, maxLen int) string {
+	if maxLen <= 0 || len(s) <= maxLen {
+		return s
+	}
+	// Keep 70% head, 30% tail so the model sees both the start of errors
+	// and the summary at the end.
+	headLen := maxLen * 7 / 10
+	tailLen := maxLen - headLen - 100 // reserve space for the separator
+	if tailLen < 0 {
+		tailLen = 0
+	}
+	return s[:headLen] +
+		fmt.Sprintf("\n\n... [truncated %d bytes, showing first %d and last %d bytes] ...\n\n", len(s), headLen, tailLen) +
+		s[len(s)-tailLen:]
+}
+
 // BashParams are the parameters for the bash tool.
 type BashParams struct {
 	// Command is the shell command to execute.
@@ -84,13 +103,11 @@ func Bash(opts ...Option) core.Tool {
 			outStr := stdout.String()
 			errStr := stderr.String()
 
-			// Truncate output if too long.
-			if cfg.MaxOutputLen > 0 && len(outStr) > cfg.MaxOutputLen {
-				outStr = outStr[:cfg.MaxOutputLen] + fmt.Sprintf("\n... [truncated, %d bytes total]", len(stdout.String()))
-			}
-			if cfg.MaxOutputLen > 0 && len(errStr) > cfg.MaxOutputLen {
-				errStr = errStr[:cfg.MaxOutputLen] + fmt.Sprintf("\n... [truncated, %d bytes total]", len(stderr.String()))
-			}
+			// Truncate output if too long, keeping both head and tail so
+			// the model can see error summaries at the end (e.g., test
+			// results, compiler error counts).
+			outStr = truncateOutput(outStr, cfg.MaxOutputLen)
+			errStr = truncateOutput(errStr, cfg.MaxOutputLen)
 
 			return BashResult{
 				Stdout:   outStr,

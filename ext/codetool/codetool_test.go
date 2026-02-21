@@ -129,6 +129,35 @@ func assertNotContains(t *testing.T, s, substr string) {
 	}
 }
 
+// --- Truncation Tests ---
+
+func TestTruncateOutput_Short(t *testing.T) {
+	result := truncateOutput("short output", 1000)
+	if result != "short output" {
+		t.Errorf("expected no truncation, got %q", result)
+	}
+}
+
+func TestTruncateOutput_Long(t *testing.T) {
+	// Create a long string with identifiable head and tail.
+	input := strings.Repeat("HEAD", 100) + strings.Repeat("MIDDLE", 500) + strings.Repeat("TAIL", 100)
+	result := truncateOutput(input, 500)
+
+	if len(result) > 600 { // some slack for the separator
+		t.Errorf("result too long: %d bytes", len(result))
+	}
+	assertContains(t, result, "HEAD")
+	assertContains(t, result, "TAIL")
+	assertContains(t, result, "truncated")
+}
+
+func TestTruncateOutput_ZeroMax(t *testing.T) {
+	result := truncateOutput("anything", 0)
+	if result != "anything" {
+		t.Errorf("expected no truncation with maxLen=0, got %q", result)
+	}
+}
+
 // --- Bash Tests ---
 
 func TestBash_Echo(t *testing.T) {
