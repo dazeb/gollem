@@ -1,0 +1,2 @@
+gollem: running with claude-sonnet-4-6 in /app
+error: model request failed: anthropic API error: {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},"request_id":"req_011CYLsZBac5i8QSF5Feh6k9"} (status 401)

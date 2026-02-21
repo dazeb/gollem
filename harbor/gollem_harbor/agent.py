@@ -4,9 +4,13 @@ This module implements the BaseInstalledAgent interface so gollem can be
 evaluated on Terminal-Bench 2.0 via Harbor.
 
 Usage:
+    # First, build the Linux binary:
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o harbor/gollem-linux-amd64 ./cmd/gollem/
+
+    # Then run:
     harbor run -d terminal-bench@2.0 \\
         --agent-import-path gollem_harbor:GollemAgent \\
-        -m anthropic/claude-sonnet-4-5 \\
+        -m anthropic/claude-sonnet-4-6 \\
         --env docker
 """
 
@@ -15,18 +19,66 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import subprocess
 from pathlib import Path
 
 from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
+from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-_TEMPLATES_DIR = Path(__file__).parent / "templates"
+_PKG_DIR = Path(__file__).parent
+_TEMPLATES_DIR = _PKG_DIR / "templates"
+_REPO_ROOT = _PKG_DIR.parent.parent  # gollem repo root
+
+
+def _find_binary() -> Path:
+    """Locate the pre-built gollem Linux binary.
+
+    Searches in order:
+    1. harbor/gollem-linux-amd64 (next to pyproject.toml)
+    2. GOLLEM_BINARY env var
+    3. Attempts to build it on the fly
+    """
+    # Check next to pyproject.toml.
+    candidate = _PKG_DIR.parent / "gollem-linux-amd64"
+    if candidate.exists():
+        return candidate
+
+    # Check env var.
+    if env_path := os.environ.get("GOLLEM_BINARY"):
+        p = Path(env_path)
+        if p.exists():
+            return p
+
+    # Try to build it.
+    build_target = _PKG_DIR.parent / "gollem-linux-amd64"
+    cmd_dir = _REPO_ROOT / "cmd" / "gollem"
+    if cmd_dir.exists():
+        subprocess.run(
+            ["go", "build", "-o", str(build_target), "./cmd/gollem/"],
+            cwd=str(_REPO_ROOT),
+            env={**os.environ, "GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "0"},
+            check=True,
+            capture_output=True,
+        )
+        if build_target.exists():
+            return build_target
+
+    raise FileNotFoundError(
+        "gollem Linux binary not found. Build it with:\n"
+        "  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o harbor/gollem-linux-amd64 ./cmd/gollem/"
+    )
 
 
 class GollemAgent(BaseInstalledAgent):
-    """Harbor agent that runs the gollem coding agent CLI."""
+    """Harbor agent that runs the gollem coding agent CLI.
 
-    SUPPORTS_ATIF = False  # We emit a simpler trajectory format.
+    Instead of compiling Go inside the container (slow), we upload a
+    pre-built static binary. This reduces setup time from 6+ minutes
+    to under 10 seconds.
+    """
+
+    SUPPORTS_ATIF = False
 
     def __init__(
         self,
@@ -47,14 +99,31 @@ class GollemAgent(BaseInstalledAgent):
     def _install_agent_template_path(self) -> Path:
         return _TEMPLATES_DIR / "install.sh.j2"
 
+    async def setup(self, environment: BaseEnvironment) -> None:
+        """Upload the pre-built binary instead of compiling from source."""
+        binary_path = _find_binary()
+
+        # Upload binary to container.
+        await environment.exec(command="mkdir -p /usr/local/bin")
+        await environment.upload_file(
+            source_path=binary_path,
+            target_path="/usr/local/bin/gollem",
+        )
+        await environment.exec(command="chmod +x /usr/local/bin/gollem")
+
+        # Verify.
+        result = await environment.exec(command="gollem --help")
+        if result.return_code != 0:
+            raise RuntimeError(
+                f"gollem binary verification failed: {result.stderr}"
+            )
+
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         """Build the shell command to invoke gollem run inside the container."""
-        # Determine provider from model name (e.g. "anthropic/claude-sonnet-4-5").
         provider, model = self._parse_model_name()
 
-        # Build the gollem run command.
         cmd_parts = [
-            "gollem", "run",
+            "/usr/local/bin/gollem", "run",
             "--provider", provider,
         ]
         if model:
@@ -65,16 +134,13 @@ class GollemAgent(BaseInstalledAgent):
         if self._thinking_budget > 0:
             cmd_parts.extend(["--thinking-budget", str(self._thinking_budget)])
 
-        # The instruction is the prompt.
         cmd_parts.append(shlex.quote(instruction))
 
-        # Environment variables for API keys and Go path.
         env = {
-            "PATH": "/usr/local/go/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "PATH": "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
             "HOME": "/root",
         }
 
-        # Pass through API keys from the host environment.
         for key in [
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
@@ -88,13 +154,12 @@ class GollemAgent(BaseInstalledAgent):
             ExecInput(
                 command=" ".join(cmd_parts),
                 env=env,
-                timeout_sec=self._timeout_minutes * 60 + 60,  # +1min buffer
+                timeout_sec=self._timeout_minutes * 60 + 60,
             ),
         ]
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Parse gollem output from the command logs."""
-        # Read stdout from the last command execution.
         command_dir = self.logs_dir / "command-0"
         if not command_dir.exists():
             return
@@ -111,7 +176,6 @@ class GollemAgent(BaseInstalledAgent):
             else -1
         )
 
-        # Build a simple trajectory.
         trajectory = {
             "agent": "gollem",
             "model": self.model_name,
@@ -120,8 +184,6 @@ class GollemAgent(BaseInstalledAgent):
             "stderr": stderr,
         }
 
-        # Parse token usage from stderr (gollem prints it there).
-        # Format: "gollem: done (tokens: N in, M out, tools: K)"
         for line in stderr.splitlines():
             if "tokens:" in line and "done" in line:
                 try:
@@ -136,27 +198,27 @@ class GollemAgent(BaseInstalledAgent):
                 except (IndexError, ValueError):
                     pass
 
-        # Write trajectory.
         traj_path = self.logs_dir / "trajectory.json"
         traj_path.write_text(json.dumps(trajectory, indent=2))
 
-        # Set the agent output as the final answer.
-        context.output = stdout.strip() if stdout.strip() else None
-        context.trajectory_path = traj_path
+        # Populate AgentContext with token usage.
+        if "input_tokens" in trajectory:
+            context.n_input_tokens = trajectory["input_tokens"]
+        if "output_tokens" in trajectory:
+            context.n_output_tokens = trajectory["output_tokens"]
+
+        context.metadata = {
+            "trajectory_path": str(traj_path),
+            "return_code": return_code,
+        }
 
     def _parse_model_name(self) -> tuple[str, str]:
-        """Parse 'provider/model' format into (provider, model) tuple.
-
-        Harbor passes model names as 'provider/model' (e.g.
-        'anthropic/claude-sonnet-4-5'). We split this into the provider
-        and model parts that gollem expects.
-        """
+        """Parse 'provider/model' format into (provider, model) tuple."""
         if not self.model_name:
             return "anthropic", ""
 
         if "/" in self.model_name:
             provider, model = self.model_name.split("/", 1)
-            # Map common Harbor provider names to gollem provider names.
             provider_map = {
                 "anthropic": "anthropic",
                 "openai": "openai",
