@@ -169,7 +169,7 @@ func (s *Server) dispatch(ctx context.Context, req *jsonRPCRequest) {
 	case "tools/call":
 		s.handleToolsCall(ctx, req)
 	default:
-		s.sendError(req.ID, codeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method))
+		s.sendError(req.ID, codeMethodNotFound, "method not found: "+req.Method)
 	}
 }
 
@@ -261,7 +261,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *jsonRPCRequest) {
 	case "list_providers":
 		s.callListProviders(req)
 	default:
-		s.sendError(req.ID, codeMethodNotFound, fmt.Sprintf("unknown tool: %s", params.Name))
+		s.sendError(req.ID, codeMethodNotFound, "unknown tool: "+params.Name)
 	}
 }
 

@@ -68,7 +68,7 @@ func handleStream(c *fiber.Ctx, runner AgentRunner, prompt string) error {
 		stream, err := runner.RunStream(c.UserContext(), prompt)
 		if err != nil {
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
-			w.Flush()
+			_ = w.Flush()
 			return
 		}
 		defer stream.Close()
@@ -76,19 +76,19 @@ func handleStream(c *fiber.Ctx, runner AgentRunner, prompt string) error {
 		for text, err := range stream.StreamText(true) {
 			if err != nil {
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
-				w.Flush()
+				_ = w.Flush()
 				return
 			}
 			data, _ := json.Marshal(map[string]string{"text": text})
 			fmt.Fprintf(w, "data: %s\n\n", data)
-			w.Flush()
+			_ = w.Flush()
 		}
 
 		resp := stream.Response()
 		if resp != nil {
 			data, _ := json.Marshal(map[string]any{"usage": resp.Usage})
 			fmt.Fprintf(w, "event: done\ndata: %s\n\n", data)
-			w.Flush()
+			_ = w.Flush()
 		}
 	})
 
