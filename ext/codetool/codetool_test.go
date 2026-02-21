@@ -2,6 +2,7 @@ package codetool
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -608,5 +609,200 @@ func TestMatchDoublestar(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("matchDoublestar(%q, %q) = %v, want %v", tt.pattern, tt.path, got, tt.want)
 		}
+	}
+}
+
+// --- Verification Checkpoint Tests ---
+
+func TestIsVerificationCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		argsJSON string
+		want     bool
+	}{
+		{"go test", `{"command":"go test ./..."}`, true},
+		{"go build", `{"command":"go build ./..."}`, true},
+		{"go vet", `{"command":"go vet ./..."}`, true},
+		{"pytest", `{"command":"pytest tests/"}`, true},
+		{"npm test", `{"command":"npm test"}`, true},
+		{"yarn test", `{"command":"yarn test"}`, true},
+		{"cargo test", `{"command":"cargo test"}`, true},
+		{"cargo clippy", `{"command":"cargo clippy"}`, true},
+		{"make test", `{"command":"make test"}`, true},
+		{"make (build)", `{"command":"make"}`, true},
+		{"eslint", `{"command":"npx eslint src/"}`, true},
+		{"golangci-lint", `{"command":"golangci-lint run"}`, true},
+		{"tsc", `{"command":"tsc --noEmit"}`, true},
+		{"mypy", `{"command":"mypy src/"}`, true},
+		{"mvn test", `{"command":"mvn test"}`, true},
+		{"gradle test", `{"command":"gradle test"}`, true},
+		{"dotnet test", `{"command":"dotnet test"}`, true},
+		{"mixed case", `{"command":"Go Test ./..."}`, true},
+
+		// Non-verification commands.
+		{"echo", `{"command":"echo hello"}`, false},
+		{"ls", `{"command":"ls -la"}`, false},
+		{"cat", `{"command":"cat file.txt"}`, false},
+		{"git status", `{"command":"git status"}`, false},
+		{"cd", `{"command":"cd /tmp"}`, false},
+		{"curl", `{"command":"curl https://example.com"}`, false},
+		{"invalid json", `not json`, false},
+		{"empty command", `{"command":""}`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isVerificationCommand(tt.argsJSON)
+			if got != tt.want {
+				t.Errorf("isVerificationCommand(%s) = %v, want %v", tt.argsJSON, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVerificationCheckpoint_RejectsWithoutVerification(t *testing.T) {
+	_, validator := VerificationCheckpoint()
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+
+	_, err := validator(ctx, rc, "I'm done with the task.")
+	if err == nil {
+		t.Fatal("expected error when no verification was done")
+	}
+
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got %T: %v", err, err)
+	}
+	assertContains(t, retryErr.Message, "verify")
+}
+
+func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
+	mw, validator := VerificationCheckpoint()
+
+	ctx := context.Background()
+
+	// Simulate a conversation where the model called bash with "go test".
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Fix the bug"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"go test ./..."}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "ok\nPASS",
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+
+	// Run the middleware so it scans the messages.
+	nextCalled := false
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		nextCalled = true
+		return &core.ModelResponse{}, nil
+	}
+	_, err := mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("middleware error: %v", err)
+	}
+	if !nextCalled {
+		t.Fatal("middleware did not call next")
+	}
+
+	// Now the validator should accept.
+	rc := &core.RunContext{}
+	output, err := validator(ctx, rc, "Done! All tests pass.")
+	if err != nil {
+		t.Fatalf("validator should accept after verification, got: %v", err)
+	}
+	if output != "Done! All tests pass." {
+		t.Errorf("validator modified output: %q", output)
+	}
+}
+
+func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
+	mw, validator := VerificationCheckpoint()
+
+	ctx := context.Background()
+
+	// Simulate a conversation with edit and view calls but no bash.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "edit",
+					ArgsJSON:   `{"path":"main.go","old_string":"foo","new_string":"bar"}`,
+					ToolCallID: "call1",
+				},
+				core.ToolCallPart{
+					ToolName:   "view",
+					ArgsJSON:   `{"path":"main.go"}`,
+					ToolCallID: "call2",
+				},
+			},
+		},
+	}
+
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// Should still reject — no bash verification.
+	rc := &core.RunContext{}
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected error when only edit/view tools were used")
+	}
+}
+
+func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
+	mw, validator := VerificationCheckpoint()
+
+	ctx := context.Background()
+
+	// Bash calls that are NOT verification (e.g., ls, cat).
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"ls -la"}`,
+					ToolCallID: "call1",
+				},
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"cat README.md"}`,
+					ToolCallID: "call2",
+				},
+			},
+		},
+	}
+
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// Should reject — bash was used but not for verification.
+	rc := &core.RunContext{}
+	_, err := validator(ctx, rc, "All done!")
+	if err == nil {
+		t.Fatal("expected error when bash was used but not for verification")
 	}
 }

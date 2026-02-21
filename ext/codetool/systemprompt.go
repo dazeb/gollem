@@ -29,10 +29,10 @@ You have access to tools for reading, writing, searching, and executing code.
 
 ## Before Declaring Completion
 
-You MUST verify your work before stopping:
-1. Build/compile the code successfully
-2. Run all relevant tests and confirm they pass
+You MUST run verification commands using bash before stopping:
+1. Build/compile the code successfully (e.g., ` + "`go build ./...`" + `, ` + "`cargo build`" + `, ` + "`npm run build`" + `, ` + "`make`" + `)
+2. Run all relevant tests and confirm they pass (e.g., ` + "`go test ./...`" + `, ` + "`pytest`" + `, ` + "`npm test`" + `)
 3. If you modified a config, verify it loads correctly
 4. If you fixed a bug, confirm the fix with a test or manual verification
 
-NEVER declare the task complete without verification. The most common failure mode is writing a solution, glancing at it, deciding "looks good," and stopping without actually testing it.`
+NEVER declare the task complete without running tests and builds. The most common failure mode is writing a solution, glancing at it, deciding "looks good," and stopping without actually testing it. You will be rejected if you try to complete without evidence of verification.`

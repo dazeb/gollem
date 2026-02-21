@@ -120,17 +120,10 @@ func runAgent() {
 		os.Exit(1)
 	}
 
-	// Build the coding agent with tools, middleware, and system prompt.
-	toolOpts := []codetool.Option{codetool.WithWorkDir(workDir)}
-
-	agentOpts := []core.AgentOption[string]{
-		core.WithSystemPrompt[string](codetool.SystemPrompt),
-		core.WithToolsets[string](codetool.Toolset(toolOpts...)),
-		core.WithMaxRetries[string](3),
-		core.WithRunCondition[string](core.MaxRunDuration(timeout)),
-		core.WithAgentMiddleware[string](codetool.LoopDetectionMiddleware(4)),
-		core.WithAgentMiddleware[string](codetool.ContextInjectionMiddleware(workDir)),
-	}
+	// Build the coding agent with the full recommended setup: tools, system
+	// prompt, loop detection, context injection, and verification checkpoint.
+	agentOpts := codetool.AgentOptions(workDir)
+	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(timeout)))
 
 	if thinkingBudget > 0 {
 		agentOpts = append(agentOpts, core.WithThinkingBudget[string](thinkingBudget))
