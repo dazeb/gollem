@@ -8,7 +8,7 @@
 
 ## Issues to File
 - [ ] **OTEL Go Contrib proposal** — Copy `marketing/otel-proposal-issue.md` to a new issue on `github.com/open-telemetry/opentelemetry-go-contrib` (needs CNCF CLA first)
-- [ ] **LangFuse Go SDK announcement** — Open issue on `langfuse/langfuse` proposing the Go SDK, linking to https://github.com/fugue-labs/langfuse-go
+- [x] **LangFuse Go SDK announcement** — https://github.com/langfuse/langfuse/issues/12189
 
 ## Content to Post (stagger across different days for max exposure)
 - [ ] **Show HN** — Post `marketing/show-hn.md` to news.ycombinator.com (best: 9-11am ET weekday)
@@ -18,10 +18,10 @@
 - [ ] **dev.to blog** — Publish `marketing/blog-go-vs-python-agents.md`, cross-post to personal blog, share in HN/Reddit threads
 
 ## Framework Ecosystem PRs
-- [ ] **chi** — Submit PR or issue to go-chi/chi ecosystem listing, linking `gollem/contrib/chi`
-- [ ] **gin** — Submit PR or issue to gin-gonic/gin ecosystem listing, linking `gollem/contrib/ginhandler`
-- [ ] **echo** — Submit PR or issue to labstack/echo ecosystem listing, linking `gollem/contrib/echohandler`
-- [ ] **fiber** — Submit PR or issue to gofiber/fiber ecosystem listing, linking `gollem/contrib/fiberhandler`
+- [x] **chi** — https://github.com/go-chi/chi/issues/1055
+- [x] **gin** — https://github.com/gin-gonic/contrib/pull/233
+- [x] **echo** — https://github.com/labstack/echo/issues/2904
+- [x] **fiber** — https://github.com/gofiber/awesome-fiber/pull/52
 
 ## GitHub Action Marketplace
 - [ ] **Test gollem-review-action on a real PR** — Use `act` locally or test on a real PR in a test repo
@@ -45,7 +45,17 @@ All PRs are open, waiting on maintainer review. CI is clean on our end (LiteLLM 
 | https://github.com/BerriAI/litellm/pull/21747 | LiteLLM cookbook | Open, CLA signed, CI failures are theirs |
 | https://github.com/e2b-dev/e2b-cookbook/pull/85 | E2B cookbook | Open, waiting on maintainer |
 | https://github.com/tetratelabs/wazero/pull/2477 | wazero examples | Open, waiting on maintainer |
-| https://github.com/promptfoo/promptfoo/pull/7803 | Promptfoo docs | Open, CodeRabbit + Prettier fixed |
+| https://github.com/promptfoo/promptfoo/pull/7803 | Promptfoo docs | Open, Prettier fixed |
+| https://github.com/gin-gonic/contrib/pull/233 | gin contrib | Open, waiting on maintainer |
+| https://github.com/gofiber/awesome-fiber/pull/52 | awesome-fiber | Open, waiting on maintainer |
+
+## Open Issues to Monitor
+
+| Issue | Target | Status |
+|-------|--------|--------|
+| https://github.com/go-chi/chi/issues/1055 | chi | Open |
+| https://github.com/labstack/echo/issues/2904 | echo | Open |
+| https://github.com/langfuse/langfuse/issues/12189 | langfuse | Open |
 
 ## New Repos Created
 
