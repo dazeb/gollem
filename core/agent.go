@@ -325,6 +325,7 @@ type agentRunState struct {
 	toolRetries map[string]int
 	runStep     int
 	runID       string
+	startTime   time.Time
 	limits      UsageLimits
 	mu          sync.Mutex // protects usage, toolRetries, and traceSteps during concurrent tool execution
 	traceSteps  []TraceStep
@@ -353,6 +354,7 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	state := &agentRunState{
 		toolRetries: make(map[string]int),
 		runID:       newRunID(),
+		startTime:   time.Now(),
 	}
 
 	// Copy any provided history.
@@ -392,12 +394,13 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 
 	// Fire OnRunStart hooks.
 	rc := &RunContext{
-		Deps:     deps,
-		Usage:    state.usage,
-		Prompt:   prompt,
-		RunStep:  state.runStep,
-		RunID:    state.runID,
-		EventBus: a.eventBus,
+		Deps:         deps,
+		Usage:        state.usage,
+		Prompt:       prompt,
+		RunStep:      state.runStep,
+		RunID:        state.runID,
+		RunStartTime: state.startTime,
+		EventBus:     a.eventBus,
 	}
 
 	// Publish RunStartedEvent.
@@ -410,18 +413,16 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 		}
 	})
 
-	// Track start time for tracing.
-	startTime := time.Now()
-
 	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, deps, cfg.deferredResults)
 
 	endRC := &RunContext{
-		Deps:     deps,
-		Usage:    state.usage,
-		Prompt:   prompt,
-		RunStep:  state.runStep,
-		RunID:    state.runID,
-		EventBus: a.eventBus,
+		Deps:         deps,
+		Usage:        state.usage,
+		Prompt:       prompt,
+		RunStep:      state.runStep,
+		RunID:        state.runID,
+		RunStartTime: state.startTime,
+		EventBus:     a.eventBus,
 	}
 
 	// Publish RunCompletedEvent.
@@ -444,9 +445,9 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 		trace := &RunTrace{
 			RunID:     state.runID,
 			Prompt:    prompt,
-			StartTime: startTime,
+			StartTime: state.startTime,
 			EndTime:   endTime,
-			Duration:  endTime.Sub(startTime),
+			Duration:  endTime.Sub(state.startTime),
 			Steps:     state.traceSteps,
 			Usage:     state.usage,
 			Success:   runErr == nil,
@@ -487,6 +488,7 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 	state := &agentRunState{
 		toolRetries: make(map[string]int),
 		runID:       newRunID(),
+		startTime:   time.Now(),
 	}
 	if len(cfg.messages) > 0 {
 		state.messages = make([]ModelMessage, len(cfg.messages))
@@ -498,12 +500,46 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 		settings = cfg.modelSettings
 	}
 
-	// Build the initial request.
-	req := a.buildInitialRequest(prompt)
+	// Run input guardrails (must apply to streaming too).
+	for _, g := range a.inputGuardrails {
+		var gErr error
+		prompt, gErr = g.fn(ctx, prompt)
+		if gErr != nil {
+			return nil, &GuardrailError{
+				GuardrailName: g.name,
+				Message:       gErr.Error(),
+			}
+		}
+	}
+
+	// Resolve deps: run-level deps override agent-level deps.
+	deps := a.deps
+	if cfg.deps != nil {
+		deps = cfg.deps
+	}
+
+	// Build the initial request with dynamic system prompts.
+	req, err := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build initial request: %w", err)
+	}
 	state.messages = append(state.messages, req)
 
-	// Build model request parameters.
-	params := buildModelRequestParams(a.tools, outputSchema)
+	// Gather all tools (direct + toolsets).
+	allTools := a.allTools()
+
+	// Build model request parameters with all tools.
+	params := buildModelRequestParams(allTools, outputSchema)
+
+	// Apply tool choice to settings.
+	if a.toolChoice != nil {
+		if settings == nil {
+			settings = &ModelSettings{}
+		}
+		if settings.ToolChoice == nil {
+			settings.ToolChoice = a.toolChoice
+		}
+	}
 
 	// Make streaming request.
 	stream, err := a.model.RequestStream(ctx, state.messages, settings, params)
@@ -511,7 +547,7 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 		return nil, fmt.Errorf("model stream request failed: %w", err)
 	}
 
-	return newStreamResult[T](stream, outputSchema, a.outputValidators, state.messages), nil
+	return newStreamResult(stream, outputSchema, a.outputValidators, state.messages), nil
 }
 
 // allTools returns all tools from both direct tools and toolsets.
@@ -533,12 +569,13 @@ func (a *Agent[T]) prepareTools(ctx context.Context, state *agentRunState, tools
 	}
 
 	rc := &RunContext{
-		Deps:     deps,
-		Usage:    state.usage,
-		Prompt:   prompt,
-		Messages: state.messages,
-		RunStep:  state.runStep,
-		RunID:    state.runID,
+		Deps:         deps,
+		Usage:        state.usage,
+		Prompt:       prompt,
+		Messages:     state.messages,
+		RunStep:      state.runStep,
+		RunID:        state.runID,
+		RunStartTime: state.startTime,
 	}
 
 	// Apply per-tool prepare functions.
@@ -608,11 +645,13 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			if dr.IsError {
 				deferredParts = append(deferredParts, RetryPromptPart{
 					Content:    dr.Content,
+					ToolName:   dr.ToolName,
 					ToolCallID: dr.ToolCallID,
 					Timestamp:  time.Now(),
 				})
 			} else {
 				deferredParts = append(deferredParts, ToolReturnPart{
+					ToolName:   dr.ToolName,
 					Content:    dr.Content,
 					ToolCallID: dr.ToolCallID,
 					Timestamp:  time.Now(),
@@ -718,13 +757,14 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 
 		// Run turn guardrails.
 		turnRC := &RunContext{
-			Deps:     deps,
-			Usage:    state.usage,
-			Prompt:   prompt,
-			Messages: messages,
-			RunStep:  state.runStep,
-			RunID:    state.runID,
-			EventBus: a.eventBus,
+			Deps:         deps,
+			Usage:        state.usage,
+			Prompt:       prompt,
+			Messages:     messages,
+			RunStep:      state.runStep,
+			RunID:        state.runID,
+			RunStartTime: state.startTime,
+			EventBus:     a.eventBus,
 		}
 		for _, g := range a.turnGuardrails {
 			if gErr := g.fn(ctx, turnRC, messages); gErr != nil {
@@ -737,13 +777,14 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 
 		// Fire OnModelRequest hooks.
 		modelRC := &RunContext{
-			Deps:     deps,
-			Usage:    state.usage,
-			Prompt:   prompt,
-			Messages: messages,
-			RunStep:  state.runStep,
-			RunID:    state.runID,
-			EventBus: a.eventBus,
+			Deps:         deps,
+			Usage:        state.usage,
+			Prompt:       prompt,
+			Messages:     messages,
+			RunStep:      state.runStep,
+			RunID:        state.runID,
+			RunStartTime: state.startTime,
+			EventBus:     a.eventBus,
 		}
 		a.fireHook(func(h Hook) {
 			if h.OnModelRequest != nil {
@@ -828,12 +869,13 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 		// Check run conditions.
 		if len(a.runConditions) > 0 {
 			condRC := &RunContext{
-				Deps:     deps,
-				Usage:    state.usage,
-				Prompt:   prompt,
-				Messages: state.messages,
-				RunStep:  state.runStep,
-				RunID:    state.runID,
+				Deps:         deps,
+				Usage:        state.usage,
+				Prompt:       prompt,
+				Messages:     state.messages,
+				RunStep:      state.runStep,
+				RunID:        state.runID,
+				RunStartTime: state.startTime,
 			}
 			for _, cond := range a.runConditions {
 				if stop, reason := cond(ctx, condRC, resp); stop {
@@ -843,8 +885,10 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 						output, parseErr := deserializeOutput[T](text, a.outputSchema.OuterTypedDictKey)
 						if parseErr != nil {
 							if a.outputSchema.Mode == OutputModeText {
-								output = any(text).(T)
-								parseErr = nil
+								if textOutput, ok := any(text).(T); ok {
+									output = textOutput
+									parseErr = nil
+								}
 							}
 						}
 						if parseErr == nil {
@@ -946,10 +990,17 @@ func (a *Agent[T]) processResponse(
 			// Try direct assignment.
 			if a.outputSchema.Mode == OutputModeText {
 				// T should be string in text mode.
-				output = any(text).(T)
+				textOutput, ok := any(text).(T)
+				if !ok {
+					return nil, nil, nil, fmt.Errorf("output mode is text but type %T is not compatible with string", output)
+				}
+				output = textOutput
 			} else if a.repairFunc != nil {
 				// Try repair before failing.
-				repairFn := a.repairFunc.(RepairFunc[T])
+				repairFn, ok := a.repairFunc.(RepairFunc[T])
+				if !ok {
+					return nil, nil, nil, fmt.Errorf("failed to parse text output: %w", err)
+				}
 				repaired, repairErr := repairFn(ctx, text, err)
 				if repairErr != nil {
 					return nil, nil, nil, fmt.Errorf("failed to parse text output: %w", err)
@@ -962,18 +1013,19 @@ func (a *Agent[T]) processResponse(
 
 		// Validate output.
 		rc := &RunContext{
-			Deps:    deps,
-			Usage:   state.usage,
-			Prompt:  prompt,
-			RunStep: state.runStep,
-			RunID:   state.runID,
+			Deps:         deps,
+			Usage:        state.usage,
+			Prompt:       prompt,
+			RunStep:      state.runStep,
+			RunID:        state.runID,
+			RunStartTime: state.startTime,
 		}
 		output, err = validateOutput(ctx, rc, output, a.outputValidators)
 		if err != nil {
 			var retryErr *ModelRetryError
 			if errors.As(err, &retryErr) {
-				if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
-					return nil, nil, nil, retryErr
+				if incErr := incrementRetries(&state.retries, a.maxRetries, state.messages); incErr != nil {
+					return nil, nil, nil, incErr
 				}
 				part := buildRetryParts(retryErr.Message, "", "")
 				return nil, []ModelRequestPart{part}, nil, nil
@@ -1044,11 +1096,12 @@ func (a *Agent[T]) processResponse(
 		if err != nil {
 			// Try repair if available.
 			if a.repairFunc != nil {
-				repairFn := a.repairFunc.(RepairFunc[T])
-				repaired, repairErr := repairFn(ctx, tc.ArgsJSON, err)
-				if repairErr == nil {
-					output = repaired
-					err = nil
+				if repairFn, ok := a.repairFunc.(RepairFunc[T]); ok {
+					repaired, repairErr := repairFn(ctx, tc.ArgsJSON, err)
+					if repairErr == nil {
+						output = repaired
+						err = nil
+					}
 				}
 			}
 		}
@@ -1067,13 +1120,14 @@ func (a *Agent[T]) processResponse(
 
 		// Validate output.
 		rc := &RunContext{
-			Deps:       deps,
-			Usage:      state.usage,
-			Prompt:     prompt,
-			ToolName:   tc.ToolName,
-			ToolCallID: tc.ToolCallID,
-			RunStep:    state.runStep,
-			RunID:      state.runID,
+			Deps:         deps,
+			Usage:        state.usage,
+			Prompt:       prompt,
+			ToolName:     tc.ToolName,
+			ToolCallID:   tc.ToolCallID,
+			RunStep:      state.runStep,
+			RunID:        state.runID,
+			RunStartTime: state.startTime,
 		}
 		output, err = validateOutput(ctx, rc, output, a.outputValidators)
 		if err != nil {
@@ -1193,8 +1247,20 @@ func (a *Agent[T]) executeFunctionTools(
 			go func(ic indexedCall) {
 				defer wg.Done()
 				if sem != nil {
-					sem <- struct{}{}
-					defer func() { <-sem }()
+					select {
+					case sem <- struct{}{}:
+						defer func() { <-sem }()
+					case <-ctx.Done():
+						mu.Lock()
+						results[ic.idx] = ToolReturnPart{
+							ToolName:   ic.call.ToolName,
+							Content:    "error: " + ctx.Err().Error(),
+							ToolCallID: ic.call.ToolCallID,
+							Timestamp:  time.Now(),
+						}
+						mu.Unlock()
+						return
+					}
 				}
 				part := a.executeSingleTool(ctx, state, ic.call, ic.tool, deps, prompt)
 				mu.Lock()
@@ -1237,17 +1303,18 @@ func (a *Agent[T]) executeSingleTool(
 	}
 
 	rc := &RunContext{
-		Deps:       deps,
-		Usage:      state.usage,
-		Prompt:     prompt,
-		Retry:      state.toolRetries[call.ToolName],
-		MaxRetries: maxRetries,
-		ToolName:   call.ToolName,
-		ToolCallID: call.ToolCallID,
-		Messages:   state.messages,
-		RunStep:    state.runStep,
-		RunID:      state.runID,
-		EventBus:   a.eventBus,
+		Deps:         deps,
+		Usage:        state.usage,
+		Prompt:       prompt,
+		Retry:        state.toolRetries[call.ToolName],
+		MaxRetries:   maxRetries,
+		ToolName:     call.ToolName,
+		ToolCallID:   call.ToolCallID,
+		Messages:     state.messages,
+		RunStep:      state.runStep,
+		RunID:        state.runID,
+		RunStartTime: state.startTime,
+		EventBus:     a.eventBus,
 	}
 	state.mu.Unlock()
 
@@ -1322,7 +1389,11 @@ func (a *Agent[T]) executeSingleTool(
 	{
 		var resultStr string
 		if err == nil {
-			resultStr, _ = serializeToolResult(result)
+			var serErr error
+			resultStr, serErr = serializeToolResult(result)
+			if serErr != nil {
+				resultStr = fmt.Sprintf("(serialization error: %v)", serErr)
+			}
 		}
 		a.fireHook(func(h Hook) {
 			if h.OnToolEnd != nil {
@@ -1487,11 +1558,12 @@ func (a *Agent[T]) buildInitialRequestWithDynamic(ctx context.Context, prompt st
 	// Add dynamic system prompts.
 	for _, fn := range a.dynamicSystemPrompts {
 		rc := &RunContext{
-			Deps:    deps,
-			Usage:   state.usage,
-			Prompt:  prompt,
-			RunStep: state.runStep,
-			RunID:   state.runID,
+			Deps:         deps,
+			Usage:        state.usage,
+			Prompt:       prompt,
+			RunStep:      state.runStep,
+			RunID:        state.runID,
+			RunStartTime: state.startTime,
 		}
 		content, err := fn(ctx, rc)
 		if err != nil {

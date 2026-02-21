@@ -39,11 +39,12 @@ func And(conditions ...RunCondition) RunCondition {
 	}
 }
 
-// MaxRunDuration stops the run after a time limit.
+// MaxRunDuration stops the run after a time limit. The timer starts when the
+// run begins, not when MaxRunDuration is called, so this works correctly even
+// when used as an AgentOption or shared across multiple runs.
 func MaxRunDuration(d time.Duration) RunCondition {
-	start := time.Now()
-	return func(_ context.Context, _ *RunContext, _ *ModelResponse) (bool, string) {
-		if time.Since(start) >= d {
+	return func(_ context.Context, rc *RunContext, _ *ModelResponse) (bool, string) {
+		if time.Since(rc.RunStartTime) >= d {
 			return true, "max run duration exceeded"
 		}
 		return false, ""
@@ -60,8 +61,11 @@ func TextContains(substr string) RunCondition {
 	}
 }
 
-// ToolCallCount stops after max total tool calls.
+// ToolCallCount stops after max total tool calls. max must be positive.
 func ToolCallCount(max int) RunCondition {
+	if max <= 0 {
+		max = 1 // Minimum of 1 to avoid immediate stop.
+	}
 	return func(_ context.Context, rc *RunContext, _ *ModelResponse) (bool, string) {
 		if rc.Usage.ToolCalls >= max {
 			return true, "tool call count limit reached"
