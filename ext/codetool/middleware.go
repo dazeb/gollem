@@ -1,9 +1,14 @@
 package codetool
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -131,16 +136,95 @@ func ContextInjectionMiddleware(workDir string) core.AgentMiddleware {
 	}
 }
 
-// discoverEnvironment runs lightweight discovery commands to map the workspace.
+// discoverEnvironment maps the workspace by inspecting files and running
+// lightweight commands. This gives the model a head start so it doesn't waste
+// tool calls on basic orientation.
 func discoverEnvironment(workDir string) string {
 	var parts []string
 	parts = append(parts, "## Environment Context")
 	parts = append(parts, "Working directory: "+workDir)
 
-	// These are static context hints. The actual discovery happens when the
-	// agent uses ls/grep/bash tools at runtime. This gives it a head start.
-	parts = append(parts, "You can use bash, view, edit, write, grep, glob, and ls tools.")
-	parts = append(parts, "Start by using ls to understand the project structure, then proceed with the task.")
+	// Detect project language and build system from marker files.
+	if lang, build := detectProject(workDir); lang != "" {
+		parts = append(parts, "Language: "+lang)
+		if build != "" {
+			parts = append(parts, "Build system: "+build)
+		}
+	}
+
+	// Git info.
+	if branch := runQuiet(workDir, "git", "branch", "--show-current"); branch != "" {
+		parts = append(parts, "Git branch: "+branch)
+	}
+
+	// Top-level directory listing (first 30 entries, one level deep).
+	if ls := runQuiet(workDir, "ls", "-1"); ls != "" {
+		entries := strings.Split(strings.TrimSpace(ls), "\n")
+		if len(entries) > 30 {
+			entries = append(entries[:30], "... (truncated)")
+		}
+		parts = append(parts, "Top-level files:\n"+strings.Join(entries, "\n"))
+	}
+
+	// Available tools.
+	parts = append(parts, "\nAvailable tools: bash, view, edit, multi_edit, write, grep, glob, ls")
+	parts = append(parts, "Start by reading the task-relevant files, then proceed with changes.")
 
 	return strings.Join(parts, "\n")
+}
+
+// detectProject identifies the project language and build system from marker
+// files in the working directory.
+func detectProject(workDir string) (language, buildSystem string) {
+	markers := []struct {
+		file     string
+		lang     string
+		build    string
+	}{
+		{"go.mod", "Go", "go"},
+		{"Cargo.toml", "Rust", "cargo"},
+		{"package.json", "JavaScript/TypeScript", "npm"},
+		{"pyproject.toml", "Python", "pyproject"},
+		{"setup.py", "Python", "setuptools"},
+		{"requirements.txt", "Python", "pip"},
+		{"pom.xml", "Java", "maven"},
+		{"build.gradle", "Java", "gradle"},
+		{"Gemfile", "Ruby", "bundler"},
+		{"CMakeLists.txt", "C/C++", "cmake"},
+		{"Makefile", "unknown", "make"},
+	}
+
+	for _, m := range markers {
+		if _, err := os.Stat(filepath.Join(workDir, m.file)); err == nil {
+			if language == "" || m.lang != "unknown" {
+				language = m.lang
+			}
+			if buildSystem == "" {
+				buildSystem = m.build
+			}
+			if language != "" && language != "unknown" {
+				return language, buildSystem
+			}
+		}
+	}
+	return language, buildSystem
+}
+
+// runQuiet runs a command in workDir and returns trimmed stdout, or empty
+// string on any error. It has a short timeout to avoid blocking agent startup.
+func runQuiet(workDir string, name string, args ...string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = workDir
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = nil
+
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out.String())
 }
