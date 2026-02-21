@@ -43,7 +43,7 @@ func And(conditions ...RunCondition) RunCondition {
 func MaxRunDuration(d time.Duration) RunCondition {
 	start := time.Now()
 	return func(_ context.Context, _ *RunContext, _ *ModelResponse) (bool, string) {
-		if time.Since(start) > d {
+		if time.Since(start) >= d {
 			return true, "max run duration exceeded"
 		}
 		return false, ""
