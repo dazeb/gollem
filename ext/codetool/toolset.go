@@ -1,6 +1,12 @@
 package codetool
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/fugue-labs/gollem/core"
 )
 
@@ -38,7 +44,8 @@ func AllTools(opts ...Option) []core.Tool {
 
 // AgentOptions returns the recommended set of agent options for a coding agent.
 // This includes the system prompt, toolset, middleware (loop detection, context
-// injection, verification checkpoint), and the output validator.
+// injection, verification checkpoint), guardrails, tracing, hooks, auto-context
+// management, and tool timeouts.
 //
 // Usage:
 //
@@ -49,13 +56,122 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		toolOpts = append([]Option{WithWorkDir(workDir)}, toolOpts...)
 	}
 	verifyMW, verifyValidator := VerificationCheckpoint()
-	return []core.AgentOption[string]{
+
+	opts := []core.AgentOption[string]{
+		// System prompt with coding agent instructions.
 		core.WithSystemPrompt[string](SystemPrompt),
+
+		// Full coding toolset: bash, view, write, edit, multi_edit, grep, glob, ls.
 		core.WithToolsets[string](Toolset(toolOpts...)),
+
+		// Retry malformed output up to 3 times.
 		core.WithMaxRetries[string](3),
+
+		// Middleware chain (outermost first):
+		// 1. Loop detection — break doom loops of repeated edits.
 		core.WithAgentMiddleware[string](LoopDetectionMiddleware(4)),
+		// 2. Context injection — discover environment on first turn.
 		core.WithAgentMiddleware[string](ContextInjectionMiddleware(workDir)),
+		// 3. Verification tracking — track whether agent runs tests.
 		core.WithAgentMiddleware[string](verifyMW),
+		// 4. Stderr logging — real-time tool call observability.
+		core.WithAgentMiddleware[string](stderrLoggingMiddleware()),
+
+		// Output validator: reject completion without verification.
 		core.WithOutputValidator[string](verifyValidator),
+
+		// Guardrails: prevent infinite loops.
+		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(200)),
+
+		// Tool timeout: individual tools get 2 minutes max.
+		core.WithDefaultToolTimeout[string](2 * time.Minute),
+
+		// Auto context: compress old messages when context grows too large.
+		core.WithAutoContext[string](core.AutoContextConfig{
+			MaxTokens: 180000,
+			KeepLastN: 10,
+		}),
+
+		// Tracing: capture full execution trace for post-run analysis.
+		core.WithTracing[string](),
+
+		// Hooks: real-time observability to stderr.
+		core.WithHooks[string](core.Hook{
+			OnRunStart: func(_ context.Context, _ *core.RunContext, prompt string) {
+				if len(prompt) > 100 {
+					prompt = prompt[:100] + "..."
+				}
+				fmt.Fprintf(os.Stderr, "[gollem] run started: %s\n", prompt)
+			},
+			OnRunEnd: func(_ context.Context, _ *core.RunContext, _ []core.ModelMessage, err error) {
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[gollem] run ended with error: %v\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "[gollem] run completed successfully\n")
+				}
+			},
+			OnToolStart: func(_ context.Context, _ *core.RunContext, name string, argsJSON string) {
+				summary := argsJSON
+				if len(summary) > 200 {
+					summary = summary[:200] + "..."
+				}
+				fmt.Fprintf(os.Stderr, "[gollem] tool:start %s %s\n", name, summary)
+			},
+			OnToolEnd: func(_ context.Context, _ *core.RunContext, name string, result string, err error) {
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[gollem] tool:end   %s ERROR: %v\n", name, err)
+				} else {
+					summary := result
+					if len(summary) > 150 {
+						summary = summary[:150] + "..."
+					}
+					fmt.Fprintf(os.Stderr, "[gollem] tool:end   %s %s\n", name, strings.ReplaceAll(summary, "\n", "\\n"))
+				}
+			},
+		}),
+	}
+
+	// Export traces to /tmp/gollem-traces if the dir is writable.
+	traceDir := "/tmp/gollem-traces"
+	if err := os.MkdirAll(traceDir, 0o755); err == nil {
+		opts = append(opts, core.WithTraceExporter[string](core.NewJSONFileExporter(traceDir)))
+	}
+
+	return opts
+}
+
+// stderrLoggingMiddleware logs each model turn to stderr with timing.
+func stderrLoggingMiddleware() core.AgentMiddleware {
+	turn := 0
+	return func(
+		ctx context.Context,
+		messages []core.ModelMessage,
+		settings *core.ModelSettings,
+		params *core.ModelRequestParameters,
+		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
+	) (*core.ModelResponse, error) {
+		turn++
+		fmt.Fprintf(os.Stderr, "[gollem] turn %d: sending %d messages to model\n", turn, len(messages))
+		start := time.Now()
+		resp, err := next(ctx, messages, settings, params)
+		elapsed := time.Since(start)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[gollem] turn %d: model error after %v: %v\n", turn, elapsed, err)
+		} else {
+			// Count tool calls in response.
+			toolCalls := 0
+			for _, part := range resp.Parts {
+				if _, ok := part.(core.ToolCallPart); ok {
+					toolCalls++
+				}
+			}
+			text := resp.TextContent()
+			if len(text) > 100 {
+				text = text[:100] + "..."
+			}
+			fmt.Fprintf(os.Stderr, "[gollem] turn %d: response in %v (tools: %d, text: %d chars)\n",
+				turn, elapsed.Round(time.Millisecond), toolCalls, len(resp.TextContent()))
+		}
+		return resp, err
 	}
 }

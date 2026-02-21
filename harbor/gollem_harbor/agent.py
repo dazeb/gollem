@@ -146,6 +146,9 @@ class GollemAgent(BaseInstalledAgent):
             "OPENAI_API_KEY",
             "GOOGLE_CLOUD_PROJECT",
             "GOOGLE_APPLICATION_CREDENTIALS",
+            "LANGFUSE_SECRET_KEY",
+            "LANGFUSE_PUBLIC_KEY",
+            "LANGFUSE_BASE_URL",
         ]:
             if val := os.environ.get(key):
                 env[key] = val
@@ -160,6 +163,8 @@ class GollemAgent(BaseInstalledAgent):
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Parse gollem output from the command logs."""
+        import re
+
         command_dir = self.logs_dir / "command-0"
         if not command_dir.exists():
             return
@@ -180,23 +185,25 @@ class GollemAgent(BaseInstalledAgent):
             "agent": "gollem",
             "model": self.model_name,
             "return_code": return_code,
-            "stdout": stdout,
-            "stderr": stderr,
+            "stdout": stdout[-5000:] if len(stdout) > 5000 else stdout,
+            "stderr": stderr[-5000:] if len(stderr) > 5000 else stderr,
         }
 
-        for line in stderr.splitlines():
-            if "tokens:" in line and "done" in line:
-                try:
-                    parts = line.split("tokens:")[1].strip().rstrip(")")
-                    tokens = parts.split(",")
-                    for t in tokens:
-                        t = t.strip()
-                        if t.endswith("in"):
-                            trajectory["input_tokens"] = int(t.split()[0])
-                        elif t.endswith("out"):
-                            trajectory["output_tokens"] = int(t.split()[0])
-                except (IndexError, ValueError):
-                    pass
+        # Parse token usage from gollem's "done" line.
+        # Format: "gollem: done (tokens: 12345 in, 6789 out, tools: 42)"
+        done_match = re.search(
+            r"tokens:\s*(\d+)\s*in,\s*(\d+)\s*out,\s*tools:\s*(\d+)",
+            stderr,
+        )
+        if done_match:
+            trajectory["input_tokens"] = int(done_match.group(1))
+            trajectory["output_tokens"] = int(done_match.group(2))
+            trajectory["tool_calls"] = int(done_match.group(3))
+
+        # Count tool invocations from stderr hooks.
+        tool_starts = stderr.count("[gollem] tool:start")
+        if tool_starts > 0:
+            trajectory["tool_invocations"] = tool_starts
 
         traj_path = self.logs_dir / "trajectory.json"
         traj_path.write_text(json.dumps(trajectory, indent=2))
@@ -210,6 +217,7 @@ class GollemAgent(BaseInstalledAgent):
         context.metadata = {
             "trajectory_path": str(traj_path),
             "return_code": return_code,
+            "tool_invocations": trajectory.get("tool_invocations", 0),
         }
 
     def _parse_model_name(self) -> tuple[str, str]:

@@ -13,14 +13,22 @@ import (
 	"strings"
 	"time"
 
+	lf "github.com/fugue-labs/langfuse-go"
+
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/codetool"
+	"github.com/fugue-labs/gollem/ext/middleware"
 	"github.com/fugue-labs/gollem/ext/tui"
+	"github.com/fugue-labs/gollem/modelutil"
 	"github.com/fugue-labs/gollem/provider/anthropic"
 	"github.com/fugue-labs/gollem/provider/openai"
 	"github.com/fugue-labs/gollem/provider/vertexai"
 	"github.com/fugue-labs/gollem/provider/vertexai_anthropic"
 )
+
+// Default thinking budget for Anthropic models with extended thinking.
+// Set high enough to give the model room to reason through complex tasks.
+const defaultThinkingBudget = 50000
 
 func main() {
 	if len(os.Args) < 2 {
@@ -47,7 +55,7 @@ func main() {
 func parseFlags(args []string) (provider, modelName, workDir, prompt string, timeout time.Duration, thinkingBudget int) {
 	provider = ""
 	timeout = 30 * time.Minute
-	thinkingBudget = 0
+	thinkingBudget = -1 // -1 means "use default"
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -76,10 +84,12 @@ func parseFlags(args []string) (provider, modelName, workDir, prompt string, tim
 		case "--thinking-budget":
 			if i+1 < len(args) {
 				if _, err := fmt.Sscanf(args[i+1], "%d", &thinkingBudget); err != nil {
-					thinkingBudget = 0
+					thinkingBudget = -1
 				}
 				i++
 			}
+		case "--no-thinking":
+			thinkingBudget = 0
 		case "--help", "-h":
 			printUsage()
 			os.Exit(0)
@@ -114,19 +124,57 @@ func runAgent() {
 		}
 	}
 
-	model, err := createModel(provider, modelName)
+	baseModel, err := createModel(provider, modelName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating model: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Build the coding agent with the full recommended setup: tools, system
-	// prompt, loop detection, context injection, and verification checkpoint.
+	// Apply middleware layers to the model.
+	var mws []middleware.Middleware
+
+	// Langfuse observability (if configured via environment).
+	var langfuseProcessor *lf.BatchProcessor
+	if os.Getenv("LANGFUSE_SECRET_KEY") != "" {
+		lfOpts := []lf.Option{
+			lf.WithKeys(os.Getenv("LANGFUSE_PUBLIC_KEY"), os.Getenv("LANGFUSE_SECRET_KEY")),
+		}
+		if baseURL := os.Getenv("LANGFUSE_BASE_URL"); baseURL != "" {
+			lfOpts = append(lfOpts, lf.WithBaseURL(baseURL))
+		}
+		client := lf.New(lfOpts...)
+		langfuseProcessor = lf.NewBatchProcessor(client)
+		mws = append(mws, newLangfuseMiddleware(langfuseProcessor))
+		fmt.Fprintf(os.Stderr, "gollem: langfuse tracing enabled\n")
+	}
+
+	var model core.Model = baseModel
+	if len(mws) > 0 {
+		model = middleware.Wrap(model, mws...)
+	}
+
+	// Wrap with retry for API resilience (exponential backoff on 429/5xx).
+	model = modelutil.NewRetryModel(model, modelutil.DefaultRetryConfig())
+
+	// Build the coding agent with the full recommended setup.
 	agentOpts := codetool.AgentOptions(workDir)
 	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(timeout)))
 
+	// Enable thinking by default for providers that support it.
+	if thinkingBudget < 0 {
+		// Default: enable thinking if provider supports it.
+		if provider == "anthropic" || provider == "vertexai-anthropic" {
+			thinkingBudget = defaultThinkingBudget
+		} else {
+			thinkingBudget = 0
+		}
+	}
 	if thinkingBudget > 0 {
 		agentOpts = append(agentOpts, core.WithThinkingBudget[string](thinkingBudget))
+		// max_tokens must be > thinking budget per Anthropic API requirement.
+		maxTokens := thinkingBudget + 16000
+		agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
+		fmt.Fprintf(os.Stderr, "gollem: thinking enabled (budget: %d, max_tokens: %d)\n", thinkingBudget, maxTokens)
 	}
 
 	agent := core.NewAgent[string](model, agentOpts...)
@@ -134,9 +182,16 @@ func runAgent() {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	fmt.Fprintf(os.Stderr, "gollem: running with %s in %s\n", model.ModelName(), workDir)
+	fmt.Fprintf(os.Stderr, "gollem: running with %s in %s (timeout: %v)\n",
+		baseModel.ModelName(), workDir, timeout)
 
 	result, err := agent.Run(ctx, prompt)
+
+	// Flush Langfuse traces before exiting.
+	if langfuseProcessor != nil {
+		_ = langfuseProcessor.Close()
+	}
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -146,6 +201,119 @@ func runAgent() {
 	fmt.Println(result.Output)
 	fmt.Fprintf(os.Stderr, "\ngollem: done (tokens: %d in, %d out, tools: %d)\n",
 		result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.ToolCalls)
+}
+
+// newLangfuseMiddleware creates a provider-level middleware that sends traces
+// to Langfuse. It wraps each model request with a generation event containing
+// token usage, timing, input messages, and output.
+func newLangfuseMiddleware(processor *lf.BatchProcessor) middleware.Middleware {
+	traceID := lf.NewID()
+	processor.Enqueue(lf.TraceEvent{
+		ID:        traceID,
+		Name:      "gollem-run",
+		Timestamp: time.Now().UTC(),
+	})
+
+	turn := 0
+	return middleware.Func(func(next middleware.RequestFunc) middleware.RequestFunc {
+		return func(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+			turn++
+			genID := lf.NewID()
+			startTime := time.Now().UTC()
+
+			// Capture input: summarize messages for Langfuse.
+			input := langfuseSummarizeMessages(messages)
+
+			resp, err := next(ctx, messages, settings, params)
+
+			endTime := time.Now().UTC()
+			gen := lf.GenerationEvent{
+				ID:        genID,
+				TraceID:   traceID,
+				Name:      fmt.Sprintf("turn-%d", turn),
+				StartTime: startTime,
+				EndTime:   &endTime,
+				Input:     input,
+			}
+
+			if err == nil && resp != nil {
+				gen.Model = resp.ModelName
+				gen.Output = langfuseSummarizeResponse(resp)
+				gen.Usage = &lf.Usage{
+					Input:  resp.Usage.InputTokens,
+					Output: resp.Usage.OutputTokens,
+					Total:  resp.Usage.TotalTokens(),
+					Unit:   "TOKENS",
+				}
+			} else if err != nil {
+				gen.Level = "ERROR"
+				gen.StatusMessage = err.Error()
+			}
+
+			processor.Enqueue(gen)
+			return resp, err
+		}
+	})
+}
+
+// langfuseSummarizeMessages extracts a simplified view of messages for tracing.
+func langfuseSummarizeMessages(messages []core.ModelMessage) []map[string]any {
+	var result []map[string]any
+	for _, msg := range messages {
+		switch m := msg.(type) {
+		case core.ModelRequest:
+			for _, part := range m.Parts {
+				switch p := part.(type) {
+				case core.SystemPromptPart:
+					content := p.Content
+					if len(content) > 500 {
+						content = content[:500] + "..."
+					}
+					result = append(result, map[string]any{"role": "system", "content": content})
+				case core.UserPromptPart:
+					content := p.Content
+					if len(content) > 2000 {
+						content = content[:2000] + "..."
+					}
+					result = append(result, map[string]any{"role": "user", "content": content})
+				case core.ToolReturnPart:
+					content := fmt.Sprintf("%v", p.Content)
+					if len(content) > 1000 {
+						content = content[:1000] + "..."
+					}
+					result = append(result, map[string]any{"role": "tool", "tool": p.ToolName, "content": content})
+				}
+			}
+		case *core.ModelResponse:
+			result = append(result, map[string]any{"role": "assistant", "content": m.TextContent()})
+		}
+	}
+	return result
+}
+
+// langfuseSummarizeResponse extracts text + tool calls from a model response.
+func langfuseSummarizeResponse(resp *core.ModelResponse) map[string]any {
+	out := map[string]any{}
+	if text := resp.TextContent(); text != "" {
+		if len(text) > 2000 {
+			text = text[:2000] + "..."
+		}
+		out["text"] = text
+	}
+	var tools []map[string]string
+	for _, part := range resp.Parts {
+		if tc, ok := part.(core.ToolCallPart); ok {
+			args := tc.ArgsJSON
+			if len(args) > 500 {
+				args = args[:500] + "..."
+			}
+			tools = append(tools, map[string]string{"tool": tc.ToolName, "args": args})
+		}
+	}
+	if len(tools) > 0 {
+		out["tool_calls"] = tools
+	}
+	return out
 }
 
 func runDebug() {
@@ -258,18 +426,22 @@ Options:
   --model <name>           Model name (uses provider default if not set)
   --workdir <path>         Working directory (default: current directory)
   --timeout <duration>     Maximum run time (default: 30m)
-  --thinking-budget <n>    Thinking/reasoning token budget (Anthropic extended thinking)
+  --thinking-budget <n>    Thinking/reasoning token budget (default: 32000 for Anthropic)
+  --no-thinking            Disable extended thinking
   -h, --help               Show this help
 
 Examples:
   gollem run --provider anthropic "Fix the failing tests in this project"
-  gollem run --provider openai --model gpt-4o "Implement the TODO items"
+  gollem run --provider openai --model gpt-5.3 "Implement the TODO items"
   gollem run --workdir /path/to/project "Add error handling to main.go"
-  gollem run --provider anthropic --thinking-budget 10000 "Refactor the auth system"
+  gollem run --provider anthropic --thinking-budget 64000 "Refactor the auth system"
 
 Environment variables:
-  ANTHROPIC_API_KEY       API key for the anthropic provider
-  OPENAI_API_KEY          API key for the openai provider
-  GOOGLE_CLOUD_PROJECT    GCP project for vertexai and vertexai-anthropic providers
+  ANTHROPIC_API_KEY        API key for the anthropic provider
+  OPENAI_API_KEY           API key for the openai provider
+  GOOGLE_CLOUD_PROJECT     GCP project for vertexai and vertexai-anthropic providers
+  LANGFUSE_SECRET_KEY      Langfuse secret key (enables tracing)
+  LANGFUSE_PUBLIC_KEY      Langfuse public key
+  LANGFUSE_BASE_URL        Langfuse API URL (default: https://cloud.langfuse.com)
 `)
 }
