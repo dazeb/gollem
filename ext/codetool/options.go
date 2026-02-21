@@ -1,6 +1,10 @@
 package codetool
 
-import "time"
+import (
+	"time"
+
+	montygo "github.com/fugue-labs/monty-go"
+)
 
 // Config holds shared configuration for coding tools.
 type Config struct {
@@ -19,6 +23,11 @@ type Config struct {
 	// MaxOutputLen is the maximum output length in bytes from Bash.
 	// Defaults to 100KB.
 	MaxOutputLen int
+
+	// Runner is an optional monty-go WASM Python runner for code mode.
+	// When set, the agent gets an execute_code tool that lets it batch
+	// multiple tool calls into a single Python script (N calls per round-trip).
+	Runner *montygo.Runner
 }
 
 // Option configures coding tools.
@@ -58,4 +67,13 @@ func WithMaxFileSize(n int64) Option {
 // WithMaxOutputLen sets the maximum output length from bash commands.
 func WithMaxOutputLen(n int) Option {
 	return func(c *Config) { c.MaxOutputLen = n }
+}
+
+// WithCodeMode enables code mode using a monty-go WASM Python runner.
+// The agent gets an execute_code tool alongside individual tools, letting
+// it batch multiple operations into a single Python script per API call.
+// The caller owns the runner lifecycle (create with montygo.New(), close
+// when done).
+func WithCodeMode(runner *montygo.Runner) Option {
+	return func(c *Config) { c.Runner = runner }
 }

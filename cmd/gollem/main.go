@@ -14,6 +14,7 @@ import (
 	"time"
 
 	lf "github.com/fugue-labs/langfuse-go"
+	montygo "github.com/fugue-labs/monty-go"
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/codetool"
@@ -52,79 +53,92 @@ func main() {
 	}
 }
 
-func parseFlags(args []string) (provider, modelName, workDir, prompt string, timeout time.Duration, thinkingBudget int) {
-	provider = ""
-	timeout = 30 * time.Minute
-	thinkingBudget = -1 // -1 means "use default"
+type flags struct {
+	provider       string
+	modelName      string
+	workDir        string
+	prompt         string
+	timeout        time.Duration
+	thinkingBudget int
+	noCodeMode     bool
+}
+
+func parseFlags(args []string) flags {
+	f := flags{
+		timeout:        30 * time.Minute,
+		thinkingBudget: -1, // -1 means "use default"
+	}
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--provider":
 			if i+1 < len(args) {
-				provider = args[i+1]
+				f.provider = args[i+1]
 				i++
 			}
 		case "--model":
 			if i+1 < len(args) {
-				modelName = args[i+1]
+				f.modelName = args[i+1]
 				i++
 			}
 		case "--workdir":
 			if i+1 < len(args) {
-				workDir = args[i+1]
+				f.workDir = args[i+1]
 				i++
 			}
 		case "--timeout":
 			if i+1 < len(args) {
 				if d, err := time.ParseDuration(args[i+1]); err == nil {
-					timeout = d
+					f.timeout = d
 				}
 				i++
 			}
 		case "--thinking-budget":
 			if i+1 < len(args) {
-				if _, err := fmt.Sscanf(args[i+1], "%d", &thinkingBudget); err != nil {
-					thinkingBudget = -1
+				if _, err := fmt.Sscanf(args[i+1], "%d", &f.thinkingBudget); err != nil {
+					f.thinkingBudget = -1
 				}
 				i++
 			}
 		case "--no-thinking":
-			thinkingBudget = 0
+			f.thinkingBudget = 0
+		case "--no-code-mode":
+			f.noCodeMode = true
 		case "--help", "-h":
 			printUsage()
 			os.Exit(0)
 		default:
-			if !strings.HasPrefix(args[i], "-") && prompt == "" {
-				prompt = args[i]
+			if !strings.HasPrefix(args[i], "-") && f.prompt == "" {
+				f.prompt = args[i]
 			}
 		}
 	}
 
-	if workDir == "" {
-		workDir, _ = os.Getwd()
+	if f.workDir == "" {
+		f.workDir, _ = os.Getwd()
 	}
 
-	return provider, modelName, workDir, prompt, timeout, thinkingBudget
+	return f
 }
 
 func runAgent() {
-	provider, modelName, workDir, prompt, timeout, thinkingBudget := parseFlags(os.Args[2:])
+	f := parseFlags(os.Args[2:])
 
-	if prompt == "" {
+	if f.prompt == "" {
 		fmt.Fprintln(os.Stderr, "error: prompt is required")
 		printRunUsage()
 		os.Exit(1)
 	}
 
-	if provider == "" {
-		provider = detectProvider()
-		if provider == "" {
+	if f.provider == "" {
+		f.provider = detectProvider()
+		if f.provider == "" {
 			fmt.Fprintln(os.Stderr, "error: --provider is required (or set ANTHROPIC_API_KEY / OPENAI_API_KEY)")
 			os.Exit(1)
 		}
 	}
 
-	baseModel, err := createModel(provider, modelName)
+	baseModel, err := createModel(f.provider, f.modelName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating model: %v\n", err)
 		os.Exit(1)
@@ -156,36 +170,52 @@ func runAgent() {
 	// Wrap with retry for API resilience (exponential backoff on 429/5xx).
 	model = modelutil.NewRetryModel(model, modelutil.DefaultRetryConfig())
 
-	// Build the coding agent with the full recommended setup.
-	agentOpts := codetool.AgentOptions(workDir)
-	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(timeout)))
-
-	// Enable thinking by default for providers that support it.
-	if thinkingBudget < 0 {
-		// Default: enable thinking if provider supports it.
-		if provider == "anthropic" || provider == "vertexai-anthropic" {
-			thinkingBudget = defaultThinkingBudget
+	// Build tool options, including code mode if enabled.
+	var toolOpts []codetool.Option
+	var runner *montygo.Runner
+	if !f.noCodeMode {
+		runner, err = montygo.New()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: code mode unavailable: %v\n", err)
 		} else {
-			thinkingBudget = 0
+			toolOpts = append(toolOpts, codetool.WithCodeMode(runner))
+			fmt.Fprintf(os.Stderr, "gollem: code mode enabled (monty-go WASM Python)\n")
 		}
 	}
-	if thinkingBudget > 0 {
-		agentOpts = append(agentOpts, core.WithThinkingBudget[string](thinkingBudget))
+	if runner != nil {
+		defer runner.Close()
+	}
+
+	// Build the coding agent with the full recommended setup.
+	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
+	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(f.timeout)))
+
+	// Enable thinking by default for providers that support it.
+	if f.thinkingBudget < 0 {
+		// Default: enable thinking if provider supports it.
+		if f.provider == "anthropic" || f.provider == "vertexai-anthropic" {
+			f.thinkingBudget = defaultThinkingBudget
+		} else {
+			f.thinkingBudget = 0
+		}
+	}
+	if f.thinkingBudget > 0 {
+		agentOpts = append(agentOpts, core.WithThinkingBudget[string](f.thinkingBudget))
 		// max_tokens must be > thinking budget per Anthropic API requirement.
-		maxTokens := thinkingBudget + 16000
+		maxTokens := f.thinkingBudget + 16000
 		agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
-		fmt.Fprintf(os.Stderr, "gollem: thinking enabled (budget: %d, max_tokens: %d)\n", thinkingBudget, maxTokens)
+		fmt.Fprintf(os.Stderr, "gollem: thinking enabled (budget: %d, max_tokens: %d)\n", f.thinkingBudget, maxTokens)
 	}
 
 	agent := core.NewAgent[string](model, agentOpts...)
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), f.timeout)
 	defer cancel()
 
 	fmt.Fprintf(os.Stderr, "gollem: running with %s in %s (timeout: %v)\n",
-		baseModel.ModelName(), workDir, timeout)
+		baseModel.ModelName(), f.workDir, f.timeout)
 
-	result, err := agent.Run(ctx, prompt)
+	result, err := agent.Run(ctx, f.prompt)
 
 	// Flush Langfuse traces before exiting.
 	if langfuseProcessor != nil {
@@ -317,7 +347,8 @@ func langfuseSummarizeResponse(resp *core.ModelResponse) map[string]any {
 }
 
 func runDebug() {
-	provider, modelName, _, prompt, _, _ := parseFlags(os.Args[2:])
+	f := parseFlags(os.Args[2:])
+	provider, modelName, prompt := f.provider, f.modelName, f.prompt
 
 	if prompt == "" {
 		fmt.Fprintln(os.Stderr, "error: prompt is required")
@@ -428,6 +459,7 @@ Options:
   --timeout <duration>     Maximum run time (default: 30m)
   --thinking-budget <n>    Thinking/reasoning token budget (default: 32000 for Anthropic)
   --no-thinking            Disable extended thinking
+  --no-code-mode           Disable code mode (monty-go WASM Python batching)
   -h, --help               Show this help
 
 Examples:

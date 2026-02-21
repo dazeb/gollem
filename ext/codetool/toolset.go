@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/ext/monty"
 )
 
 // Toolset returns all coding agent tools as a core.Toolset.
@@ -55,15 +56,28 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	if workDir != "" {
 		toolOpts = append([]Option{WithWorkDir(workDir)}, toolOpts...)
 	}
+	cfg := applyOpts(toolOpts)
 	verifyMW, verifyValidator := VerificationCheckpoint()
 
-	opts := []core.AgentOption[string]{
-		// System prompt with coding agent instructions.
-		core.WithSystemPrompt[string](SystemPrompt),
-
-		// Full coding toolset: bash, view, write, edit, multi_edit, grep, glob, ls.
+	// Build system prompt and tool options.
+	// When code mode is enabled, the agent gets both individual tools AND
+	// an execute_code tool that batches N tool calls per API round-trip.
+	systemPrompt := SystemPrompt
+	toolOptions := []core.AgentOption[string]{
 		core.WithToolsets[string](Toolset(toolOpts...)),
+	}
+	if cfg.Runner != nil {
+		cm := monty.New(cfg.Runner, AllTools(toolOpts...))
+		toolOptions = append(toolOptions, core.WithTools[string](cm.Tool()))
+		systemPrompt += "\n\n" + cm.SystemPrompt()
+	}
 
+	opts := []core.AgentOption[string]{
+		// System prompt with coding agent instructions (+ code mode if enabled).
+		core.WithSystemPrompt[string](systemPrompt),
+	}
+	opts = append(opts, toolOptions...)
+	opts = append(opts,
 		// Retry malformed output up to 3 times.
 		core.WithMaxRetries[string](3),
 
@@ -129,7 +143,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 				}
 			},
 		}),
-	}
+	)
 
 	// Export traces to /tmp/gollem-traces if the dir is writable.
 	traceDir := "/tmp/gollem-traces"
