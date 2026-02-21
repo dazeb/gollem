@@ -3,8 +3,11 @@ package modelutil
 import (
 	"context"
 	"errors"
+	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
@@ -32,7 +35,7 @@ func DefaultRetryConfig() RetryConfig {
 	}
 }
 
-// defaultIsRetryable checks for transient HTTP errors.
+// defaultIsRetryable checks for transient HTTP and connection errors.
 func defaultIsRetryable(err error) bool {
 	var httpErr *core.ModelHTTPError
 	if errors.As(err, &httpErr) {
@@ -41,6 +44,24 @@ func defaultIsRetryable(err error) bool {
 			return true
 		}
 	}
+
+	// Retry on connection-level errors (unexpected EOF, connection reset, timeout).
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	// Check error message for common transient patterns.
+	msg := err.Error()
+	for _, pattern := range []string{"unexpected EOF", "connection reset", "connection refused", "broken pipe", "i/o timeout"} {
+		if strings.Contains(msg, pattern) {
+			return true
+		}
+	}
+
 	return false
 }
 
