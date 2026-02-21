@@ -691,6 +691,42 @@ func TestNewLiteLLM(t *testing.T) {
 	}
 }
 
+func TestNewOllama(t *testing.T) {
+	p := NewOllama(WithModel("llama3"))
+	if p.baseURL != "http://localhost:11434" {
+		t.Errorf("expected baseURL http://localhost:11434, got %s", p.baseURL)
+	}
+	if p.apiKey != "ollama" {
+		t.Errorf("expected API key ollama, got %s", p.apiKey)
+	}
+	if p.model != "llama3" {
+		t.Errorf("expected model llama3, got %s", p.model)
+	}
+}
+
+func TestNewOllamaDefaults(t *testing.T) {
+	p := NewOllama()
+	if p.baseURL != "http://localhost:11434" {
+		t.Errorf("expected baseURL http://localhost:11434, got %s", p.baseURL)
+	}
+	if p.apiKey != "ollama" {
+		t.Errorf("expected API key ollama, got %s", p.apiKey)
+	}
+	if p.model != defaultModel {
+		t.Errorf("expected default model %s, got %s", defaultModel, p.model)
+	}
+}
+
+func TestNewOllamaCustomURL(t *testing.T) {
+	p := NewOllama(WithBaseURL("http://remote:11434"), WithModel("mistral"))
+	if p.baseURL != "http://remote:11434" {
+		t.Errorf("expected baseURL http://remote:11434, got %s", p.baseURL)
+	}
+	if p.model != "mistral" {
+		t.Errorf("expected model mistral, got %s", p.model)
+	}
+}
+
 func TestRequestIntegration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify headers.

@@ -103,6 +103,18 @@ func NewLiteLLM(baseURL string, opts ...Option) *Provider {
 	return p
 }
 
+// NewOllama creates an OpenAI-compatible provider configured for a local Ollama instance.
+// By default it connects to http://localhost:11434 and uses a dummy API key since
+// Ollama does not require authentication. The model should be set via WithModel
+// to match a model pulled in Ollama (e.g., "llama3", "mistral", "codellama").
+func NewOllama(opts ...Option) *Provider {
+	allOpts := append([]Option{
+		WithBaseURL("http://localhost:11434"),
+		WithAPIKey("ollama"),
+	}, opts...)
+	return New(allOpts...)
+}
+
 // ModelName returns the model identifier.
 func (p *Provider) ModelName() string {
 	return p.model
