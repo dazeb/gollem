@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from pathlib import Path
 
@@ -74,8 +75,6 @@ class GollemAgent(BaseInstalledAgent):
         }
 
         # Pass through API keys from the host environment.
-        import os
-
         for key in [
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
@@ -88,7 +87,6 @@ class GollemAgent(BaseInstalledAgent):
         return [
             ExecInput(
                 command=" ".join(cmd_parts),
-                cwd="/",
                 env=env,
                 timeout_sec=self._timeout_minutes * 60 + 60,  # +1min buffer
             ),
