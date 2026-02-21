@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
@@ -72,6 +73,13 @@ func Bash(opts ...Option) core.Tool {
 			cmd := exec.CommandContext(ctx, "bash", "-c", params.Command)
 			if cfg.WorkDir != "" {
 				cmd.Dir = cfg.WorkDir
+			}
+
+			// Run in a new process group so we can kill all children on timeout.
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Cancel = func() error {
+				// Kill the entire process group (negative PID).
+				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
 
 			var stdout, stderr bytes.Buffer
