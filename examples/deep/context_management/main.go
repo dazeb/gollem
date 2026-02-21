@@ -10,6 +10,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/deep"
@@ -29,9 +32,9 @@ func main() {
 		core.ToolCallResponse("analyze_data", `{"dataset":"sales_q4"}`),
 		// Second response: model produces the final result.
 		core.ToolCallResponse("final_result", `{
-			"summary": "Q4 sales data analyzed across 1000 records",
-			"item_count": 1000,
-			"conclusion": "Revenue increased 15% quarter-over-quarter"
+			"summary": "Q4 sales data analyzed across 1200 records with segment-level trends",
+			"item_count": 1200,
+			"conclusion": "Revenue increased 15% quarter-over-quarter, with strongest gains in enterprise plans"
 		}`),
 	)
 
@@ -44,21 +47,30 @@ func main() {
 		func(_ context.Context, params struct {
 			Dataset string `json:"dataset" jsonschema:"description=Name of the dataset to analyze"`
 		}) (string, error) {
-			return fmt.Sprintf("Analysis of %s: 1000 records processed. Revenue trends show steady growth.", params.Dataset), nil
+			// Build a deliberately large payload so tier-1 offloading is exercised.
+			var b strings.Builder
+			b.WriteString("Executive summary for ")
+			b.WriteString(params.Dataset)
+			b.WriteString(":\n")
+			for i := 1; i <= 30; i++ {
+				fmt.Fprintf(&b, "Segment %02d: revenue +%d%%, margin +%d%%, churn -%d%%\n", i, 10+i%7, 3+i%4, i%5)
+			}
+			return b.String(), nil
 		},
 	)
 
 	// Set up the ContextManager with a filesystem-backed store.
-	store, err := deep.NewFileStore("")
+	storeDir := filepath.Join(os.TempDir(), "gollem-context-example")
+	store, err := deep.NewFileStore(storeDir)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer store.Cleanup()
 
 	cm := deep.NewContextManager(model,
-		deep.WithMaxContextTokens(50000),
-		deep.WithOffloadThreshold(10000),
-		deep.WithCompressionThreshold(0.80),
+		deep.WithMaxContextTokens(240),
+		deep.WithOffloadThreshold(40),
+		deep.WithCompressionThreshold(0.70),
 		deep.WithContextStore(store),
 	)
 
@@ -81,6 +93,11 @@ func main() {
 	fmt.Printf("Items analyzed: %d\n", result.Output.ItemCount)
 	fmt.Printf("Conclusion: %s\n", result.Output.Conclusion)
 	fmt.Printf("Requests: %d, Tool calls: %d\n", result.Usage.Requests, result.Usage.ToolCalls)
+	files, err := os.ReadDir(storeDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Offloaded context files: %d (%s)\n", len(files), storeDir)
 
 	// Demonstrate the LongRunAgent, which bundles context management
 	// and optional planning into a single wrapper.
@@ -88,9 +105,9 @@ func main() {
 
 	longModel := core.NewTestModel(
 		core.ToolCallResponse("final_result", `{
-			"summary": "Comprehensive analysis complete",
+			"summary": "Comprehensive analysis complete with anomaly scan and remediation plan",
 			"item_count": 5000,
-			"conclusion": "All systems nominal"
+			"conclusion": "Core systems healthy; recommend proactive scaling for peak traffic windows"
 		}`),
 	)
 

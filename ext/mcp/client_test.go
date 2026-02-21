@@ -1,8 +1,12 @@
 package mcp
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -236,5 +240,55 @@ func TestInitializeParamsSerialization(t *testing.T) {
 	clientInfo := parsed["clientInfo"].(map[string]any)
 	if clientInfo["name"] != "gollem" {
 		t.Errorf("expected client name gollem, got %v", clientInfo["name"])
+	}
+}
+
+type nopWriteCloser struct {
+	bytes.Buffer
+}
+
+func (w *nopWriteCloser) Close() error {
+	return nil
+}
+
+func TestClientCallClosedChannel(t *testing.T) {
+	c := &Client{
+		stdin:   &nopWriteCloser{},
+		pending: make(map[int64]chan *jsonRPCResponse),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.call(ctx, "tools/list", nil)
+		errCh <- err
+	}()
+
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		c.mu.Lock()
+		ch := c.pending[1]
+		c.mu.Unlock()
+		if ch != nil {
+			close(ch)
+			break
+		}
+
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for pending call")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	err := <-errCh
+	if err == nil {
+		t.Fatal("expected error when response channel is closed")
+	}
+	if !strings.Contains(err.Error(), "connection closed while waiting for response") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -1,46 +1,66 @@
-// Example streaming demonstrates RunStream with iter.Seq2 text streaming,
-// printing model output to the terminal in real time as it arrives.
+// Example streaming demonstrates real-time token streaming.
+// It runs offline by default with TestModel and can use Anthropic when
+// GOLLEM_USE_LIVE_MODELS=1 is set.
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/provider/anthropic"
 )
 
 func main() {
-	model := anthropic.New()
+	model, live := selectModel()
 
-	// Create a string agent for free-form text output.
 	agent := core.NewAgent[string](model,
-		core.WithSystemPrompt[string]("You are a creative storyteller. Write engaging short stories."),
+		core.WithSystemPrompt[string]("You are a cinematic storyteller. Keep scenes vivid and concise."),
 	)
 
-	// Start a streaming run.
-	stream, err := agent.RunStream(context.Background(), "Write a very short story about a robot learning to paint")
+	stream, err := agent.RunStream(context.Background(), "Write a tiny story about a robot learning to paint dawn skies.")
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer stream.Close()
 
-	// Stream text deltas to stdout in real time.
-	fmt.Println("--- Story ---")
+	fmt.Println("=== Streaming Output (delta mode) ===")
+	chunks := 0
 	for text, err := range stream.StreamText(true) {
 		if err != nil {
 			log.Fatal(err)
 		}
+		chunks++
 		fmt.Print(text)
 	}
-	fmt.Println("\n--- End ---")
+	fmt.Println("\n=== End Stream ===")
 
-	// Get the final response with usage info.
 	resp, err := stream.GetOutput()
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("\nModel: %s\n", resp.ModelName)
+
+	finalText := resp.TextContent()
+	fmt.Printf("\nChunks streamed: %d\n", chunks)
+	fmt.Printf("Final length: %d chars\n", len(finalText))
+	fmt.Printf("Model: %s\n", resp.ModelName)
 	fmt.Printf("Tokens: %d input, %d output\n",
 		resp.Usage.InputTokens, resp.Usage.OutputTokens)
+	if !live {
+		fmt.Println("(offline demo mode: set GOLLEM_USE_LIVE_MODELS=1 to call Anthropic)")
+	}
+}
+
+func selectModel() (core.Model, bool) {
+	if os.Getenv("GOLLEM_USE_LIVE_MODELS") == "1" {
+		return anthropic.New(), true
+	}
+
+	return core.NewTestModel(core.TextResponse(
+		"At 5:03 a.m., Unit-9 mixed cobalt with apricot.\n" +
+			"Its first sunrise looked clumsy, then brave.\n" +
+			"By noon, the studio windows were glowing back.",
+	)), false
 }

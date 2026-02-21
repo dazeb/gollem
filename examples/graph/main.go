@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/fugue-labs/gollem/ext/graph"
@@ -20,6 +21,7 @@ type OrderState struct {
 	TotalAmount float64
 	Status      string
 	Approved    bool
+	RiskScore   int
 	Notes       []string
 }
 
@@ -53,8 +55,10 @@ func main() {
 
 			// Orders over $1000 require approval.
 			if s.TotalAmount > 1000 {
+				s.RiskScore += 2
 				return "approve", nil
 			}
+			s.RiskScore += 1
 			return "process", nil
 		},
 	})
@@ -68,11 +72,13 @@ func main() {
 			// Simulate approval logic.
 			if s.TotalAmount < 5000 {
 				s.Approved = true
+				s.RiskScore += 1
 				s.Notes = append(s.Notes, "Auto-approved (under $5000)")
 				return "process", nil
 			}
 
 			s.Approved = false
+			s.RiskScore += 4
 			s.Status = "pending_review"
 			s.Notes = append(s.Notes, "Requires manual review (over $5000)")
 			return graph.EndNode, nil
@@ -89,6 +95,7 @@ func main() {
 			// Simulate processing.
 			s.Notes = append(s.Notes, fmt.Sprintf("Reserving %d items: %s",
 				len(s.Items), strings.Join(s.Items, ", ")))
+			s.Notes = append(s.Notes, fmt.Sprintf("Computed risk score: %d", s.RiskScore))
 
 			return "ship", nil
 		},
@@ -113,58 +120,71 @@ func main() {
 	fmt.Println("=== Workflow Diagram (Mermaid) ===")
 	fmt.Println(g.Mermaid())
 
-	// --- Scenario 1: Normal order (auto-processed) ---
-	fmt.Println("=== Scenario 1: Normal Order ($150) ===")
-	state1, err := g.Run(context.Background(), OrderState{
-		OrderID:     "ORD-001",
-		Items:       []string{"Widget A", "Widget B"},
-		TotalAmount: 150.00,
-	})
-	if err != nil {
-		log.Fatal(err)
+	scenarios := []struct {
+		Label string
+		Input OrderState
+	}{
+		{
+			Label: "Scenario 1: Normal Order ($150)",
+			Input: OrderState{
+				OrderID:     "ORD-001",
+				Items:       []string{"Widget A", "Widget B"},
+				TotalAmount: 150.00,
+			},
+		},
+		{
+			Label: "Scenario 2: High-Value Order ($2500)",
+			Input: OrderState{
+				OrderID:     "ORD-002",
+				Items:       []string{"Premium Package", "Support Plan"},
+				TotalAmount: 2500.00,
+			},
+		},
+		{
+			Label: "Scenario 3: Very High-Value Order ($7500)",
+			Input: OrderState{
+				OrderID:     "ORD-003",
+				Items:       []string{"Enterprise License"},
+				TotalAmount: 7500.00,
+			},
+		},
+		{
+			Label: "Scenario 4: Invalid Order (no items)",
+			Input: OrderState{
+				OrderID:     "ORD-004",
+				TotalAmount: 50.00,
+			},
+		},
 	}
-	printState(state1)
 
-	// --- Scenario 2: High-value order (requires approval, auto-approved) ---
-	fmt.Println("=== Scenario 2: High-Value Order ($2500) ===")
-	state2, err := g.Run(context.Background(), OrderState{
-		OrderID:     "ORD-002",
-		Items:       []string{"Premium Package", "Support Plan"},
-		TotalAmount: 2500.00,
-	})
-	if err != nil {
-		log.Fatal(err)
+	statusCounts := map[string]int{}
+	for _, scenario := range scenarios {
+		fmt.Printf("=== %s ===\n", scenario.Label)
+		state, err := g.Run(context.Background(), scenario.Input)
+		if err != nil {
+			log.Fatal(err)
+		}
+		statusCounts[state.Status]++
+		printState(state)
 	}
-	printState(state2)
 
-	// --- Scenario 3: Very high-value order (requires manual review) ---
-	fmt.Println("=== Scenario 3: Very High-Value Order ($7500) ===")
-	state3, err := g.Run(context.Background(), OrderState{
-		OrderID:     "ORD-003",
-		Items:       []string{"Enterprise License"},
-		TotalAmount: 7500.00,
-	})
-	if err != nil {
-		log.Fatal(err)
+	fmt.Println("=== Final Status Summary ===")
+	statuses := make([]string, 0, len(statusCounts))
+	for status := range statusCounts {
+		statuses = append(statuses, status)
 	}
-	printState(state3)
-
-	// --- Scenario 4: Invalid order (no items) ---
-	fmt.Println("=== Scenario 4: Invalid Order (no items) ===")
-	state4, err := g.Run(context.Background(), OrderState{
-		OrderID:     "ORD-004",
-		TotalAmount: 50.00,
-	})
-	if err != nil {
-		log.Fatal(err)
+	sort.Strings(statuses)
+	for _, status := range statuses {
+		count := statusCounts[status]
+		fmt.Printf("  %s: %d\n", status, count)
 	}
-	printState(state4)
 }
 
 func printState(s *OrderState) {
 	fmt.Printf("  Order: %s\n", s.OrderID)
 	fmt.Printf("  Status: %s\n", s.Status)
 	fmt.Printf("  Approved: %v\n", s.Approved)
+	fmt.Printf("  Risk score: %d\n", s.RiskScore)
 	fmt.Printf("  Notes:\n")
 	for _, note := range s.Notes {
 		fmt.Printf("    - %s\n", note)

@@ -1,57 +1,92 @@
-// Example tools demonstrates Agent with FuncTool, showing how the model
-// can call tools and use their results to produce a final answer.
+// Example tools demonstrates multiple FuncTool calls in one run.
+// It runs offline by default with TestModel and can use Anthropic when
+// GOLLEM_USE_LIVE_MODELS=1 is set.
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/provider/anthropic"
 )
 
-// WeatherParams defines the parameters for the weather tool.
-type WeatherParams struct {
-	City string `json:"city" jsonschema:"description=The city to get weather for"`
+// CityParams defines a tool input with a city name.
+type CityParams struct {
+	City string `json:"city" jsonschema:"description=The city to query"`
 }
 
-// WeatherResult is the structured output type.
-type WeatherResult struct {
-	City        string `json:"city"`
-	Temperature int    `json:"temperature"`
-	Conditions  string `json:"conditions"`
-	Suggestion  string `json:"suggestion"`
+// WeatherPlan is the structured output type.
+type WeatherPlan struct {
+	City        string   `json:"city"`
+	Temperature int      `json:"temperature"`
+	Conditions  string   `json:"conditions"`
+	AirQuality  string   `json:"air_quality"`
+	Highlights  []string `json:"highlights"`
+	Plan        string   `json:"plan"`
 }
 
 func main() {
-	model := anthropic.New()
+	model, live := selectModel()
 
-	// Create a tool that the agent can call.
-	weatherTool := core.FuncTool[WeatherParams](
+	weatherTool := core.FuncTool[CityParams](
 		"get_weather",
-		"Get the current weather for a city",
-		func(ctx context.Context, params WeatherParams) (string, error) {
-			// In a real app, this would call a weather API.
-			return fmt.Sprintf("Weather in %s: 72°F, sunny with light clouds", params.City), nil
+		"Get weather snapshot for a city",
+		func(_ context.Context, params CityParams) (string, error) {
+			return fmt.Sprintf("%s weather: 64°F, breezy, sunny intervals", params.City), nil
 		},
 	)
 
-	// Create an agent with the tool.
-	agent := core.NewAgent[WeatherResult](model,
-		core.WithSystemPrompt[WeatherResult]("You are a helpful weather assistant. Use the get_weather tool to look up weather, then provide a summary with clothing suggestions."),
-		core.WithTools[WeatherResult](weatherTool),
+	airQualityTool := core.FuncTool[CityParams](
+		"get_air_quality",
+		"Get air quality snapshot for a city",
+		func(_ context.Context, params CityParams) (string, error) {
+			return fmt.Sprintf("%s AQI: 42 (Good)", params.City), nil
+		},
 	)
 
-	result, err := agent.Run(context.Background(), "What's the weather like in San Francisco?")
+	agent := core.NewAgent[WeatherPlan](model,
+		core.WithSystemPrompt[WeatherPlan](
+			"You are a city concierge. Use tools, then produce a practical outdoor plan with highlights.",
+		),
+		core.WithTools[WeatherPlan](weatherTool, airQualityTool),
+	)
+
+	result, err := agent.Run(context.Background(), "Plan a fun afternoon in San Francisco based on current conditions.")
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	fmt.Println("=== City Outdoor Plan ===")
 	fmt.Printf("City: %s\n", result.Output.City)
-	fmt.Printf("Temperature: %d°F\n", result.Output.Temperature)
-	fmt.Printf("Conditions: %s\n", result.Output.Conditions)
-	fmt.Printf("Suggestion: %s\n", result.Output.Suggestion)
-	fmt.Printf("\nRequests made: %d, Tool calls: %d\n",
+	fmt.Printf("Weather: %d°F, %s\n", result.Output.Temperature, result.Output.Conditions)
+	fmt.Printf("Air quality: %s\n", result.Output.AirQuality)
+	fmt.Printf("Highlights: %v\n", result.Output.Highlights)
+	fmt.Printf("Plan: %s\n", result.Output.Plan)
+	fmt.Printf("\nRun stats: %d requests, %d tool calls\n",
 		result.Usage.Requests, result.Usage.ToolCalls)
+	if !live {
+		fmt.Println("(offline demo mode: set GOLLEM_USE_LIVE_MODELS=1 to call Anthropic)")
+	}
+}
+
+func selectModel() (core.Model, bool) {
+	if os.Getenv("GOLLEM_USE_LIVE_MODELS") == "1" {
+		return anthropic.New(), true
+	}
+
+	return core.NewTestModel(
+		core.ToolCallResponse("get_weather", `{"city":"San Francisco"}`),
+		core.ToolCallResponse("get_air_quality", `{"city":"San Francisco"}`),
+		core.ToolCallResponse("final_result", `{
+			"city":"San Francisco",
+			"temperature":64,
+			"conditions":"breezy with sunny intervals",
+			"air_quality":"AQI 42 (Good)",
+			"highlights":["Crissy Field walk","Ferry Building snacks","Sunset at Lands End"],
+			"plan":"Start with a waterfront walk, grab lunch at the Ferry Building, and finish with sunset views."
+		}`),
+	), false
 }

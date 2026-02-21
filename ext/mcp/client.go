@@ -147,11 +147,17 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	_, err = fmt.Fprintf(c.stdin, "%s\n", data)
 	c.mu.Unlock()
 	if err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
 		return nil, fmt.Errorf("mcp: failed to write request: %w", err)
 	}
 
 	select {
 	case resp := <-ch:
+		if resp == nil {
+			return nil, errors.New("mcp: connection closed while waiting for response")
+		}
 		if resp.Error != nil {
 			return nil, resp.Error
 		}
