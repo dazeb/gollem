@@ -94,8 +94,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// Output validator: reject completion without verification.
 		core.WithOutputValidator[string](verifyValidator),
 
+		// Override default request limit of 50 — coding tasks need more turns.
+		core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(500)}),
+
 		// Guardrails: prevent infinite loops.
-		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(200)),
+		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(500)),
 
 		// Tool timeout: individual tools get 2 minutes max.
 		core.WithDefaultToolTimeout[string](2 * time.Minute),
