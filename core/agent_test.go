@@ -870,7 +870,7 @@ func TestConcurrentToolSemaphore_RespectsContextCancellation(t *testing.T) {
 	// Cancel after a brief delay.
 	go func() {
 		// Small delay to let goroutines start.
-		for i := 0; i < 1000000; i++ {
+		for range 1000000 {
 		}
 		cancel()
 	}()

@@ -35,7 +35,7 @@ func main() {
 		"get_weather",
 		"Get weather snapshot for a city",
 		func(_ context.Context, params CityParams) (string, error) {
-			return fmt.Sprintf("%s weather: 64°F, breezy, sunny intervals", params.City), nil
+			return params.City + " weather: 64°F, breezy, sunny intervals", nil
 		},
 	)
 
@@ -43,7 +43,7 @@ func main() {
 		"get_air_quality",
 		"Get air quality snapshot for a city",
 		func(_ context.Context, params CityParams) (string, error) {
-			return fmt.Sprintf("%s AQI: 42 (Good)", params.City), nil
+			return params.City + " AQI: 42 (Good)", nil
 		},
 	)
 
