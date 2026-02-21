@@ -103,6 +103,23 @@ class GollemAgent(BaseInstalledAgent):
         """Upload the pre-built binary instead of compiling from source."""
         binary_path = _find_binary()
 
+        # Ensure CA certificates are available for TLS (some task images lack them).
+        # Try multiple package managers since images vary (Debian, Alpine, etc.).
+        await environment.exec(
+            command=(
+                "("
+                "  apt-get update -qq && apt-get install -y -qq ca-certificates"
+                "  || apk add --no-cache ca-certificates"
+                "  || yum install -y ca-certificates"
+                "  || dnf install -y ca-certificates"
+                ") > /dev/null 2>&1 || true"
+            )
+        )
+        # Also ensure update-ca-certificates runs if available.
+        await environment.exec(
+            command="update-ca-certificates > /dev/null 2>&1 || true"
+        )
+
         # Upload binary to container.
         await environment.exec(command="mkdir -p /usr/local/bin")
         await environment.upload_file(
@@ -139,6 +156,9 @@ class GollemAgent(BaseInstalledAgent):
         env = {
             "PATH": "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
             "HOME": "/root",
+            # Common CA cert bundle paths for TLS verification.
+            "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
+            "SSL_CERT_DIR": "/etc/ssl/certs",
         }
 
         for key in [

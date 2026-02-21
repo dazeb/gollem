@@ -166,6 +166,19 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Top-level files:\n"+strings.Join(entries, "\n"))
 	}
 
+	// Discover test files (verifier tests live in /tests/ on Terminal-Bench).
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+	for _, td := range testDirs {
+		if info, err := os.Stat(td); err == nil && info.IsDir() {
+			if testLs := runQuiet(td, "ls", "-1"); testLs != "" {
+				parts = append(parts, "\nTest directory found: "+td)
+				parts = append(parts, testLs)
+				parts = append(parts, "IMPORTANT: Read these test files FIRST to understand exactly what will be verified.")
+			}
+			break
+		}
+	}
+
 	// Available tools.
 	parts = append(parts, "\nAvailable tools: bash, view, edit, multi_edit, write, grep, glob, ls")
 	parts = append(parts, "Start by reading the task-relevant files, then proceed with changes.")
