@@ -33,7 +33,7 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 
 ### Core Agent Framework
 - **Generic `Agent[T]`** — Define output type once; schema generation, validation, and deserialization happen automatically at compile time
-- **4 LLM providers** — Anthropic Claude, OpenAI GPT/O-series, Google Gemini (Vertex AI), Claude via Vertex AI
+- **5+ LLM providers** — Anthropic Claude, OpenAI GPT/O-series, Google Gemini (Vertex AI), Claude via Vertex AI
 - **`FuncTool[P]` with reflection-based JSON Schema** — Create tools from typed Go functions; parameter schemas generated from struct tags
 - **Structured output via "final_result" tool pattern** — Reliable typed extraction across all providers
 - **Streaming with `iter.Seq2`** — Go 1.23+ range-over-function iterators for real-time token streaming
