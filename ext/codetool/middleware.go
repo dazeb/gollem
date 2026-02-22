@@ -636,7 +636,62 @@ func discoverEnvironment(workDir string) string {
 	// be inaccurate if code mode or team mode adds/removes tools.
 	parts = append(parts, "\nSource files are pre-loaded above. For complex tasks, create a plan first using the planning tool, then proceed.")
 
+	// Add a compact action summary at the very end. This exploits recency bias —
+	// the last thing the model reads before starting work is a focused summary
+	// of what to do. This prevents the key info from being lost in the middle
+	// of a large context dump.
+	if summary := buildActionSummary(workDir); summary != "" {
+		parts = append(parts, summary)
+	}
+
 	return strings.Join(parts, "\n")
+}
+
+// buildActionSummary creates a focused, compact summary that appears at the
+// very end of context injection. It synthesizes the most critical info:
+// what to create, how to test, and what to do first.
+func buildActionSummary(workDir string) string {
+	var lines []string
+	lines = append(lines, "\n## ACTION SUMMARY (start here)")
+
+	// What expected outputs need to be created?
+	expectedOutputs := detectExpectedOutputs(workDir)
+	if len(expectedOutputs) > 0 {
+		if len(expectedOutputs) > 5 {
+			expectedOutputs = expectedOutputs[:5]
+		}
+		lines = append(lines, "CREATE: "+strings.Join(expectedOutputs, ", "))
+	}
+
+	// What test command to run?
+	cmds := detectTestCommands(workDir)
+	for _, cmd := range cmds {
+		if strings.HasPrefix(cmd, "Test:") {
+			lines = append(lines, "VERIFY: "+strings.TrimPrefix(cmd, "Test: "))
+			break
+		}
+	}
+
+	// What to do first based on task type?
+	hasTests := dirExists("/tests") || dirExists(filepath.Join(workDir, "tests")) || dirExists(filepath.Join(workDir, "test"))
+	hasInputData := dirExists("/app/task_file/input_data") || dirExists(filepath.Join(workDir, "input_data"))
+
+	if hasInputData {
+		lines = append(lines, "FIRST: Read input data format, then write processing code to output_data/")
+	} else if hasTests && len(expectedOutputs) > 0 {
+		lines = append(lines, "FIRST: Write initial output files (even rough drafts), then run tests")
+	} else if hasTests {
+		lines = append(lines, "FIRST: Write implementation based on test expectations, then run tests")
+	} else {
+		lines = append(lines, "FIRST: Create required output files immediately, then iterate")
+	}
+
+	lines = append(lines, "REMEMBER: Output First, Perfect Later. Write code NOW, refine after testing.")
+
+	if len(lines) <= 2 {
+		return "" // nothing useful to summarize
+	}
+	return strings.Join(lines, "\n")
 }
 
 // readFileTruncated reads a file and returns its content truncated to maxBytes.
