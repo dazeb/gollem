@@ -268,10 +268,10 @@ func MultiEdit(opts ...Option) core.Tool {
 				if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
 					return "", fmt.Errorf("edit[%d]: write file: %w", i, err)
 				}
-				results = append(results, "edited "+edit.Path)
+				results = append(results, editResultWithContext(newContent, edit.NewString, 1, edit.Path))
 			}
 
-			return fmt.Sprintf("Applied %d edit(s): %s", len(results), strings.Join(results, ", ")), nil
+			return strings.Join(results, "\n\n"), nil
 		},
 	)
 }

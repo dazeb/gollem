@@ -135,7 +135,17 @@ func Bash(opts ...Option) core.Tool {
 			outStr = truncateOutput(outStr, cfg.MaxOutputLen)
 			errStr = truncateOutput(errStr, cfg.MaxOutputLen)
 
-			return formatBashOutput(outStr, errStr, exitCode, timedOut, timeout), nil
+			result := formatBashOutput(outStr, errStr, exitCode, timedOut, timeout)
+
+			// Add hint for "command not found" errors — saves a turn of
+			// the model figuring out the package name.
+			if exitCode == 127 || strings.Contains(errStr, "command not found") || strings.Contains(errStr, "No such file or directory") {
+				if hint := commandNotFoundHint(errStr); hint != "" {
+					result += "\n" + hint
+				}
+			}
+
+			return result, nil
 		},
 		core.WithToolSequential(true), // bash commands should run sequentially
 	)
@@ -177,6 +187,68 @@ func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeou
 	}
 
 	return b.String()
+}
+
+// commandNotFoundHint generates an installation hint when a command is missing.
+// This saves a turn of the model figuring out what package to install.
+func commandNotFoundHint(stderr string) string {
+	// Common command → package mappings for Debian/Ubuntu containers.
+	packages := map[string]string{
+		"python3":    "python3",
+		"python":     "python3",
+		"pip3":       "python3-pip",
+		"pip":        "python3-pip",
+		"node":       "nodejs",
+		"npm":        "npm",
+		"gcc":        "build-essential",
+		"g++":        "build-essential",
+		"cc":         "build-essential",
+		"make":       "build-essential",
+		"cmake":      "cmake",
+		"curl":       "curl",
+		"wget":       "wget",
+		"git":        "git",
+		"java":       "default-jdk",
+		"javac":      "default-jdk",
+		"perl":       "perl",
+		"ruby":       "ruby",
+		"gfortran":   "gfortran",
+		"ffmpeg":     "ffmpeg",
+		"jq":         "jq",
+		"unzip":      "unzip",
+		"zip":        "zip",
+		"bc":         "bc",
+		"flex":       "flex",
+		"bison":      "bison",
+		"pkg-config": "pkg-config",
+		"autoconf":   "autoconf",
+		"automake":   "automake",
+		"libtool":    "libtool",
+		"rsync":      "rsync",
+		"sqlite3":    "sqlite3",
+		"lsof":       "lsof",
+		"netcat":     "netcat-openbsd",
+		"nc":         "netcat-openbsd",
+		"socat":      "socat",
+		"grpc":       "protobuf-compiler",
+		"protoc":     "protobuf-compiler",
+	}
+
+	// Extract the missing command name from stderr.
+	lower := strings.ToLower(stderr)
+	for cmd, pkg := range packages {
+		if strings.Contains(lower, cmd+": command not found") ||
+			strings.Contains(lower, cmd+": not found") {
+			return fmt.Sprintf("[hint: try: apt-get install -y %s]", pkg)
+		}
+	}
+
+	// Fallback for pip/ensurepip.
+	if strings.Contains(lower, "no module named pip") {
+		return "[hint: try: python3 -m ensurepip || apt-get install -y python3-pip]"
+	}
+
+	return ""
 }
 
 // isBuildCommand detects commands that typically need longer timeouts.

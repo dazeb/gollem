@@ -427,7 +427,11 @@ func TestMultiEdit(t *testing.T) {
 		{"path": "lib/utils.go", "old_string": "func Add", "new_string": "func Sum"}
 	]}`
 	result := call(t, tool, args)
-	assertContains(t, result, "Applied 2")
+	// Multi-edit now shows per-edit context.
+	assertContains(t, result, "Replaced 1 occurrence(s) in hello.go")
+	assertContains(t, result, "Replaced 1 occurrence(s) in lib/utils.go")
+	assertContains(t, result, "Hi!")
+	assertContains(t, result, "func Sum")
 
 	data1, _ := os.ReadFile(filepath.Join(dir, "hello.go"))
 	assertContains(t, string(data1), "Hi!")
