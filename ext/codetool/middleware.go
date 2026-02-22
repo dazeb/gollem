@@ -436,12 +436,17 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, envHint)
 	}
 
+	// Extract file references from test content to prioritize source auto-read.
+	// Tests that import specific source files tell us exactly what's relevant.
+	testRefs := extractTestReferencedFiles(parts)
+
 	// Auto-read small source files in /app/ — now recursive (depth 3).
 	// Reads files < 5KB to avoid overwhelming context, up to 8 files total.
+	// Test-referenced files are prioritized above entry points.
 	if autoReadBudget > 0 {
 		appSourceDirs := []string{"/app", workDir}
 		for _, ad := range appSourceDirs {
-			autoReadBudget = autoReadSourceFilesBudget(ad, &parts, 5000, 8, autoReadBudget)
+			autoReadBudget = autoReadSourceFilesBudget(ad, &parts, 5000, 8, autoReadBudget, testRefs)
 			break // only read from one source directory
 		}
 	}
@@ -781,16 +786,23 @@ func autoReadTestRecursive(dir string, parts *[]string, maxBytes int, remaining 
 // autoReadSourceFilesBudget reads small source files in a directory recursively
 // (up to depth 3), respecting a total byte budget. This ensures the agent sees
 // code in subdirectories like src/, lib/, utils/ without wasting turns.
+// testRefs is an optional set of filenames referenced by test imports — these
+// get highest priority in reading order.
 // Returns the remaining byte budget.
-func autoReadSourceFilesBudget(dir string, parts *[]string, maxBytes, maxFiles, budget int) int {
-	autoReadSourceRecursive(dir, parts, maxBytes, &maxFiles, &budget, 0, 3)
+func autoReadSourceFilesBudget(dir string, parts *[]string, maxBytes, maxFiles, budget int, testRefs ...map[string]bool) int {
+	var refs map[string]bool
+	if len(testRefs) > 0 {
+		refs = testRefs[0]
+	}
+	autoReadSourceRecursive(dir, parts, maxBytes, &maxFiles, &budget, 0, 3, refs)
 	return budget
 }
 
 // autoReadSourceRecursive walks a directory tree reading source files.
-// Files are prioritized: entry-point files (main.*, app.*, index.*) are
-// read first since they define the program structure.
-func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remaining *int, budget *int, depth, maxDepth int) {
+// Files are prioritized: test-referenced files first, then entry-point files
+// (main.*, app.*, index.*), then remaining files. testRefs is a set of
+// lowercased filenames that tests import — these get highest priority.
+func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remaining *int, budget *int, depth, maxDepth int, testRefs map[string]bool) {
 	if depth > maxDepth || *remaining <= 0 || *budget <= 0 {
 		return
 	}
@@ -799,8 +811,11 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 		return
 	}
 
-	// Partition files into priority tiers: entry points first, then rest.
-	var priority, regular []os.DirEntry
+	// Partition files into priority tiers:
+	// 1. Test-referenced files (imported by tests — highest value)
+	// 2. Entry points (main.*, app.*, index.*, solution.*)
+	// 3. Regular source files
+	var testRef, priority, regular []os.DirEntry
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -813,15 +828,21 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 		if lower == "readme.md" || lower == "readme.txt" || lower == "readme" {
 			continue // Already auto-read separately.
 		}
-		if isEntryPointFile(lower) {
+		if testRefs != nil && testRefs[lower] {
+			testRef = append(testRef, entry)
+		} else if isEntryPointFile(lower) {
 			priority = append(priority, entry)
 		} else {
 			regular = append(regular, entry)
 		}
 	}
 
-	// Read priority files first, then regular files.
-	for _, entry := range append(priority, regular...) {
+	// Read in priority order: test-referenced → entry points → regular.
+	allFiles := make([]os.DirEntry, 0, len(testRef)+len(priority)+len(regular))
+	allFiles = append(allFiles, testRef...)
+	allFiles = append(allFiles, priority...)
+	allFiles = append(allFiles, regular...)
+	for _, entry := range allFiles {
 		if *remaining <= 0 || *budget <= 0 {
 			return
 		}
@@ -857,7 +878,7 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 			name == "build" || name == "dist" || name == "target" {
 			continue
 		}
-		autoReadSourceRecursive(filepath.Join(dir, name), parts, maxBytes, remaining, budget, depth+1, maxDepth)
+		autoReadSourceRecursive(filepath.Join(dir, name), parts, maxBytes, remaining, budget, depth+1, maxDepth, testRefs)
 	}
 }
 
@@ -1181,6 +1202,137 @@ func detectExpectedOutputs(workDir string) []string {
 
 // extractPathFromLine extracts a file path starting at position idx in a line.
 // It looks for surrounding quotes or extracts until whitespace/punctuation.
+// extractTestReferencedFiles scans the auto-read parts for test file content
+// and extracts source file names referenced by import/require statements.
+// Returns a map of lowercased filenames (e.g., "solution.py") that tests import.
+// This enables prioritizing these files in source auto-read.
+func extractTestReferencedFiles(parts []string) map[string]bool {
+	refs := make(map[string]bool)
+	inTestSection := false
+
+	for _, part := range parts {
+		// Track whether we're in a test file section.
+		if strings.HasPrefix(part, "\n## Test file auto-read") {
+			inTestSection = true
+			continue
+		}
+		if strings.HasPrefix(part, "\n## ") {
+			inTestSection = false
+			continue
+		}
+		if !inTestSection {
+			continue
+		}
+
+		// Scan each line for import/require patterns.
+		for _, line := range strings.Split(part, "\n") {
+			trimmed := strings.TrimSpace(line)
+
+			// Python: "import solution", "from solution import *", "from my_module import X"
+			if strings.HasPrefix(trimmed, "import ") {
+				// "import solution" or "import solution as sol"
+				mod := strings.Fields(trimmed)[1]
+				mod = strings.Split(mod, ".")[0] // "import foo.bar" → "foo"
+				mod = strings.TrimRight(mod, ",")
+				if mod != "" && !isStdlibModule(mod) {
+					refs[strings.ToLower(mod)+".py"] = true
+				}
+			} else if strings.HasPrefix(trimmed, "from ") {
+				// "from solution import *", "from my_module import func"
+				fields := strings.Fields(trimmed)
+				if len(fields) >= 2 {
+					mod := fields[1]
+					mod = strings.Split(mod, ".")[0] // "from foo.bar import X" → "foo"
+					if mod != "" && mod != "." && !isStdlibModule(mod) {
+						refs[strings.ToLower(mod)+".py"] = true
+					}
+				}
+			}
+
+			// JavaScript/TypeScript: require('./solution'), import from './solution'
+			if strings.Contains(trimmed, "require(") || strings.Contains(trimmed, "from '") || strings.Contains(trimmed, "from \"") {
+				// Extract path from quotes after require( or from
+				for _, delim := range []string{"'", "\""} {
+					startPat := delim
+					idx := strings.Index(trimmed, "require("+startPat)
+					if idx < 0 {
+						idx = strings.Index(trimmed, "from "+startPat)
+						if idx >= 0 {
+							idx += 5
+						}
+					} else {
+						idx += 8
+					}
+					if idx >= 0 {
+						rest := trimmed[idx+1:]
+						endIdx := strings.Index(rest, delim)
+						if endIdx > 0 {
+							modPath := rest[:endIdx]
+							// Only local imports (starting with . or /)
+							if strings.HasPrefix(modPath, ".") || strings.HasPrefix(modPath, "/") {
+								base := filepath.Base(modPath)
+								// Add common extensions if missing
+								if !strings.Contains(base, ".") {
+									refs[strings.ToLower(base)+".js"] = true
+									refs[strings.ToLower(base)+".ts"] = true
+								} else {
+									refs[strings.ToLower(base)] = true
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Shell: source ./helper.sh, . ./utils.sh
+			if strings.HasPrefix(trimmed, "source ") || strings.HasPrefix(trimmed, ". ./") {
+				var scriptPath string
+				if strings.HasPrefix(trimmed, "source ") {
+					scriptPath = strings.Fields(trimmed)[1]
+				} else {
+					scriptPath = strings.Fields(trimmed)[1]
+				}
+				base := filepath.Base(scriptPath)
+				if base != "" {
+					refs[strings.ToLower(base)] = true
+				}
+			}
+		}
+	}
+
+	return refs
+}
+
+// isStdlibModule returns true for common Python standard library modules
+// that should NOT be prioritized in source auto-read.
+func isStdlibModule(mod string) bool {
+	stdlib := map[string]bool{
+		"os": true, "sys": true, "re": true, "json": true, "math": true,
+		"time": true, "datetime": true, "collections": true, "itertools": true,
+		"functools": true, "pathlib": true, "shutil": true, "subprocess": true,
+		"unittest": true, "pytest": true, "typing": true, "io": true,
+		"hashlib": true, "filecmp": true, "tempfile": true, "glob": true,
+		"csv": true, "string": true, "random": true, "copy": true,
+		"argparse": true, "logging": true, "traceback": true, "inspect": true,
+		"abc": true, "enum": true, "dataclasses": true, "contextlib": true,
+		"socket": true, "http": true, "urllib": true, "email": true,
+		"struct": true, "array": true, "heapq": true, "bisect": true,
+		"operator": true, "textwrap": true, "difflib": true, "pprint": true,
+		"warnings": true, "signal": true, "threading": true, "multiprocessing": true,
+		"pickle": true, "shelve": true, "sqlite3": true, "xml": true,
+		"html": true, "base64": true, "binascii": true, "hmac": true,
+		"secrets": true, "zipfile": true, "tarfile": true, "gzip": true,
+		"configparser": true, "platform": true, "ctypes": true,
+		// Common third-party but not user code
+		"numpy": true, "np": true, "pandas": true, "pd": true,
+		"scipy": true, "matplotlib": true, "plt": true,
+		"torch": true, "tensorflow": true, "sklearn": true,
+		"requests": true, "flask": true, "django": true,
+		"PIL": true, "cv2": true, "yaml": true, "toml": true,
+	}
+	return stdlib[mod]
+}
+
 func extractPathFromLine(line string, idx int) string {
 	// Walk backward to find the start of the path (quote or path separator).
 	start := idx

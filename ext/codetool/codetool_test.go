@@ -2368,6 +2368,53 @@ func TestDetectDatabaseTask(t *testing.T) {
 	}
 }
 
+func TestExtractTestReferencedFiles(t *testing.T) {
+	// Simulate parts with Python test imports.
+	parts := []string{
+		"\n## Test file auto-read (DO NOT MODIFY): /tests/test_solution.py",
+		`import solution
+from utils import helper
+from os import path
+import json
+import numpy as np
+from my_module import MyClass
+`,
+		"\n## Source file auto-read: /app/main.py",
+		`print("hello")`,
+	}
+
+	refs := extractTestReferencedFiles(parts)
+
+	// Should find solution.py, utils.py, my_module.py
+	for _, expected := range []string{"solution.py", "utils.py", "my_module.py"} {
+		if !refs[expected] {
+			t.Errorf("expected test ref %q, got refs: %v", expected, refs)
+		}
+	}
+
+	// Should NOT include stdlib modules (os, json, numpy)
+	for _, unexpected := range []string{"os.py", "json.py", "numpy.py", "np.py"} {
+		if refs[unexpected] {
+			t.Errorf("unexpected stdlib ref %q in test refs", unexpected)
+		}
+	}
+}
+
+func TestIsStdlibModule(t *testing.T) {
+	if !isStdlibModule("os") {
+		t.Error("os should be stdlib")
+	}
+	if !isStdlibModule("numpy") {
+		t.Error("numpy should be treated as stdlib")
+	}
+	if isStdlibModule("solution") {
+		t.Error("solution should NOT be stdlib")
+	}
+	if isStdlibModule("my_custom_module") {
+		t.Error("my_custom_module should NOT be stdlib")
+	}
+}
+
 func TestExtractTestConstraintsShell(t *testing.T) {
 	// Shell test with diff and wc patterns.
 	dir := t.TempDir()
