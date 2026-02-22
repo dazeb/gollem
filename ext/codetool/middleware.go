@@ -258,8 +258,9 @@ func discoverEnvironment(workDir string) string {
 
 	// Quick network connectivity check — many TB2 containers have no internet.
 	// Detecting this early prevents the agent from wasting 2-3 turns on failed
-	// pip install or apt-get commands.
-	if !hasNetworkAccess() {
+	// pip install or apt-get commands. Cached for reuse by auto-install logic below.
+	networkAvailable := hasNetworkAccess()
+	if !networkAvailable {
 		parts = append(parts, "\nWARNING: No internet access detected. Use only locally installed packages and tools.")
 		parts = append(parts, "For Python: check with `python3 -c \"import <module>\"` before trying to install.")
 		parts = append(parts, "For system packages: check with `dpkg -l | grep <pkg>` or `which <tool>`.")
@@ -422,15 +423,28 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
-	// Detect Python requirements files and hint the agent to install early.
-	// This is one of the most common first steps that wastes turns.
+	// Detect Python requirements files and auto-install if possible.
+	// This saves 1-2 turns on EVERY Python task — the agent's first action is
+	// almost always `pip install -r requirements.txt`.
 	foundPyDeps := false
 	for _, dir := range []string{workDir, "/app"} {
 		reqPath := filepath.Join(dir, "requirements.txt")
 		if content := readFileTruncated(reqPath, 2000); content != "" {
 			parts = append(parts, fmt.Sprintf("\n## Python dependencies found: %s", reqPath))
 			parts = append(parts, content)
-			parts = append(parts, "HINT: Install these FIRST with: pip install --break-system-packages -r "+reqPath)
+			// Auto-install if network is available and python3/pip exist.
+			if networkAvailable && runQuiet(workDir, "which", "python3") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Python dependencies from %s\n", reqPath)
+				result := runQuietTimeout(workDir, 60*time.Second,
+					"pip", "install", "--break-system-packages", "-q", "-r", reqPath)
+				if result != "" {
+					parts = append(parts, "AUTO-INSTALLED: Python dependencies from "+reqPath+" (already done, no need to install again)")
+				} else {
+					parts = append(parts, "NOTE: Auto-install attempted but may have failed. Verify with: pip install --break-system-packages -r "+reqPath)
+				}
+			} else {
+				parts = append(parts, "HINT: Install these FIRST with: pip install --break-system-packages -r "+reqPath)
+			}
 			foundPyDeps = true
 			break
 		}
@@ -443,6 +457,22 @@ func discoverEnvironment(workDir string) string {
 				parts = append(parts, "\n## Pipfile found: "+pipfilePath)
 				parts = append(parts, "HINT: Install with: pip install --break-system-packages pipenv && pipenv install --system, or manually install packages listed in Pipfile")
 				foundPyDeps = true
+				break
+			}
+		}
+	}
+
+	// Auto-install npm dependencies for Node.js projects.
+	if !foundPyDeps && networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			pkgPath := filepath.Join(dir, "package.json")
+			if fileExists(pkgPath) && runQuiet(workDir, "which", "npm") != "" {
+				lockPath := filepath.Join(dir, "node_modules")
+				if !dirExists(lockPath) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing npm dependencies in %s\n", dir)
+					runQuietTimeout(dir, 60*time.Second, "npm", "install", "--no-audit", "--no-fund")
+					parts = append(parts, "AUTO-INSTALLED: npm dependencies (already done, no need to install again)")
+				}
 				break
 			}
 		}
@@ -644,11 +674,18 @@ func detectProject(workDir string) (language, buildSystem string) {
 // runQuiet runs a command in workDir and returns trimmed stdout, or empty
 // string on any error. It has a short timeout to avoid blocking agent startup.
 func runQuiet(workDir string, name string, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	return runQuietTimeout(workDir, 5*time.Second, name, args...)
+}
+
+// runQuietTimeout runs a command with a custom timeout, returning trimmed
+// stdout or empty string on error.
+func runQuietTimeout(workDir string, timeout time.Duration, name string, args ...string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(), "PIP_BREAK_SYSTEM_PACKAGES=1")
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -776,9 +813,11 @@ func autoReadTestRecursive(dir string, parts *[]string, maxBytes int, remaining 
 	}
 
 	// Read files first, then recurse into subdirectories.
+	// Track large test files we can't fully read — we'll extract their structure.
+	var largeTestFiles []string
 	for _, entry := range entries {
 		if *remaining <= 0 || *budget <= 0 {
-			return
+			break
 		}
 		if entry.IsDir() {
 			continue
@@ -788,7 +827,12 @@ func autoReadTestRecursive(dir string, parts *[]string, maxBytes int, remaining 
 			continue
 		}
 		info, err := entry.Info()
-		if err != nil || info.Size() > int64(maxBytes) || info.Size() == 0 {
+		if err != nil || info.Size() == 0 {
+			continue
+		}
+		if info.Size() > int64(maxBytes) {
+			// Too large for full auto-read — extract structure instead.
+			largeTestFiles = append(largeTestFiles, filepath.Join(dir, name))
 			continue
 		}
 		limit := maxBytes
@@ -801,6 +845,20 @@ func autoReadTestRecursive(dir string, parts *[]string, maxBytes int, remaining 
 			*parts = append(*parts, content)
 			*budget -= len(content)
 			*remaining--
+		}
+	}
+
+	// For large test files we couldn't auto-read, extract test function names.
+	// This ensures the agent knows what tests exist even in large test suites.
+	for _, path := range largeTestFiles {
+		if *budget <= 0 {
+			break
+		}
+		if skeleton := extractFileStructure(path); skeleton != "" {
+			*parts = append(*parts, fmt.Sprintf("\n## Large test file structure (DO NOT MODIFY): %s", path))
+			*parts = append(*parts, skeleton)
+			*parts = append(*parts, "NOTE: File too large to auto-read. Use view tool to read specific test functions.")
+			*budget -= len(skeleton)
 		}
 	}
 
