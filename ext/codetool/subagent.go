@@ -77,6 +77,10 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				core.WithAgentMiddleware[string](ContextInjectionMiddleware(cfg.WorkDir)),
 				// Loop detection: catch subagent doom loops early (3 repeated edits).
 				core.WithAgentMiddleware[string](LoopDetectionMiddleware(3)),
+				// Reasoning sandwich: vary thinking budget by phase (planning vs
+				// implementation vs verification). Helps subagent reason carefully
+				// when analyzing errors and verifying fixes.
+				core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(subagentReasoningConfig())),
 				// Context overflow recovery: catches 413 and retries with compressed
 				// messages. Subagents can hit overflow on long-running subtasks.
 				core.WithAgentMiddleware[string](ContextOverflowMiddleware()),

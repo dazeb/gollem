@@ -54,7 +54,23 @@ func Write(opts ...Option) core.Tool {
 				return "", fmt.Errorf("create directories: %w", err)
 			}
 
-			if err := os.WriteFile(path, []byte(params.Content), 0o644); err != nil {
+			// Auto-chmod scripts to executable: files with shebang lines or
+			// script extensions (.sh, .bash, .py, .rb, .pl) should be executable.
+			// This prevents "Permission denied" errors that waste 1-2 agent turns
+			// when test scripts invoke the solution with ./solution.sh or ./solve.py.
+			perm := os.FileMode(0o644)
+			lower := strings.ToLower(filepath.Base(path))
+			isScript := strings.HasPrefix(params.Content, "#!") ||
+				strings.HasSuffix(lower, ".sh") ||
+				strings.HasSuffix(lower, ".bash") ||
+				strings.HasSuffix(lower, ".py") ||
+				strings.HasSuffix(lower, ".rb") ||
+				strings.HasSuffix(lower, ".pl")
+			if isScript {
+				perm = 0o755
+			}
+
+			if err := os.WriteFile(path, []byte(params.Content), perm); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 

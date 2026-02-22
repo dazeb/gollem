@@ -62,6 +62,20 @@ func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	}
 }
 
+// subagentReasoningConfig returns a reasoning sandwich config tuned for subagents.
+// Subagents run shorter tasks (50 turns max) so they get fewer planning turns
+// and slightly lower budgets to keep them fast. The verification phase still
+// gets high reasoning since careful error analysis is critical.
+func subagentReasoningConfig() ReasoningSandwichConfig {
+	return ReasoningSandwichConfig{
+		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
+		Implementation: ReasoningLevel{ThinkingBudget: 12000, ReasoningEffort: "medium"},
+		Verification:   ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
+		PlanningTurns:         3,
+		VerificationThreshold: 0, // Use heuristic
+	}
+}
+
 // ReasoningSandwichMiddleware implements the "reasoning sandwich" pattern:
 // high reasoning for planning → lower for implementation → high for verification.
 //
