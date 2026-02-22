@@ -536,8 +536,8 @@ func previewInputData(dir string, hints *[]string) {
 		if err != nil || info.Size() == 0 {
 			continue
 		}
-		// Read first 500 bytes to show format.
-		content := readFileTruncated(filepath.Join(dir, name), 500)
+		// Read first 1000 bytes to show format.
+		content := readFileTruncated(filepath.Join(dir, name), 1000)
 		if content != "" {
 			*hints = append(*hints, fmt.Sprintf("Input data preview (%s, %d bytes total):", name, info.Size()))
 			*hints = append(*hints, content)

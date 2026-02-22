@@ -138,6 +138,11 @@ func isVerificationCommand(argsJSON string) bool {
 		"python3 check", "python check",
 		"python3 /app/scripts/", "python /app/scripts/",
 		"bash /app/scripts/", "sh /app/scripts/",
+		// Pattern: inline test execution.
+		"python3 -c \"import", "python -c \"import",
+		"python3 -c 'import", "python -c 'import",
+		// Pattern: pmars (corewars simulator).
+		"pmars ",
 	}
 
 	// Build/compile commands.
