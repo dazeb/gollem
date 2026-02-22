@@ -223,12 +223,36 @@ class GollemAgent(BaseInstalledAgent):
         await environment.exec(
             command=(
                 "timeout 120 sh -c '"
+                # Install pytest first — nearly all verifier tests use it, and
+                # the agent needs it to verify its work. Also install common
+                # packages that many tasks require.
+                "pip install --break-system-packages -q pytest 2>/dev/null || "
+                "pip3 install --break-system-packages -q pytest 2>/dev/null || true; "
                 # Python: requirements.txt
                 "for f in /app/requirements.txt /requirements.txt; do "
                 "  if [ -f \"$f\" ]; then "
                 "    pip install --break-system-packages -r \"$f\" 2>&1 | tail -5 || "
                 "    pip3 install --break-system-packages -r \"$f\" 2>&1 | tail -5 || "
                 "    python3 -m pip install --break-system-packages -r \"$f\" 2>&1 | tail -5 || true; "
+                "    break; "
+                "  fi; "
+                "done; "
+                # Python: setup.py (editable install for projects with setup.py)
+                "for d in /app .; do "
+                "  if [ -f \"$d/setup.py\" ] && ! [ -f \"$d/requirements.txt\" ]; then "
+                "    cd \"$d\" && pip install --break-system-packages -e . 2>&1 | tail -5 || true; "
+                "    break; "
+                "  fi; "
+                "done; "
+                # Python: scan test files for imports and install missing ones
+                "for td in /tests /app/tests; do "
+                "  if [ -d \"$td\" ]; then "
+                "    grep -rh \"^import \\|^from \" \"$td\"/*.py 2>/dev/null | "
+                "      sed \"s/^import //;s/^from //;s/ .*//;s/\\..*//\" | "
+                "      sort -u | while read mod; do "
+                "        python3 -c \"import $mod\" 2>/dev/null || "
+                "          pip install --break-system-packages -q \"$mod\" 2>/dev/null || true; "
+                "    done; "
                 "    break; "
                 "  fi; "
                 "done; "
