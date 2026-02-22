@@ -138,21 +138,28 @@ func runAgent() {
 		os.Exit(1)
 	}
 
-	// Auto-detect task timeout from multiple sources (in priority order):
-	// 1. task.toml in working directory or /app/task_file/ (Terminal-Bench format)
-	// 2. GOLLEM_TIMEOUT_SEC environment variable (set by Harbor agent)
-	// This ensures time budget warnings are accurate for the actual deadline.
-	if taskTimeout := detectTaskTimeout(f.workDir); taskTimeout > 0 && taskTimeout < f.timeout {
-		fmt.Fprintf(os.Stderr, "gollem: detected task timeout: %v (overriding %v)\n", taskTimeout, f.timeout)
-		f.timeout = taskTimeout
-	} else if envTimeout := os.Getenv("GOLLEM_TIMEOUT_SEC"); envTimeout != "" {
+	// Detect the real task deadline for accurate time budget warnings.
+	// GOLLEM_TIMEOUT_SEC (from Harbor) or task.toml represents the outer
+	// deadline. The --timeout flag (f.timeout) may be shorter to leave a
+	// cleanup buffer. We track both:
+	//   - f.timeout:    execution timeout for context.WithTimeout (shorter)
+	//   - budgetTimeout: real deadline for TimeBudgetMiddleware warnings
+	budgetTimeout := f.timeout
+	if taskTimeout := detectTaskTimeout(f.workDir); taskTimeout > 0 {
+		budgetTimeout = taskTimeout
+		// Also shorten exec timeout if task.toml is shorter than --timeout.
+		if taskTimeout < f.timeout {
+			fmt.Fprintf(os.Stderr, "gollem: detected task timeout: %v (overriding %v)\n", taskTimeout, f.timeout)
+			f.timeout = taskTimeout
+		}
+	}
+	if envTimeout := os.Getenv("GOLLEM_TIMEOUT_SEC"); envTimeout != "" {
 		var secs float64
 		if _, err := fmt.Sscanf(envTimeout, "%f", &secs); err == nil && secs > 0 {
 			envDuration := time.Duration(secs) * time.Second
-			// Always use env timeout when set — it comes from Harbor
-			// and represents the outer execution deadline.
-			fmt.Fprintf(os.Stderr, "gollem: using env timeout: %v (overriding %v)\n", envDuration, f.timeout)
-			f.timeout = envDuration
+			// Use env timeout for budget tracking (accurate deadline).
+			budgetTimeout = envDuration
+			fmt.Fprintf(os.Stderr, "gollem: budget timeout: %v, exec timeout: %v\n", envDuration, f.timeout)
 		}
 	}
 
@@ -214,8 +221,9 @@ func runAgent() {
 
 	// Pass the model so the coding agent can spawn subagents for delegation.
 	toolOpts = append(toolOpts, codetool.WithModel(model))
-	// Pass timeout for time budget awareness middleware.
-	toolOpts = append(toolOpts, codetool.WithTimeout(f.timeout))
+	// Pass the budget timeout (real deadline) for time budget warnings.
+	// This is separate from f.timeout (exec timeout) which may be shorter.
+	toolOpts = append(toolOpts, codetool.WithTimeout(budgetTimeout))
 
 	// Build the coding agent with the full recommended setup.
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
