@@ -197,7 +197,7 @@ func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeou
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(fmt.Sprintf("[timed out after %s]", timeout))
+		b.WriteString(fmt.Sprintf("[timed out after %s — if this is a test or benchmark, optimize YOUR code to be faster. Do NOT modify test/benchmark parameters. Use the timeout parameter for legitimately long-running commands.]", timeout))
 	} else if exitCode != 0 {
 		if b.Len() > 0 {
 			b.WriteByte('\n')

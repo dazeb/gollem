@@ -282,7 +282,7 @@ func discoverEnvironment(workDir string) string {
 			// Auto-read test files (up to 8KB each, up to 5 files).
 			// Tests are the highest-value context — knowing what's verified
 			// prevents wasted turns writing solutions that don't match.
-			autoReadBudget = autoReadDirBudget(td, &parts, "Test", 8000, 5, autoReadBudget)
+			autoReadBudget = autoReadDirBudget(td, &parts, "Test (DO NOT MODIFY)", 8000, 5, autoReadBudget)
 			// Extract and highlight key constraints from test assertions.
 			if constraints := extractTestConstraints(td); len(constraints) > 0 {
 				parts = append(parts, "\n## KEY CONSTRAINTS (extracted from tests)")
@@ -672,6 +672,18 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Verify size after EVERY edit: `wc -c <output_file>`")
 	}
 
+	// Detect system emulator / QEMU tasks.
+	if detectSystemEmulatorTask(workDir) {
+		hints = append(hints, "\n## Task Type: System Emulator / VM Setup")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Check available tools first: `which qemu-system-x86_64`, `which kvm`, etc.")
+		hints = append(hints, "- Install QEMU if missing: `apt-get install -y qemu-system-x86 qemu-utils`")
+		hints = append(hints, "- Use `-nographic` flag for headless operation (no display server available)")
+		hints = append(hints, "- Set appropriate timeouts for VM boot (use bash timeout 120+ seconds)")
+		hints = append(hints, "- For SSH access: use port forwarding `-netdev user,id=net0,hostfwd=tcp::2222-:22`")
+		hints = append(hints, "- Don't try to install GUI tools or display servers — this is a headless environment")
+	}
+
 	// Detect Dockerfile/container tasks.
 	if fileExists(filepath.Join(workDir, "Dockerfile")) || fileExists(filepath.Join(workDir, "docker-compose.yml")) {
 		hints = append(hints, "\n## Note: Docker files detected")
@@ -881,6 +893,28 @@ func detectCryptoTask(workDir string) bool {
 		content := readFileTruncated(m, 2000)
 		if strings.Contains(content, "Crypto.") || strings.Contains(content, "cryptography") ||
 			strings.Contains(content, "hashlib") || strings.Contains(content, "hmac") {
+			return true
+		}
+	}
+	return false
+}
+
+// detectSystemEmulatorTask returns true if the task involves QEMU or system emulators.
+func detectSystemEmulatorTask(workDir string) bool {
+	indicators := []string{
+		"qemu", "vm", "virtual-machine", "emulator", "mips",
+		"install-windows", "alpine-ssh", "startup",
+	}
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range indicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for QEMU disk images or ISOs.
+	for _, ext := range []string{"*.qcow2", "*.img", "*.iso", "*.vmdk"} {
+		matches, _ := filepath.Glob(filepath.Join(workDir, ext))
+		if len(matches) > 0 {
 			return true
 		}
 	}
@@ -1399,9 +1433,24 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 			return resp, nil
 		}
 
-		// Only handle 413 errors.
+		// Handle 413 (Request Entity Too Large) and 400 errors caused by context overflow.
+		// Some providers (OpenAI, xAI) return 400 with "context" or "too long" in the message
+		// instead of a proper 413.
 		var httpErr *core.ModelHTTPError
-		if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusRequestEntityTooLarge {
+		if !errors.As(err, &httpErr) {
+			return nil, err
+		}
+		isContextOverflow := httpErr.StatusCode == http.StatusRequestEntityTooLarge
+		if httpErr.StatusCode == http.StatusBadRequest {
+			lower := strings.ToLower(httpErr.Body + httpErr.Message)
+			if strings.Contains(lower, "context") && (strings.Contains(lower, "too long") || strings.Contains(lower, "too large") || strings.Contains(lower, "exceed") || strings.Contains(lower, "maximum")) {
+				isContextOverflow = true
+			}
+			if strings.Contains(lower, "maximum context length") || strings.Contains(lower, "token limit") {
+				isContextOverflow = true
+			}
+		}
+		if !isContextOverflow {
 			return nil, err
 		}
 

@@ -225,6 +225,18 @@ func isVerificationString(cmd string) bool {
 		"python3 -c 'import", "python -c 'import",
 		// Pattern: pmars (corewars simulator).
 		"pmars ",
+		// Lean 4 build (theorem proving).
+		"lake build", "lake env",
+		// OCaml build systems.
+		"dune build", "dune test", "dune exec",
+		// Haskell build systems.
+		"stack build", "stack test", "cabal build", "cabal test",
+		// Coq proof checker.
+		"coqc ", "coq_makefile",
+		// Elixir/Erlang.
+		"mix test", "mix compile",
+		// Zig build.
+		"zig build", "zig test",
 	}
 
 	// Build/compile commands.

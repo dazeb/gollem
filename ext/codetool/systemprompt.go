@@ -82,6 +82,16 @@ Common pitfalls to avoid:
 - **delegate**: Use for self-contained subtasks that benefit from a fresh context. The subagent sees the same environment (files, tests, README) automatically, but has NO memory of your conversation. Good uses: implementing a self-contained module, debugging a specific component, researching an unfamiliar API. Bad uses: tasks that depend on your in-progress work, trivial one-step operations. Include all necessary context about WHAT to do in the task description — the subagent already knows WHERE (same working directory).
 - **planning**: Use for multi-step tasks. Create a plan with task IDs, then update each task's status as you progress.
 
+## NEVER Modify Test, Benchmark, or Verifier Files
+
+This is critical — violating this rule guarantees failure:
+- **DO NOT** edit files in /tests/, test directories, benchmark scripts, or verifier scripts
+- **DO NOT** change test parameters, thresholds, data sizes, or expected values
+- If a benchmark times out, your solution is too slow — optimize YOUR code, not the test
+- If a test expects specific values, your code must produce those values — not the other way around
+- The verifier runs the ORIGINAL test files. Any modifications you make will be ignored during evaluation.
+- If you need to understand test expectations, READ the test code — don't change it
+
 ## Test Early and Often
 
 Do NOT wait until the end to run tests. Follow this pattern:
@@ -177,6 +187,7 @@ When processing input data:
 2. **Match output format exactly**: Verifiers often check exact format (JSON schema, CSV headers, whitespace, newlines). Compare your output against any example output files
 3. **Handle edge cases**: Empty files, Unicode, very large files, missing fields. Use streaming (line-by-line) for files > 100MB
 4. **Validate output size**: If the task specifies size constraints, check with ` + "`wc -c`" + ` or ` + "`stat`" + ` after writing
+5. **For large/binary files (images, data dumps, binaries)**: NEVER read them line-by-line with sed/awk/head in a loop. Instead, write a Python/script to process the entire file at once. For example, to analyze a PPM image, write a Python script that reads and processes all pixels, rather than using ` + "`sed -n '<line>p'`" + ` for each pixel. This is 100x faster and more reliable.
 
 ## Multi-File Projects
 
