@@ -45,6 +45,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 	lastVerifyFailed := false
 	lastVerifySummary := ""
 	failedCompletionAttempts := 0
+	stagnationWarned := 0 // consecutive fail level at which we last injected guidance
 	startTime := time.Now()
 
 	// Determine effective timeout for skip-checklist logic.
@@ -69,10 +70,14 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
 	) (*core.ModelResponse, error) {
 		mu.Lock()
-		// Scan all messages to track the latest verification command and
-		// its result. We always scan (even after verified=true) because
-		// newer verification runs may have different pass/fail results.
+		// Scan all messages to track verification commands and their results.
+		// We rebuild the full run history each time (messages are immutable
+		// so this is idempotent). This also tracks stagnation metrics.
 		var pendingCallID string
+		var runFailed []bool  // whether each verification run failed
+		var runPassed []int   // pass count per run (-1 if unavailable)
+		var runSummary []string
+
 		for _, msg := range messages {
 			if resp, ok := msg.(core.ModelResponse); ok {
 				for _, part := range resp.Parts {
@@ -81,7 +86,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 							(tc.ToolName == "execute_code" && isVerificationCode(tc.ArgsJSON)) {
 							verified = true
 							pendingCallID = tc.ToolCallID
-							// Reset counters for each new verification run.
+							// Reset completion counters for each new verification run.
 							failedCompletionAttempts = 0
 							completionAttempts = 0
 						}
@@ -93,14 +98,67 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 					if tr, ok := part.(core.ToolReturnPart); ok {
 						if pendingCallID != "" && tr.ToolCallID == pendingCallID {
 							content := toolReturnContentString(tr.Content)
-							lastVerifyFailed, lastVerifySummary = verificationResultFailed(content)
+							failed, summary := verificationResultFailed(content)
+							p, _, _ := extractTestCounts(content)
+							runFailed = append(runFailed, failed)
+							runPassed = append(runPassed, p)
+							runSummary = append(runSummary, summary)
 							pendingCallID = ""
 						}
 					}
 				}
 			}
 		}
+
+		// Update latest result for the validator.
+		if len(runFailed) > 0 {
+			lastVerifyFailed = runFailed[len(runFailed)-1]
+			lastVerifySummary = runSummary[len(runSummary)-1]
+		}
+
+		// Compute stagnation: count consecutive failing runs from the end
+		// that aren't showing improvement in pass counts.
+		consecutiveFails := 0
+		for i := len(runFailed) - 1; i >= 0; i-- {
+			if !runFailed[i] {
+				break
+			}
+			consecutiveFails++
+		}
+
+		// Check if pass counts are improving across the failing streak.
+		// If the agent went from 2 passed → 5 passed, that's progress
+		// even though tests are still failing overall.
+		isImproving := false
+		if consecutiveFails >= 2 {
+			streakStart := len(runPassed) - consecutiveFails
+			firstPassed := runPassed[streakStart]
+			lastPassedCnt := runPassed[len(runPassed)-1]
+			if firstPassed >= 0 && lastPassedCnt > firstPassed {
+				isImproving = true
+			}
+		}
+
+		sw := stagnationWarned
 		mu.Unlock()
+
+		// Inject stagnation guidance when the agent isn't making progress.
+		// Only inject when the stagnation level increases past a threshold
+		// we haven't warned about yet, and skip if improving.
+		if consecutiveFails >= 2 && consecutiveFails > sw && !isImproving {
+			mu.Lock()
+			stagnationWarned = consecutiveFails
+			mu.Unlock()
+
+			guidance := stagnationGuidance(consecutiveFails, runPassed, runSummary)
+			fmt.Fprintf(os.Stderr, "[gollem] verification: stagnation detected — %d consecutive failing runs\n", consecutiveFails)
+			stagnationMsg := core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{Content: guidance},
+				},
+			}
+			messages = append(messages, stagnationMsg)
+		}
 
 		return next(ctx, messages, settings, params)
 	}
@@ -650,6 +708,67 @@ func failureGuidance(summary string) string {
 			"Fix one failure at a time, starting with the first.\n"
 	default:
 		return "Fix the failures and re-run verification before completing. "
+	}
+}
+
+// stagnationGuidance returns progressively stronger guidance based on how many
+// consecutive verification runs have failed without improvement.
+func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []string) string {
+	// Build a brief run history for context.
+	var history string
+	streakStart := len(runPassed) - consecutiveFails
+	if streakStart < 0 {
+		streakStart = 0
+	}
+	for i := streakStart; i < len(runPassed); i++ {
+		run := i - streakStart + 1
+		summary := ""
+		if i < len(runSummary) {
+			summary = runSummary[i]
+		}
+		if runPassed[i] >= 0 {
+			history += fmt.Sprintf("  Run %d: %s\n", run, summary)
+		} else if summary != "" {
+			history += fmt.Sprintf("  Run %d: %s\n", run, summary)
+		}
+	}
+
+	switch {
+	case consecutiveFails == 2:
+		msg := "VERIFICATION STAGNATION: Tests have failed 2 times in a row.\n"
+		if history != "" {
+			msg += "Run history:\n" + history
+		}
+		msg += "Re-read the FULL error output from the last test run — you may be " +
+			"misunderstanding the requirement or fixing the wrong thing.\n" +
+			"Before making more changes, re-read the test file to confirm what's actually expected."
+		return msg
+
+	case consecutiveFails == 3:
+		msg := "STAGNATION WARNING: Tests have failed 3 times in a row without improvement.\n"
+		if history != "" {
+			msg += "Run history:\n" + history
+		}
+		msg += "Your current approach may be fundamentally wrong. Do these NOW:\n" +
+			"1. Re-read the ORIGINAL task description from scratch\n" +
+			"2. Re-read the test file assertions character by character\n" +
+			"3. Compare your output with expected output using diff\n" +
+			"4. Consider if you're solving the WRONG PROBLEM entirely"
+		return msg
+
+	default: // 4+
+		msg := fmt.Sprintf("CRITICAL STAGNATION: Tests have failed %d times in a row. "+
+			"STOP making incremental fixes — they are NOT working.\n", consecutiveFails)
+		if history != "" {
+			msg += "Run history:\n" + history
+		}
+		msg += "You MUST try a FUNDAMENTALLY DIFFERENT approach:\n" +
+			"- If output format is wrong: dump the expected output in hex (xxd) and compare byte-by-byte\n" +
+			"- If algorithm is wrong: switch to a simpler brute-force approach, then optimize\n" +
+			"- If compilation keeps failing: rewrite the solution file from scratch\n" +
+			"- If you keep getting the same test failure: the test might expect something you haven't considered — " +
+			"read the test code line by line, including imports and helper functions"
+		return msg
 	}
 }
 

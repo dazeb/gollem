@@ -1655,6 +1655,154 @@ func TestVerificationCheckpoint_FailureCapAt2(t *testing.T) {
 	}
 }
 
+func TestVerificationCheckpoint_StagnationDetection(t *testing.T) {
+	mw, _ := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		// Check if stagnation guidance was injected into messages.
+		lastMsg := msgs[len(msgs)-1]
+		if req, ok := lastMsg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					if strings.Contains(up.Content, "STAGNATION") {
+						return &core.ModelResponse{
+							Parts: []core.ModelResponsePart{
+								core.TextPart{Content: "stagnation_detected"},
+							},
+						}, nil
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	// Build messages with 3 consecutive failing test runs.
+	messages := []core.ModelMessage{}
+	for i := 1; i <= 3; i++ {
+		callID := fmt.Sprintf("call%d", i)
+		messages = append(messages,
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{
+						ToolName:   "bash",
+						ArgsJSON:   `{"command":"pytest"}`,
+						ToolCallID: callID,
+					},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.ToolReturnPart{
+						ToolName:   "bash",
+						Content:    "FAILED test_main.py::test_output\n1 failed, 2 passed\n[exit code: 1]",
+						ToolCallID: callID,
+					},
+				},
+			},
+		)
+	}
+
+	// After 3 failing runs, middleware should inject stagnation guidance.
+	resp, err := mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Parts) > 0 {
+		if tp, ok := resp.Parts[0].(core.TextPart); ok {
+			if tp.Content != "stagnation_detected" {
+				t.Error("expected stagnation guidance to be injected after 3 consecutive failing runs")
+			}
+		}
+	}
+}
+
+func TestVerificationCheckpoint_NoStagnationWhenImproving(t *testing.T) {
+	mw, _ := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	stagnationInjected := false
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		lastMsg := msgs[len(msgs)-1]
+		if req, ok := lastMsg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					if strings.Contains(up.Content, "STAGNATION") || strings.Contains(up.Content, "CRITICAL STAGNATION") {
+						stagnationInjected = true
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	// Build messages with 3 consecutive failing runs BUT improving pass counts.
+	// Run 1: 1 passed, 2 failed. Run 2: 2 passed, 1 failed. Run 3: 3 passed, 1 failed.
+	messages := []core.ModelMessage{}
+	passCounts := []int{1, 2, 3}
+	failCounts := []int{2, 1, 1}
+	for i := 0; i < 3; i++ {
+		callID := fmt.Sprintf("call%d", i+1)
+		output := fmt.Sprintf("%d passed, %d failed\n[exit code: 1]", passCounts[i], failCounts[i])
+		messages = append(messages,
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{
+						ToolName:   "bash",
+						ArgsJSON:   `{"command":"pytest"}`,
+						ToolCallID: callID,
+					},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.ToolReturnPart{
+						ToolName:   "bash",
+						Content:    output,
+						ToolCallID: callID,
+					},
+				},
+			},
+		)
+	}
+
+	_, err := mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stagnationInjected {
+		t.Error("should NOT inject stagnation guidance when pass counts are improving")
+	}
+}
+
+func TestStagnationGuidance(t *testing.T) {
+	tests := []struct {
+		name            string
+		consecutiveFails int
+		wantSubstr      string
+	}{
+		{"2_fails", 2, "VERIFICATION STAGNATION"},
+		{"3_fails", 3, "STAGNATION WARNING"},
+		{"4_fails", 4, "CRITICAL STAGNATION"},
+		{"5_fails", 5, "CRITICAL STAGNATION"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runPassed := make([]int, tt.consecutiveFails)
+			runSummary := make([]string, tt.consecutiveFails)
+			for i := range runPassed {
+				runPassed[i] = 2
+				runSummary[i] = "1 failed, 2 passed"
+			}
+			got := stagnationGuidance(tt.consecutiveFails, runPassed, runSummary)
+			if !strings.Contains(got, tt.wantSubstr) {
+				t.Errorf("stagnationGuidance(%d) = %q, want substring %q", tt.consecutiveFails, got, tt.wantSubstr)
+			}
+		})
+	}
+}
+
 func TestVerificationResultFailed(t *testing.T) {
 	tests := []struct {
 		name       string
