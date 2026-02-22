@@ -353,17 +353,26 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
-	// Auto-read conftest.py from project root — defines pytest fixtures that tests
-	// depend on. Without reading this, the agent won't understand test setup (e.g.,
-	// fixtures, parametrize, tmp_path usage) and may waste turns debugging fixtures.
+	// Auto-read conftest.py — defines pytest fixtures that tests depend on.
+	// Check project root AND test directories — conftest.py is often placed
+	// alongside tests (e.g., /tests/conftest.py) rather than the project root.
 	if autoReadBudget > 0 {
-		for _, dir := range []string{workDir, "/app"} {
-			confPath := filepath.Join(dir, "conftest.py")
+		confPaths := []string{
+			filepath.Join(workDir, "conftest.py"),
+			filepath.Join("/app", "conftest.py"),
+		}
+		// Also check inside test directories.
+		for _, td := range testDirs {
+			confPaths = append(confPaths, filepath.Join(td, "conftest.py"))
+		}
+		for _, confPath := range confPaths {
+			if autoReadBudget <= 0 {
+				break
+			}
 			if content := readFileTruncated(confPath, min(5000, autoReadBudget)); content != "" {
 				parts = append(parts, "\n## Pytest fixtures (auto-read): "+confPath)
 				parts = append(parts, content)
 				autoReadBudget -= len(content)
-				break
 			}
 		}
 	}
@@ -870,16 +879,33 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 	allFiles = append(allFiles, testRef...)
 	allFiles = append(allFiles, priority...)
 	allFiles = append(allFiles, regular...)
+
+	// Track large files we skip — we'll extract structure from them below.
+	var largeFiles []string
+
 	for _, entry := range allFiles {
 		if *remaining <= 0 || *budget <= 0 {
-			return
+			break
 		}
 		name := entry.Name()
 		info, err := entry.Info()
-		if err != nil || info.Size() > int64(maxBytes) || info.Size() == 0 {
+		if err != nil || info.Size() == 0 {
 			continue
 		}
-		limit := maxBytes
+
+		// Test-referenced files get a higher limit (8KB vs 5KB) since
+		// they're known to be relevant — tests import them directly.
+		effectiveMax := maxBytes
+		if testRefs != nil && testRefs[strings.ToLower(name)] {
+			effectiveMax = maxBytes * 8 / 5 // 5KB → 8KB
+		}
+
+		if info.Size() > int64(effectiveMax) {
+			// File too large to auto-read — save for structure extraction.
+			largeFiles = append(largeFiles, filepath.Join(dir, name))
+			continue
+		}
+		limit := effectiveMax
 		if limit > *budget {
 			limit = *budget
 		}
@@ -889,6 +915,20 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 			*parts = append(*parts, content)
 			*budget -= len(content)
 			*remaining--
+		}
+	}
+
+	// For large files we couldn't auto-read, extract a structure summary
+	// (function/class names). This gives the agent a "table of contents"
+	// for big files, preventing 2-3 wasted turns on grep/view.
+	for _, path := range largeFiles {
+		if *budget <= 0 {
+			break
+		}
+		if skeleton := extractFileStructure(path); skeleton != "" {
+			*parts = append(*parts, fmt.Sprintf("\n## Source file structure (too large to auto-read): %s", path))
+			*parts = append(*parts, skeleton)
+			*budget -= len(skeleton)
 		}
 	}
 
@@ -1125,6 +1165,19 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Start the build early — compilation can take a long time. Check build logs for errors within the first minute.")
 		hints = append(hints, "- If a build fails, read the FULL error log rather than restarting from scratch.")
 		hints = append(hints, "- Keep source directories intact — verifiers often check that sources exist.")
+	}
+
+	// Detect Git-related tasks (patches, merge, bisect, cherry-pick).
+	if detectGitTask(workDir) {
+		hints = append(hints, "\n## Task Type: Git Operations")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Check git status first: `git status`, `git log --oneline -10`, `git branch -a`")
+		hints = append(hints, "- For patch tasks: use `git apply <patch>` or `patch -p1 < <file>`. If it fails, try `git apply --3way`.")
+		hints = append(hints, "- For merge conflicts: use `git merge` then resolve conflicts by editing files, don't use interactive tools")
+		hints = append(hints, "- For bisect: script it with `git bisect start`, `git bisect good/bad`, `git bisect run <script>`")
+		hints = append(hints, "- For cherry-pick: `git cherry-pick <commit>`, resolve conflicts manually if needed")
+		hints = append(hints, "- Check for .patch or .diff files in the working directory — they may need to be applied")
+		hints = append(hints, "- After git operations: verify the result with `git log`, `git diff`, and run tests")
 	}
 
 	// Detect tasks with image files that need analysis.
@@ -1802,6 +1855,48 @@ func detectDatabaseTask(workDir string) bool {
 	return false
 }
 
+// detectGitTask returns true if the task involves git operations (patches,
+// merge conflicts, bisect, cherry-pick, rebases, etc.).
+func detectGitTask(workDir string) bool {
+	// Check directory name.
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range []string{"git-", "patch", "merge", "bisect", "cherry-pick", "rebase", "commit"} {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for .patch / .diff files.
+	for _, dir := range []string{workDir, "/app"} {
+		for _, ext := range []string{"*.patch", "*.diff"} {
+			matches, _ := filepath.Glob(filepath.Join(dir, ext))
+			if len(matches) > 0 {
+				return true
+			}
+		}
+	}
+	// Check if there's a .git directory with actual history (not just a marker).
+	if dirExists(filepath.Join(workDir, ".git")) {
+		// Check if git log returns commits — some tasks set up git repos for the agent to work with.
+		if log := runQuiet(workDir, "git", "log", "--oneline", "-1"); log != "" {
+			// Check README for git-related instructions.
+			for _, rp := range []string{filepath.Join(workDir, "README.md"), filepath.Join(workDir, "instruction.md"), "/app/instruction.md"} {
+				content := strings.ToLower(readFileTruncated(rp, 3000))
+				if content != "" {
+					if (strings.Contains(content, "git ") || strings.Contains(content, "patch") ||
+						strings.Contains(content, "commit") || strings.Contains(content, "branch")) &&
+						(strings.Contains(content, "apply") || strings.Contains(content, "merge") ||
+							strings.Contains(content, "bisect") || strings.Contains(content, "cherry") ||
+							strings.Contains(content, "rebase") || strings.Contains(content, "revert") ||
+							strings.Contains(content, "fix") || strings.Contains(content, "diff")) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 // detectCodeGolfTask returns true if the task has size constraints on output files.
 // Code golf tasks require specific strategies: create output first, then optimize for size.
 func detectCodeGolfTask(workDir string) bool {
@@ -2380,6 +2475,113 @@ func hasNetworkAccess() bool {
 	resolver := &net.Resolver{}
 	_, err := resolver.LookupHost(ctx, "pypi.org")
 	return err == nil
+}
+
+// extractFileStructure reads a source file and extracts function/class/method
+// definitions to produce a compact "table of contents". This is used for large
+// files (>5KB) that we can't auto-read fully — it gives the agent a map of
+// the file so it knows what's there without spending turns on grep/view.
+// Returns empty string if no structure is found or file can't be read.
+func extractFileStructure(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	lines := strings.Split(content, "\n")
+
+	ext := strings.ToLower(filepath.Ext(path))
+	var defs []string
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+
+		matched := false
+		switch ext {
+		case ".py":
+			// Python: top-level and class-level def/class
+			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "async def ") {
+				matched = true
+			}
+		case ".go":
+			if strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "type ") {
+				matched = true
+			}
+		case ".js", ".ts", ".jsx", ".tsx":
+			if strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "export ") || strings.HasPrefix(trimmed, "const ") ||
+				strings.HasPrefix(trimmed, "async function ") {
+				matched = true
+			}
+		case ".rs":
+			if strings.HasPrefix(trimmed, "fn ") || strings.HasPrefix(trimmed, "pub fn ") ||
+				strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "pub struct ") ||
+				strings.HasPrefix(trimmed, "impl ") || strings.HasPrefix(trimmed, "enum ") ||
+				strings.HasPrefix(trimmed, "pub enum ") || strings.HasPrefix(trimmed, "trait ") {
+				matched = true
+			}
+		case ".c", ".cpp", ".h", ".hpp", ".cc", ".cxx":
+			// C/C++: function definitions, struct/class declarations
+			if strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "typedef ") || strings.HasPrefix(trimmed, "enum ") {
+				matched = true
+			}
+			// Function-like lines: type name(...) with no semicolon (definition, not declaration)
+			if !matched && strings.Contains(trimmed, "(") && !strings.HasPrefix(trimmed, "#") &&
+				!strings.HasPrefix(trimmed, "if") && !strings.HasPrefix(trimmed, "for") &&
+				!strings.HasPrefix(trimmed, "while") && !strings.HasPrefix(trimmed, "switch") &&
+				!strings.HasSuffix(trimmed, ";") {
+				// Likely a function definition
+				matched = true
+			}
+		case ".java", ".kt", ".kts", ".scala":
+			if strings.HasPrefix(trimmed, "public ") || strings.HasPrefix(trimmed, "private ") ||
+				strings.HasPrefix(trimmed, "protected ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "interface ") || strings.HasPrefix(trimmed, "fun ") ||
+				strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "object ") {
+				matched = true
+			}
+		case ".rb":
+			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "module ") {
+				matched = true
+			}
+		case ".hs":
+			// Haskell: top-level type signatures and definitions
+			if !strings.HasPrefix(trimmed, "--") && strings.Contains(trimmed, "::") {
+				matched = true
+			}
+		}
+
+		if matched {
+			// Truncate long definition lines.
+			def := trimmed
+			if len(def) > 120 {
+				def = def[:120] + "..."
+			}
+			defs = append(defs, fmt.Sprintf("  L%d: %s", i+1, def))
+		}
+	}
+
+	if len(defs) == 0 {
+		return ""
+	}
+
+	// Cap to 30 definitions to avoid bloat.
+	if len(defs) > 30 {
+		defs = append(defs[:30], fmt.Sprintf("  ... and %d more definitions", len(defs)-30))
+	}
+
+	info, _ := os.Stat(path)
+	sizeInfo := ""
+	if info != nil {
+		sizeInfo = fmt.Sprintf(" (%s, %d lines)", humanSize(info.Size()), len(lines))
+	}
+	return fmt.Sprintf("Definitions in %s%s:\n%s", filepath.Base(path), sizeInfo, strings.Join(defs, "\n"))
 }
 
 func dirExists(path string) bool {

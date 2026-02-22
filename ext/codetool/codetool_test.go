@@ -2442,3 +2442,111 @@ wc -l output.txt | grep "^100 "
 		}
 	}
 }
+
+func TestExtractFileStructure(t *testing.T) {
+	dir := t.TempDir()
+
+	// Python file with classes and functions.
+	writeTestFile(t, dir, "big.py", `import os
+import sys
+
+class MyClass:
+    def __init__(self):
+        pass
+
+    def method_one(self):
+        return 1
+
+    def method_two(self, x, y):
+        return x + y
+
+class AnotherClass(MyClass):
+    pass
+
+def standalone_function():
+    return 42
+
+async def async_handler(request):
+    return None
+`)
+	result := extractFileStructure(filepath.Join(dir, "big.py"))
+	if result == "" {
+		t.Fatal("expected structure output for Python file")
+	}
+	for _, want := range []string{"class MyClass", "def __init__", "def method_one", "class AnotherClass", "def standalone_function", "async def async_handler"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Go file with functions and types.
+	writeTestFile(t, dir, "big.go", `package main
+
+import "fmt"
+
+type Server struct {
+	Port int
+	Host string
+}
+
+type Handler interface {
+	ServeHTTP()
+}
+
+func NewServer(port int) *Server {
+	return &Server{Port: port}
+}
+
+func (s *Server) Start() error {
+	fmt.Println("starting")
+	return nil
+}
+`)
+	result = extractFileStructure(filepath.Join(dir, "big.go"))
+	if result == "" {
+		t.Fatal("expected structure output for Go file")
+	}
+	for _, want := range []string{"type Server struct", "type Handler interface", "func NewServer", "func (s *Server) Start"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Empty file should return nothing.
+	writeTestFile(t, dir, "empty.py", "")
+	result = extractFileStructure(filepath.Join(dir, "empty.py"))
+	if result != "" {
+		t.Errorf("expected empty result for empty file, got: %s", result)
+	}
+
+	// Non-existent file should return empty.
+	result = extractFileStructure(filepath.Join(dir, "nonexistent.py"))
+	if result != "" {
+		t.Errorf("expected empty result for missing file, got: %s", result)
+	}
+}
+
+func TestDetectGitTask(t *testing.T) {
+	// Directory with git-related name.
+	dir := t.TempDir()
+	gitDir := filepath.Join(dir, "fix-git-merge")
+	os.MkdirAll(gitDir, 0o755)
+	if !detectGitTask(gitDir) {
+		t.Error("expected git task for dir named fix-git-merge")
+	}
+
+	// Directory with .patch file.
+	patchDir := filepath.Join(dir, "apply-fix")
+	os.MkdirAll(patchDir, 0o755)
+	writeTestFile(t, dir, "apply-fix/bugfix.patch", "--- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n-old\n+new\n")
+	if !detectGitTask(patchDir) {
+		t.Error("expected git task for dir with .patch file")
+	}
+
+	// Empty directory should not be a git task.
+	emptyDir := filepath.Join(dir, "simple-task")
+	os.MkdirAll(emptyDir, 0o755)
+	if detectGitTask(emptyDir) {
+		t.Error("did not expect git task for empty dir")
+	}
+}
