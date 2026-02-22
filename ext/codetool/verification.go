@@ -41,6 +41,9 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 	var mu sync.Mutex
 	verified := false
 	completionAttempts := 0
+	lastVerifyFailed := false
+	lastVerifySummary := ""
+	failedCompletionAttempts := 0
 	startTime := time.Now()
 
 	// Determine effective timeout for skip-checklist logic.
@@ -65,23 +68,33 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
 	) (*core.ModelResponse, error) {
 		mu.Lock()
-		if !verified {
-			for _, msg := range messages {
-				if resp, ok := msg.(core.ModelResponse); ok {
-					for _, part := range resp.Parts {
-						if tc, ok := part.(core.ToolCallPart); ok {
-							if tc.ToolName == "bash" && isVerificationCommand(tc.ArgsJSON) {
-								verified = true
-								break
-							}
-							if tc.ToolName == "execute_code" && isVerificationCode(tc.ArgsJSON) {
-								verified = true
-								break
-							}
+		// Scan all messages to track the latest verification command and
+		// its result. We always scan (even after verified=true) because
+		// newer verification runs may have different pass/fail results.
+		var pendingCallID string
+		for _, msg := range messages {
+			if resp, ok := msg.(core.ModelResponse); ok {
+				for _, part := range resp.Parts {
+					if tc, ok := part.(core.ToolCallPart); ok {
+						if (tc.ToolName == "bash" && isVerificationCommand(tc.ArgsJSON)) ||
+							(tc.ToolName == "execute_code" && isVerificationCode(tc.ArgsJSON)) {
+							verified = true
+							pendingCallID = tc.ToolCallID
+							// Reset counters for each new verification run.
+							failedCompletionAttempts = 0
+							completionAttempts = 0
 						}
 					}
-					if verified {
-						break
+				}
+			}
+			if req, ok := msg.(core.ModelRequest); ok {
+				for _, part := range req.Parts {
+					if tr, ok := part.(core.ToolReturnPart); ok {
+						if pendingCallID != "" && tr.ToolCallID == pendingCallID {
+							content := toolReturnContentString(tr.Content)
+							lastVerifyFailed, lastVerifySummary = verificationResultFailed(content)
+							pendingCallID = ""
+						}
 					}
 				}
 			}
@@ -94,8 +107,9 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 	validator := func(_ context.Context, _ *core.RunContext, output string) (string, error) {
 		mu.Lock()
 		v := verified
-		attempts := completionAttempts
-		completionAttempts++
+		lvf := lastVerifyFailed
+		lvs := lastVerifySummary
+		fca := failedCompletionAttempts
 		mu.Unlock()
 
 		if !v {
@@ -107,6 +121,29 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 					"evidence that your solution works.",
 			}
 		}
+
+		// If the last verification run failed, force the agent to fix and
+		// re-verify. Cap at 2 rejections to prevent infinite loops.
+		if lvf && fca < 2 {
+			mu.Lock()
+			failedCompletionAttempts++
+			mu.Unlock()
+			msg := "STOP. Your last verification run FAILED"
+			if lvs != "" {
+				msg += ": " + lvs
+			}
+			msg += "\nFix the failures and re-run verification before completing. " +
+				"Do NOT declare completion with failing tests."
+			return output, &core.ModelRetryError{Message: msg}
+		}
+		if lvf {
+			fmt.Fprintf(os.Stderr, "[gollem] verification: allowing completion despite test failures (rejected %d times)\n", fca)
+		}
+
+		mu.Lock()
+		attempts := completionAttempts
+		completionAttempts++
+		mu.Unlock()
 
 		// Pre-completion checklist: on first completion attempt after verification,
 		// force the agent to re-check requirements. This catches cases where the
@@ -428,4 +465,56 @@ func checkExpectedOutputsExist(workDir string) string {
 	}
 
 	return ""
+}
+
+// toolReturnContentString extracts a string from a ToolReturnPart's Content field.
+func toolReturnContentString(content any) string {
+	if s, ok := content.(string); ok {
+		return s
+	}
+	b, err := json.Marshal(content)
+	if err != nil {
+		return fmt.Sprintf("%v", content)
+	}
+	return string(b)
+}
+
+// verificationResultFailed checks whether a verification command's output
+// indicates failure (non-zero exit code, test failures, build errors, timeouts).
+// Returns (failed, summary) where summary describes what went wrong.
+func verificationResultFailed(output string) (bool, string) {
+	hasNonZeroExit := strings.Contains(output, "[exit code:") &&
+		!strings.Contains(output, "[exit code: 0]")
+	hasTimeout := strings.Contains(output, "[timed out after")
+
+	if !hasNonZeroExit && !hasTimeout {
+		// Some frameworks report failures even with exit code 0.
+		if _, f, ok := extractTestCounts(output); ok && f > 0 {
+			summary := testResultSummary(output)
+			if summary == "" {
+				summary = fmt.Sprintf("%d test(s) failed", f)
+			}
+			return true, summary
+		}
+		return false, ""
+	}
+
+	// Try to extract a specific failure summary.
+	if summary := testResultSummary(output); summary != "" {
+		return true, summary
+	}
+	// Try extracting test counts directly (works with shorter output).
+	if p, f, ok := extractTestCounts(output); ok && f > 0 {
+		return true, fmt.Sprintf("%d passed, %d failed", p, f)
+	}
+	if summary := compilationErrorSummary(output, 1); summary != "" {
+		return true, summary
+	}
+	if detail := firstFailureDetail(output); detail != "" {
+		return true, detail
+	}
+	if hasTimeout {
+		return true, "verification command timed out"
+	}
+	return true, "verification command exited with non-zero status"
 }

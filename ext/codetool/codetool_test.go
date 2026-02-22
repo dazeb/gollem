@@ -1459,6 +1459,269 @@ func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
 	}
 }
 
+func TestVerificationCheckpoint_RejectsOnTestFailure(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+
+	// Simulate: agent ran tests, tests failed (exit code 1).
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest"}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "FAILED tests/test_main.py::test_output - AssertionError\n1 failed, 2 passed\n[exit code: 1]",
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// Validator should reject: tests failed.
+	rc := &core.RunContext{}
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected rejection when last test run failed")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+	if !strings.Contains(retryErr.Message, "FAILED") {
+		t.Errorf("expected failure details in message, got: %s", retryErr.Message)
+	}
+}
+
+func TestVerificationCheckpoint_AcceptsAfterFailureThenPass(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// Phase 1: Tests fail.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"go test ./..."}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "FAIL\n[exit code: 1]",
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// Should reject: tests failed.
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected rejection when tests failed")
+	}
+
+	// Phase 2: Agent fixes code and re-runs tests successfully.
+	messages = append(messages,
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"go test ./..."}`,
+					ToolCallID: "call2",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "ok\nPASS",
+					ToolCallID: "call2",
+				},
+			},
+		},
+	)
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// First passing attempt: should trigger checklist.
+	_, err = validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected checklist on first passing attempt")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError for checklist, got: %v", err)
+	}
+	if strings.Contains(retryErr.Message, "FAILED") {
+		t.Error("checklist should not mention FAILED")
+	}
+
+	// Second attempt: should accept.
+	output, err := validator(ctx, rc, "Done!")
+	if err != nil {
+		t.Fatalf("should accept on second passing attempt, got: %v", err)
+	}
+	if output != "Done!" {
+		t.Errorf("modified output: %q", output)
+	}
+}
+
+func TestVerificationCheckpoint_FailureCapAt2(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// Tests fail.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest"}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 failed\n[exit code: 1]",
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// Rejection 1.
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected rejection 1")
+	}
+
+	// Rejection 2.
+	_, err = validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected rejection 2")
+	}
+
+	// Attempt 3: should fall through to checklist (not another failure rejection).
+	_, err = validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected checklist after failure cap")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+	// This should be the checklist, not a failure rejection.
+	if strings.Contains(retryErr.Message, "Your last verification run FAILED") {
+		t.Error("after 2 failure rejections, should get checklist, not another failure rejection")
+	}
+
+	// Attempt 4: should accept.
+	_, err = validator(ctx, rc, "Done!")
+	if err != nil {
+		t.Fatalf("should accept after checklist, got: %v", err)
+	}
+}
+
+func TestVerificationResultFailed(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     string
+		wantFailed bool
+		wantSubstr string // expected substring in summary (empty = no check)
+	}{
+		{
+			name:       "passing_tests",
+			output:     "ok\nPASS",
+			wantFailed: false,
+		},
+		{
+			name:       "exit_code_0",
+			output:     "all good\n[exit code: 0]",
+			wantFailed: false,
+		},
+		{
+			name:       "exit_code_1",
+			output:     "error\n[exit code: 1]",
+			wantFailed: true,
+			wantSubstr: "non-zero",
+		},
+		{
+			name:       "pytest_failures",
+			output:     "FAILED test_foo.py::test_bar\n2 failed, 3 passed\n[exit code: 1]",
+			wantFailed: true,
+			wantSubstr: "failed",
+		},
+		{
+			name:       "timeout",
+			output:     "[timed out after 120s]",
+			wantFailed: true,
+			wantSubstr: "timed out",
+		},
+		{
+			name:       "no_output",
+			output:     "(no output)",
+			wantFailed: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			failed, summary := verificationResultFailed(tt.output)
+			if failed != tt.wantFailed {
+				t.Errorf("verificationResultFailed(%q) = %v, want %v (summary: %q)", tt.output, failed, tt.wantFailed, summary)
+			}
+			if tt.wantSubstr != "" && !strings.Contains(strings.ToLower(summary), tt.wantSubstr) {
+				t.Errorf("summary %q should contain %q", summary, tt.wantSubstr)
+			}
+		})
+	}
+}
+
+func TestToolReturnContentString(t *testing.T) {
+	// String content.
+	if got := toolReturnContentString("hello"); got != "hello" {
+		t.Errorf("expected %q, got %q", "hello", got)
+	}
+	// Non-string content (e.g., structured data).
+	m := map[string]string{"key": "value"}
+	got := toolReturnContentString(m)
+	if !strings.Contains(got, "key") || !strings.Contains(got, "value") {
+		t.Errorf("expected JSON with key/value, got %q", got)
+	}
+}
+
 func TestFileSnippetForEdit(t *testing.T) {
 	content := `package main
 
