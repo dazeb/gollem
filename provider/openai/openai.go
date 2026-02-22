@@ -79,6 +79,8 @@ func WithMaxTokens(n int) Option {
 }
 
 // New creates a new OpenAI provider with the given options.
+// Supports OPENAI_API_KEY and OPENAI_BASE_URL environment variables
+// for compatibility with OpenAI-compatible APIs (xAI, Together, etc.).
 func New(opts ...Option) *Provider {
 	p := &Provider{
 		model:      defaultModel,
@@ -91,6 +93,12 @@ func New(opts ...Option) *Provider {
 	}
 	if p.apiKey == "" {
 		p.apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+	// Support OPENAI_BASE_URL env var (standard for OpenAI-compatible APIs).
+	if p.baseURL == defaultBaseURL {
+		if envURL := os.Getenv("OPENAI_BASE_URL"); envURL != "" {
+			p.baseURL = envURL
+		}
 	}
 	return p
 }

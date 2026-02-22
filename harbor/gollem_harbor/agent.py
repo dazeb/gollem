@@ -174,6 +174,7 @@ class GollemAgent(BaseInstalledAgent):
         for key in [
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
             "GOOGLE_CLOUD_PROJECT",
             "GOOGLE_APPLICATION_CREDENTIALS",
             "LANGFUSE_SECRET_KEY",
