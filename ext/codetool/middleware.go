@@ -343,6 +343,21 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-read conftest.py from project root — defines pytest fixtures that tests
+	// depend on. Without reading this, the agent won't understand test setup (e.g.,
+	// fixtures, parametrize, tmp_path usage) and may waste turns debugging fixtures.
+	if autoReadBudget > 0 {
+		for _, dir := range []string{workDir, "/app"} {
+			confPath := filepath.Join(dir, "conftest.py")
+			if content := readFileTruncated(confPath, min(5000, autoReadBudget)); content != "" {
+				parts = append(parts, "\n## Pytest fixtures (auto-read): "+confPath)
+				parts = append(parts, content)
+				autoReadBudget -= len(content)
+				break
+			}
+		}
+	}
+
 	// Auto-read scripts directory — common in Terminal-Bench tasks for cost models,
 	// baselines, and evaluation scripts.
 	if autoReadBudget > 0 {
@@ -389,13 +404,27 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect Python requirements files and hint the agent to install early.
 	// This is one of the most common first steps that wastes turns.
+	foundPyDeps := false
 	for _, dir := range []string{workDir, "/app"} {
 		reqPath := filepath.Join(dir, "requirements.txt")
 		if content := readFileTruncated(reqPath, 2000); content != "" {
 			parts = append(parts, fmt.Sprintf("\n## Python dependencies found: %s", reqPath))
 			parts = append(parts, content)
 			parts = append(parts, "HINT: Install these FIRST with: pip install --break-system-packages -r "+reqPath)
+			foundPyDeps = true
 			break
+		}
+	}
+	// Fallback: check for Pipfile or pyproject.toml with dependencies.
+	if !foundPyDeps {
+		for _, dir := range []string{workDir, "/app"} {
+			pipfilePath := filepath.Join(dir, "Pipfile")
+			if fileExists(pipfilePath) {
+				parts = append(parts, "\n## Pipfile found: "+pipfilePath)
+				parts = append(parts, "HINT: Install with: pip install --break-system-packages pipenv && pipenv install --system, or manually install packages listed in Pipfile")
+				foundPyDeps = true
+				break
+			}
 		}
 	}
 
