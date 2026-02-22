@@ -254,6 +254,23 @@ func discoverEnvironment(workDir string) string {
 	// Python version is critical — many TB2 containers have python3 but not python.
 	if pyVer := runQuiet(workDir, "python3", "--version"); pyVer != "" {
 		parts = append(parts, "Python: "+pyVer)
+		// Create python → python3 symlink if python3 exists but python doesn't.
+		// This is the #1 "command not found" error on TB2: test scripts often use
+		// "python" but containers only have "python3". Creating the symlink
+		// preemptively saves 1-2 turns of debugging.
+		if runQuiet(workDir, "which", "python") == "" {
+			if py3Path := runQuiet(workDir, "which", "python3"); py3Path != "" {
+				os.Symlink(py3Path, "/usr/local/bin/python")
+				fmt.Fprintf(os.Stderr, "[gollem] created python → python3 symlink\n")
+			}
+		}
+		// Also create pip → pip3 symlink for the same reason.
+		if runQuiet(workDir, "which", "pip") == "" {
+			if pip3Path := runQuiet(workDir, "which", "pip3"); pip3Path != "" {
+				os.Symlink(pip3Path, "/usr/local/bin/pip")
+				fmt.Fprintf(os.Stderr, "[gollem] created pip → pip3 symlink\n")
+			}
+		}
 	}
 
 	// Detect Python virtual environments (venv/conda) that need activation.
