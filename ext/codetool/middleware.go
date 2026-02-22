@@ -401,6 +401,15 @@ func discoverEnvironment(workDir string) string {
 	// Task-type specific guidance based on detected patterns.
 	parts = append(parts, detectTaskGuidance(workDir))
 
+	// Suggest specific test/build commands so the agent doesn't waste turns
+	// figuring out how to verify its work.
+	if cmds := detectTestCommands(workDir); len(cmds) > 0 {
+		parts = append(parts, "\n## Quick Commands")
+		for _, cmd := range cmds {
+			parts = append(parts, "  "+cmd)
+		}
+	}
+
 	// Remind agent that source files are pre-loaded. Don't enumerate tools —
 	// the model sees tool definitions from the API, and a hardcoded list would
 	// be inaccurate if code mode or team mode adds/removes tools.
@@ -1191,6 +1200,88 @@ func detectTaskTimeout(workDir string) time.Duration {
 		}
 	}
 	return 0
+}
+
+// detectTestCommands generates a short list of ready-to-run commands based on
+// the project's language, build system, and test files. This saves the agent
+// from wasting turns figuring out how to run tests.
+func detectTestCommands(workDir string) []string {
+	var cmds []string
+
+	// Detect test directories for explicit test commands.
+	for _, td := range []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")} {
+		if dirExists(td) {
+			entries, _ := os.ReadDir(td)
+			for _, e := range entries {
+				name := e.Name()
+				if strings.HasPrefix(name, "test_") && strings.HasSuffix(name, ".py") {
+					cmds = append(cmds, "Test: python3 "+filepath.Join(td, name))
+					break
+				}
+				if strings.HasPrefix(name, "test_") && strings.HasSuffix(name, ".sh") {
+					cmds = append(cmds, "Test: bash "+filepath.Join(td, name))
+					break
+				}
+			}
+			break
+		}
+	}
+
+	// Language-specific commands.
+	if fileExists(filepath.Join(workDir, "go.mod")) {
+		cmds = append(cmds, "Build: go build ./...")
+		cmds = append(cmds, "Test: go test ./...")
+	}
+	if fileExists(filepath.Join(workDir, "Cargo.toml")) {
+		cmds = append(cmds, "Build: cargo build")
+		cmds = append(cmds, "Test: cargo test")
+	}
+	if fileExists(filepath.Join(workDir, "package.json")) {
+		cmds = append(cmds, "Install: npm install")
+		cmds = append(cmds, "Test: npm test")
+	}
+	if fileExists(filepath.Join(workDir, "Makefile")) || fileExists("/app/Makefile") {
+		cmds = append(cmds, "Build: make")
+		if fileExists(filepath.Join(workDir, "Makefile")) {
+			content := readFileTruncated(filepath.Join(workDir, "Makefile"), 2000)
+			if strings.Contains(content, "test:") {
+				cmds = append(cmds, "Test: make test")
+			}
+		}
+	}
+	if fileExists(filepath.Join(workDir, "CMakeLists.txt")) {
+		cmds = append(cmds, "Build: mkdir -p build && cd build && cmake .. && make")
+	}
+	if fileExists(filepath.Join(workDir, "requirements.txt")) {
+		cmds = append(cmds, "Install: pip install --break-system-packages -r requirements.txt")
+	}
+	if fileExists(filepath.Join(workDir, "setup.py")) {
+		cmds = append(cmds, "Install: pip install --break-system-packages -e .")
+	}
+
+	// pytest detection (common across all Python projects).
+	hasPyTests := false
+	for _, td := range []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")} {
+		if dirExists(td) {
+			entries, _ := os.ReadDir(td)
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".py") {
+					hasPyTests = true
+					break
+				}
+			}
+			break
+		}
+	}
+	if hasPyTests {
+		cmds = append(cmds, "Test: pytest -xvs")
+	}
+
+	// Cap to prevent context bloat.
+	if len(cmds) > 8 {
+		cmds = cmds[:8]
+	}
+	return cmds
 }
 
 func dirExists(path string) bool {

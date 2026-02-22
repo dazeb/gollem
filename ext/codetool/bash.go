@@ -503,8 +503,8 @@ func signalHint(exitCode int) string {
 	switch exitCode {
 	case 137:
 		return "[hint: process was killed (SIGKILL) — likely out of memory. " +
-			"Try: reduce batch size, process data in chunks, use less memory-intensive approach, " +
-			"or add swap with: dd if=/dev/zero of=/swapfile bs=1M count=1024 && mkswap /swapfile && swapon /swapfile]"
+			"Try: reduce batch size, process data in smaller chunks, use generators/iterators instead of loading all data into memory, " +
+			"use more memory-efficient data structures, or reduce number of concurrent processes]"
 	case 139:
 		return "[hint: segmentation fault (SIGSEGV) — likely a memory access bug. " +
 			"Check: array bounds, null pointers, use-after-free, stack overflow from deep recursion]"
