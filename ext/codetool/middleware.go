@@ -459,6 +459,12 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Skip dependency installation if another agent (parent) already did it.
+	// This prevents subagents from wasting 10-60 seconds re-installing Maven,
+	// Gradle, Haskell, or OCaml dependencies that the parent already resolved.
+	depsMarker := depsMarkerPath(workDir)
+	depsAlreadyInstalled := fileExists(depsMarker)
+
 	// Detect Python requirements files and auto-install if possible.
 	// This saves 1-2 turns on EVERY Python task — the agent's first action is
 	// almost always `pip install -r requirements.txt`.
@@ -529,7 +535,7 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Auto-fetch Rust/Cargo dependencies.
-	if networkAvailable {
+	if networkAvailable && !depsAlreadyInstalled {
 		for _, dir := range []string{workDir, "/app"} {
 			if fileExists(filepath.Join(dir, "Cargo.toml")) && runQuiet(dir, "which", "cargo") != "" {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-fetching Cargo dependencies in %s\n", dir)
@@ -570,7 +576,7 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Auto-resolve Maven dependencies.
-	if networkAvailable {
+	if networkAvailable && !depsAlreadyInstalled {
 		for _, dir := range []string{workDir, "/app"} {
 			if fileExists(filepath.Join(dir, "pom.xml")) && runQuiet(dir, "which", "mvn") != "" {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Maven dependencies in %s\n", dir)
@@ -582,7 +588,7 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Auto-resolve Gradle dependencies.
-	if networkAvailable {
+	if networkAvailable && !depsAlreadyInstalled {
 		for _, dir := range []string{workDir, "/app"} {
 			if (fileExists(filepath.Join(dir, "build.gradle")) || fileExists(filepath.Join(dir, "build.gradle.kts"))) &&
 				(runQuiet(dir, "which", "gradle") != "" || fileExists(filepath.Join(dir, "gradlew"))) {
@@ -600,7 +606,7 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Auto-restore .NET dependencies.
-	if networkAvailable {
+	if networkAvailable && !depsAlreadyInstalled {
 		for _, dir := range []string{workDir, "/app"} {
 			hasProject := false
 			if matches, _ := filepath.Glob(filepath.Join(dir, "*.csproj")); len(matches) > 0 {
@@ -620,7 +626,7 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Auto-setup Haskell Stack (download dependencies and build setup).
-	if networkAvailable {
+	if networkAvailable && !depsAlreadyInstalled {
 		for _, dir := range []string{workDir, "/app"} {
 			if fileExists(filepath.Join(dir, "stack.yaml")) && runQuiet(dir, "which", "stack") != "" {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-setting up Haskell Stack in %s\n", dir)
@@ -663,7 +669,7 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// OCaml/Dune: install opam dependencies if available.
-	if networkAvailable {
+	if networkAvailable && !depsAlreadyInstalled {
 		for _, dir := range []string{workDir, "/app"} {
 			if fileExists(filepath.Join(dir, "dune-project")) && runQuiet(dir, "which", "opam") != "" {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-installing OCaml dependencies in %s\n", dir)
@@ -673,6 +679,11 @@ func discoverEnvironment(workDir string) string {
 				break
 			}
 		}
+	}
+
+	// Mark dependencies as installed so subagents skip redundant installs.
+	if !depsAlreadyInstalled {
+		os.WriteFile(depsMarker, []byte("1"), 0o644)
 	}
 
 	// Detect .env files and surface environment variable requirements.
@@ -893,10 +904,12 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
-	// Remind agent that source files are pre-loaded. Don't enumerate tools —
-	// the model sees tool definitions from the API, and a hardcoded list would
-	// be inaccurate if code mode or team mode adds/removes tools.
-	parts = append(parts, "\nSource files are pre-loaded above. For complex tasks, create a plan first using the planning tool, then proceed.")
+	// Strong reminder that source files, tests, and build files are already loaded
+	// in the context above. The #1 wasted first turn is re-reading files that are
+	// already visible. Don't enumerate tools — the model sees tool definitions
+	// from the API, and a hardcoded list would be inaccurate if code mode or
+	// team mode adds/removes tools.
+	parts = append(parts, "\nIMPORTANT: README, tests, source files, and build files are PRE-LOADED above — do NOT re-read them. Start coding immediately. For complex tasks, create a plan first using the planning tool.")
 
 	// Add a compact action summary at the very end. This exploits recency bias —
 	// the last thing the model reads before starting work is a focused summary
@@ -3895,6 +3908,18 @@ func dirExists(path string) bool {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+// depsMarkerPath returns the path to a marker file indicating that dependencies
+// have already been installed for the given working directory. Subagents check
+// this marker to skip redundant (and slow) dependency installation steps.
+func depsMarkerPath(workDir string) string {
+	// Simple hash to keep the filename short and filesystem-safe.
+	h := uint32(0)
+	for _, b := range []byte(workDir) {
+		h = h*31 + uint32(b)
+	}
+	return fmt.Sprintf("%s/gollem-deps-%08x", os.TempDir(), h)
 }
 
 // isSourceFile returns true if the filename has a recognized source code extension.

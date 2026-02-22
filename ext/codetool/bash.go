@@ -757,6 +757,22 @@ func compilationErrorHint(output string, exitCode int) string {
 		return ""
 	}
 
+	// Linker errors: "undefined reference to 'foo'" — suggest common -l flags.
+	// These save 1-2 turns of the agent figuring out which library to link.
+	if strings.Contains(output, "undefined reference to") {
+		if hint := linkerHint(output); hint != "" {
+			return hint
+		}
+	}
+
+	// Missing header file: suggest the apt package to install.
+	if (strings.Contains(output, "fatal error") || strings.Contains(output, "error:")) &&
+		strings.Contains(output, "No such file or directory") {
+		if hint := missingHeaderHint(output); hint != "" {
+			return hint
+		}
+	}
+
 	lines := strings.Split(output, "\n")
 
 	// C/C++/clang: "file.c:42:5: error: ..."
@@ -794,6 +810,78 @@ func compilationErrorHint(output string, exitCode int) string {
 		}
 	}
 
+	return ""
+}
+
+// linkerHint maps "undefined reference to" errors to the right -l flags.
+// These are the most common linker errors in C/C++ tasks.
+func linkerHint(output string) string {
+	lower := strings.ToLower(output)
+	// Map function names to libraries.
+	libHints := []struct {
+		patterns []string
+		flag     string
+		desc     string
+	}{
+		{[]string{"pthread_create", "pthread_join", "pthread_mutex"}, "-lpthread", "pthread functions"},
+		{[]string{"'sin'", "'cos'", "'tan'", "'sqrt'", "'pow'", "'log'", "'exp'", "'fabs'", "'ceil'", "'floor'", "'round'"}, "-lm", "math functions"},
+		{[]string{"dlopen", "dlsym", "dlclose"}, "-ldl", "dynamic loading functions"},
+		{[]string{"curl_easy", "curl_global"}, "-lcurl", "libcurl functions"},
+		{[]string{"ssl_", "ssl_new", "ssl_ctx"}, "-lssl -lcrypto", "OpenSSL functions"},
+		{[]string{"deflate", "inflate", "compress", "uncompress"}, "-lz", "zlib functions"},
+		{[]string{"sqlite3_"}, "-lsqlite3", "SQLite functions"},
+		{[]string{"readline"}, "-lreadline", "readline functions"},
+		{[]string{"ncurses", "initscr", "endwin", "printw", "mvprintw"}, "-lncurses", "ncurses functions"},
+	}
+
+	for _, lh := range libHints {
+		for _, p := range lh.patterns {
+			if strings.Contains(lower, p) {
+				return fmt.Sprintf("[hint: undefined reference to %s — add %s to your link flags (e.g., gcc ... %s)]",
+					lh.desc, lh.flag, lh.flag)
+			}
+		}
+	}
+
+	// Generic linker error hint.
+	return "[hint: undefined reference — check that all required source files are compiled and linked. Common fixes: add -lm (math), -lpthread (threads), -lz (zlib)]"
+}
+
+// missingHeaderHint maps missing header files to apt packages.
+// Saves 1-2 turns of the agent searching for the right package.
+func missingHeaderHint(output string) string {
+	// Common header → apt package mappings for Debian/Ubuntu containers.
+	headerPkgs := map[string]string{
+		"curl/curl.h":          "libcurl4-openssl-dev",
+		"openssl/ssl.h":        "libssl-dev",
+		"openssl/evp.h":        "libssl-dev",
+		"zlib.h":               "zlib1g-dev",
+		"png.h":                "libpng-dev",
+		"jpeglib.h":            "libjpeg-dev",
+		"sqlite3.h":            "libsqlite3-dev",
+		"ncurses.h":            "libncurses-dev",
+		"curses.h":             "libncurses-dev",
+		"readline/readline.h":  "libreadline-dev",
+		"uuid/uuid.h":          "uuid-dev",
+		"X11/Xlib.h":           "libx11-dev",
+		"SDL2/SDL.h":           "libsdl2-dev",
+		"glib.h":               "libglib2.0-dev",
+		"ffi.h":                "libffi-dev",
+		"pcre.h":               "libpcre3-dev",
+		"yaml.h":               "libyaml-dev",
+		"jansson.h":            "libjansson-dev",
+		"event.h":              "libevent-dev",
+		"boost/":               "libboost-all-dev",
+		"mysql/mysql.h":        "libmysqlclient-dev",
+		"postgresql/libpq-fe.h": "libpq-dev",
+		"libpq-fe.h":           "libpq-dev",
+	}
+
+	for header, pkg := range headerPkgs {
+		if strings.Contains(output, header) {
+			return fmt.Sprintf("[hint: missing header %s — install with: apt-get install -y %s]", header, pkg)
+		}
+	}
 	return ""
 }
 

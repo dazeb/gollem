@@ -3321,3 +3321,145 @@ def test_main():
 		t.Errorf("expected subprocess invocation with solution, got: %v", patterns)
 	}
 }
+
+func TestDepsMarkerPath(t *testing.T) {
+	// Verify marker paths are deterministic and different for different dirs.
+	p1 := depsMarkerPath("/app")
+	p2 := depsMarkerPath("/app")
+	p3 := depsMarkerPath("/other")
+
+	if p1 != p2 {
+		t.Errorf("same workDir should produce same marker path: %s vs %s", p1, p2)
+	}
+	if p1 == p3 {
+		t.Errorf("different workDirs should produce different marker paths: %s vs %s", p1, p3)
+	}
+	if !strings.HasPrefix(p1, os.TempDir()) {
+		t.Errorf("marker should be in temp dir, got: %s", p1)
+	}
+}
+
+func TestDepsMarkerSkipsReinstall(t *testing.T) {
+	// Verify that depsMarkerPath creates a valid path we can write to.
+	dir := t.TempDir()
+	marker := depsMarkerPath(dir)
+	defer os.Remove(marker)
+
+	// Initially no marker.
+	if fileExists(marker) {
+		t.Fatal("marker should not exist initially")
+	}
+
+	// Create marker.
+	if err := os.WriteFile(marker, []byte("1"), 0o644); err != nil {
+		t.Fatalf("failed to write marker: %v", err)
+	}
+
+	// Marker should now exist.
+	if !fileExists(marker) {
+		t.Fatal("marker should exist after creation")
+	}
+}
+
+func TestLinkerHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		contains string
+	}{
+		{
+			name:     "pthread",
+			output:   "main.o: In function `main':\nmain.c:(.text+0x1a): undefined reference to `pthread_create'\n",
+			contains: "-lpthread",
+		},
+		{
+			name:     "math",
+			output:   "/tmp/ccABC123.o: undefined reference to `sin'\n",
+			contains: "-lm",
+		},
+		{
+			name:     "sqlite",
+			output:   "main.o: undefined reference to `sqlite3_open'\n",
+			contains: "-lsqlite3",
+		},
+		{
+			name:     "generic",
+			output:   "foo.o: undefined reference to `some_custom_func'\n",
+			contains: "undefined reference",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hint := linkerHint(tt.output)
+			if hint == "" {
+				t.Fatal("expected a linker hint")
+			}
+			if !strings.Contains(hint, tt.contains) {
+				t.Errorf("hint %q should contain %q", hint, tt.contains)
+			}
+		})
+	}
+}
+
+func TestMissingHeaderHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		contains string
+	}{
+		{
+			name:     "curl",
+			output:   "main.c:1:10: fatal error: curl/curl.h: No such file or directory",
+			contains: "libcurl4-openssl-dev",
+		},
+		{
+			name:     "ssl",
+			output:   "crypto.c:3:10: fatal error: openssl/ssl.h: No such file or directory",
+			contains: "libssl-dev",
+		},
+		{
+			name:     "zlib",
+			output:   "compress.c:1:10: fatal error: zlib.h: No such file or directory",
+			contains: "zlib1g-dev",
+		},
+		{
+			name:     "unknown header",
+			output:   "main.c:1:10: fatal error: obscure_lib.h: No such file or directory",
+			contains: "", // no hint for unknown headers
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hint := missingHeaderHint(tt.output)
+			if tt.contains == "" {
+				if hint != "" {
+					t.Errorf("expected no hint for unknown header, got: %s", hint)
+				}
+			} else {
+				if !strings.Contains(hint, tt.contains) {
+					t.Errorf("hint %q should contain %q", hint, tt.contains)
+				}
+			}
+		})
+	}
+}
+
+func TestCompilationErrorHintLinker(t *testing.T) {
+	// compilationErrorHint should delegate to linkerHint for undefined reference errors.
+	output := "main.o: undefined reference to `pthread_create'\ncollect2: error: ld returned 1 exit status"
+	hint := compilationErrorHint(output, 1)
+	if !strings.Contains(hint, "-lpthread") {
+		t.Errorf("expected -lpthread hint, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHintMissingHeader(t *testing.T) {
+	// compilationErrorHint should delegate to missingHeaderHint for missing headers.
+	output := "main.c:1:10: fatal error: curl/curl.h: No such file or directory\n #include <curl/curl.h>\n          ^~~~~~~~~~~~~~"
+	hint := compilationErrorHint(output, 1)
+	if !strings.Contains(hint, "libcurl4-openssl-dev") {
+		t.Errorf("expected libcurl hint, got: %s", hint)
+	}
+}
