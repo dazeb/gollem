@@ -418,8 +418,8 @@ func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
 	var mu sync.Mutex
 	turn := 0
 	hasWritten := false
-	warned10 := false
-	warned20 := false
+	warned7 := false
+	warned15 := false
 
 	return func(
 		ctx context.Context,
@@ -468,22 +468,22 @@ func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
 		}
 
 		needsWarning := !hasWritten
-		w10 := warned10
-		w20 := warned20
-		if needsWarning && currentTurn >= 10 && !w10 {
-			warned10 = true
+		w7 := warned7
+		w15 := warned15
+		if needsWarning && currentTurn >= 7 && !w7 {
+			warned7 = true
 		}
-		if needsWarning && currentTurn >= 20 && !w20 {
-			warned20 = true
+		if needsWarning && currentTurn >= 15 && !w15 {
+			warned15 = true
 		}
 		mu.Unlock()
 
-		if needsWarning && currentTurn >= 20 && !w20 {
+		if needsWarning && currentTurn >= 15 && !w15 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: CRITICAL — turn %d with no output files created\n", currentTurn)
 			urgentMsg := core.ModelRequest{
 				Parts: []core.ModelRequestPart{
 					core.UserPromptPart{
-						Content: "🚨 CRITICAL: You are " + fmt.Sprintf("%d", currentTurn) + " turns in and have NOT created any output files yet. " +
+						Content: "CRITICAL: You are " + fmt.Sprintf("%d", currentTurn) + " turns in and have NOT created any output files yet. " +
 							"You MUST produce output NOW. Stop researching, stop analyzing, stop debugging infrastructure. " +
 							"Write your best attempt at a solution immediately using the write tool or bash redirects. " +
 							"You can refine it after — but you MUST have something written. " +
@@ -492,12 +492,12 @@ func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
 				},
 			}
 			messages = append(messages, urgentMsg)
-		} else if needsWarning && currentTurn >= 10 && !w10 {
+		} else if needsWarning && currentTurn >= 7 && !w7 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: warning — turn %d with no output files created\n", currentTurn)
 			warningMsg := core.ModelRequest{
 				Parts: []core.ModelRequestPart{
 					core.UserPromptPart{
-						Content: "⚠️ PROGRESS WARNING: You are " + fmt.Sprintf("%d", currentTurn) + " turns in and have not created any output files yet. " +
+						Content: "PROGRESS WARNING: You are " + fmt.Sprintf("%d", currentTurn) + " turns in and have not created any output files yet. " +
 							"Remember Rule #1: Output First, Perfect Later. " +
 							"Write your best attempt at a solution NOW, then iterate to improve it. " +
 							"Don't spend more time researching — start producing output.",

@@ -10,10 +10,11 @@ You have access to tools for reading, writing, searching, and executing code.
 
 This is the single most important rule. The #1 failure mode is spending all available time researching, analyzing, or debugging without ever creating the expected output.
 
-- **Within the first 5-10 turns**, create the required output files — even if they're a rough first attempt.
+- **Within the first 3-5 turns**, create the required output files — even if they're a rough first attempt.
+- Source files and test scripts are pre-loaded in your context — don't waste turns re-reading them.
 - A wrong answer that exists beats a perfect answer that doesn't. You can always iterate and improve.
 - If you're unsure of the approach, write your BEST GUESS first, then test and refine.
-- If a task asks you to create a file, CREATE IT EARLY. Don't spend 30+ turns analyzing before writing anything.
+- If a task asks you to create a file, CREATE IT EARLY. Don't spend 10+ turns analyzing before writing anything.
 - If a task requires running a test/verification script, write your output FIRST, then run the test to see what fails, then fix issues iteratively.
 
 ## Planning First
