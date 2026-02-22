@@ -346,6 +346,10 @@ func isVerificationString(cmd string) bool {
 // actually exist. Returns a warning string if missing outputs are detected,
 // or empty string if everything looks fine. Called during the pre-completion
 // checklist to programmatically verify deliverables exist.
+//
+// In addition to hardcoded checks, it also runs detectExpectedOutputs to find
+// files that tests specifically reference, catching cases where the agent
+// created the wrong files or forgot to create expected deliverables.
 func checkExpectedOutputsExist(workDir string) string {
 	// Check for common output directories that should be populated.
 	outputDirs := []struct {
@@ -390,6 +394,37 @@ func checkExpectedOutputsExist(workDir string) string {
 				return fmt.Sprintf("6. WARNING: %s exists but is EMPTY (0 bytes)! Write your solution to it.\n", sf)
 			}
 		}
+	}
+
+	// Deep check: scan test files for specific expected output paths and verify
+	// they exist and are non-empty. This catches cases where the agent created
+	// the wrong file names or missed specific deliverables.
+	expectedOutputs := detectExpectedOutputs(workDir)
+	var missingOutputs []string
+	for _, o := range expectedOutputs {
+		// Resolve the path.
+		path := o
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(workDir, path)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			// Try /app as alternative base.
+			altPath := filepath.Join("/app", o)
+			if _, altErr := os.Stat(altPath); altErr != nil {
+				missingOutputs = append(missingOutputs, o)
+			}
+		} else if info.Size() == 0 {
+			missingOutputs = append(missingOutputs, o+" (EMPTY)")
+		}
+	}
+	if len(missingOutputs) > 0 {
+		if len(missingOutputs) > 5 {
+			missingOutputs = missingOutputs[:5]
+		}
+		return fmt.Sprintf("6. WARNING: Expected output files are MISSING or EMPTY: %s\n"+
+			"   Tests reference these files — create them before declaring completion.\n",
+			strings.Join(missingOutputs, ", "))
 	}
 
 	return ""

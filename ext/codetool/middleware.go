@@ -1143,6 +1143,11 @@ func buildActionSummaryCached(workDir string, expectedOutputs, testCmds, missing
 		lines = append(lines, "FIRST: Create required output files immediately, then iterate")
 	}
 
+	// Surface per-test timeout if detected — critical for performance tasks.
+	if perTestTimeouts := extractPerTestTimeouts(workDir); len(perTestTimeouts) > 0 {
+		lines = append(lines, "TIMEOUT: "+perTestTimeouts[0]+" — optimize for speed!")
+	}
+
 	lines = append(lines, "REMEMBER: Output First, Perfect Later. Write code NOW, refine after testing.")
 
 	if len(lines) <= 2 {
