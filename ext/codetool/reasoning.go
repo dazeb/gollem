@@ -45,15 +45,18 @@ type ReasoningSandwichConfig struct {
 	VerificationThreshold int
 }
 
-// DefaultReasoningSandwichConfig returns a balanced reasoning sandwich config.
-// Planning: high reasoning for deep analysis (first 5 turns).
-// Implementation: low reasoning for fast execution (middle turns).
-// Verification: high reasoning for careful error analysis (last turns or when testing).
+// DefaultReasoningSandwichConfig returns the recommended reasoning sandwich config.
+// Based on LangChain's harness engineering research showing xhigh-high-xhigh
+// outperforms high-low-high by +3 points on Terminal-Bench 2.0.
+//
+// Planning: extra-high reasoning for deep task analysis (first 5 turns).
+// Implementation: high reasoning for quality code generation (middle turns).
+// Verification: extra-high reasoning for careful error analysis (when testing).
 func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
-		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
-		Implementation: ReasoningLevel{ThinkingBudget: 10000, ReasoningEffort: "low"},
-		Verification:   ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
+		Planning:       ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
+		Implementation: ReasoningLevel{ThinkingBudget: 16000, ReasoningEffort: "high"},
+		Verification:   ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
 		PlanningTurns:         5,
 		VerificationThreshold: 0, // Use heuristic: detect verification commands
 	}
