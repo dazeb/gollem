@@ -240,7 +240,7 @@ func discoverEnvironment(workDir string) string {
 		filepath.Join(workDir, "prompt.txt"),
 	}
 	for _, rp := range readmePaths {
-		if content := readFileTruncated(rp, 3000); content != "" {
+		if content := readFileTruncated(rp, 5000); content != "" {
 			parts = append(parts, "\n## README Contents (auto-read)")
 			parts = append(parts, content)
 			break
@@ -264,8 +264,9 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Track total auto-read bytes to prevent context bloat.
-	// Cap at 30KB total (~8000 tokens) to leave room for the actual conversation.
-	autoReadBudget := 30000
+	// Cap at 50KB total (~12500 tokens). Investing more in initial context
+	// saves 3-5 turns of file reading, which is a net win for token efficiency.
+	autoReadBudget := 50000
 
 	// Discover and auto-read test files (verifier tests live in /tests/ on Terminal-Bench).
 	// Auto-reading tests is the single highest-impact context injection — the agent
@@ -278,8 +279,10 @@ func discoverEnvironment(workDir string) string {
 				parts = append(parts, testLs)
 				parts = append(parts, "IMPORTANT: These test files define what will be verified. Run them EARLY and OFTEN. Tests often check for unexpected files in directories — clean up all build artifacts.")
 			}
-			// Auto-read test files (up to 5KB each, up to 3 files).
-			autoReadBudget = autoReadDirBudget(td, &parts, "Test", 5000, 3, autoReadBudget)
+			// Auto-read test files (up to 8KB each, up to 5 files).
+			// Tests are the highest-value context — knowing what's verified
+			// prevents wasted turns writing solutions that don't match.
+			autoReadBudget = autoReadDirBudget(td, &parts, "Test", 8000, 5, autoReadBudget)
 			// Extract and highlight key constraints from test assertions.
 			if constraints := extractTestConstraints(td); len(constraints) > 0 {
 				parts = append(parts, "\n## KEY CONSTRAINTS (extracted from tests)")

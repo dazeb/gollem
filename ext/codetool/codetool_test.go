@@ -70,26 +70,11 @@ func call(t *testing.T, tool core.Tool, argsJSON string) string {
 	if err != nil {
 		t.Fatalf("tool call failed: %v", err)
 	}
-	switch v := result.(type) {
-	case string:
-		return v
-	case BashResult:
-		// Format bash result as combined output.
-		var parts []string
-		if v.Stdout != "" {
-			parts = append(parts, v.Stdout)
-		}
-		if v.Stderr != "" {
-			parts = append(parts, v.Stderr)
-		}
-		if v.ExitCode != 0 {
-			parts = append(parts, "exit code: "+strings.Repeat("X", 0)) // just note it
-		}
-		return strings.Join(parts, "\n")
-	default:
-		t.Fatalf("unexpected result type: %T", result)
-		return ""
+	s, ok := result.(string)
+	if !ok {
+		t.Fatalf("expected string result, got %T", result)
 	}
+	return s
 }
 
 func callErr(t *testing.T, tool core.Tool, argsJSON string) error {
@@ -100,19 +85,9 @@ func callErr(t *testing.T, tool core.Tool, argsJSON string) error {
 	return err
 }
 
-func callBash(t *testing.T, tool core.Tool, argsJSON string) BashResult {
+func callBashStr(t *testing.T, tool core.Tool, argsJSON string) string {
 	t.Helper()
-	ctx := context.Background()
-	rc := &core.RunContext{}
-	result, err := tool.Handler(ctx, rc, argsJSON)
-	if err != nil {
-		t.Fatalf("tool call failed: %v", err)
-	}
-	br, ok := result.(BashResult)
-	if !ok {
-		t.Fatalf("expected BashResult, got %T", result)
-	}
-	return br
+	return call(t, tool, argsJSON)
 }
 
 func assertContains(t *testing.T, s, substr string) {
@@ -163,28 +138,22 @@ func TestTruncateOutput_ZeroMax(t *testing.T) {
 func TestBash_Echo(t *testing.T) {
 	dir := setupTestDir(t)
 	tool := Bash(WithWorkDir(dir))
-	br := callBash(t, tool, `{"command": "echo hello world"}`)
-	assertContains(t, br.Stdout, "hello world")
-	if br.ExitCode != 0 {
-		t.Errorf("expected exit code 0, got %d", br.ExitCode)
-	}
+	result := callBashStr(t, tool, `{"command": "echo hello world"}`)
+	assertContains(t, result, "hello world")
+	// Success: no exit code shown.
+	assertNotContains(t, result, "exit code")
 }
 
 func TestBash_ExitCode(t *testing.T) {
 	tool := Bash()
-	br := callBash(t, tool, `{"command": "exit 42"}`)
-	if br.ExitCode != 42 {
-		t.Errorf("expected exit code 42, got %d", br.ExitCode)
-	}
+	result := callBashStr(t, tool, `{"command": "exit 42"}`)
+	assertContains(t, result, "[exit code: 42]")
 }
 
 func TestBash_Timeout(t *testing.T) {
 	tool := Bash(WithBashTimeout(1 * time.Second))
-	br := callBash(t, tool, `{"command": "sleep 10"}`)
-	assertContains(t, br.Stderr, "timed out")
-	if br.ExitCode != 124 {
-		t.Errorf("expected exit code 124, got %d", br.ExitCode)
-	}
+	result := callBashStr(t, tool, `{"command": "sleep 10"}`)
+	assertContains(t, result, "timed out")
 }
 
 func TestBash_EmptyCommand(t *testing.T) {
@@ -198,20 +167,66 @@ func TestBash_EmptyCommand(t *testing.T) {
 func TestBash_WorkDir(t *testing.T) {
 	dir := setupTestDir(t)
 	tool := Bash(WithWorkDir(dir))
-	br := callBash(t, tool, `{"command": "ls hello.go"}`)
-	assertContains(t, br.Stdout, "hello.go")
+	result := callBashStr(t, tool, `{"command": "ls hello.go"}`)
+	assertContains(t, result, "hello.go")
 }
 
 func TestBash_Stderr(t *testing.T) {
 	tool := Bash()
-	br := callBash(t, tool, `{"command": "echo err >&2"}`)
-	assertContains(t, br.Stderr, "err")
+	result := callBashStr(t, tool, `{"command": "echo err >&2"}`)
+	assertContains(t, result, "err")
 }
 
 func TestBash_CustomTimeout(t *testing.T) {
 	tool := Bash(WithBashTimeout(60 * time.Second))
-	br := callBash(t, tool, `{"command": "sleep 10", "timeout": 1}`)
-	assertContains(t, br.Stderr, "timed out")
+	result := callBashStr(t, tool, `{"command": "sleep 10", "timeout": 1}`)
+	assertContains(t, result, "timed out")
+}
+
+func TestBash_BuildTimeout(t *testing.T) {
+	// Verify build commands get auto-extended timeout.
+	if !isBuildCommand("make -j4") {
+		t.Error("expected make to be detected as build command")
+	}
+	if !isBuildCommand("cargo build --release") {
+		t.Error("expected cargo build to be detected as build command")
+	}
+	if !isBuildCommand("pip install numpy") {
+		t.Error("expected pip install to be detected as build command")
+	}
+	if isBuildCommand("echo hello") {
+		t.Error("expected echo NOT to be detected as build command")
+	}
+}
+
+func TestFormatBashOutput(t *testing.T) {
+	// Success with stdout only.
+	result := formatBashOutput("hello\n", "", 0, false, 0)
+	if result != "hello\n" {
+		t.Errorf("stdout only: got %q", result)
+	}
+
+	// Success with stderr.
+	result = formatBashOutput("out\n", "warn\n", 0, false, 0)
+	assertContains(t, result, "out")
+	assertContains(t, result, "[stderr]")
+	assertContains(t, result, "warn")
+
+	// Error with no output.
+	result = formatBashOutput("", "", 1, false, 0)
+	assertContains(t, result, "[exit code: 1]")
+	assertContains(t, result, "(no output)")
+
+	// Timeout.
+	result = formatBashOutput("partial\n", "", 124, true, 120*time.Second)
+	assertContains(t, result, "partial")
+	assertContains(t, result, "[timed out after")
+
+	// No output, success.
+	result = formatBashOutput("", "", 0, false, 0)
+	if result != "(no output)" {
+		t.Errorf("empty success: got %q", result)
+	}
 }
 
 // --- View Tests ---
@@ -342,6 +357,9 @@ func TestEdit_SimpleReplace(t *testing.T) {
 	tool := Edit(WithWorkDir(dir))
 	result := call(t, tool, `{"path": "hello.go", "old_string": "Hello, World!", "new_string": "Hello, Gollem!"}`)
 	assertContains(t, result, "Replaced 1")
+	// Should show context around the edit.
+	assertContains(t, result, "Hello, Gollem!")
+	assertContains(t, result, "Context:")
 
 	data, _ := os.ReadFile(filepath.Join(dir, "hello.go"))
 	assertContains(t, string(data), "Hello, Gollem!")

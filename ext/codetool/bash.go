@@ -56,7 +56,7 @@ type BashParams struct {
 	Timeout *int `json:"timeout,omitempty" jsonschema:"description=Optional timeout in seconds (default: 120)"`
 }
 
-// BashResult is the result of a bash command execution.
+// BashResult is the result of a bash command execution (used in tests).
 type BashResult struct {
 	Stdout   string `json:"stdout,omitempty"`
 	Stderr   string `json:"stderr,omitempty"`
@@ -64,6 +64,7 @@ type BashResult struct {
 }
 
 // Bash creates a tool that executes shell commands.
+// Returns formatted text (not JSON) for efficient token usage and easier model parsing.
 func Bash(opts ...Option) core.Tool {
 	cfg := applyOpts(opts)
 	return core.FuncTool[BashParams](
@@ -72,14 +73,18 @@ func Bash(opts ...Option) core.Tool {
 			"compiling code, running tests, git operations, and any other terminal commands. "+
 			"Commands run in a persistent working directory. "+
 			"Prefer this tool for exploring the filesystem and running build/test commands.",
-		func(ctx context.Context, params BashParams) (BashResult, error) {
+		func(ctx context.Context, params BashParams) (string, error) {
 			if strings.TrimSpace(params.Command) == "" {
-				return BashResult{}, &core.ModelRetryError{Message: "command must not be empty"}
+				return "", &core.ModelRetryError{Message: "command must not be empty"}
 			}
 
 			timeout := cfg.BashTimeout
 			if params.Timeout != nil && *params.Timeout > 0 {
 				timeout = time.Duration(*params.Timeout) * time.Second
+			} else if isBuildCommand(params.Command) && timeout < 5*time.Minute {
+				// Auto-extend timeout for build/compile commands which often
+				// need much longer than the 120s default.
+				timeout = 5 * time.Minute
 			}
 
 			ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -104,40 +109,95 @@ func Bash(opts ...Option) core.Tool {
 			err := cmd.Run()
 
 			exitCode := 0
+			timedOut := false
 			if err != nil {
 				// Check timeout first — on some platforms a killed process
 				// returns ExitError with code -1, so we must check context
 				// before inspecting the exit code.
 				if ctx.Err() == context.DeadlineExceeded {
-					return BashResult{
-						Stdout:   stdout.String(),
-						Stderr:   fmt.Sprintf("Command timed out after %s", timeout),
-						ExitCode: 124,
-					}, nil
-				}
-				var exitErr *exec.ExitError
-				if errors.As(err, &exitErr) {
-					exitCode = exitErr.ExitCode()
+					timedOut = true
+					exitCode = 124
 				} else {
-					return BashResult{}, fmt.Errorf("failed to execute command: %w", err)
+					var exitErr *exec.ExitError
+					if errors.As(err, &exitErr) {
+						exitCode = exitErr.ExitCode()
+					} else {
+						return "", fmt.Errorf("failed to execute command: %w", err)
+					}
 				}
 			}
 
 			outStr := stdout.String()
 			errStr := stderr.String()
 
-			// Truncate output if too long, keeping both head and tail so
-			// the model can see error summaries at the end (e.g., test
-			// results, compiler error counts).
+			// Truncate long output, keeping head and tail so the model can
+			// see error summaries at the end.
 			outStr = truncateOutput(outStr, cfg.MaxOutputLen)
 			errStr = truncateOutput(errStr, cfg.MaxOutputLen)
 
-			return BashResult{
-				Stdout:   outStr,
-				Stderr:   errStr,
-				ExitCode: exitCode,
-			}, nil
+			return formatBashOutput(outStr, errStr, exitCode, timedOut, timeout), nil
 		},
 		core.WithToolSequential(true), // bash commands should run sequentially
 	)
+}
+
+// formatBashOutput combines stdout, stderr, and exit code into a clean text
+// format that's efficient on tokens and easy for models to parse.
+func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeout time.Duration) string {
+	var b strings.Builder
+	hasContent := stdout != "" || stderr != ""
+
+	if stdout != "" {
+		b.WriteString(stdout)
+	}
+	if stderr != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n[stderr]\n")
+		}
+		b.WriteString(stderr)
+	}
+
+	if timedOut {
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(fmt.Sprintf("[timed out after %s]", timeout))
+	} else if exitCode != 0 {
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(fmt.Sprintf("[exit code: %d]", exitCode))
+		if !hasContent {
+			b.WriteString("\n(no output)")
+		}
+	}
+
+	if b.Len() == 0 {
+		return "(no output)"
+	}
+
+	return b.String()
+}
+
+// isBuildCommand detects commands that typically need longer timeouts.
+func isBuildCommand(cmd string) bool {
+	lower := strings.ToLower(strings.TrimSpace(cmd))
+	buildPatterns := []string{
+		"make", "cmake", "cargo build", "cargo install",
+		"go build", "go install",
+		"gcc ", "g++ ", "clang ", "cc ",
+		"javac ", "mvn ", "gradle ",
+		"npm install", "npm ci", "yarn install", "pnpm install",
+		"pip install", "pip3 install",
+		"apt-get install", "apt install", "apk add", "yum install", "dnf install",
+		"docker build",
+		"lake build", // Lean 4
+		"./configure",
+	}
+	for _, p := range buildPatterns {
+		if strings.HasPrefix(lower, p) || strings.Contains(lower, " && "+p) || strings.Contains(lower, "; "+p) {
+			return true
+		}
+	}
+	return false
 }

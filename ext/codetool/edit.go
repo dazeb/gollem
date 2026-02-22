@@ -92,9 +92,51 @@ func Edit(opts ...Option) core.Tool {
 			if params.ReplaceAll {
 				replacements = count
 			}
-			return fmt.Sprintf("Replaced %d occurrence(s) in %s", replacements, params.Path), nil
+			return editResultWithContext(newContent, params.NewString, replacements, params.Path), nil
 		},
 	)
+}
+
+// editResultWithContext returns a success message with surrounding file context
+// so the model can verify the edit without a separate view call. This saves
+// one turn per edit — a significant efficiency gain.
+func editResultWithContext(content, newString string, replacements int, path string) string {
+	header := fmt.Sprintf("Replaced %d occurrence(s) in %s", replacements, path)
+
+	// For replace_all with many replacements, skip context — too many locations.
+	if replacements > 2 {
+		return header
+	}
+
+	// Find the location of the new string in the content.
+	idx := strings.Index(content, newString)
+	if idx < 0 || newString == "" {
+		return header
+	}
+
+	// Determine the line range to show (3 before, edited lines, 3 after).
+	editStartLine := strings.Count(content[:idx], "\n")
+	editLines := strings.Count(newString, "\n") + 1
+	allLines := strings.Split(content, "\n")
+
+	showStart := max(0, editStartLine-3)
+	showEnd := min(len(allLines), editStartLine+editLines+3)
+
+	// Cap at 25 lines to prevent bloating the response.
+	if showEnd-showStart > 25 {
+		showEnd = showStart + 25
+	}
+
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("\n\nContext:\n")
+	for i := showStart; i < showEnd; i++ {
+		fmt.Fprintf(&b, "%6d\t%s\n", i+1, allLines[i])
+	}
+	if showEnd < len(allLines) {
+		b.WriteString("       ...\n")
+	}
+	return b.String()
 }
 
 // findNearestLines finds lines in the file content that are most similar to
