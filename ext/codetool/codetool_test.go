@@ -5119,3 +5119,115 @@ func TestTestPassRateRegression(t *testing.T) {
 		}
 	})
 }
+func TestAutoCleanupIntermediates(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create various intermediates.
+	pycacheDir := filepath.Join(dir, "pkg", "__pycache__")
+	os.MkdirAll(pycacheDir, 0o755)
+	os.WriteFile(filepath.Join(pycacheDir, "module.cpython-39.pyc"), []byte("bytecode"), 0o644)
+
+	// .pyc file outside __pycache__
+	os.WriteFile(filepath.Join(dir, "old.pyc"), []byte("bytecode"), 0o644)
+
+	// .o and a.out in root
+	os.WriteFile(filepath.Join(dir, "main.o"), []byte("object"), 0o644)
+	os.WriteFile(filepath.Join(dir, "a.out"), []byte("binary"), 0o755)
+
+	// Real files that should NOT be deleted.
+	os.WriteFile(filepath.Join(dir, "solution.py"), []byte("print('hi')"), 0o644)
+	os.WriteFile(filepath.Join(dir, "output.txt"), []byte("result"), 0o644)
+
+	cleaned := autoCleanupIntermediates(dir)
+	if cleaned < 3 {
+		t.Errorf("expected at least 3 items cleaned, got %d", cleaned)
+	}
+
+	// Verify intermediates are gone.
+	if _, err := os.Stat(pycacheDir); !os.IsNotExist(err) {
+		t.Error("__pycache__ should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "old.pyc")); !os.IsNotExist(err) {
+		t.Error("old.pyc should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "main.o")); !os.IsNotExist(err) {
+		t.Error("main.o should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.out")); !os.IsNotExist(err) {
+		t.Error("a.out should be removed")
+	}
+
+	// Verify real files are still there.
+	if _, err := os.Stat(filepath.Join(dir, "solution.py")); err != nil {
+		t.Error("solution.py should NOT be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "output.txt")); err != nil {
+		t.Error("output.txt should NOT be removed")
+	}
+}
+
+func TestPytestFailedTestExtraction(t *testing.T) {
+	output := `============================= test session starts ==============================
+collected 5 items
+
+test_solution.py::test_add PASSED
+test_solution.py::test_subtract FAILED
+test_solution.py::test_multiply PASSED
+test_solution.py::test_divide FAILED
+test_solution.py::test_modulo PASSED
+
+FAILED test_solution.py::test_subtract - AssertionError: assert 3 == 2
+FAILED test_solution.py::test_divide - ZeroDivisionError
+========================= 2 failed, 3 passed in 0.5s ==========================`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary")
+	}
+	if !strings.Contains(summary, "2 failed") {
+		t.Errorf("expected '2 failed' in summary, got: %s", summary)
+	}
+	if !strings.Contains(summary, "test_subtract") {
+		t.Errorf("expected 'test_subtract' in failed tests, got: %s", summary)
+	}
+	if !strings.Contains(summary, "test_divide") {
+		t.Errorf("expected 'test_divide' in failed tests, got: %s", summary)
+	}
+}
+
+func TestUnittestFailedTestExtraction(t *testing.T) {
+	output := `FAIL: test_add (test_math.TestMath)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "test_math.py", line 10, in test_add
+    self.assertEqual(add(1, 2), 4)
+AssertionError: 3 != 4
+
+FAIL: test_divide (test_math.TestMath)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "test_math.py", line 20, in test_divide
+    self.assertEqual(divide(10, 3), 3)
+AssertionError: 3.3333333333333335 != 3
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.003s
+
+FAILED (failures=2)
+[exit code: 1]`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary")
+	}
+	if !strings.Contains(summary, "Ran 5 tests") {
+		t.Errorf("expected 'Ran 5 tests' in summary, got: %s", summary)
+	}
+	if !strings.Contains(summary, "test_add") {
+		t.Errorf("expected 'test_add' in failed tests, got: %s", summary)
+	}
+	if !strings.Contains(summary, "test_divide") {
+		t.Errorf("expected 'test_divide' in failed tests, got: %s", summary)
+	}
+}
+

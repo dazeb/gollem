@@ -221,6 +221,16 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 				}
 			}
 			if !skipChecklist {
+				// Auto-clean build intermediates that can cause test failures
+				// (tests often check directory contents with os.listdir/ls).
+				// Doing this programmatically saves the agent 1 turn.
+				if workDir != "" {
+					cleaned := autoCleanupIntermediates(workDir)
+					if cleaned > 0 {
+						fmt.Fprintf(os.Stderr, "[gollem] verification: auto-cleaned %d intermediate artifacts\n", cleaned)
+					}
+				}
+
 				// Programmatic check: are expected output files actually present?
 				// This catches agents that ran tests but forgot to create outputs.
 				var missingOutputHint string
@@ -231,9 +241,8 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 				}
 				checklistMsg := "Before finalizing: run through this checklist.\n" +
 					"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
-					"2. Clean up known build intermediates only (tests often check directory contents with os.listdir/ls):\n" +
-					"   Run: find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; rm -f *.o a.out 2>/dev/null\n" +
-					"   DO NOT delete files that are part of your solution (executables, source files, output data).\n" +
+					"2. Build intermediates (__pycache__, *.pyc, *.o, a.out) have been AUTO-CLEANED.\n" +
+					"   DO NOT delete any other files \u2014 especially not executables, source files, or output data.\n" +
 					"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
 					"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
 					"5. Check output file formatting (common gotchas that cause test failures):\n" +
@@ -451,6 +460,61 @@ func isVerificationString(cmd string) bool {
 // In addition to hardcoded checks, it also runs detectExpectedOutputs to find
 // files that tests specifically reference, catching cases where the agent
 // created the wrong files or forgot to create expected deliverables.
+// autoCleanupIntermediates removes known build artifacts that can interfere
+// with test verification (many tests use os.listdir/ls to check directory
+// contents). Returns the count of items removed. Only removes safe targets:
+// __pycache__ dirs, *.pyc files, *.o object files, and a.out.
+func autoCleanupIntermediates(workDir string) int {
+	cleaned := 0
+
+	// Remove __pycache__ directories recursively.
+	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() && info.Name() == "__pycache__" {
+			if os.RemoveAll(path) == nil {
+				cleaned++
+			}
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
+	// Remove *.pyc files.
+	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".pyc") {
+			if os.Remove(path) == nil {
+				cleaned++
+			}
+		}
+		return nil
+	})
+
+	// Remove *.o and a.out in the workDir root only (not recursively —
+	// subdirectories may contain intentional object files).
+	entries, err := os.ReadDir(workDir)
+	if err != nil {
+		return cleaned
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == "a.out" || strings.HasSuffix(name, ".o") {
+			path := filepath.Join(workDir, name)
+			if os.Remove(path) == nil {
+				cleaned++
+			}
+		}
+	}
+	return cleaned
+}
+
 func checkExpectedOutputsExist(workDir string) string {
 	// Check for common output directories that should be populated.
 	outputDirs := []struct {

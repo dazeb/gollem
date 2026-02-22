@@ -1232,6 +1232,31 @@ func testResultSummary(output string) string {
 				break
 			}
 		}
+		// Extract all FAILED test names for actionable debugging.
+		// pytest outputs "FAILED path::test_name" lines in its summary.
+		var failedTests []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "FAILED ") {
+				name := strings.TrimPrefix(trimmed, "FAILED ")
+				// Strip the error description after " - "
+				if dashIdx := strings.Index(name, " - "); dashIdx > 0 {
+					name = name[:dashIdx]
+				}
+				failedTests = append(failedTests, name)
+			}
+		}
+		if len(failedTests) > 0 && summary != "" {
+			shown := failedTests
+			if len(shown) > 10 {
+				shown = shown[:10]
+			}
+			summary += "\n[failed tests: " + strings.Join(shown, ", ")
+			if len(failedTests) > 10 {
+				summary += fmt.Sprintf("... and %d more", len(failedTests)-10)
+			}
+			summary += "]"
+		}
 		// Append first failure detail for actionable debugging.
 		if detail := firstFailureDetail(output); detail != "" {
 			if summary != "" {
@@ -1301,6 +1326,26 @@ func testResultSummary(output string) string {
 				}
 				if summary == "" {
 					summary = "[test summary: " + line + "]"
+				}
+				// Extract all FAIL: test_name lines for actionable debugging.
+				var failedTests []string
+				for _, fline := range lines {
+					trimmed := strings.TrimSpace(fline)
+					if strings.HasPrefix(trimmed, "FAIL: ") {
+						name := strings.TrimPrefix(trimmed, "FAIL: ")
+						failedTests = append(failedTests, name)
+					}
+				}
+				if len(failedTests) > 0 {
+					shown := failedTests
+					if len(shown) > 10 {
+						shown = shown[:10]
+					}
+					summary += "\n[failed tests: " + strings.Join(shown, ", ")
+					if len(failedTests) > 10 {
+						summary += fmt.Sprintf("... and %d more", len(failedTests)-10)
+					}
+					summary += "]"
 				}
 				if detail := firstFailureDetail(output); detail != "" {
 					summary += "\n" + detail
