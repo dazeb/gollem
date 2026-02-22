@@ -494,6 +494,21 @@ func transientErrorHint(output string, exitCode int) string {
 		}
 	}
 
+	// Disk space errors — clean up or use /tmp.
+	if strings.Contains(lower, "no space left on device") {
+		return "[hint: no disk space — clean up with: rm -rf /tmp/* __pycache__ *.pyc .cache build/ dist/ node_modules/.cache; or write output to /tmp/]"
+	}
+
+	// Read-only filesystem — common in some container setups.
+	if strings.Contains(lower, "read-only file system") {
+		return "[hint: read-only filesystem — try writing to /tmp/ or /app/ instead]"
+	}
+
+	// Segfault in Python (common with numpy/scipy compiled extensions).
+	if strings.Contains(lower, "segmentation fault") && (strings.Contains(lower, "python") || strings.Contains(output, "python")) {
+		return "[hint: Python segfault — likely a compiled extension issue. Try: pip install --break-system-packages --force-reinstall numpy scipy, or use pure Python alternatives]"
+	}
+
 	return ""
 }
 

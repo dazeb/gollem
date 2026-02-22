@@ -520,19 +520,19 @@ func TestEdit_NotFound(t *testing.T) {
 	}
 }
 
-func TestEdit_WhitespaceMismatch(t *testing.T) {
+func TestEdit_WhitespaceAutoCorrect(t *testing.T) {
 	dir := setupTestDir(t)
 	tool := Edit(WithWorkDir(dir))
-	// hello.go uses tabs, but we'll try with spaces — should get a whitespace hint.
-	err := callErr(t, tool, `{"path": "hello.go", "old_string": "  fmt.Println(\"Hello, World!\")", "new_string": "  fmt.Println(\"Hi\")"}`)
-	if err == nil {
-		t.Error("expected error for whitespace mismatch")
+	// hello.go uses tabs, but we'll try with spaces — should auto-correct.
+	result := call(t, tool, `{"path": "hello.go", "old_string": "  fmt.Println(\"Hello, World!\")", "new_string": "  fmt.Println(\"Hi\")"}`)
+	assertContains(t, result, "auto-corrected whitespace")
+	// Verify the edit was applied with the file's tab indentation.
+	content, err := os.ReadFile(filepath.Join(dir, "hello.go"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	errMsg := err.Error()
-	if !strings.Contains(errMsg, "Whitespace mismatch") && !strings.Contains(errMsg, "whitespace") {
-		// Also acceptable: the findNearestLines fallback if normalization doesn't match.
-		assertContains(t, errMsg, "old_string not found")
-	}
+	assertContains(t, string(content), "\tfmt.Println(\"Hi\")")
+	assertNotContains(t, string(content), "Hello, World!")
 }
 
 func TestDetectWhitespaceMismatch(t *testing.T) {
@@ -559,6 +559,62 @@ func TestDetectWhitespaceMismatch(t *testing.T) {
 	if hint3 != "" {
 		t.Errorf("expected empty hint for non-matching content, got %q", hint3)
 	}
+}
+
+func TestAutoCorrectWhitespace(t *testing.T) {
+	// Tab-indented content, space-indented search.
+	content := "func main() {\n\tfmt.Println(\"hello\")\n\tfmt.Println(\"world\")\n}\n"
+
+	t.Run("spaces_to_tabs", func(t *testing.T) {
+		oldStr := "    fmt.Println(\"hello\")\n    fmt.Println(\"world\")"
+		newStr := "    fmt.Println(\"HI\")\n    fmt.Println(\"WORLD\")"
+		actualOld, adjustedNew, ok := autoCorrectWhitespace(content, oldStr, newStr)
+		if !ok {
+			t.Fatal("expected auto-correct to succeed")
+		}
+		assertContains(t, actualOld, "\tfmt.Println(\"hello\")")
+		assertContains(t, adjustedNew, "\tfmt.Println(\"HI\")")
+		assertContains(t, adjustedNew, "\tfmt.Println(\"WORLD\")")
+	})
+
+	t.Run("exact_match_returns_false", func(t *testing.T) {
+		oldStr := "\tfmt.Println(\"hello\")\n\tfmt.Println(\"world\")"
+		newStr := "\tfmt.Println(\"HI\")"
+		_, _, ok := autoCorrectWhitespace(content, oldStr, newStr)
+		if ok {
+			t.Error("expected no auto-correct for exact match")
+		}
+	})
+
+	t.Run("no_match_returns_false", func(t *testing.T) {
+		_, _, ok := autoCorrectWhitespace(content, "completely different", "new")
+		if ok {
+			t.Error("expected no auto-correct for non-matching content")
+		}
+	})
+
+	t.Run("ambiguous_match_returns_false", func(t *testing.T) {
+		// Content with duplicate lines when normalized.
+		dupContent := "if true {\n\tfoo()\n}\nif false {\n\tfoo()\n}\n"
+		_, _, ok := autoCorrectWhitespace(dupContent, "    foo()", "    bar()")
+		if ok {
+			t.Error("expected no auto-correct for ambiguous match")
+		}
+	})
+
+	t.Run("indent_change_preserved", func(t *testing.T) {
+		// Model increases indent: 4 spaces → 8 spaces (old) should map to tab → double tab.
+		oldStr := "    fmt.Println(\"hello\")"
+		newStr := "        if true {\n            fmt.Println(\"hello\")\n        }"
+		_, adjustedNew, ok := autoCorrectWhitespace(content, oldStr, newStr)
+		if !ok {
+			t.Fatal("expected auto-correct to succeed")
+		}
+		// The new string should have tab-based indentation, not spaces.
+		if strings.Contains(adjustedNew, "    ") {
+			t.Errorf("expected tab indentation in adjusted new, got: %q", adjustedNew)
+		}
+	})
 }
 
 func TestEdit_AmbiguousMatch(t *testing.T) {

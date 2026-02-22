@@ -843,6 +843,8 @@ func discoverVerificationScripts(workDir string) []string {
 	verifyPatterns := []string{
 		"verify*", "check*", "validate*", "test_*", "run_test*",
 		"score*", "eval*", "grade*",
+		"run.sh", "run.py", "run_*.sh", "run_*.py",
+		"judge*", "compare*",
 	}
 
 	for _, dir := range searchDirs {
@@ -1448,7 +1450,7 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 				if resp, ok := msg.(core.ModelResponse); ok {
 					for _, part := range resp.Parts {
 						if tc, ok := part.(core.ToolCallPart); ok {
-							if tc.ToolName == "write" || tc.ToolName == "multi_edit" || tc.ToolName == "edit" || tc.ToolName == "execute_code" {
+							if tc.ToolName == "write" || tc.ToolName == "multi_edit" || tc.ToolName == "edit" || tc.ToolName == "execute_code" || tc.ToolName == "delegate" {
 								hasWritten = true
 								break
 							}

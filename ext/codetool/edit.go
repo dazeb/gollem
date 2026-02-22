@@ -62,11 +62,24 @@ func Edit(opts ...Option) core.Tool {
 			count := strings.Count(content, params.OldString)
 
 			if count == 0 {
+				// Auto-correct whitespace mismatches: if old_string matches
+				// exactly once when whitespace is normalized, automatically
+				// adjust indentation and apply the edit. This saves a full
+				// round-trip — whitespace mismatches are the #1 edit failure.
+				if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, params.OldString, params.NewString); ok {
+					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+					if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
+						return "", fmt.Errorf("write file: %w", err)
+					}
+					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+					result += "\n[auto-corrected whitespace mismatch]"
+					return result, nil
+				}
+
 				msg := fmt.Sprintf("old_string not found in %s.", params.Path)
 
-				// Check for whitespace-only mismatch: the content matches
-				// when whitespace is normalized but not exactly. This is the
-				// #1 cause of edit failures — wrong indentation.
+				// Check for whitespace-only mismatch that couldn't be auto-corrected
+				// (e.g., multiple normalized matches, line count mismatch).
 				if wsHint := detectWhitespaceMismatch(content, params.OldString); wsHint != "" {
 					msg += " " + wsHint
 				} else {
@@ -329,20 +342,27 @@ func MultiEdit(opts ...Option) core.Tool {
 				}
 
 				content := string(data)
+				var newContent string
 				if !strings.Contains(content, edit.OldString) {
-					msg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
-					if wsHint := detectWhitespaceMismatch(content, edit.OldString); wsHint != "" {
-						msg += " " + wsHint
+					// Try auto-correcting whitespace mismatch.
+					if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, edit.OldString, edit.NewString); ok {
+						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
+						results = append(results, fmt.Sprintf("edit[%d]: auto-corrected whitespace mismatch", i))
 					} else {
-						msg += " Ensure exact match including whitespace."
-						if hint := findNearestLines(content, edit.OldString, 3); hint != "" {
-							msg += "\n\nMost similar lines:\n" + hint
+						msg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
+						if wsHint := detectWhitespaceMismatch(content, edit.OldString); wsHint != "" {
+							msg += " " + wsHint
+						} else {
+							msg += " Ensure exact match including whitespace."
+							if hint := findNearestLines(content, edit.OldString, 3); hint != "" {
+								msg += "\n\nMost similar lines:\n" + hint
+							}
 						}
+						return "", &core.ModelRetryError{Message: msg}
 					}
-					return "", &core.ModelRetryError{Message: msg}
+				} else {
+					newContent = strings.Replace(content, edit.OldString, edit.NewString, 1)
 				}
-
-				newContent := strings.Replace(content, edit.OldString, edit.NewString, 1)
 				if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
 					return "", fmt.Errorf("edit[%d]: write file: %w", i, err)
 				}
@@ -352,4 +372,149 @@ func MultiEdit(opts ...Option) core.Tool {
 			return strings.Join(results, "\n\n"), nil
 		},
 	)
+}
+
+// autoCorrectWhitespace attempts to fix a whitespace mismatch automatically.
+// When old_string doesn't match exactly but matches exactly once when whitespace
+// is normalized (each line trimmed of leading/trailing space, inner runs collapsed),
+// it maps the indentation from old_string to the actual content and applies the
+// same mapping to new_string.
+//
+// Returns:
+//   - actualOld: the actual content in the file (to use as search string)
+//   - adjustedNew: new_string with indentation adjusted to match the file
+//   - ok: true if auto-correction was possible (unique normalized match found)
+func autoCorrectWhitespace(content, oldStr, newStr string) (actualOld, adjustedNew string, ok bool) {
+	// Normalize lines by collapsing whitespace within each line.
+	normalizeLine := func(s string) string {
+		return strings.Join(strings.Fields(s), " ")
+	}
+	normalizeBlock := func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			lines[i] = normalizeLine(line)
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	normalizedOld := normalizeBlock(oldStr)
+	normalizedContent := normalizeBlock(content)
+
+	// Must match exactly once (unique).
+	idx := strings.Index(normalizedContent, normalizedOld)
+	if idx < 0 {
+		return "", "", false
+	}
+	// Check for a second occurrence.
+	if idx2 := strings.Index(normalizedContent[idx+1:], normalizedOld); idx2 >= 0 {
+		return "", "", false // ambiguous — multiple normalized matches
+	}
+
+	// Map back to actual content lines using newline count.
+	matchStartLine := strings.Count(normalizedContent[:idx], "\n")
+	oldLines := strings.Split(oldStr, "\n")
+	contentLines := strings.Split(content, "\n")
+
+	if matchStartLine+len(oldLines) > len(contentLines) {
+		return "", "", false
+	}
+
+	actualLines := contentLines[matchStartLine : matchStartLine+len(oldLines)]
+
+	// Verify each line matches when normalized (sanity check).
+	for i := range oldLines {
+		if normalizeLine(oldLines[i]) != normalizeLine(actualLines[i]) {
+			return "", "", false // lines don't correspond
+		}
+	}
+
+	actualOld = strings.Join(actualLines, "\n")
+
+	// If actual matches old exactly, no correction needed.
+	if actualOld == oldStr {
+		return "", "", false
+	}
+
+	// Build adjusted new_string by mapping indentation from old → actual → new.
+	newLines := strings.Split(newStr, "\n")
+	adjusted := make([]string, len(newLines))
+
+	for i, newLine := range newLines {
+		if i < len(oldLines) {
+			oldIndent := leadingWhitespace(oldLines[i])
+			actualIndent := leadingWhitespace(actualLines[i])
+			newIndent := leadingWhitespace(newLine)
+
+			if newIndent == oldIndent {
+				// New line has same indent as old — swap to actual's indent.
+				adjusted[i] = actualIndent + strings.TrimLeft(newLine, " \t")
+			} else {
+				// Model intentionally changed indent relative to old.
+				// Compute the relative change and apply to actual.
+				adjusted[i] = applyRelativeIndent(oldIndent, actualIndent, newIndent, newLine)
+			}
+		} else {
+			// Extra lines in new_string (model added lines).
+			// Try to match the indent pattern: use the last actual line's
+			// indent mapping as a baseline.
+			if len(oldLines) > 0 {
+				lastOldIndent := leadingWhitespace(oldLines[len(oldLines)-1])
+				lastActualIndent := leadingWhitespace(actualLines[len(actualLines)-1])
+				newIndent := leadingWhitespace(newLine)
+				adjusted[i] = applyRelativeIndent(lastOldIndent, lastActualIndent, newIndent, newLine)
+			} else {
+				adjusted[i] = newLine
+			}
+		}
+	}
+
+	adjustedNew = strings.Join(adjusted, "\n")
+	return actualOld, adjustedNew, true
+}
+
+// leadingWhitespace returns the leading whitespace of a string.
+func leadingWhitespace(s string) string {
+	trimmed := strings.TrimLeft(s, " \t")
+	return s[:len(s)-len(trimmed)]
+}
+
+// applyRelativeIndent computes the relative indent change from oldIndent to
+// newIndent and applies the same relative change to actualIndent.
+func applyRelativeIndent(oldIndent, actualIndent, newIndent string, newLine string) string {
+	oldWidth := indentWidth(oldIndent)
+	actualWidth := indentWidth(actualIndent)
+	newWidth := indentWidth(newIndent)
+
+	// Compute relative change in indent columns.
+	delta := newWidth - oldWidth
+	targetWidth := actualWidth + delta
+	if targetWidth < 0 {
+		targetWidth = 0
+	}
+
+	// Determine indent character from actual (preserve file convention).
+	indentChar := "\t"
+	indentUnit := 1
+	if strings.Contains(actualIndent, " ") && !strings.Contains(actualIndent, "\t") {
+		indentChar = " "
+		indentUnit = 1
+	} else if actualIndent == "" && strings.Contains(newIndent, " ") {
+		indentChar = " "
+		indentUnit = 1
+	}
+
+	return strings.Repeat(indentChar, targetWidth/indentUnit) + strings.TrimLeft(newLine, " \t")
+}
+
+// indentWidth computes the visual width of an indent string (tabs = 4 cols).
+func indentWidth(indent string) int {
+	width := 0
+	for _, c := range indent {
+		if c == '\t' {
+			width += 4
+		} else {
+			width++
+		}
+	}
+	return width
 }
