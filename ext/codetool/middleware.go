@@ -597,6 +597,34 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-setup Haskell Stack (download dependencies and build setup).
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "stack.yaml")) && runQuiet(dir, "which", "stack") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-setting up Haskell Stack in %s\n", dir)
+				runQuietTimeout(dir, 120*time.Second, "stack", "setup", "--no-terminal")
+				runQuietTimeout(dir, 120*time.Second, "stack", "build", "--only-dependencies", "--no-terminal")
+				parts = append(parts, "AUTO-INSTALLED: Haskell Stack dependencies (already done, no need to install again)")
+				break
+			}
+		}
+	}
+
+	// Auto-install Elixir Mix dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "mix.exs")) && runQuiet(dir, "which", "mix") != "" {
+				if !dirExists(filepath.Join(dir, "deps")) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Elixir dependencies in %s\n", dir)
+					runQuietTimeout(dir, 90*time.Second, "mix", "deps.get")
+					runQuietTimeout(dir, 90*time.Second, "mix", "deps.compile")
+					parts = append(parts, "AUTO-INSTALLED: Elixir Mix dependencies (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
 	// Detect .env files and surface environment variable requirements.
 	// Many TB2 tasks need specific env vars set; finding this early saves 2+ turns
 	// of the agent troubleshooting "connection refused" or "missing config" errors.
