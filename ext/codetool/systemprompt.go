@@ -37,6 +37,8 @@ This prevents you from losing track of requirements, missing constraints, or goi
 
 6. **Work incrementally**: Make one logical change at a time. Build and test after each change. Don't make multiple unrelated changes at once.
 
+7. **Produce deliverables early**: If the task requires creating output files, write an initial version EARLY — even if imperfect. Then iterate to improve it. The #1 failure mode is spending all available time researching or debugging without ever creating the expected output. A wrong answer that exists beats a perfect answer that doesn't.
+
 ## Error Recovery
 
 When you encounter an error, follow this protocol:
