@@ -143,6 +143,19 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 	}
 	defer f.Close()
 
+	// Quick binary check: if the first 512 bytes contain null bytes, skip.
+	probe := make([]byte, 512)
+	n, _ := f.Read(probe)
+	for _, b := range probe[:n] {
+		if b == 0 {
+			return nil // binary file, skip
+		}
+	}
+	// Seek back to start after probe.
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil
+	}
+
 	var allLines []string
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -187,14 +200,21 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 func isBinaryFilename(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
-	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
-		".zip", ".tar", ".gz", ".bz2", ".xz", ".7z",
-		".exe", ".dll", ".so", ".dylib", ".o", ".a",
-		".pdf", ".doc", ".docx", ".xls", ".xlsx",
-		".wasm", ".pyc", ".class",
-		".mp3", ".mp4", ".avi", ".mov", ".mkv",
-		".ttf", ".otf", ".woff", ".woff2",
-		".sqlite", ".db":
+	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp", ".tiff", ".tif",
+		".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".zst",
+		".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib", ".obj",
+		".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+		".wasm", ".pyc", ".pyo", ".class", ".jar",
+		".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac", ".ogg",
+		".ttf", ".otf", ".woff", ".woff2", ".eot",
+		".sqlite", ".db", ".db3",
+		".qcow2", ".img", ".iso", ".vmdk", ".vdi",     // disk images
+		".bin", ".dat", ".raw", ".pak",                  // generic binary
+		".npy", ".npz", ".pkl", ".pickle", ".pt", ".pth", // ML data/models
+		".h5", ".hdf5", ".parquet", ".feather",          // data formats
+		".cab", ".deb", ".rpm",                          // packages
+		".icns",                                         // icons
+		".DS_Store", ".lock":                            // system/lock files
 		return true
 	}
 	return false

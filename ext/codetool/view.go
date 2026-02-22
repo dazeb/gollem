@@ -60,14 +60,12 @@ func View(opts ...Option) core.Tool {
 			// Quick binary file check: read the first 512 bytes and look for
 			// null bytes. Binary files waste context tokens and confuse the model.
 			if info.Size() > 0 {
-				probe, err := os.ReadFile(path)
-				if err == nil {
-					checkLen := 512
-					if len(probe) < checkLen {
-						checkLen = len(probe)
-					}
+				probe := make([]byte, 512)
+				if pf, err := os.Open(path); err == nil {
+					n, _ := pf.Read(probe)
+					pf.Close()
 					nullCount := 0
-					for _, b := range probe[:checkLen] {
+					for _, b := range probe[:n] {
 						if b == 0 {
 							nullCount++
 						}
