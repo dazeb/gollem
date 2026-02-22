@@ -43,8 +43,12 @@ func VerificationCheckpoint() (core.AgentMiddleware, core.OutputValidatorFunc[st
 			for _, msg := range messages {
 				if resp, ok := msg.(core.ModelResponse); ok {
 					for _, part := range resp.Parts {
-						if tc, ok := part.(core.ToolCallPart); ok && tc.ToolName == "bash" {
-							if isVerificationCommand(tc.ArgsJSON) {
+						if tc, ok := part.(core.ToolCallPart); ok {
+							if tc.ToolName == "bash" && isVerificationCommand(tc.ArgsJSON) {
+								verified = true
+								break
+							}
+							if tc.ToolName == "execute_code" && isVerificationCode(tc.ArgsJSON) {
 								verified = true
 								break
 							}
@@ -107,9 +111,51 @@ func isVerificationCommand(argsJSON string) bool {
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return false
 	}
+	return isVerificationString(strings.ToLower(args.Command))
+}
 
-	cmd := strings.ToLower(args.Command)
+// isVerificationCode checks whether an execute_code tool call's ArgsJSON
+// contains code that looks like verification (running tests, checking output,
+// comparing results). This handles the case where the agent uses execute_code
+// instead of bash for verification.
+func isVerificationCode(argsJSON string) bool {
+	var args struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return false
+	}
+	code := strings.ToLower(args.Code)
 
+	// Check if the code calls bash() with a verification command.
+	// execute_code wraps tool calls as Python functions, e.g.:
+	//   bash(command="python /app/test_outputs.py")
+	//   bash(command="pytest")
+	if strings.Contains(code, "bash(") {
+		return isVerificationString(code)
+	}
+
+	// Check for verification-like code patterns.
+	codeVerifyPatterns := []string{
+		"assert ", "assert(",       // Python assertions
+		"assertEqual", "assertTrue", // unittest assertions
+		"test_output", "test_result", "run_test",
+		"verify(", "validate(",
+		"expected", "== expected",
+		"diff(", "compare(",
+		"open(", // reading output files to check them
+	}
+	for _, p := range codeVerifyPatterns {
+		if strings.Contains(code, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isVerificationString checks whether a command/code string contains patterns
+// that look like verification (tests, builds, lints, constraint checks).
+func isVerificationString(cmd string) bool {
 	// Test commands.
 	testPatterns := []string{
 		"go test",
@@ -175,6 +221,7 @@ func isVerificationCommand(argsJSON string) bool {
 		"du -", "file ",
 		"diff ", "cmp ",
 		"md5sum", "sha256sum",
+		"grep -c", "grep --count", // counting matches is verification
 	}
 
 	for _, p := range testPatterns {

@@ -125,6 +125,14 @@ func retryLoop[T any](ctx context.Context, cfg RetryConfig, fn func() (T, error)
 		// Don't sleep after the last attempt.
 		if attempt < cfg.MaxRetries {
 			wait := backoff
+
+			// Use Retry-After from the provider if available (e.g., 429 rate limits).
+			// This is more accurate than exponential backoff for rate-limited APIs.
+			var httpErr *core.ModelHTTPError
+			if errors.As(err, &httpErr) && httpErr.RetryAfter > 0 {
+				wait = httpErr.RetryAfter
+			}
+
 			if cfg.Jitter {
 				// Add 0-25% jitter.
 				jitter := time.Duration(float64(wait) * 0.25 * rand.Float64())

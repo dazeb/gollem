@@ -779,7 +779,7 @@ func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Simulate a conversation with edit and view calls but no bash.
+	// Simulate a conversation with edit and view calls but no bash or execute_code.
 	messages := []core.ModelMessage{
 		core.ModelResponse{
 			Parts: []core.ModelResponsePart{
@@ -802,11 +802,75 @@ func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
 	}
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	// Should still reject — no bash verification.
+	// Should still reject — no bash or verification execute_code.
 	rc := &core.RunContext{}
 	_, err := validator(ctx, rc, "Done!")
 	if err == nil {
 		t.Fatal("expected error when only edit/view tools were used")
+	}
+}
+
+func TestVerificationCheckpoint_AcceptsExecuteCode(t *testing.T) {
+	mw, validator := VerificationCheckpoint()
+
+	ctx := context.Background()
+
+	// Simulate a conversation where the model used execute_code with bash() to verify.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "execute_code",
+					ArgsJSON:   `{"code":"result = bash(command='python /app/test_outputs.py')\nresult"}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// First validator call triggers checklist.
+	rc := &core.RunContext{}
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("first call should trigger pre-completion checklist")
+	}
+
+	// Second call should accept.
+	_, err = validator(ctx, rc, "Done!")
+	if err != nil {
+		t.Fatalf("should accept after execute_code verification, got: %v", err)
+	}
+}
+
+func TestIsVerificationCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		argsJSON string
+		want     bool
+	}{
+		{"bash call with test", `{"code":"bash(command='pytest')"}`, true},
+		{"bash call with test_outputs", `{"code":"bash(command='python /app/test_outputs.py')"}`, true},
+		{"assert statement", `{"code":"assert result == expected"}`, true},
+		{"assertEqual", `{"code":"self.assertEqual(output, expected)"}`, true},
+		{"open output file", `{"code":"with open('output.csv') as f:\n    data = f.read()"}`, true},
+		{"simple math", `{"code":"x = 1 + 2\nx"}`, false},
+		{"view call only", `{"code":"view(path='main.py')"}`, false},
+		{"invalid json", `not json`, false},
+		{"empty code", `{"code":""}`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isVerificationCode(tt.argsJSON)
+			if got != tt.want {
+				t.Errorf("isVerificationCode(%s) = %v, want %v", tt.argsJSON, got, tt.want)
+			}
+		})
 	}
 }
 

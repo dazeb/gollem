@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -114,7 +113,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 		return nil, fmt.Errorf("anthropic: failed to marshal request: %w", err)
 	}
 
-	resp, err := p.doWithRetry(ctx, body)
+	resp, err := p.doRequest(ctx, body)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +139,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 		return nil, fmt.Errorf("anthropic: failed to marshal request: %w", err)
 	}
 
-	resp, err := p.doWithRetry(ctx, body)
+	resp, err := p.doRequest(ctx, body)
 	if err != nil {
 		return nil, err
 	}
@@ -148,91 +147,46 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 	return newStreamedResponse(resp.Body, p.model), nil
 }
 
-// doWithRetry sends an HTTP request with automatic retry for transient errors
-// (429 rate limits, 500/502/503 server errors). Uses exponential backoff,
-// respecting Retry-After headers when present.
-func (p *Provider) doWithRetry(ctx context.Context, body []byte) (*http.Response, error) {
-	const maxRetries = 3
-	baseDelay := 2 * time.Second
+// doRequest sends a single HTTP request and returns the response or a typed
+// error. Retry logic is handled at the model level by modelutil.RetryModel,
+// which uses this error's RetryAfter field for backoff.
+func (p *Provider) doRequest(ctx context.Context, body []byte) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+messagesEndpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: failed to create HTTP request: %w", err)
+	}
+	p.setHeaders(httpReq)
 
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			delay := time.Duration(float64(baseDelay) * math.Pow(2, float64(attempt-1)))
-			if delay > 30*time.Second {
-				delay = 30 * time.Second
-			}
-			if lastErr != nil {
-				if httpErr, ok := lastErr.(*core.ModelHTTPError); ok && httpErr.RetryAfter > 0 {
-					delay = httpErr.RetryAfter
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(delay):
-			}
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+messagesEndpoint, bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("anthropic: failed to create HTTP request: %w", err)
-		}
-		p.setHeaders(httpReq)
-
-		resp, err := p.httpClient.Do(httpReq)
-		if err != nil {
-			lastErr = fmt.Errorf("anthropic: HTTP request failed: %w", err)
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			continue
-		}
-
-		if resp.StatusCode == http.StatusOK {
-			return resp, nil
-		}
-
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		httpErr := &core.ModelHTTPError{
-			Message:    "anthropic API error: " + string(respBody),
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
-			ModelName:  p.model,
-		}
-
-		if resp.StatusCode == http.StatusTooManyRequests {
-			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				if secs, err := strconv.Atoi(ra); err == nil {
-					httpErr.RetryAfter = time.Duration(secs) * time.Second
-				}
-			}
-		}
-
-		if !isRetryableStatus(resp.StatusCode) {
-			return nil, httpErr
-		}
-
-		lastErr = httpErr
-		fmt.Fprintf(os.Stderr, "[gollem] anthropic: retrying after %d (attempt %d/%d)\n",
-			resp.StatusCode, attempt+1, maxRetries)
+	resp, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: HTTP request failed: %w", err)
 	}
 
-	return nil, lastErr
-}
-
-func isRetryableStatus(code int) bool {
-	switch code {
-	case http.StatusTooManyRequests,
-		http.StatusInternalServerError,
-		http.StatusBadGateway,
-		http.StatusServiceUnavailable,
-		http.StatusGatewayTimeout:
-		return true
+	if resp.StatusCode == http.StatusOK {
+		return resp, nil
 	}
-	return false
+
+	respBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	httpErr := &core.ModelHTTPError{
+		Message:    "anthropic API error: " + string(respBody),
+		StatusCode: resp.StatusCode,
+		Body:       string(respBody),
+		ModelName:  p.model,
+	}
+
+	// Parse Retry-After header for 429 responses so the model-level
+	// retry (modelutil.RetryModel) can use appropriate backoff.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil {
+				httpErr.RetryAfter = time.Duration(secs) * time.Second
+			}
+		}
+	}
+
+	return nil, httpErr
 }
 
 func (p *Provider) setHeaders(req *http.Request) {

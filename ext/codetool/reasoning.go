@@ -148,8 +148,11 @@ func detectVerificationPhase(messages []core.ModelMessage) bool {
 	for _, msg := range messages[start:] {
 		if resp, ok := msg.(core.ModelResponse); ok {
 			for _, part := range resp.Parts {
-				if tc, ok := part.(core.ToolCallPart); ok && tc.ToolName == "bash" {
-					if isVerificationCommand(tc.ArgsJSON) {
+				if tc, ok := part.(core.ToolCallPart); ok {
+					if tc.ToolName == "bash" && isVerificationCommand(tc.ArgsJSON) {
+						return true
+					}
+					if tc.ToolName == "execute_code" && isVerificationCode(tc.ArgsJSON) {
 						return true
 					}
 				}
