@@ -242,7 +242,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -916,6 +916,26 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- If stuck, try `decide` for decidable propositions or `norm_num` for numeric goals")
 	}
 
+	// Detect Coq proof tasks.
+	if detectCoqTask(workDir) {
+		hints = append(hints, "\n## Task Type: Theorem Proving (Coq)")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Check Coq version: `coqc --version`. Version mismatches cause obscure failures.")
+		hints = append(hints, "- Coq compilation is SLOW. Build incrementally with `make -j$(nproc)` or `coq_makefile`.")
+		hints = append(hints, "- If building a large project (CompCert, etc.), start the build early and check logs for errors within 60 seconds.")
+		hints = append(hints, "- Common issue: deprecated tactics/notations between Coq versions. Check error messages for version hints.")
+		hints = append(hints, "- If compilation fails mid-way, fix the specific error rather than rebuilding from scratch.")
+	}
+
+	// Detect OCaml tasks.
+	if detectOCamlTask(workDir) {
+		hints = append(hints, "\n## Task Type: OCaml")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Check for build system: `dune build`, `make`, or direct `ocamlfind`/`ocamlopt`")
+		hints = append(hints, "- Use `opam install` for package management if opam is available")
+		hints = append(hints, "- OCaml type errors are verbose but precise — read the full error including expected vs actual types")
+	}
+
 	// Detect cryptography / security analysis tasks.
 	if detectCryptoTask(workDir) {
 		hints = append(hints, "\n## Task Type: Cryptography / Security Analysis")
@@ -956,6 +976,17 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "\n## Note: Docker files detected")
 		hints = append(hints, "If the task involves Docker: build and test locally first, then containerize.")
 		hints = append(hints, "Don't waste turns debugging Docker networking or GPU passthrough — focus on the core task.")
+	}
+
+	// Detect build-from-source tasks.
+	if detectBuildFromSourceTask(workDir) {
+		hints = append(hints, "\n## Task Type: Build from Source")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- When extracting archives (tar, zip), verify ALL files were extracted: `ls -la` the extracted directory.")
+		hints = append(hints, "- Some tests check for specific source files by hash. Don't delete source files after building.")
+		hints = append(hints, "- Start the build early — compilation can take a long time. Check build logs for errors within the first minute.")
+		hints = append(hints, "- If a build fails, read the FULL error log rather than restarting from scratch.")
+		hints = append(hints, "- Keep source directories intact — verifiers often check that sources exist.")
 	}
 
 	if len(hints) > 0 {
@@ -1220,6 +1251,89 @@ func detectSystemEmulatorTask(workDir string) bool {
 		}
 	}
 	return false
+}
+
+// detectBuildFromSourceTask returns true if the task looks like it requires building
+// software from source code (compilation, configuration, etc.).
+func detectBuildFromSourceTask(workDir string) bool {
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range []string{"build-", "compile", "make-", "install-"} {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for source archives in the working directory.
+	for _, ext := range []string{"*.tar.*", "*.tgz", "*.tar", "*.zip", "*.tar.gz", "*.tar.bz2", "*.tar.xz"} {
+		matches, _ := filepath.Glob(filepath.Join(workDir, ext))
+		if len(matches) > 0 {
+			return true
+		}
+	}
+	// Check in /app/ as well.
+	for _, ext := range []string{"*.tar.*", "*.tgz", "*.tar", "*.zip"} {
+		matches, _ := filepath.Glob(filepath.Join("/app", ext))
+		if len(matches) > 0 {
+			return true
+		}
+	}
+	// Check for configure scripts.
+	return fileExists(filepath.Join(workDir, "configure")) ||
+		fileExists(filepath.Join(workDir, "configure.ac")) ||
+		fileExists(filepath.Join(workDir, "CMakeLists.txt"))
+}
+
+// detectCoqTask returns true if the working directory looks like a Coq proof task.
+func detectCoqTask(workDir string) bool {
+	// Check for Coq project files.
+	for _, f := range []string{"_CoqProject", "Makefile.coq", "coq_makefile"} {
+		if fileExists(filepath.Join(workDir, f)) {
+			return true
+		}
+	}
+	// Check directory name.
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range []string{"compcert", "coq", "proof", "prove"} {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for .v files.
+	matches, _ := filepath.Glob(filepath.Join(workDir, "*.v"))
+	if len(matches) > 0 {
+		return true
+	}
+	// Check subdirectories (CompCert layout: source/*.v).
+	entries, _ := os.ReadDir(workDir)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			subMatches, _ := filepath.Glob(filepath.Join(workDir, entry.Name(), "*.v"))
+			if len(subMatches) > 3 { // multiple .v files suggest a Coq project
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// detectOCamlTask returns true if the working directory looks like an OCaml task.
+func detectOCamlTask(workDir string) bool {
+	for _, f := range []string{"dune-project", "dune", "_build"} {
+		if fileExists(filepath.Join(workDir, f)) {
+			return true
+		}
+	}
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range []string{"ocaml", "dune", "opam"} {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	matches, _ := filepath.Glob(filepath.Join(workDir, "*.ml"))
+	if len(matches) > 0 {
+		return true
+	}
+	matches, _ = filepath.Glob(filepath.Join(workDir, "*.mli"))
+	return len(matches) > 0
 }
 
 // detectCodeGolfTask returns true if the task has size constraints on output files.

@@ -2126,3 +2126,69 @@ func TestFirstFailureDetailColon(t *testing.T) {
 		t.Errorf("expected diff: pattern, got: %s", got)
 	}
 }
+
+func TestDetectCoqTask(t *testing.T) {
+	// Directory with _CoqProject file.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "_CoqProject", "-R . MyProject\n")
+	if !detectCoqTask(dir) {
+		t.Error("expected Coq task detection with _CoqProject")
+	}
+
+	// Directory with .v files.
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "Proof.v", "Theorem plus_comm : forall n m, n + m = m + n.\n")
+	if !detectCoqTask(dir2) {
+		t.Error("expected Coq task detection with .v files")
+	}
+
+	// Empty directory — should not detect.
+	dir3 := t.TempDir()
+	if detectCoqTask(dir3) {
+		t.Error("expected no Coq task in empty directory")
+	}
+}
+
+func TestDetectOCamlTask(t *testing.T) {
+	// Directory with dune-project.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "dune-project", "(lang dune 3.0)\n")
+	if !detectOCamlTask(dir) {
+		t.Error("expected OCaml task detection with dune-project")
+	}
+
+	// Directory with .ml files.
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "main.ml", "let () = print_endline \"hello\"\n")
+	if !detectOCamlTask(dir2) {
+		t.Error("expected OCaml task detection with .ml files")
+	}
+
+	// Empty directory — should not detect.
+	dir3 := t.TempDir()
+	if detectOCamlTask(dir3) {
+		t.Error("expected no OCaml task in empty directory")
+	}
+}
+
+func TestDetectBuildFromSourceTask(t *testing.T) {
+	// Directory name with "build-" prefix.
+	dir := filepath.Join(t.TempDir(), "build-povray")
+	os.MkdirAll(dir, 0o755)
+	if !detectBuildFromSourceTask(dir) {
+		t.Error("expected build task detection from directory name 'build-povray'")
+	}
+
+	// Directory with configure script.
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "configure", "#!/bin/sh\n")
+	if !detectBuildFromSourceTask(dir2) {
+		t.Error("expected build task detection with configure script")
+	}
+
+	// Empty directory — should not detect.
+	dir3 := t.TempDir()
+	if detectBuildFromSourceTask(dir3) {
+		t.Error("expected no build task in empty directory")
+	}
+}

@@ -124,9 +124,9 @@ func VerificationCheckpoint(timeout ...time.Duration) (core.AgentMiddleware, cor
 				return output, &core.ModelRetryError{
 					Message: "Before finalizing: run through this checklist.\n" +
 						"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
-						"2. Clean up build artifacts (tests often check directory contents with os.listdir/ls):\n" +
-						"   Run: find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; rm -f *.o *.out a.out 2>/dev/null\n" +
-						"   Then: ls the output/working directory and rm anything that isn't part of the deliverable.\n" +
+						"2. Clean up known build intermediates only (tests often check directory contents with os.listdir/ls):\n" +
+						"   Run: find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; rm -f *.o a.out 2>/dev/null\n" +
+						"   DO NOT delete files that are part of your solution (executables, source files, output data).\n" +
 						"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
 						"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
 						"5. Check output file formatting (common gotchas that cause test failures):\n" +

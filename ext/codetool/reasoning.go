@@ -191,14 +191,14 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 			warning = fmt.Sprintf("EMERGENCY: Only %s remaining (%.0f%% elapsed). "+
 				"This is your LAST CHANCE. You will be killed soon. "+
 				"DO ONLY: (1) if output files don't exist, write them NOW with whatever you have, "+
-				"(2) rm -rf __pycache__ *.pyc *.o build/ dist/ — remove ALL build artifacts, "+
+				"(2) remove only known intermediates: find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; rm -f *.o a.out 2>/dev/null "+
 				"(3) STOP. Do nothing else. Any further exploration or debugging is wasted.",
 				remaining.Round(time.Second), pct*100)
 		case pct >= 0.90 && !warned90:
 			warned90 = true
 			warning = fmt.Sprintf("TIME CRITICAL: Only %s remaining (%.0f%% elapsed). "+
 				"STOP all new work. Final actions only: "+
-				"(1) ensure output files exist, (2) run final test, (3) rm build artifacts. "+
+				"(1) ensure output files exist, (2) run final test, (3) remove only __pycache__/*.pyc/*.o intermediates (keep solution files). "+
 				"Do NOT start new approaches or fix more issues.", remaining.Round(time.Second), pct*100)
 		case pct >= 0.75 && !warned75:
 			warned75 = true
