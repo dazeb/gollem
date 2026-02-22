@@ -2212,3 +2212,32 @@ func TestDetectImageFiles(t *testing.T) {
 		t.Errorf("expected 0 image files in empty dir, got %d", len(images2))
 	}
 }
+
+func TestDetectRTask(t *testing.T) {
+	// Directory with .R file.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "ars.R", "ars <- function(f, domain, n) {}\n")
+	if !detectRTask(dir) {
+		t.Error("expected R task detection with .R file")
+	}
+
+	// Directory with DESCRIPTION (R package).
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "DESCRIPTION", "Package: mypackage\nVersion: 1.0\n")
+	if !detectRTask(dir2) {
+		t.Error("expected R task detection with DESCRIPTION file")
+	}
+
+	// Empty directory — should not detect.
+	dir3 := t.TempDir()
+	if detectRTask(dir3) {
+		t.Error("expected no R task in empty directory")
+	}
+
+	// DESCRIPTION without Package: field — not an R package.
+	dir4 := t.TempDir()
+	writeTestFile(t, dir4, "DESCRIPTION", "Just some text\n")
+	if detectRTask(dir4) {
+		t.Error("expected no R task from non-R DESCRIPTION file")
+	}
+}

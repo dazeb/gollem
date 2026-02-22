@@ -146,6 +146,7 @@ Your code will often be tested against time limits. Write efficient solutions:
 3. **Test with realistic data sizes**: If the task involves processing data, test with inputs similar to what the verifier will use — not just toy examples.
 4. **Profile if slow**: If your solution takes more than a few seconds, use timing measurements to find the bottleneck. Optimize the hot path.
 5. **Prefer built-in/native operations**: Use numpy vectorized operations over Python loops, built-in sort over manual sort, etc.
+6. **Verifier timeout awareness**: Test scripts often have per-test timeouts (15-60 seconds). If your solution works but is slow, the verifier will kill it and report a timeout failure. Always time your solution: ` + "`time python3 solution.py`" + ` and ensure it completes well within expected limits.
 
 ## Long-Running Processes
 

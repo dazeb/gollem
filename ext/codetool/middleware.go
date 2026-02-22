@@ -242,7 +242,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -479,6 +479,24 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// List resources/ directory — common TB2 layout for reference data, patch files,
+	// and input data that tests compare against. Knowing what's here prevents the
+	// agent from missing critical reference files (e.g., fix-git's patch_files/).
+	for _, rd := range []string{"/app/resources", filepath.Join(workDir, "resources")} {
+		if info, err := os.Stat(rd); err == nil && info.IsDir() {
+			if ls := runQuiet(rd, "ls", "-1R"); ls != "" {
+				lines := strings.Split(strings.TrimSpace(ls), "\n")
+				if len(lines) > 30 {
+					lines = append(lines[:30], "... (truncated)")
+				}
+				parts = append(parts, "\nResources directory ("+rd+"):")
+				parts = append(parts, strings.Join(lines, "\n"))
+				parts = append(parts, "NOTE: Tests may compare your output against files in this directory.")
+			}
+			break
+		}
+	}
+
 	// Detect expected output files from test analysis.
 	// This tells the agent exactly WHAT to create from the start.
 	if expectedOutputs := detectExpectedOutputs(workDir); len(expectedOutputs) > 0 {
@@ -551,6 +569,7 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"lakefile.toml", "Lean 4", "lake"},
 		{"stack.yaml", "Haskell", "stack"},
 		{"dune-project", "OCaml", "dune"},
+		{"DESCRIPTION", "R", "R"},
 		{"mix.exs", "Elixir", "mix"},
 		{"build.zig", "Zig", "zig"},
 		{"Project.toml", "Julia", "julia"},
@@ -934,6 +953,17 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Check for build system: `dune build`, `make`, or direct `ocamlfind`/`ocamlopt`")
 		hints = append(hints, "- Use `opam install` for package management if opam is available")
 		hints = append(hints, "- OCaml type errors are verbose but precise — read the full error including expected vs actual types")
+	}
+
+	// Detect R language tasks.
+	if detectRTask(workDir) {
+		hints = append(hints, "\n## Task Type: R Language")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Run R scripts with `Rscript <file.R>`. Check `which Rscript` first.")
+		hints = append(hints, "- Install packages: `Rscript -e 'install.packages(\"pkg\", repos=\"https://cloud.r-project.org\")'`")
+		hints = append(hints, "- R code can be slow with large loops — use vectorized operations (apply/sapply/vapply) instead of for loops")
+		hints = append(hints, "- Test your R code with small inputs first, then verify it completes within verifier timeouts (typically 15-60s)")
+		hints = append(hints, "- If the task has a `test()` function, ensure it exists and runs correctly with `source('file.R'); test()`")
 	}
 
 	// Detect cryptography / security analysis tasks.
@@ -1365,6 +1395,32 @@ func detectOCamlTask(workDir string) bool {
 	}
 	matches, _ = filepath.Glob(filepath.Join(workDir, "*.mli"))
 	return len(matches) > 0
+}
+
+// detectRTask returns true if the working directory contains R language files.
+func detectRTask(workDir string) bool {
+	for _, dir := range []string{workDir, "/app"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.R"))
+		if len(matches) > 0 {
+			return true
+		}
+		matches, _ = filepath.Glob(filepath.Join(dir, "*.r"))
+		if len(matches) > 0 {
+			return true
+		}
+		matches, _ = filepath.Glob(filepath.Join(dir, "*.Rmd"))
+		if len(matches) > 0 {
+			return true
+		}
+	}
+	// Check for DESCRIPTION file (R package marker).
+	if fileExists(filepath.Join(workDir, "DESCRIPTION")) {
+		data, err := os.ReadFile(filepath.Join(workDir, "DESCRIPTION"))
+		if err == nil && strings.Contains(string(data), "Package:") {
+			return true
+		}
+	}
+	return false
 }
 
 // detectCodeGolfTask returns true if the task has size constraints on output files.
@@ -1924,6 +1980,7 @@ func isSourceFile(name string) bool {
 		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hs",
 		".jl", ".m", ".swift", ".f90", ".f95",
 		".lean", ".v", ".agda",          // theorem provers
+		".red",                          // Redcode (CoreWars)
 		".cu", ".cuh",                   // CUDA
 		".s", ".asm", ".wat",            // assembly / WebAssembly text
 		".proto", ".thrift", ".graphql", // schema files
