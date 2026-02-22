@@ -10,6 +10,8 @@ import (
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/deep"
 	"github.com/fugue-labs/gollem/ext/monty"
+	"github.com/fugue-labs/gollem/ext/team"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 // Toolset returns all coding agent tools as a core.Toolset.
@@ -76,9 +78,38 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	// Planning tool: persistent task list for tracking progress on multi-step work.
 	toolOptions = append(toolOptions, core.WithTools[string](deep.PlanningTool()))
 
+	// Default personality generation: when a model is available but no
+	// explicit generator was provided, auto-create a cached generator.
+	// Append to toolOpts so it flows through to SubAgentTool as well.
+	if cfg.Model != nil && cfg.PersonalityGenerator == nil {
+		cfg.PersonalityGenerator = modelutil.CachedPersonalityGenerator(
+			modelutil.GeneratePersonality(cfg.Model),
+		)
+		toolOpts = append(toolOpts, WithPersonalityGenerator(cfg.PersonalityGenerator))
+	}
+
 	// SubAgent delegation: spawn focused subagents for subtask execution.
-	if cfg.Model != nil {
+	// Disabled in team mode (team tools replace delegation).
+	if cfg.Model != nil && !cfg.TeamMode {
 		toolOptions = append(toolOptions, core.WithTools[string](SubAgentTool(cfg.Model, toolOpts...)))
+	}
+
+	// Team mode: leader agent with tools to spawn teammates and coordinate work.
+	var teamLeaderMW core.AgentMiddleware
+	if cfg.TeamMode && cfg.Model != nil {
+		t := team.NewTeam(team.TeamConfig{
+			Name:                 "coding-team",
+			Leader:               "leader",
+			Model:                cfg.Model,
+			Toolset:              Toolset(toolOpts...),
+			PersonalityGenerator: cfg.PersonalityGenerator,
+		})
+		// Register the leader so workers can send messages to it.
+		teamLeaderMW = t.RegisterLeader("leader")
+		toolOptions = append(toolOptions,
+			core.WithTools[string](team.LeaderTools(t)...),
+		)
+		systemPrompt += "\n\n" + team.LeaderSystemPrompt("coding-team")
 	}
 
 	opts := []core.AgentOption[string]{
@@ -158,6 +189,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 			},
 		}),
 	)
+
+	// Team leader middleware: drain incoming messages from workers between turns.
+	if teamLeaderMW != nil {
+		opts = append(opts, core.WithAgentMiddleware[string](teamLeaderMW))
+	}
 
 	// Time budget awareness: warn the agent when approaching timeout.
 	if cfg.Timeout > 0 {
