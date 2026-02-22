@@ -26,7 +26,7 @@ type RetryConfig struct {
 // DefaultRetryConfig returns sensible defaults.
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxRetries:     3,
+		MaxRetries:     5,
 		InitialBackoff: 1 * time.Second,
 		MaxBackoff:     30 * time.Second,
 		BackoffFactor:  2.0,
@@ -56,8 +56,8 @@ func defaultIsRetryable(err error) bool {
 
 	// Check error message for common transient patterns.
 	msg := err.Error()
-	for _, pattern := range []string{"unexpected EOF", "connection reset", "connection refused", "broken pipe", "i/o timeout"} {
-		if strings.Contains(msg, pattern) {
+	for _, pattern := range []string{"unexpected EOF", "connection reset", "connection refused", "broken pipe", "i/o timeout", "no such host", "dns", "temporary failure"} {
+		if strings.Contains(strings.ToLower(msg), pattern) {
 			return true
 		}
 	}
