@@ -10,45 +10,61 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
+// ReasoningLevel defines a provider-agnostic reasoning intensity.
+// It maps to ThinkingBudget (Anthropic) and ReasoningEffort (OpenAI).
+type ReasoningLevel struct {
+	// ThinkingBudget is the token budget for Anthropic extended thinking.
+	ThinkingBudget int
+	// ReasoningEffort is the effort level for OpenAI o-series ("low", "medium", "high").
+	ReasoningEffort string
+}
+
 // ReasoningSandwichConfig configures the reasoning sandwich middleware.
+// This is provider-agnostic: it sets both ThinkingBudget (Anthropic) and
+// ReasoningEffort (OpenAI) for each phase. Each provider uses whichever
+// field applies to it.
 type ReasoningSandwichConfig struct {
-	// PlanningBudget is the thinking token budget for early turns (planning/discovery).
-	// Higher budget allows deeper analysis of the task and codebase.
-	PlanningBudget int
+	// Planning is the reasoning level for early turns (planning/discovery).
+	// Higher reasoning allows deeper analysis of the task and codebase.
+	Planning ReasoningLevel
 
-	// ImplementationBudget is the thinking token budget for middle turns (building).
-	// Lower budget keeps implementation turns fast.
-	ImplementationBudget int
+	// Implementation is the reasoning level for middle turns (building).
+	// Lower reasoning keeps implementation turns fast.
+	Implementation ReasoningLevel
 
-	// VerificationBudget is the thinking token budget for late turns (verification/fix).
-	// Higher budget allows careful analysis of test results and errors.
-	VerificationBudget int
+	// Verification is the reasoning level for late turns (verification/fix).
+	// Higher reasoning allows careful analysis of test results and errors.
+	Verification ReasoningLevel
 
-	// PlanningTurns is the number of early turns that get the planning budget.
+	// PlanningTurns is the number of early turns that get the planning level.
 	PlanningTurns int
 
 	// VerificationThreshold is the turn number (from the end of max turns) at which
-	// we switch to the verification budget. If we don't know max turns, we use
+	// we switch to the verification level. If we don't know max turns, we use
 	// a heuristic: switch when verification commands are detected in recent output.
 	VerificationThreshold int
 }
 
 // DefaultReasoningSandwichConfig returns a balanced reasoning sandwich config.
-// Planning: 32k tokens for deep analysis (first 5 turns)
-// Implementation: 10k tokens for fast execution (middle turns)
-// Verification: 32k tokens for careful error analysis (last turns or when testing)
+// Planning: high reasoning for deep analysis (first 5 turns)
+// Implementation: low reasoning for fast execution (middle turns)
+// Verification: high reasoning for careful error analysis (last turns or when testing)
 func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
-		PlanningBudget:        32000,
-		ImplementationBudget:  10000,
-		VerificationBudget:    32000,
+		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
+		Implementation: ReasoningLevel{ThinkingBudget: 10000, ReasoningEffort: "low"},
+		Verification:   ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
 		PlanningTurns:         5,
 		VerificationThreshold: 0, // Use heuristic: detect verification commands
 	}
 }
 
 // ReasoningSandwichMiddleware implements the "reasoning sandwich" pattern:
-// high thinking budget for planning → lower for implementation → high for verification.
+// high reasoning for planning → lower for implementation → high for verification.
+//
+// This is provider-agnostic: it sets both ThinkingBudget (Anthropic/Vertex)
+// and ReasoningEffort (OpenAI) for each phase. Each provider uses whichever
+// field applies to it, ignoring the other.
 //
 // This technique was shown to improve Terminal-Bench scores by +10pts in
 // LangChain's harness engineering work. The key insight: LLMs benefit from
@@ -77,38 +93,45 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddlewa
 		isVerifying := inVerification
 		mu.Unlock()
 
-		// Only modify settings if thinking budget is configured.
-		if settings != nil && settings.ThinkingBudget != nil {
-			s := *settings
-			var newBudget int
-			var phase string
-
-			switch {
-			case currentTurn <= cfg.PlanningTurns:
-				newBudget = cfg.PlanningBudget
-				phase = "planning"
-			case isVerifying:
-				newBudget = cfg.VerificationBudget
-				phase = "verification"
-			default:
-				newBudget = cfg.ImplementationBudget
-				phase = "implementation"
-			}
-
-			s.ThinkingBudget = &newBudget
-			// Ensure max_tokens > thinking budget (Anthropic requirement).
-			if s.MaxTokens != nil && *s.MaxTokens <= newBudget {
-				maxT := newBudget + 16000
-				s.MaxTokens = &maxT
-			}
-
-			fmt.Fprintf(os.Stderr, "[gollem] reasoning: turn %d phase=%s budget=%d\n",
-				currentTurn, phase, newBudget)
-
-			return next(ctx, messages, &s, params)
+		// Only modify settings if reasoning is configured (either provider).
+		if settings == nil || (settings.ThinkingBudget == nil && settings.ReasoningEffort == nil) {
+			return next(ctx, messages, settings, params)
 		}
 
-		return next(ctx, messages, settings, params)
+		s := *settings
+		var level ReasoningLevel
+		var phase string
+
+		switch {
+		case currentTurn <= cfg.PlanningTurns:
+			level = cfg.Planning
+			phase = "planning"
+		case isVerifying:
+			level = cfg.Verification
+			phase = "verification"
+		default:
+			level = cfg.Implementation
+			phase = "implementation"
+		}
+
+		// Set provider-appropriate reasoning level.
+		// Each provider ignores the field that doesn't apply to it.
+		if s.ThinkingBudget != nil {
+			s.ThinkingBudget = &level.ThinkingBudget
+			// Ensure max_tokens > thinking budget (Anthropic requirement).
+			if s.MaxTokens != nil && *s.MaxTokens <= level.ThinkingBudget {
+				maxT := level.ThinkingBudget + 16000
+				s.MaxTokens = &maxT
+			}
+		}
+		if s.ReasoningEffort != nil {
+			s.ReasoningEffort = &level.ReasoningEffort
+		}
+
+		fmt.Fprintf(os.Stderr, "[gollem] reasoning: turn %d phase=%s budget=%d effort=%s\n",
+			currentTurn, phase, level.ThinkingBudget, level.ReasoningEffort)
+
+		return next(ctx, messages, &s, params)
 	}
 }
 

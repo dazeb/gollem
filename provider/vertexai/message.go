@@ -65,11 +65,16 @@ type geminiFunction struct {
 }
 
 type geminiGenerationConfig struct {
-	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
-	Temperature      *float64 `json:"temperature,omitempty"`
-	TopP             *float64 `json:"topP,omitempty"`
-	ResponseMimeType string   `json:"responseMimeType,omitempty"`
-	ResponseSchema   any      `json:"responseSchema,omitempty"`
+	MaxOutputTokens  int                  `json:"maxOutputTokens,omitempty"`
+	Temperature      *float64             `json:"temperature,omitempty"`
+	TopP             *float64             `json:"topP,omitempty"`
+	ResponseMimeType string               `json:"responseMimeType,omitempty"`
+	ResponseSchema   any                  `json:"responseSchema,omitempty"`
+	ThinkingConfig   *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
+}
+
+type geminiThinkingConfig struct {
+	ThinkingBudget int `json:"thinkingBudget,omitempty"`
 }
 
 // --- Gemini API response types ---
@@ -111,6 +116,13 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 		}
 		if settings.TopP != nil {
 			genConfig.TopP = settings.TopP
+			hasGenConfig = true
+		}
+		// Enable thinking for Gemini models that support it (2.5+, 3.x).
+		if settings.ThinkingBudget != nil && *settings.ThinkingBudget > 0 {
+			genConfig.ThinkingConfig = &geminiThinkingConfig{
+				ThinkingBudget: *settings.ThinkingBudget,
+			}
 			hasGenConfig = true
 		}
 	}

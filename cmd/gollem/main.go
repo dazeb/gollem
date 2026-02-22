@@ -55,13 +55,15 @@ func main() {
 }
 
 type flags struct {
-	provider       string
-	modelName      string
-	workDir        string
-	prompt         string
-	timeout        time.Duration
-	thinkingBudget int
-	noCodeMode     bool
+	provider        string
+	modelName       string
+	workDir         string
+	prompt          string
+	timeout         time.Duration
+	thinkingBudget  int
+	reasoningEffort string // OpenAI: "low", "medium", "high"
+	noCodeMode      bool
+	noReasoning     bool // Disable all reasoning (thinking + effort)
 }
 
 func parseFlags(args []string) flags {
@@ -101,8 +103,13 @@ func parseFlags(args []string) flags {
 				}
 				i++
 			}
-		case "--no-thinking":
-			f.thinkingBudget = 0
+		case "--reasoning-effort":
+			if i+1 < len(args) {
+				f.reasoningEffort = args[i+1]
+				i++
+			}
+		case "--no-thinking", "--no-reasoning":
+			f.noReasoning = true
 		case "--no-code-mode":
 			f.noCodeMode = true
 		case "--help", "-h":
@@ -196,21 +203,48 @@ func runAgent() {
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
 	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(f.timeout)))
 
-	// Enable thinking by default for providers that support it.
-	if f.thinkingBudget < 0 {
-		// Default: enable thinking if provider supports it.
-		if f.provider == "anthropic" || f.provider == "vertexai-anthropic" {
-			f.thinkingBudget = defaultThinkingBudget
-		} else {
-			f.thinkingBudget = 0
+	// Enable reasoning by default for providers that support it.
+	// This is provider-agnostic: Anthropic uses ThinkingBudget,
+	// OpenAI uses ReasoningEffort. The reasoning sandwich middleware
+	// will vary these per-turn for optimal performance.
+	if !f.noReasoning {
+		switch f.provider {
+		case "anthropic", "vertexai-anthropic":
+			if f.thinkingBudget < 0 {
+				f.thinkingBudget = defaultThinkingBudget
+			}
+			if f.thinkingBudget > 0 {
+				agentOpts = append(agentOpts, core.WithThinkingBudget[string](f.thinkingBudget))
+				maxTokens := f.thinkingBudget + 16000
+				agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
+				fmt.Fprintf(os.Stderr, "gollem: thinking enabled (budget: %d, max_tokens: %d)\n",
+					f.thinkingBudget, maxTokens)
+			}
+		case "openai":
+			if f.reasoningEffort == "" {
+				f.reasoningEffort = "high" // Default to high for reasoning models
+			}
+			agentOpts = append(agentOpts, core.WithReasoningEffort[string](f.reasoningEffort))
+			fmt.Fprintf(os.Stderr, "gollem: reasoning effort enabled (%s)\n", f.reasoningEffort)
+		case "vertexai":
+			// Gemini 2.5+ and 3.x support thinkingConfig.
+			if f.thinkingBudget < 0 {
+				f.thinkingBudget = defaultThinkingBudget
+			}
+			if f.thinkingBudget > 0 {
+				agentOpts = append(agentOpts, core.WithThinkingBudget[string](f.thinkingBudget))
+				fmt.Fprintf(os.Stderr, "gollem: gemini thinking enabled (budget: %d)\n",
+					f.thinkingBudget)
+			}
+		default:
+			if f.thinkingBudget > 0 {
+				agentOpts = append(agentOpts, core.WithThinkingBudget[string](f.thinkingBudget))
+				maxTokens := f.thinkingBudget + 16000
+				agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
+				fmt.Fprintf(os.Stderr, "gollem: thinking enabled (budget: %d, max_tokens: %d)\n",
+					f.thinkingBudget, maxTokens)
+			}
 		}
-	}
-	if f.thinkingBudget > 0 {
-		agentOpts = append(agentOpts, core.WithThinkingBudget[string](f.thinkingBudget))
-		// max_tokens must be > thinking budget per Anthropic API requirement.
-		maxTokens := f.thinkingBudget + 16000
-		agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
-		fmt.Fprintf(os.Stderr, "gollem: thinking enabled (budget: %d, max_tokens: %d)\n", f.thinkingBudget, maxTokens)
 	}
 
 	agent := core.NewAgent[string](model, agentOpts...)
@@ -463,8 +497,9 @@ Options:
   --model <name>           Model name (uses provider default if not set)
   --workdir <path>         Working directory (default: current directory)
   --timeout <duration>     Maximum run time (default: 30m)
-  --thinking-budget <n>    Thinking/reasoning token budget (default: 32000 for Anthropic)
-  --no-thinking            Disable extended thinking
+  --thinking-budget <n>    Thinking token budget for Anthropic (default: 16000)
+  --reasoning-effort <l>   Reasoning effort for OpenAI: low, medium, high (default: high)
+  --no-reasoning           Disable all reasoning (thinking + effort)
   --no-code-mode           Disable code mode (monty-go WASM Python batching)
   -h, --help               Show this help
 
