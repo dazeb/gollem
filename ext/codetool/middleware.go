@@ -262,9 +262,12 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Task-type specific guidance based on detected patterns.
+	parts = append(parts, detectTaskGuidance(workDir))
+
 	// Available tools.
 	parts = append(parts, "\nAvailable tools: bash, view, edit, multi_edit, write, grep, glob, ls, planning, delegate")
-	parts = append(parts, "Start by reading the task-relevant files. For complex tasks, create a plan first using the planning tool, then proceed with changes.")
+	parts = append(parts, "Source files are pre-loaded above. For complex tasks, create a plan first using the planning tool, then proceed.")
 
 	return strings.Join(parts, "\n")
 }
@@ -410,6 +413,48 @@ func autoReadSourceFilesBudget(dir string, parts *[]string, maxBytes, maxFiles, 
 			count++
 		}
 	}
+}
+
+// detectTaskGuidance returns task-type-specific guidance based on file patterns.
+func detectTaskGuidance(workDir string) string {
+	hasInputData := dirExists("/app/task_file/input_data") || dirExists(filepath.Join(workDir, "input_data"))
+	hasOutputData := dirExists("/app/task_file/output_data") || dirExists(filepath.Join(workDir, "output_data"))
+	hasScripts := dirExists("/app/task_file/scripts") || dirExists(filepath.Join(workDir, "scripts"))
+	hasFilter := fileExists(filepath.Join(workDir, "filter.py")) || fileExists("/app/filter.py")
+	hasTests := dirExists("/tests") || dirExists(filepath.Join(workDir, "tests"))
+
+	var hints []string
+	if hasInputData && hasOutputData {
+		hints = append(hints, "\n## Task Type: Data Processing")
+		hints = append(hints, "This task has input_data/ and output_data/ directories.")
+		hints = append(hints, "Strategy: (1) Read input data format, (2) understand output requirements from tests/scripts, (3) write processing code, (4) validate output matches expected format.")
+	}
+	if hasScripts {
+		hints = append(hints, "Scripts are available — study them to understand evaluation criteria and cost models BEFORE implementing.")
+	}
+	if hasFilter {
+		hints = append(hints, "\n## Task Type: Security/Bypass")
+		hints = append(hints, "Strategy: (1) Read and understand the filter code thoroughly, (2) identify what it blocks vs allows, (3) craft payloads that exploit gaps, (4) test each payload against the filter before writing to output.")
+	}
+	if hasTests && !hasInputData {
+		hints = append(hints, "\n## Task Type: Code Implementation")
+		hints = append(hints, "Strategy: (1) Read test files to understand expected behavior, (2) implement solution, (3) run tests iteratively until passing, (4) clean up build artifacts.")
+	}
+
+	if len(hints) > 0 {
+		return strings.Join(hints, "\n")
+	}
+	return ""
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // isSourceFile returns true if the filename has a recognized source code extension.

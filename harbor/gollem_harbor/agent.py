@@ -35,14 +35,20 @@ def _find_binary() -> Path:
     """Locate the pre-built gollem Linux binary.
 
     Searches in order:
-    1. harbor/gollem-linux-amd64 (next to pyproject.toml)
-    2. GOLLEM_BINARY env var
-    3. Attempts to build it on the fly
+    1. harbor/gollem-linux-amd64 (canonical build target)
+    2. harbor/gollem_harbor/gollem (alternative location)
+    3. GOLLEM_BINARY env var
+    4. Attempts to build it on the fly
     """
-    # Check next to pyproject.toml.
+    # Check canonical location next to pyproject.toml.
     candidate = _PKG_DIR.parent / "gollem-linux-amd64"
     if candidate.exists():
         return candidate
+
+    # Check inside the package directory.
+    candidate2 = _PKG_DIR / "gollem"
+    if candidate2.exists():
+        return candidate2
 
     # Check env var.
     if env_path := os.environ.get("GOLLEM_BINARY"):
