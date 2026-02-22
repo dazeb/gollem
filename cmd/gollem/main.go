@@ -189,6 +189,8 @@ func runAgent() {
 
 	// Pass the model so the coding agent can spawn subagents for delegation.
 	toolOpts = append(toolOpts, codetool.WithModel(model))
+	// Pass timeout for time budget awareness middleware.
+	toolOpts = append(toolOpts, codetool.WithTimeout(f.timeout))
 
 	// Build the coding agent with the full recommended setup.
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)

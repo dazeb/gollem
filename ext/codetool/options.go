@@ -34,6 +34,10 @@ type Config struct {
 	// Model is the LLM model used for subagent delegation.
 	// When set, the agent gets a delegate tool for spawning subagents.
 	Model core.Model
+
+	// Timeout is the overall run timeout for the agent. Used by the
+	// TimeBudgetMiddleware to inject time-remaining warnings.
+	Timeout time.Duration
 }
 
 // Option configures coding tools.
@@ -90,4 +94,11 @@ func WithCodeMode(runner *montygo.Runner) Option {
 // with its own context and limited turns.
 func WithModel(model core.Model) Option {
 	return func(c *Config) { c.Model = model }
+}
+
+// WithTimeout sets the overall run timeout. When set, a time budget
+// middleware injects warnings as the deadline approaches, helping the
+// agent prioritize completion.
+func WithTimeout(d time.Duration) Option {
+	return func(c *Config) { c.Timeout = d }
 }

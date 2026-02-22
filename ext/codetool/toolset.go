@@ -95,9 +95,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		core.WithAgentMiddleware[string](LoopDetectionMiddleware(4)),
 		// 2. Context injection — discover environment on first turn.
 		core.WithAgentMiddleware[string](ContextInjectionMiddleware(workDir)),
-		// 3. Verification tracking — track whether agent runs tests.
+		// 3. Reasoning sandwich — vary thinking budget by phase.
+		core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(DefaultReasoningSandwichConfig())),
+		// 4. Verification tracking — track whether agent runs tests.
 		core.WithAgentMiddleware[string](verifyMW),
-		// 4. Stderr logging — real-time tool call observability.
+		// 5. Stderr logging — real-time tool call observability.
 		core.WithAgentMiddleware[string](stderrLoggingMiddleware()),
 
 		// Output validator: reject completion without verification.
@@ -156,6 +158,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 			},
 		}),
 	)
+
+	// Time budget awareness: warn the agent when approaching timeout.
+	if cfg.Timeout > 0 {
+		opts = append(opts, core.WithAgentMiddleware[string](TimeBudgetMiddleware(cfg.Timeout)))
+	}
 
 	// Export traces to /tmp/gollem-traces if the dir is writable.
 	traceDir := "/tmp/gollem-traces"
