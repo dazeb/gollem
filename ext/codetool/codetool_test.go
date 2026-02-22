@@ -1722,6 +1722,75 @@ func TestToolReturnContentString(t *testing.T) {
 	}
 }
 
+func TestFailureGuidance(t *testing.T) {
+	tests := []struct {
+		summary     string
+		wantSubstr  string
+	}{
+		{"verification command timed out", "TOO SLOW"},
+		{"compilation error: undefined variable", "COMPILATION"},
+		{"expected 42, got 43", "MISMATCH"},
+		{"file not found: output.txt", "MISSING FILE"},
+		{"AssertionError: values differ", "ASSERTION"},
+		{"generic failure", "Fix the failures"},
+	}
+	for _, tt := range tests {
+		got := failureGuidance(tt.summary)
+		if !strings.Contains(got, tt.wantSubstr) {
+			t.Errorf("failureGuidance(%q) = %q, want substring %q", tt.summary, got, tt.wantSubstr)
+		}
+	}
+}
+
+func TestValidateOutputFormats_BOM(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file with BOM marker.
+	bomFile := filepath.Join(dir, "output.txt")
+	os.WriteFile(bomFile, []byte{0xEF, 0xBB, 0xBF, 'h', 'e', 'l', 'l', 'o'}, 0o644)
+
+	// Create a test script that references the output file.
+	testsDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testsDir, 0o755)
+	os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte(`diff output.txt expected.txt`), 0o644)
+
+	result := validateOutputFormats(dir)
+	if !strings.Contains(result, "BOM") {
+		t.Errorf("expected BOM warning, got: %q", result)
+	}
+}
+
+func TestValidateOutputFormats_WindowsLineEndings(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file with \r\n line endings.
+	crlfFile := filepath.Join(dir, "output.csv")
+	os.WriteFile(crlfFile, []byte("a,b\r\nc,d\r\n"), 0o644)
+
+	// Create a test script that references the output file.
+	testsDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testsDir, 0o755)
+	os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte(`diff output.csv expected.csv`), 0o644)
+
+	result := validateOutputFormats(dir)
+	if !strings.Contains(result, "Windows line endings") {
+		t.Errorf("expected Windows line endings warning, got: %q", result)
+	}
+}
+
+func TestValidateOutputFormats_CleanFile(t *testing.T) {
+	dir := t.TempDir()
+	// Create a clean file.
+	os.WriteFile(filepath.Join(dir, "output.txt"), []byte("hello\nworld\n"), 0o644)
+
+	testsDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testsDir, 0o755)
+	os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte(`diff output.txt expected.txt`), 0o644)
+
+	result := validateOutputFormats(dir)
+	if result != "" {
+		t.Errorf("expected no issues for clean file, got: %q", result)
+	}
+}
+
 func TestFileSnippetForEdit(t *testing.T) {
 	content := `package main
 

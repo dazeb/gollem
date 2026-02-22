@@ -1,6 +1,7 @@
 package codetool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -132,8 +133,8 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 			if lvs != "" {
 				msg += ": " + lvs
 			}
-			msg += "\nFix the failures and re-run verification before completing. " +
-				"Do NOT declare completion with failing tests."
+			msg += "\n" + failureGuidance(lvs)
+			msg += "Do NOT declare completion with failing tests."
 			return output, &core.ModelRetryError{Message: msg}
 		}
 		if lvf {
@@ -165,8 +166,10 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 				// Programmatic check: are expected output files actually present?
 				// This catches agents that ran tests but forgot to create outputs.
 				var missingOutputHint string
+				var formatIssuesHint string
 				if workDir != "" {
 					missingOutputHint = checkExpectedOutputsExist(workDir)
+					formatIssuesHint = validateOutputFormats(workDir)
 				}
 				checklistMsg := "Before finalizing: run through this checklist.\n" +
 					"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
@@ -181,6 +184,9 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 					"   - If tests compare output: diff your output against expected output character-by-character\n"
 				if missingOutputHint != "" {
 					checklistMsg += missingOutputHint
+				}
+				if formatIssuesHint != "" {
+					checklistMsg += formatIssuesHint
 				}
 				checklistMsg += "Only declare completion after confirming all the above."
 				return output, &core.ModelRetryError{Message: checklistMsg}
@@ -465,6 +471,186 @@ func checkExpectedOutputsExist(workDir string) string {
 	}
 
 	return ""
+}
+
+// validateOutputFormats programmatically checks output files for common format
+// issues that cause test failures: BOM markers, Windows line endings, invalid
+// JSON, and missing executable bits. Returns a warning string or empty.
+func validateOutputFormats(workDir string) string {
+	// Gather output files from multiple sources for comprehensive checking.
+	seen := make(map[string]bool)
+	var outputFiles []string
+
+	addFile := func(path string) {
+		if !seen[path] {
+			seen[path] = true
+			outputFiles = append(outputFiles, path)
+		}
+	}
+
+	// Source 1: files detected from test scripts.
+	for _, o := range detectExpectedOutputs(workDir) {
+		addFile(o)
+	}
+
+	// Source 2: files in output directories.
+	for _, dirName := range []string{"output_data", "output"} {
+		for _, base := range []string{workDir, "/app", "/app/task_file"} {
+			dir := filepath.Join(base, dirName)
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+					addFile(filepath.Join(dirName, e.Name()))
+				}
+			}
+		}
+	}
+
+	// Source 3: common output file patterns in workDir.
+	for _, pattern := range []string{"output.*", "result.*", "results.*", "answer.*"} {
+		matches, _ := filepath.Glob(filepath.Join(workDir, pattern))
+		for _, m := range matches {
+			info, err := os.Stat(m)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			rel, _ := filepath.Rel(workDir, m)
+			if rel != "" {
+				addFile(rel)
+			}
+		}
+	}
+
+	formatHints := detectOutputFormat(workDir)
+
+	// Determine expected formats.
+	expectJSON := false
+	expectBinary := false
+	for _, h := range formatHints {
+		if strings.HasPrefix(h, "FORMAT=JSON") {
+			expectJSON = true
+		}
+		if strings.HasPrefix(h, "EXECUTABLE:") {
+			expectBinary = true
+		}
+	}
+
+	var issues []string
+
+	// Check each output file for format issues.
+	for _, o := range outputFiles {
+		path := o
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(workDir, path)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			// Try /app as alternative.
+			altPath := filepath.Join("/app", o)
+			if altInfo, altErr := os.Stat(altPath); altErr == nil {
+				path = altPath
+				info = altInfo
+			} else {
+				continue // file doesn't exist, handled by checkExpectedOutputsExist
+			}
+		}
+
+		// Only check text/data files under 1MB.
+		if info.Size() > 1024*1024 {
+			continue
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+
+		// Check for UTF-8 BOM (0xEF 0xBB 0xBF).
+		if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+			issues = append(issues, fmt.Sprintf("%s has UTF-8 BOM marker — remove it: sed -i '1s/^\\xEF\\xBB\\xBF//' %s", o, path))
+		}
+
+		// Check for Windows line endings (\r\n).
+		if bytes.Contains(data, []byte("\r\n")) {
+			issues = append(issues, fmt.Sprintf("%s has Windows line endings (\\r\\n) — convert: sed -i 's/\\r$//' %s", o, path))
+		}
+
+		// Validate JSON if expected.
+		if expectJSON && (strings.HasSuffix(o, ".json") || strings.HasSuffix(o, ".jsonl")) {
+			if strings.HasSuffix(o, ".jsonl") {
+				// Check first line of JSONL.
+				if newline := bytes.IndexByte(data, '\n'); newline > 0 {
+					if !json.Valid(data[:newline]) {
+						issues = append(issues, fmt.Sprintf("%s: first line is not valid JSON", o))
+					}
+				}
+			} else {
+				if !json.Valid(bytes.TrimSpace(data)) {
+					issues = append(issues, fmt.Sprintf("%s is not valid JSON — check syntax", o))
+				}
+			}
+		}
+
+		if len(issues) >= 3 {
+			break
+		}
+	}
+
+	// Check executable bit if binary expected.
+	if expectBinary {
+		binaryName := detectExpectedBinaryName(nil)
+		if binaryName == "" {
+			// Try common names.
+			for _, name := range []string{"solution", "program", "main", "a.out"} {
+				for _, dir := range []string{workDir, "/app"} {
+					p := filepath.Join(dir, name)
+					if info, err := os.Stat(p); err == nil && !info.IsDir() {
+						if info.Mode()&0o111 == 0 {
+							issues = append(issues, fmt.Sprintf("%s exists but is NOT executable — run: chmod +x %s", name, p))
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if len(issues) == 0 {
+		return ""
+	}
+	result := "7. FORMAT ISSUES found in your output files:\n"
+	for _, issue := range issues {
+		result += "   - " + issue + "\n"
+	}
+	result += "   Fix these before declaring completion — they WILL cause test failures.\n"
+	return result
+}
+
+// failureGuidance returns targeted recovery advice based on the type of
+// verification failure. More specific than generic "fix the failures".
+func failureGuidance(summary string) string {
+	lower := strings.ToLower(summary)
+	switch {
+	case strings.Contains(lower, "timed out"):
+		return "Your solution is TOO SLOW. Profile with `time` and optimize the hot path. " +
+			"Consider: more efficient algorithm, caching, avoiding redundant computation.\n"
+	case strings.Contains(lower, "compilation") || strings.Contains(lower, "compile") ||
+		strings.Contains(lower, "syntax error") || strings.Contains(lower, "undefined"):
+		return "Fix the COMPILATION ERRORS first — read the error messages for exact file:line locations.\n"
+	case strings.Contains(lower, "expected") && strings.Contains(lower, "got"):
+		return "Output MISMATCH — compare expected vs actual values character-by-character. " +
+			"Check: trailing newlines, whitespace, numeric precision, encoding.\n"
+	case strings.Contains(lower, "not found") || strings.Contains(lower, "no such file"):
+		return "MISSING FILE — check that you created all required output files in the right location.\n"
+	case strings.Contains(lower, "assert"):
+		return "ASSERTION FAILURE — read the test code to understand exactly what's expected. " +
+			"Fix one failure at a time, starting with the first.\n"
+	default:
+		return "Fix the failures and re-run verification before completing. "
+	}
 }
 
 // toolReturnContentString extracts a string from a ToolReturnPart's Content field.
