@@ -2,7 +2,7 @@
   <h1 align="center">gollem</h1>
   <p align="center"><strong>The production agent framework for Go</strong></p>
   <p align="center">
-    Type-safe agents, structured output, multi-provider streaming, guardrails, cost tracking, agent middleware, composable pipelines, and multi-agent orchestration — with zero core dependencies and compile-time guarantees that Python frameworks can't offer.
+    Type-safe agents, structured output, multi-provider streaming, guardrails, cost tracking, agent middleware, composable pipelines, multi-agent team swarms with dynamic personality generation, and multi-agent orchestration — with zero core dependencies and compile-time guarantees that Python frameworks can't offer.
   </p>
 </p>
 
@@ -75,6 +75,15 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **Composable run conditions** — `MaxRunDuration`, `ToolCallCount`, `TextContains` with `And`/`Or` combinators
 - **Batch execution** — `RunBatch` for concurrent multi-prompt runs with ordered results
 
+### Multi-Agent Team Swarms
+- **Team orchestration** — Spawn concurrent teammate agents as goroutines with shared task boards, mailbox-based messaging, and automatic lifecycle management (`ext/team`)
+- **Dynamic personality generation** — LLM generates task-specific system prompts for each subagent and teammate before they start, dramatically improving agent effectiveness (`modelutil`)
+- **Cached personality generation** — SHA256-keyed cache prevents redundant LLM calls when identical tasks are delegated multiple times
+- **Mailbox messaging** — Buffered channel-based message queues with automatic draining via agent middleware; teammates see messages between model turns
+- **Shared task board** — Concurrency-safe task tracking with status, ownership, blocking dependencies, and metadata
+- **Teammate lifecycle** — Starting, running, idle, shutting down, stopped states with automatic error recovery and leader notification
+- **Team-aware agent middleware** — Injects pending messages as `UserPromptPart` between model calls so agents stay coordinated without polling
+
 ### Composition & Multi-Agent
 - **Agent cloning** — `Clone()` creates independent copies with additional options
 - **Agent chaining** — `orchestration.ChainRun` pipes one agent's output as the next agent's input with usage aggregation
@@ -100,6 +109,8 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **Unified `StreamText`** — Single function with `StreamTextOptions` for all modes
 
 ### Extensions
+- **Multi-agent team swarms** — Concurrent teammate agents with mailbox messaging, shared task boards, dynamic personality generation, and automatic lifecycle management (`ext/team`)
+- **Dynamic personality generation** — LLM-generated task-specific system prompts for subagents and teammates with SHA256-keyed caching (`modelutil`)
 - **Code mode (monty)** — LLM writes a single Python script that calls N tools as functions; executes in a WASM sandbox via [monty-go](https://github.com/fugue-labs/monty-go) — N tool calls in 1 model round-trip
 - **Graph workflow engine** — Typed state machines with conditional branching, fan-out/map-reduce, cycle detection, and Mermaid export
 - **Deep context management** — Three-tier compression, planning tools, and checkpointing for long-running agents
@@ -212,6 +223,47 @@ result, err := agent.Run(ctx, "Analyze Q4 earnings report")
 // result.Cost.TotalCost — cost of this run
 // result.Trace — full execution trace
 // tracker.TotalCost() — cumulative cost across all runs
+```
+
+### Multi-Agent Team Swarm
+
+Spawn concurrent teammates that coordinate through mailboxes and a shared task board. Each teammate gets a dynamically generated personality tailored to its specific task — the LLM itself writes the system prompt.
+
+```go
+import (
+    "github.com/fugue-labs/gollem/ext/team"
+    "github.com/fugue-labs/gollem/modelutil"
+)
+
+// Create a team with dynamic personality generation (enabled by default).
+t := team.NewTeam(team.TeamConfig{
+    Name:   "code-review",
+    Leader: "lead",
+    Model:  model,
+    Toolset: codingTools, // bash, edit, grep, etc.
+    PersonalityGenerator: modelutil.CachedPersonalityGenerator(
+        modelutil.GeneratePersonality(model),
+    ),
+})
+
+// Register the leader — returns middleware that auto-injects teammate messages.
+middleware := t.RegisterLeader("lead")
+leader := gollem.NewAgent[string](model,
+    gollem.WithAgentMiddleware[string](middleware),
+    gollem.WithTools[string](team.LeaderTools(t)...),
+)
+
+// Teammates run as goroutines with fresh context windows.
+// Each gets a unique, LLM-generated system prompt matching its task.
+t.SpawnTeammate(ctx, "reviewer", "Review auth module for security vulnerabilities")
+t.SpawnTeammate(ctx, "tester", "Write comprehensive tests for the payment flow")
+t.SpawnTeammate(ctx, "docs", "Update API documentation for the new endpoints")
+
+// The leader coordinates — messages from teammates arrive automatically
+// between model turns via the team-awareness middleware.
+result, _ := leader.Run(ctx, "Coordinate the code review across all teammates")
+
+t.Shutdown(ctx)
 ```
 
 ### Multi-Agent with Event Coordination
@@ -649,6 +701,88 @@ summary, _ := orchestration.ChainRun(ctx, researcher, writer, "Topic: AI safety"
 )
 ```
 
+### Multi-Agent Team Swarms
+
+Spawn teams of concurrent agents that coordinate through mailbox messaging and a shared task board. Each teammate runs as a goroutine with its own context window and tools.
+
+```go
+import "github.com/fugue-labs/gollem/ext/team"
+
+// Create a team. Teammates get coding tools + team coordination tools.
+t := team.NewTeam(team.TeamConfig{
+    Name:    "refactor",
+    Leader:  "lead",
+    Model:   model,
+    Toolset: codingTools,
+})
+
+// Leader's middleware auto-injects messages from teammates between turns.
+middleware := t.RegisterLeader("lead")
+
+// Spawn teammates — each runs concurrently in its own goroutine.
+t.SpawnTeammate(ctx, "analyzer", "Analyze the codebase for dead code and unused imports")
+t.SpawnTeammate(ctx, "migrator", "Migrate database queries from raw SQL to the ORM")
+
+// Teammates can send messages, create/update tasks, and coordinate.
+// The leader sees all messages via the team-awareness middleware.
+leader := gollem.NewAgent[string](model,
+    gollem.WithAgentMiddleware[string](middleware),
+    gollem.WithTools[string](team.LeaderTools(t)...),
+)
+result, _ := leader.Run(ctx, "Coordinate the refactoring effort")
+
+// Graceful shutdown — sends shutdown messages, waits for completion.
+t.Shutdown(ctx)
+```
+
+**Task board coordination:**
+
+```go
+// Teammates share a concurrency-safe task board.
+board := t.TaskBoard()
+
+// Create tasks with blocking dependencies.
+id1 := board.Create("Write migration", "Migrate user table to new schema")
+id2 := board.Create("Update tests", "Update test fixtures for new schema")
+board.Update(id2, team.WithAddBlockedBy(id1)) // tests wait for migration
+
+// Claim and complete tasks.
+board.Update(id1, team.WithOwner("migrator"), team.WithStatus(team.TaskInProgress))
+board.Update(id1, team.WithStatus(team.TaskCompleted)) // unblocks id2
+```
+
+### Dynamic Personality Generation
+
+Instead of static system prompts, let the LLM generate a task-specific personality for each subagent. A "write tests for auth" agent gets a different persona than a "refactor database layer" agent — better focus, better results.
+
+```go
+import "github.com/fugue-labs/gollem/modelutil"
+
+// Generate a personality — the model writes a system prompt tailored to the task.
+gen := modelutil.GeneratePersonality(model)
+
+prompt, _ := gen(ctx, modelutil.PersonalityRequest{
+    Task:        "Review Go code for concurrency bugs and race conditions",
+    Role:        "senior concurrency reviewer",
+    BasePrompt:  "You are a coding assistant.", // extended, not replaced
+    Constraints: []string{"Focus only on goroutine safety", "Ignore style issues"},
+})
+// prompt is now a rich, task-specific system prompt written by the model itself.
+
+// Wrap with caching to avoid redundant LLM calls for identical tasks.
+cached := modelutil.CachedPersonalityGenerator(gen)
+
+// Use with teams — every teammate gets a unique personality.
+t := team.NewTeam(team.TeamConfig{
+    Name:                 "review-team",
+    Leader:               "lead",
+    Model:                model,
+    PersonalityGenerator: cached,
+})
+```
+
+Personality generation is **enabled by default** when using the codetool toolset — no configuration needed. Every subagent and teammate automatically gets a tailored system prompt.
+
 ### State Snapshots & Time-Travel Debugging
 
 Capture and restore agent state for debugging, branching, or replay:
@@ -852,6 +986,7 @@ agent := gollem.NewAgent[string](wrapped)
 | [`examples/multi-agent/delegation`](examples/multi-agent/delegation) | Agent-as-tool delegation |
 | [`examples/deep/context_management`](examples/deep/context_management) | Three-tier context compression |
 | [`examples/graph`](examples/graph) | Graph workflow state machine |
+| [`ext/team`](ext/team) | Multi-agent team swarms with task boards and messaging |
 
 ## Testing
 
