@@ -5230,6 +5230,86 @@ FAILED (failures=2)
 		t.Errorf("expected 'test_divide' in failed tests, got: %s", summary)
 	}
 }
+func TestCargoTestFailedTestExtraction(t *testing.T) {
+	output := `running 5 tests
+test tests::test_add ... ok
+test tests::test_subtract ... FAILED
+test tests::test_multiply ... ok
+test tests::test_divide ... FAILED
+test tests::test_modulo ... ok
+
+failures:
+
+---- tests::test_subtract stdout ----
+thread 'tests::test_subtract' panicked at 'assertion left == right failed
+  left: 3
+  right: 2', src/lib.rs:15:5
+
+---- tests::test_divide stdout ----
+thread 'tests::test_divide' panicked at 'attempt to divide by zero', src/lib.rs:25:5
+
+failures:
+    tests::test_subtract
+    tests::test_divide
+
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary")
+	}
+	if !strings.Contains(summary, "FAILED") {
+		t.Errorf("expected 'FAILED' in summary, got: %s", summary)
+	}
+	if !strings.Contains(summary, "tests::test_subtract") {
+		t.Errorf("expected 'tests::test_subtract' in failed tests, got: %s", summary)
+	}
+	if !strings.Contains(summary, "tests::test_divide") {
+		t.Errorf("expected 'tests::test_divide' in failed tests, got: %s", summary)
+	}
+}
+
+func TestJestFailedSuiteExtraction(t *testing.T) {
+	output := `FAIL src/__tests__/math.test.js
+  ● TestSuite › should add correctly
+
+    expect(received).toBe(expected)
+
+    Expected: 5
+    Received: 4
+
+      4 | test('should add correctly', () => {
+      5 |   expect(add(2, 3)).toBe(5);
+      6 | });
+
+FAIL src/__tests__/string.test.js
+  ● StringSuite › should capitalize
+
+    expect(received).toBe(expected)
+
+    Expected: "Hello"
+    Received: "hello"
+
+PASS src/__tests__/utils.test.js
+
+Tests:        2 failed, 1 passed, 3 total
+Test Suites:  2 failed, 1 passed, 3 total`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary")
+	}
+	if !strings.Contains(summary, "2 failed") {
+		t.Errorf("expected '2 failed' in summary, got: %s", summary)
+	}
+	if !strings.Contains(summary, "math.test.js") {
+		t.Errorf("expected 'math.test.js' in failed suites, got: %s", summary)
+	}
+	if !strings.Contains(summary, "string.test.js") {
+		t.Errorf("expected 'string.test.js' in failed suites, got: %s", summary)
+	}
+}
+
 func TestValidateOutputFormats_TrailingNewline(t *testing.T) {
 	dir := t.TempDir()
 

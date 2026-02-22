@@ -204,18 +204,25 @@ func Bash(opts ...Option) core.Tool {
 			}
 			rawLen := len(outStr) + len(errStr)
 
-			// Pre-compute test summary from FULL output before truncation.
-			// This ensures the agent always sees all failing test names and
-			// accurate pass/fail counts, even when output is heavily truncated.
+			// Pre-compute test summary and compilation errors from FULL output
+			// before truncation. This ensures the agent always sees all failing
+			// test names, accurate pass/fail counts, and all compilation error
+			// lines, even when output is heavily truncated.
 			fullCombined := outStr + errStr
 			var preTestSummary string
 			var preTestFingerprint string
 			var preTestPassed, preTestFailed int
 			var preTestCountsOK bool
+			var preCompileSummary string
 			if len(fullCombined) > 2000 {
 				preTestSummary = testResultSummary(fullCombined)
 				preTestFingerprint = testFailureFingerprint(fullCombined)
 				preTestPassed, preTestFailed, preTestCountsOK = extractTestCounts(fullCombined)
+				// Also pre-compute compilation error summary if no test output.
+				// Long builds can lose error lines in the middle after truncation.
+				if preTestSummary == "" {
+					preCompileSummary = compilationErrorSummary(fullCombined, exitCode)
+				}
 			}
 
 			// Truncate long output, keeping head and tail so the model can
@@ -349,7 +356,11 @@ func Bash(opts ...Option) core.Tool {
 					lastTestFailFingerprint = ""
 					testRunHistory = nil
 				}
+			} else if preCompileSummary != "" {
+				// Use pre-computed compilation summary from FULL output.
+				result += "\n" + preCompileSummary
 			} else if len(outStr+errStr) > 2000 {
+				// Fallback: compute from truncated output (short builds).
 				if summary := compilationErrorSummary(outStr+errStr, exitCode); summary != "" {
 					result += "\n" + summary
 				}
@@ -1263,12 +1274,11 @@ func testResultSummary(output string) string {
 			summary += "]"
 		}
 		// Append first failure detail for actionable debugging.
-		if detail := firstFailureDetail(output); detail != "" {
-			if summary != "" {
-				summary += "\n" + detail
-			} else {
-				summary = detail
-			}
+		// Only supplement an existing summary — don't return just the detail
+		// when no pytest summary line was found, as the output may match a
+		// more specific framework section below (cargo, jest, etc.).
+		if detail := firstFailureDetail(output); detail != "" && summary != "" {
+			summary += "\n" + detail
 		}
 		if summary != "" {
 			return summary
@@ -1366,23 +1376,84 @@ func testResultSummary(output string) string {
 		}
 	}
 
-	// npm/jest: "Tests: X failed, Y passed, Z total"
+	// npm/jest/vitest: "Tests: X failed, Y passed, Z total"
 	if strings.Contains(lower, "tests:") && strings.Contains(lower, "total") {
-		for _, line := range strings.Split(output, "\n") {
+		lines := strings.Split(output, "\n")
+		var summary string
+		for _, line := range lines {
 			lineLower := strings.ToLower(strings.TrimSpace(line))
 			if strings.Contains(lineLower, "tests:") && strings.Contains(lineLower, "total") {
-				return "[test summary: " + strings.TrimSpace(line) + "]"
+				summary = "[test summary: " + strings.TrimSpace(line) + "]"
+				break
 			}
+		}
+		// Extract individual failing test suite names.
+		// Jest/Vitest output "FAIL path/to/test.js" for failing suites.
+		var failedSuites []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "FAIL ") && !strings.Contains(trimmed, "Tests:") {
+				name := strings.TrimPrefix(trimmed, "FAIL ")
+				failedSuites = append(failedSuites, name)
+			}
+		}
+		if len(failedSuites) > 0 && summary != "" {
+			shown := failedSuites
+			if len(shown) > 10 {
+				shown = shown[:10]
+			}
+			summary += "\n[failed suites: " + strings.Join(shown, ", ")
+			if len(failedSuites) > 10 {
+				summary += fmt.Sprintf("... and %d more", len(failedSuites)-10)
+			}
+			summary += "]"
+		}
+		if summary != "" {
+			if detail := firstFailureDetail(output); detail != "" {
+				summary += "\n" + detail
+			}
+			return summary
 		}
 	}
 
 	// Cargo test: "test result: ok. X passed; Y failed; Z ignored"
 	if strings.Contains(output, "test result:") {
-		for _, line := range strings.Split(output, "\n") {
+		lines := strings.Split(output, "\n")
+		var summary string
+		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "test result:") {
-				return "[test summary: " + trimmed + "]"
+				summary = "[test summary: " + trimmed + "]"
+				break
 			}
+		}
+		// Extract individual failing test names.
+		// Cargo outputs "test test_name ... FAILED" for each failing test.
+		var failedTests []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "test ") && strings.HasSuffix(trimmed, " ... FAILED") {
+				name := strings.TrimPrefix(trimmed, "test ")
+				name = strings.TrimSuffix(name, " ... FAILED")
+				failedTests = append(failedTests, name)
+			}
+		}
+		if len(failedTests) > 0 && summary != "" {
+			shown := failedTests
+			if len(shown) > 10 {
+				shown = shown[:10]
+			}
+			summary += "\n[failed tests: " + strings.Join(shown, ", ")
+			if len(failedTests) > 10 {
+				summary += fmt.Sprintf("... and %d more", len(failedTests)-10)
+			}
+			summary += "]"
+		}
+		if summary != "" {
+			if detail := firstFailureDetail(output); detail != "" {
+				summary += "\n" + detail
+			}
+			return summary
 		}
 	}
 
