@@ -164,6 +164,14 @@ func isVerificationCommand(argsJSON string) bool {
 		"black --check", "ruff check",
 	}
 
+	// Constraint verification commands (size checks, output validation).
+	constraintPatterns := []string{
+		"wc -c", "wc -l", "stat ",
+		"du -", "file ",
+		"diff ", "cmp ",
+		"md5sum", "sha256sum",
+	}
+
 	for _, p := range testPatterns {
 		if strings.Contains(cmd, p) {
 			return true
@@ -175,6 +183,11 @@ func isVerificationCommand(argsJSON string) bool {
 		}
 	}
 	for _, p := range lintPatterns {
+		if strings.Contains(cmd, p) {
+			return true
+		}
+	}
+	for _, p := range constraintPatterns {
 		if strings.Contains(cmd, p) {
 			return true
 		}

@@ -214,9 +214,12 @@ func MultiEdit(opts ...Option) core.Tool {
 
 				content := string(data)
 				if !strings.Contains(content, edit.OldString) {
-					return "", &core.ModelRetryError{
-						Message: fmt.Sprintf("edit[%d]: old_string not found in %s", i, edit.Path),
+					hint := findNearestLines(content, edit.OldString, 3)
+					msg := fmt.Sprintf("edit[%d]: old_string not found in %s. Ensure exact match including whitespace.", i, edit.Path)
+					if hint != "" {
+						msg += "\n\nMost similar lines:\n" + hint
 					}
+					return "", &core.ModelRetryError{Message: msg}
 				}
 
 				newContent := strings.Replace(content, edit.OldString, edit.NewString, 1)

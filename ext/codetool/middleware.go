@@ -674,12 +674,21 @@ func isSourceFile(name string) bool {
 		".java", ".rb", ".sh", ".bash", ".pl", ".lua", ".r", ".R",
 		".sql", ".html", ".css", ".json", ".yaml", ".yml", ".toml",
 		".xml", ".md", ".txt", ".cfg", ".ini", ".conf",
+		".csv", ".tsv", ".jsonl", ".env", ".dockerfile",
+		".jsx", ".tsx", ".vue", ".svelte", ".zig", ".nim",
+		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hs",
+		".jl", ".m", ".swift", ".f90", ".f95",
 	}
 	lower := strings.ToLower(name)
 	for _, ext := range sourceExts {
 		if strings.HasSuffix(lower, ext) {
 			return true
 		}
+	}
+	// Extensionless files that are commonly source/config.
+	switch lower {
+	case "makefile", "dockerfile", "gemfile", "rakefile", "cmakelists.txt":
+		return true
 	}
 	return false
 }
@@ -706,13 +715,13 @@ func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
 		turn++
 		currentTurn := turn
 
-		// Track whether the agent has created any files via write tool.
+		// Track whether the agent has created or modified any files.
 		if !hasWritten {
 			for _, msg := range messages {
 				if resp, ok := msg.(core.ModelResponse); ok {
 					for _, part := range resp.Parts {
 						if tc, ok := part.(core.ToolCallPart); ok {
-							if tc.ToolName == "write" || tc.ToolName == "multi_edit" {
+							if tc.ToolName == "write" || tc.ToolName == "multi_edit" || tc.ToolName == "edit" {
 								hasWritten = true
 								break
 							}
