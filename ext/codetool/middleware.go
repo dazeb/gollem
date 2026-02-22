@@ -309,11 +309,33 @@ func discoverEnvironment(workDir string) string {
 		"/app/task_file/INSTRUCTIONS.md",
 		"/app/task_file/prompts/agent.md",
 	}
+	readmeFound := false
+	readmeBudget := 8000   // total budget for all README/instruction files
+	readmeSeen := make(map[string]bool) // deduplicate by resolved path
 	for _, rp := range readmePaths {
-		if content := readFileTruncated(rp, 5000); content != "" {
-			parts = append(parts, "\n## README Contents (auto-read)")
-			parts = append(parts, content)
+		if readmeBudget <= 0 {
 			break
+		}
+		// Resolve symlinks and normalize to avoid reading the same file twice.
+		resolved, err := filepath.EvalSymlinks(rp)
+		if err != nil {
+			resolved = rp // fallback to original path
+		}
+		resolved, _ = filepath.Abs(resolved)
+		if readmeSeen[resolved] {
+			continue
+		}
+		maxRead := min(readmeBudget, 5000) // per-file cap
+		if content := readFileTruncated(rp, maxRead); content != "" {
+			readmeSeen[resolved] = true
+			if !readmeFound {
+				parts = append(parts, "\n## README Contents ("+filepath.Base(rp)+", auto-read)")
+				readmeFound = true
+			} else {
+				parts = append(parts, "\n## Additional Instructions ("+filepath.Base(rp)+", auto-read)")
+			}
+			parts = append(parts, content)
+			readmeBudget -= len(content)
 		}
 	}
 
