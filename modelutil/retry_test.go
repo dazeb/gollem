@@ -182,6 +182,80 @@ func TestRetryModel_ModelName(t *testing.T) {
 	}
 }
 
+func TestRetryModel_Permanent429CreditsExhausted(t *testing.T) {
+	fm := &retryFailingModel{
+		failCount: 100,
+		failErr: &core.ModelHTTPError{
+			StatusCode: 429,
+			Message:    "rate limited",
+			Body:       `{"code":"Some resource has been exhausted","error":"Your team has either used all available credits or reached its monthly spending limit."}`,
+		},
+	}
+
+	rm := NewRetryModel(fm, RetryConfig{
+		MaxRetries:     5,
+		InitialBackoff: time.Millisecond,
+		Jitter:         false,
+	})
+
+	_, err := rm.Request(context.Background(), nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// Should fail immediately without retrying — credits exhausted is permanent.
+	if int(fm.attempts.Load()) != 1 {
+		t.Errorf("expected 1 attempt (no retry for credits exhausted), got %d", fm.attempts.Load())
+	}
+}
+
+func TestRetryModel_Transient429StillRetries(t *testing.T) {
+	fm := &retryFailingModel{
+		failCount:  1,
+		failErr:    &core.ModelHTTPError{StatusCode: 429, Message: "rate limited", Body: `{"error":"too many requests"}`},
+		successMsg: "success",
+	}
+
+	rm := NewRetryModel(fm, RetryConfig{
+		MaxRetries:     3,
+		InitialBackoff: time.Millisecond,
+		Jitter:         false,
+	})
+
+	resp, err := rm.Request(context.Background(), nil, nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		t.Fatalf("expected success after retry, got: %v", err)
+	}
+	if resp.TextContent() != "success" {
+		t.Errorf("expected 'success', got %q", resp.TextContent())
+	}
+	if int(fm.attempts.Load()) != 2 {
+		t.Errorf("expected 2 attempts, got %d", fm.attempts.Load())
+	}
+}
+
+func TestIsPermanent429(t *testing.T) {
+	tests := []struct {
+		body     string
+		expected bool
+	}{
+		{`{"error":"too many requests"}`, false},
+		{`{"error":"rate limited"}`, false},
+		{`{"error":"Your team has used all available credits"}`, true},
+		{`{"error":"reached its monthly spending limit"}`, true},
+		{`{"error":"billing issue"}`, true},
+		{`{"error":"quota exceeded for model"}`, true},
+		{`{"error":"plan limit reached"}`, true},
+		{`{"error":"subscription expired"}`, true},
+		{``, false},
+	}
+	for _, tc := range tests {
+		got := isPermanent429(tc.body)
+		if got != tc.expected {
+			t.Errorf("isPermanent429(%q) = %v, want %v", tc.body, got, tc.expected)
+		}
+	}
+}
+
 func TestRetryModel_StreamRetry(t *testing.T) {
 	fm := &retryFailingModel{
 		failCount:  1,

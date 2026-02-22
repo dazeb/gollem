@@ -1385,6 +1385,7 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 // from the model provider and performs emergency context compression before
 // retrying. This handles the case where auto-context's token estimation
 // underestimates and the actual payload exceeds the provider's limit.
+// Retries up to 2 times with progressively more aggressive truncation.
 func ContextOverflowMiddleware() core.AgentMiddleware {
 	return func(
 		ctx context.Context,
@@ -1404,26 +1405,51 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 			return nil, err
 		}
 
-		compressed := emergencyCompressMessages(messages)
-		if len(compressed) >= len(messages) {
-			// Can't compress further, propagate the error.
-			return nil, err
+		// Progressive compression: try increasingly aggressive truncation.
+		// Round 1: standard emergency compression (20KB per block, keep 6 messages)
+		// Round 2: aggressive compression (5KB per block, keep 4 messages)
+		current := messages
+		configs := []struct {
+			maxContentBytes int
+			keepLast        int
+		}{
+			{20000, 6},
+			{5000, 4},
 		}
 
-		fmt.Fprintf(os.Stderr, "[gollem] 413 context overflow: emergency compression %d → %d messages, retrying\n",
-			len(messages), len(compressed))
+		for _, cfg := range configs {
+			compressed := emergencyCompressMessagesWithConfig(current, cfg.maxContentBytes, cfg.keepLast)
+			if len(compressed) >= len(current) && compressed[0] == current[0] {
+				continue // Can't compress further with this config.
+			}
 
-		return next(ctx, compressed, settings, params)
+			fmt.Fprintf(os.Stderr, "[gollem] 413 context overflow: compression %d → %d messages (max %dB/block), retrying\n",
+				len(current), len(compressed), cfg.maxContentBytes)
+
+			resp, err = next(ctx, compressed, settings, params)
+			if err == nil {
+				return resp, nil
+			}
+
+			if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusRequestEntityTooLarge {
+				return nil, err
+			}
+			current = compressed
+		}
+
+		return nil, err
 	}
 }
 
 // emergencyCompressMessages performs aggressive message truncation for 413 recovery.
-// Keeps the first message (task description), adds an emergency note, and keeps the
-// last 6 messages with oversized content truncated.
 func emergencyCompressMessages(messages []core.ModelMessage) []core.ModelMessage {
-	const keepLast = 6
-	const maxContentBytes = 20000 // 20KB per content block
+	return emergencyCompressMessagesWithConfig(messages, 20000, 6)
+}
 
+// emergencyCompressMessagesWithConfig performs message truncation with configurable parameters.
+// Keeps the first message (task description), adds an emergency note, and keeps the
+// last keepLast messages with content truncated to maxContentBytes per block.
+func emergencyCompressMessagesWithConfig(messages []core.ModelMessage, maxContentBytes, keepLast int) []core.ModelMessage {
 	if len(messages) <= keepLast+1 {
 		// Can't drop messages, but still try truncating content.
 		result := make([]core.ModelMessage, len(messages))

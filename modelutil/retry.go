@@ -3,10 +3,12 @@ package modelutil
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -35,12 +37,37 @@ func DefaultRetryConfig() RetryConfig {
 	}
 }
 
+// isPermanent429 checks if a 429 response indicates a permanent condition
+// (credits exhausted, billing issue) rather than a transient rate limit.
+func isPermanent429(body string) bool {
+	lower := strings.ToLower(body)
+	for _, pattern := range []string{
+		"credits",
+		"spending limit",
+		"billing",
+		"quota exceeded",
+		"plan limit",
+		"subscription",
+	} {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // defaultIsRetryable checks for transient HTTP and connection errors.
 func defaultIsRetryable(err error) bool {
 	var httpErr *core.ModelHTTPError
 	if errors.As(err, &httpErr) {
 		switch httpErr.StatusCode {
-		case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+		case http.StatusTooManyRequests:
+			// Don't retry 429s caused by permanent billing/credit issues.
+			if isPermanent429(httpErr.Body) {
+				return false
+			}
+			return true
+		case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
 			return true
 		}
 	}
@@ -120,6 +147,10 @@ func retryLoop[T any](ctx context.Context, cfg RetryConfig, fn func() (T, error)
 
 		if !cfg.IsRetryable(err) {
 			return zero, err
+		}
+
+		if attempt < cfg.MaxRetries {
+			fmt.Fprintf(os.Stderr, "[gollem] retry: attempt %d/%d after error: %v\n", attempt+1, cfg.MaxRetries, err)
 		}
 
 		// Don't sleep after the last attempt.
