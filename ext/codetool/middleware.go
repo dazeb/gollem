@@ -466,6 +466,13 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"build.gradle", "Java", "gradle"},
 		{"Gemfile", "Ruby", "bundler"},
 		{"CMakeLists.txt", "C/C++", "cmake"},
+		{"lakefile.lean", "Lean 4", "lake"},
+		{"lakefile.toml", "Lean 4", "lake"},
+		{"stack.yaml", "Haskell", "stack"},
+		{"dune-project", "OCaml", "dune"},
+		{"mix.exs", "Elixir", "mix"},
+		{"build.zig", "Zig", "zig"},
+		{"Project.toml", "Julia", "julia"},
 		{"Makefile", "unknown", "make"},
 	}
 
@@ -481,6 +488,10 @@ func detectProject(workDir string) (language, buildSystem string) {
 				return language, buildSystem
 			}
 		}
+	}
+	// Check for Haskell cabal files (glob pattern).
+	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.cabal")); len(matches) > 0 {
+		return "Haskell", "cabal"
 	}
 	return language, buildSystem
 }
@@ -1269,6 +1280,33 @@ func detectTestCommands(workDir string) []string {
 	if fileExists(filepath.Join(workDir, "CMakeLists.txt")) {
 		cmds = append(cmds, "Build: mkdir -p build && cd build && cmake .. && make")
 	}
+	// Lean 4
+	if fileExists(filepath.Join(workDir, "lakefile.lean")) || fileExists(filepath.Join(workDir, "lakefile.toml")) {
+		cmds = append(cmds, "Build: lake build")
+	}
+	// Haskell
+	if fileExists(filepath.Join(workDir, "stack.yaml")) {
+		cmds = append(cmds, "Build: stack build")
+		cmds = append(cmds, "Test: stack test")
+	} else if matches, _ := filepath.Glob(filepath.Join(workDir, "*.cabal")); len(matches) > 0 {
+		cmds = append(cmds, "Build: cabal build")
+		cmds = append(cmds, "Test: cabal test")
+	}
+	// OCaml
+	if fileExists(filepath.Join(workDir, "dune-project")) {
+		cmds = append(cmds, "Build: dune build")
+		cmds = append(cmds, "Test: dune test")
+	}
+	// Elixir
+	if fileExists(filepath.Join(workDir, "mix.exs")) {
+		cmds = append(cmds, "Build: mix compile")
+		cmds = append(cmds, "Test: mix test")
+	}
+	// Zig
+	if fileExists(filepath.Join(workDir, "build.zig")) {
+		cmds = append(cmds, "Build: zig build")
+		cmds = append(cmds, "Test: zig test")
+	}
 	if fileExists(filepath.Join(workDir, "requirements.txt")) {
 		cmds = append(cmds, "Install: pip install --break-system-packages -r requirements.txt")
 	}
@@ -1295,8 +1333,8 @@ func detectTestCommands(workDir string) []string {
 	}
 
 	// Cap to prevent context bloat.
-	if len(cmds) > 8 {
-		cmds = cmds[:8]
+	if len(cmds) > 10 {
+		cmds = cmds[:10]
 	}
 	return cmds
 }
