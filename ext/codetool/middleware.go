@@ -456,6 +456,14 @@ func discoverEnvironment(workDir string) string {
 			parts = append(parts, "  - "+vs)
 		}
 		parts = append(parts, "Run these EARLY after creating output files to check correctness.")
+		// Auto-chmod +x for shell scripts to prevent "Permission denied" errors.
+		// This is a very common 1-2 turn waste on TB2 tasks.
+		chmodScripts(verifyScripts)
+	}
+
+	// Also chmod +x any shell scripts in test directories.
+	for _, td := range testDirs {
+		chmodScriptsInDir(td)
 	}
 
 	// Check for output directories that need to be populated.
@@ -1082,6 +1090,37 @@ func discoverVerificationScripts(workDir string) []string {
 		}
 	}
 	return scripts
+}
+
+// chmodScripts makes a list of script files executable. This prevents the very
+// common "Permission denied" error that wastes 1-2 agent turns.
+func chmodScripts(scripts []string) {
+	for _, s := range scripts {
+		lower := strings.ToLower(s)
+		if strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash") ||
+			strings.HasSuffix(lower, ".py") || strings.HasSuffix(lower, ".rb") ||
+			strings.HasSuffix(lower, ".pl") {
+			os.Chmod(s, 0o755)
+		}
+	}
+}
+
+// chmodScriptsInDir makes all shell/Python scripts in a directory executable.
+func chmodScriptsInDir(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		lower := strings.ToLower(entry.Name())
+		if strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash") ||
+			strings.HasSuffix(lower, ".py") {
+			os.Chmod(filepath.Join(dir, entry.Name()), 0o755)
+		}
+	}
 }
 
 // detectSciCompute returns true if the working directory looks like a scientific computing task.

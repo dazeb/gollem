@@ -2060,3 +2060,69 @@ PORT=8080
 		t.Errorf("expected cp hint for .env.example, got: %s", got)
 	}
 }
+
+func TestSignalHintTimeout(t *testing.T) {
+	hint := signalHint(124)
+	if !strings.Contains(hint, "timeout") {
+		t.Errorf("expected timeout hint for exit 124, got: %s", hint)
+	}
+	if !strings.Contains(hint, "too slow") {
+		t.Errorf("expected 'too slow' in timeout hint, got: %s", hint)
+	}
+}
+
+func TestNodeErrorHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		exitCode int
+		contains string
+	}{
+		{
+			name:     "module_not_found",
+			output:   `Error: Cannot find module 'express'\nRequire stack:\n- /app/server.js`,
+			exitCode: 1,
+			contains: "npm install express",
+		},
+		{
+			name:     "reference_error_with_stack",
+			output:   "ReferenceError: foo is not defined\n    at Object.<anonymous> (/app/main.js:15:3)\n    at Module._compile (node:internal/modules/cjs/loader:1254:14)",
+			exitCode: 1,
+			contains: "/app/main.js:15:3",
+		},
+		{
+			name:     "success_no_hint",
+			output:   "Server listening on port 3000",
+			exitCode: 0,
+			contains: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nodeErrorHint(tt.output, tt.exitCode)
+			if tt.contains == "" {
+				if got != "" {
+					t.Errorf("expected no hint, got: %s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.contains) {
+				t.Errorf("expected hint containing %q, got: %s", tt.contains, got)
+			}
+		})
+	}
+}
+
+func TestFirstFailureDetailColon(t *testing.T) {
+	// Lines ending in ":" should be treated as headers, not assertions.
+	output := "Comparing expected vs actual output:\n< hello\n---\n> world"
+	got := firstFailureDetail(output)
+	// Should match the diff pattern, not the "expected vs actual" header.
+	if strings.Contains(got, "Comparing") {
+		t.Errorf("expected diff pattern match, not header match, got: %s", got)
+	}
+	if !strings.Contains(got, "diff:") {
+		t.Errorf("expected diff: pattern, got: %s", got)
+	}
+}

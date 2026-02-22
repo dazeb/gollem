@@ -246,6 +246,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := addressInUseHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := nodeErrorHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			combined := outStr + errStr
@@ -613,6 +616,12 @@ func transientErrorHint(output string, exitCode int) string {
 // Exit code 137 = SIGKILL (often OOM), 139 = SIGSEGV, 134 = SIGABRT.
 func signalHint(exitCode int) string {
 	switch exitCode {
+	case 124:
+		// Exit code 124 is used by the `timeout` command when it kills a process.
+		return "[hint: command was killed by timeout — your solution is too slow. " +
+			"Optimize: use more efficient algorithms, avoid O(n²) when O(n log n) works, " +
+			"use built-in/vectorized operations (numpy, etc.), reduce data copies, " +
+			"or process data in streaming fashion instead of loading all into memory]"
 	case 137:
 		return "[hint: process was killed (SIGKILL) — likely out of memory. " +
 			"Try: reduce batch size, process data in smaller chunks, use generators/iterators instead of loading all data into memory, " +
@@ -873,6 +882,62 @@ func addressInUseHint(output string, exitCode int) string {
 		return "[hint: port already in use — find the process with: lsof -i :<port> or ss -tlnp | grep <port>, " +
 			"then kill it with: kill <pid>. Or use a different port.]"
 	}
+	return ""
+}
+
+// nodeErrorHint extracts actionable information from Node.js errors.
+// Maps MODULE_NOT_FOUND to npm install hints and extracts file:line from stacks.
+func nodeErrorHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// MODULE_NOT_FOUND — suggest npm install.
+	if strings.Contains(output, "MODULE_NOT_FOUND") || strings.Contains(output, "Cannot find module") {
+		// Extract the module name.
+		for _, pattern := range []string{"Cannot find module '", "Cannot find module \""} {
+			idx := strings.Index(output, pattern)
+			if idx < 0 {
+				continue
+			}
+			start := idx + len(pattern)
+			rest := output[start:]
+			end := strings.IndexAny(rest, "'\"")
+			if end > 0 {
+				module := rest[:end]
+				// Skip relative paths — those are user code errors, not missing packages.
+				if !strings.HasPrefix(module, ".") && !strings.HasPrefix(module, "/") {
+					return fmt.Sprintf("[hint: missing Node module — try: npm install %s]", module)
+				}
+			}
+		}
+		return "[hint: missing Node module — try: npm install]"
+	}
+
+	// ReferenceError, TypeError with stack trace — extract file:line.
+	for _, errType := range []string{"ReferenceError:", "TypeError:", "SyntaxError:"} {
+		if strings.Contains(output, errType) {
+			lines := strings.Split(output, "\n")
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				// Node stack format: "    at functionName (file:line:col)"
+				if strings.HasPrefix(trimmed, "at ") && strings.Contains(trimmed, "(") {
+					parenIdx := strings.Index(trimmed, "(")
+					if parenIdx > 0 {
+						locEnd := strings.Index(trimmed[parenIdx:], ")")
+						if locEnd > 0 {
+							loc := trimmed[parenIdx+1 : parenIdx+locEnd]
+							// Skip node_modules and internal paths.
+							if !strings.Contains(loc, "node_modules") && !strings.HasPrefix(loc, "node:") {
+								return fmt.Sprintf("[hint: %s — at %s]", errType, loc)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return ""
 }
 
@@ -1204,9 +1269,11 @@ func firstFailureDetail(output string) string {
 		if (strings.Contains(lower, "expected") && strings.Contains(lower, "got")) ||
 			(strings.Contains(lower, "expected") && strings.Contains(lower, "actual")) ||
 			(strings.Contains(lower, "expected") && strings.Contains(lower, "received")) {
-			// Make sure it's an actual assertion, not just a comment
+			// Make sure it's an actual assertion, not just a comment or header.
+			// Headers like "Comparing expected vs actual:" don't contain values.
 			if !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "//") &&
-				!strings.HasPrefix(trimmed, "*") && len(trimmed) > 10 {
+				!strings.HasPrefix(trimmed, "*") && len(trimmed) > 10 &&
+				!strings.HasSuffix(trimmed, ":") { // skip headers ending in colon
 				if len(trimmed) > 200 {
 					trimmed = trimmed[:200] + "..."
 				}
