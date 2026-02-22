@@ -744,6 +744,9 @@ func discoverEnvironment(workDir string) string {
 	if networkAvailable && !depsAlreadyInstalled {
 		if sysPkgs := detectSystemPackagesFromTests(workDir); len(sysPkgs) > 0 {
 			fmt.Fprintf(os.Stderr, "[gollem] auto-installing system packages from test scripts: %s\n", strings.Join(sysPkgs, " "))
+			// Run apt-get update first — many containers have stale package lists
+			// and install fails with "Unable to locate package" without it.
+			runQuietTimeout(workDir, 30*time.Second, "apt-get", "update", "-qq")
 			runQuietTimeout(workDir, 60*time.Second, "apt-get", append([]string{"install", "-y", "-q"}, sysPkgs...)...)
 			parts = append(parts, "AUTO-INSTALLED: system packages ("+strings.Join(sysPkgs, ", ")+")")
 		}

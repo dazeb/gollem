@@ -275,14 +275,17 @@ func Bash(opts ...Option) core.Tool {
 					result += "\n" + summary
 					if exitCode != 0 && (strings.Contains(strings.ToLower(summary), "fail") || strings.Contains(strings.ToLower(summary), "error")) {
 						// Surface the first failure detail so the agent knows
-					// exactly what's wrong without scanning the full output.
-					// This is the highest-value hint for test failures.
-					fp := testFailureFingerprint(combined)
-					if fp != "" {
-						result += "\n" + fp
-					} else {
-						result += "\n[hint: read the FULL test failure output above — fix one failure at a time, starting with the first]"
-					}
+						// exactly what's wrong without scanning the full output.
+						fp := testFailureFingerprint(combined)
+						// Only append if testResultSummary didn't already include it
+						// (Go test and unittest summaries already embed it).
+						if fp != "" && !strings.Contains(summary, fp) {
+							result += "\n" + fp
+						} else if fp == "" {
+							result += "\n[hint: read the FULL test failure output above — fix one failure at a time, starting with the first]"
+						}
+						// Stale failure detection: warn when the same test failure
+						// appears consecutively, indicating the fix was ineffective.
 						if fp != "" && fp == lastTestFailFingerprint {
 							result += "\n[hint: this test failure is IDENTICAL to the previous run — your edit did not fix the issue. Re-read the error, verify your edit was applied correctly, and try a fundamentally different approach]"
 						}
