@@ -216,6 +216,40 @@ class GollemAgent(BaseInstalledAgent):
                 f"gollem binary verification failed: {result.stderr}"
             )
 
+        # Auto-install task dependencies found in the container.
+        # This runs during setup (before the agent timer starts), saving 2-5
+        # agent turns that would otherwise be spent on `pip install` / `npm install`.
+        # All installs are best-effort with timeouts — failures are ignored.
+        await environment.exec(
+            command=(
+                "timeout 120 sh -c '"
+                # Python: requirements.txt
+                "for f in /app/requirements.txt /requirements.txt; do "
+                "  if [ -f \"$f\" ]; then "
+                "    pip install --break-system-packages -r \"$f\" 2>&1 | tail -5 || "
+                "    pip3 install --break-system-packages -r \"$f\" 2>&1 | tail -5 || "
+                "    python3 -m pip install --break-system-packages -r \"$f\" 2>&1 | tail -5 || true; "
+                "    break; "
+                "  fi; "
+                "done; "
+                # Node.js: package.json
+                "for d in /app .; do "
+                "  if [ -f \"$d/package.json\" ] && command -v npm >/dev/null 2>&1; then "
+                "    cd \"$d\" && npm install --no-audit --no-fund 2>&1 | tail -5 || true; "
+                "    break; "
+                "  fi; "
+                "done; "
+                # Go: go.mod
+                "for d in /app .; do "
+                "  if [ -f \"$d/go.mod\" ] && command -v go >/dev/null 2>&1; then "
+                "    cd \"$d\" && go mod download 2>&1 | tail -3 || true; "
+                "    break; "
+                "  fi; "
+                "done"
+                "' || true"
+            )
+        )
+
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         """Build the shell command to invoke gollem run inside the container."""
         provider, model = self._parse_model_name()
