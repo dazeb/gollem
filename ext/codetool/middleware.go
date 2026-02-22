@@ -1459,3 +1459,17 @@ func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessa
 	}
 	return msg
 }
+
+// ContentTruncationProcessor returns a history processor that truncates
+// oversized content blocks in the message history. This runs before
+// auto-context compression, ensuring token estimates are more accurate
+// and preventing a single large tool result from dominating the context.
+func ContentTruncationProcessor(maxBytes int) core.HistoryProcessor {
+	return func(_ context.Context, messages []core.ModelMessage) ([]core.ModelMessage, error) {
+		result := make([]core.ModelMessage, len(messages))
+		for i, msg := range messages {
+			result[i] = truncateMessageContent(msg, maxBytes)
+		}
+		return result, nil
+	}
+}

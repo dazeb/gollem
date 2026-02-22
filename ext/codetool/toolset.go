@@ -151,6 +151,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// Some compute-heavy tasks (compilation, data processing) need extra time.
 		core.WithDefaultToolTimeout[string](3 * time.Minute),
 
+		// History processor: truncate oversized content blocks before
+		// auto-context sees them. Ensures token estimates are accurate
+		// and prevents a single large tool result from dominating context.
+		core.WithHistoryProcessor[string](ContentTruncationProcessor(50000)),
+
 		// Auto context: compress old messages when context grows too large.
 		// Set to 80K to leave headroom before provider limits (xAI/grok
 		// returns 413 at ~130K tokens). ContextOverflowMiddleware provides
