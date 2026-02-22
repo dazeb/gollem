@@ -6,6 +6,7 @@ import (
 	montygo "github.com/fugue-labs/monty-go"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 // Config holds shared configuration for coding tools.
@@ -38,6 +39,16 @@ type Config struct {
 	// Timeout is the overall run timeout for the agent. Used by the
 	// TimeBudgetMiddleware to inject time-remaining warnings.
 	Timeout time.Duration
+
+	// TeamMode enables multi-agent team coordination. When set, the agent
+	// becomes a team leader with tools to spawn teammate agents, send
+	// messages, and manage a shared task board. Requires Model to be set.
+	TeamMode bool
+
+	// PersonalityGenerator generates task-specific system prompts for
+	// subagents and teammates. When set, each spawned agent gets a
+	// dynamically generated personality tailored to its assigned task.
+	PersonalityGenerator modelutil.PersonalityGeneratorFunc
 }
 
 // Option configures coding tools.
@@ -101,4 +112,18 @@ func WithModel(model core.Model) Option {
 // agent prioritize completion.
 func WithTimeout(d time.Duration) Option {
 	return func(c *Config) { c.Timeout = d }
+}
+
+// WithTeamMode enables multi-agent team coordination. The agent becomes
+// a team leader that can spawn teammate agents for parallel work.
+// Requires WithModel to be set (teammates use the same model).
+func WithTeamMode() Option {
+	return func(c *Config) { c.TeamMode = true }
+}
+
+// WithPersonalityGenerator sets a function that generates task-specific
+// system prompts for subagents and teammates. Use modelutil.GeneratePersonality
+// to create a generator backed by an LLM, or provide a custom function.
+func WithPersonalityGenerator(gen modelutil.PersonalityGeneratorFunc) Option {
+	return func(c *Config) { c.PersonalityGenerator = gen }
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 // subagentParams is the input schema for the delegate tool.
@@ -23,6 +24,7 @@ type subagentParams struct {
 // differentiator on benchmarks like Terminal-Bench where complex tasks
 // benefit from decomposition into focused subtasks.
 func SubAgentTool(model core.Model, opts ...Option) core.Tool {
+	cfg := applyOpts(opts)
 	return core.FuncTool[subagentParams](
 		"delegate",
 		"Delegate a subtask to a focused subagent. The subagent gets the same "+
@@ -37,10 +39,26 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				return nil, &core.ModelRetryError{Message: "task description must not be empty"}
 			}
 
+			// Generate a task-specific system prompt if a personality generator
+			// is configured, falling back to the static prompt on error.
+			systemPrompt := subAgentSystemPrompt
+			if cfg.PersonalityGenerator != nil {
+				if generated, err := cfg.PersonalityGenerator(ctx, modelutil.PersonalityRequest{
+					Task:       params.Task,
+					Role:       "focused coding subagent",
+					BasePrompt: subAgentSystemPrompt,
+				}); err == nil {
+					systemPrompt = generated
+					fmt.Fprintf(os.Stderr, "[gollem] subagent:personality generated (%d chars)\n", len(generated))
+				} else {
+					fmt.Fprintf(os.Stderr, "[gollem] subagent:personality fallback: %v\n", err)
+				}
+			}
+
 			// Build a lightweight subagent with coding tools but no delegation
 			// (prevents infinite recursion).
 			subOpts := []core.AgentOption[string]{
-				core.WithSystemPrompt[string](subAgentSystemPrompt),
+				core.WithSystemPrompt[string](systemPrompt),
 				core.WithToolsets[string](Toolset(opts...)),
 				core.WithMaxRetries[string](2),
 				core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(50)}),
