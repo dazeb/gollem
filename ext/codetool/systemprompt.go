@@ -197,6 +197,14 @@ When a task involves multiple source files:
 3. **Build after each logical change**: Don't accumulate 5 edits before checking if they compile
 4. **If editing a file, read it first**: Even if it was auto-read, it may have changed since
 
+## Stdin and Interactive Programs
+
+When a task requires providing input to a program:
+- Use ` + "`echo 'input' | program`" + ` or ` + "`program <<< 'input'`" + ` for simple input
+- Use heredoc for multi-line input: ` + "`program <<'EOF'\nline1\nline2\nEOF`" + `
+- For interactive programs: use ` + "`expect`" + ` or ` + "`printf 'input1\\ninput2\\n' | program`" + `
+- NEVER try to type interactively — bash tool is non-interactive
+
 ## When You Get Stuck
 
 If you've been stuck for 5+ turns on the same issue:
@@ -204,4 +212,5 @@ If you've been stuck for 5+ turns on the same issue:
 2. **Re-read the test output** — the error message often tells you exactly what's wrong
 3. **Try a completely different approach** — don't keep tweaking the same failing code
 4. **Simplify ruthlessly** — a correct solution to 80% of the problem beats a broken solution to 100%
-5. **Check for typos and off-by-one errors** — these cause a disproportionate number of failures`
+5. **Check for typos and off-by-one errors** — these cause a disproportionate number of failures
+6. **Compare your output format character-by-character** against what tests expect — whitespace, newlines, encoding, BOM markers, and trailing newlines cause frequent mismatches`

@@ -67,6 +67,18 @@ func Ls(opts ...Option) core.Tool {
 	)
 }
 
+// compactSize formats bytes into a compact human-readable string.
+func compactSize(bytes int64) string {
+	switch {
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1fM", float64(bytes)/(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.1fK", float64(bytes)/(1<<10))
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
 func listDir(ctx context.Context, basePath, currentPath, prefix string, remainingDepth int, lines *[]string) {
 	if ctx.Err() != nil {
 		return
@@ -101,6 +113,10 @@ func listDir(ctx context.Context, basePath, currentPath, prefix string, remainin
 			*lines = append(*lines, display)
 			listDir(ctx, basePath, filepath.Join(currentPath, name), prefix+name+"/", remainingDepth-1, lines)
 		} else {
+			// Show file size to save agents from needing `ls -la` via bash.
+			if info, err := entry.Info(); err == nil {
+				display += fmt.Sprintf("  (%s)", compactSize(info.Size()))
+			}
 			*lines = append(*lines, display)
 		}
 
