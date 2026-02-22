@@ -3463,3 +3463,58 @@ func TestCompilationErrorHintMissingHeader(t *testing.T) {
 		t.Errorf("expected libcurl hint, got: %s", hint)
 	}
 }
+
+func TestTimeoutContextHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmd      string
+		contains string
+		empty    bool
+	}{
+		{
+			name:     "flask server",
+			cmd:      "flask run --host=0.0.0.0 --port=8080",
+			contains: "background",
+		},
+		{
+			name:     "npm start",
+			cmd:      "npm start",
+			contains: "background",
+		},
+		{
+			name:     "uvicorn server",
+			cmd:      "uvicorn app:main --host 0.0.0.0",
+			contains: "background",
+		},
+		{
+			name:     "tail -f",
+			cmd:      "tail -f /var/log/app.log",
+			contains: "blocking monitoring",
+		},
+		{
+			name:  "normal build command",
+			cmd:   "make -j4",
+			empty: true,
+		},
+		{
+			name:  "test command",
+			cmd:   "pytest test_foo.py",
+			empty: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hint := timeoutContextHint(tt.cmd)
+			if tt.empty {
+				if hint != "" {
+					t.Errorf("expected no hint for %q, got: %s", tt.cmd, hint)
+				}
+			} else {
+				if !strings.Contains(hint, tt.contains) {
+					t.Errorf("hint for %q should contain %q, got: %s", tt.cmd, tt.contains, hint)
+				}
+			}
+		})
+	}
+}

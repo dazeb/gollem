@@ -201,6 +201,14 @@ func Bash(opts ...Option) core.Tool {
 
 			result := formatBashOutput(outStr, errStr, exitCode, timedOut, timeout)
 
+			// Context-aware timeout hint: server/daemon commands need background
+			// execution, not optimization. This saves a turn of confusion.
+			if timedOut {
+				if hint := timeoutContextHint(params.Command); hint != "" {
+					result += "\n" + hint
+				}
+			}
+
 			// Note when the command succeeded after auto-retry.
 			if retried && exitCode == 0 {
 				result += "\n[auto-retried after transient failure — succeeded on second attempt]"
@@ -1593,6 +1601,40 @@ func isLongRunningCommand(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// timeoutContextHint provides a context-aware hint when a command times out.
+// Server/daemon commands need background execution, not optimization. Build
+// commands need more time or parallelization. This saves a turn of confusion.
+func timeoutContextHint(cmd string) string {
+	lower := strings.ToLower(strings.TrimSpace(cmd))
+
+	// Server/daemon commands: suggest running in background.
+	serverPatterns := []string{
+		"flask run", "django", "runserver", "uvicorn", "gunicorn",
+		"node server", "npm start", "npm run dev", "npm run serve",
+		"python3 -m http.server", "python -m http.server",
+		"rails server", "rails s ", "puma ",
+		"nginx", "apache", "httpd",
+		"redis-server", "mongod", "postgres",
+		"java -jar", "spring-boot:run",
+		"cargo run", "go run",
+	}
+	for _, p := range serverPatterns {
+		if strings.Contains(lower, p) {
+			return "[hint: this looks like a server/daemon command that runs indefinitely. " +
+				"Run it in the background: nohup <command> > /tmp/server.log 2>&1 & " +
+				"Then verify with: curl localhost:<port> or ss -tlnp]"
+		}
+	}
+
+	// Interactive/blocking commands that should be backgrounded.
+	if strings.Contains(lower, "tail -f") || strings.Contains(lower, "watch ") {
+		return "[hint: this is a blocking monitoring command. Use a non-blocking alternative " +
+			"(e.g., tail -n 20 instead of tail -f, or run checks with individual commands)]"
+	}
+
+	return ""
 }
 
 // isPipCommand returns true if the command involves pip installing packages.
