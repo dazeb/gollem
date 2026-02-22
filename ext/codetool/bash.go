@@ -227,6 +227,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := compilationErrorHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := jsonErrorHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			combined := outStr + errStr
@@ -721,6 +724,49 @@ func isNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+// jsonErrorHint extracts position info from JSON decode errors. Many TB2 tasks
+// involve creating JSON output files, and a decode error with "line X column Y"
+// saves the agent from having to count characters manually.
+func jsonErrorHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Python: json.decoder.JSONDecodeError: Expecting ',' delimiter: line 5 column 3 (char 42)
+	if idx := strings.Index(output, "JSONDecodeError:"); idx >= 0 {
+		rest := output[idx:]
+		if end := strings.IndexAny(rest, "\n\r"); end > 0 {
+			errLine := strings.TrimSpace(rest[:end])
+			return "[hint: " + errLine + " — check the JSON file at that line/column for missing commas, brackets, or quotes]"
+		}
+		if len(rest) < 200 {
+			return "[hint: " + strings.TrimSpace(rest) + " — check JSON syntax]"
+		}
+	}
+
+	// Node.js: SyntaxError: Unexpected token } in JSON at position 42
+	if strings.Contains(output, "SyntaxError:") && strings.Contains(output, "JSON") {
+		for _, line := range strings.Split(output, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "SyntaxError:") && strings.Contains(trimmed, "JSON") {
+				return "[hint: " + trimmed + " — check JSON syntax at that position]"
+			}
+		}
+	}
+
+	// jq: parse error (Invalid numeric literal at line 3, column 1)
+	if strings.Contains(output, "parse error") && strings.Contains(output, "jq") {
+		for _, line := range strings.Split(output, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "parse error") {
+				return "[hint: " + trimmed + "]"
+			}
+		}
+	}
+
+	return ""
 }
 
 // testResultSummary extracts a concise summary from test runner output.

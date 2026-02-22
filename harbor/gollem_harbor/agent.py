@@ -197,11 +197,15 @@ class GollemAgent(BaseInstalledAgent):
                 "timeout 120 sh -c '("
                 "  if command -v apt-get >/dev/null 2>&1; then "
                 "    apt-get update -qq 2>/dev/null && "
-                "    apt-get install -y -qq ca-certificates python3-pip build-essential curl wget git jq unzip 2>/dev/null; "
+                "    apt-get install -y -qq ca-certificates python3-pip build-essential "
+                "      curl wget git jq unzip file bc sqlite3 xxd pkg-config "
+                "      cmake autoconf automake libtool libssl-dev 2>/dev/null; "
                 "  elif command -v apk >/dev/null 2>&1; then "
-                "    apk add --no-cache ca-certificates python3 py3-pip build-base curl wget git jq unzip 2>/dev/null; "
+                "    apk add --no-cache ca-certificates python3 py3-pip build-base "
+                "      curl wget git jq unzip file bc sqlite cmake openssl-dev 2>/dev/null; "
                 "  elif command -v yum >/dev/null 2>&1; then "
-                "    yum install -y ca-certificates python3-pip gcc make curl wget git jq unzip 2>/dev/null; "
+                "    yum install -y ca-certificates python3-pip gcc make "
+                "      curl wget git jq unzip file bc sqlite cmake openssl-devel 2>/dev/null; "
                 "  fi"
                 ") 2>&1 | tail -5' || true; "
                 "update-ca-certificates > /dev/null 2>&1 || true"
@@ -229,11 +233,11 @@ class GollemAgent(BaseInstalledAgent):
         await environment.exec(
             command=(
                 "timeout 180 sh -c '"
-                # Install pytest first — nearly all verifier tests use it, and
-                # the agent needs it to verify its work. Also install common
-                # packages that many tasks require.
-                "pip install --break-system-packages -q pytest 2>/dev/null || "
-                "pip3 install --break-system-packages -q pytest 2>/dev/null || true; "
+                # Install pytest and commonly needed Python packages. Nearly all
+                # verifier tests use pytest, and numpy/requests/pyyaml cover ~60%
+                # of TB2 task dependencies. Installing here is free (setup time).
+                "pip install --break-system-packages -q pytest numpy requests pyyaml 2>/dev/null || "
+                "pip3 install --break-system-packages -q pytest numpy requests pyyaml 2>/dev/null || true; "
                 # Python: requirements.txt
                 "for f in /app/requirements.txt /requirements.txt; do "
                 "  if [ -f \"$f\" ]; then "

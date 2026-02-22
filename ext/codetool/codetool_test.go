@@ -1628,3 +1628,42 @@ func TestCompilationErrorHint(t *testing.T) {
 		})
 	}
 }
+
+func TestJsonErrorHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		exitCode int
+		contains string
+	}{
+		{
+			name:     "python_json_decode",
+			output:   `json.decoder.JSONDecodeError: Expecting ',' delimiter: line 5 column 3 (char 42)`,
+			exitCode: 1,
+			contains: "line 5 column 3",
+		},
+		{
+			name:     "node_json_error",
+			output:   `SyntaxError: Unexpected token } in JSON at position 42`,
+			exitCode: 1,
+			contains: "position 42",
+		},
+		{
+			name:     "success_no_hint",
+			output:   `{"key": "value"}`,
+			exitCode: 0,
+			contains: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := jsonErrorHint(tt.output, tt.exitCode)
+			if tt.contains == "" && got != "" {
+				t.Errorf("expected no hint, got: %s", got)
+			}
+			if tt.contains != "" && !strings.Contains(got, tt.contains) {
+				t.Errorf("expected hint containing %q, got: %s", tt.contains, got)
+			}
+		})
+	}
+}
