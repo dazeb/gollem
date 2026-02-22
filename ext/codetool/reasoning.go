@@ -36,7 +36,7 @@ type ReasoningSandwichConfig struct {
 // DefaultReasoningSandwichConfig returns a balanced reasoning sandwich config.
 // Planning: 32k tokens for deep analysis (first 5 turns)
 // Implementation: 10k tokens for fast execution (middle turns)
-// Verification: 32k tokens for careful error analysis (last turns or when testing)
+// Verification: 32k tokens for careful error analysis (last turns or when testing).
 func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
 		PlanningBudget:        32000,

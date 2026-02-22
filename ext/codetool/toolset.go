@@ -234,12 +234,9 @@ func stderrLoggingMiddleware() core.AgentMiddleware {
 					toolCalls++
 				}
 			}
-			text := resp.TextContent()
-			if len(text) > 100 {
-				text = text[:100] + "..."
-			}
+			textLen := len(resp.TextContent())
 			fmt.Fprintf(os.Stderr, "[gollem] turn %d: response in %v (tools: %d, text: %d chars)\n",
-				turn, elapsed.Round(time.Millisecond), toolCalls, len(resp.TextContent()))
+				turn, elapsed.Round(time.Millisecond), toolCalls, textLen)
 		}
 		return resp, err
 	}

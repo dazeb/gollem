@@ -163,7 +163,7 @@ func runAgent() {
 		fmt.Fprintf(os.Stderr, "gollem: langfuse tracing enabled\n")
 	}
 
-	var model core.Model = baseModel
+	var model = baseModel
 	if len(mws) > 0 {
 		model = middleware.Wrap(model, mws...)
 	}

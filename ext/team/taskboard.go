@@ -2,6 +2,7 @@ package team
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 )
 
@@ -47,7 +48,7 @@ func (tb *TaskBoard) Create(subject, description string) string {
 	defer tb.mu.Unlock()
 
 	tb.nextID++
-	id := fmt.Sprintf("%d", tb.nextID)
+	id := strconv.Itoa(tb.nextID)
 	tb.tasks[id] = &Task{
 		ID:          id,
 		Subject:     subject,

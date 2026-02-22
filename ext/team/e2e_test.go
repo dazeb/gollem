@@ -226,10 +226,7 @@ func TestE2E_ContextCancellation(t *testing.T) {
 
 	// Worker should stop.
 	deadline := time.After(3 * time.Second)
-	for {
-		if w1.State() == TeammateStopped {
-			break
-		}
+	for w1.State() != TeammateStopped {
 		select {
 		case <-deadline:
 			t.Fatalf("worker did not stop after context cancel, state: %v", w1.State())
@@ -318,10 +315,7 @@ func TestE2E_ShutdownViaMessage(t *testing.T) {
 
 	// Worker should stop.
 	deadline := time.After(3 * time.Second)
-	for {
-		if w.State() == TeammateStopped {
-			break
-		}
+	for w.State() != TeammateStopped {
 		select {
 		case <-deadline:
 			t.Fatalf("worker did not stop after shutdown message, state: %v", w.State())
@@ -349,7 +343,7 @@ func TestE2E_MultipleWakeCycles(t *testing.T) {
 	waitForState(t, w, TeammateIdle, 3*time.Second)
 
 	// Wake 3 more times.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		w.mailbox.Send(Message{
 			From:    "leader",
 			To:      "worker",

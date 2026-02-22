@@ -3,7 +3,9 @@ package modelutil
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -38,7 +40,7 @@ type PersonalityGeneratorFunc func(ctx context.Context, req PersonalityRequest) 
 func GeneratePersonality(model core.Model) PersonalityGeneratorFunc {
 	return func(ctx context.Context, req PersonalityRequest) (string, error) {
 		if req.Task == "" {
-			return "", fmt.Errorf("personality request requires a task")
+			return "", errors.New("personality request requires a task")
 		}
 
 		prompt := buildMetaPrompt(req)
@@ -61,7 +63,7 @@ func GeneratePersonality(model core.Model) PersonalityGeneratorFunc {
 
 		generated := strings.TrimSpace(resp.TextContent())
 		if generated == "" {
-			return "", fmt.Errorf("personality generation returned empty result")
+			return "", errors.New("personality generation returned empty result")
 		}
 
 		return generated, nil
@@ -90,7 +92,7 @@ func CachedPersonalityGenerator(gen PersonalityGeneratorFunc) PersonalityGenerat
 func personalityCacheKey(req PersonalityRequest) string {
 	data, _ := json.Marshal(req)
 	hash := sha256.Sum256(data)
-	return fmt.Sprintf("%x", hash)
+	return hex.EncodeToString(hash[:])
 }
 
 func buildMetaPrompt(req PersonalityRequest) string {

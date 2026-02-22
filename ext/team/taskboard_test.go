@@ -188,7 +188,7 @@ func TestTaskBoard_ConcurrentAccess(t *testing.T) {
 
 	var wg sync.WaitGroup
 	// Create tasks concurrently.
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -212,7 +212,7 @@ func TestTaskBoard_ConcurrentAccess(t *testing.T) {
 	var claimWg sync.WaitGroup
 	successes := 0
 	var mu sync.Mutex
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		claimWg.Add(1)
 		go func(owner string) {
 			defer claimWg.Done()

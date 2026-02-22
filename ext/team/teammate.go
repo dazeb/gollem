@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,7 +123,7 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 						To:        tm.team.leader,
 						Type:      MessageStatusUpdate,
 						Content:   fmt.Sprintf("Error on attempt %d: %v", consecutiveErrors, err),
-						Summary:   fmt.Sprintf("%s encountered an error", tm.name),
+						Summary:   tm.name + " encountered an error",
 						Timestamp: time.Now(),
 					})
 				}
@@ -140,16 +141,12 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 			if tm.team.leader != "" {
 				leaderMB := tm.team.getMailbox(tm.team.leader)
 				if leaderMB != nil {
-					summary := result.Output
-					if len(summary) > 200 {
-						summary = summary[:200] + "..."
-					}
 					leaderMB.Send(Message{
 						From:      tm.name,
 						To:        tm.team.leader,
 						Type:      MessageStatusUpdate,
 						Content:   result.Output,
-						Summary:   fmt.Sprintf("%s finished current task", tm.name),
+						Summary:   tm.name + " finished current task",
 						Timestamp: time.Now(),
 					})
 				}
@@ -198,14 +195,17 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 
 func formatMessagesAsPrompt(msgs []Message) string {
 	if len(msgs) == 1 {
-		return fmt.Sprintf("[Message from %s]: %s", msgs[0].From, msgs[0].Content)
+		return "[Message from " + msgs[0].From + "]: " + msgs[0].Content
 	}
-	var result string
+	var b strings.Builder
 	for i, msg := range msgs {
 		if i > 0 {
-			result += "\n\n"
+			b.WriteString("\n\n")
 		}
-		result += fmt.Sprintf("[Message from %s]: %s", msg.From, msg.Content)
+		b.WriteString("[Message from ")
+		b.WriteString(msg.From)
+		b.WriteString("]: ")
+		b.WriteString(msg.Content)
 	}
-	return result
+	return b.String()
 }
