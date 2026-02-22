@@ -242,7 +242,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "sqlite3", "psql", "mysql"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -384,6 +384,7 @@ func discoverEnvironment(workDir string) string {
 			"package.json", "pom.xml", "build.gradle",
 			"configure.ac", "meson.build", "BUILD",
 			"docker-compose.yml", "docker-compose.yaml",
+			"Dockerfile",
 		}
 		for _, bf := range buildFiles {
 			if autoReadBudget <= 0 {
@@ -1022,6 +1023,18 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Use Python's pycryptodome or built-in hashlib for crypto operations")
 	}
 
+	// Detect database tasks (SQLite, PostgreSQL, MySQL).
+	if detectDatabaseTask(workDir) {
+		hints = append(hints, "\n## Task Type: Database")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Check available databases: `which sqlite3`, `which psql`, `which mysql`")
+		hints = append(hints, "- For SQLite: use `sqlite3 <dbfile>` or Python's `sqlite3` module. Check if .db/.sqlite files exist.")
+		hints = append(hints, "- For PostgreSQL: check if running with `pg_isready`. Start with `service postgresql start` if needed.")
+		hints = append(hints, "- For MySQL: check with `mysqladmin ping`. Start with `service mysql start` if needed.")
+		hints = append(hints, "- Read schema first: `.schema` (SQLite), `\\dt` then `\\d+ tablename` (psql), `SHOW TABLES; DESCRIBE tablename;` (MySQL)")
+		hints = append(hints, "- When tests compare query results, match EXACT column names, ordering, and formatting")
+	}
+
 	// Detect code golf / size-constrained tasks.
 	if detectCodeGolfTask(workDir) {
 		hints = append(hints, "\n## Task Type: Code Golf / Size-Constrained")
@@ -1569,6 +1582,46 @@ func detectHashComparisonTask(workDir string) bool {
 	return false
 }
 
+// detectDatabaseTask returns true if the task involves database work.
+func detectDatabaseTask(workDir string) bool {
+	// Check directory name for database-related keywords.
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range []string{"database", "sqlite", "postgres", "mysql", "sql", "db-"} {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for database files.
+	for _, dir := range []string{workDir, "/app"} {
+		for _, ext := range []string{"*.db", "*.sqlite", "*.sqlite3"} {
+			matches, _ := filepath.Glob(filepath.Join(dir, ext))
+			if len(matches) > 0 {
+				return true
+			}
+		}
+	}
+	// Check for SQL files.
+	for _, dir := range []string{workDir, "/app"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.sql"))
+		if len(matches) > 0 {
+			return true
+		}
+	}
+	// Check README for database keywords.
+	for _, rp := range []string{filepath.Join(workDir, "README.md"), filepath.Join(workDir, "instruction.md"), "/app/instruction.md"} {
+		content := strings.ToLower(readFileTruncated(rp, 3000))
+		if content != "" {
+			if (strings.Contains(content, "database") || strings.Contains(content, "sqlite") ||
+				strings.Contains(content, "postgresql") || strings.Contains(content, "mysql")) &&
+				(strings.Contains(content, "query") || strings.Contains(content, "table") ||
+					strings.Contains(content, "select") || strings.Contains(content, "schema")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // detectCodeGolfTask returns true if the task has size constraints on output files.
 // Code golf tasks require specific strategies: create output first, then optimize for size.
 func detectCodeGolfTask(workDir string) bool {
@@ -1716,25 +1769,46 @@ func extractTestConstraints(testDir string) []string {
 		if err != nil {
 			continue
 		}
+		isShellTest := strings.HasSuffix(entry.Name(), ".sh") || strings.HasSuffix(entry.Name(), ".bash")
 		for _, line := range strings.Split(string(data), "\n") {
 			trimmed := strings.TrimSpace(line)
-			// Look for assertion lines with numeric comparisons.
-			if !strings.Contains(trimmed, "assert") {
+			// Skip comments and empty lines.
+			if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") ||
+				strings.HasPrefix(trimmed, "import") || trimmed == "" {
 				continue
 			}
-			// Skip comments and imports.
-			if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "import") {
-				continue
-			}
-			// Extract constraints with numeric values (size limits, thresholds, etc.)
-			hasConstraint := false
-			for _, indicator := range []string{"<", ">", "<=", ">=", "==", "size", "bytes", "length", "len(", "count"} {
-				if strings.Contains(trimmed, indicator) {
-					hasConstraint = true
-					break
+
+			isConstraintLine := false
+
+			// Python/general: assertion lines with numeric comparisons.
+			if strings.Contains(trimmed, "assert") {
+				for _, indicator := range []string{"<", ">", "<=", ">=", "==", "size", "bytes", "length", "len(", "count"} {
+					if strings.Contains(trimmed, indicator) {
+						isConstraintLine = true
+						break
+					}
 				}
 			}
-			if hasConstraint && !seen[trimmed] {
+
+			// Shell tests: diff, test -f, wc, file existence checks.
+			if isShellTest && !isConstraintLine {
+				for _, shellPat := range []string{
+					"diff ", "cmp ",           // file comparison
+					"test -f ", "test -s ",     // file existence/non-empty checks
+					"[ -f ", "[ -s ",           // bracket syntax file checks
+					"wc -l", "wc -c",          // line/byte count checks
+					"md5sum", "sha256sum",      // hash checks
+					"grep -c",                  // count matches
+					"test $(", "[ $(", "[[ $(", // subshell comparison
+				} {
+					if strings.Contains(trimmed, shellPat) {
+						isConstraintLine = true
+						break
+					}
+				}
+			}
+
+			if isConstraintLine && !seen[trimmed] {
 				// Truncate very long lines.
 				if len(trimmed) > 200 {
 					trimmed = trimmed[:200] + "..."

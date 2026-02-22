@@ -2337,3 +2337,61 @@ def test_about_file():
 		t.Error("expected no hash comparison in empty directory")
 	}
 }
+
+func TestDetectDatabaseTask(t *testing.T) {
+	// Directory name with database keyword.
+	dir := t.TempDir()
+	dbDir := filepath.Join(dir, "sqlite-queries")
+	os.MkdirAll(dbDir, 0o755)
+	if !detectDatabaseTask(dbDir) {
+		t.Error("expected database detection from directory name containing 'sqlite'")
+	}
+
+	// .db file present.
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "data.db", "fake sqlite db")
+	if !detectDatabaseTask(dir2) {
+		t.Error("expected database detection with .db file")
+	}
+
+	// .sql file present.
+	dir3 := t.TempDir()
+	writeTestFile(t, dir3, "schema.sql", "CREATE TABLE users (id INTEGER);")
+	if !detectDatabaseTask(dir3) {
+		t.Error("expected database detection with .sql file")
+	}
+
+	// Empty directory.
+	dir4 := t.TempDir()
+	if detectDatabaseTask(dir4) {
+		t.Error("expected no database detection in empty directory")
+	}
+}
+
+func TestExtractTestConstraintsShell(t *testing.T) {
+	// Shell test with diff and wc patterns.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "test.sh", `#!/bin/bash
+diff output.txt expected.txt
+test -f /app/output/result.csv
+wc -l output.txt | grep "^100 "
+`)
+	constraints := extractTestConstraints(dir)
+	if len(constraints) == 0 {
+		t.Error("expected constraints from shell test patterns")
+	}
+	// Should find diff, test -f, and wc -l patterns.
+	found := map[string]bool{"diff": false, "test -f": false, "wc -l": false}
+	for _, c := range constraints {
+		for pat := range found {
+			if strings.Contains(c, pat) {
+				found[pat] = true
+			}
+		}
+	}
+	for pat, ok := range found {
+		if !ok {
+			t.Errorf("expected constraint containing %q", pat)
+		}
+	}
+}

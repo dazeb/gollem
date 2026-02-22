@@ -278,6 +278,7 @@ func isVerificationString(cmd string) bool {
 		"diff ", "cmp ",
 		"md5sum", "sha256sum",
 		"grep -c", "grep --count", // counting matches is verification
+		"sqlite3 ",                 // querying database to verify contents
 	}
 
 	for _, p := range testPatterns {
