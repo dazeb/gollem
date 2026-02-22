@@ -1064,6 +1064,14 @@ func missingHeaderHint(output string) string {
 		"mysql/mysql.h":        "libmysqlclient-dev",
 		"postgresql/libpq-fe.h": "libpq-dev",
 		"libpq-fe.h":           "libpq-dev",
+		"gsl/":                 "libgsl-dev",
+		"tiff.h":               "libtiff-dev",
+		"lzma.h":               "liblzma-dev",
+		"bzlib.h":              "libbz2-dev",
+		"expat.h":              "libexpat1-dev",
+		"MagickWand/":          "libmagickwand-dev",
+		"cairo.h":              "libcairo2-dev",
+		"lapacke.h":            "liblapack-dev",
 	}
 
 	for header, pkg := range headerPkgs {
