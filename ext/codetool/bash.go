@@ -858,6 +858,10 @@ func addressInUseHint(output string, exitCode int) string {
 // Returns empty string if the output doesn't look like test results.
 // This helps the model quickly understand what passed/failed without
 // parsing the entire output itself — especially valuable after truncation.
+//
+// In addition to pass/fail counts, it extracts the FIRST failure's assertion
+// detail (e.g., "Expected X, got Y") which is the most actionable information
+// for fixing the issue.
 func testResultSummary(output string) string {
 	lower := strings.ToLower(output)
 
@@ -866,13 +870,26 @@ func testResultSummary(output string) string {
 		strings.Contains(lower, "===") && strings.Contains(lower, "passed") {
 		// Find the pytest summary line (usually the last line with "passed" and/or "failed")
 		lines := strings.Split(output, "\n")
+		var summary string
 		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if (strings.Contains(lineLower, "passed") || strings.Contains(lineLower, "failed")) &&
 				(strings.Contains(line, "=") || strings.Contains(lineLower, "error")) {
-				return "[test summary: " + line + "]"
+				summary = "[test summary: " + line + "]"
+				break
 			}
+		}
+		// Append first failure detail for actionable debugging.
+		if detail := firstFailureDetail(output); detail != "" {
+			if summary != "" {
+				summary += "\n" + detail
+			} else {
+				summary = detail
+			}
+		}
+		if summary != "" {
+			return summary
 		}
 	}
 
@@ -908,6 +925,9 @@ func testResultSummary(output string) string {
 				summary += fmt.Sprintf("... and %d more", len(fails)-10)
 			}
 			summary += "]"
+			if detail := firstFailureDetail(output); detail != "" {
+				summary += "\n" + detail
+			}
 			return summary
 		}
 	}
@@ -984,6 +1004,124 @@ func testResultSummary(output string) string {
 
 func upper(s string) string {
 	return strings.ToUpper(s)
+}
+
+// firstFailureDetail extracts the assertion detail from the FIRST test failure
+// in the output. This is the most actionable information for the agent —
+// knowing "Expected 42, got 43" or "AssertionError: lists differ" tells it
+// exactly what to fix, saving 1-2 turns of reading test output.
+//
+// Scans for common assertion patterns across pytest, unittest, Go, Rust, Jest.
+func firstFailureDetail(output string) string {
+	lines := strings.Split(output, "\n")
+
+	// Patterns that indicate an assertion/comparison failure with details.
+	// We want the FIRST one — it's the most useful for "fix one at a time".
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// pytest: "AssertionError: assert X == Y" or "E       assert X == Y"
+		if strings.HasPrefix(trimmed, "E ") && (strings.Contains(trimmed, "assert") ||
+			strings.Contains(trimmed, "==") || strings.Contains(trimmed, "!=") ||
+			strings.Contains(trimmed, "Error") || strings.Contains(trimmed, "not in") ||
+			strings.Contains(trimmed, "in ")) {
+			detail := strings.TrimPrefix(trimmed, "E ")
+			detail = strings.TrimSpace(detail)
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// pytest/unittest: "AssertionError: ..." on its own line
+		if strings.HasPrefix(trimmed, "AssertionError:") || strings.HasPrefix(trimmed, "AssertionError(") {
+			detail := trimmed
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// Python unittest: "FAIL: test_name (module.TestClass)"
+		// followed by assertion details in subsequent lines
+		if strings.HasPrefix(trimmed, "FAIL: ") && strings.Contains(trimmed, "(") {
+			// Look ahead for the actual assertion
+			for j := i + 1; j < min(i+8, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				if strings.HasPrefix(ahead, "AssertionError:") ||
+					strings.Contains(ahead, "!=") && strings.Contains(ahead, "assert") ||
+					strings.HasPrefix(ahead, "Expected") ||
+					strings.HasPrefix(ahead, "Got") {
+					if len(ahead) > 200 {
+						ahead = ahead[:200] + "..."
+					}
+					return "[first failure: " + ahead + "]"
+				}
+			}
+		}
+
+		// Go test: lines right after "--- FAIL:" often have "expected X, got Y"
+		// or "want X, got Y"
+		if strings.HasPrefix(trimmed, "--- FAIL:") {
+			for j := i + 1; j < min(i+8, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if (strings.Contains(aheadLower, "expected") || strings.Contains(aheadLower, "want ")) &&
+					(strings.Contains(aheadLower, "got ") || strings.Contains(aheadLower, "actual")) {
+					if len(ahead) > 200 {
+						ahead = ahead[:200] + "..."
+					}
+					return "[first failure: " + ahead + "]"
+				}
+				// Go test: Error() or Errorf() messages
+				if strings.Contains(ahead, "Error Trace:") {
+					// Skip trace, look for the message
+					for k := j + 1; k < min(j+5, len(lines)); k++ {
+						msg := strings.TrimSpace(lines[k])
+						if strings.HasPrefix(msg, "Error:") || strings.HasPrefix(msg, "Messages:") {
+							if len(msg) > 200 {
+								msg = msg[:200] + "..."
+							}
+							return "[first failure: " + msg + "]"
+						}
+					}
+				}
+			}
+		}
+
+		// Generic "Expected X, got Y" pattern (many test frameworks)
+		lower := strings.ToLower(trimmed)
+		if (strings.Contains(lower, "expected") && strings.Contains(lower, "got")) ||
+			(strings.Contains(lower, "expected") && strings.Contains(lower, "actual")) ||
+			(strings.Contains(lower, "expected") && strings.Contains(lower, "received")) {
+			// Make sure it's an actual assertion, not just a comment
+			if !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "//") &&
+				!strings.HasPrefix(trimmed, "*") && len(trimmed) > 10 {
+				if len(trimmed) > 200 {
+					trimmed = trimmed[:200] + "..."
+				}
+				return "[first failure: " + trimmed + "]"
+			}
+		}
+
+		// Jest/Vitest: "Expected: X" / "Received: Y" (consecutive lines)
+		if strings.HasPrefix(trimmed, "Expected:") || strings.HasPrefix(trimmed, "- Expected") {
+			detail := trimmed
+			// Grab the "Received:" line too if it follows
+			if i+1 < len(lines) {
+				nextTrimmed := strings.TrimSpace(lines[i+1])
+				if strings.HasPrefix(nextTrimmed, "Received:") || strings.HasPrefix(nextTrimmed, "+ Received") {
+					detail += " / " + nextTrimmed
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+	}
+
+	return ""
 }
 
 // compilationErrorSummary extracts key error lines from compiler output.

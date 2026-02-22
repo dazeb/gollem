@@ -399,6 +399,13 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Detect .env files and surface environment variable requirements.
+	// Many TB2 tasks need specific env vars set; finding this early saves 2+ turns
+	// of the agent troubleshooting "connection refused" or "missing config" errors.
+	if envHint := detectEnvFiles(workDir); envHint != "" {
+		parts = append(parts, envHint)
+	}
+
 	// Auto-read small source files in /app/ — now recursive (depth 3).
 	// Reads files < 5KB to avoid overwhelming context, up to 8 files total.
 	if autoReadBudget > 0 {
@@ -1472,10 +1479,15 @@ func detectTestCommands(workDir string) []string {
 	}
 	if fileExists(filepath.Join(workDir, "Makefile")) || fileExists("/app/Makefile") {
 		cmds = append(cmds, "Build: make")
-		if fileExists(filepath.Join(workDir, "Makefile")) {
-			content := readFileTruncated(filepath.Join(workDir, "Makefile"), 2000)
-			if strings.Contains(content, "test:") {
-				cmds = append(cmds, "Test: make test")
+		// Parse Makefile for useful targets beyond just "test".
+		for _, dir := range []string{workDir, "/app"} {
+			mkPath := filepath.Join(dir, "Makefile")
+			if content := readFileTruncated(mkPath, 3000); content != "" {
+				targets := parseMakefileTargets(content)
+				for _, t := range targets {
+					cmds = append(cmds, "Make: make "+t)
+				}
+				break
 			}
 		}
 	}
@@ -1559,6 +1571,122 @@ func isEntryPointFile(lowerName string) bool {
 		}
 	}
 	return false
+}
+
+// parseMakefileTargets extracts useful build/test/run targets from a Makefile.
+// Returns a deduplicated list of target names that the agent might want to run.
+func parseMakefileTargets(content string) []string {
+	// Interesting target patterns — these are the ones the agent would actually run.
+	interestingTargets := map[string]bool{
+		"test": true, "tests": true, "check": true, "verify": true,
+		"run": true, "start": true, "serve": true, "dev": true,
+		"build": true, "compile": true, "install": true,
+		"clean": true, "lint": true, "fmt": true, "format": true,
+		"benchmark": true, "bench": true,
+		"debug": true, "release": true,
+	}
+
+	var targets []string
+	seen := make(map[string]bool)
+
+	for _, line := range strings.Split(content, "\n") {
+		// Makefile target lines: "target:" or "target: deps"
+		// Must start at column 0 (not indented — indented lines are recipes).
+		if len(line) == 0 || line[0] == '\t' || line[0] == ' ' || line[0] == '#' || line[0] == '.' {
+			continue
+		}
+		colonIdx := strings.Index(line, ":")
+		if colonIdx <= 0 {
+			continue
+		}
+		// Skip variable assignments (FOO := bar)
+		if colonIdx+1 < len(line) && line[colonIdx+1] == '=' {
+			continue
+		}
+		target := strings.TrimSpace(line[:colonIdx])
+		// Skip targets with special characters (%, $, etc.)
+		if strings.ContainsAny(target, "%$(){}") {
+			continue
+		}
+		// Skip .PHONY and similar special targets
+		if strings.HasPrefix(target, ".") {
+			continue
+		}
+		if interestingTargets[target] && !seen[target] {
+			seen[target] = true
+			targets = append(targets, target)
+		}
+	}
+
+	// Cap at 6 targets to avoid bloat
+	if len(targets) > 6 {
+		targets = targets[:6]
+	}
+	return targets
+}
+
+// detectEnvFiles searches for .env, .env.example, .env.sample files and
+// surfaces their contents. Many TB2 tasks require specific environment variables
+// (database URLs, API keys, ports) that are defined in these files.
+func detectEnvFiles(workDir string) string {
+	envFiles := []struct {
+		name     string
+		isExample bool
+	}{
+		{".env.example", true},
+		{".env.sample", true},
+		{".env.template", true},
+		{".env", false},
+		{".env.local", false},
+	}
+
+	for _, dir := range []string{workDir, "/app"} {
+		for _, ef := range envFiles {
+			path := filepath.Join(dir, ef.name)
+			content := readFileTruncated(path, 2000)
+			if content == "" {
+				continue
+			}
+
+			var hint strings.Builder
+			if ef.isExample {
+				hint.WriteString(fmt.Sprintf("\n## Environment Config Found: %s", path))
+				hint.WriteString("\n" + content)
+				hint.WriteString("\nHINT: Copy this to .env and fill in any placeholder values: cp " + path + " " + filepath.Join(dir, ".env"))
+			} else {
+				// .env file exists — check for placeholder values that need filling
+				hint.WriteString(fmt.Sprintf("\n## Environment Config Found: %s", path))
+				hint.WriteString("\n" + content)
+				// Check for common placeholder patterns
+				if strings.Contains(content, "TODO") || strings.Contains(content, "CHANGEME") ||
+					strings.Contains(content, "your_") || strings.Contains(content, "xxx") ||
+					strings.Contains(content, "placeholder") {
+					hint.WriteString("\nWARNING: This .env file contains placeholder values that need to be filled in.")
+				}
+			}
+
+			// Extract key variable names so the agent knows what's expected
+			var varNames []string
+			for _, line := range strings.Split(content, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				if eqIdx := strings.Index(line, "="); eqIdx > 0 {
+					varName := strings.TrimSpace(line[:eqIdx])
+					if varName != "" {
+						varNames = append(varNames, varName)
+					}
+				}
+			}
+			if len(varNames) > 0 {
+				hint.WriteString(fmt.Sprintf("\nRequired env vars: %s", strings.Join(varNames, ", ")))
+			}
+
+			return hint.String()
+		}
+	}
+	return ""
 }
 
 func dirExists(path string) bool {

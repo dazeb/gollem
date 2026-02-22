@@ -1787,3 +1787,173 @@ func TestAddressInUseHint(t *testing.T) {
 		t.Errorf("expected no hint for success, got: %s", got)
 	}
 }
+
+func TestFirstFailureDetail(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		contains string
+	}{
+		{
+			name: "pytest_assertion",
+			output: `test_foo.py::test_add FAILED
+E       assert 5 == 4
+E        +  where 5 = add(2, 3)
+================ 1 failed, 2 passed ================`,
+			contains: "assert 5 == 4",
+		},
+		{
+			name: "go_test_expected_got",
+			output: `--- FAIL: TestAdd (0.00s)
+    main_test.go:15: expected 42, got 43
+FAIL
+FAIL	example.com/pkg	0.001s`,
+			contains: "expected 42, got 43",
+		},
+		{
+			name: "python_unittest_assertion",
+			output: `FAIL: test_add (test_math.TestMath)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "test_math.py", line 10, in test_add
+    self.assertEqual(result, 5)
+AssertionError: 4 != 5
+----------------------------------------------------------------------
+Ran 3 tests in 0.001s
+
+FAILED (failures=1)`,
+			contains: "AssertionError: 4 != 5",
+		},
+		{
+			name: "jest_expected_received",
+			output: `FAIL src/math.test.js
+  ● add › should return 5
+
+    Expected: 5
+    Received: 4
+
+Tests: 1 failed, 2 passed, 3 total`,
+			contains: "Expected: 5",
+		},
+		{
+			name: "generic_expected_actual",
+			output: `Running tests...
+Test 1: PASS
+Test 2: FAIL - Expected "hello" but got "world"
+Test 3: PASS`,
+			contains: `Expected "hello" but got "world"`,
+		},
+		{
+			name: "no_failure",
+			output: `All tests passed!
+3 passed, 0 failed`,
+			contains: "", // empty = no match expected
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := firstFailureDetail(tc.output)
+			if tc.contains == "" {
+				if got != "" {
+					t.Errorf("expected no failure detail, got: %s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("expected failure detail containing %q, got: %s", tc.contains, got)
+			}
+		})
+	}
+}
+
+func TestTestResultSummaryWithFailureDetail(t *testing.T) {
+	// Verify that testResultSummary now includes first failure details.
+	output := `test_calc.py::test_multiply PASSED
+test_calc.py::test_add FAILED
+E       assert 7 == 5
+test_calc.py::test_subtract PASSED
+========================= 1 failed, 2 passed =========================`
+
+	got := testResultSummary(output)
+	if !strings.Contains(got, "1 failed") {
+		t.Errorf("expected summary line with '1 failed', got: %s", got)
+	}
+	if !strings.Contains(got, "assert 7 == 5") {
+		t.Errorf("expected first failure detail 'assert 7 == 5', got: %s", got)
+	}
+}
+
+func TestParseMakefileTargets(t *testing.T) {
+	makefile := `# My project Makefile
+
+CC = gcc
+CFLAGS = -Wall
+
+.PHONY: all test clean
+
+all: build
+
+build:
+	$(CC) $(CFLAGS) -o myapp main.c
+
+test: build
+	./run_tests.sh
+
+clean:
+	rm -f myapp *.o
+
+install: build
+	cp myapp /usr/local/bin/
+
+run: build
+	./myapp
+
+lint:
+	pylint src/
+
+# Don't include these:
+%.o: %.c
+	$(CC) -c $<
+`
+	targets := parseMakefileTargets(makefile)
+
+	// Should include useful targets
+	targetSet := make(map[string]bool)
+	for _, t := range targets {
+		targetSet[t] = true
+	}
+
+	for _, expected := range []string{"build", "test", "clean", "install", "run", "lint"} {
+		if !targetSet[expected] {
+			t.Errorf("expected target %q in parsed targets: %v", expected, targets)
+		}
+	}
+}
+
+func TestDetectEnvFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	// No .env files — should return empty.
+	got := detectEnvFiles(dir)
+	if got != "" {
+		t.Errorf("expected empty for no env files, got: %s", got)
+	}
+
+	// Create .env.example with some vars.
+	writeTestFile(t, dir, ".env.example", `# Database config
+DATABASE_URL=postgresql://localhost:5432/mydb
+SECRET_KEY=changeme
+PORT=8080
+`)
+	got = detectEnvFiles(dir)
+	if !strings.Contains(got, "DATABASE_URL") {
+		t.Errorf("expected DATABASE_URL in env hint, got: %s", got)
+	}
+	if !strings.Contains(got, ".env.example") {
+		t.Errorf("expected .env.example path in hint, got: %s", got)
+	}
+	if !strings.Contains(got, "cp") {
+		t.Errorf("expected cp hint for .env.example, got: %s", got)
+	}
+}
