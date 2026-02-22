@@ -157,15 +157,26 @@ func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.A
 	) (*core.ModelResponse, error) {
 		once.Do(func() {
 			envContext = discoverEnvironment(workDir)
-			// Inject timeout awareness if provided.
+
+			// Determine effective timeout: prefer task-level timeout from
+			// task.toml (accurate per-task) over the agent's configured timeout.
+			effectiveTimeout := time.Duration(0)
 			if len(timeout) > 0 && timeout[0] > 0 {
-				mins := int(timeout[0].Minutes())
+				effectiveTimeout = timeout[0]
+			}
+			if taskTimeout := detectTaskTimeout(workDir); taskTimeout > 0 {
+				effectiveTimeout = taskTimeout
+			}
+
+			if effectiveTimeout > 0 {
+				mins := int(effectiveTimeout.Minutes())
 				envContext += fmt.Sprintf("\n\nTIME BUDGET: You have %d minutes total. "+
 					"Each API call takes 5-30 seconds. Budget your turns wisely:\n"+
 					"- Turns 1-3: Read task, understand constraints, plan approach\n"+
 					"- Turns 3-8: Create output files (even rough drafts)\n"+
 					"- Turns 8+: Iterate, test, refine\n"+
-					"- Final 25%%: Clean up artifacts, verify tests pass", mins)
+					"- Final 25%%: Clean up artifacts, verify tests pass\n"+
+					"DO NOT waste turns on unnecessary exploration. Time is your scarcest resource.", mins)
 			}
 		})
 
@@ -595,6 +606,55 @@ func extractTestConstraints(testDir string) []string {
 		}
 	}
 	return constraints
+}
+
+// detectTaskTimeout reads the task timeout from task.toml or task.yaml files
+// that Harbor places in the container. Returns 0 if not found.
+func detectTaskTimeout(workDir string) time.Duration {
+	// Terminal-Bench task files are at /app/task_file/task.toml or similar.
+	candidates := []string{
+		filepath.Join(workDir, "task.toml"),
+		"/app/task_file/task.toml",
+		filepath.Join(workDir, "task.yaml"),
+		filepath.Join(workDir, "task.yml"),
+	}
+
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		// Parse agent timeout_sec from TOML/YAML.
+		// Look for lines like: timeout_sec = 900.0 or timeout_sec: 900
+		inAgentSection := false
+		for _, line := range strings.Split(content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "[agent]" {
+				inAgentSection = true
+				continue
+			}
+			if strings.HasPrefix(trimmed, "[") {
+				inAgentSection = false
+				continue
+			}
+			if inAgentSection && strings.Contains(trimmed, "timeout_sec") {
+				// Extract the numeric value.
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) != 2 {
+					parts = strings.SplitN(trimmed, ":", 2)
+				}
+				if len(parts) == 2 {
+					var secs float64
+					if _, err := fmt.Sscanf(strings.TrimSpace(parts[1]), "%f", &secs); err == nil && secs > 0 {
+						fmt.Fprintf(os.Stderr, "[gollem] detected task timeout: %.0fs\n", secs)
+						return time.Duration(secs) * time.Second
+					}
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func dirExists(path string) bool {

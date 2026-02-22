@@ -138,6 +138,14 @@ func runAgent() {
 		os.Exit(1)
 	}
 
+	// Auto-detect task timeout from task.toml (Terminal-Bench format).
+	// This ensures the agent's internal timeout matches the benchmark's
+	// task-level timeout, so time budget warnings are accurate.
+	if taskTimeout := detectTaskTimeout(f.workDir); taskTimeout > 0 && taskTimeout < f.timeout {
+		fmt.Fprintf(os.Stderr, "gollem: detected task timeout: %v (overriding %v)\n", taskTimeout, f.timeout)
+		f.timeout = taskTimeout
+	}
+
 	if f.provider == "" {
 		f.provider = detectProvider()
 		if f.provider == "" {
@@ -430,6 +438,43 @@ func runDebug() {
 		fmt.Printf("Tokens: %d input, %d output\n",
 			result.Usage.InputTokens, result.Usage.OutputTokens)
 	}
+}
+
+// detectTaskTimeout reads the agent timeout from task.toml (Terminal-Bench format).
+// This ensures the agent's time budget warnings match the actual deadline.
+func detectTaskTimeout(workDir string) time.Duration {
+	candidates := []string{
+		workDir + "/task.toml",
+		"/app/task_file/task.toml",
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		inAgentSection := false
+		for _, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "[agent]" {
+				inAgentSection = true
+				continue
+			}
+			if strings.HasPrefix(trimmed, "[") {
+				inAgentSection = false
+				continue
+			}
+			if inAgentSection && strings.Contains(trimmed, "timeout_sec") {
+				parts := strings.SplitN(trimmed, "=", 2)
+				if len(parts) == 2 {
+					var secs float64
+					if _, err := fmt.Sscanf(strings.TrimSpace(parts[1]), "%f", &secs); err == nil && secs > 0 {
+						return time.Duration(secs) * time.Second
+					}
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func detectProvider() string {

@@ -153,6 +153,10 @@ class GollemAgent(BaseInstalledAgent):
         """Build the shell command to invoke gollem run inside the container."""
         provider, model = self._parse_model_name()
 
+        # Use timeout_minutes - 1 as the agent timeout so it has time to
+        # clean up before Harbor kills it. The exec timeout gets +60s buffer.
+        agent_timeout_secs = max((self._timeout_minutes - 1) * 60, 60)
+
         cmd_parts = [
             "/usr/local/bin/gollem", "run",
             "--provider", provider,
@@ -160,7 +164,7 @@ class GollemAgent(BaseInstalledAgent):
         if model:
             cmd_parts.extend(["--model", model])
         cmd_parts.extend([
-            "--timeout", f"{self._timeout_minutes}m",
+            "--timeout", f"{agent_timeout_secs}s",
         ])
         if self._thinking_budget > 0:
             cmd_parts.extend(["--thinking-budget", str(self._thinking_budget)])
