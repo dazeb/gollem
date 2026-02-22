@@ -3006,6 +3006,47 @@ diff output.txt expected.txt
 	}
 }
 
+func TestMissingSolutionFilesSurfaced(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	// Test that imports solution.py which doesn't exist.
+	os.WriteFile(filepath.Join(testDir, "test_main.py"), []byte(`
+from solution import solve
+
+def test_solve():
+    assert solve(2) == 4
+`), 0o644)
+
+	// Run discoverEnvironment (which calls extractTestReferencedFiles internally).
+	// We can't easily unit-test the full discoverEnvironment, so test the
+	// extractTestReferencedFiles + missing check logic directly.
+
+	// Simulate auto-read parts that include test content.
+	parts := []string{
+		"\n## Test file auto-read: " + testDir + "/test_main.py",
+		"from solution import solve\n\ndef test_solve():\n    assert solve(2) == 4\n",
+	}
+	testRefs := extractTestReferencedFiles(parts)
+
+	// solution.py should be referenced.
+	if !testRefs["solution.py"] {
+		t.Errorf("expected solution.py in testRefs, got: %v", testRefs)
+	}
+
+	// Since solution.py doesn't exist in dir, it should be "missing".
+	found := false
+	for filename := range testRefs {
+		if !fileExists(filepath.Join(dir, filename)) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected solution.py to be missing in %s", dir)
+	}
+}
+
 func TestIsBinaryExtension(t *testing.T) {
 	tests := []struct {
 		name   string

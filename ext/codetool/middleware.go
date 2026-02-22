@@ -707,6 +707,34 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Surface solution files that tests expect but don't exist yet.
+	// If a test imports "from solution import X" and solution.py doesn't exist,
+	// the agent needs to CREATE it. This is the #1 thing to do first.
+	if len(testRefs) > 0 {
+		var missingFiles []string
+		for filename := range testRefs {
+			// Check if the file exists in workDir or /app.
+			found := false
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, filename)) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				missingFiles = append(missingFiles, filename)
+			}
+		}
+		if len(missingFiles) > 0 {
+			parts = append(parts, "\n## Solution Files to Create (tests import these)")
+			parts = append(parts, "Tests import/require these files but they DON'T EXIST yet — you must CREATE them:")
+			for _, f := range missingFiles {
+				parts = append(parts, "  - "+f)
+			}
+			parts = append(parts, "Create these files FIRST — they are the primary deliverables.")
+		}
+	}
+
 	// Discover standalone verification scripts that aren't in /tests/.
 	// TB2 tasks sometimes place verifier scripts in the working directory
 	// or /app/ with names like verify.py, check_output.sh, validate.py.
