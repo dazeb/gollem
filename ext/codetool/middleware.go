@@ -1332,6 +1332,37 @@ func detectExpectedOutputs(workDir string) []string {
 		}
 	}
 
+	// Also scan README/instruction files for output file references.
+	// Task descriptions often mention expected output files explicitly.
+	readmePaths := []string{
+		filepath.Join(workDir, "README.md"),
+		filepath.Join(workDir, "instruction.md"),
+		"/app/instruction.md",
+		filepath.Join(workDir, "prompts", "agent.md"),
+		"/app/prompts/agent.md",
+	}
+	for _, rp := range readmePaths {
+		data, err := os.ReadFile(rp)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		for _, line := range strings.Split(content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			for _, pat := range []string{"output_data/", "output/", "/app/output"} {
+				idx := strings.Index(trimmed, pat)
+				if idx < 0 {
+					continue
+				}
+				path := extractPathFromLine(trimmed, idx)
+				if path != "" && !seen[path] {
+					seen[path] = true
+					outputs = append(outputs, path)
+				}
+			}
+		}
+	}
+
 	// Cap to 15 to prevent context bloat.
 	if len(outputs) > 15 {
 		outputs = outputs[:15]
@@ -2655,7 +2686,9 @@ func fileExists(path string) bool {
 // isSourceFile returns true if the filename has a recognized source code extension.
 func isSourceFile(name string) bool {
 	sourceExts := []string{
-		".py", ".js", ".ts", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
+		".py", ".pyx", ".pyi",                          // Python
+		".js", ".ts", ".go", ".rs",                     // popular languages
+		".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", // C/C++
 		".java", ".rb", ".sh", ".bash", ".pl", ".lua", ".r", ".R",
 		".sql", ".html", ".css", ".json", ".yaml", ".yml", ".toml",
 		".xml", ".md", ".txt", ".cfg", ".ini", ".conf",
@@ -2663,12 +2696,14 @@ func isSourceFile(name string) bool {
 		".jsx", ".tsx", ".vue", ".svelte", ".zig", ".nim",
 		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hs",
 		".jl", ".m", ".swift", ".f90", ".f95", ".pm",
+		".ml", ".mli",                   // OCaml
 		".lean", ".v", ".agda",          // theorem provers
 		".red",                          // Redcode (CoreWars)
 		".cu", ".cuh",                   // CUDA
 		".s", ".asm", ".wat",            // assembly / WebAssembly text
 		".proto", ".thrift", ".graphql", // schema files
 		".cmake",                        // build config
+		".rkt", ".scm", ".lisp", ".cl", // Lisp/Scheme/Racket
 	}
 	lower := strings.ToLower(name)
 	for _, ext := range sourceExts {
