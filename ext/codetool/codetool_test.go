@@ -2192,3 +2192,23 @@ func TestDetectBuildFromSourceTask(t *testing.T) {
 		t.Error("expected no build task in empty directory")
 	}
 }
+
+func TestDetectImageFiles(t *testing.T) {
+	// Directory with image files.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "diagram.png", "PNG")
+	writeTestFile(t, dir, "photo.jpg", "JPEG")
+	writeTestFile(t, dir, "code.py", "print('hi')")
+
+	images := detectImageFiles(dir)
+	if len(images) != 2 {
+		t.Errorf("expected 2 image files, got %d: %v", len(images), images)
+	}
+
+	// Empty directory — no images.
+	dir2 := t.TempDir()
+	images2 := detectImageFiles(dir2)
+	if len(images2) != 0 {
+		t.Errorf("expected 0 image files in empty dir, got %d", len(images2))
+	}
+}

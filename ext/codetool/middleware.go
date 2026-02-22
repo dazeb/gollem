@@ -989,10 +989,41 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Keep source directories intact — verifiers often check that sources exist.")
 	}
 
+	// Detect tasks with image files that need analysis.
+	if imageFiles := detectImageFiles(workDir); len(imageFiles) > 0 {
+		hints = append(hints, "\n## Image Files Detected")
+		for _, f := range imageFiles {
+			hints = append(hints, "  - "+f)
+		}
+		hints = append(hints, "To analyze images, use Python with PIL/Pillow or OpenCV:")
+		hints = append(hints, "  pip install --break-system-packages Pillow 2>/dev/null")
+		hints = append(hints, "  python3 -c \"from PIL import Image; img = Image.open('file.png'); print(img.size, img.mode)\"")
+		hints = append(hints, "For OCR: pip install --break-system-packages pytesseract (needs tesseract-ocr)")
+		hints = append(hints, "For chess positions: analyze piece positions programmatically, don't try to 'see' the image")
+	}
+
 	if len(hints) > 0 {
 		return strings.Join(hints, "\n")
 	}
 	return ""
+}
+
+// detectImageFiles returns image file paths found in the working directory.
+func detectImageFiles(workDir string) []string {
+	var images []string
+	for _, dir := range []string{workDir, "/app"} {
+		for _, ext := range []string{"*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.tiff", "*.ppm", "*.pgm"} {
+			matches, _ := filepath.Glob(filepath.Join(dir, ext))
+			for _, m := range matches {
+				images = append(images, m)
+			}
+		}
+	}
+	// Cap to 10 to prevent context bloat.
+	if len(images) > 10 {
+		images = images[:10]
+	}
+	return images
 }
 
 // detectExpectedOutputs scans test files and README to identify the output
