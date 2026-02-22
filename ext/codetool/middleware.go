@@ -647,6 +647,34 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Julia: instantiate packages from Project.toml.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "Project.toml")) && runQuiet(dir, "which", "julia") != "" {
+				// Check if Manifest.toml already exists (already instantiated).
+				if !fileExists(filepath.Join(dir, "Manifest.toml")) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-instantiating Julia packages in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "julia", "--project="+dir, "-e", "using Pkg; Pkg.instantiate()")
+					parts = append(parts, "AUTO-INSTALLED: Julia packages via Pkg.instantiate() (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
+	// OCaml/Dune: install opam dependencies if available.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "dune-project")) && runQuiet(dir, "which", "opam") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing OCaml dependencies in %s\n", dir)
+				// opam install . --deps-only -y installs project deps without building.
+				runQuietTimeout(dir, 120*time.Second, "opam", "install", ".", "--deps-only", "-y")
+				parts = append(parts, "AUTO-INSTALLED: OCaml opam dependencies (already done, no need to install again)")
+				break
+			}
+		}
+	}
+
 	// Detect .env files and surface environment variable requirements.
 	// Many TB2 tasks need specific env vars set; finding this early saves 2+ turns
 	// of the agent troubleshooting "connection refused" or "missing config" errors.
