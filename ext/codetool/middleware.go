@@ -356,9 +356,10 @@ func discoverEnvironment(workDir string) string {
 	// Task-type specific guidance based on detected patterns.
 	parts = append(parts, detectTaskGuidance(workDir))
 
-	// Available tools.
-	parts = append(parts, "\nAvailable tools: bash, view, edit, multi_edit, write, grep, glob, ls, planning, delegate")
-	parts = append(parts, "Source files are pre-loaded above. For complex tasks, create a plan first using the planning tool, then proceed.")
+	// Remind agent that source files are pre-loaded. Don't enumerate tools —
+	// the model sees tool definitions from the API, and a hardcoded list would
+	// be inaccurate if code mode or team mode adds/removes tools.
+	parts = append(parts, "\nSource files are pre-loaded above. For complex tasks, create a plan first using the planning tool, then proceed.")
 
 	return strings.Join(parts, "\n")
 }
@@ -613,6 +614,19 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Use Python's pycryptodome or built-in hashlib for crypto operations")
 	}
 
+	// Detect code golf / size-constrained tasks.
+	if detectCodeGolfTask(workDir) {
+		hints = append(hints, "\n## Task Type: Code Golf / Size-Constrained")
+		hints = append(hints, "This task has SIZE CONSTRAINTS on output files. Key strategies:")
+		hints = append(hints, "- Check size constraints FIRST and track byte count at every step with `wc -c`")
+		hints = append(hints, "- Start with the simplest working implementation, then optimize for size")
+		hints = append(hints, "- Create the output file IMMEDIATELY even if it's too large, then shrink it")
+		hints = append(hints, "- Use compact coding style: short variable names, minimal whitespace, eliminate dead code")
+		hints = append(hints, "- For C: omit unnecessary includes, use preprocessor tricks, minimize struct padding")
+		hints = append(hints, "- For Python: use list comprehensions, lambda, semicolons to join lines")
+		hints = append(hints, "- Verify size after EVERY edit: `wc -c <output_file>`")
+	}
+
 	// Detect Dockerfile/container tasks.
 	if fileExists(filepath.Join(workDir, "Dockerfile")) || fileExists(filepath.Join(workDir, "docker-compose.yml")) {
 		hints = append(hints, "\n## Note: Docker files detected")
@@ -822,6 +836,41 @@ func detectCryptoTask(workDir string) bool {
 		content := readFileTruncated(m, 2000)
 		if strings.Contains(content, "Crypto.") || strings.Contains(content, "cryptography") ||
 			strings.Contains(content, "hashlib") || strings.Contains(content, "hmac") {
+			return true
+		}
+	}
+	return false
+}
+
+// detectCodeGolfTask returns true if the task has size constraints on output files.
+// Code golf tasks require specific strategies: create output first, then optimize for size.
+func detectCodeGolfTask(workDir string) bool {
+	// Check README/task description for size constraint mentions.
+	readmePaths := []string{
+		filepath.Join(workDir, "README.md"),
+		filepath.Join(workDir, "TASK.md"),
+		filepath.Join(workDir, "task.md"),
+		filepath.Join(workDir, "prompt.md"),
+		filepath.Join(workDir, "prompt.txt"),
+		filepath.Join(workDir, "INSTRUCTIONS.md"),
+		filepath.Join(workDir, "instructions.md"),
+	}
+	for _, rp := range readmePaths {
+		content := readFileTruncated(rp, 5000)
+		if content == "" {
+			continue
+		}
+		lower := strings.ToLower(content)
+		// Explicit code golf mentions.
+		if strings.Contains(lower, "code golf") || strings.Contains(lower, "codegolf") {
+			return true
+		}
+		// Byte size constraints: "must be < 5000 bytes", "less than N bytes", etc.
+		if strings.Contains(lower, "bytes") &&
+			(strings.Contains(lower, "must be") || strings.Contains(lower, "less than") ||
+				strings.Contains(lower, "under ") || strings.Contains(lower, "smaller than") ||
+				strings.Contains(lower, "no more than") || strings.Contains(lower, "at most") ||
+				strings.Contains(lower, "not exceed")) {
 			return true
 		}
 	}

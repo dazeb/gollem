@@ -69,6 +69,12 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 					MaxTokens: 80000,
 					KeepLastN: 8,
 				}),
+				// Environment discovery: give the subagent awareness of directory
+				// structure, README, tests, and task type so it doesn't waste turns
+				// on basic orientation. #1 source of wasted subagent turns.
+				core.WithAgentMiddleware[string](ContextInjectionMiddleware(cfg.WorkDir)),
+				// Loop detection: catch subagent doom loops early (3 repeated edits).
+				core.WithAgentMiddleware[string](LoopDetectionMiddleware(3)),
 			}
 
 			agent := core.NewAgent[string](model, subOpts...)

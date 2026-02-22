@@ -60,7 +60,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		toolOpts = append([]Option{WithWorkDir(workDir)}, toolOpts...)
 	}
 	cfg := applyOpts(toolOpts)
-	verifyMW, verifyValidator := VerificationCheckpoint()
+	verifyMW, verifyValidator := VerificationCheckpoint(cfg.Timeout)
 
 	// Build system prompt and tool options.
 	// When code mode is enabled, the agent gets both individual tools AND

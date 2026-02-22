@@ -79,7 +79,7 @@ Common pitfalls to avoid:
 - **bash**: Set appropriate timeouts for long-running commands. Check exit codes.
 - **grep**: Use specific patterns. Combine with glob patterns to narrow scope.
 - **view**: Use offset/limit for large files instead of reading the whole thing.
-- **delegate**: Use for self-contained subtasks that benefit from a fresh context (e.g., "write a test suite for X", "debug why Y fails"). The subagent has no memory of your conversation, so include all context in the task description.
+- **delegate**: Use for self-contained subtasks that benefit from a fresh context. The subagent sees the same environment (files, tests, README) automatically, but has NO memory of your conversation. Good uses: implementing a self-contained module, debugging a specific component, researching an unfamiliar API. Bad uses: tasks that depend on your in-progress work, trivial one-step operations. Include all necessary context about WHAT to do in the task description — the subagent already knows WHERE (same working directory).
 - **planning**: Use for multi-step tasks. Create a plan with task IDs, then update each task's status as you progress.
 
 ## Test Early and Often

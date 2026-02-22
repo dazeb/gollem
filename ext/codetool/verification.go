@@ -3,8 +3,11 @@ package codetool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -19,17 +22,36 @@ import (
 // validator rejects the agent's output if no verification was detected, forcing
 // a retry with instructions to verify.
 //
+// When a timeout is provided, the pre-completion checklist is skipped if more
+// than 80% of the time has elapsed — wasting a turn on the checklist when the
+// agent is about to be killed is counterproductive.
+//
 // Usage:
 //
-//	mw, validator := codetool.VerificationCheckpoint()
+//	mw, validator := codetool.VerificationCheckpoint(timeout)
 //	agent := core.NewAgent[string](model,
 //	    core.WithAgentMiddleware[string](mw),
 //	    core.WithOutputValidator[string](validator),
 //	)
-func VerificationCheckpoint() (core.AgentMiddleware, core.OutputValidatorFunc[string]) {
+func VerificationCheckpoint(timeout ...time.Duration) (core.AgentMiddleware, core.OutputValidatorFunc[string]) {
 	var mu sync.Mutex
 	verified := false
 	completionAttempts := 0
+	startTime := time.Now()
+
+	// Determine effective timeout for skip-checklist logic.
+	effectiveTimeout := time.Duration(0)
+	if len(timeout) > 0 && timeout[0] > 0 {
+		effectiveTimeout = timeout[0]
+	}
+	if effectiveTimeout == 0 {
+		if envTimeout := os.Getenv("GOLLEM_TIMEOUT_SEC"); envTimeout != "" {
+			var secs float64
+			if _, err := fmt.Sscanf(envTimeout, "%f", &secs); err == nil && secs > 0 {
+				effectiveTimeout = time.Duration(secs) * time.Second
+			}
+		}
+	}
 
 	mw := func(
 		ctx context.Context,
@@ -85,14 +107,28 @@ func VerificationCheckpoint() (core.AgentMiddleware, core.OutputValidatorFunc[st
 		// Pre-completion checklist: on first completion attempt after verification,
 		// force the agent to re-check requirements. This catches cases where the
 		// agent ran tests but missed requirements.
+		//
+		// Skip the checklist if time is running out — wasting a turn when the
+		// agent is about to be killed is worse than missing a requirement.
 		if attempts == 0 {
-			return output, &core.ModelRetryError{
-				Message: "Before finalizing: run through this checklist.\n" +
-					"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
-					"2. List all output/working directories — are there leftover files that shouldn't be there? (rm build artifacts, temp files, __pycache__, .o files)\n" +
-					"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
-					"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
-					"Only declare completion after confirming all the above.",
+			skipChecklist := false
+			if effectiveTimeout > 0 {
+				elapsed := time.Since(startTime)
+				pct := float64(elapsed) / float64(effectiveTimeout)
+				if pct > 0.80 {
+					skipChecklist = true
+					fmt.Fprintf(os.Stderr, "[gollem] verification: skipping checklist (%.0f%% time elapsed)\n", pct*100)
+				}
+			}
+			if !skipChecklist {
+				return output, &core.ModelRetryError{
+					Message: "Before finalizing: run through this checklist.\n" +
+						"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
+						"2. List all output/working directories — are there leftover files that shouldn't be there? (rm build artifacts, temp files, __pycache__, .o files)\n" +
+						"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
+						"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
+						"Only declare completion after confirming all the above.",
+				}
 			}
 		}
 
