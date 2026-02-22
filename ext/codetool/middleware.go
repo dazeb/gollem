@@ -144,7 +144,7 @@ func extractCommandPrefix(argsJSON string) string {
 // conversation. It runs a set of bash commands to discover the environment
 // (e.g., directory structure, language, available tools) and prepends the
 // results as a system-level context message.
-func ContextInjectionMiddleware(workDir string) core.AgentMiddleware {
+func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.AgentMiddleware {
 	var once sync.Once
 	var envContext string
 
@@ -157,6 +157,16 @@ func ContextInjectionMiddleware(workDir string) core.AgentMiddleware {
 	) (*core.ModelResponse, error) {
 		once.Do(func() {
 			envContext = discoverEnvironment(workDir)
+			// Inject timeout awareness if provided.
+			if len(timeout) > 0 && timeout[0] > 0 {
+				mins := int(timeout[0].Minutes())
+				envContext += fmt.Sprintf("\n\nTIME BUDGET: You have %d minutes total. "+
+					"Each API call takes 5-30 seconds. Budget your turns wisely:\n"+
+					"- Turns 1-3: Read task, understand constraints, plan approach\n"+
+					"- Turns 3-8: Create output files (even rough drafts)\n"+
+					"- Turns 8+: Iterate, test, refine\n"+
+					"- Final 25%%: Clean up artifacts, verify tests pass", mins)
+			}
 		})
 
 		if envContext != "" && len(messages) > 0 {
@@ -255,6 +265,14 @@ func discoverEnvironment(workDir string) string {
 			}
 			// Auto-read test files (up to 5KB each, up to 3 files).
 			autoReadBudget = autoReadDirBudget(td, &parts, "Test", 5000, 3, autoReadBudget)
+			// Extract and highlight key constraints from test assertions.
+			if constraints := extractTestConstraints(td); len(constraints) > 0 {
+				parts = append(parts, "\n## KEY CONSTRAINTS (extracted from tests)")
+				parts = append(parts, "These constraints MUST be satisfied. Check them BEFORE declaring completion:")
+				for _, c := range constraints {
+					parts = append(parts, "  - "+c)
+				}
+			}
 			break
 		}
 	}
@@ -515,6 +533,68 @@ func previewInputData(dir string, hints *[]string) {
 			count++
 		}
 	}
+}
+
+// extractTestConstraints scans test files for assert statements that contain
+// numeric thresholds, size limits, or performance requirements. These are the
+// constraints most likely to cause failures if missed.
+func extractTestConstraints(testDir string) []string {
+	entries, err := os.ReadDir(testDir)
+	if err != nil {
+		return nil
+	}
+
+	var constraints []string
+	seen := make(map[string]bool)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if !isSourceFile(entry.Name()) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.Size() > 10000 {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(testDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			// Look for assertion lines with numeric comparisons.
+			if !strings.Contains(trimmed, "assert") {
+				continue
+			}
+			// Skip comments and imports.
+			if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "import") {
+				continue
+			}
+			// Extract constraints with numeric values (size limits, thresholds, etc.)
+			hasConstraint := false
+			for _, indicator := range []string{"<", ">", "<=", ">=", "==", "size", "bytes", "length", "len(", "count"} {
+				if strings.Contains(trimmed, indicator) {
+					hasConstraint = true
+					break
+				}
+			}
+			if hasConstraint && !seen[trimmed] {
+				// Truncate very long lines.
+				if len(trimmed) > 200 {
+					trimmed = trimmed[:200] + "..."
+				}
+				constraints = append(constraints, trimmed)
+				seen[trimmed] = true
+			}
+		}
+		// Cap at 15 constraints to avoid overwhelming context.
+		if len(constraints) >= 15 {
+			break
+		}
+	}
+	return constraints
 }
 
 func dirExists(path string) bool {

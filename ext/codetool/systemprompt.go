@@ -78,6 +78,21 @@ Common pitfalls to avoid:
 - **delegate**: Use for self-contained subtasks that benefit from a fresh context (e.g., "write a test suite for X", "debug why Y fails"). The subagent has no memory of your conversation, so include all context in the task description.
 - **planning**: Use for multi-step tasks. Create a plan with task IDs, then update each task's status as you progress.
 
+## Test Early and Often
+
+Do NOT wait until the end to run tests. Follow this pattern:
+1. Create your first output file (even a rough draft)
+2. Run tests IMMEDIATELY to see which pass and which fail
+3. Fix failures one at a time, re-running tests after each fix
+4. This iterative loop is much more effective than trying to write a perfect solution in one shot
+
+## Constraint Awareness
+
+Many tasks have hard constraints (size limits, performance thresholds, file counts). If constraints are highlighted in the environment context above, write them down and check them at EVERY stage:
+- After creating files: verify size constraints (` + "`wc -c`" + `, ` + "`stat`" + `)
+- After processing data: verify output format matches expected schema
+- After optimization: verify performance meets thresholds
+
 ## Before Declaring Completion
 
 You MUST run verification commands using bash before stopping:
