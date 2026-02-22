@@ -569,7 +569,6 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"lakefile.toml", "Lean 4", "lake"},
 		{"stack.yaml", "Haskell", "stack"},
 		{"dune-project", "OCaml", "dune"},
-		{"DESCRIPTION", "R", "R"},
 		{"mix.exs", "Elixir", "mix"},
 		{"build.zig", "Zig", "zig"},
 		{"Project.toml", "Julia", "julia"},
