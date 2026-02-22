@@ -110,7 +110,7 @@ Test failures contain EXACT information about what's wrong. Read them carefully:
 - **"File not found"**: You forgot to create a required file
 - **AssertionError with numbers**: Check your math, precision, or data processing
 - **Timeout in tests**: Your solution is too slow — optimize the hot path
-- **Extra files in directory**: Clean up known intermediates (rm *.o *.pyc; rm -rf __pycache__) but keep solution files
+- **Extra files in directory**: Build intermediates (__pycache__, *.pyc, *.o) are auto-cleaned at completion, but if tests check directory contents mid-run, clean up manually
 - When fixing a test failure, fix EXACTLY what the error says is wrong — don't guess at a different problem
 
 ## Constraint Awareness
@@ -128,7 +128,7 @@ You MUST run verification commands using bash before stopping:
 3. Run all relevant tests and confirm they pass (e.g., ` + "`go test ./...`" + `, ` + "`pytest`" + `, ` + "`npm test`" + `)
 4. If you modified a config, verify it loads correctly
 5. If you fixed a bug, confirm the fix with a test or manual verification
-6. **Clean up build intermediates only**: Remove known intermediate files that aren't part of your solution: ` + "`find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; rm -f *.o a.out 2>/dev/null`" + `. Tests may check directory contents with ` + "`os.listdir()`" + ` or ` + "`ls`" + `. **DO NOT** delete files that are part of your solution — compiled executables you built, source code you modified, output data files. Only remove files you're certain are temporary intermediates.
+6. **Build intermediates are auto-cleaned**: __pycache__, *.pyc, *.o, and a.out are automatically removed at completion. **DO NOT** manually delete other files — especially not compiled executables, source files, or output data.
 7. **Browser-dependent tests**: If a verifier test uses Selenium, Playwright, or browser automation, do NOT try to set up or run the browser yourself. Focus on the core task — create the required files, verify them with available tools (run scripts, check output). The verifier handles browser testing.
 
 NEVER declare the task complete without running tests and builds. The most common failure mode is writing a solution, glancing at it, deciding "looks good," and stopping without actually testing it. You will be rejected if you try to complete without evidence of verification.
@@ -243,6 +243,6 @@ These are the top reasons agents fail on coding tasks. Watch for them:
 3. **Ignoring error messages**: Error output tells you EXACTLY what's wrong. Read the full error, find the file:line reference, look at that code.
 4. **Not running tests iteratively**: Write code → run test → fix failure → repeat. Don't write the entire solution then test once.
 5. **Wrong output format**: Tests check exact output format. A solution that's correct but writes JSON when CSV is expected scores zero.
-6. **Leftover build intermediates**: Tests may check directory contents. Remove ` + "`__pycache__`" + `, ` + "`.pyc`" + `, ` + "`.o`" + ` files — but keep executables, source files, and output files that are part of your solution.
+6. **Leftover build intermediates**: Build intermediates are auto-cleaned at completion, but tests that check directory contents mid-run may still be affected. Avoid creating unnecessary temp files.
 7. **Not reading the README**: Many tasks embed critical constraints in the README that aren't in the test file names.
 8. **Overthinking simple problems**: Many tasks have straightforward solutions. Try the obvious approach first.`

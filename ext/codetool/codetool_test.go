@@ -5230,4 +5230,42 @@ FAILED (failures=2)
 		t.Errorf("expected 'test_divide' in failed tests, got: %s", summary)
 	}
 }
+func TestValidateOutputFormats_TrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+
+	// File without trailing newline should trigger warning.
+	os.WriteFile(filepath.Join(dir, "output.txt"), []byte("hello world"), 0o644)
+
+	// Use validateOutputFormats (which calls detectExpectedOutputs internally).
+	// For a direct test, we need the file to be in a pattern it checks.
+	// validateOutputFormats checks files matching "output.*" pattern.
+	issues := validateOutputFormats(dir)
+	if !strings.Contains(issues, "missing a trailing newline") {
+		t.Errorf("expected trailing newline warning, got: %q", issues)
+	}
+
+	// File WITH trailing newline should not trigger warning.
+	os.WriteFile(filepath.Join(dir, "output.txt"), []byte("hello world\n"), 0o644)
+	issues = validateOutputFormats(dir)
+	if strings.Contains(issues, "missing a trailing newline") {
+		t.Errorf("should not warn about trailing newline when present, got: %q", issues)
+	}
+}
+
+func TestIsBinaryLike(t *testing.T) {
+	// Text data.
+	if isBinaryLike([]byte("hello world\n")) {
+		t.Error("text data should not be binary-like")
+	}
+
+	// Binary data with NUL.
+	if !isBinaryLike([]byte("hello\x00world")) {
+		t.Error("data with NUL should be binary-like")
+	}
+
+	// Empty data.
+	if isBinaryLike([]byte{}) {
+		t.Error("empty data should not be binary-like")
+	}
+}
 

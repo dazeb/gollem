@@ -700,6 +700,15 @@ func validateOutputFormats(workDir string) string {
 			issues = append(issues, fmt.Sprintf("%s has Windows line endings (\\r\\n) — convert: sed -i 's/\\r$//' %s", o, path))
 		}
 
+		// Check trailing newline for text files. Most test frameworks
+		// expect text output to end with a newline. Missing trailing
+		// newline is one of the top 3 format-related failures.
+		if len(data) > 0 && !isBinaryLike(data) {
+			if data[len(data)-1] != '\n' {
+				issues = append(issues, fmt.Sprintf("%s is missing a trailing newline — most tests expect one. Add with: printf '\\n' >> %s", o, path))
+			}
+		}
+
 		// Validate JSON if expected.
 		if expectJSON && (strings.HasSuffix(o, ".json") || strings.HasSuffix(o, ".jsonl")) {
 			if strings.HasSuffix(o, ".jsonl") {
@@ -834,6 +843,22 @@ func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []stri
 			"read the test code line by line, including imports and helper functions"
 		return msg
 	}
+}
+
+// isBinaryLike checks if file data appears to be binary (not text).
+// Used to skip trailing newline checks on binary/image files.
+func isBinaryLike(data []byte) bool {
+	// Check first 512 bytes for NUL characters (binary indicator).
+	checkLen := len(data)
+	if checkLen > 512 {
+		checkLen = 512
+	}
+	for _, b := range data[:checkLen] {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // toolReturnContentString extracts a string from a ToolReturnPart's Content field.
