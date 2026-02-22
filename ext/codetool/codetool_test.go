@@ -5483,3 +5483,192 @@ Total tests: 5
 	}
 }
 
+func TestCTestCountExtraction(t *testing.T) {
+	output := `Test project /app/build
+    Start 1: test_basic
+1/4 Test #1: test_basic ...........   Passed    0.01 sec
+    Start 2: test_advanced
+2/4 Test #2: test_advanced ........   Passed    0.02 sec
+    Start 3: test_edge
+3/4 Test #3: test_edge ............***Failed    0.01 sec
+    Start 4: test_perf
+4/4 Test #4: test_perf ............   Passed    0.03 sec
+
+75% tests passed, 1 tests failed out of 4
+
+The following tests FAILED:
+          3 - test_edge (Failed)`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected extractTestCounts to find CTest counts")
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failure, got: %d", f)
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed, got: %d", p)
+	}
+}
+
+func TestCatch2CountExtraction(t *testing.T) {
+	output := `~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+tests is a Catch v2.13.6 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+Test multiply
+-------------------------------------------------------------------------------
+tests.cpp:15
+...............................................................................
+
+tests.cpp:17: FAILED:
+  REQUIRE( multiply(3, 4) == 11 )
+with expansion:
+  12 == 11
+
+===============================================================================
+test cases: 5 | 4 passed | 1 failed
+assertions: 8 | 7 passed | 1 failed`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected extractTestCounts to find Catch2 counts")
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failure, got: %d", f)
+	}
+	if p != 4 {
+		t.Errorf("expected 4 passed, got: %d", p)
+	}
+}
+
+func TestCatch2AllPassedExtraction(t *testing.T) {
+	output := `All tests passed (12 assertions in 5 test cases)`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected extractTestCounts to find Catch2 all-passed counts")
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failures, got: %d", f)
+	}
+	if p != 5 {
+		t.Errorf("expected 5 passed, got: %d", p)
+	}
+}
+
+func TestRSpecFailingTestExtraction(t *testing.T) {
+	output := `..F.F
+
+Failures:
+
+  1) Calculator#add adds two numbers
+     Failure/Error: expect(calc.add(2, 3)).to eq(6)
+
+       expected: 6
+            got: 5
+
+     # ./spec/calculator_spec.rb:10:in ` + "`block (3 levels) in <top (required)>`" + `
+
+  2) Calculator#multiply multiplies two numbers
+     Failure/Error: expect(calc.multiply(3, 4)).to eq(11)
+
+       expected: 11
+            got: 12
+
+     # ./spec/calculator_spec.rb:20:in ` + "`block (3 levels) in <top (required)>`" + `
+
+Finished in 0.123 seconds (files took 0.5 seconds to load)
+5 examples, 2 failures
+
+Failed examples:
+
+rspec ./spec/calculator_spec.rb:8 # Calculator#add adds two numbers
+rspec ./spec/calculator_spec.rb:18 # Calculator#multiply multiplies two numbers`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected testResultSummary to produce a summary")
+	}
+	if !strings.Contains(summary, "5 examples") {
+		t.Errorf("expected summary to contain '5 examples', got: %s", summary)
+	}
+	if !strings.Contains(summary, "2 failures") {
+		t.Errorf("expected summary to contain '2 failures', got: %s", summary)
+	}
+	if !strings.Contains(summary, "failed examples") {
+		t.Errorf("expected summary to contain 'failed examples', got: %s", summary)
+	}
+	if !strings.Contains(summary, "calculator_spec.rb:8") {
+		t.Errorf("expected summary to contain 'calculator_spec.rb:8', got: %s", summary)
+	}
+	// Should also have first failure detail.
+	if !strings.Contains(summary, "first failure") {
+		t.Errorf("expected summary to contain first failure detail, got: %s", summary)
+	}
+}
+
+func TestExtractCommandPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		argsJSON string
+		expected string
+	}{
+		{
+			name:     "simple command",
+			argsJSON: `{"command": "make test"}`,
+			expected: "make",
+		},
+		{
+			name:     "python with script",
+			argsJSON: `{"command": "python3 test.py"}`,
+			expected: "python3 test.py",
+		},
+		{
+			name:     "python with module",
+			argsJSON: `{"command": "python3 -m pytest"}`,
+			expected: "python3 -m pytest",
+		},
+		{
+			name:     "python different script",
+			argsJSON: `{"command": "python3 solution.py"}`,
+			expected: "python3 solution.py",
+		},
+		{
+			name:     "compound with cd",
+			argsJSON: `{"command": "cd /app && python3 test.py"}`,
+			expected: "python3 test.py",
+		},
+		{
+			name:     "full path interpreter",
+			argsJSON: `{"command": "/usr/bin/python3 test.py"}`,
+			expected: "python3 test.py",
+		},
+		{
+			name:     "node with script",
+			argsJSON: `{"command": "node test.js"}`,
+			expected: "node test.js",
+		},
+		{
+			name:     "go test stays simple",
+			argsJSON: `{"command": "go test ./..."}`,
+			expected: "go",
+		},
+		{
+			name:     "cargo test stays simple",
+			argsJSON: `{"command": "cargo test"}`,
+			expected: "cargo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractCommandPrefix(tt.argsJSON)
+			if got != tt.expected {
+				t.Errorf("extractCommandPrefix(%s) = %q, want %q", tt.argsJSON, got, tt.expected)
+			}
+		})
+	}
+}
+

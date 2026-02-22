@@ -1486,12 +1486,50 @@ func testResultSummary(output string) string {
 	// RSpec: "3 examples, 1 failure" or "5 examples, 0 failures"
 	if strings.Contains(lower, "example") && strings.Contains(lower, "failure") {
 		lines := strings.Split(output, "\n")
-		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+		var summary string
+		for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "example") && strings.Contains(lineLower, "failure") {
-				return "[test summary: " + line + "]"
+				summary = "[test summary: " + line + "]"
+				break
 			}
+		}
+		// Extract failing example names from "rspec ./spec/path:42 # description" lines.
+		// RSpec outputs these in a "Failed examples:" section at the end.
+		var failedExamples []string
+		inFailedSection := false
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "Failed examples:") {
+				inFailedSection = true
+				continue
+			}
+			if inFailedSection && strings.HasPrefix(trimmed, "rspec ") {
+				failedExamples = append(failedExamples, strings.TrimPrefix(trimmed, "rspec "))
+			} else if inFailedSection && trimmed == "" {
+				// Empty line after failed examples section — stop.
+				if len(failedExamples) > 0 {
+					break
+				}
+			}
+		}
+		if len(failedExamples) > 0 && summary != "" {
+			shown := failedExamples
+			if len(shown) > 10 {
+				shown = shown[:10]
+			}
+			summary += "\n[failed examples: " + strings.Join(shown, ", ")
+			if len(failedExamples) > 10 {
+				summary += fmt.Sprintf("... and %d more", len(failedExamples)-10)
+			}
+			summary += "]"
+		}
+		if detail := firstFailureDetail(output); detail != "" && summary != "" {
+			summary += "\n" + detail
+		}
+		if summary != "" {
+			return summary
 		}
 	}
 
@@ -1769,6 +1807,23 @@ func firstFailureDetail(output string) string {
 			}
 		}
 
+		// RSpec/Ruby: "expected: X" / "got: Y" on separate lines (lowercase, indented)
+		if strings.HasPrefix(strings.TrimSpace(strings.ToLower(trimmed)), "expected:") &&
+			!strings.HasPrefix(trimmed, "Expected:") { // skip Jest (already handled above)
+			detail := trimmed
+			if i+1 < len(lines) {
+				nextTrimmed := strings.TrimSpace(lines[i+1])
+				nextLower := strings.ToLower(nextTrimmed)
+				if strings.HasPrefix(nextLower, "got:") || strings.HasPrefix(nextLower, "actual:") {
+					detail += " / " + nextTrimmed
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
 		// Generic "Expected X, got Y" pattern (many test frameworks)
 		lower := strings.ToLower(trimmed)
 		if (strings.Contains(lower, "expected") && strings.Contains(lower, "got")) ||
@@ -1876,6 +1931,55 @@ func testFailureFingerprint(output string) string {
 func extractTestCounts(output string) (passed, failed int, ok bool) {
 	lower := strings.ToLower(output)
 	lines := strings.Split(output, "\n")
+
+	// Catch2 (C++): "test cases: 5 | 4 passed | 1 failed"
+	// or "All tests passed (X assertions in Y test cases)"
+	// MUST run before pytest — Catch2's "assertions" line has "passed"/"failed"
+	// which the pytest section would incorrectly parse as test counts.
+	if strings.Contains(lower, "test case") && strings.Contains(lower, "assertion") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "test case") {
+				continue
+			}
+			// "All tests passed (X assertions in Y test cases)"
+			if strings.HasPrefix(line, "all tests passed") {
+				var assertions, cases int
+				fmt.Sscanf(extractAfter(line, "("), "%d assertions in %d", &assertions, &cases)
+				if cases > 0 {
+					passed = cases
+					ok = true
+					return
+				}
+			}
+			// "test cases: 5 | 4 passed | 1 failed"
+			// Strip | separators and parse "N passed" / "N failed" directly.
+			cleaned := strings.ReplaceAll(line, "|", " ")
+			words := strings.Fields(cleaned)
+			var p, f int
+			foundPF := false
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					if nextWord == "passed" {
+						p = n
+						foundPF = true
+					} else if nextWord == "failed" || strings.HasPrefix(nextWord, "failure") {
+						f = n
+						foundPF = true
+					}
+				}
+			}
+			if foundPF {
+				passed = p
+				failed = f
+				ok = true
+				return
+			}
+		}
+	}
 
 	// pytest: "X passed, Y failed" or "X passed" (often in "==== 3 passed, 2 failed ====")
 	if strings.Contains(lower, "passed") {
@@ -2180,6 +2284,65 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			fmt.Sscanf(extractAfter(window, "passed:"), "%d", &passed)
 			fmt.Sscanf(extractAfter(window, "failed:"), "%d", &failed)
 			if passed+failed > 0 {
+				ok = true
+				return
+			}
+		}
+	}
+
+	// CTest: "XX% tests passed, Y tests failed out of Z"
+	if strings.Contains(lower, "tests passed") && strings.Contains(lower, "tests failed") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "tests passed") || !strings.Contains(line, "tests failed") {
+				continue
+			}
+			// Parse "Y tests failed out of Z"
+			words := strings.Fields(line)
+			for j := 0; j+3 < len(words); j++ {
+				if isNumeric(words[j]) && words[j+1] == "tests" && words[j+2] == "failed" {
+					var f int
+					fmt.Sscanf(words[j], "%d", &f)
+					failed = f
+					// Look for "out of Z" after "failed"
+					for k := j + 3; k+2 < len(words); k++ {
+						if words[k] == "out" && words[k+1] == "of" && isNumeric(words[k+2]) {
+							var total int
+							fmt.Sscanf(words[k+2], "%d", &total)
+							passed = total - failed
+							ok = true
+							return
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Gradle: "X tests completed, Y failed" or "X tests, Y failures"
+	if strings.Contains(lower, "tests completed") || (strings.Contains(lower, "tests") && strings.Contains(lower, "gradle")) {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "test") {
+				continue
+			}
+			words := strings.Fields(line)
+			var total, failures int
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					if strings.HasPrefix(nextWord, "test") && strings.Contains(nextWord, "completed") || (j+2 < len(words) && strings.TrimRight(words[j+2], ",.;:") == "completed") {
+						total = n
+					} else if nextWord == "failed" || strings.HasPrefix(nextWord, "failure") {
+						failures = n
+					}
+				}
+			}
+			if total > 0 {
+				failed = failures
+				passed = total - failed
 				ok = true
 				return
 			}

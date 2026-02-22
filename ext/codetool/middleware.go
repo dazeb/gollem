@@ -152,9 +152,14 @@ func extractPathFromArgs(argsJSON string) string {
 	return args.File
 }
 
-// extractCommandPrefix extracts the first word/command from a bash tool call's
-// ArgsJSON. This is used for loop detection — if the same command prefix keeps
-// getting run, the agent is likely stuck.
+// extractCommandPrefix extracts a fingerprint from a bash tool call's ArgsJSON
+// for loop detection. The fingerprint must be specific enough to distinguish
+// different operations (e.g., "python3 test.py" vs "python3 solution.py") but
+// general enough to catch true loops (same command repeated without progress).
+//
+// For interpreter commands (python, node, ruby, etc.), includes the script name
+// to avoid false positives during normal iterative testing. For compound
+// commands (cd /foo && python test.py), skips shell preamble.
 func extractCommandPrefix(argsJSON string) string {
 	var args struct {
 		Command string `json:"command"`
@@ -166,13 +171,63 @@ func extractCommandPrefix(argsJSON string) string {
 	if cmd == "" {
 		return ""
 	}
-	// Use first token as the prefix (e.g., "python", "npm", "go").
-	// For paths like /usr/bin/python, use the basename.
+
+	// For compound commands (using && or ;), use the last significant command.
+	// This handles patterns like "cd /app && python test.py" where the real
+	// action is the last part. Also handles "export FOO=bar && make test".
+	parts := strings.Split(cmd, "&&")
+	if len(parts) > 1 {
+		cmd = strings.TrimSpace(parts[len(parts)-1])
+	}
+	// Also handle semicolons (less common but valid).
+	parts = strings.Split(cmd, ";")
+	if len(parts) > 1 {
+		last := strings.TrimSpace(parts[len(parts)-1])
+		if last != "" {
+			cmd = last
+		}
+	}
+
 	fields := strings.Fields(cmd)
 	if len(fields) == 0 {
 		return ""
 	}
-	return filepath.Base(fields[0])
+
+	// Skip common preamble commands that aren't the real action.
+	skipPrefixes := map[string]bool{
+		"cd": true, "env": true, "sudo": true, "time": true,
+		"timeout": true, "nice": true, "nohup": true, "exec": true,
+	}
+	for len(fields) > 1 && skipPrefixes[filepath.Base(fields[0])] {
+		fields = fields[1:]
+		// Skip cd's target directory argument.
+		if filepath.Base(fields[0]) == "cd" {
+			fields = fields[1:]
+		}
+	}
+
+	base := filepath.Base(fields[0])
+
+	// For interpreters, include the script name (second token) to distinguish
+	// "python3 test.py" from "python3 solution.py". Without this, normal
+	// iterative testing (5 runs of pytest) falsely triggers loop warnings.
+	interpreters := map[string]bool{
+		"python": true, "python3": true, "python2": true,
+		"node": true, "nodejs": true,
+		"ruby": true, "perl": true, "lua": true,
+		"julia": true, "Rscript": true, "php": true,
+	}
+	if interpreters[base] && len(fields) >= 2 {
+		arg := fields[1]
+		// For flags like -m, -c, -e, include the flag + next token.
+		if strings.HasPrefix(arg, "-") && len(fields) >= 3 {
+			return base + " " + arg + " " + filepath.Base(fields[2])
+		}
+		// For script paths, use just the basename.
+		return base + " " + filepath.Base(arg)
+	}
+
+	return base
 }
 
 // ContextInjectionMiddleware injects environment context at the start of the
