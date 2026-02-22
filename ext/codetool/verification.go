@@ -426,6 +426,17 @@ func isVerificationString(cmd string) bool {
 		"valgrind ",                // memory leak checking
 		"curl localhost", "curl 127.0.0.1", "curl http://localhost", // service verification
 		"wget localhost", "wget 127.0.0.1",
+		// Network/service verification commands.
+		"nc localhost", "nc 127.0.0.1", "nc -z",       // netcat connectivity checks
+		"netcat localhost", "netcat 127.0.0.1",
+		"ss -tlnp", "ss -tnlp",                        // listening port checks
+		"lsof -i:",                                     // port ownership checks
+		"nginx -t", "apachectl configtest",             // config validation
+		"sshd -t",                                       // SSH config validation
+		"named-checkconf", "named-checkzone",           // DNS config validation
+		"postconf -n",                                   // Postfix config check
+		"systemctl status",                              // service status checks
+		"service ", // SysV service status
 	}
 
 	for _, p := range testPatterns {

@@ -302,6 +302,13 @@ class GollemAgent(BaseInstalledAgent):
                 "    break; "
                 "  fi; "
                 "done; "
+                # Ruby: Gemfile — install gems
+                "for d in /app .; do "
+                "  if [ -f \"$d/Gemfile\" ] && command -v bundle >/dev/null 2>&1; then "
+                "    cd \"$d\" && bundle install 2>&1 | tail -5 || true; "
+                "    break; "
+                "  fi; "
+                "done; "
                 # Python: also scan conftest.py for imports (pytest fixtures often need extra packages)
                 "for td in /tests /app/tests; do "
                 "  if [ -f \"$td/conftest.py\" ]; then "
