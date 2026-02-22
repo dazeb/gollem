@@ -1164,6 +1164,92 @@ func TestIsPipCommand(t *testing.T) {
 	}
 }
 
+func TestIsDestructiveTestCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		// Destructive operations — should be blocked.
+		{"redirect to tests", "echo hello > /tests/test.sh", true},
+		{"append to tests", "echo hello >> /tests/test.sh", true},
+		{"rm tests file", "rm /tests/test.sh", true},
+		{"rm -rf tests", "rm -rf /tests/", true},
+		{"sed -i on tests", "sed -i 's/old/new/' /tests/test.py", true},
+		{"chmod tests", "chmod +x /tests/test.sh", true},
+		{"tee to tests", "echo data | tee /tests/out.txt", true},
+		{"truncate tests", "truncate -s 0 /tests/test.sh", true},
+
+		// Non-destructive operations — should be allowed.
+		{"run test script", "bash /tests/test.sh", false},
+		{"run python test", "python3 /tests/test.py", false},
+		{"cat test file", "cat /tests/test.sh", false},
+		{"ls tests dir", "ls /tests/", false},
+		{"head test file", "head -n 10 /tests/test.py", false},
+		{"diff with tests", "diff output.txt /tests/expected.txt", false},
+		{"grep in tests", "grep -r 'pattern' /tests/", false},
+		{"no tests ref", "echo hello > /app/output.txt", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isDestructiveTestCommand(tt.cmd)
+			if got != tt.want {
+				t.Errorf("isDestructiveTestCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTransientBashFailure(t *testing.T) {
+	tests := []struct {
+		name     string
+		exitCode int
+		output   string
+		want     bool
+	}{
+		{"network error", 1, "Could not resolve host: example.com", true},
+		{"connection timeout", 1, "Connection timed out", true},
+		{"dpkg lock", 1, "unable to acquire the dpkg frontend lock", true},
+		{"hash sum mismatch", 1, "Hash sum mismatch", true},
+		{"failed to fetch", 100, "E: Failed to fetch http://archive.ubuntu.com/", true},
+		{"success", 0, "all good", false},
+		{"normal error", 1, "syntax error near unexpected token", false},
+		{"test failure", 1, "FAILED test_something", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isTransientBashFailure(tt.exitCode, tt.output)
+			if got != tt.want {
+				t.Errorf("isTransientBashFailure(%d, %q) = %v, want %v", tt.exitCode, tt.output, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBash_BlocksDestructiveTestCommand(t *testing.T) {
+	tool := Bash()
+	err := callErr(t, tool, `{"command":"echo pwned > /tests/test.sh"}`)
+	if err == nil {
+		t.Fatal("expected error for destructive test command")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got %T: %v", err, err)
+	}
+	if !strings.Contains(retryErr.Message, "BLOCKED") {
+		t.Errorf("expected BLOCKED message, got: %s", retryErr.Message)
+	}
+}
+
+func TestBash_AllowsRunningTests(t *testing.T) {
+	// Running tests from /tests/ should not be blocked.
+	tool := Bash()
+	// Use a simple echo to verify the command runs (bash /tests/... would fail
+	// because /tests/ doesn't exist, but it should not be blocked by our check).
+	result := call(t, tool, `{"command":"echo 'bash /tests/test.sh would run here'"}`)
+	assertContains(t, result, "bash /tests/test.sh would run here")
+}
+
 func TestIsProtectedTestFile(t *testing.T) {
 	tests := []struct {
 		path string

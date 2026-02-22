@@ -79,6 +79,17 @@ func Bash(opts ...Option) core.Tool {
 				return "", &core.ModelRetryError{Message: "command must not be empty"}
 			}
 
+			// Block bash commands that destructively modify verifier test files.
+			// The edit/write tools already block /tests/ modifications, but
+			// agents can bypass that via bash redirects, rm, sed -i, etc.
+			if isDestructiveTestCommand(params.Command) {
+				return "", &core.ModelRetryError{
+					Message: "BLOCKED: This command would modify files in /tests/ (verifier test directory). " +
+						"The verifier runs the ORIGINAL tests — your changes will be ignored. " +
+						"Fix YOUR code to pass the tests instead.",
+				}
+			}
+
 			timeout := cfg.BashTimeout
 			if params.Timeout != nil && *params.Timeout > 0 {
 				timeout = time.Duration(*params.Timeout) * time.Second
@@ -114,33 +125,66 @@ func Bash(opts ...Option) core.Tool {
 				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
 
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-
-			err := cmd.Run()
-
+			// Execute the command with one auto-retry for transient failures
+			// (network errors, dpkg locks, etc.). This saves a full agent turn.
+			var outStr, errStr string
 			exitCode := 0
 			timedOut := false
-			if err != nil {
-				// Check timeout first — on some platforms a killed process
-				// returns ExitError with code -1, so we must check context
-				// before inspecting the exit code.
-				if ctx.Err() == context.DeadlineExceeded {
-					timedOut = true
-					exitCode = 124
+			retried := false
+
+			for attempt := 0; attempt < 2; attempt++ {
+				var stdout, stderr bytes.Buffer
+				if attempt == 0 {
+					cmd.Stdout = &stdout
+					cmd.Stderr = &stderr
 				} else {
-					var exitErr *exec.ExitError
-					if errors.As(err, &exitErr) {
-						exitCode = exitErr.ExitCode()
+					// Re-create cmd for retry (exec.Cmd can only be started once).
+					retried = true
+					cmd = exec.CommandContext(ctx, "bash", "-c", params.Command)
+					if cfg.WorkDir != "" {
+						cmd.Dir = cfg.WorkDir
+					}
+					if isPipCommand(params.Command) {
+						cmd.Env = append(os.Environ(), "PIP_BREAK_SYSTEM_PACKAGES=1")
+					}
+					cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+					cmd.Cancel = func() error {
+						return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+					}
+					cmd.Stdout = &stdout
+					cmd.Stderr = &stderr
+					fmt.Fprintf(os.Stderr, "[gollem] bash: auto-retrying transient failure\n")
+					// Brief pause before retry.
+					time.Sleep(2 * time.Second)
+				}
+
+				err := cmd.Run()
+
+				exitCode = 0
+				timedOut = false
+				if err != nil {
+					if ctx.Err() == context.DeadlineExceeded {
+						timedOut = true
+						exitCode = 124
 					} else {
-						return "", fmt.Errorf("failed to execute command: %w", err)
+						var exitErr *exec.ExitError
+						if errors.As(err, &exitErr) {
+							exitCode = exitErr.ExitCode()
+						} else {
+							return "", fmt.Errorf("failed to execute command: %w", err)
+						}
 					}
 				}
-			}
 
-			outStr := stdout.String()
-			errStr := stderr.String()
+				outStr = stdout.String()
+				errStr = stderr.String()
+
+				// Auto-retry on transient failures (first attempt only).
+				if attempt == 0 && !timedOut && isTransientBashFailure(exitCode, outStr+errStr) {
+					continue
+				}
+				break
+			}
 			rawLen := len(outStr) + len(errStr)
 
 			// Truncate long output, keeping head and tail so the model can
@@ -149,6 +193,11 @@ func Bash(opts ...Option) core.Tool {
 			errStr = truncateOutput(errStr, cfg.MaxOutputLen)
 
 			result := formatBashOutput(outStr, errStr, exitCode, timedOut, timeout)
+
+			// Note when the command succeeded after auto-retry.
+			if retried && exitCode == 0 {
+				result += "\n[auto-retried after transient failure — succeeded on second attempt]"
+			}
 
 			// Hint when output was heavily truncated — suggest file redirect.
 			if rawLen > cfg.MaxOutputLen*2 {
@@ -816,6 +865,115 @@ func isBuildCommand(cmd string) bool {
 	}
 	for _, p := range buildPatterns {
 		if strings.HasPrefix(lower, p) || strings.Contains(lower, " && "+p) || strings.Contains(lower, "; "+p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDestructiveTestCommand checks whether a bash command would destructively
+// modify files in /tests/ (the verifier test directory). This blocks:
+//   - Redirects to /tests/ files (>, >>)
+//   - rm, mv, cp targeting /tests/
+//   - sed -i (in-place edit) on /tests/ files
+//   - chmod, chown on /tests/ files
+//   - truncate on /tests/ files
+//
+// It does NOT block running tests (bash /tests/test.sh, python3 /tests/test.py)
+// or reading tests (cat /tests/test.sh, head /tests/test.py).
+func isDestructiveTestCommand(cmd string) bool {
+	// Quick check: if the command doesn't reference /tests/, skip.
+	if !strings.Contains(cmd, "/tests/") {
+		return false
+	}
+
+	// Destructive patterns that target /tests/ files.
+	lower := strings.ToLower(cmd)
+
+	// Redirects to /tests/ files.
+	if (strings.Contains(cmd, "> /tests/") || strings.Contains(cmd, ">/tests/") ||
+		strings.Contains(cmd, ">> /tests/") || strings.Contains(cmd, ">>/tests/")) {
+		return true
+	}
+
+	// tee writing to /tests/ files.
+	if strings.Contains(lower, "tee ") && strings.Contains(cmd, "/tests/") {
+		// Check if /tests/ comes after tee (output target).
+		teeIdx := strings.Index(lower, "tee ")
+		testsIdx := strings.Index(cmd[teeIdx:], "/tests/")
+		if testsIdx > 0 {
+			return true
+		}
+	}
+
+	// rm targeting /tests/ files.
+	if (strings.Contains(lower, "rm ") || strings.Contains(lower, "rm -")) && strings.Contains(cmd, "/tests/") {
+		return true
+	}
+
+	// sed -i (in-place edit) on /tests/ files.
+	if strings.Contains(lower, "sed ") && strings.Contains(lower, "-i") && strings.Contains(cmd, "/tests/") {
+		return true
+	}
+
+	// chmod, chown on /tests/ files (prevents making tests non-executable, etc.).
+	if (strings.Contains(lower, "chmod ") || strings.Contains(lower, "chown ")) && strings.Contains(cmd, "/tests/") {
+		return true
+	}
+
+	// truncate on /tests/ files.
+	if strings.Contains(lower, "truncate ") && strings.Contains(cmd, "/tests/") {
+		return true
+	}
+
+	// mv/cp with /tests/ as destination (overwriting test files).
+	// Only block if /tests/ is in the latter part (destination).
+	if strings.Contains(lower, "cp ") || strings.Contains(lower, "mv ") {
+		// Split on /tests/ and check if it appears after the first argument.
+		parts := strings.SplitN(cmd, "/tests/", 2)
+		if len(parts) == 2 {
+			before := parts[0]
+			// If /tests/ follows the source argument (i.e., it's the destination), block.
+			if strings.Contains(before, "cp ") || strings.Contains(before, "mv ") {
+				// But NOT if /tests/ is the source (first arg after cp/mv).
+				lastSpace := strings.LastIndex(strings.TrimSpace(before), " ")
+				if lastSpace > 0 {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// isTransientBashFailure returns true if the bash output suggests a transient
+// failure that's likely to succeed on retry (network errors, lock contention).
+func isTransientBashFailure(exitCode int, output string) bool {
+	if exitCode == 0 {
+		return false
+	}
+	lower := strings.ToLower(output)
+
+	transientPatterns := []string{
+		"could not resolve host",
+		"connection timed out",
+		"connection refused",
+		"temporary failure in name resolution",
+		"network is unreachable",
+		"unable to fetch",
+		"failed to download",
+		"dpkg was interrupted",
+		"unable to acquire the dpkg",
+		"is another process using it",
+		"hash sum mismatch",        // apt mirror inconsistency
+		"failed to fetch",          // apt download failure
+		"connection reset by peer",
+		"ssl_error_syscall",
+		"read: connection reset",
+	}
+	for _, p := range transientPatterns {
+		if strings.Contains(lower, p) {
 			return true
 		}
 	}
