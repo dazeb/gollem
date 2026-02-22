@@ -133,7 +133,9 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(DefaultReasoningSandwichConfig())),
 		// 5. Verification tracking — track whether agent runs tests.
 		core.WithAgentMiddleware[string](verifyMW),
-		// 6. Stderr logging — real-time tool call observability.
+		// 6. Context overflow recovery — catches 413 and retries with compressed messages.
+		core.WithAgentMiddleware[string](ContextOverflowMiddleware()),
+		// 7. Stderr logging — real-time tool call observability.
 		core.WithAgentMiddleware[string](stderrLoggingMiddleware()),
 
 		// Output validator: reject completion without verification.
@@ -150,10 +152,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		core.WithDefaultToolTimeout[string](3 * time.Minute),
 
 		// Auto context: compress old messages when context grows too large.
-		// Keep at 100K to stay within API request size limits (xAI/grok
-		// returns 413 at ~130K tokens).
+		// Set to 80K to leave headroom before provider limits (xAI/grok
+		// returns 413 at ~130K tokens). ContextOverflowMiddleware provides
+		// a safety net if we still exceed the limit.
 		core.WithAutoContext[string](core.AutoContextConfig{
-			MaxTokens: 100000,
+			MaxTokens: 80000,
 			KeepLastN: 10,
 		}),
 

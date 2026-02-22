@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1334,4 +1336,126 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 
 		return next(ctx, messages, settings, params)
 	}
+}
+
+// ContextOverflowMiddleware catches HTTP 413 (Request Entity Too Large) errors
+// from the model provider and performs emergency context compression before
+// retrying. This handles the case where auto-context's token estimation
+// underestimates and the actual payload exceeds the provider's limit.
+func ContextOverflowMiddleware() core.AgentMiddleware {
+	return func(
+		ctx context.Context,
+		messages []core.ModelMessage,
+		settings *core.ModelSettings,
+		params *core.ModelRequestParameters,
+		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
+	) (*core.ModelResponse, error) {
+		resp, err := next(ctx, messages, settings, params)
+		if err == nil {
+			return resp, nil
+		}
+
+		// Only handle 413 errors.
+		var httpErr *core.ModelHTTPError
+		if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusRequestEntityTooLarge {
+			return nil, err
+		}
+
+		compressed := emergencyCompressMessages(messages)
+		if len(compressed) >= len(messages) {
+			// Can't compress further, propagate the error.
+			return nil, err
+		}
+
+		fmt.Fprintf(os.Stderr, "[gollem] 413 context overflow: emergency compression %d → %d messages, retrying\n",
+			len(messages), len(compressed))
+
+		return next(ctx, compressed, settings, params)
+	}
+}
+
+// emergencyCompressMessages performs aggressive message truncation for 413 recovery.
+// Keeps the first message (task description), adds an emergency note, and keeps the
+// last 6 messages with oversized content truncated.
+func emergencyCompressMessages(messages []core.ModelMessage) []core.ModelMessage {
+	const keepLast = 6
+	const maxContentBytes = 20000 // 20KB per content block
+
+	if len(messages) <= keepLast+1 {
+		// Can't drop messages, but still try truncating content.
+		result := make([]core.ModelMessage, len(messages))
+		for i, msg := range messages {
+			result[i] = truncateMessageContent(msg, maxContentBytes)
+		}
+		return result
+	}
+
+	result := make([]core.ModelMessage, 0, keepLast+2)
+	result = append(result, messages[0]) // first message (task + system prompt)
+
+	// Emergency recovery note.
+	result = append(result, core.ModelRequest{
+		Parts: []core.ModelRequestPart{
+			core.SystemPromptPart{
+				Content: "[EMERGENCY CONTEXT RECOVERY] Previous conversation history was too large " +
+					"and has been truncated to recover from a 413 error. Focus on completing " +
+					"the task with the remaining context. Check output files and test results " +
+					"to understand current state.",
+			},
+		},
+	})
+
+	// Keep last N messages with content truncation.
+	tail := messages[len(messages)-keepLast:]
+	for _, msg := range tail {
+		result = append(result, truncateMessageContent(msg, maxContentBytes))
+	}
+
+	return result
+}
+
+// truncateMessageContent truncates oversized content within a single message.
+func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessage {
+	switch m := msg.(type) {
+	case core.ModelRequest:
+		parts := make([]core.ModelRequestPart, len(m.Parts))
+		for i, part := range m.Parts {
+			switch p := part.(type) {
+			case core.ToolReturnPart:
+				if s, ok := p.Content.(string); ok && len(s) > maxBytes {
+					p.Content = s[:maxBytes] + "\n... [truncated: context overflow recovery]"
+					parts[i] = p
+					continue
+				}
+			case core.UserPromptPart:
+				if len(p.Content) > maxBytes {
+					p.Content = p.Content[:maxBytes] + "\n... [truncated: context overflow recovery]"
+					parts[i] = p
+					continue
+				}
+			case core.RetryPromptPart:
+				if len(p.Content) > maxBytes {
+					p.Content = p.Content[:maxBytes] + "\n... [truncated: context overflow recovery]"
+					parts[i] = p
+					continue
+				}
+			}
+			parts[i] = part
+		}
+		m.Parts = parts
+		return m
+	case core.ModelResponse:
+		parts := make([]core.ModelResponsePart, len(m.Parts))
+		for i, part := range m.Parts {
+			if tp, ok := part.(core.TextPart); ok && len(tp.Content) > maxBytes {
+				tp.Content = tp.Content[:maxBytes] + "\n... [truncated]"
+				parts[i] = tp
+				continue
+			}
+			parts[i] = part
+		}
+		m.Parts = parts
+		return m
+	}
+	return msg
 }

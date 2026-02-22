@@ -58,7 +58,7 @@ func defaults() *Config {
 	return &Config{
 		BashTimeout:  120 * time.Second,
 		MaxFileSize:  1 << 20, // 1MB
-		MaxOutputLen: 100 * 1024,
+		MaxOutputLen: 50 * 1024,
 	}
 }
 
