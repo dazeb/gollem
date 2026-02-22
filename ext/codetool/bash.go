@@ -230,6 +230,15 @@ func Bash(opts ...Option) core.Tool {
 			if hint := jsonErrorHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := encodingErrorHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := permissionHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := addressInUseHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			combined := outStr + errStr
@@ -600,9 +609,8 @@ func signalHint(exitCode int) string {
 }
 
 // pythonErrorHint extracts actionable information from Python errors.
-// SyntaxError, IndentationError, and NameError are the most common Python
-// failures that waste turns because the agent doesn't immediately know the
-// exact file and line to fix.
+// Extracts file:line from tracebacks for ALL error types (not just syntax
+// errors) and provides targeted guidance based on the error category.
 func pythonErrorHint(output string, exitCode int) string {
 	if exitCode == 0 {
 		return ""
@@ -619,7 +627,7 @@ func pythonErrorHint(output string, exitCode int) string {
 	// followed by the error line. Extract the LAST traceback frame
 	// (innermost/most relevant).
 	var lastFile, lastLine, errorType string
-	for i, line := range lines {
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "File \"") {
 			// Extract file and line number.
@@ -635,33 +643,59 @@ func pythonErrorHint(output string, exitCode int) string {
 				}
 			}
 		}
-		// Capture the error type (usually at the end of traceback).
-		if strings.Contains(trimmed, "SyntaxError:") ||
-			strings.Contains(trimmed, "IndentationError:") ||
-			strings.Contains(trimmed, "TabError:") {
-			errorType = trimmed
-			_ = i // suppress unused warning
+		// Capture the error type line (the final error at the end of traceback).
+		// Match common Python exception patterns.
+		for _, errPrefix := range []string{
+			"SyntaxError:", "IndentationError:", "TabError:",
+			"TypeError:", "ValueError:", "KeyError:", "IndexError:",
+			"FileNotFoundError:", "PermissionError:", "OSError:",
+			"AttributeError:", "NameError:", "ImportError:",
+			"ZeroDivisionError:", "RuntimeError:", "StopIteration:",
+			"RecursionError:", "OverflowError:", "AssertionError:",
+			"UnicodeDecodeError:", "UnicodeEncodeError:",
+		} {
+			if strings.Contains(trimmed, errPrefix) {
+				errorType = trimmed
+				break
+			}
 		}
 	}
 
 	if errorType != "" && lastFile != "" && lastLine != "" {
-		hint := fmt.Sprintf("[hint: %s at %s:%s — use the view tool with offset=%s to see the exact code, then fix with edit]",
-			errorType, lastFile, lastLine, lastLine)
+		// Skip files in standard library / site-packages — the error
+		// is in user code, and the innermost user frame is more useful.
+		// But if it's the only frame we found, still show it.
+		hint := fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			truncateErrorLine(errorType, 150), lastFile, lastLine, lastLine)
 		return hint
 	}
 
-	// NameError with a suggestion (Python 3.10+): "NameError: name 'foo' is not defined. Did you mean: 'bar'?"
+	// NameError/AttributeError with a suggestion (Python 3.10+).
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "NameError:") && strings.Contains(trimmed, "Did you mean:") {
-			return "[hint: " + trimmed + "]"
+		if (strings.Contains(trimmed, "NameError:") || strings.Contains(trimmed, "AttributeError:")) &&
+			strings.Contains(trimmed, "Did you mean:") {
+			return "[hint: " + truncateErrorLine(trimmed, 150) + "]"
 		}
-		if strings.Contains(trimmed, "AttributeError:") && strings.Contains(trimmed, "Did you mean:") {
-			return "[hint: " + trimmed + "]"
+	}
+
+	// FileNotFoundError without traceback location — still useful to surface.
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "FileNotFoundError:") {
+			return "[hint: " + truncateErrorLine(trimmed, 150) + " — check the file path exists and is spelled correctly]"
 		}
 	}
 
 	return ""
+}
+
+// truncateErrorLine shortens an error line for hint display.
+func truncateErrorLine(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // compilationErrorHint extracts the first file:line from C/C++, Go, and Rust
@@ -766,6 +800,54 @@ func jsonErrorHint(output string, exitCode int) string {
 		}
 	}
 
+	return ""
+}
+
+// encodingErrorHint detects Python UnicodeDecodeError/UnicodeEncodeError and
+// provides the fix. These waste 1-2 turns as the agent figures out encoding.
+func encodingErrorHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	if strings.Contains(output, "UnicodeDecodeError:") {
+		return "[hint: UnicodeDecodeError — add encoding='utf-8' and errors='replace' to open() calls, " +
+			"or use: open(file, 'r', encoding='utf-8', errors='replace'). " +
+			"For binary files, use open(file, 'rb')]"
+	}
+	if strings.Contains(output, "UnicodeEncodeError:") {
+		return "[hint: UnicodeEncodeError — add encoding='utf-8' to open() calls for writing, " +
+			"or encode strings with .encode('utf-8', errors='replace')]"
+	}
+	return ""
+}
+
+// permissionHint detects "Permission denied" on executable scripts (exit code 126)
+// and suggests chmod +x. Saves 1 turn of troubleshooting.
+func permissionHint(output string, exitCode int) string {
+	if exitCode == 126 {
+		return "[hint: permission denied — the script is not executable. Run: chmod +x <script_path>, then retry]"
+	}
+	// Also catch "Permission denied" when trying to run a script directly.
+	if exitCode != 0 && strings.Contains(output, "Permission denied") {
+		lower := strings.ToLower(output)
+		// Check if it's a script execution issue (not a file access issue).
+		if strings.Contains(lower, ".sh") || strings.Contains(lower, ".py") ||
+			strings.Contains(lower, "./") {
+			return "[hint: permission denied — try: chmod +x <script>, then retry. Or run with: bash <script> or python3 <script>]"
+		}
+	}
+	return ""
+}
+
+// addressInUseHint detects "Address already in use" errors from server processes.
+func addressInUseHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	if strings.Contains(output, "Address already in use") || strings.Contains(output, "EADDRINUSE") {
+		return "[hint: port already in use — find the process with: lsof -i :<port> or ss -tlnp | grep <port>, " +
+			"then kill it with: kill <pid>. Or use a different port.]"
+	}
 	return ""
 }
 

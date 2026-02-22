@@ -1691,3 +1691,99 @@ func TestJsonErrorHint(t *testing.T) {
 		})
 	}
 }
+
+func TestPythonErrorHintExpanded(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		exitCode int
+		contains string
+	}{
+		{
+			name: "type_error_with_traceback",
+			output: `Traceback (most recent call last):
+  File "main.py", line 42, in process
+    result = x + "hello"
+TypeError: unsupported operand type(s) for +: 'int' and 'str'`,
+			exitCode: 1,
+			contains: "main.py:42",
+		},
+		{
+			name: "value_error_with_traceback",
+			output: `Traceback (most recent call last):
+  File "/app/solver.py", line 15, in parse
+    val = int("abc")
+ValueError: invalid literal for int() with base 10: 'abc'`,
+			exitCode: 1,
+			contains: "solver.py:15",
+		},
+		{
+			name: "key_error_with_traceback",
+			output: `Traceback (most recent call last):
+  File "data.py", line 8, in load
+    x = d["missing"]
+KeyError: 'missing'`,
+			exitCode: 1,
+			contains: "data.py:8",
+		},
+		{
+			name: "file_not_found_no_traceback",
+			output: `FileNotFoundError: [Errno 2] No such file or directory: 'output.csv'`,
+			exitCode: 1,
+			contains: "output.csv",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pythonErrorHint(tt.output, tt.exitCode)
+			if tt.contains != "" && !strings.Contains(got, tt.contains) {
+				t.Errorf("expected hint containing %q, got: %s", tt.contains, got)
+			}
+		})
+	}
+}
+
+func TestEncodingErrorHint(t *testing.T) {
+	got := encodingErrorHint("UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff", 1)
+	if !strings.Contains(got, "encoding='utf-8'") {
+		t.Errorf("expected encoding hint, got: %s", got)
+	}
+	got = encodingErrorHint("UnicodeEncodeError: 'ascii' codec can't encode character", 1)
+	if !strings.Contains(got, "encoding='utf-8'") {
+		t.Errorf("expected encoding hint, got: %s", got)
+	}
+	got = encodingErrorHint("success output", 0)
+	if got != "" {
+		t.Errorf("expected no hint for success, got: %s", got)
+	}
+}
+
+func TestPermissionHint(t *testing.T) {
+	got := permissionHint("bash: ./run.sh: Permission denied", 126)
+	if !strings.Contains(got, "chmod") {
+		t.Errorf("expected chmod hint for exit 126, got: %s", got)
+	}
+	got = permissionHint("Permission denied: ./test.py", 1)
+	if !strings.Contains(got, "chmod") {
+		t.Errorf("expected chmod hint for script, got: %s", got)
+	}
+	got = permissionHint("all good", 0)
+	if got != "" {
+		t.Errorf("expected no hint for success, got: %s", got)
+	}
+}
+
+func TestAddressInUseHint(t *testing.T) {
+	got := addressInUseHint("OSError: [Errno 98] Address already in use", 1)
+	if !strings.Contains(got, "port") {
+		t.Errorf("expected port hint, got: %s", got)
+	}
+	got = addressInUseHint("Error: listen EADDRINUSE: address already in use :::3000", 1)
+	if !strings.Contains(got, "port") {
+		t.Errorf("expected port hint for EADDRINUSE, got: %s", got)
+	}
+	got = addressInUseHint("server started", 0)
+	if got != "" {
+		t.Errorf("expected no hint for success, got: %s", got)
+	}
+}
