@@ -74,14 +74,23 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 		return messages, nil
 	}
 
-	// Keep the last N messages.
+	// Keep the last N messages AND the first message (which contains the
+	// task description, system prompt, and environment context). Losing
+	// the original task requirements is a common failure mode.
 	keepN := config.KeepLastN
 	if keepN >= len(messages) {
 		return messages, nil // can't compress further
 	}
 
-	oldMessages := messages[:len(messages)-keepN]
+	// Always preserve the first message (task + system prompt).
+	// Summarize messages[1:len-keepN], keep messages[0] and messages[len-keepN:].
+	firstMsg := messages[0]
+	oldMessages := messages[1 : len(messages)-keepN]
 	recentMessages := messages[len(messages)-keepN:]
+
+	if len(oldMessages) == 0 {
+		return messages, nil // nothing to compress
+	}
 
 	// Build a summary of old messages.
 	summaryModel := config.SummaryModel
@@ -149,7 +158,7 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 		return messages, err
 	}
 
-	// Build new message list with summary + recent messages.
+	// Build new message list: first message + summary + recent messages.
 	summaryMsg := ModelRequest{
 		Parts: []ModelRequestPart{
 			SystemPromptPart{
@@ -160,7 +169,8 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 		Timestamp: time.Now(),
 	}
 
-	result := make([]ModelMessage, 0, 1+len(recentMessages))
+	result := make([]ModelMessage, 0, 2+len(recentMessages))
+	result = append(result, firstMsg)
 	result = append(result, summaryMsg)
 	result = append(result, recentMessages...)
 	return result, nil

@@ -51,9 +51,9 @@ func TestAutoContext_CompressesOld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should be compressed: 1 summary + 4 recent = 5
-	if len(result) != 5 {
-		t.Errorf("expected 5 messages after compression, got %d", len(result))
+	// Should be compressed: 1 first msg + 1 summary + 4 recent = 6
+	if len(result) != 6 {
+		t.Errorf("expected 6 messages after compression, got %d", len(result))
 	}
 }
 
@@ -77,13 +77,13 @@ func TestAutoContext_KeepsRecent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should be: 1 summary + 2 recent = 3
-	if len(result) != 3 {
-		t.Errorf("expected 3 messages, got %d", len(result))
+	// Should be: 1 first msg + 1 summary + 2 recent = 4
+	if len(result) != 4 {
+		t.Errorf("expected 4 messages, got %d", len(result))
 	}
 
 	// Last two should be the recent messages.
-	if req, ok := result[1].(ModelRequest); ok {
+	if req, ok := result[2].(ModelRequest); ok {
 		if up, ok := req.Parts[0].(UserPromptPart); ok {
 			if up.Content != "recent 1" {
 				t.Errorf("expected 'recent 1', got %q", up.Content)
@@ -112,8 +112,9 @@ func TestAutoContext_CustomModel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Check that the summary uses the custom model.
-	if req, ok := result[0].(ModelRequest); ok {
+	// Check that the summary uses the custom model (first msg + summary + 2 recent).
+	// Summary is at index 1 (after the preserved first message).
+	if req, ok := result[1].(ModelRequest); ok {
 		for _, part := range req.Parts {
 			if sp, ok := part.(SystemPromptPart); ok {
 				if sp.Content != "[Conversation Summary] Custom summary" {
