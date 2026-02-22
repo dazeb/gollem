@@ -686,7 +686,13 @@ func pythonErrorHint(output string, exitCode int) string {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.Contains(trimmed, "FileNotFoundError:") {
-			return "[hint: " + truncateErrorLine(trimmed, 150) + " — check the file path exists and is spelled correctly]"
+			hint := "[hint: " + truncateErrorLine(trimmed, 150) + " — check the file path exists and is spelled correctly"
+			// Common TB2 issue: running from wrong directory.
+			if strings.Contains(trimmed, "input_data") || strings.Contains(trimmed, "task_file") {
+				hint += ". If running a script, try: cd /app && python3 script.py, or use absolute paths"
+			}
+			hint += "]"
+			return hint
 		}
 	}
 

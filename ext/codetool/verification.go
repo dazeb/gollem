@@ -129,6 +129,10 @@ func VerificationCheckpoint(timeout ...time.Duration) (core.AgentMiddleware, cor
 						"   Then: ls the output/working directory and rm anything that isn't part of the deliverable.\n" +
 						"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
 						"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
+						"5. Check output file formatting (common gotchas that cause test failures):\n" +
+						"   - Trailing newline: some tests expect it, some don't. Check with: xxd <file> | tail -1\n" +
+						"   - Encoding: ensure UTF-8 (no BOM). Check with: file <output_file>\n" +
+						"   - If tests compare output: diff your output against expected output character-by-character\n" +
 						"Only declare completion after confirming all the above.",
 				}
 			}
