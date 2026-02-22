@@ -443,6 +443,39 @@ func TestView_EmptyPath(t *testing.T) {
 	}
 }
 
+func TestView_BinaryFile(t *testing.T) {
+	dir := setupTestDir(t)
+	// Write a binary file with null bytes.
+	binPath := filepath.Join(dir, "binary.dat")
+	data := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG header
+		0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1 pixel
+	}
+	os.WriteFile(binPath, data, 0o644)
+
+	tool := View(WithWorkDir(dir))
+	result := call(t, tool, `{"path":"binary.dat"}`)
+	assertContains(t, result, "Binary file")
+}
+
+func TestView_TotalLineCount(t *testing.T) {
+	dir := setupTestDir(t)
+	// Create a file with 20 lines.
+	var lines []string
+	for i := 1; i <= 20; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	os.WriteFile(filepath.Join(dir, "long.txt"), []byte(strings.Join(lines, "\n")), 0o644)
+
+	tool := View(WithWorkDir(dir))
+	// Read only first 5 lines.
+	result := call(t, tool, `{"path":"long.txt","limit":5}`)
+	assertContains(t, result, "line 1")
+	assertContains(t, result, "line 5")
+	// Should show total line count.
+	assertContains(t, result, "20 total lines")
+}
+
 // --- Write Tests ---
 
 func TestWrite_NewFile(t *testing.T) {

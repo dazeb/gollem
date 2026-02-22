@@ -57,6 +57,28 @@ func View(opts ...Option) core.Tool {
 				}
 			}
 
+			// Quick binary file check: read the first 512 bytes and look for
+			// null bytes. Binary files waste context tokens and confuse the model.
+			if info.Size() > 0 {
+				probe, err := os.ReadFile(path)
+				if err == nil {
+					checkLen := 512
+					if len(probe) < checkLen {
+						checkLen = len(probe)
+					}
+					nullCount := 0
+					for _, b := range probe[:checkLen] {
+						if b == 0 {
+							nullCount++
+						}
+					}
+					if nullCount > 5 {
+						return fmt.Sprintf("Binary file (%d bytes). Use bash tools (hexdump, xxd, file) to inspect binary files, or write a Python script to process them.",
+							info.Size()), nil
+					}
+				}
+			}
+
 			f, err := os.Open(path)
 			if err != nil {
 				return "", fmt.Errorf("open file: %w", err)
@@ -82,6 +104,10 @@ func View(opts ...Option) core.Tool {
 					continue
 				}
 				if lineNum >= offset+limit {
+					// Keep counting total lines.
+					for scanner.Scan() {
+						lineNum++
+					}
 					break
 				}
 				line := scanner.Text()
@@ -103,8 +129,8 @@ func View(opts ...Option) core.Tool {
 			}
 
 			result := strings.Join(lines, "\n")
-			if lineNum >= offset+limit {
-				result += fmt.Sprintf("\n... (file continues, showing lines %d-%d)", offset, offset+limit-1)
+			if lineNum >= offset+limit-1 {
+				result += fmt.Sprintf("\n... (%d total lines, showing %d-%d)", lineNum, offset, offset+len(lines)-1)
 			}
 			return result, nil
 		},
