@@ -4153,6 +4153,20 @@ func detectPythonImports(workDir string) []string {
 		"ujson":        "ujson",
 		"xxhash":       "xxhash",
 		"sortedcontainers": "sortedcontainers",
+		// Crypto and security.
+		"cryptography": "cryptography",
+		"gmpy2":        "gmpy2",
+		// System and process utilities.
+		"psutil":  "psutil",
+		"pexpect": "pexpect",
+		// Web/network.
+		"websockets": "websockets",
+		"websocket":  "websocket-client",
+		"grpc":       "grpcio",
+		// Data formats and validation.
+		"jsonschema":     "jsonschema",
+		"more_itertools": "more-itertools",
+		"bitarray":       "bitarray",
 	}
 
 	needed := make(map[string]string) // module → pip package

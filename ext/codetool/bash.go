@@ -310,6 +310,12 @@ func Bash(opts ...Option) core.Tool {
 			if hint := subprocessTimeoutHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := sharedLibraryHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := diskSpaceHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -785,12 +791,19 @@ func signalHint(exitCode int) string {
 			"use built-in/vectorized operations (numpy, etc.), reduce data copies, " +
 			"or process data in streaming fashion instead of loading all into memory]"
 	case 137:
-		return "[hint: process was killed (SIGKILL) — likely out of memory. " +
-			"Try: reduce batch size, process data in smaller chunks, use generators/iterators instead of loading all data into memory, " +
-			"use more memory-efficient data structures, or reduce number of concurrent processes]"
+		return "[hint: process was killed (SIGKILL) — likely out of memory (OOM). " +
+			"Try: (1) reduce batch size, process data in smaller chunks, " +
+			"(2) use generators/iterators instead of loading all data into memory, " +
+			"(3) use more memory-efficient data structures (arrays vs linked lists), " +
+			"(4) reduce number of concurrent processes, " +
+			"(5) check `dmesg | tail -20` — if you see 'Out of memory: Killed process', confirm OOM, " +
+			"(6) for C/C++: check for memory leaks with `valgrind --tool=memcheck ./program`]"
 	case 139:
-		return "[hint: segmentation fault (SIGSEGV) — likely a memory access bug. " +
-			"Check: array bounds, null pointers, use-after-free, stack overflow from deep recursion]"
+		return "[hint: segmentation fault (SIGSEGV) — a memory access bug. " +
+			"Debug: (1) run `valgrind --tool=memcheck ./program` to find the exact source, " +
+			"(2) compile with debug symbols: `gcc -g -fsanitize=address`, " +
+			"(3) common causes: array out of bounds, null pointer dereference, use-after-free, stack overflow from deep recursion, " +
+			"(4) check `dmesg | tail` for kernel messages about the crash]"
 	case 134:
 		return "[hint: process aborted (SIGABRT) — likely an assertion failure or double-free. " +
 			"Check: assert() failures, memory corruption, C++ exception in destructor]"
@@ -1291,6 +1304,61 @@ func subprocessTimeoutHint(output string, exitCode int) string {
 			"(6) Check if the program runs in an infinite loop or unnecessarily waits for input]"
 	}
 
+	return ""
+}
+
+// sharedLibraryHint detects missing shared library errors and suggests fixes.
+// These occur when a compiled binary can't find a required .so file at runtime.
+func sharedLibraryHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	if strings.Contains(output, "cannot open shared object file") ||
+		strings.Contains(output, "error while loading shared libraries") {
+		// Try to extract the library name.
+		for _, prefix := range []string{
+			"error while loading shared libraries: ",
+			"cannot open shared object file",
+		} {
+			idx := strings.Index(output, prefix)
+			if idx < 0 {
+				continue
+			}
+			// Look backwards from "error while loading" to find the lib name.
+			if prefix == "error while loading shared libraries: " {
+				start := idx + len(prefix)
+				rest := output[start:]
+				if colon := strings.Index(rest, ":"); colon > 0 {
+					lib := strings.TrimSpace(rest[:colon])
+					return fmt.Sprintf("[hint: missing shared library '%s'. Try: "+
+						"(1) `ldconfig` to refresh the linker cache, "+
+						"(2) `apt-get install -y` the dev package (e.g., lib%s-dev), "+
+						"(3) `find / -name '%s*' 2>/dev/null` to check if it exists elsewhere, "+
+						"(4) set LD_LIBRARY_PATH to the directory containing the library]",
+						lib, strings.TrimPrefix(strings.TrimPrefix(lib, "lib"), ".so"), lib)
+				}
+			}
+		}
+		return "[hint: missing shared library. Try: (1) `ldconfig`, (2) install the dev package with apt-get, " +
+			"(3) check LD_LIBRARY_PATH, (4) `find / -name '*.so*' 2>/dev/null` to locate it]"
+	}
+	return ""
+}
+
+// diskSpaceHint detects "No space left on device" and suggests cleanup strategies.
+func diskSpaceHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	if strings.Contains(output, "No space left on device") ||
+		strings.Contains(output, "ENOSPC") {
+		return "[hint: disk full. Free space: " +
+			"(1) `df -h` to check filesystem usage, " +
+			"(2) remove build artifacts: `rm -rf /tmp/* build/ *.o`, " +
+			"(3) remove package caches: `apt-get clean`, `pip cache purge`, " +
+			"(4) remove large unnecessary files: `find / -size +100M -type f 2>/dev/null | head -10`, " +
+			"(5) if compiling, consider a smaller build (disable optional features)]"
+	}
 	return ""
 }
 

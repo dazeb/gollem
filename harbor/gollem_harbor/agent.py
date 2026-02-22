@@ -286,6 +286,32 @@ class GollemAgent(BaseInstalledAgent):
                 "    cd \"$d\" && go mod download 2>&1 | tail -3 || true; "
                 "    break; "
                 "  fi; "
+                "done; "
+                # Rust: Cargo.toml — pre-fetch dependencies.
+                "for d in /app .; do "
+                "  if [ -f \"$d/Cargo.toml\" ] && command -v cargo >/dev/null 2>&1; then "
+                "    cd \"$d\" && cargo fetch 2>&1 | tail -3 || true; "
+                "    break; "
+                "  fi; "
+                "done; "
+                # Python: pyproject.toml (PEP 517/518 projects without requirements.txt)
+                "for d in /app .; do "
+                "  if [ -f \"$d/pyproject.toml\" ] && ! [ -f \"$d/requirements.txt\" ] && ! [ -f \"$d/setup.py\" ]; then "
+                "    cd \"$d\" && pip install --break-system-packages -e . 2>&1 | tail -5 || "
+                "    pip3 install --break-system-packages -e . 2>&1 | tail -5 || true; "
+                "    break; "
+                "  fi; "
+                "done; "
+                # Python: also scan conftest.py for imports (pytest fixtures often need extra packages)
+                "for td in /tests /app/tests; do "
+                "  if [ -f \"$td/conftest.py\" ]; then "
+                "    grep -h \"^import \\|^from \" \"$td/conftest.py\" 2>/dev/null | "
+                "      sed \"s/^import //;s/^from //;s/ .*//;s/\\..*//\" | "
+                "      sort -u | while read mod; do "
+                "        python3 -c \"import $mod\" 2>/dev/null || "
+                "          pip install --break-system-packages -q \"$mod\" 2>/dev/null || true; "
+                "    done; "
+                "  fi; "
                 "done"
                 "' || true"
             )
@@ -324,7 +350,7 @@ class GollemAgent(BaseInstalledAgent):
         cmd_parts.append(shlex.quote(instruction))
 
         env = {
-            "PATH": "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
+            "PATH": "/root/.local/bin:/root/go/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
             "HOME": "/root",
             # Common CA cert bundle paths for TLS verification.
             "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",

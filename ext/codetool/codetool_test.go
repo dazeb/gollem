@@ -5902,3 +5902,61 @@ func TestCompilationTimeoutMessage(t *testing.T) {
 	}
 }
 
+func TestSharedLibraryHint(t *testing.T) {
+	t.Run("cannot open shared object", func(t *testing.T) {
+		output := `./solver: error while loading shared libraries: libgsl.so.25: cannot open shared object file: No such file or directory`
+		hint := sharedLibraryHint(output, 127)
+		if hint == "" {
+			t.Fatal("expected hint for missing shared library")
+		}
+		if !strings.Contains(hint, "libgsl.so.25") {
+			t.Errorf("expected library name in hint, got: %s", hint)
+		}
+		if !strings.Contains(hint, "ldconfig") {
+			t.Errorf("expected ldconfig suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := sharedLibraryHint("cannot open shared object file", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+
+	t.Run("unrelated error", func(t *testing.T) {
+		hint := sharedLibraryHint("No such file or directory: /tmp/foo", 1)
+		if hint != "" {
+			t.Errorf("expected no hint for unrelated error, got: %s", hint)
+		}
+	})
+}
+
+func TestDiskSpaceHint(t *testing.T) {
+	t.Run("no space left on device", func(t *testing.T) {
+		output := `OSError: [Errno 28] No space left on device: '/app/output.bin'`
+		hint := diskSpaceHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for disk space issue")
+		}
+		if !strings.Contains(hint, "df -h") {
+			t.Errorf("expected df -h suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("ENOSPC", func(t *testing.T) {
+		output := `Error: ENOSPC: no space left on device, write`
+		hint := diskSpaceHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for ENOSPC")
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := diskSpaceHint("No space left on device", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+}
+
