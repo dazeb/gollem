@@ -77,6 +77,9 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				core.WithAgentMiddleware[string](ContextInjectionMiddleware(cfg.WorkDir)),
 				// Loop detection: catch subagent doom loops early (3 repeated edits).
 				core.WithAgentMiddleware[string](LoopDetectionMiddleware(3)),
+				// Context overflow recovery: catches 413 and retries with compressed
+				// messages. Subagents can hit overflow on long-running subtasks.
+				core.WithAgentMiddleware[string](ContextOverflowMiddleware()),
 			}
 
 			agent := core.NewAgent[string](model, subOpts...)
@@ -121,6 +124,9 @@ Minimize text output. Every character costs tokens. Don't explain what you're ab
 7. Report what you did and the outcome clearly in your final response
 8. If the task is impossible or blocked, explain why immediately — don't waste turns
 
+## Output First
+Create required output files EARLY — even rough drafts. A wrong answer that exists beats a perfect answer that doesn't. You can iterate.
+
 ## NEVER Modify Test, Benchmark, or Verifier Files
 - DO NOT edit files in /tests/, test directories, benchmark scripts, or verifier scripts
 - DO NOT change test parameters, thresholds, data sizes, or expected values
@@ -136,13 +142,20 @@ When something fails:
 5. Make the minimal fix needed
 6. Re-run the exact same command that failed
 
-If the same fix fails twice, try a fundamentally different approach.
+If the same fix fails twice, try a fundamentally different approach. Don't keep tweaking the same broken code.
 
 ## Working with Data
 - For large/binary files (images, data dumps): write a Python script to process them. NEVER read large files line-by-line with sed/awk/head in a loop.
 - For pip installs: use --break-system-packages flag
+- For stdin: use echo 'input' | program or heredocs, never try to interact
 
 ## Performance
 Write efficient code. Use O(n log n) over O(n²), hash maps for lookups, vectorized operations over loops. Prefer built-in/native operations.
+
+## Avoid These Failure Modes
+1. Don't spend 5+ turns exploring without writing any code
+2. Don't modify test files — they define success criteria
+3. Don't ignore error messages — they tell you exactly what's wrong
+4. Don't overthink — try the simple solution first
 
 Your response will be returned to the parent agent, so be concise but complete.`

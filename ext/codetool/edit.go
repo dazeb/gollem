@@ -349,14 +349,29 @@ func MultiEdit(opts ...Option) core.Tool {
 	return core.FuncTool[MultiEditParams](
 		"multi_edit",
 		"Apply multiple file edits in a single operation. Each edit specifies a file, an exact string "+
-			"to find (old_string), and its replacement (new_string). Edits are applied in order. "+
+			"to find (old_string), and its replacement (new_string). Edits are applied atomically — "+
+			"either all succeed or none are written. "+
 			"Use this when you need to make coordinated changes across multiple files.",
 		func(ctx context.Context, params MultiEditParams) (string, error) {
 			if len(params.Edits) == 0 {
 				return "", &core.ModelRetryError{Message: "edits list must not be empty"}
 			}
 
-			var results []string
+			// Phase 1: Validate all edits and compute new file contents.
+			// No files are written until all edits pass validation.
+			type pendingWrite struct {
+				path       string
+				relPath    string
+				newContent string
+				newString  string
+				message    string
+			}
+			var pending []pendingWrite
+
+			// Track already-modified file contents for sequential edits to the
+			// same file within a single multi_edit batch.
+			fileContents := make(map[string]string)
+
 			for i, edit := range params.Edits {
 				if edit.Path == "" {
 					return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: path must not be empty", i)}
@@ -374,37 +389,59 @@ func MultiEdit(opts ...Option) core.Tool {
 					return "", protectedFileError(edit.Path)
 				}
 
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: %v", i, err)}
+				// Use in-memory content if we already modified this file
+				// in an earlier edit within this batch.
+				content, ok := fileContents[path]
+				if !ok {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: %v", i, err)}
+					}
+					content = string(data)
 				}
 
-				content := string(data)
 				var newContent string
+				var msg string
 				if !strings.Contains(content, edit.OldString) {
 					// Try auto-correcting whitespace mismatch.
-					if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, edit.OldString, edit.NewString); ok {
+					if actualOld, adjustedNew, okWs := autoCorrectWhitespace(content, edit.OldString, edit.NewString); okWs {
 						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
-						results = append(results, fmt.Sprintf("edit[%d]: auto-corrected whitespace mismatch", i))
+						msg = fmt.Sprintf("edit[%d]: auto-corrected whitespace mismatch", i)
 					} else {
-						msg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
+						errMsg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
 						if wsHint := detectWhitespaceMismatch(content, edit.OldString); wsHint != "" {
-							msg += " " + wsHint
+							errMsg += " " + wsHint
 						} else {
-							msg += " Ensure exact match including whitespace."
+							errMsg += " Ensure exact match including whitespace."
 							if hint := findNearestLines(content, edit.OldString, 3); hint != "" {
-								msg += "\n\nMost similar lines:\n" + hint
+								errMsg += "\n\nMost similar lines:\n" + hint
 							}
 						}
-						return "", &core.ModelRetryError{Message: msg}
+						return "", &core.ModelRetryError{Message: errMsg}
 					}
 				} else {
 					newContent = strings.Replace(content, edit.OldString, edit.NewString, 1)
 				}
-				if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
+				fileContents[path] = newContent
+				pending = append(pending, pendingWrite{
+					path:       path,
+					relPath:    edit.Path,
+					newContent: newContent,
+					newString:  edit.NewString,
+					message:    msg,
+				})
+			}
+
+			// Phase 2: Write all files atomically.
+			var results []string
+			for i, pw := range pending {
+				if err := os.WriteFile(pw.path, []byte(pw.newContent), 0o644); err != nil {
 					return "", fmt.Errorf("edit[%d]: write file: %w", i, err)
 				}
-				results = append(results, editResultWithContext(newContent, edit.NewString, 1, edit.Path))
+				if pw.message != "" {
+					results = append(results, pw.message)
+				}
+				results = append(results, editResultWithContext(pw.newContent, pw.newString, 1, pw.relPath))
 			}
 
 			return strings.Join(results, "\n\n"), nil

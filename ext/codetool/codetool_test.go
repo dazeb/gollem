@@ -1503,6 +1503,43 @@ func TestWritePreview(t *testing.T) {
 	}
 }
 
+func TestMultiEdit_Atomic(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "a.txt", "hello world\ngoodbye world\n")
+	writeTestFile(t, dir, "b.txt", "foo bar\nbaz qux\n")
+
+	tool := MultiEdit(WithWorkDir(dir))
+
+	// First edit succeeds, second should fail — verify first file is NOT modified.
+	err := callErr(t, tool, `{"edits":[
+		{"path":"a.txt","old_string":"hello world","new_string":"hello earth"},
+		{"path":"b.txt","old_string":"nonexistent string","new_string":"replacement"}
+	]}`)
+	if err == nil {
+		t.Fatal("expected error for second edit not found")
+	}
+
+	// Verify a.txt was NOT modified (atomic — second edit failed, so no writes).
+	data, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if !strings.Contains(string(data), "hello world") {
+		t.Errorf("expected a.txt to remain unchanged (atomic multi_edit), got: %s", data)
+	}
+
+	// Test that sequential edits to the same file work within a batch.
+	result := call(t, tool, `{"edits":[
+		{"path":"a.txt","old_string":"hello world","new_string":"hello earth"},
+		{"path":"a.txt","old_string":"goodbye world","new_string":"goodbye earth"}
+	]}`)
+	if !strings.Contains(result, "hello earth") {
+		t.Errorf("expected first edit result, got: %s", result)
+	}
+	data, _ = os.ReadFile(filepath.Join(dir, "a.txt"))
+	content := string(data)
+	if !strings.Contains(content, "hello earth") || !strings.Contains(content, "goodbye earth") {
+		t.Errorf("expected both edits applied, got: %s", content)
+	}
+}
+
 func TestGlobShowsSizes(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "big.txt", strings.Repeat("x", 2000))
