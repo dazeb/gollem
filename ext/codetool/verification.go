@@ -29,6 +29,7 @@ import (
 func VerificationCheckpoint() (core.AgentMiddleware, core.OutputValidatorFunc[string]) {
 	var mu sync.Mutex
 	verified := false
+	completionAttempts := 0
 
 	mw := func(
 		ctx context.Context,
@@ -63,6 +64,8 @@ func VerificationCheckpoint() (core.AgentMiddleware, core.OutputValidatorFunc[st
 	validator := func(_ context.Context, _ *core.RunContext, output string) (string, error) {
 		mu.Lock()
 		v := verified
+		attempts := completionAttempts
+		completionAttempts++
 		mu.Unlock()
 
 		if !v {
@@ -74,6 +77,21 @@ func VerificationCheckpoint() (core.AgentMiddleware, core.OutputValidatorFunc[st
 					"evidence that your solution works.",
 			}
 		}
+
+		// Pre-completion checklist: on first completion attempt after verification,
+		// force the agent to re-check requirements. This catches cases where the
+		// agent ran tests but missed requirements.
+		if attempts == 0 {
+			return output, &core.ModelRetryError{
+				Message: "Before finalizing: run through this checklist.\n" +
+					"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
+					"2. List all output/working directories — are there leftover files that shouldn't be there? (rm build artifacts, temp files, __pycache__, .o files)\n" +
+					"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
+					"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
+					"Only declare completion after confirming all the above.",
+			}
+		}
+
 		return output, nil
 	}
 
