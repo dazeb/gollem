@@ -89,7 +89,7 @@ class GollemAgent(BaseInstalledAgent):
     def __init__(
         self,
         *args,
-        timeout_minutes: int = 15,
+        timeout_minutes: int = 60,
         thinking_budget: int = 0,
         reasoning_effort: str = "",
         **kwargs,

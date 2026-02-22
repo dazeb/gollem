@@ -721,7 +721,7 @@ func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
 				if resp, ok := msg.(core.ModelResponse); ok {
 					for _, part := range resp.Parts {
 						if tc, ok := part.(core.ToolCallPart); ok {
-							if tc.ToolName == "write" || tc.ToolName == "multi_edit" || tc.ToolName == "edit" {
+							if tc.ToolName == "write" || tc.ToolName == "multi_edit" || tc.ToolName == "edit" || tc.ToolName == "execute_code" {
 								hasWritten = true
 								break
 							}

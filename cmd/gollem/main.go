@@ -149,10 +149,10 @@ func runAgent() {
 		var secs float64
 		if _, err := fmt.Sscanf(envTimeout, "%f", &secs); err == nil && secs > 0 {
 			envDuration := time.Duration(secs) * time.Second
-			if envDuration < f.timeout {
-				fmt.Fprintf(os.Stderr, "gollem: using env timeout: %v (overriding %v)\n", envDuration, f.timeout)
-				f.timeout = envDuration
-			}
+			// Always use env timeout when set — it comes from Harbor
+			// and represents the outer execution deadline.
+			fmt.Fprintf(os.Stderr, "gollem: using env timeout: %v (overriding %v)\n", envDuration, f.timeout)
+			f.timeout = envDuration
 		}
 	}
 
