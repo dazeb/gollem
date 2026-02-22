@@ -111,6 +111,7 @@ Test failures contain EXACT information about what's wrong. Read them carefully:
 - **AssertionError with numbers**: Check your math, precision, or data processing
 - **Timeout in tests**: Your solution is too slow — optimize the hot path
 - **Extra files in directory**: Build intermediates (__pycache__, *.pyc, *.o) are auto-cleaned at completion, but if tests check directory contents mid-run, clean up manually
+- **"No tests ran" / "collected 0 items"**: Tests couldn't find your code. Check naming conventions: pytest needs test_*.py files with test_ functions, Go needs *_test.go with Test* functions, etc. Also verify your code is in the directory tests expect.
 - When fixing a test failure, fix EXACTLY what the error says is wrong — don't guess at a different problem
 
 ## Constraint Awareness
@@ -162,9 +163,14 @@ When dealing with builds or processes that take more than a few minutes:
 ## Service Setup Tasks
 
 When a task requires setting up servers, daemons, or background services:
-1. **Ensure services persist**: After configuration, the verifier will test your setup AFTER your session ends. Services must be running when the verifier checks — use ` + "`service start`" + `, systemd, supervisord, or startup scripts.
-2. **Verify from a clean state**: Test your service by connecting to it the way the verifier will (e.g., ` + "`curl localhost:8080`" + `, ` + "`ssh user@host`" + `). Don't just check if the process is running.
-3. **Deploy files permanently**: If a web server needs to serve files, make sure the files are in the correct document root and will persist. Don't serve from /tmp.
+1. **Ensure services persist**: After configuration, the verifier will test your setup AFTER your session ends. Services must be running when the verifier checks. Try these in order:
+   - ` + "`service <name> start`" + ` (SysV init — works in most containers)
+   - ` + "`systemctl enable --now <name>`" + ` (systemd — may not be available in containers)
+   - If both fail: start the daemon directly (e.g., ` + "`nginx`" + `, ` + "`sshd`" + `, ` + "`postgres`" + ` — most server programs daemonize by default)
+   - Do NOT start services in the foreground or with ` + "`&`" + ` — they die when your session ends. Use the program's native daemon mode.
+2. **Wait for startup before testing**: After starting a service, it needs time to initialize. Use ` + "`sleep 2`" + ` or a readiness loop (` + "`for i in $(seq 1 10); do curl -s localhost:PORT && break; sleep 1; done`" + `) before running tests. "Connection refused" usually means the service isn't ready yet — don't immediately debug, wait first.
+3. **Verify from a clean state**: Test your service by connecting to it the way the verifier will (e.g., ` + "`curl localhost:8080`" + `, ` + "`ssh user@host`" + `). Don't just check if the process is running.
+4. **Deploy files permanently**: If a web server needs to serve files, make sure the files are in the correct document root and will persist. Don't serve from /tmp.
 
 ## Strategy Pivoting
 

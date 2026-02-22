@@ -201,7 +201,9 @@ func Bash(opts ...Option) core.Tool {
 				errStr = stderr.String()
 
 				// Auto-retry on transient failures (first attempt only).
-				if attempt == 0 && !timedOut && isTransientBashFailure(exitCode, outStr+errStr) {
+				// Pass the command so we can skip retries for non-install commands
+				// where "connection refused" is expected (e.g., curl testing a service).
+				if attempt == 0 && !timedOut && isTransientBashFailure(exitCode, outStr+errStr, params.Command) {
 					continue
 				}
 				break
@@ -234,7 +236,7 @@ func Bash(opts ...Option) core.Tool {
 			outStr = truncateOutput(outStr, cfg.MaxOutputLen)
 			errStr = truncateOutput(errStr, cfg.MaxOutputLen)
 
-			result := formatBashOutput(outStr, errStr, exitCode, timedOut, timeout)
+			result := formatBashOutput(outStr, errStr, exitCode, timedOut, timeout, params.Command)
 
 			// Context-aware timeout hint: server/daemon commands need background
 			// execution, not optimization. This saves a turn of confusion.
@@ -294,6 +296,9 @@ func Bash(opts ...Option) core.Tool {
 				result += "\n" + hint
 			}
 			if hint := connectionRefusedHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := systemctlNotFoundHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
 			if hint := nodeErrorHint(errStr + outStr, exitCode); hint != "" {
@@ -396,7 +401,7 @@ func Bash(opts ...Option) core.Tool {
 
 // formatBashOutput combines stdout, stderr, and exit code into a clean text
 // format that's efficient on tokens and easy for models to parse.
-func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeout time.Duration) string {
+func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeout time.Duration, command string) string {
 	var b strings.Builder
 	hasContent := stdout != "" || stderr != ""
 
@@ -414,7 +419,16 @@ func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeou
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(fmt.Sprintf("[timed out after %s — if this is a test or benchmark, optimize YOUR code to be faster. Do NOT modify test/benchmark parameters. Use the timeout parameter for legitimately long-running commands.]", timeout))
+		if isBuildCommand(command) {
+			b.WriteString(fmt.Sprintf("[timed out after %s — compilation took too long. Strategies: "+
+				"(1) Use parallel builds: `make -j$(nproc)`, `cargo build -j$(nproc)` "+
+				"(2) Add `-O0` instead of `-O2`/`-O3` for faster compilation (optimize for compile speed, not runtime) "+
+				"(3) Use `timeout` parameter with a longer value "+
+				"(4) Compile fewer files at once or split into stages "+
+				"(5) If building from source, check if a pre-built package exists]", timeout))
+		} else {
+			b.WriteString(fmt.Sprintf("[timed out after %s — if this is a test or benchmark, optimize YOUR code to be faster. Do NOT modify test/benchmark parameters. Use the timeout parameter for legitimately long-running commands.]", timeout))
+		}
 	} else if exitCode != 0 {
 		if b.Len() > 0 {
 			b.WriteByte('\n')
@@ -1223,6 +1237,32 @@ func connectionRefusedHint(output string, exitCode int) string {
 		"(3) check service logs for startup errors, " +
 		"(4) verify the service is configured for the correct host/port]"
 	return hint
+}
+
+// systemctlNotFoundHint detects when systemctl/systemd is unavailable (common in
+// Docker containers) and suggests alternative service persistence methods.
+// This saves 1-2 turns of the agent trying different systemd incantations.
+func systemctlNotFoundHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+	detected := false
+	if strings.Contains(lower, "systemctl") && (strings.Contains(lower, "command not found") || strings.Contains(lower, "no such file")) {
+		detected = true
+	}
+	if strings.Contains(lower, "failed to connect to bus") || strings.Contains(lower, "system has not been booted with systemd") {
+		detected = true
+	}
+	if !detected {
+		return ""
+	}
+	return "[hint: systemd/systemctl is not available in this container. Alternative service persistence methods: " +
+		"(1) Start daemons directly (e.g., `nginx`, `sshd`, `postgres` — most server programs daemonize by default), " +
+		"(2) Use `service <name> start` (SysV init — works in many containers), " +
+		"(3) For custom processes: `nohup <command> > /var/log/<name>.log 2>&1 &`, " +
+		"(4) Add to `/etc/rc.local` or `crontab -e` with `@reboot <command>` for persistence across container restarts. " +
+		"Do NOT keep trying systemctl — it will never work without systemd]"
 }
 
 // nodeErrorHint extracts actionable information from Node.js errors.
@@ -2819,16 +2859,37 @@ func isDestructiveTestCommand(cmd string) bool {
 
 // isTransientBashFailure returns true if the bash output suggests a transient
 // failure that's likely to succeed on retry (network errors, lock contention).
-func isTransientBashFailure(exitCode int, output string) bool {
+// The command parameter enables context-aware decisions: "connection refused"
+// is transient during package installs but NOT when testing a local service
+// (where it means the service isn't running — retrying won't help).
+func isTransientBashFailure(exitCode int, output string, command string) bool {
 	if exitCode == 0 {
 		return false
 	}
 	lower := strings.ToLower(output)
+	cmdLower := strings.ToLower(command)
+
+	// "Connection refused" is only transient for package managers and remote fetches.
+	// For local service tests (curl localhost, wget localhost), the service is simply
+	// not running — retrying wastes 2 seconds and the result is always the same.
+	if strings.Contains(lower, "connection refused") {
+		isInstallCmd := strings.Contains(cmdLower, "apt") ||
+			strings.Contains(cmdLower, "pip") ||
+			strings.Contains(cmdLower, "npm") ||
+			strings.Contains(cmdLower, "gem") ||
+			strings.Contains(cmdLower, "cargo") ||
+			strings.Contains(cmdLower, "go get") ||
+			strings.Contains(cmdLower, "go mod") ||
+			strings.Contains(cmdLower, "wget") && !strings.Contains(cmdLower, "localhost")
+		if !isInstallCmd {
+			return false // not transient for service tests
+		}
+	}
 
 	transientPatterns := []string{
 		"could not resolve host",
 		"connection timed out",
-		"connection refused",
+		"connection refused", // now only reached for install commands (above guard)
 		"temporary failure in name resolution",
 		"network is unreachable",
 		"unable to fetch",

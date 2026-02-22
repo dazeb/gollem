@@ -202,29 +202,29 @@ func TestBash_BuildTimeout(t *testing.T) {
 
 func TestFormatBashOutput(t *testing.T) {
 	// Success with stdout only.
-	result := formatBashOutput("hello\n", "", 0, false, 0)
+	result := formatBashOutput("hello\n", "", 0, false, 0, "")
 	if result != "hello\n" {
 		t.Errorf("stdout only: got %q", result)
 	}
 
 	// Success with stderr.
-	result = formatBashOutput("out\n", "warn\n", 0, false, 0)
+	result = formatBashOutput("out\n", "warn\n", 0, false, 0, "")
 	assertContains(t, result, "out")
 	assertContains(t, result, "[stderr]")
 	assertContains(t, result, "warn")
 
 	// Error with no output.
-	result = formatBashOutput("", "", 1, false, 0)
+	result = formatBashOutput("", "", 1, false, 0, "")
 	assertContains(t, result, "[exit code: 1]")
 	assertContains(t, result, "(no output)")
 
 	// Timeout.
-	result = formatBashOutput("partial\n", "", 124, true, 120*time.Second)
+	result = formatBashOutput("partial\n", "", 124, true, 120*time.Second, "")
 	assertContains(t, result, "partial")
 	assertContains(t, result, "[timed out after")
 
 	// No output, success.
-	result = formatBashOutput("", "", 0, false, 0)
+	result = formatBashOutput("", "", 0, false, 0, "")
 	if result != "(no output)" {
 		t.Errorf("empty success: got %q", result)
 	}
@@ -1303,22 +1303,29 @@ func TestIsTransientBashFailure(t *testing.T) {
 		name     string
 		exitCode int
 		output   string
+		command  string
 		want     bool
 	}{
-		{"network error", 1, "Could not resolve host: example.com", true},
-		{"connection timeout", 1, "Connection timed out", true},
-		{"dpkg lock", 1, "unable to acquire the dpkg frontend lock", true},
-		{"hash sum mismatch", 1, "Hash sum mismatch", true},
-		{"failed to fetch", 100, "E: Failed to fetch http://archive.ubuntu.com/", true},
-		{"success", 0, "all good", false},
-		{"normal error", 1, "syntax error near unexpected token", false},
-		{"test failure", 1, "FAILED test_something", false},
+		{"network error", 1, "Could not resolve host: example.com", "curl http://example.com", true},
+		{"connection timeout", 1, "Connection timed out", "pip install requests", true},
+		{"dpkg lock", 1, "unable to acquire the dpkg frontend lock", "apt-get install foo", true},
+		{"hash sum mismatch", 1, "Hash sum mismatch", "apt-get update", true},
+		{"failed to fetch", 100, "E: Failed to fetch http://archive.ubuntu.com/", "apt-get install foo", true},
+		{"success", 0, "all good", "echo hi", false},
+		{"normal error", 1, "syntax error near unexpected token", "bash test.sh", false},
+		{"test failure", 1, "FAILED test_something", "pytest", false},
+		// Connection refused is NOT transient for service test commands.
+		{"conn refused curl", 7, "curl: (7) Failed to connect to localhost port 8080: Connection refused", "curl localhost:8080", false},
+		{"conn refused wget", 1, "Connection refused", "wget http://localhost:3000", false},
+		// Connection refused IS transient for package install commands.
+		{"conn refused apt", 1, "Connection refused", "apt-get install nginx", true},
+		{"conn refused pip", 1, "Connection refused", "pip install flask", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isTransientBashFailure(tt.exitCode, tt.output)
+			got := isTransientBashFailure(tt.exitCode, tt.output, tt.command)
 			if got != tt.want {
-				t.Errorf("isTransientBashFailure(%d, %q) = %v, want %v", tt.exitCode, tt.output, got, tt.want)
+				t.Errorf("isTransientBashFailure(%d, %q, %q) = %v, want %v", tt.exitCode, tt.output, tt.command, got, tt.want)
 			}
 		})
 	}
@@ -5750,6 +5757,66 @@ func TestNoTestsCollectedSummary(t *testing.T) {
 	}
 	if !strings.Contains(summary, "NO TESTS FOUND") {
 		t.Errorf("expected 'NO TESTS FOUND' in summary, got: %s", summary)
+	}
+}
+
+func TestSystemctlNotFoundHint(t *testing.T) {
+	t.Run("command not found", func(t *testing.T) {
+		output := "bash: systemctl: command not found"
+		hint := systemctlNotFoundHint(output, 127)
+		if hint == "" {
+			t.Fatal("expected hint for systemctl not found")
+		}
+		if !strings.Contains(hint, "systemd/systemctl is not available") {
+			t.Errorf("expected 'not available' in hint, got: %s", hint)
+		}
+		if !strings.Contains(hint, "service") {
+			t.Errorf("expected 'service' alternative in hint, got: %s", hint)
+		}
+	})
+
+	t.Run("no systemd boot", func(t *testing.T) {
+		output := "System has not been booted with systemd as init system."
+		hint := systemctlNotFoundHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for no systemd boot")
+		}
+	})
+
+	t.Run("bus connection", func(t *testing.T) {
+		output := "Failed to connect to bus: No such file or directory"
+		hint := systemctlNotFoundHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for bus connection failure")
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := systemctlNotFoundHint("systemctl start nginx", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+
+	t.Run("unrelated error", func(t *testing.T) {
+		hint := systemctlNotFoundHint("python3: syntax error", 1)
+		if hint != "" {
+			t.Errorf("expected no hint for unrelated error, got: %s", hint)
+		}
+	})
+}
+
+func TestCompilationTimeoutMessage(t *testing.T) {
+	// Build command that times out should get compilation-specific advice.
+	result := formatBashOutput("", "g++ main.cpp -o app\n", 124, true, 120*time.Second, "make -j4")
+	if !strings.Contains(result, "parallel builds") {
+		t.Errorf("expected parallel build suggestion for compilation timeout, got: %s", result)
+	}
+
+	// Non-build command timeout should get the generic message.
+	result = formatBashOutput("", "", 124, true, 120*time.Second, "python3 test.py")
+	if !strings.Contains(result, "optimize YOUR code") {
+		t.Errorf("expected generic timeout message for test, got: %s", result)
 	}
 }
 
