@@ -737,6 +737,18 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-detect and install system packages referenced in test scripts.
+	// Test scripts (.sh) often use commands like jq, bc, xmllint, xxd that
+	// may not be installed in the container. Detecting and installing them
+	// preemptively saves 1-2 turns of "command not found" debugging.
+	if networkAvailable && !depsAlreadyInstalled {
+		if sysPkgs := detectSystemPackagesFromTests(workDir); len(sysPkgs) > 0 {
+			fmt.Fprintf(os.Stderr, "[gollem] auto-installing system packages from test scripts: %s\n", strings.Join(sysPkgs, " "))
+			runQuietTimeout(workDir, 60*time.Second, "apt-get", append([]string{"install", "-y", "-q"}, sysPkgs...)...)
+			parts = append(parts, "AUTO-INSTALLED: system packages ("+strings.Join(sysPkgs, ", ")+")")
+		}
+	}
+
 	// Mark dependencies as installed so subagents skip redundant installs.
 	if !depsAlreadyInstalled {
 		os.WriteFile(depsMarker, []byte("1"), 0o644)
@@ -2855,6 +2867,99 @@ func detectPythonImports(workDir string) []string {
 		cancel()
 		if err != nil {
 			missing = append(missing, pkg)
+		}
+	}
+
+	return missing
+}
+
+// detectSystemPackagesFromTests scans shell scripts in test directories for
+// references to system commands and returns apt package names for any that are
+// missing. This catches common TB2 failures where test scripts invoke utilities
+// like jq, bc, xmllint, xxd that aren't installed in the container.
+func detectSystemPackagesFromTests(workDir string) []string {
+	// Map of commands commonly used in test scripts → apt packages.
+	cmdPackages := map[string]string{
+		"jq":       "jq",
+		"bc":       "bc",
+		"xmllint":  "libxml2-utils",
+		"xxd":      "xxd",
+		"hexdump":  "bsdmainutils",
+		"socat":    "socat",
+		"netcat":   "netcat-openbsd",
+		"nc":       "netcat-openbsd",
+		"nmap":     "nmap",
+		"expect":   "expect",
+		"sshpass":  "sshpass",
+		"valgrind": "valgrind",
+		"strace":   "strace",
+		"file":     "file",
+		"dos2unix": "dos2unix",
+		"iconv":    "libc-bin",
+		"patch":    "patch",
+		"diffstat": "diffstat",
+		"entr":     "entr",
+		"parallel": "parallel",
+		"pv":       "pv",
+		"tree":     "tree",
+		"rsync":    "rsync",
+		"sqlite3":  "sqlite3",
+		"csvtool":  "csvtool",
+		"gnuplot":  "gnuplot-nox",
+		"convert":  "imagemagick",
+		"identify": "imagemagick",
+		"dot":      "graphviz",
+		"nasm":     "nasm",
+	}
+
+	// Scan .sh files in test directories.
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+	needed := make(map[string]string) // cmd → pkg
+
+	for _, td := range testDirs {
+		if !dirExists(td) {
+			continue
+		}
+		matches, _ := filepath.Glob(filepath.Join(td, "*.sh"))
+		if len(matches) > 10 {
+			matches = matches[:10]
+		}
+		for _, f := range matches {
+			data, err := os.ReadFile(f)
+			if err != nil || len(data) > 50000 {
+				continue
+			}
+			content := string(data)
+			for cmd, pkg := range cmdPackages {
+				// Match command at word boundaries: "jq .", "$(jq", "| jq", etc.
+				// Avoid false positives by checking common usage patterns.
+				if strings.Contains(content, cmd+" ") ||
+					strings.Contains(content, cmd+"\n") ||
+					strings.Contains(content, cmd+"\"") ||
+					strings.Contains(content, cmd+"'") ||
+					strings.Contains(content, "|"+cmd) ||
+					strings.Contains(content, "| "+cmd) ||
+					strings.Contains(content, "$("+cmd) {
+					needed[cmd] = pkg
+				}
+			}
+		}
+		break // only scan first found test dir
+	}
+
+	if len(needed) == 0 {
+		return nil
+	}
+
+	// Check which commands are actually missing.
+	var missing []string
+	seen := make(map[string]bool) // deduplicate packages
+	for cmd, pkg := range needed {
+		if runQuiet(workDir, "which", cmd) == "" {
+			if !seen[pkg] {
+				seen[pkg] = true
+				missing = append(missing, pkg)
+			}
 		}
 	}
 

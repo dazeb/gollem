@@ -3686,6 +3686,21 @@ func TestExtractTestCounts(t *testing.T) {
 			passed: 5, failed: 0, ok: true,
 		},
 		{
+			name:   "jest with failures",
+			output: "FAIL src/app.test.js\n  ✕ renders (5 ms)\n\nTests:  2 passed, 1 failed, 3 total\nTime:   1.234 s",
+			passed: 2, failed: 1, ok: true,
+		},
+		{
+			name:   "cargo test failures",
+			output: "running 5 tests\ntest test_a ... ok\ntest test_b ... FAILED\n\ntest result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured",
+			passed: 4, failed: 1, ok: true,
+		},
+		{
+			name:   "rspec",
+			output: "Finished in 0.5 seconds\n3 examples, 1 failure",
+			passed: 2, failed: 1, ok: true,
+		},
+		{
 			name:   "not test output",
 			output: "hello world\nsome random output",
 			passed: 0, failed: 0, ok: false,

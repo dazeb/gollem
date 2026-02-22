@@ -274,10 +274,15 @@ func Bash(opts ...Option) core.Tool {
 				if summary := testResultSummary(combined); summary != "" {
 					result += "\n" + summary
 					if exitCode != 0 && (strings.Contains(strings.ToLower(summary), "fail") || strings.Contains(strings.ToLower(summary), "error")) {
+						// Surface the first failure detail so the agent knows
+					// exactly what's wrong without scanning the full output.
+					// This is the highest-value hint for test failures.
+					fp := testFailureFingerprint(combined)
+					if fp != "" {
+						result += "\n" + fp
+					} else {
 						result += "\n[hint: read the FULL test failure output above — fix one failure at a time, starting with the first]"
-						// Stale failure detection: warn when the same test failure
-						// appears consecutively, indicating the fix was ineffective.
-						fp := testFailureFingerprint(combined)
+					}
 						if fp != "" && fp == lastTestFailFingerprint {
 							result += "\n[hint: this test failure is IDENTICAL to the previous run — your edit did not fix the issue. Re-read the error, verify your edit was applied correctly, and try a fundamentally different approach]"
 						}
@@ -1635,6 +1640,97 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			}
 			if line == "OK" && total > 0 {
 				passed = total
+				ok = true
+				return
+			}
+		}
+	}
+
+	// Jest/Vitest: "Tests:  X passed, Y failed, Z total" or "Test Suites:  X passed, Y failed, Z total"
+	if strings.Contains(lower, "tests:") && (strings.Contains(lower, "total") || strings.Contains(lower, "passed")) {
+		for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.HasPrefix(line, "tests:") {
+				continue
+			}
+			words := strings.Fields(line)
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					switch {
+					case nextWord == "passed":
+						passed = n
+						ok = true
+					case nextWord == "failed":
+						failed += n
+						ok = true
+					}
+				}
+			}
+			if ok {
+				return
+			}
+		}
+	}
+
+	// Cargo test: "test result: FAILED. X passed; Y failed; Z ignored; ..."
+	// or "test result: ok. X passed; Y failed; ..."
+	if strings.Contains(lower, "test result:") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "test result:") {
+				continue
+			}
+			words := strings.Fields(line)
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					switch {
+					case nextWord == "passed":
+						passed = n
+						ok = true
+					case nextWord == "failed":
+						failed += n
+						ok = true
+					}
+				}
+			}
+			if ok {
+				return
+			}
+		}
+	}
+
+	// RSpec: "X examples, Y failures" or "X examples, 0 failures"
+	if strings.Contains(lower, "examples") && strings.Contains(lower, "failure") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "example") {
+				continue
+			}
+			words := strings.Fields(line)
+			var examples, failures int
+			foundExamples := false
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					if strings.HasPrefix(nextWord, "example") {
+						examples = n
+						foundExamples = true
+					} else if strings.HasPrefix(nextWord, "failure") {
+						failures = n
+					}
+				}
+			}
+			if foundExamples {
+				passed = examples - failures
+				failed = failures
 				ok = true
 				return
 			}
