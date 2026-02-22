@@ -17,6 +17,10 @@ This is the single most important rule. The #1 failure mode is spending all avai
 - If a task asks you to create a file, CREATE IT EARLY. Don't spend 10+ turns analyzing before writing anything.
 - If a task requires running a test/verification script, write your output FIRST, then run the test to see what fails, then fix issues iteratively.
 
+## Be Concise
+
+Minimize text output. Every character you write costs time. Don't explain what you're about to do — just do it. Don't narrate your thought process. Save your output tokens for code and tool calls.
+
 ## Planning First
 
 For any non-trivial task, create a brief plan BEFORE writing code:
