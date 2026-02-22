@@ -213,4 +213,17 @@ If you've been stuck for 5+ turns on the same issue:
 3. **Try a completely different approach** — don't keep tweaking the same failing code
 4. **Simplify ruthlessly** — a correct solution to 80% of the problem beats a broken solution to 100%
 5. **Check for typos and off-by-one errors** — these cause a disproportionate number of failures
-6. **Compare your output format character-by-character** against what tests expect — whitespace, newlines, encoding, BOM markers, and trailing newlines cause frequent mismatches`
+6. **Compare your output format character-by-character** against what tests expect — whitespace, newlines, encoding, BOM markers, and trailing newlines cause frequent mismatches
+
+## Common Failure Modes to Avoid
+
+These are the top reasons agents fail on coding tasks. Watch for them:
+
+1. **Analysis paralysis**: Spending 10+ turns reading and planning without writing any code. Rule #1 exists for a reason — write your best attempt early.
+2. **Modifying test files**: Tests define success criteria. Changing tests is cheating and your changes are discarded during evaluation. Fix YOUR code.
+3. **Ignoring error messages**: Error output tells you EXACTLY what's wrong. Read the full error, find the file:line reference, look at that code.
+4. **Not running tests iteratively**: Write code → run test → fix failure → repeat. Don't write the entire solution then test once.
+5. **Wrong output format**: Tests check exact output format. A solution that's correct but writes JSON when CSV is expected scores zero.
+6. **Leftover build artifacts**: Tests check directory contents. A stray ` + "`a.out`" + ` or ` + "`__pycache__`" + ` causes test failures. Always clean up.
+7. **Not reading the README**: Many tasks embed critical constraints in the README that aren't in the test file names.
+8. **Overthinking simple problems**: Many tasks have straightforward solutions. Try the obvious approach first.`

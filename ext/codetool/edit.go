@@ -115,6 +115,14 @@ func Edit(opts ...Option) core.Tool {
 						msg += "\n\nMost similar lines in the file:\n" + hint
 					}
 				}
+
+				// Include a file snippet around the nearest match so the agent
+				// doesn't need a separate view call before retrying the edit.
+				// This saves a full turn on every edit-not-found failure.
+				if snippet := fileSnippetForEdit(content, params.OldString); snippet != "" {
+					msg += "\n\nFile content around best match:\n" + snippet
+				}
+
 				return "", &core.ModelRetryError{Message: msg}
 			}
 
@@ -534,6 +542,80 @@ func applyRelativeIndent(oldIndent, actualIndent, newIndent string, newLine stri
 	}
 
 	return strings.Repeat(indentChar, targetWidth/indentUnit) + strings.TrimLeft(newLine, " \t")
+}
+
+// fileSnippetForEdit returns a compact snippet of the file around the area
+// most similar to the search string. This allows the agent to immediately
+// retry the edit with the correct content, saving a full view + edit cycle.
+func fileSnippetForEdit(content, search string) string {
+	if len(content) == 0 || len(search) == 0 {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	searchLines := strings.Split(search, "\n")
+	if len(searchLines) == 0 || len(lines) == 0 {
+		return ""
+	}
+
+	// Find the line most similar to the first line of search.
+	firstSearch := strings.TrimSpace(searchLines[0])
+	if len(firstSearch) < 3 {
+		return ""
+	}
+
+	bestLine := -1
+	bestScore := 0
+	searchWords := strings.Fields(strings.ToLower(firstSearch))
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) < 3 {
+			continue
+		}
+		lineWords := strings.Fields(strings.ToLower(trimmed))
+		score := 0
+		for _, sw := range searchWords {
+			for _, lw := range lineWords {
+				if sw == lw {
+					score++
+					break
+				}
+			}
+		}
+		// Bonus for substring match.
+		if strings.Contains(strings.ToLower(trimmed), strings.ToLower(firstSearch)) {
+			score += len(searchWords)
+		}
+		if score > bestScore {
+			bestScore = score
+			bestLine = i
+		}
+	}
+
+	if bestLine < 0 || bestScore < 2 {
+		return ""
+	}
+
+	// Show a window around the best match: enough context to retry the edit.
+	contextBefore := 5
+	contextAfter := len(searchLines) + 5
+	start := max(0, bestLine-contextBefore)
+	end := min(len(lines), bestLine+contextAfter)
+
+	// Cap snippet at 30 lines to avoid bloating the error.
+	if end-start > 30 {
+		end = start + 30
+	}
+
+	var b strings.Builder
+	for i := start; i < end; i++ {
+		fmt.Fprintf(&b, "%6d\t%s\n", i+1, lines[i])
+	}
+	if end < len(lines) {
+		b.WriteString("       ...\n")
+	}
+	return b.String()
 }
 
 // indentWidth computes the visual width of an indent string (tabs = 4 cols).

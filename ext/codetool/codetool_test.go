@@ -1393,3 +1393,126 @@ func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
 		t.Fatal("expected error when bash was used but not for verification")
 	}
 }
+
+func TestFileSnippetForEdit(t *testing.T) {
+	content := `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello, World!")
+}
+
+func helper() {
+	fmt.Println("helper")
+}
+`
+	// Search for something that partially matches.
+	search := `func main() {
+	fmt.Println("Goodbye, World!")
+}`
+	snippet := fileSnippetForEdit(content, search)
+	if snippet == "" {
+		t.Fatal("expected a non-empty snippet")
+	}
+	if !strings.Contains(snippet, "func main()") {
+		t.Errorf("snippet should contain 'func main()', got: %s", snippet)
+	}
+	if !strings.Contains(snippet, "Hello, World!") {
+		t.Errorf("snippet should contain the actual file content, got: %s", snippet)
+	}
+
+	// Empty search should return empty.
+	if s := fileSnippetForEdit(content, ""); s != "" {
+		t.Errorf("expected empty snippet for empty search, got: %s", s)
+	}
+
+	// Search for something with no match at all.
+	if s := fileSnippetForEdit(content, "zzzzzzz_nonexistent"); s != "" {
+		t.Errorf("expected empty snippet for non-matching search, got: %s", s)
+	}
+}
+
+func TestPythonErrorHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		exitCode int
+		want     string
+	}{
+		{
+			name: "syntax_error",
+			output: `Traceback (most recent call last):
+  File "solve.py", line 42, in <module>
+    x = (1 +
+SyntaxError: unexpected EOF while parsing`,
+			exitCode: 1,
+			want:     "solve.py:42",
+		},
+		{
+			name: "indentation_error",
+			output: `  File "main.py", line 10
+    print("hello")
+IndentationError: unexpected indent`,
+			exitCode: 1,
+			want:     "main.py:10",
+		},
+		{
+			name: "name_error_suggestion",
+			output: `Traceback (most recent call last):
+  File "app.py", line 5, in <module>
+NameError: name 'pritn' is not defined. Did you mean: 'print'?`,
+			exitCode: 1,
+			want:     "Did you mean",
+		},
+		{
+			name:     "success_no_hint",
+			output:   "All tests passed!",
+			exitCode: 0,
+			want:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pythonErrorHint(tt.output, tt.exitCode)
+			if tt.want == "" {
+				if got != "" {
+					t.Errorf("expected empty hint, got: %s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("expected hint to contain %q, got: %s", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestWritePreview(t *testing.T) {
+	dir := t.TempDir()
+	tool := Write(WithWorkDir(dir))
+
+	// Small file should include preview.
+	result := call(t, tool, `{"path":"small.py","content":"print('hello')\nprint('world')\n"}`)
+	if !strings.Contains(result, "3 lines") {
+		t.Errorf("expected line count in result, got: %s", result)
+	}
+	if !strings.Contains(result, "print('hello')") {
+		t.Errorf("expected content preview, got: %s", result)
+	}
+}
+
+func TestGlobShowsSizes(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "big.txt", strings.Repeat("x", 2000))
+	writeTestFile(t, dir, "small.txt", "hello")
+
+	tool := Glob(WithWorkDir(dir))
+
+	result := call(t, tool, `{"pattern":"*.txt"}`)
+	// Should show file sizes.
+	if !strings.Contains(result, "(") {
+		t.Errorf("expected file sizes in glob output, got: %s", result)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -50,7 +51,29 @@ func Write(opts ...Option) core.Tool {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 
-			return fmt.Sprintf("Wrote %d bytes to %s", len(params.Content), params.Path), nil
+			// Return a summary with line count. For small files, include a
+			// content preview so the agent can verify without a separate view.
+			lineCount := strings.Count(params.Content, "\n") + 1
+			if params.Content == "" {
+				lineCount = 0
+			}
+			result := fmt.Sprintf("Wrote %d bytes (%d lines) to %s", len(params.Content), lineCount, params.Path)
+
+			// Include a preview for small files (< 30 lines) to save a view call.
+			if lineCount > 0 && lineCount <= 30 {
+				lines := strings.Split(params.Content, "\n")
+				var preview strings.Builder
+				preview.WriteString("\n\nContent:\n")
+				for i, line := range lines {
+					if len(line) > 200 {
+						line = line[:200] + "..."
+					}
+					fmt.Fprintf(&preview, "%6d\t%s\n", i+1, line)
+				}
+				result += preview.String()
+			}
+
+			return result, nil
 		},
 	)
 }

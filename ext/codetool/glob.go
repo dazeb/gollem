@@ -53,6 +53,7 @@ func Glob(opts ...Option) core.Tool {
 			type fileEntry struct {
 				path    string
 				modTime int64
+				size    int64
 			}
 
 			var results []fileEntry
@@ -77,7 +78,7 @@ func Glob(opts ...Option) core.Tool {
 
 					relPath, _ := filepath.Rel(searchPath, path)
 					if matchDoublestar(params.Pattern, relPath) {
-						results = append(results, fileEntry{relPath, info.ModTime().Unix()})
+						results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})
 					}
 					return nil
 				})
@@ -100,7 +101,7 @@ func Glob(opts ...Option) core.Tool {
 						continue
 					}
 					relPath, _ := filepath.Rel(searchPath, m)
-					results = append(results, fileEntry{relPath, info.ModTime().Unix()})
+					results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})
 				}
 			}
 
@@ -121,7 +122,7 @@ func Glob(opts ...Option) core.Tool {
 
 			var lines []string
 			for _, r := range results {
-				lines = append(lines, r.path)
+				lines = append(lines, fmt.Sprintf("%s  (%s)", r.path, compactSize(r.size)))
 			}
 
 			result := strings.Join(lines, "\n")

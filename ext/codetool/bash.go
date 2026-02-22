@@ -221,6 +221,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := signalHint(exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := pythonErrorHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			combined := outStr + errStr
@@ -587,6 +590,71 @@ func signalHint(exitCode int) string {
 		return "[hint: process aborted (SIGABRT) — likely an assertion failure or double-free. " +
 			"Check: assert() failures, memory corruption, C++ exception in destructor]"
 	}
+	return ""
+}
+
+// pythonErrorHint extracts actionable information from Python errors.
+// SyntaxError, IndentationError, and NameError are the most common Python
+// failures that waste turns because the agent doesn't immediately know the
+// exact file and line to fix.
+func pythonErrorHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Only process if it looks like a Python error.
+	if !strings.Contains(output, "Error:") && !strings.Contains(output, "Error (") {
+		return ""
+	}
+
+	lines := strings.Split(output, "\n")
+
+	// Look for Python traceback patterns: "File "xxx", line N"
+	// followed by the error line. Extract the LAST traceback frame
+	// (innermost/most relevant).
+	var lastFile, lastLine, errorType string
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "File \"") {
+			// Extract file and line number.
+			if fileEnd := strings.Index(trimmed[6:], "\""); fileEnd > 0 {
+				lastFile = trimmed[6 : 6+fileEnd]
+			}
+			if lineIdx := strings.Index(trimmed, "line "); lineIdx > 0 {
+				rest := trimmed[lineIdx+5:]
+				if commaIdx := strings.IndexAny(rest, ", \n"); commaIdx > 0 {
+					lastLine = rest[:commaIdx]
+				} else {
+					lastLine = strings.TrimSpace(rest)
+				}
+			}
+		}
+		// Capture the error type (usually at the end of traceback).
+		if strings.Contains(trimmed, "SyntaxError:") ||
+			strings.Contains(trimmed, "IndentationError:") ||
+			strings.Contains(trimmed, "TabError:") {
+			errorType = trimmed
+			_ = i // suppress unused warning
+		}
+	}
+
+	if errorType != "" && lastFile != "" && lastLine != "" {
+		hint := fmt.Sprintf("[hint: %s at %s:%s — use the view tool with offset=%s to see the exact code, then fix with edit]",
+			errorType, lastFile, lastLine, lastLine)
+		return hint
+	}
+
+	// NameError with a suggestion (Python 3.10+): "NameError: name 'foo' is not defined. Did you mean: 'bar'?"
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "NameError:") && strings.Contains(trimmed, "Did you mean:") {
+			return "[hint: " + trimmed + "]"
+		}
+		if strings.Contains(trimmed, "AttributeError:") && strings.Contains(trimmed, "Did you mean:") {
+			return "[hint: " + trimmed + "]"
+		}
+	}
+
 	return ""
 }
 
