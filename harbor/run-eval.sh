@@ -4,7 +4,7 @@
 #   model: provider/model (default: openai/grok-4-1-fast-reasoning)
 #   concurrency: number of parallel tasks (default: 2)
 
-MODEL="${1:-openai/grok-4-1-fast-reasoning}"
+MODEL="${1:-openai/grok-4-0709}"
 CONCURRENCY="${2:-2}"
 
 # Load API keys

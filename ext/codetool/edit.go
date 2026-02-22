@@ -62,11 +62,19 @@ func Edit(opts ...Option) core.Tool {
 			count := strings.Count(content, params.OldString)
 
 			if count == 0 {
-				// Show nearby lines to help the model fix the edit without re-reading.
-				hint := findNearestLines(content, params.OldString, 3)
-				msg := fmt.Sprintf("old_string not found in %s. Ensure exact match including whitespace and indentation.", params.Path)
-				if hint != "" {
-					msg += "\n\nMost similar lines in the file:\n" + hint
+				msg := fmt.Sprintf("old_string not found in %s.", params.Path)
+
+				// Check for whitespace-only mismatch: the content matches
+				// when whitespace is normalized but not exactly. This is the
+				// #1 cause of edit failures — wrong indentation.
+				if wsHint := detectWhitespaceMismatch(content, params.OldString); wsHint != "" {
+					msg += " " + wsHint
+				} else {
+					msg += " Ensure exact match including whitespace and indentation."
+					// Show nearby lines to help the model fix the edit without re-reading.
+					if hint := findNearestLines(content, params.OldString, 3); hint != "" {
+						msg += "\n\nMost similar lines in the file:\n" + hint
+					}
 				}
 				return "", &core.ModelRetryError{Message: msg}
 			}
@@ -204,6 +212,72 @@ func findNearestLines(content, search string, maxResults int) string {
 	return result.String()
 }
 
+// detectWhitespaceMismatch checks if the search string matches the content
+// when whitespace is normalized. If so, returns a hint with the actual content
+// that the model should use. This catches the most common edit failure:
+// wrong indentation (tabs vs spaces, wrong indent level).
+func detectWhitespaceMismatch(content, search string) string {
+	// Normalize both content and search by collapsing all whitespace runs
+	// to single spaces and trimming each line. This catches:
+	// - tabs vs spaces
+	// - wrong indent depth
+	// - trailing whitespace
+	normalizeLines := func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			lines[i] = strings.Join(strings.Fields(line), " ")
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	normalizedSearch := normalizeLines(search)
+	normalizedContent := normalizeLines(content)
+
+	idx := strings.Index(normalizedContent, normalizedSearch)
+	if idx < 0 {
+		return ""
+	}
+
+	// Found a whitespace-normalized match. Extract the actual content
+	// lines that the model should use.
+	// Map normalized index back to the original content by counting
+	// the same number of newlines.
+	searchLineCount := strings.Count(search, "\n") + 1
+
+	// Find the line in the original content that corresponds to the match.
+	normalizedBefore := normalizedContent[:idx]
+	matchStartLine := strings.Count(normalizedBefore, "\n")
+
+	contentLines := strings.Split(content, "\n")
+	if matchStartLine >= len(contentLines) {
+		return ""
+	}
+
+	endLine := matchStartLine + searchLineCount
+	if endLine > len(contentLines) {
+		endLine = len(contentLines)
+	}
+
+	actualLines := contentLines[matchStartLine:endLine]
+	actual := strings.Join(actualLines, "\n")
+
+	// Only report if the actual differs from the search (confirming it's
+	// a whitespace issue, not an exact match we somehow missed).
+	if actual == search {
+		return ""
+	}
+
+	// Show a compact hint with the actual content the model should use.
+	hint := fmt.Sprintf("Whitespace mismatch — the content exists but with different indentation (line %d). Use this exact text:\n%s",
+		matchStartLine+1, actual)
+
+	// Truncate very long hints.
+	if len(hint) > 1000 {
+		hint = hint[:1000] + "\n..."
+	}
+	return hint
+}
+
 // MultiEditEntry is a single edit operation within a multi-edit batch.
 type MultiEditEntry struct {
 	// Path is the file to edit.
@@ -256,10 +330,14 @@ func MultiEdit(opts ...Option) core.Tool {
 
 				content := string(data)
 				if !strings.Contains(content, edit.OldString) {
-					hint := findNearestLines(content, edit.OldString, 3)
-					msg := fmt.Sprintf("edit[%d]: old_string not found in %s. Ensure exact match including whitespace.", i, edit.Path)
-					if hint != "" {
-						msg += "\n\nMost similar lines:\n" + hint
+					msg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
+					if wsHint := detectWhitespaceMismatch(content, edit.OldString); wsHint != "" {
+						msg += " " + wsHint
+					} else {
+						msg += " Ensure exact match including whitespace."
+						if hint := findNearestLines(content, edit.OldString, 3); hint != "" {
+							msg += "\n\nMost similar lines:\n" + hint
+						}
 					}
 					return "", &core.ModelRetryError{Message: msg}
 				}

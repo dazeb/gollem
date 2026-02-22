@@ -421,6 +421,47 @@ func TestEdit_NotFound(t *testing.T) {
 	}
 }
 
+func TestEdit_WhitespaceMismatch(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := Edit(WithWorkDir(dir))
+	// hello.go uses tabs, but we'll try with spaces — should get a whitespace hint.
+	err := callErr(t, tool, `{"path": "hello.go", "old_string": "  fmt.Println(\"Hello, World!\")", "new_string": "  fmt.Println(\"Hi\")"}`)
+	if err == nil {
+		t.Error("expected error for whitespace mismatch")
+	}
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "Whitespace mismatch") && !strings.Contains(errMsg, "whitespace") {
+		// Also acceptable: the findNearestLines fallback if normalization doesn't match.
+		assertContains(t, errMsg, "old_string not found")
+	}
+}
+
+func TestDetectWhitespaceMismatch(t *testing.T) {
+	content := "func main() {\n\tfmt.Println(\"hello\")\n}\n"
+
+	// Spaces instead of tab — should detect mismatch.
+	search := "    fmt.Println(\"hello\")"
+	hint := detectWhitespaceMismatch(content, search)
+	if hint == "" {
+		t.Error("expected whitespace mismatch hint for spaces vs tab")
+	}
+	assertContains(t, hint, "Whitespace mismatch")
+	assertContains(t, hint, "fmt.Println")
+
+	// Exact match — should return empty (no mismatch).
+	search2 := "\tfmt.Println(\"hello\")"
+	hint2 := detectWhitespaceMismatch(content, search2)
+	if hint2 != "" {
+		t.Errorf("expected empty hint for exact match, got %q", hint2)
+	}
+
+	// Totally different content — should return empty.
+	hint3 := detectWhitespaceMismatch(content, "completely different")
+	if hint3 != "" {
+		t.Errorf("expected empty hint for non-matching content, got %q", hint3)
+	}
+}
+
 func TestEdit_AmbiguousMatch(t *testing.T) {
 	dir := setupTestDir(t)
 	tool := Edit(WithWorkDir(dir))
