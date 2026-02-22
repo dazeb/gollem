@@ -104,6 +104,13 @@ func isVerificationCommand(argsJSON string) bool {
 		"dotnet test",
 		"ruby -e", "rake test", "rspec", "bundle exec",
 		"phpunit",
+		// Terminal-Bench patterns: tasks often have test scripts.
+		"test_outputs", "test_output", "run_tests",
+		"python3 /app/test", "python /app/test",
+		"python3 /tests/", "python /tests/",
+		"python3 test_", "python test_",
+		"bash /tests/", "sh /tests/",
+		"./test", "./run_test", "./check",
 	}
 
 	// Build/compile commands.
@@ -117,6 +124,7 @@ func isVerificationCommand(argsJSON string) bool {
 		"dotnet build",
 		"tsc",
 		"python -m py_compile", "python -c",
+		"python3 -c",
 	}
 
 	// Lint/check commands.

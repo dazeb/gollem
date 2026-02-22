@@ -3,6 +3,8 @@ package codetool
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -240,4 +242,105 @@ func runQuiet(workDir string, name string, args ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(out.String())
+}
+
+// ProgressTrackingMiddleware detects when the agent isn't producing output
+// files and nudges it to stop researching and start writing. This combats
+// the "analysis paralysis" failure mode where agents spend all turns
+// exploring without creating deliverables.
+func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
+	var mu sync.Mutex
+	turn := 0
+	hasWritten := false
+	warned10 := false
+	warned20 := false
+
+	return func(
+		ctx context.Context,
+		messages []core.ModelMessage,
+		settings *core.ModelSettings,
+		params *core.ModelRequestParameters,
+		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
+	) (*core.ModelResponse, error) {
+		mu.Lock()
+		turn++
+		currentTurn := turn
+
+		// Track whether the agent has created any files via write tool.
+		if !hasWritten {
+			for _, msg := range messages {
+				if resp, ok := msg.(core.ModelResponse); ok {
+					for _, part := range resp.Parts {
+						if tc, ok := part.(core.ToolCallPart); ok {
+							if tc.ToolName == "write" || tc.ToolName == "multi_edit" {
+								hasWritten = true
+								break
+							}
+							// Also check bash for redirects/tee that create files.
+							if tc.ToolName == "bash" {
+								var args struct {
+									Command string `json:"command"`
+								}
+								if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil {
+									cmd := args.Command
+									if strings.Contains(cmd, " > ") ||
+										strings.Contains(cmd, " >> ") ||
+										strings.Contains(cmd, " tee ") ||
+										strings.Contains(cmd, "echo ") && strings.Contains(cmd, ">") {
+										hasWritten = true
+										break
+									}
+								}
+							}
+						}
+					}
+					if hasWritten {
+						break
+					}
+				}
+			}
+		}
+
+		needsWarning := !hasWritten
+		w10 := warned10
+		w20 := warned20
+		if needsWarning && currentTurn >= 10 && !w10 {
+			warned10 = true
+		}
+		if needsWarning && currentTurn >= 20 && !w20 {
+			warned20 = true
+		}
+		mu.Unlock()
+
+		if needsWarning && currentTurn >= 20 && !w20 {
+			fmt.Fprintf(os.Stderr, "[gollem] progress: CRITICAL — turn %d with no output files created\n", currentTurn)
+			urgentMsg := core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{
+						Content: "🚨 CRITICAL: You are " + fmt.Sprintf("%d", currentTurn) + " turns in and have NOT created any output files yet. " +
+							"You MUST produce output NOW. Stop researching, stop analyzing, stop debugging infrastructure. " +
+							"Write your best attempt at a solution immediately using the write tool or bash redirects. " +
+							"You can refine it after — but you MUST have something written. " +
+							"An imperfect solution that exists scores higher than a perfect solution that doesn't.",
+					},
+				},
+			}
+			messages = append(messages, urgentMsg)
+		} else if needsWarning && currentTurn >= 10 && !w10 {
+			fmt.Fprintf(os.Stderr, "[gollem] progress: warning — turn %d with no output files created\n", currentTurn)
+			warningMsg := core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{
+						Content: "⚠️ PROGRESS WARNING: You are " + fmt.Sprintf("%d", currentTurn) + " turns in and have not created any output files yet. " +
+							"Remember Rule #1: Output First, Perfect Later. " +
+							"Write your best attempt at a solution NOW, then iterate to improve it. " +
+							"Don't spend more time researching — start producing output.",
+					},
+				},
+			}
+			messages = append(messages, warningMsg)
+		}
+
+		return next(ctx, messages, settings, params)
+	}
 }

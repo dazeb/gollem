@@ -124,13 +124,15 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// Middleware chain (outermost first):
 		// 1. Loop detection — break doom loops of repeated edits.
 		core.WithAgentMiddleware[string](LoopDetectionMiddleware(4)),
-		// 2. Context injection — discover environment on first turn.
+		// 2. Progress tracking — nudge agent to produce output files early.
+		core.WithAgentMiddleware[string](ProgressTrackingMiddleware(workDir)),
+		// 3. Context injection — discover environment on first turn.
 		core.WithAgentMiddleware[string](ContextInjectionMiddleware(workDir)),
-		// 3. Reasoning sandwich — vary thinking budget by phase.
+		// 4. Reasoning sandwich — vary thinking budget by phase.
 		core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(DefaultReasoningSandwichConfig())),
-		// 4. Verification tracking — track whether agent runs tests.
+		// 5. Verification tracking — track whether agent runs tests.
 		core.WithAgentMiddleware[string](verifyMW),
-		// 5. Stderr logging — real-time tool call observability.
+		// 6. Stderr logging — real-time tool call observability.
 		core.WithAgentMiddleware[string](stderrLoggingMiddleware()),
 
 		// Output validator: reject completion without verification.

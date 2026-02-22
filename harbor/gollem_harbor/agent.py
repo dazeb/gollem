@@ -85,11 +85,13 @@ class GollemAgent(BaseInstalledAgent):
         *args,
         timeout_minutes: int = 30,
         thinking_budget: int = 0,
+        reasoning_effort: str = "",
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self._timeout_minutes = timeout_minutes
         self._thinking_budget = thinking_budget
+        self._reasoning_effort = reasoning_effort
 
     @staticmethod
     def name() -> str:
@@ -150,6 +152,8 @@ class GollemAgent(BaseInstalledAgent):
         ])
         if self._thinking_budget > 0:
             cmd_parts.extend(["--thinking-budget", str(self._thinking_budget)])
+        if self._reasoning_effort:
+            cmd_parts.extend(["--reasoning-effort", self._reasoning_effort])
 
         cmd_parts.append(shlex.quote(instruction))
 
