@@ -77,17 +77,42 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 		mu.Unlock()
 
 		if len(loopedFiles) > 0 {
-			// Inject a guidance message.
+			// Build specific recovery guidance based on what type of loop it is.
+			var guidance string
+			hasEditLoop := false
+			hasBashLoop := false
+			for _, f := range loopedFiles {
+				if strings.HasPrefix(f, "bash: ") {
+					hasBashLoop = true
+				} else {
+					hasEditLoop = true
+				}
+			}
+
+			guidance = "WARNING: You appear to be stuck in a loop, repeatedly "
+			if hasEditLoop && hasBashLoop {
+				guidance += "editing " + strings.Join(loopedFiles, ", ") + ". "
+			} else if hasEditLoop {
+				guidance += "editing " + strings.Join(loopedFiles, ", ") + ". "
+			} else {
+				guidance += "running " + strings.Join(loopedFiles, ", ") + ". "
+			}
+
+			guidance += "Step back and try a FUNDAMENTALLY DIFFERENT strategy:\n"
+			if hasEditLoop {
+				guidance += "- If the same edit keeps failing: consider rewriting the entire file with the write tool instead of patching it\n"
+				guidance += "- If you keep getting the same test failure: re-read the FULL error output — you may be misunderstanding the requirement\n"
+				guidance += "- If you're going back and forth between two approaches: pick ONE and commit to it\n"
+			}
+			if hasBashLoop {
+				guidance += "- If the same command keeps failing: check if you're missing a dependency, wrong directory, or misconfigured environment\n"
+				guidance += "- If a test keeps failing with the same error: the issue is in your code, not in how you're running the test\n"
+			}
+			guidance += "- Consider if your fundamental approach is wrong — small tweaks won't fix a broken algorithm"
+
 			loopMsg := core.ModelRequest{
 				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{
-						Content: "WARNING: You appear to be stuck in a loop, repeatedly editing " +
-							strings.Join(loopedFiles, ", ") + ". " +
-							"Step back and reconsider your approach. Try a FUNDAMENTALLY DIFFERENT strategy: " +
-							"(1) re-read the FULL error output, (2) consider if your approach is wrong, " +
-							"(3) try a completely different algorithm or implementation. " +
-							"Do NOT keep making small tweaks to the same failing approach.",
-					},
+					core.UserPromptPart{Content: guidance},
 				},
 			}
 			messages = append(messages, loopMsg)

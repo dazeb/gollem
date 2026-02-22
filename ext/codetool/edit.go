@@ -127,9 +127,13 @@ func Edit(opts ...Option) core.Tool {
 			}
 
 			if count > 1 && !params.ReplaceAll {
-				return "", &core.ModelRetryError{
-					Message: fmt.Sprintf("old_string found %d times in %s. Provide more surrounding context to make it unique, or set replace_all=true.", count, params.Path),
-				}
+				// Show the line numbers of each occurrence so the agent can
+				// include surrounding context to disambiguate. Without this,
+				// the agent wastes a turn re-reading the file.
+				locations := findOccurrenceLines(content, params.OldString)
+				msg := fmt.Sprintf("old_string found %d times in %s (at lines %s). Provide more surrounding context to make it unique, or set replace_all=true.",
+					count, params.Path, locations)
+				return "", &core.ModelRetryError{Message: msg}
 			}
 
 			var newContent string
@@ -192,6 +196,30 @@ func editResultWithContext(content, newString string, replacements int, path str
 		b.WriteString("       ...\n")
 	}
 	return b.String()
+}
+
+// findOccurrenceLines returns a comma-separated list of line numbers where
+// old_string starts in the file content. Capped at 6 locations.
+func findOccurrenceLines(content, old string) string {
+	var lineNums []string
+	offset := 0
+	for {
+		idx := strings.Index(content[offset:], old)
+		if idx < 0 {
+			break
+		}
+		lineNum := strings.Count(content[:offset+idx], "\n") + 1
+		lineNums = append(lineNums, fmt.Sprintf("%d", lineNum))
+		offset += idx + len(old)
+		if len(lineNums) >= 6 {
+			lineNums = append(lineNums, "...")
+			break
+		}
+	}
+	if len(lineNums) == 0 {
+		return "unknown"
+	}
+	return strings.Join(lineNums, ", ")
 }
 
 // findNearestLines finds lines in the file content that are most similar to

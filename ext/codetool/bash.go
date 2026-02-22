@@ -224,6 +224,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := pythonErrorHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := compilationErrorHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			combined := outStr + errStr
@@ -656,6 +659,68 @@ func pythonErrorHint(output string, exitCode int) string {
 	}
 
 	return ""
+}
+
+// compilationErrorHint extracts the first file:line from C/C++, Go, and Rust
+// compiler errors so the agent can jump directly to the error location.
+// Saves 1-2 turns of the agent reading the full error output and figuring out
+// which file and line to view/edit.
+func compilationErrorHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	lines := strings.Split(output, "\n")
+
+	// C/C++/clang: "file.c:42:5: error: ..."
+	// Go: "./main.go:42:5: ..." or "main.go:42:5: ..."
+	// Rust (cargo): " --> src/main.rs:42:5"
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Rust: " --> file:line:col"
+		if strings.HasPrefix(trimmed, "--> ") {
+			rest := strings.TrimPrefix(trimmed, "--> ")
+			parts := strings.SplitN(rest, ":", 3)
+			if len(parts) >= 2 && isNumeric(parts[1]) {
+				return fmt.Sprintf("[hint: error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+					parts[0], parts[1], parts[1])
+			}
+		}
+
+		// C/C++/Go: "file:line:col: error:" or "file:line: error:"
+		if !strings.Contains(trimmed, ": error") && !strings.Contains(trimmed, ": fatal error") &&
+			!strings.Contains(trimmed, ": cannot ") && !strings.Contains(trimmed, ": undefined") &&
+			!strings.Contains(trimmed, "cannot find") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, ":", 4)
+		if len(parts) >= 3 && isNumeric(parts[1]) {
+			file := parts[0]
+			line := parts[1]
+			// Skip very long file paths (probably not real file references)
+			if len(file) > 200 {
+				continue
+			}
+			return fmt.Sprintf("[hint: error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				file, line, line)
+		}
+	}
+
+	return ""
+}
+
+// isNumeric returns true if the string contains only digits.
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // testResultSummary extracts a concise summary from test runner output.

@@ -1553,3 +1553,78 @@ func TestGlobShowsSizes(t *testing.T) {
 		t.Errorf("expected file sizes in glob output, got: %s", result)
 	}
 }
+
+func TestFindOccurrenceLines(t *testing.T) {
+	content := "aaa\nbbb\nccc\nbbb\nddd\nbbb\n"
+	got := findOccurrenceLines(content, "bbb")
+	// "bbb" appears at lines 2, 4, 6
+	if !strings.Contains(got, "2") || !strings.Contains(got, "4") || !strings.Contains(got, "6") {
+		t.Errorf("findOccurrenceLines() = %q, want lines 2, 4, 6", got)
+	}
+}
+
+func TestEditMultipleOccurrencesShowsLines(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file with duplicate lines
+	content := "line1\ndup\nline3\ndup\nline5\n"
+	writeTestFile(t, dir, "dup.txt", content)
+
+	tool := Edit(WithWorkDir(dir))
+	err := callErr(t, tool, `{"path":"dup.txt","old_string":"dup","new_string":"unique"}`)
+	if err == nil {
+		t.Fatal("expected error for multiple occurrences")
+	}
+	errMsg := err.Error()
+	// Should mention line numbers
+	if !strings.Contains(errMsg, "lines") {
+		t.Errorf("expected line numbers in error, got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "2") {
+		t.Errorf("expected line 2 in error, got: %s", errMsg)
+	}
+}
+
+func TestCompilationErrorHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		exitCode int
+		contains string
+	}{
+		{
+			name:     "gcc_error",
+			output:   "main.c:42:5: error: expected ';' after expression",
+			exitCode: 1,
+			contains: "main.c:42",
+		},
+		{
+			name:     "go_error",
+			output:   "./main.go:15:2: undefined: fmt.Printl",
+			exitCode: 2,
+			contains: "main.go:15",
+		},
+		{
+			name:     "rust_error",
+			output:   "error[E0308]: mismatched types\n --> src/main.rs:10:5\n  |\n10 |     foo()\n  |     ^^^^^ expected u32",
+			exitCode: 101,
+			contains: "src/main.rs:10",
+		},
+		{
+			name:     "success_no_hint",
+			output:   "Build succeeded",
+			exitCode: 0,
+			contains: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compilationErrorHint(tt.output, tt.exitCode)
+			if tt.contains == "" && got != "" {
+				t.Errorf("expected no hint, got: %s", got)
+			}
+			if tt.contains != "" && !strings.Contains(got, tt.contains) {
+				t.Errorf("expected hint containing %q, got: %s", tt.contains, got)
+			}
+		})
+	}
+}
