@@ -229,6 +229,29 @@ func TestFormatBashOutput(t *testing.T) {
 	}
 }
 
+func TestModuleNotFoundHint(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{"simple module", "ModuleNotFoundError: No module named 'numpy'", "[hint: try: pip install numpy]"},
+		{"aliased module", "ModuleNotFoundError: No module named 'cv2'", "[hint: try: pip install opencv-python]"},
+		{"submodule", "ModuleNotFoundError: No module named 'sklearn.ensemble'", "[hint: try: pip install scikit-learn]"},
+		{"double quotes", `ModuleNotFoundError: No module named "yaml"`, "[hint: try: pip install PyYAML]"},
+		{"no match", "some random error output", ""},
+		{"PIL alias", "ModuleNotFoundError: No module named 'PIL'", "[hint: try: pip install Pillow]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := moduleNotFoundHint(tt.output)
+			if got != tt.want {
+				t.Errorf("moduleNotFoundHint(%q) = %q, want %q", tt.output, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- View Tests ---
 
 func TestView_ReadFile(t *testing.T) {

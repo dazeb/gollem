@@ -137,10 +137,14 @@ func Bash(opts ...Option) core.Tool {
 
 			result := formatBashOutput(outStr, errStr, exitCode, timedOut, timeout)
 
-			// Add hint for "command not found" errors — saves a turn of
-			// the model figuring out the package name.
+			// Add hints for common errors — saves turns of troubleshooting.
 			if exitCode == 127 || strings.Contains(errStr, "command not found") || strings.Contains(errStr, "No such file or directory") {
 				if hint := commandNotFoundHint(errStr); hint != "" {
+					result += "\n" + hint
+				}
+			}
+			if strings.Contains(errStr, "ModuleNotFoundError") || strings.Contains(errStr, "ImportError") || strings.Contains(outStr, "ModuleNotFoundError") {
+				if hint := moduleNotFoundHint(errStr + outStr); hint != "" {
 					result += "\n" + hint
 				}
 			}
@@ -246,6 +250,67 @@ func commandNotFoundHint(stderr string) string {
 	// Fallback for pip/ensurepip.
 	if strings.Contains(lower, "no module named pip") {
 		return "[hint: try: python3 -m ensurepip || apt-get install -y python3-pip]"
+	}
+
+	return ""
+}
+
+// moduleNotFoundHint generates a pip install hint when a Python import fails.
+// This saves a turn of the model figuring out which package to install.
+func moduleNotFoundHint(output string) string {
+	// Common module → pip package mappings where they differ.
+	aliases := map[string]string{
+		"cv2":         "opencv-python",
+		"PIL":         "Pillow",
+		"sklearn":     "scikit-learn",
+		"skimage":     "scikit-image",
+		"yaml":        "PyYAML",
+		"bs4":         "beautifulsoup4",
+		"attr":        "attrs",
+		"dotenv":      "python-dotenv",
+		"git":         "GitPython",
+		"serial":      "pyserial",
+		"usb":         "pyusb",
+		"magic":       "python-magic",
+		"Crypto":      "pycryptodome",
+		"dateutil":    "python-dateutil",
+		"jwt":         "PyJWT",
+		"lxml":        "lxml",
+		"wx":          "wxPython",
+		"gi":          "PyGObject",
+		"nacl":        "PyNaCl",
+		"socks":       "PySocks",
+		"zmq":         "pyzmq",
+		"Levenshtein": "python-Levenshtein",
+		"Bio":         "biopython",
+	}
+
+	// Try to extract the module name from common error patterns.
+	// Patterns: "No module named 'foo'" or "No module named 'foo.bar'"
+	for _, pattern := range []string{"No module named '", "No module named \""} {
+		idx := strings.Index(output, pattern)
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(pattern)
+		rest := output[start:]
+		end := strings.IndexAny(rest, "'\"")
+		if end < 0 {
+			continue
+		}
+		module := rest[:end]
+		// Use the top-level package name (e.g., "foo" from "foo.bar.baz").
+		if dot := strings.Index(module, "."); dot > 0 {
+			module = module[:dot]
+		}
+		if module == "" {
+			continue
+		}
+		pkg := module
+		if alias, ok := aliases[module]; ok {
+			pkg = alias
+		}
+		return fmt.Sprintf("[hint: try: pip install %s]", pkg)
 	}
 
 	return ""
