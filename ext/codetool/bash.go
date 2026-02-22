@@ -339,8 +339,6 @@ func Bash(opts ...Option) core.Tool {
 							for _, r := range last3[1:] {
 								if r.passed > bestPassed {
 									improving = true
-								}
-								if r.passed > bestPassed {
 									bestPassed = r.passed
 								}
 							}
@@ -1509,6 +1507,53 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Mocha (Node.js): "N passing (Xms)" / "M failing" on separate lines.
+	// Mocha uses "passing" and "failing" (present participle), not "passed"/"failed".
+	if strings.Contains(lower, "passing") {
+		lines := strings.Split(output, "\n")
+		var passingLine, failingLine string
+		for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
+			line := strings.TrimSpace(lines[i])
+			words := strings.Fields(strings.ToLower(line))
+			if len(words) >= 2 && words[1] == "passing" && isNumeric(words[0]) {
+				passingLine = line
+			} else if len(words) >= 2 && words[1] == "failing" && isNumeric(words[0]) {
+				failingLine = line
+			}
+		}
+		if passingLine != "" {
+			summary := "[test summary: " + passingLine
+			if failingLine != "" {
+				summary += ", " + failingLine
+			}
+			summary += "]"
+			if detail := firstFailureDetail(output); detail != "" {
+				summary += "\n" + detail
+			}
+			return summary
+		}
+	}
+
+	// PHPUnit: "Tests: N, Assertions: M, Failures: F" or "OK (N tests, M assertions)"
+	if strings.Contains(lower, "phpunit") ||
+		(strings.Contains(lower, "tests:") && strings.Contains(lower, "assertions:")) {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if (strings.Contains(lineLower, "tests:") && strings.Contains(lineLower, "assertions:")) ||
+				(strings.HasPrefix(lineLower, "ok (") && strings.Contains(lineLower, "test")) {
+				summary := "[test summary: " + line + "]"
+				if strings.Contains(lineLower, "failure") || strings.Contains(lineLower, "error") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
+			}
+		}
+	}
+
 	// Catch2 (C++): "X test cases - Y assertions - Z failures"
 	// or "All tests passed (X assertions in Y test cases)"
 	if strings.Contains(lower, "test case") && strings.Contains(lower, "assertion") {
@@ -2082,6 +2127,61 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 					ok = true
 					return
 				}
+			}
+		}
+	}
+
+	// Ruby minitest: "X runs, Y assertions, Z failures, W errors"
+	if strings.Contains(lower, "runs") && strings.Contains(lower, "assertions") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "runs") || !strings.Contains(line, "assertions") {
+				continue
+			}
+			words := strings.Fields(line)
+			var runs, failures, errs int
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					switch {
+					case strings.HasPrefix(nextWord, "run"):
+						runs = n
+					case strings.HasPrefix(nextWord, "failure"):
+						failures = n
+					case strings.HasPrefix(nextWord, "error"):
+						errs = n
+					}
+				}
+			}
+			if runs > 0 {
+				failed = failures + errs
+				passed = runs - failed
+				ok = true
+				return
+			}
+		}
+	}
+
+	// .NET: "Total tests: X, Passed: Y, Failed: Z" (may be one line or separate lines)
+	if strings.Contains(lower, "total tests:") && strings.Contains(lower, "passed:") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "total tests:") {
+				continue
+			}
+			// .NET may put all on one line or spread across several.
+			// Gather a window of lines around "Total tests:".
+			window := line
+			for j := i + 1; j < min(i+5, len(lines)); j++ {
+				window += " " + strings.ToLower(strings.TrimSpace(lines[j]))
+			}
+			fmt.Sscanf(extractAfter(window, "passed:"), "%d", &passed)
+			fmt.Sscanf(extractAfter(window, "failed:"), "%d", &failed)
+			if passed+failed > 0 {
+				ok = true
+				return
 			}
 		}
 	}

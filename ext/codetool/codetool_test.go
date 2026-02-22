@@ -5349,3 +5349,137 @@ func TestIsBinaryLike(t *testing.T) {
 	}
 }
 
+func TestMochaTestSummaryExtraction(t *testing.T) {
+	output := `
+  Calculator
+    ✓ should add correctly
+    ✓ should subtract correctly
+    1) should multiply correctly
+    2) should divide correctly
+
+  2 passing (15ms)
+  2 failing
+
+  1) Calculator
+       should multiply correctly:
+     AssertionError: expected 6 to equal 8
+      at Context.<anonymous> (test/calc.test.js:12:24)
+
+  2) Calculator
+       should divide correctly:
+     AssertionError: expected 2 to equal 3
+      at Context.<anonymous> (test/calc.test.js:18:24)
+`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty Mocha summary")
+	}
+	if !strings.Contains(summary, "2 passing") {
+		t.Errorf("expected '2 passing' in summary, got: %s", summary)
+	}
+	if !strings.Contains(summary, "2 failing") {
+		t.Errorf("expected '2 failing' in summary, got: %s", summary)
+	}
+	// Should also extract first failure detail.
+	if !strings.Contains(summary, "first failure") {
+		t.Errorf("expected first failure detail in summary, got: %s", summary)
+	}
+}
+
+func TestPHPUnitTestSummaryExtraction(t *testing.T) {
+	output := `PHPUnit 9.5.0 by Sebastian Bergmann and contributors.
+
+..F.                                                               3 / 4 (100%)
+
+Time: 00:00.015, Memory: 6.00 MB
+
+There was 1 failure:
+
+1) TestCalculator::testMultiply
+Failed asserting that 6 matches expected 8.
+
+/app/tests/CalculatorTest.php:15
+
+FAILURES!
+Tests: 4, Assertions: 4, Failures: 1`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty PHPUnit summary")
+	}
+	if !strings.Contains(summary, "Tests: 4") {
+		t.Errorf("expected 'Tests: 4' in summary, got: %s", summary)
+	}
+	if !strings.Contains(summary, "Failures: 1") {
+		t.Errorf("expected 'Failures: 1' in summary, got: %s", summary)
+	}
+	// Should also extract first failure detail.
+	if !strings.Contains(summary, "first failure") {
+		t.Errorf("expected first failure detail in summary, got: %s", summary)
+	}
+}
+
+func TestMinitestCountExtraction(t *testing.T) {
+	output := `Run options: --seed 12345
+
+# Running:
+
+..F.E
+
+Finished in 0.001234s, 4050.1234 runs/s, 4050.1234 assertions/s.
+
+  1) Failure:
+TestCalculator#test_multiply [test_calculator.rb:15]:
+Expected: 8
+  Actual: 6
+
+  2) Error:
+TestCalculator#test_divide [test_calculator.rb:20]:
+ZeroDivisionError: divided by 0
+
+5 runs, 5 assertions, 1 failures, 1 errors, 0 skips`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected extractTestCounts to find minitest counts")
+	}
+	if f != 2 {
+		t.Errorf("expected 2 failures (1 failure + 1 error), got: %d", f)
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed (5 runs - 2 failures), got: %d", p)
+	}
+}
+
+func TestDotNetCountExtraction(t *testing.T) {
+	output := `  Determining projects to restore...
+  All projects are up-to-date for restore.
+  TestProject -> /app/bin/Debug/net6.0/TestProject.dll
+Test run for /app/bin/Debug/net6.0/TestProject.dll (.NETCoreApp,Version=v6.0)
+Microsoft (R) Test Execution Command Line Tool Version 17.3.1 (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+  Failed TestProject.Tests.TestCalculator.TestMultiply [5 ms]
+  Error Message:
+   Assert.Equal() Failure
+Expected: 8
+Actual:   6
+
+Total tests: 5
+     Passed: 4
+     Failed: 1`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected extractTestCounts to find .NET counts")
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failure, got: %d", f)
+	}
+	if p != 4 {
+		t.Errorf("expected 4 passed, got: %d", p)
+	}
+}
+
