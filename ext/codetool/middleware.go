@@ -446,6 +446,12 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Create these files EARLY — even with placeholder content — then refine.")
 	}
 
+	// Auto-read example/reference output files that show expected format.
+	// These save the agent from guessing output format — the #4 failure mode.
+	if autoReadBudget > 0 {
+		autoReadBudget = autoReadExampleOutputs(workDir, &parts, autoReadBudget)
+	}
+
 	// Task-type specific guidance based on detected patterns.
 	parts = append(parts, detectTaskGuidance(workDir))
 
@@ -544,6 +550,74 @@ func runQuiet(workDir string, name string, args ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(out.String())
+}
+
+// autoReadExampleOutputs searches for example/reference output files that show
+// the expected output format. These are invaluable for preventing format mismatches.
+// Looks for files named "example_*", "sample_*", "reference_*", "expected_*"
+// in common locations. Returns remaining budget.
+func autoReadExampleOutputs(workDir string, parts *[]string, budget int) int {
+	searchDirs := []string{
+		workDir,
+		"/app",
+		"/app/task_file",
+		filepath.Join(workDir, "task_file"),
+		filepath.Join(workDir, "examples"),
+		filepath.Join(workDir, "sample"),
+		"/app/task_file/input_data", // sometimes example outputs are in input_data
+	}
+	examplePrefixes := []string{
+		"example", "sample", "reference", "expected",
+		"template", "demo", "baseline",
+	}
+
+	count := 0
+	for _, dir := range searchDirs {
+		if budget <= 0 || count >= 3 {
+			break
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if budget <= 0 || count >= 3 {
+				break
+			}
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			lower := strings.ToLower(name)
+			isExample := false
+			for _, prefix := range examplePrefixes {
+				if strings.HasPrefix(lower, prefix) {
+					isExample = true
+					break
+				}
+			}
+			if !isExample {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil || info.Size() == 0 || info.Size() > 3000 {
+				continue // only read small example files
+			}
+			limit := 3000
+			if limit > budget {
+				limit = budget
+			}
+			content := readFileTruncated(filepath.Join(dir, name), limit)
+			if content != "" {
+				*parts = append(*parts, fmt.Sprintf("\n## Example output file (MATCH THIS FORMAT): %s/%s", dir, name))
+				*parts = append(*parts, content)
+				*parts = append(*parts, "IMPORTANT: Your output MUST match this format exactly (headers, delimiters, whitespace, encoding).")
+				budget -= len(content)
+				count++
+			}
+		}
+	}
+	return budget
 }
 
 // autoReadDirBudget reads small files in a directory and appends them to parts,
