@@ -281,6 +281,26 @@ func discoverEnvironment(workDir string) string {
 	os.Setenv("PYTHONDONTWRITEBYTECODE", "1")
 	os.Setenv("PYTHONUNBUFFERED", "1")
 
+	// Set PYTHONPATH to include the working directory and /app so that test
+	// scripts can import local modules regardless of their cwd. This is the #1
+	// cause of "ModuleNotFoundError: No module named 'solution'" — tests in
+	// /tests/ run with cwd=/tests/ and can't see modules in /app/. Setting
+	// PYTHONPATH preemptively prevents this entirely, saving 1-2 turns.
+	pythonPaths := []string{}
+	if workDir != "" {
+		pythonPaths = append(pythonPaths, workDir)
+	}
+	if workDir != "/app" && dirExists("/app") {
+		pythonPaths = append(pythonPaths, "/app")
+	}
+	// Preserve existing PYTHONPATH if set (e.g., from venv activation).
+	if existing := os.Getenv("PYTHONPATH"); existing != "" {
+		pythonPaths = append(pythonPaths, existing)
+	}
+	if len(pythonPaths) > 0 {
+		os.Setenv("PYTHONPATH", strings.Join(pythonPaths, ":"))
+	}
+
 	// Detect Python virtual environments (venv/conda) that need activation.
 	// Many containers have packages installed in a venv, but the agent's shell
 	// doesn't activate it by default. Detecting and activating saves 2-3 turns

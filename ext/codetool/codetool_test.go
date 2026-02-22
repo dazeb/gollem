@@ -3651,3 +3651,59 @@ func TestTimeoutContextHint(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractTestCounts(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		passed int
+		failed int
+		ok     bool
+	}{
+		{
+			name:   "pytest with failures",
+			output: "test_foo.py ..F.F\n\n====== 3 passed, 2 failed in 1.23s ======",
+			passed: 3, failed: 2, ok: true,
+		},
+		{
+			name:   "pytest all pass",
+			output: "test_foo.py .....\n\n====== 5 passed in 0.42s ======",
+			passed: 5, failed: 0, ok: true,
+		},
+		{
+			name:   "go test failures",
+			output: "--- PASS: TestA (0.00s)\n--- PASS: TestB (0.01s)\n--- FAIL: TestC (0.00s)\nFAIL",
+			passed: 2, failed: 1, ok: true,
+		},
+		{
+			name:   "python unittest failure",
+			output: "..F.E\n------\nRan 5 tests in 0.003s\n\nFAILED (failures=1, errors=1)",
+			passed: 3, failed: 2, ok: true,
+		},
+		{
+			name:   "python unittest OK",
+			output: ".....\n------\nRan 5 tests in 0.002s\n\nOK",
+			passed: 5, failed: 0, ok: true,
+		},
+		{
+			name:   "not test output",
+			output: "hello world\nsome random output",
+			passed: 0, failed: 0, ok: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, f, ok := extractTestCounts(tt.output)
+			if ok != tt.ok {
+				t.Errorf("ok: got %v, want %v", ok, tt.ok)
+			}
+			if p != tt.passed {
+				t.Errorf("passed: got %d, want %d", p, tt.passed)
+			}
+			if f != tt.failed {
+				t.Errorf("failed: got %d, want %d", f, tt.failed)
+			}
+		})
+	}
+}

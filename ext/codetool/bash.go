@@ -76,6 +76,15 @@ func Bash(opts ...Option) core.Tool {
 	// Safe because bash is WithToolSequential (no concurrent calls).
 	var lastTestFailFingerprint string
 
+	// Track pass/fail counts across test runs to detect stagnation.
+	// When the agent runs tests 3+ times without improving the pass rate,
+	// it's likely stuck — warn it to try a fundamentally different approach.
+	type testRunRecord struct {
+		passed, failed int
+	}
+	var testRunHistory []testRunRecord
+	const maxTestHistory = 5
+
 	return core.FuncTool[BashParams](
 		"bash",
 		"Execute a bash command in the shell. Use this for running programs, installing packages, "+
@@ -273,8 +282,39 @@ func Bash(opts ...Option) core.Tool {
 							result += "\n[hint: this test failure is IDENTICAL to the previous run — your edit did not fix the issue. Re-read the error, verify your edit was applied correctly, and try a fundamentally different approach]"
 						}
 						lastTestFailFingerprint = fp
+
+						// Pass-rate stagnation detection: track test counts over
+						// multiple runs and warn when no progress is being made.
+						if p, f, ok := extractTestCounts(combined); ok {
+							rec := testRunRecord{passed: p, failed: f}
+							testRunHistory = append(testRunHistory, rec)
+							if len(testRunHistory) > maxTestHistory {
+								testRunHistory = testRunHistory[len(testRunHistory)-maxTestHistory:]
+							}
+							// Detect stagnation: 3+ runs with same or worse pass count.
+							if len(testRunHistory) >= 3 {
+								last3 := testRunHistory[len(testRunHistory)-3:]
+								bestPassed := last3[0].passed
+								improving := false
+								for _, r := range last3[1:] {
+									if r.passed > bestPassed {
+										improving = true
+									}
+									if r.passed > bestPassed {
+										bestPassed = r.passed
+									}
+								}
+								if !improving && last3[len(last3)-1].failed > 0 {
+									result += fmt.Sprintf("\n[hint: pass rate has NOT improved over last 3 test runs (%d/%d → %d/%d → %d/%d). Your current approach may be fundamentally wrong — consider: (1) re-reading the task requirements, (2) trying a completely different algorithm, (3) checking if you missed a constraint]",
+										last3[0].passed, last3[0].passed+last3[0].failed,
+										last3[1].passed, last3[1].passed+last3[1].failed,
+										last3[2].passed, last3[2].passed+last3[2].failed)
+								}
+							}
+						}
 					} else {
 						lastTestFailFingerprint = "" // reset on success
+						testRunHistory = nil         // reset on full pass
 					}
 				} else if summary := compilationErrorSummary(combined, exitCode); summary != "" {
 					result += "\n" + summary
@@ -1507,6 +1547,136 @@ func firstFailureDetail(output string) string {
 // failure assertion is identical, the agent's fix was ineffective.
 func testFailureFingerprint(output string) string {
 	return firstFailureDetail(output)
+}
+
+// extractTestCounts parses test output to extract pass/fail counts.
+// Returns (passed, failed, ok) where ok indicates whether counts were found.
+// Supports pytest, unittest, Go test, jest, cargo test, custom "X/Y" patterns.
+func extractTestCounts(output string) (passed, failed int, ok bool) {
+	lower := strings.ToLower(output)
+	lines := strings.Split(output, "\n")
+
+	// pytest: "X passed, Y failed" or "X passed" (often in "==== 3 passed, 2 failed ====")
+	if strings.Contains(lower, "passed") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "passed") {
+				continue
+			}
+			// Extract "N passed" and "M failed" using word-boundary scanning.
+			// Split into words and look for number + "passed"/"failed" pairs.
+			// Strip trailing punctuation (commas) from keyword matching.
+			words := strings.Fields(line)
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					switch {
+					case nextWord == "passed":
+						passed = n
+						ok = true
+					case nextWord == "failed":
+						failed += n
+						ok = true
+					case strings.HasPrefix(nextWord, "error"):
+						failed += n
+						ok = true
+					}
+				}
+			}
+			if ok {
+				return
+			}
+		}
+	}
+
+	// Go test: count "--- FAIL:" and "--- PASS:" lines.
+	if strings.Contains(output, "--- FAIL:") || strings.Contains(output, "--- PASS:") {
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "--- FAIL:") {
+				failed++
+				ok = true
+			} else if strings.HasPrefix(trimmed, "--- PASS:") {
+				passed++
+				ok = true
+			}
+		}
+		if ok {
+			return
+		}
+	}
+
+	// Python unittest: "FAILED (failures=N, errors=M)" or "Ran X tests... OK"
+	// Pre-scan for "Ran X tests" line (may appear before the result line).
+	if strings.Contains(output, "Ran ") && strings.Contains(lower, "tests") {
+		var total int
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "Ran ") {
+				fmt.Sscanf(trimmed, "Ran %d", &total)
+			}
+		}
+		// Now scan from end for result line.
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "failures=") || strings.Contains(lineLower, "errors=") {
+				var f, e int
+				fmt.Sscanf(extractAfter(lineLower, "failures="), "%d", &f)
+				fmt.Sscanf(extractAfter(lineLower, "errors="), "%d", &e)
+				failed = f + e
+				if total > 0 {
+					passed = total - failed
+				}
+				ok = total > 0
+				return
+			}
+			if line == "OK" && total > 0 {
+				passed = total
+				ok = true
+				return
+			}
+		}
+	}
+
+	// Generic: "X/Y tests passed" or "N out of M"
+	for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
+		line := strings.TrimSpace(lines[i])
+		lineLower := strings.ToLower(line)
+		// "X/Y" pattern
+		if strings.Contains(lineLower, "passed") || strings.Contains(lineLower, "tests") {
+			var p, t int
+			if n, _ := fmt.Sscanf(line, "%d/%d", &p, &t); n == 2 && t > 0 {
+				passed = p
+				failed = t - p
+				ok = true
+				return
+			}
+		}
+	}
+
+	// Count PASS/FAIL lines.
+	passCount := strings.Count(strings.ToUpper(output), "\nPASS")
+	failCount := strings.Count(strings.ToUpper(output), "\nFAIL")
+	if passCount+failCount >= 3 {
+		passed = passCount
+		failed = failCount
+		ok = true
+		return
+	}
+
+	return 0, 0, false
+}
+
+// extractAfter returns the substring after the given prefix in s.
+func extractAfter(s, prefix string) string {
+	idx := strings.Index(s, prefix)
+	if idx < 0 {
+		return ""
+	}
+	return s[idx+len(prefix):]
 }
 
 // compilationErrorSummary extracts key error lines from compiler output.
