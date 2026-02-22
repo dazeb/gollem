@@ -245,6 +245,11 @@ func isVerificationString(cmd string) bool {
 		"zig build", "zig test",
 		// Perl.
 		"prove ", "perl -e",
+		// R language.
+		"rscript ", "rscript -e",
+		// Inline output validation patterns.
+		"python3 -c \"open(", "python -c \"open(",
+		"python3 -c 'open(", "python -c 'open(",
 	}
 
 	// Build/compile commands.
@@ -276,9 +281,13 @@ func isVerificationString(cmd string) bool {
 		"wc -c", "wc -l", "stat ",
 		"du -", "file ",
 		"diff ", "cmp ",
-		"md5sum", "sha256sum",
+		"md5sum", "sha256sum", "sha1sum",
 		"grep -c", "grep --count", // counting matches is verification
 		"sqlite3 ",                 // querying database to verify contents
+		"xxd ",                     // hex dump for byte-level comparison
+		"valgrind ",                // memory leak checking
+		"curl localhost", "curl 127.0.0.1", "curl http://localhost", // service verification
+		"wget localhost", "wget 127.0.0.1",
 	}
 
 	for _, p := range testPatterns {

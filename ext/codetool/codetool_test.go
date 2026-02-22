@@ -1172,6 +1172,36 @@ func TestIsVerificationCode(t *testing.T) {
 	}
 }
 
+func TestIsVerificationString(t *testing.T) {
+	tests := []struct {
+		cmd  string
+		want bool
+	}{
+		{"go test ./...", true},
+		{"pytest -xvs", true},
+		{"npm test", true},
+		{"cargo test", true},
+		{"make test", true},
+		{"diff output.txt expected.txt", true},
+		{"valgrind ./myprogram", true},
+		{"curl localhost:8080/api/health", true},
+		{"curl http://localhost:3000", true},
+		{"xxd output.bin | head", true},
+		{"Rscript test.R", true},
+		{"echo hello world", false},
+		{"cat main.py", false},
+		{"ls -la", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			got := isVerificationString(strings.ToLower(tt.cmd))
+			if got != tt.want {
+				t.Errorf("isVerificationString(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsPipCommand(t *testing.T) {
 	tests := []struct {
 		cmd  string
