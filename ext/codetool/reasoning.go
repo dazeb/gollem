@@ -46,9 +46,9 @@ type ReasoningSandwichConfig struct {
 }
 
 // DefaultReasoningSandwichConfig returns a balanced reasoning sandwich config.
-// Planning: high reasoning for deep analysis (first 5 turns)
-// Implementation: low reasoning for fast execution (middle turns)
-// Verification: high reasoning for careful error analysis (last turns or when testing)
+// Planning: high reasoning for deep analysis (first 5 turns).
+// Implementation: low reasoning for fast execution (middle turns).
+// Verification: high reasoning for careful error analysis (last turns or when testing).
 func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
 		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},

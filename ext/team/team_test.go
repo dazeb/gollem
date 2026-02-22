@@ -45,10 +45,7 @@ func TestTeam_SpawnTeammate(t *testing.T) {
 
 	// Wait for the teammate to become idle (completed initial task).
 	deadline := time.After(3 * time.Second)
-	for {
-		if teammate.State() == TeammateIdle || teammate.State() == TeammateStopped {
-			break
-		}
+	for teammate.State() != TeammateIdle && teammate.State() != TeammateStopped {
 		select {
 		case <-deadline:
 			t.Fatalf("teammate did not become idle, state: %v", teammate.State())
