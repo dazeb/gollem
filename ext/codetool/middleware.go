@@ -949,6 +949,50 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Ensure your solution is compatible with this invocation pattern.")
 	}
 
+	// Extract function signatures from test code — tells the agent the exact
+	// API it needs to implement (parameter names, types, return values).
+	// This goes beyond extractImportedNames (which only knows WHAT is imported)
+	// to show HOW imported functions are called.
+	if signatures := extractFunctionSignatures(workDir); len(signatures) > 0 {
+		parts = append(parts, "\n## Function Signatures (from test calls)")
+		parts = append(parts, "Tests call your functions with these signatures:")
+		for _, sig := range signatures {
+			parts = append(parts, "  - "+sig)
+		}
+		parts = append(parts, "Implement functions matching these exact signatures.")
+	}
+
+	// Detect numerical comparison tolerances from test assertions.
+	// Tests using assertAlmostEqual, isclose, etc. have specific precision
+	// requirements. Surfacing these prevents the agent from returning values
+	// with wrong precision (a common failure for scientific computing tasks).
+	if tolerances := detectComparisonTolerances(workDir); len(tolerances) > 0 {
+		parts = append(parts, "\n## Precision Requirements (from test assertions)")
+		for _, t := range tolerances {
+			parts = append(parts, "  - "+t)
+		}
+	}
+
+	// Extract environment variables from test scripts. Tests often set
+	// env vars (PORT, DATABASE_URL, etc.) that the solution must respect.
+	// Missing env vars cause silent failures that waste 2-3 debugging turns.
+	if envVars := extractTestEnvironmentVars(workDir); len(envVars) > 0 {
+		parts = append(parts, "\n## Environment Variables (from test scripts)")
+		parts = append(parts, "Tests set these environment variables before running your solution:")
+		for _, ev := range envVars {
+			parts = append(parts, "  - "+ev)
+		}
+		parts = append(parts, "Your solution MUST respect these variables.")
+	}
+
+	// Detect working directory expectations from test scripts. Some tests
+	// cd to a specific directory before running the solution. If the agent
+	// creates files in the wrong directory, tests fail silently.
+	if cwdHint := detectExpectedWorkingDir(workDir); cwdHint != "" {
+		parts = append(parts, "\n## Working Directory (from test analysis)")
+		parts = append(parts, cwdHint)
+	}
+
 	// Auto-read example/reference output files that show expected format.
 	// These save the agent from guessing output format — the #4 failure mode.
 	if autoReadBudget > 0 {
@@ -2484,6 +2528,671 @@ func extractImportedNames(parts []string, missingFiles []string) map[string][]st
 	}
 
 	return result
+}
+
+// extractFunctionSignatures scans test files for function call patterns to
+// determine the exact API the solution needs to implement. Goes beyond
+// extractImportedNames by showing HOW functions are called (parameter names,
+// argument patterns), not just WHAT is imported.
+// Example: from "assert solve(3, [1,2,3]) == 6" → "solve(n, list) → called with int and list args"
+func extractFunctionSignatures(workDir string) []string {
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+	var signatures []string
+	seen := make(map[string]bool)
+
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !isSourceFile(entry.Name()) {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 30000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
+			if err != nil {
+				continue
+			}
+			content := string(data)
+			ext := strings.ToLower(filepath.Ext(entry.Name()))
+
+			switch ext {
+			case ".py":
+				sigs := extractPythonFunctionSignatures(content)
+				for _, sig := range sigs {
+					if !seen[sig] {
+						seen[sig] = true
+						signatures = append(signatures, sig)
+					}
+				}
+			case ".js", ".ts":
+				sigs := extractJSFunctionSignatures(content)
+				for _, sig := range sigs {
+					if !seen[sig] {
+						seen[sig] = true
+						signatures = append(signatures, sig)
+					}
+				}
+			}
+		}
+		if len(signatures) > 0 {
+			break
+		}
+	}
+
+	if len(signatures) > 10 {
+		signatures = signatures[:10]
+	}
+	return signatures
+}
+
+// extractPythonFunctionSignatures finds function call patterns in Python test code.
+// Looks for calls to non-stdlib functions: solution.solve(x, y), solve(n, k), etc.
+func extractPythonFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	// Known test/stdlib function names to skip.
+	skipFuncs := map[string]bool{
+		"assert": true, "print": true, "len": true, "range": true,
+		"int": true, "str": true, "float": true, "list": true, "dict": true,
+		"set": true, "tuple": true, "sorted": true, "reversed": true,
+		"enumerate": true, "zip": true, "map": true, "filter": true,
+		"isinstance": true, "type": true, "hasattr": true, "getattr": true,
+		"open": true, "os": true, "json": true, "re": true,
+		"assertEqual": true, "assertAlmostEqual": true, "assertTrue": true,
+		"assertFalse": true, "assertRaises": true, "assertIn": true,
+		"assertNotEqual": true, "assertIsNone": true, "assertIsNotNone": true,
+		"assertGreater": true, "assertLess": true, "assertGreaterEqual": true,
+		"assertLessEqual": true, "assertCountEqual": true,
+		"pytest": true, "fixture": true, "parametrize": true,
+		"isclose": true, "allclose": true, "array_equal": true,
+		"approx": true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "import") || strings.HasPrefix(trimmed, "from ") {
+			continue
+		}
+
+		// Look for function calls: word( or word.word(
+		// Patterns: "result = solve(n, k)", "assert process(data) == expected",
+		// "solution.solve(3, [1,2,3])"
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			// Extract function name (walk backward).
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == '.') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			// Extract the base function name (after last dot).
+			baseName := fullName
+			if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] || strings.HasPrefix(baseName, "assert") || strings.HasPrefix(baseName, "self.") {
+				continue
+			}
+			// Skip if the "module" part is a known stdlib/test module.
+			if dotIdx := strings.Index(fullName, "."); dotIdx >= 0 {
+				module := fullName[:dotIdx]
+				if skipFuncs[module] || module == "self" || module == "cls" || module == "np" || module == "pd" {
+					continue
+				}
+			}
+
+			// Extract arguments (up to the matching closing paren).
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue // unbalanced parens
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break // one sig per line
+		}
+	}
+
+	// Deduplicate by function name — keep the most informative call.
+	byFunc := make(map[string]string) // baseName → best signature
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
+}
+
+// extractJSFunctionSignatures finds function call patterns in JS/TS test code.
+func extractJSFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	skipFuncs := map[string]bool{
+		"describe": true, "it": true, "test": true, "expect": true,
+		"beforeEach": true, "afterEach": true, "beforeAll": true, "afterAll": true,
+		"require": true, "import": true, "console": true,
+		"parseInt": true, "parseFloat": true, "JSON": true,
+		"Array": true, "Object": true, "String": true, "Number": true,
+		"toEqual": true, "toBe": true, "toContain": true, "toThrow": true,
+		"toHaveLength": true, "toBeDefined": true, "toBeNull": true,
+		"toStrictEqual": true, "toBeGreaterThan": true, "toBeLessThan": true,
+		"toBeCloseTo": true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "import") ||
+			strings.HasPrefix(trimmed, "const {") || strings.HasPrefix(trimmed, "const ") && strings.Contains(trimmed, "require(") {
+			continue
+		}
+
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == '.') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			baseName := fullName
+			if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] {
+				continue
+			}
+
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break
+		}
+	}
+
+	// Deduplicate by base function name.
+	byFunc := make(map[string]string)
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
+}
+
+func isAlphaNumUnderscore(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
+// detectComparisonTolerances scans test files for numerical comparison patterns
+// with specific tolerance requirements. Tests using assertAlmostEqual, isclose,
+// np.allclose, pytest.approx, etc. have precision requirements that the agent
+// must match. Missing these causes test failures on otherwise correct solutions.
+func detectComparisonTolerances(workDir string) []string {
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+	var tolerances []string
+	seen := make(map[string]bool)
+
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !isSourceFile(entry.Name()) {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 30000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
+			if err != nil {
+				continue
+			}
+			content := string(data)
+			for _, line := range strings.Split(content, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+					continue
+				}
+				lower := strings.ToLower(trimmed)
+
+				var hint string
+
+				// Python: assertAlmostEqual(a, b, places=5)
+				if strings.Contains(lower, "assertalmostequal") && strings.Contains(lower, "places") {
+					hint = "assertAlmostEqual with " + extractKVFromLine(trimmed, "places") + " decimal places"
+				}
+
+				// Python: math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
+				if strings.Contains(lower, "isclose") && (strings.Contains(lower, "rel_tol") || strings.Contains(lower, "abs_tol")) {
+					tols := []string{}
+					if strings.Contains(lower, "rel_tol") {
+						tols = append(tols, "rel_tol="+extractKVFromLine(trimmed, "rel_tol"))
+					}
+					if strings.Contains(lower, "abs_tol") {
+						tols = append(tols, "abs_tol="+extractKVFromLine(trimmed, "abs_tol"))
+					}
+					hint = "isclose with " + strings.Join(tols, ", ")
+				}
+
+				// Python: np.allclose(a, b, atol=1e-6, rtol=1e-5)
+				if strings.Contains(lower, "allclose") && (strings.Contains(lower, "atol") || strings.Contains(lower, "rtol")) {
+					tols := []string{}
+					if strings.Contains(lower, "atol") {
+						tols = append(tols, "atol="+extractKVFromLine(trimmed, "atol"))
+					}
+					if strings.Contains(lower, "rtol") {
+						tols = append(tols, "rtol="+extractKVFromLine(trimmed, "rtol"))
+					}
+					hint = "np.allclose with " + strings.Join(tols, ", ")
+				}
+
+				// Python: pytest.approx(expected, abs=1e-6, rel=1e-3)
+				if strings.Contains(lower, "approx") && (strings.Contains(lower, "abs=") || strings.Contains(lower, "rel=")) {
+					tols := []string{}
+					if strings.Contains(lower, "abs=") {
+						tols = append(tols, "abs="+extractKVFromLine(trimmed, "abs"))
+					}
+					if strings.Contains(lower, "rel=") {
+						tols = append(tols, "rel="+extractKVFromLine(trimmed, "rel"))
+					}
+					hint = "pytest.approx with " + strings.Join(tols, ", ")
+				}
+
+				// Generic: abs(a - b) < epsilon patterns
+				if strings.Contains(lower, "abs(") && (strings.Contains(lower, "< 0.") || strings.Contains(lower, "< 1e-") || strings.Contains(lower, "<= 0.") || strings.Contains(lower, "<= 1e-")) {
+					// Extract the threshold value.
+					for _, sep := range []string{"< ", "<= "} {
+						idx := strings.Index(lower, "abs(")
+						if idx < 0 {
+							continue
+						}
+						threshIdx := strings.Index(lower[idx:], sep)
+						if threshIdx < 0 {
+							continue
+						}
+						threshStart := idx + threshIdx + len(sep)
+						threshEnd := threshStart
+						for threshEnd < len(lower) && (lower[threshEnd] == '.' || lower[threshEnd] == '-' || lower[threshEnd] == 'e' ||
+							(lower[threshEnd] >= '0' && lower[threshEnd] <= '9')) {
+							threshEnd++
+						}
+						if threshEnd > threshStart {
+							hint = "Tolerance: |actual - expected| " + sep + trimmed[threshStart:threshEnd]
+						}
+						break
+					}
+				}
+
+				// JS: toBeCloseTo(expected, numDigits)
+				if strings.Contains(lower, "tobecloseto") {
+					hint = "Jest toBeCloseTo — default 5 decimal places precision"
+				}
+
+				if hint != "" && !seen[hint] {
+					seen[hint] = true
+					tolerances = append(tolerances, hint)
+				}
+			}
+		}
+		if len(tolerances) > 0 {
+			break
+		}
+	}
+
+	if len(tolerances) > 5 {
+		tolerances = tolerances[:5]
+	}
+	return tolerances
+}
+
+// extractKVFromLine extracts the value for a key=value pattern in a line.
+// E.g., extractKVFromLine("isclose(a, b, rel_tol=1e-9)", "rel_tol") → "1e-9"
+func extractKVFromLine(line, key string) string {
+	idx := strings.Index(line, key+"=")
+	if idx < 0 {
+		return "?"
+	}
+	start := idx + len(key) + 1
+	end := start
+	for end < len(line) && line[end] != ',' && line[end] != ')' && line[end] != ' ' {
+		end++
+	}
+	if end > start {
+		return strings.TrimSpace(line[start:end])
+	}
+	return "?"
+}
+
+// extractTestEnvironmentVars scans test scripts for environment variable
+// settings (export FOO=bar, os.environ, process.env). These env vars often
+// configure ports, database URLs, API keys, or feature flags that the solution
+// must respect. Missing them causes silent failures.
+func extractTestEnvironmentVars(workDir string) []string {
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test"), workDir, "/app"}
+	var envVars []string
+	seen := make(map[string]bool)
+
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !isSourceFile(entry.Name()) {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 30000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+					continue
+				}
+
+				var envVar string
+
+				// Shell: export FOO=bar or FOO=bar (before command)
+				if strings.HasPrefix(trimmed, "export ") {
+					rest := strings.TrimPrefix(trimmed, "export ")
+					if eqIdx := strings.Index(rest, "="); eqIdx > 0 {
+						varName := strings.TrimSpace(rest[:eqIdx])
+						value := strings.TrimSpace(rest[eqIdx+1:])
+						value = strings.Trim(value, "\"'")
+						// Skip PATH, HOME, and other generic vars.
+						if !isGenericEnvVar(varName) {
+							envVar = varName + "=" + value
+						}
+					}
+				}
+
+				// Python: os.environ["FOO"] = "bar" or os.environ.setdefault("FOO", "bar")
+				if strings.Contains(trimmed, "os.environ") {
+					if strings.Contains(trimmed, "os.environ[") {
+						// os.environ["KEY"] = "VALUE"
+						if kv := extractPythonEnvAssign(trimmed); kv != "" {
+							envVar = kv
+						}
+					} else if strings.Contains(trimmed, ".setdefault(") || strings.Contains(trimmed, ".get(") {
+						// os.environ.setdefault("KEY", "VALUE")
+						if kv := extractPythonEnvDefault(trimmed); kv != "" {
+							envVar = kv
+						}
+					}
+				}
+
+				// JS/TS: process.env.FOO = "bar"
+				if strings.Contains(trimmed, "process.env.") && strings.Contains(trimmed, "=") {
+					// process.env.PORT = "8080"
+					idx := strings.Index(trimmed, "process.env.")
+					rest := trimmed[idx+12:]
+					if eqIdx := strings.Index(rest, "="); eqIdx > 0 {
+						varName := strings.TrimSpace(rest[:eqIdx])
+						varName = strings.TrimRight(varName, " ")
+						value := strings.TrimSpace(rest[eqIdx+1:])
+						value = strings.Trim(value, "\"';")
+						if !isGenericEnvVar(varName) {
+							envVar = varName + "=" + value
+						}
+					}
+				}
+
+				if envVar != "" && !seen[envVar] {
+					seen[envVar] = true
+					envVars = append(envVars, envVar)
+				}
+			}
+		}
+		if len(envVars) > 0 {
+			break
+		}
+	}
+
+	if len(envVars) > 8 {
+		envVars = envVars[:8]
+	}
+	return envVars
+}
+
+// isGenericEnvVar returns true for common env vars that aren't task-specific.
+func isGenericEnvVar(name string) bool {
+	generic := map[string]bool{
+		"PATH": true, "HOME": true, "USER": true, "SHELL": true,
+		"LANG": true, "LC_ALL": true, "TERM": true, "PWD": true,
+		"PYTHONDONTWRITEBYTECODE": true, "PYTHONUNBUFFERED": true,
+		"PYTHONPATH": true, "GOPATH": true, "GOROOT": true,
+		"NODE_PATH": true, "NODE_ENV": true,
+		"PIP_BREAK_SYSTEM_PACKAGES": true,
+	}
+	return generic[name]
+}
+
+// extractPythonEnvAssign extracts KEY=VALUE from os.environ["KEY"] = "VALUE".
+func extractPythonEnvAssign(line string) string {
+	// Find the key in brackets after os.environ
+	bracketIdx := strings.Index(line, "os.environ[")
+	if bracketIdx < 0 {
+		return ""
+	}
+	rest := line[bracketIdx+11:]
+	// Extract key from quotes.
+	key := extractQuotedString(rest)
+	if key == "" || isGenericEnvVar(key) {
+		return ""
+	}
+	// Find the value after =
+	eqIdx := strings.Index(rest, "=")
+	if eqIdx < 0 {
+		return key + "=(set in test)"
+	}
+	value := strings.TrimSpace(rest[eqIdx+1:])
+	value = strings.Trim(value, "\"' ")
+	return key + "=" + value
+}
+
+// extractPythonEnvDefault extracts KEY=VALUE from os.environ.setdefault("KEY", "VALUE").
+func extractPythonEnvDefault(line string) string {
+	// Find the opening paren after setdefault or get.
+	var funcIdx int
+	if idx := strings.Index(line, ".setdefault("); idx >= 0 {
+		funcIdx = idx + 12
+	} else if idx := strings.Index(line, ".get("); idx >= 0 {
+		funcIdx = idx + 5
+	} else {
+		return ""
+	}
+	rest := line[funcIdx:]
+	key := extractQuotedString(rest)
+	if key == "" || isGenericEnvVar(key) {
+		return ""
+	}
+	// Find the default value (second argument).
+	commaIdx := strings.Index(rest, ",")
+	if commaIdx < 0 {
+		return key + "=(read from env)"
+	}
+	valueRest := rest[commaIdx+1:]
+	value := extractQuotedString(valueRest)
+	if value == "" {
+		value = strings.TrimSpace(valueRest)
+		value = strings.TrimRight(value, ")")
+	}
+	return key + "=" + value
+}
+
+// extractQuotedString extracts the first quoted string from text.
+func extractQuotedString(s string) string {
+	for _, delim := range []byte{'"', '\''} {
+		idx := strings.IndexByte(s, delim)
+		if idx < 0 {
+			continue
+		}
+		endIdx := strings.IndexByte(s[idx+1:], delim)
+		if endIdx < 0 {
+			continue
+		}
+		return s[idx+1 : idx+1+endIdx]
+	}
+	return ""
+}
+
+// detectExpectedWorkingDir analyzes test scripts to determine if they expect
+// the solution to run from a specific directory. Tests that cd to a directory
+// or use absolute paths reveal the expected cwd.
+func detectExpectedWorkingDir(workDir string) string {
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !isSourceFile(entry.Name()) {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 30000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
+			if err != nil {
+				continue
+			}
+			content := string(data)
+			for _, line := range strings.Split(content, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+					continue
+				}
+
+				// Shell: cd /app or cd /some/path
+				if strings.HasPrefix(trimmed, "cd ") && !strings.Contains(trimmed, "$") {
+					dir := strings.TrimPrefix(trimmed, "cd ")
+					dir = strings.TrimSpace(dir)
+					dir = strings.Trim(dir, "\"'")
+					if strings.HasPrefix(dir, "/") && dir != workDir {
+						return fmt.Sprintf("Tests cd to `%s` before running your solution. Ensure your output files are in that directory.", dir)
+					}
+				}
+
+				// Python: os.chdir("/app")
+				if strings.Contains(trimmed, "os.chdir(") {
+					dir := extractQuotedString(trimmed[strings.Index(trimmed, "os.chdir(")+9:])
+					if dir != "" && strings.HasPrefix(dir, "/") && dir != workDir {
+						return fmt.Sprintf("Tests chdir to `%s` before running your solution. Ensure your output files are in that directory.", dir)
+					}
+				}
+
+				// Python: subprocess with cwd= argument
+				if strings.Contains(trimmed, "cwd=") && (strings.Contains(trimmed, "subprocess") || strings.Contains(trimmed, "Popen")) {
+					cwdIdx := strings.Index(trimmed, "cwd=")
+					rest := trimmed[cwdIdx+4:]
+					dir := extractQuotedString(rest)
+					if dir != "" && strings.HasPrefix(dir, "/") && dir != workDir {
+						return fmt.Sprintf("Tests run your solution with cwd=`%s`. Ensure your solution and output files are in that directory.", dir)
+					}
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 func extractTestReferencedFiles(parts []string) map[string]bool {

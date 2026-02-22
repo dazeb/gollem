@@ -3797,3 +3797,227 @@ func TestExtractTestCounts(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractPythonFunctionSignatures(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string // function names that should appear
+	}{
+		{
+			name: "simple_function_call",
+			content: `
+from solution import solve
+def test_basic():
+    assert solve(3, [1, 2, 3]) == 6
+`,
+			want: []string{"solve"},
+		},
+		{
+			name: "module_method_call",
+			content: `
+import solution
+def test_process():
+    result = solution.process(data, threshold=0.5)
+    assert result is not None
+`,
+			want: []string{"process"},
+		},
+		{
+			name: "multiple_functions",
+			content: `
+from my_module import encode, decode
+def test_roundtrip():
+    encoded = encode("hello")
+    decoded = decode(encoded)
+    assert decoded == "hello"
+`,
+			want: []string{"encode", "decode"},
+		},
+		{
+			name: "skip_stdlib_calls",
+			content: `
+def test_basic():
+    result = solve(10)
+    assert len(result) == 5
+    print("done")
+`,
+			want: []string{"solve"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sigs := extractPythonFunctionSignatures(tt.content)
+			for _, wantFunc := range tt.want {
+				found := false
+				for _, sig := range sigs {
+					if strings.Contains(sig, wantFunc+"(") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected to find signature for %q in %v", wantFunc, sigs)
+				}
+			}
+		})
+	}
+}
+
+func TestDetectComparisonTolerances(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	content := `
+import math
+from solution import compute
+
+def test_precision():
+    result = compute(3.14)
+    assert math.isclose(result, 2.71828, rel_tol=1e-5, abs_tol=1e-8)
+
+def test_almost():
+    self.assertAlmostEqual(result, expected, places=6)
+`
+	os.WriteFile(filepath.Join(testDir, "test_precision.py"), []byte(content), 0o644)
+
+	tolerances := detectComparisonTolerances(dir)
+	if len(tolerances) == 0 {
+		t.Fatal("expected to detect comparison tolerances")
+	}
+
+	foundIsclose := false
+	foundPlaces := false
+	for _, tol := range tolerances {
+		if strings.Contains(tol, "isclose") && strings.Contains(tol, "rel_tol") {
+			foundIsclose = true
+		}
+		if strings.Contains(tol, "assertAlmostEqual") && strings.Contains(tol, "places") {
+			foundPlaces = true
+		}
+	}
+	if !foundIsclose {
+		t.Errorf("expected to detect isclose tolerance, got %v", tolerances)
+	}
+	if !foundPlaces {
+		t.Errorf("expected to detect assertAlmostEqual tolerance, got %v", tolerances)
+	}
+}
+
+func TestExtractTestEnvironmentVars(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	content := `#!/bin/bash
+export PORT=8080
+export DATABASE_URL="postgres://localhost/testdb"
+export PATH="/usr/bin:$PATH"
+./solution
+`
+	os.WriteFile(filepath.Join(testDir, "test.sh"), []byte(content), 0o644)
+
+	envVars := extractTestEnvironmentVars(dir)
+	if len(envVars) == 0 {
+		t.Fatal("expected to detect environment variables")
+	}
+
+	foundPort := false
+	foundDB := false
+	foundPath := false
+	for _, ev := range envVars {
+		if strings.HasPrefix(ev, "PORT=") {
+			foundPort = true
+		}
+		if strings.HasPrefix(ev, "DATABASE_URL=") {
+			foundDB = true
+		}
+		if strings.HasPrefix(ev, "PATH=") {
+			foundPath = true
+		}
+	}
+	if !foundPort {
+		t.Errorf("expected to detect PORT env var, got %v", envVars)
+	}
+	if !foundDB {
+		t.Errorf("expected to detect DATABASE_URL env var, got %v", envVars)
+	}
+	if foundPath {
+		t.Errorf("expected to skip generic PATH env var, got %v", envVars)
+	}
+}
+
+func TestExtractTestEnvironmentVarsPython(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	content := `
+import os
+os.environ["API_KEY"] = "test-key-123"
+os.environ.setdefault("SERVER_PORT", "3000")
+`
+	os.WriteFile(filepath.Join(testDir, "test_env.py"), []byte(content), 0o644)
+
+	envVars := extractTestEnvironmentVars(dir)
+	foundAPI := false
+	foundPort := false
+	for _, ev := range envVars {
+		if strings.Contains(ev, "API_KEY") {
+			foundAPI = true
+		}
+		if strings.Contains(ev, "SERVER_PORT") {
+			foundPort = true
+		}
+	}
+	if !foundAPI {
+		t.Errorf("expected to detect API_KEY, got %v", envVars)
+	}
+	if !foundPort {
+		t.Errorf("expected to detect SERVER_PORT, got %v", envVars)
+	}
+}
+
+func TestDetectExpectedWorkingDir(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	content := `#!/bin/bash
+cd /app
+python3 solution.py
+`
+	os.WriteFile(filepath.Join(testDir, "test.sh"), []byte(content), 0o644)
+
+	hint := detectExpectedWorkingDir(dir)
+	if hint == "" {
+		t.Fatal("expected to detect working directory hint")
+	}
+	if !strings.Contains(hint, "/app") {
+		t.Errorf("expected hint to mention /app, got %q", hint)
+	}
+}
+
+func TestExtractKVFromLine(t *testing.T) {
+	tests := []struct {
+		line string
+		key  string
+		want string
+	}{
+		{"isclose(a, b, rel_tol=1e-9)", "rel_tol", "1e-9"},
+		{"isclose(a, b, abs_tol=0.001)", "abs_tol", "0.001"},
+		{"assertAlmostEqual(a, b, places=5)", "places", "5"},
+		{"approx(expected, abs=1e-6, rel=1e-3)", "abs", "1e-6"},
+		{"approx(expected, abs=1e-6, rel=1e-3)", "rel", "1e-3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got := extractKVFromLine(tt.line, tt.key)
+			if got != tt.want {
+				t.Errorf("extractKVFromLine(%q, %q) = %q, want %q", tt.line, tt.key, got, tt.want)
+			}
+		})
+	}
+}
