@@ -710,8 +710,8 @@ func discoverEnvironment(workDir string) string {
 	// Surface solution files that tests expect but don't exist yet.
 	// If a test imports "from solution import X" and solution.py doesn't exist,
 	// the agent needs to CREATE it. This is the #1 thing to do first.
+	var missingFiles []string
 	if len(testRefs) > 0 {
-		var missingFiles []string
 		for filename := range testRefs {
 			// Check if the file exists in workDir or /app.
 			found := false
@@ -830,11 +830,24 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect output format and execution patterns from test code.
 	// This addresses failure mode #5: correct logic but wrong output format.
-	if formatHints := detectOutputFormat(workDir); len(formatHints) > 0 {
+	formatHints := detectOutputFormat(workDir)
+	if len(formatHints) > 0 {
 		parts = append(parts, "\n## Output Format & Execution (from test analysis)")
 		for _, h := range formatHints {
 			parts = append(parts, "  - "+h)
 		}
+	}
+
+	// Extract invocation patterns from test scripts — shows exactly how the
+	// solution binary/script is called (stdin/stdout, args, file paths).
+	invocationPatterns := extractInvocationPatterns(workDir)
+	if len(invocationPatterns) > 0 {
+		parts = append(parts, "\n## Solution Invocation (from test scripts)")
+		parts = append(parts, "Tests invoke your solution like this:")
+		for _, p := range invocationPatterns {
+			parts = append(parts, "  "+p)
+		}
+		parts = append(parts, "Ensure your solution is compatible with this invocation pattern.")
 	}
 
 	// Auto-read example/reference output files that show expected format.
@@ -878,9 +891,8 @@ func discoverEnvironment(workDir string) string {
 
 	// Add a compact action summary at the very end. This exploits recency bias —
 	// the last thing the model reads before starting work is a focused summary
-	// of what to do. Reuses cached expectedOutputs/testCmds to avoid
-	// re-scanning test files.
-	if summary := buildActionSummaryCached(workDir, expectedOutputs, testCmds); summary != "" {
+	// of what to do. Reuses cached data to avoid re-scanning test files.
+	if summary := buildActionSummaryCached(workDir, expectedOutputs, testCmds, missingFiles, formatHints, invocationPatterns); summary != "" {
 		parts = append(parts, summary)
 	}
 
@@ -889,11 +901,20 @@ func discoverEnvironment(workDir string) string {
 
 // buildActionSummaryCached creates a focused, compact summary that appears at
 // the very end of context injection. It synthesizes the most critical info:
-// what to create, how to test, and what to do first.
-// Takes pre-computed expectedOutputs and testCmds to avoid re-scanning test files.
-func buildActionSummaryCached(workDir string, expectedOutputs []string, testCmds []string) string {
+// what to create, how to test, how the solution is invoked, and what to do first.
+// Takes pre-computed data from context injection to avoid re-scanning files.
+func buildActionSummaryCached(workDir string, expectedOutputs, testCmds, missingFiles, formatHints, invocationPatterns []string) string {
 	var lines []string
 	lines = append(lines, "\n## ACTION SUMMARY (start here)")
+
+	// Missing solution files — these MUST be created first.
+	if len(missingFiles) > 0 {
+		display := missingFiles
+		if len(display) > 5 {
+			display = display[:5]
+		}
+		lines = append(lines, "MISSING: "+strings.Join(display, ", ")+" (tests import these — CREATE FIRST!)")
+	}
 
 	// What expected outputs need to be created?
 	if len(expectedOutputs) > 0 {
@@ -902,6 +923,33 @@ func buildActionSummaryCached(workDir string, expectedOutputs []string, testCmds
 			display = display[:5]
 		}
 		lines = append(lines, "CREATE: "+strings.Join(display, ", "))
+	}
+
+	// How is the solution invoked? Show the first (most representative) pattern.
+	if len(invocationPatterns) > 0 {
+		// Truncate the pattern for the summary line.
+		pat := invocationPatterns[0]
+		if len(pat) > 120 {
+			pat = pat[:120] + "..."
+		}
+		lines = append(lines, "INVOKE: "+pat)
+	}
+
+	// What output format? Compact single-line summary.
+	for _, h := range formatHints {
+		if strings.HasPrefix(h, "FORMAT=") {
+			// Extract just the format name (e.g., "JSON" from "FORMAT=JSON: ...")
+			eqIdx := strings.Index(h, "=")
+			colonIdx := strings.Index(h, ":")
+			if eqIdx >= 0 && colonIdx > eqIdx {
+				lines = append(lines, "FORMAT: "+h[eqIdx+1:colonIdx])
+			}
+			break // only show first format
+		}
+		if strings.HasPrefix(h, "STDIN:") {
+			lines = append(lines, "INPUT: Read from stdin (not files)")
+			break
+		}
 	}
 
 	// What test command to run?
@@ -916,7 +964,9 @@ func buildActionSummaryCached(workDir string, expectedOutputs []string, testCmds
 	hasTests := dirExists("/tests") || dirExists(filepath.Join(workDir, "tests")) || dirExists(filepath.Join(workDir, "test"))
 	hasInputData := dirExists("/app/task_file/input_data") || dirExists(filepath.Join(workDir, "input_data"))
 
-	if hasInputData {
+	if len(missingFiles) > 0 {
+		lines = append(lines, "FIRST: Create "+missingFiles[0]+" IMMEDIATELY (tests import it), then run tests")
+	} else if hasInputData {
 		lines = append(lines, "FIRST: Read input data format, then write processing code to output_data/")
 	} else if hasTests && len(expectedOutputs) > 0 {
 		lines = append(lines, "FIRST: Write initial output files (even rough drafts), then run tests")
@@ -2054,6 +2104,80 @@ func detectOutputFormat(workDir string) []string {
 		hints = append(hints, "EXECUTABLE: Tests run a compiled binary (./solution, ./program, etc). Compile your code and ensure the binary is executable (chmod +x).")
 	}
 	return hints
+}
+
+// extractInvocationPatterns scans test scripts to find exactly how the solution
+// will be invoked. This is the single most actionable piece of info for the
+// agent: knowing whether to produce a compiled binary, read stdin, accept CLI
+// args, or write to specific files.
+func extractInvocationPatterns(workDir string) []string {
+	var patterns []string
+	seen := make(map[string]bool)
+
+	// Collect test/verification script paths (shell only — invocation
+	// patterns are most explicit in shell scripts).
+	var scriptPaths []string
+	for _, dir := range []string{
+		"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test"),
+		workDir, "/app", "/app/task_file",
+	} {
+		for _, name := range []string{
+			"test.sh", "run_tests.sh", "run_test.sh", "verify.sh",
+			"check.sh", "run.sh", "grade.sh",
+		} {
+			path := filepath.Join(dir, name)
+			if fileExists(path) {
+				scriptPaths = append(scriptPaths, path)
+			}
+		}
+	}
+
+	// Invocation indicators: substrings that mark a line as invoking the solution.
+	invocationMarkers := []string{
+		"./solution", "./program", "./main", "./a.out",
+		"./solve", "./answer", "./app",
+		"python3 solution", "python solution",
+		"python3 main", "python main",
+		"python3 ./solution", "python ./solution",
+		"node solution", "node main", "node ./solution",
+		"ruby solution", "ruby main",
+		"java -", "java Solution", "java Main",
+	}
+
+	for _, scriptPath := range scriptPaths {
+		data, err := os.ReadFile(scriptPath)
+		if err != nil || len(data) > 50000 {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			// Skip comments, empty lines, and variable-only lines.
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			lower := strings.ToLower(trimmed)
+			for _, marker := range invocationMarkers {
+				if strings.Contains(lower, marker) {
+					if len(trimmed) > 200 {
+						trimmed = trimmed[:200] + "..."
+					}
+					if !seen[trimmed] {
+						seen[trimmed] = true
+						patterns = append(patterns, trimmed)
+					}
+					break
+				}
+			}
+		}
+		if len(patterns) >= 5 {
+			break
+		}
+	}
+
+	if len(patterns) > 5 {
+		patterns = patterns[:5]
+	}
+	return patterns
 }
 
 // extractPathFromLine extracts a file path starting at position idx in a line.

@@ -988,7 +988,7 @@ func TestIsVerificationCommand(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_RejectsWithoutVerification(t *testing.T) {
-	_, validator := VerificationCheckpoint()
+	_, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -1006,7 +1006,7 @@ func TestVerificationCheckpoint_RejectsWithoutVerification(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
-	mw, validator := VerificationCheckpoint()
+	mw, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
 
@@ -1073,7 +1073,7 @@ func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
-	mw, validator := VerificationCheckpoint()
+	mw, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
 
@@ -1109,7 +1109,7 @@ func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_AcceptsExecuteCode(t *testing.T) {
-	mw, validator := VerificationCheckpoint()
+	mw, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
 
@@ -1389,7 +1389,7 @@ func TestMultiEdit_ProtectedTestFile(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
-	mw, validator := VerificationCheckpoint()
+	mw, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
 
@@ -2829,7 +2829,7 @@ func TestBuildActionSummaryCached(t *testing.T) {
 	dir := t.TempDir()
 
 	// With no data, should still return something (has FIRST and REMEMBER lines).
-	summary := buildActionSummaryCached(dir, nil, nil)
+	summary := buildActionSummaryCached(dir, nil, nil, nil, nil, nil)
 	if summary == "" {
 		t.Error("expected non-empty summary even with no expected outputs")
 	}
@@ -2843,7 +2843,7 @@ func TestBuildActionSummaryCached(t *testing.T) {
 	// With expected outputs and test commands.
 	outputs := []string{"output_data/result.csv", "output_data/summary.json"}
 	cmds := []string{"Test: bash /tests/test.sh", "Build: go build ./..."}
-	summary = buildActionSummaryCached(dir, outputs, cmds)
+	summary = buildActionSummaryCached(dir, outputs, cmds, nil, nil, nil)
 	if !strings.Contains(summary, "CREATE:") {
 		t.Error("expected CREATE line for expected outputs")
 	}
@@ -3073,5 +3073,132 @@ func TestIsBinaryExtension(t *testing.T) {
 				t.Errorf("isBinaryExtension(%q) = %v, want %v", tt.name, got, tt.binary)
 			}
 		})
+	}
+}
+
+func TestExtractInvocationPatterns(t *testing.T) {
+	dir := t.TempDir()
+
+	// No test scripts — should return empty.
+	patterns := extractInvocationPatterns(dir)
+	if len(patterns) != 0 {
+		t.Errorf("expected 0 patterns, got %d", len(patterns))
+	}
+
+	// Create a test.sh with invocation patterns.
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+	os.WriteFile(filepath.Join(testDir, "test.sh"), []byte(`#!/bin/bash
+set -e
+# Build the solution
+gcc -o solution solution.c
+# Run the solution with stdin
+./solution < input.txt > output.txt
+diff output.txt expected.txt
+`), 0o755)
+
+	patterns = extractInvocationPatterns(dir)
+	if len(patterns) == 0 {
+		t.Fatal("expected invocation patterns from test.sh")
+	}
+	foundSolution := false
+	for _, p := range patterns {
+		if strings.Contains(p, "./solution") {
+			foundSolution = true
+		}
+	}
+	if !foundSolution {
+		t.Errorf("expected to find ./solution in patterns: %v", patterns)
+	}
+}
+
+func TestExtractInvocationPatternsPython(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "test.sh"), []byte(`#!/bin/bash
+python3 solution.py arg1 arg2 > result.txt
+diff result.txt expected.txt
+`), 0o755)
+
+	patterns := extractInvocationPatterns(dir)
+	foundPython := false
+	for _, p := range patterns {
+		if strings.Contains(p, "python3 solution") {
+			foundPython = true
+		}
+	}
+	if !foundPython {
+		t.Errorf("expected python3 solution invocation, got: %v", patterns)
+	}
+}
+
+func TestActionSummaryWithMissingFiles(t *testing.T) {
+	dir := t.TempDir()
+	missing := []string{"solution.py", "helper.py"}
+	summary := buildActionSummaryCached(dir, nil, nil, missing, nil, nil)
+	if !strings.Contains(summary, "MISSING:") {
+		t.Error("expected MISSING line for missing solution files")
+	}
+	if !strings.Contains(summary, "solution.py") {
+		t.Error("expected solution.py in MISSING line")
+	}
+	// FIRST should mention the missing file.
+	if !strings.Contains(summary, "FIRST: Create solution.py") {
+		t.Error("expected FIRST line to mention creating missing file")
+	}
+}
+
+func TestActionSummaryWithInvocation(t *testing.T) {
+	dir := t.TempDir()
+	invocation := []string{"./solution < input.txt > output.txt"}
+	summary := buildActionSummaryCached(dir, nil, nil, nil, nil, invocation)
+	if !strings.Contains(summary, "INVOKE:") {
+		t.Error("expected INVOKE line for invocation pattern")
+	}
+	if !strings.Contains(summary, "./solution") {
+		t.Error("expected ./solution in INVOKE line")
+	}
+}
+
+func TestActionSummaryWithFormat(t *testing.T) {
+	dir := t.TempDir()
+	hints := []string{"FORMAT=JSON: Tests parse output as JSON. Use json.dumps()."}
+	summary := buildActionSummaryCached(dir, nil, nil, nil, hints, nil)
+	if !strings.Contains(summary, "FORMAT: JSON") {
+		t.Error("expected FORMAT: JSON in summary")
+	}
+}
+
+func TestCheckExpectedOutputsExist(t *testing.T) {
+	dir := t.TempDir()
+
+	// No output dirs — should return empty.
+	result := checkExpectedOutputsExist(dir)
+	if result != "" {
+		t.Errorf("expected empty result, got: %s", result)
+	}
+
+	// Create empty output_data directory.
+	os.MkdirAll(filepath.Join(dir, "output_data"), 0o755)
+	result = checkExpectedOutputsExist(dir)
+	if !strings.Contains(result, "EMPTY") {
+		t.Error("expected warning about empty output_data directory")
+	}
+
+	// Add a file to output_data — warning should go away.
+	os.WriteFile(filepath.Join(dir, "output_data", "result.txt"), []byte("data"), 0o644)
+	result = checkExpectedOutputsExist(dir)
+	if result != "" {
+		t.Errorf("expected no warning after adding file, got: %s", result)
+	}
+}
+
+func TestCheckExpectedOutputsExistEmptySolution(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create empty solution.py — should warn.
+	os.WriteFile(filepath.Join(dir, "solution.py"), []byte(""), 0o644)
+	result := checkExpectedOutputsExist(dir)
+	if !strings.Contains(result, "EMPTY") || !strings.Contains(result, "solution.py") {
+		t.Errorf("expected warning about empty solution.py, got: %s", result)
 	}
 }

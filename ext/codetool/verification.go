@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,14 +27,17 @@ import (
 // than 80% of the time has elapsed — wasting a turn on the checklist when the
 // agent is about to be killed is counterproductive.
 //
+// When workDir is provided, the pre-completion checklist also programmatically
+// checks that expected output files actually exist.
+//
 // Usage:
 //
-//	mw, validator := codetool.VerificationCheckpoint(timeout)
+//	mw, validator := codetool.VerificationCheckpoint("/app", timeout)
 //	agent := core.NewAgent[string](model,
 //	    core.WithAgentMiddleware[string](mw),
 //	    core.WithOutputValidator[string](validator),
 //	)
-func VerificationCheckpoint(timeout ...time.Duration) (core.AgentMiddleware, core.OutputValidatorFunc[string]) {
+func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.AgentMiddleware, core.OutputValidatorFunc[string]) {
 	var mu sync.Mutex
 	verified := false
 	completionAttempts := 0
@@ -121,20 +125,28 @@ func VerificationCheckpoint(timeout ...time.Duration) (core.AgentMiddleware, cor
 				}
 			}
 			if !skipChecklist {
-				return output, &core.ModelRetryError{
-					Message: "Before finalizing: run through this checklist.\n" +
-						"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
-						"2. Clean up known build intermediates only (tests often check directory contents with os.listdir/ls):\n" +
-						"   Run: find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; rm -f *.o a.out 2>/dev/null\n" +
-						"   DO NOT delete files that are part of your solution (executables, source files, output data).\n" +
-						"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
-						"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
-						"5. Check output file formatting (common gotchas that cause test failures):\n" +
-						"   - Trailing newline: some tests expect it, some don't. Check with: xxd <file> | tail -1\n" +
-						"   - Encoding: ensure UTF-8 (no BOM). Check with: file <output_file>\n" +
-						"   - If tests compare output: diff your output against expected output character-by-character\n" +
-						"Only declare completion after confirming all the above.",
+				// Programmatic check: are expected output files actually present?
+				// This catches agents that ran tests but forgot to create outputs.
+				var missingOutputHint string
+				if workDir != "" {
+					missingOutputHint = checkExpectedOutputsExist(workDir)
 				}
+				checklistMsg := "Before finalizing: run through this checklist.\n" +
+					"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
+					"2. Clean up known build intermediates only (tests often check directory contents with os.listdir/ls):\n" +
+					"   Run: find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; rm -f *.o a.out 2>/dev/null\n" +
+					"   DO NOT delete files that are part of your solution (executables, source files, output data).\n" +
+					"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
+					"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
+					"5. Check output file formatting (common gotchas that cause test failures):\n" +
+					"   - Trailing newline: some tests expect it, some don't. Check with: xxd <file> | tail -1\n" +
+					"   - Encoding: ensure UTF-8 (no BOM). Check with: file <output_file>\n" +
+					"   - If tests compare output: diff your output against expected output character-by-character\n"
+				if missingOutputHint != "" {
+					checklistMsg += missingOutputHint
+				}
+				checklistMsg += "Only declare completion after confirming all the above."
+				return output, &core.ModelRetryError{Message: checklistMsg}
 			}
 		}
 
@@ -328,4 +340,57 @@ func isVerificationString(cmd string) bool {
 	}
 
 	return false
+}
+
+// checkExpectedOutputsExist checks whether expected output files/directories
+// actually exist. Returns a warning string if missing outputs are detected,
+// or empty string if everything looks fine. Called during the pre-completion
+// checklist to programmatically verify deliverables exist.
+func checkExpectedOutputsExist(workDir string) string {
+	// Check for common output directories that should be populated.
+	outputDirs := []struct {
+		path string
+		name string
+	}{
+		{filepath.Join(workDir, "output_data"), "output_data/"},
+		{"/app/task_file/output_data", "/app/task_file/output_data/"},
+		{filepath.Join(workDir, "output"), "output/"},
+	}
+	for _, od := range outputDirs {
+		info, err := os.Stat(od.path)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		entries, err := os.ReadDir(od.path)
+		if err != nil {
+			continue
+		}
+		// Count non-hidden files.
+		fileCount := 0
+		for _, e := range entries {
+			if !strings.HasPrefix(e.Name(), ".") {
+				fileCount++
+			}
+		}
+		if fileCount == 0 {
+			return fmt.Sprintf("6. WARNING: %s directory exists but is EMPTY! You likely need to create output files in it.\n", od.name)
+		}
+	}
+
+	// Check for expected solution files (common deliverable names).
+	solutionFiles := []string{
+		"solution.py", "solution.js", "solution.ts", "solution.go",
+		"solution.rs", "solution.c", "solution.cpp", "solution.java",
+		"solution.rb", "solution.sh",
+	}
+	for _, sf := range solutionFiles {
+		for _, dir := range []string{workDir, "/app"} {
+			path := filepath.Join(dir, sf)
+			if info, err := os.Stat(path); err == nil && info.Size() == 0 {
+				return fmt.Sprintf("6. WARNING: %s exists but is EMPTY (0 bytes)! Write your solution to it.\n", sf)
+			}
+		}
+	}
+
+	return ""
 }
