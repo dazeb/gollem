@@ -6203,6 +6203,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	var filesRead []string
 	var filesModified []string
 	var verifyRuns []string
+	var lastAssistantText string // last assistant text block — captures current approach/thinking
 
 	seenRead := make(map[string]bool)
 	seenModified := make(map[string]bool)
@@ -6214,6 +6215,10 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 
 	for _, msg := range dropped {
 		if resp, ok := msg.(core.ModelResponse); ok {
+			// Capture assistant's latest text (approach/thinking).
+			if text := resp.TextContent(); text != "" {
+				lastAssistantText = text
+			}
 			for _, part := range resp.Parts {
 				tc, ok := part.(core.ToolCallPart)
 				if !ok {
@@ -6321,6 +6326,16 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+	}
+
+	// Include the agent's last approach/thinking to maintain continuity.
+	if lastAssistantText != "" {
+		truncated := lastAssistantText
+		if len(truncated) > 500 {
+			truncated = truncated[:500] + "..."
+		}
+		b.WriteString("YOUR LAST APPROACH/THINKING:\n")
+		b.WriteString("  " + truncated + "\n\n")
 	}
 
 	b.WriteString("Focus on completing the task with the remaining context. " +
