@@ -5672,3 +5672,84 @@ func TestExtractCommandPrefix(t *testing.T) {
 	}
 }
 
+func TestConnectionRefusedHint(t *testing.T) {
+	// Should trigger for test/curl connection refused errors.
+	got := connectionRefusedHint("curl: (7) Failed to connect to localhost port 8080: Connection refused", 7)
+	if got == "" {
+		t.Fatal("expected connection refused hint for curl error")
+	}
+	if !strings.Contains(got, "8080") {
+		t.Errorf("expected port 8080 in hint, got: %s", got)
+	}
+
+	// Should trigger for Node ECONNREFUSED.
+	got = connectionRefusedHint("Error: connect ECONNREFUSED 127.0.0.1:3000", 1)
+	if got == "" {
+		t.Fatal("expected connection refused hint for ECONNREFUSED")
+	}
+	if !strings.Contains(got, "3000") {
+		t.Errorf("expected port 3000 in hint, got: %s", got)
+	}
+
+	// Should NOT trigger for apt-related connection refused.
+	got = connectionRefusedHint("E: Failed to fetch http://archive.ubuntu.com/... Connection refused apt", 100)
+	if got != "" {
+		t.Errorf("should not trigger for apt errors, got: %s", got)
+	}
+
+	// Should NOT trigger on success.
+	got = connectionRefusedHint("Connection refused", 0)
+	if got != "" {
+		t.Errorf("should not trigger on exit code 0, got: %s", got)
+	}
+}
+
+func TestCompilationFingerprint(t *testing.T) {
+	output := "main.c: In function 'main':\nmain.c:15:5: error: 'foo' undeclared (first use in this function)\nmain.c:20:10: error: expected ';' before '}' token"
+
+	fp := compilationFingerprint(output)
+	if fp == "" {
+		t.Fatal("expected a compilation fingerprint")
+	}
+	if !strings.Contains(fp, "error:") {
+		t.Errorf("expected fingerprint to contain 'error:', got: %s", fp)
+	}
+
+	// Same output should produce same fingerprint.
+	fp2 := compilationFingerprint(output)
+	if fp != fp2 {
+		t.Errorf("fingerprint should be deterministic: %s != %s", fp, fp2)
+	}
+
+	// No errors should produce empty fingerprint.
+	fp3 := compilationFingerprint("Build succeeded\nAll good")
+	if fp3 != "" {
+		t.Errorf("expected empty fingerprint for clean build, got: %s", fp3)
+	}
+}
+
+func TestGradleCountExtraction(t *testing.T) {
+	output := "> Task :test\n\ncom.example.AppTest > testMain PASSED\ncom.example.AppTest > testParse PASSED\ncom.example.AppTest > testFormat FAILED\n\n3 tests completed, 1 failed\n\nBUILD FAILED"
+
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected Gradle count extraction to succeed")
+	}
+	if passed != 2 || failed != 1 {
+		t.Errorf("Gradle: expected passed=2, failed=1, got passed=%d, failed=%d", passed, failed)
+	}
+}
+
+func TestNoTestsCollectedSummary(t *testing.T) {
+	// pytest "no tests ran"
+	output := "============================= test session starts ==============================\ncollected 0 items\n\n=============================== no tests ran ================================"
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected summary for 'no tests ran'")
+	}
+	if !strings.Contains(summary, "NO TESTS FOUND") {
+		t.Errorf("expected 'NO TESTS FOUND' in summary, got: %s", summary)
+	}
+}
+

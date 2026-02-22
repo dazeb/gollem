@@ -76,6 +76,10 @@ func Bash(opts ...Option) core.Tool {
 	// Safe because bash is WithToolSequential (no concurrent calls).
 	var lastTestFailFingerprint string
 
+	// Track compilation error fingerprints similarly — when the same
+	// compilation error appears twice, the fix attempt was ineffective.
+	var lastCompileErrorFingerprint string
+
 	// Track pass/fail counts across test runs to detect stagnation.
 	// When the agent runs tests 3+ times without improving the pass rate,
 	// it's likely stuck — warn it to try a fundamentally different approach.
@@ -289,6 +293,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := addressInUseHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := connectionRefusedHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 			if hint := nodeErrorHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
@@ -357,11 +364,28 @@ func Bash(opts ...Option) core.Tool {
 			} else if preCompileSummary != "" {
 				// Use pre-computed compilation summary from FULL output.
 				result += "\n" + preCompileSummary
+				// Stale compilation error detection: fingerprint the first error
+				// line and warn if it's identical to the last compilation error.
+				fp := compilationFingerprint(fullCombined)
+				if fp != "" && fp == lastCompileErrorFingerprint {
+					result += "\n[hint: this compilation error is IDENTICAL to the previous build — your edit did not fix the issue. Re-read the error message carefully, verify your edit was applied to the correct file and line, and try a different fix]"
+				}
+				lastCompileErrorFingerprint = fp
 			} else if len(outStr+errStr) > 2000 {
 				// Fallback: compute from truncated output (short builds).
 				if summary := compilationErrorSummary(outStr+errStr, exitCode); summary != "" {
 					result += "\n" + summary
+					fp := compilationFingerprint(outStr + errStr)
+					if fp != "" && fp == lastCompileErrorFingerprint {
+						result += "\n[hint: this compilation error is IDENTICAL to the previous build — your edit did not fix the issue. Re-read the error message carefully, verify your edit was applied to the correct file and line, and try a different fix]"
+					}
+					lastCompileErrorFingerprint = fp
 				}
+			}
+
+			// Clear stale compilation fingerprint on successful build.
+			if exitCode == 0 && isBuildCommand(params.Command) {
+				lastCompileErrorFingerprint = ""
 			}
 
 			return result, nil
@@ -1124,6 +1148,83 @@ func addressInUseHint(output string, exitCode int) string {
 	return ""
 }
 
+// connectionRefusedHint detects "Connection refused" errors in non-package-install
+// contexts. Common in service tasks where tests try to connect before a server is
+// ready, or the service failed to start, or it's listening on the wrong port.
+// This saves 1-2 turns of the agent debugging why tests can't connect.
+func connectionRefusedHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+	if !strings.Contains(lower, "connection refused") && !strings.Contains(output, "ECONNREFUSED") {
+		return ""
+	}
+	// Skip if this is a package install error (handled by transientErrorHint).
+	if strings.Contains(lower, "apt") || strings.Contains(lower, "pip") ||
+		strings.Contains(lower, "npm") || strings.Contains(lower, "gem") {
+		return ""
+	}
+
+	// Extract port number from common patterns.
+	port := ""
+	for _, prefix := range []string{"localhost:", "127.0.0.1:", "0.0.0.0:"} {
+		idx := strings.Index(lower, prefix)
+		if idx >= 0 {
+			start := idx + len(prefix)
+			end := start
+			for end < len(lower) && lower[end] >= '0' && lower[end] <= '9' {
+				end++
+			}
+			if end > start && end-start <= 5 {
+				port = lower[start:end]
+				break
+			}
+		}
+	}
+	// Also try curl-style "localhost port NNNN" or "host port NNNN".
+	if port == "" {
+		if idx := strings.Index(lower, " port "); idx >= 0 {
+			start := idx + 6 // len(" port ")
+			end := start
+			for end < len(lower) && lower[end] >= '0' && lower[end] <= '9' {
+				end++
+			}
+			if end > start && end-start <= 5 {
+				port = lower[start:end]
+			}
+		}
+	}
+	// Also try ":PORT" from ECONNREFUSED messages like "connect ECONNREFUSED 127.0.0.1:8080"
+	if port == "" {
+		if idx := strings.Index(output, "ECONNREFUSED"); idx >= 0 {
+			rest := output[idx:]
+			colonIdx := strings.LastIndex(rest[:min(len(rest), 60)], ":")
+			if colonIdx > 0 {
+				start := colonIdx + 1
+				end := start
+				for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+					end++
+				}
+				if end > start && end-start <= 5 {
+					port = rest[start:end]
+				}
+			}
+		}
+	}
+
+	hint := "[hint: 'Connection refused' — no service is listening. Check: "
+	if port != "" {
+		hint += fmt.Sprintf("(1) `ss -tlnp | grep %s` to see if anything listens on port %s, ", port, port)
+	} else {
+		hint += "(1) `ss -tlnp` to see what ports are listening, "
+	}
+	hint += "(2) if you just started a service, it may need time — use `sleep 2` or a retry loop before testing, " +
+		"(3) check service logs for startup errors, " +
+		"(4) verify the service is configured for the correct host/port]"
+	return hint
+}
+
 // nodeErrorHint extracts actionable information from Node.js errors.
 // Maps MODULE_NOT_FOUND to npm install hints and extracts file:line from stacks.
 func nodeErrorHint(output string, exitCode int) string {
@@ -1662,6 +1763,17 @@ func testResultSummary(output string) string {
 			return fmt.Sprintf("[test summary: %d PASS, %d FAIL out of %d tests]",
 				passCount, failCount, passCount+failCount)
 		}
+	}
+
+	// "No tests collected" / "no tests ran" — pytest exits with code 5,
+	// other frameworks print "0 tests". The agent often doesn't understand
+	// why tests weren't found. Provide actionable guidance.
+	if strings.Contains(lower, "no tests ran") ||
+		strings.Contains(lower, "collected 0 items") ||
+		strings.Contains(lower, "no tests were run") ||
+		strings.Contains(lower, "no test classes") ||
+		(strings.Contains(lower, "0 tests") && !strings.Contains(lower, "0 tests passed")) {
+		return "[test summary: NO TESTS FOUND — check that test files and test function names match the framework's discovery patterns (e.g., pytest needs test_*.py files with test_ functions, unittest needs test* methods in TestCase classes, Go needs Test* functions in *_test.go files)]"
 	}
 
 	return ""
@@ -2459,6 +2571,29 @@ func compilationErrorSummary(output string, exitCode int) string {
 		summary += "\n[hint: fix the FIRST error and recompile — later errors often cascade from the first one]"
 	}
 	return summary
+}
+
+// compilationFingerprint extracts a fingerprint from compilation output for
+// stale-error detection. Uses the first unique error line as fingerprint.
+// When the same fingerprint appears twice in a row, the agent's fix didn't work.
+func compilationFingerprint(output string) string {
+	errorPatterns := []string{
+		": error:", ": error[", ": fatal error:",
+		"undefined reference", "cannot find symbol",
+		"not found in scope",
+	}
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) < 5 || len(trimmed) > 200 {
+			continue
+		}
+		for _, p := range errorPatterns {
+			if strings.Contains(trimmed, p) {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }
 
 // isBuildCommand detects commands that typically need longer timeouts.
