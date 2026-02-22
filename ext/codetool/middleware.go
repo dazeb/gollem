@@ -547,6 +547,56 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-resolve Maven dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "pom.xml")) && runQuiet(dir, "which", "mvn") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Maven dependencies in %s\n", dir)
+				runQuietTimeout(dir, 120*time.Second, "mvn", "dependency:resolve", "-q", "-B")
+				parts = append(parts, "AUTO-INSTALLED: Maven dependencies (already done, no need to install again)")
+				break
+			}
+		}
+	}
+
+	// Auto-resolve Gradle dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if (fileExists(filepath.Join(dir, "build.gradle")) || fileExists(filepath.Join(dir, "build.gradle.kts"))) &&
+				(runQuiet(dir, "which", "gradle") != "" || fileExists(filepath.Join(dir, "gradlew"))) {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Gradle dependencies in %s\n", dir)
+				gradleCmd := "gradle"
+				if fileExists(filepath.Join(dir, "gradlew")) {
+					gradleCmd = filepath.Join(dir, "gradlew")
+					os.Chmod(gradleCmd, 0o755)
+				}
+				runQuietTimeout(dir, 120*time.Second, gradleCmd, "dependencies", "--quiet")
+				parts = append(parts, "AUTO-INSTALLED: Gradle dependencies (already done, no need to install again)")
+				break
+			}
+		}
+	}
+
+	// Auto-restore .NET dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			hasProject := false
+			if matches, _ := filepath.Glob(filepath.Join(dir, "*.csproj")); len(matches) > 0 {
+				hasProject = true
+			} else if matches, _ := filepath.Glob(filepath.Join(dir, "*.sln")); len(matches) > 0 {
+				hasProject = true
+			} else if matches, _ := filepath.Glob(filepath.Join(dir, "*.fsproj")); len(matches) > 0 {
+				hasProject = true
+			}
+			if hasProject && runQuiet(dir, "which", "dotnet") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-restoring .NET packages in %s\n", dir)
+				runQuietTimeout(dir, 90*time.Second, "dotnet", "restore")
+				parts = append(parts, "AUTO-INSTALLED: .NET packages via dotnet restore (already done, no need to restore again)")
+				break
+			}
+		}
+	}
+
 	// Detect .env files and surface environment variable requirements.
 	// Many TB2 tasks need specific env vars set; finding this early saves 2+ turns
 	// of the agent troubleshooting "connection refused" or "missing config" errors.
@@ -1408,7 +1458,7 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "Key strategies:")
 		hints = append(hints, "- Check build system: Maven (`pom.xml`), Gradle (`build.gradle`), or plain javac")
 		hints = append(hints, "- Maven: `mvn compile -q` to build, `mvn test -q` to test, `mvn package -q` to create JAR")
-		hints = append(hints, "- Gradle: `gradle build --quiet`, `gradle test --quiet`, `gradle run`")
+		hints = append(hints, "- Gradle: `./gradlew build --quiet` (use `./gradlew` if present, else `gradle`)")
 		hints = append(hints, "- Plain javac: `javac -d out *.java && java -cp out MainClass`")
 		hints = append(hints, "- For 'cannot find symbol' errors: check import statements and classpath")
 		hints = append(hints, "- JVM startup is slow — combine compile+test into single mvn/gradle invocation")
@@ -2919,10 +2969,14 @@ func detectTestCommands(workDir string) []string {
 		cmds = append(cmds, "Build: mvn compile -q")
 		cmds = append(cmds, "Test: mvn test -q")
 	}
-	// Java/Gradle
+	// Java/Gradle (prefer gradlew wrapper if present).
 	if fileExists(filepath.Join(workDir, "build.gradle")) || fileExists(filepath.Join(workDir, "build.gradle.kts")) {
-		cmds = append(cmds, "Build: gradle build --quiet")
-		cmds = append(cmds, "Test: gradle test --quiet")
+		gradleCmd := "gradle"
+		if fileExists(filepath.Join(workDir, "gradlew")) {
+			gradleCmd = "./gradlew"
+		}
+		cmds = append(cmds, "Build: "+gradleCmd+" build --quiet")
+		cmds = append(cmds, "Test: "+gradleCmd+" test --quiet")
 	}
 	// .NET
 	for _, dir := range []string{workDir, "/app"} {
