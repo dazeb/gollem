@@ -83,7 +83,7 @@ class GollemAgent(BaseInstalledAgent):
     def __init__(
         self,
         *args,
-        timeout_minutes: int = 30,
+        timeout_minutes: int = 45,
         thinking_budget: int = 0,
         reasoning_effort: str = "",
         **kwargs,
@@ -106,16 +106,18 @@ class GollemAgent(BaseInstalledAgent):
         binary_path = _find_binary()
 
         # Ensure CA certificates are available for TLS (some task images lack them).
-        # Skip if certs already exist to avoid slow apt-get update.
+        # Only install if the actual cert bundle file is missing — the directory
+        # /etc/ssl/certs often exists even without certs installed.
+        # Use a 60-second timeout to prevent setup from hanging on slow networks.
         await environment.exec(
             command=(
-                "if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -d /etc/ssl/certs ]; then "
-                "("
+                "if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ]; then "
+                "timeout 60 sh -c '("
                 "  apt-get update -qq && apt-get install -y -qq ca-certificates"
                 "  || apk add --no-cache ca-certificates"
                 "  || yum install -y ca-certificates"
                 "  || dnf install -y ca-certificates"
-                ") > /dev/null 2>&1; "
+                ") 2>&1 | tail -5' || true; "
                 "update-ca-certificates > /dev/null 2>&1 || true; "
                 "fi"
             )

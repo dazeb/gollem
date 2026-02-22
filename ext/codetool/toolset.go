@@ -144,8 +144,9 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// Guardrails: prevent infinite loops.
 		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(500)),
 
-		// Tool timeout: individual tools get 2 minutes max.
-		core.WithDefaultToolTimeout[string](2 * time.Minute),
+		// Tool timeout: individual tools get 3 minutes max.
+		// Some compute-heavy tasks (compilation, data processing) need extra time.
+		core.WithDefaultToolTimeout[string](3 * time.Minute),
 
 		// Auto context: compress old messages when context grows too large.
 		core.WithAutoContext[string](core.AutoContextConfig{

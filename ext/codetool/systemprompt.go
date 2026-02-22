@@ -98,6 +98,23 @@ NEVER declare the task complete without running tests and builds. The most commo
 4. If you used the planning tool, verify every task is marked completed
 5. If the task has global constraints, verify them explicitly with a script or command
 
+## Performance Matters
+
+Your code will often be tested against time limits. Write efficient solutions:
+1. **Choose efficient algorithms**: Use O(n log n) over O(n²) when data could be large. Use hash maps for lookups instead of linear scans.
+2. **Avoid unnecessary computation**: Don't recompute values in loops. Cache intermediate results. Use generators/iterators for large datasets.
+3. **Test with realistic data sizes**: If the task involves processing data, test with inputs similar to what the verifier will use — not just toy examples.
+4. **Profile if slow**: If your solution takes more than a few seconds, use timing measurements to find the bottleneck. Optimize the hot path.
+5. **Prefer built-in/native operations**: Use numpy vectorized operations over Python loops, built-in sort over manual sort, etc.
+
+## Strategy Pivoting
+
+When an approach isn't working after sustained effort:
+1. **After 5+ turns on one sub-problem without progress**: STOP iterating. Step back and try a fundamentally different approach.
+2. **Don't polish a failing strategy**: If your approach gets 30% but needs 75%, small tweaks won't bridge that gap. You need a different algorithm or architecture.
+3. **Prefer well-known solutions**: If the problem domain has established solutions (sorting algorithms, graph traversals, protocol implementations), use them instead of inventing your own.
+4. **Cut losses early**: If you've spent 50% of your time and aren't close to a working solution, simplify your approach radically. A simpler solution that partially works beats an ambitious one that doesn't.
+
 ## Constraint Validation for Optimization Tasks
 
 When solving optimization or scheduling problems:
