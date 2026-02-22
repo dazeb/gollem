@@ -215,6 +215,21 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Git branch: "+branch)
 	}
 
+	// Detect available tools to prevent wasted turns on missing commands.
+	var availableTools []string
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++"} {
+		if path := runQuiet(workDir, "which", tool); path != "" {
+			availableTools = append(availableTools, tool)
+		}
+	}
+	if len(availableTools) > 0 {
+		parts = append(parts, "Available tools: "+strings.Join(availableTools, ", "))
+	}
+	// Python version is critical — many TB2 containers have python3 but not python.
+	if pyVer := runQuiet(workDir, "python3", "--version"); pyVer != "" {
+		parts = append(parts, "Python: "+pyVer)
+	}
+
 	// Top-level directory listing (first 30 entries, one level deep).
 	if ls := runQuiet(workDir, "ls", "-1"); ls != "" {
 		entries := strings.Split(strings.TrimSpace(ls), "\n")
@@ -264,9 +279,10 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Track total auto-read bytes to prevent context bloat.
-	// Cap at 50KB total (~12500 tokens). Investing more in initial context
-	// saves 3-5 turns of file reading, which is a net win for token efficiency.
-	autoReadBudget := 50000
+	// 75KB (~18K tokens) upfront context saves 3-5 turns of file reading.
+	// With 150K auto-context (Claude), this is only 12% of the budget.
+	// With 80K (grok), it's 22% — still well within budget.
+	autoReadBudget := 75000
 
 	// Discover and auto-read test files (verifier tests live in /tests/ on Terminal-Bench).
 	// Auto-reading tests is the single highest-impact context injection — the agent
@@ -279,10 +295,11 @@ func discoverEnvironment(workDir string) string {
 				parts = append(parts, testLs)
 				parts = append(parts, "IMPORTANT: These test files define what will be verified. Run them EARLY and OFTEN. Tests often check for unexpected files in directories — clean up all build artifacts.")
 			}
-			// Auto-read test files (up to 8KB each, up to 5 files).
+			// Auto-read test files (up to 12KB each, up to 6 files).
 			// Tests are the highest-value context — knowing what's verified
 			// prevents wasted turns writing solutions that don't match.
-			autoReadBudget = autoReadDirBudget(td, &parts, "Test (DO NOT MODIFY)", 8000, 5, autoReadBudget)
+			// With 75KB budget, we allocate generously for tests.
+			autoReadBudget = autoReadDirBudget(td, &parts, "Test (DO NOT MODIFY)", 12000, 6, autoReadBudget)
 			// Extract and highlight key constraints from test assertions.
 			if constraints := extractTestConstraints(td); len(constraints) > 0 {
 				parts = append(parts, "\n## KEY CONSTRAINTS (extracted from tests)")
