@@ -107,7 +107,9 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 	sb.WriteString("- What files were created, edited, or read\n")
 	sb.WriteString("- What commands were run and their results (especially test results and errors)\n")
 	sb.WriteString("- Key decisions made and current approach\n")
-	sb.WriteString("- Any constraints or requirements discovered\n\n")
+	sb.WriteString("- Any constraints or requirements discovered\n")
+	sb.WriteString("- What approaches were tried and whether they succeeded or failed\n")
+	sb.WriteString("- Current state: what's done, what's remaining\n\n")
 	for _, msg := range oldMessages {
 		switch m := msg.(type) {
 		case ModelRequest:

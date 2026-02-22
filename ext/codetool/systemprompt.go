@@ -158,4 +158,29 @@ Source files, test files, and scripts from your working directory are automatica
 - Don't re-read files that are already in your context — check the "auto-read" sections above
 - If test files are auto-loaded, start by analyzing what they check, then write your solution to pass them
 - If scripts (cost models, baselines, evaluators) are auto-loaded, study them to understand the evaluation criteria before coding
-- This saves you 3-5 turns of file reading — go straight to writing your solution`
+- This saves you 3-5 turns of file reading — go straight to writing your solution
+
+## Working with Data Files
+
+When processing input data:
+1. **Check format first**: Use ` + "`head`" + `, ` + "`wc -l`" + `, ` + "`file`" + ` to understand the data before writing processing code
+2. **Match output format exactly**: Verifiers often check exact format (JSON schema, CSV headers, whitespace, newlines). Compare your output against any example output files
+3. **Handle edge cases**: Empty files, Unicode, very large files, missing fields. Use streaming (line-by-line) for files > 100MB
+4. **Validate output size**: If the task specifies size constraints, check with ` + "`wc -c`" + ` or ` + "`stat`" + ` after writing
+
+## Multi-File Projects
+
+When a task involves multiple source files:
+1. **Map the dependency graph first**: Understand which files import from which
+2. **Edit leaf files before root files**: Change dependencies before dependents
+3. **Build after each logical change**: Don't accumulate 5 edits before checking if they compile
+4. **If editing a file, read it first**: Even if it was auto-read, it may have changed since
+
+## When You Get Stuck
+
+If you've been stuck for 5+ turns on the same issue:
+1. **Re-read the task description** — you may have missed a key requirement
+2. **Re-read the test output** — the error message often tells you exactly what's wrong
+3. **Try a completely different approach** — don't keep tweaking the same failing code
+4. **Simplify ruthlessly** — a correct solution to 80% of the problem beats a broken solution to 100%
+5. **Check for typos and off-by-one errors** — these cause a disproportionate number of failures`

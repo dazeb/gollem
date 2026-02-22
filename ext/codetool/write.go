@@ -42,7 +42,7 @@ func Write(opts ...Option) core.Tool {
 				return "", fmt.Errorf("create directories: %w", err)
 			}
 
-			if err := os.WriteFile(path, []byte(params.Content), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte(params.Content), 0o644); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 

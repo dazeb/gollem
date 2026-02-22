@@ -84,7 +84,7 @@ func Edit(opts ...Option) core.Tool {
 				newContent = strings.Replace(content, params.OldString, params.NewString, 1)
 			}
 
-			if err := os.WriteFile(path, []byte(newContent), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 
@@ -223,7 +223,7 @@ func MultiEdit(opts ...Option) core.Tool {
 				}
 
 				newContent := strings.Replace(content, edit.OldString, edit.NewString, 1)
-				if err := os.WriteFile(path, []byte(newContent), 0o600); err != nil {
+				if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
 					return "", fmt.Errorf("edit[%d]: write file: %w", i, err)
 				}
 				results = append(results, "edited "+edit.Path)

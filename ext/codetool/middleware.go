@@ -170,13 +170,7 @@ func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.A
 
 			if effectiveTimeout > 0 {
 				mins := int(effectiveTimeout.Minutes())
-				envContext += fmt.Sprintf("\n\nTIME BUDGET: You have %d minutes total. "+
-					"Each API call takes 5-30 seconds. Budget your turns wisely:\n"+
-					"- Turns 1-3: Read task, understand constraints, plan approach\n"+
-					"- Turns 3-8: Create output files (even rough drafts)\n"+
-					"- Turns 8+: Iterate, test, refine\n"+
-					"- Final 25%%: Clean up artifacts, verify tests pass\n"+
-					"DO NOT waste turns on unnecessary exploration. Time is your scarcest resource.", mins)
+				envContext += timeStrategyGuidance(mins)
 			}
 		})
 
@@ -304,14 +298,27 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
-	// Auto-read small source files in /app/ — saves 3-5 turns of manual file reading.
-	// Only reads files < 5KB to avoid overwhelming context.
+	// Auto-read small source files in /app/ — now recursive (depth 3).
+	// Reads files < 5KB to avoid overwhelming context, up to 8 files total.
 	if autoReadBudget > 0 {
 		appSourceDirs := []string{"/app", workDir}
 		for _, ad := range appSourceDirs {
-			autoReadSourceFilesBudget(ad, &parts, 5000, 5, autoReadBudget)
+			autoReadSourceFilesBudget(ad, &parts, 5000, 8, autoReadBudget)
 			break // only read from one source directory
 		}
+	}
+
+	// Discover standalone verification scripts that aren't in /tests/.
+	// TB2 tasks sometimes place verifier scripts in the working directory
+	// or /app/ with names like verify.py, check_output.sh, validate.py.
+	verifyScripts := discoverVerificationScripts(workDir)
+	if len(verifyScripts) > 0 {
+		parts = append(parts, "\n## Verification Scripts Found")
+		parts = append(parts, "These scripts can be used to verify your solution:")
+		for _, vs := range verifyScripts {
+			parts = append(parts, "  - "+vs)
+		}
+		parts = append(parts, "Run these EARLY after creating output files to check correctness.")
 	}
 
 	// Check for output directories that need to be populated.
@@ -441,16 +448,29 @@ func autoReadDirBudget(dir string, parts *[]string, label string, maxBytes, maxF
 	return budget
 }
 
-// autoReadSourceFilesBudget reads small source files in a directory (non-recursive),
-// respecting a total byte budget.
+// autoReadSourceFilesBudget reads small source files in a directory recursively
+// (up to depth 3), respecting a total byte budget. This ensures the agent sees
+// code in subdirectories like src/, lib/, utils/ without wasting turns.
 func autoReadSourceFilesBudget(dir string, parts *[]string, maxBytes, maxFiles, budget int) {
+	autoReadSourceRecursive(dir, parts, maxBytes, &maxFiles, &budget, 0, 3)
+}
+
+// autoReadSourceRecursive walks a directory tree reading source files.
+func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remaining *int, budget *int, depth, maxDepth int) {
+	if depth > maxDepth || *remaining <= 0 || *budget <= 0 {
+		return
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
-	count := 0
+
+	// Read files first, then recurse into subdirectories.
 	for _, entry := range entries {
-		if entry.IsDir() || count >= maxFiles || budget <= 0 {
+		if *remaining <= 0 || *budget <= 0 {
+			return
+		}
+		if entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
@@ -467,16 +487,33 @@ func autoReadSourceFilesBudget(dir string, parts *[]string, maxBytes, maxFiles, 
 			continue
 		}
 		limit := maxBytes
-		if limit > budget {
-			limit = budget
+		if limit > *budget {
+			limit = *budget
 		}
 		content := readFileTruncated(filepath.Join(dir, name), limit)
 		if content != "" {
 			*parts = append(*parts, fmt.Sprintf("\n## Source file auto-read: %s/%s", dir, name))
 			*parts = append(*parts, content)
-			budget -= len(content)
-			count++
+			*budget -= len(content)
+			*remaining--
 		}
+	}
+
+	// Recurse into subdirectories (skip hidden, vendor, node_modules, etc.).
+	for _, entry := range entries {
+		if *remaining <= 0 || *budget <= 0 {
+			return
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" ||
+			name == "__pycache__" || name == ".git" || name == "venv" || name == ".venv" ||
+			name == "build" || name == "dist" || name == "target" {
+			continue
+		}
+		autoReadSourceRecursive(filepath.Join(dir, name), parts, maxBytes, remaining, budget, depth+1, maxDepth)
 	}
 }
 
@@ -514,21 +551,157 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "Strategy: (1) Read test files to understand expected behavior, (2) implement solution, (3) run tests iteratively until passing, (4) clean up build artifacts.")
 	}
 
+	// Detect scientific computing tasks (common in TB2).
+	if detectSciCompute(workDir) {
+		hints = append(hints, "\n## Task Type: Scientific/Numerical Computing")
+		hints = append(hints, "This appears to be a scientific computing task. Key strategies:")
+		hints = append(hints, "- Use numpy, scipy, or similar libraries for numerical work — don't implement algorithms from scratch")
+		hints = append(hints, "- Pay attention to numerical precision (float32 vs float64, overflow, underflow)")
+		hints = append(hints, "- Validate results against expected ranges or known values")
+		hints = append(hints, "- For optimization problems, prefer well-known algorithms (gradient descent, LP solvers, etc.)")
+	}
+
+	// Detect model training tasks.
+	if detectMLTask(workDir) {
+		hints = append(hints, "\n## Task Type: Machine Learning / Model Training")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Install required ML packages first (torch, transformers, sklearn, etc.)")
+		hints = append(hints, "- Check GPU availability with 'nvidia-smi' before training")
+		hints = append(hints, "- Use small batch sizes and few epochs initially to verify the pipeline works")
+		hints = append(hints, "- Save checkpoints frequently for long training runs")
+		hints = append(hints, "- If no GPU, use CPU-compatible approaches (sklearn, small models)")
+	}
+
+	// Detect Dockerfile/container tasks.
+	if fileExists(filepath.Join(workDir, "Dockerfile")) || fileExists(filepath.Join(workDir, "docker-compose.yml")) {
+		hints = append(hints, "\n## Note: Docker files detected")
+		hints = append(hints, "If the task involves Docker: build and test locally first, then containerize.")
+		hints = append(hints, "Don't waste turns debugging Docker networking or GPU passthrough — focus on the core task.")
+	}
+
 	if len(hints) > 0 {
 		return strings.Join(hints, "\n")
 	}
 	return ""
 }
 
-// previewInputData reads the first few lines of input data files to show format.
+// discoverVerificationScripts finds test/verification scripts outside of standard test directories.
+func discoverVerificationScripts(workDir string) []string {
+	var scripts []string
+	seen := make(map[string]bool)
+
+	// Check these directories for verification scripts.
+	searchDirs := []string{workDir, "/app", "/app/task_file"}
+	verifyPatterns := []string{
+		"verify*", "check*", "validate*", "test_*", "run_test*",
+		"score*", "eval*", "grade*",
+	}
+
+	for _, dir := range searchDirs {
+		for _, pattern := range verifyPatterns {
+			matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+			for _, m := range matches {
+				if !seen[m] {
+					seen[m] = true
+					scripts = append(scripts, m)
+				}
+			}
+		}
+	}
+	return scripts
+}
+
+// detectSciCompute returns true if the working directory looks like a scientific computing task.
+func detectSciCompute(workDir string) bool {
+	indicators := []string{
+		"eigenval", "matrix", "linear_algebra", "pde", "ode", "fft",
+		"simulation", "numerical", "physics", "quantum",
+	}
+	lower := strings.ToLower(workDir)
+	for _, ind := range indicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for scipy/numpy imports in source files.
+	sciFiles := []string{"*.py"}
+	for _, pattern := range sciFiles {
+		matches, _ := filepath.Glob(filepath.Join(workDir, pattern))
+		for _, m := range matches {
+			content := readFileTruncated(m, 2000)
+			if strings.Contains(content, "scipy") || strings.Contains(content, "numpy") ||
+				strings.Contains(content, "sympy") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// detectMLTask returns true if the working directory looks like an ML/training task.
+func detectMLTask(workDir string) bool {
+	indicators := []string{
+		"train", "model", "inference", "checkpoint", "epoch",
+		"dataset", "dataloader",
+	}
+	// Check directory name.
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range indicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for ML framework imports.
+	matches, _ := filepath.Glob(filepath.Join(workDir, "*.py"))
+	for _, m := range matches {
+		content := readFileTruncated(m, 2000)
+		if strings.Contains(content, "torch") || strings.Contains(content, "tensorflow") ||
+			strings.Contains(content, "transformers") || strings.Contains(content, "sklearn") {
+			return true
+		}
+	}
+	return false
+}
+
+// previewInputData reads input data files and shows format information to
+// help the agent understand the data structure immediately.
 func previewInputData(dir string, hints *[]string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
+
+	// First pass: summarize the directory (file count, total size, types).
+	var totalSize int64
+	var fileCount int
+	extCounts := make(map[string]int)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		fileCount++
+		if info, err := entry.Info(); err == nil {
+			totalSize += info.Size()
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if ext == "" {
+			ext = "(no ext)"
+		}
+		extCounts[ext]++
+	}
+	if fileCount > 0 {
+		var extSummary []string
+		for ext, count := range extCounts {
+			extSummary = append(extSummary, fmt.Sprintf("%s: %d", ext, count))
+		}
+		*hints = append(*hints, fmt.Sprintf("Input data: %d files, %s total [%s]",
+			fileCount, humanSize(totalSize), strings.Join(extSummary, ", ")))
+	}
+
+	// Second pass: preview up to 5 files (more than before).
 	count := 0
 	for _, entry := range entries {
-		if entry.IsDir() || count >= 3 {
+		if entry.IsDir() || count >= 5 {
 			continue
 		}
 		name := entry.Name()
@@ -536,13 +709,42 @@ func previewInputData(dir string, hints *[]string) {
 		if err != nil || info.Size() == 0 {
 			continue
 		}
-		// Read first 1000 bytes to show format.
-		content := readFileTruncated(filepath.Join(dir, name), 1000)
+		// Show more content for small files, less for large ones.
+		previewBytes := 1500
+		if info.Size() > 100000 {
+			previewBytes = 800 // large files: just show format
+		}
+		content := readFileTruncated(filepath.Join(dir, name), previewBytes)
 		if content != "" {
-			*hints = append(*hints, fmt.Sprintf("Input data preview (%s, %d bytes total):", name, info.Size()))
+			// Count lines for CSV/text files.
+			lineInfo := ""
+			if info.Size() < 10*1024*1024 { // only count lines for < 10MB
+				if lc := runQuiet(dir, "wc", "-l", filepath.Join(dir, name)); lc != "" {
+					fields := strings.Fields(lc)
+					if len(fields) > 0 {
+						lineInfo = fmt.Sprintf(", %s lines", fields[0])
+					}
+				}
+			}
+			*hints = append(*hints, fmt.Sprintf("Input data preview (%s, %s%s):",
+				name, humanSize(info.Size()), lineInfo))
 			*hints = append(*hints, content)
 			count++
 		}
+	}
+}
+
+// humanSize formats bytes into a human-readable string.
+func humanSize(bytes int64) string {
+	switch {
+	case bytes >= 1<<30:
+		return fmt.Sprintf("%.1fGB", float64(bytes)/(1<<30))
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1fMB", float64(bytes)/(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.1fKB", float64(bytes)/(1<<10))
+	default:
+		return fmt.Sprintf("%dB", bytes)
 	}
 }
 
@@ -606,6 +808,47 @@ func extractTestConstraints(testDir string) []string {
 		}
 	}
 	return constraints
+}
+
+// timeStrategyGuidance returns time-proportional strategy guidance based on
+// the total available minutes. Short tasks need aggressive output-first behavior,
+// while long tasks can afford more exploration.
+func timeStrategyGuidance(mins int) string {
+	switch {
+	case mins <= 15:
+		// Sprint: 10-15 minute tasks — minimal exploration, immediate output.
+		return fmt.Sprintf("\n\nTIME BUDGET: %d minutes (SPRINT MODE).\n"+
+			"This is a SHORT task. You have ~20-30 turns MAX.\n"+
+			"- Turn 1: Read task + tests. NO planning tool needed.\n"+
+			"- Turn 2-3: Write output files IMMEDIATELY.\n"+
+			"- Turn 4+: Run tests, fix failures.\n"+
+			"- Final 3 turns: Clean up artifacts, final test.\n"+
+			"DO NOT explore, DO NOT plan extensively. Write code NOW.", mins)
+	case mins <= 30:
+		// Standard: 15-30 minute tasks — quick plan, then execute.
+		return fmt.Sprintf("\n\nTIME BUDGET: %d minutes. Budget ~40-60 turns wisely:\n"+
+			"- Turns 1-2: Read task, constraints, tests\n"+
+			"- Turns 3-5: Create output files (even rough drafts)\n"+
+			"- Turns 5-15: Iterate, test, refine\n"+
+			"- Final 25%%: Clean up artifacts, verify tests pass\n"+
+			"Prioritize working output over perfect code.", mins)
+	case mins <= 60:
+		// Medium: 30-60 minute tasks — plan carefully, iterate.
+		return fmt.Sprintf("\n\nTIME BUDGET: %d minutes. Budget ~60-100 turns:\n"+
+			"- Turns 1-5: Read task, understand constraints, plan approach\n"+
+			"- Turns 5-10: Create initial output files\n"+
+			"- Turns 10-30: Iterate, test, refine\n"+
+			"- Final 25%%: Clean up artifacts, verify tests pass\n"+
+			"You have time for thoughtful implementation but don't over-research.", mins)
+	default:
+		// Marathon: 60+ minute tasks — more room for exploration.
+		return fmt.Sprintf("\n\nTIME BUDGET: %d minutes. Budget your turns wisely:\n"+
+			"- Turns 1-5: Read task, understand constraints, create plan\n"+
+			"- Turns 5-15: Create output files (even rough drafts)\n"+
+			"- Turns 15+: Iterate, test, refine\n"+
+			"- Final 25%%: Clean up artifacts, verify tests pass\n"+
+			"You have ample time but still don't waste it on unnecessary exploration.", mins)
+	}
 }
 
 // detectTaskTimeout reads the task timeout from task.toml or task.yaml files
