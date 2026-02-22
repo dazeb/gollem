@@ -3296,6 +3296,46 @@ func TestCheckExpectedOutputsExistEmptySolution(t *testing.T) {
 	}
 }
 
+func TestExtractImportedNames(t *testing.T) {
+	// Simulate test content that references a missing solution.py.
+	parts := []string{
+		"\n## Test file auto-read: /tests/test.py",
+		`from solution import solve, process_data
+from solution import validate as v
+import solution`,
+		"\n## Other section",
+		"some other content",
+	}
+	missingFiles := []string{"solution.py"}
+
+	result := extractImportedNames(parts, missingFiles)
+	names, ok := result["solution.py"]
+	if !ok {
+		t.Fatal("expected solution.py in results")
+	}
+	// Should have: solve, process_data, validate (deduplicated).
+	expected := map[string]bool{"solve": false, "process_data": false, "validate": false}
+	for _, n := range names {
+		if _, ok := expected[n]; ok {
+			expected[n] = true
+		}
+	}
+	for name, found := range expected {
+		if !found {
+			t.Errorf("expected %q in imported names, got %v", name, names)
+		}
+	}
+}
+
+func TestExtractImportedNamesEmpty(t *testing.T) {
+	// No test sections.
+	parts := []string{"some random content"}
+	result := extractImportedNames(parts, []string{"solution.py"})
+	if len(result) != 0 {
+		t.Errorf("expected empty, got %v", result)
+	}
+}
+
 func TestDetectTodoStubs(t *testing.T) {
 	dir := t.TempDir()
 

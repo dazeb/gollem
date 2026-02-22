@@ -782,10 +782,18 @@ func discoverEnvironment(workDir string) string {
 			}
 		}
 		if len(missingFiles) > 0 {
+			// Extract imported names from test content so the agent knows
+			// the exact API it needs to implement.
+			importedNames := extractImportedNames(parts, missingFiles)
+
 			parts = append(parts, "\n## Solution Files to Create (tests import these)")
 			parts = append(parts, "Tests import/require these files but they DON'T EXIST yet — you must CREATE them:")
 			for _, f := range missingFiles {
-				parts = append(parts, "  - "+f)
+				if names, ok := importedNames[f]; ok && len(names) > 0 {
+					parts = append(parts, fmt.Sprintf("  - %s (must export: %s)", f, strings.Join(names, ", ")))
+				} else {
+					parts = append(parts, "  - "+f)
+				}
 			}
 			parts = append(parts, "Create these files FIRST — they are the primary deliverables.")
 		}
@@ -2303,6 +2311,80 @@ func extractInvocationPatterns(workDir string) []string {
 // and extracts source file names referenced by import/require statements.
 // Returns a map of lowercased filenames (e.g., "solution.py") that tests import.
 // This enables prioritizing these files in source auto-read.
+// extractImportedNames scans test content for specific names imported from
+// each missing file. For "from solution import solve, process", returns
+// {"solution.py": ["solve", "process"]}. This tells the agent exactly what
+// API the file needs to implement, saving 1-2 turns of guessing.
+func extractImportedNames(parts []string, missingFiles []string) map[string][]string {
+	result := make(map[string][]string)
+	// Build a map of module name → filename for quick lookup.
+	moduleToFile := make(map[string]string)
+	for _, f := range missingFiles {
+		// "solution.py" → "solution"
+		mod := strings.TrimSuffix(f, filepath.Ext(f))
+		moduleToFile[mod] = f
+	}
+
+	inTestSection := false
+	for _, part := range parts {
+		if strings.HasPrefix(part, "\n## Test file auto-read") {
+			inTestSection = true
+			continue
+		}
+		if strings.HasPrefix(part, "\n## ") {
+			inTestSection = false
+			continue
+		}
+		if !inTestSection {
+			continue
+		}
+
+		for _, line := range strings.Split(part, "\n") {
+			trimmed := strings.TrimSpace(line)
+
+			// Python: "from solution import solve, process_data"
+			if strings.HasPrefix(trimmed, "from ") {
+				fields := strings.Fields(trimmed)
+				if len(fields) >= 4 && fields[2] == "import" {
+					mod := strings.Split(fields[1], ".")[0]
+					if filename, ok := moduleToFile[mod]; ok {
+						// Extract imported names.
+						importPart := strings.Join(fields[3:], " ")
+						// Handle multi-line imports: "from x import (a, b, c)"
+						importPart = strings.Trim(importPart, "()")
+						for _, name := range strings.Split(importPart, ",") {
+							name = strings.TrimSpace(name)
+							// Handle "name as alias"
+							if asIdx := strings.Index(name, " as "); asIdx > 0 {
+								name = name[:asIdx]
+							}
+							name = strings.TrimSpace(name)
+							if name != "" && name != "*" {
+								result[filename] = append(result[filename], name)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Deduplicate names per file.
+	for f, names := range result {
+		seen := make(map[string]bool)
+		var unique []string
+		for _, n := range names {
+			if !seen[n] {
+				seen[n] = true
+				unique = append(unique, n)
+			}
+		}
+		result[f] = unique
+	}
+
+	return result
+}
+
 func extractTestReferencedFiles(parts []string) map[string]bool {
 	refs := make(map[string]bool)
 	inTestSection := false
