@@ -1931,6 +1931,77 @@ lint:
 	}
 }
 
+func TestTestResultSummaryXOfYPattern(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name: "X/Y passed",
+			output: `Running test suite...
+Test 1: PASS
+Test 2: FAIL
+Test 3: PASS
+3/5 tests passed`,
+			want: "3/5 tests passed",
+		},
+		{
+			name: "X out of Y",
+			output: `Checking outputs...
+Passed 7 out of 10 tests`,
+			want: "7 out of 10",
+		},
+		{
+			name: "Passed X of Y failed Z",
+			output: `Test results: passed 3 of 5, failed 2`,
+			want: "passed 3 of 5",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := testResultSummary(tt.output)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("expected summary containing %q, got: %s", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestTestFailureFingerprint(t *testing.T) {
+	// Same output should produce same fingerprint.
+	output1 := `test_calc.py::test_add FAILED
+E       assert 7 == 5
+========================= 1 failed =========================`
+
+	fp1 := testFailureFingerprint(output1)
+	fp2 := testFailureFingerprint(output1)
+	if fp1 != fp2 {
+		t.Errorf("same output should produce same fingerprint: %q vs %q", fp1, fp2)
+	}
+	if fp1 == "" {
+		t.Error("expected non-empty fingerprint for failing test")
+	}
+
+	// Different failure should produce different fingerprint.
+	output2 := `test_calc.py::test_add FAILED
+E       assert 7 == 6
+========================= 1 failed =========================`
+
+	fp3 := testFailureFingerprint(output2)
+	if fp3 == fp1 {
+		t.Errorf("different failures should produce different fingerprints: both %q", fp1)
+	}
+
+	// Passing test should produce empty fingerprint.
+	output3 := `test_calc.py::test_add PASSED
+========================= 1 passed =========================`
+	fp4 := testFailureFingerprint(output3)
+	if fp4 != "" {
+		t.Errorf("passing test should have empty fingerprint, got: %q", fp4)
+	}
+}
+
 func TestDetectEnvFiles(t *testing.T) {
 	dir := t.TempDir()
 

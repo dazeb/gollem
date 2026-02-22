@@ -68,6 +68,13 @@ type BashResult struct {
 // Returns formatted text (not JSON) for efficient token usage and easier model parsing.
 func Bash(opts ...Option) core.Tool {
 	cfg := applyOpts(opts)
+
+	// Track test failure fingerprints for stale-failure detection.
+	// When the same test failure appears twice in a row, the agent's fix
+	// was ineffective — warn it to try a different approach.
+	// Safe because bash is WithToolSequential (no concurrent calls).
+	var lastTestFailFingerprint string
+
 	return core.FuncTool[BashParams](
 		"bash",
 		"Execute a bash command in the shell. Use this for running programs, installing packages, "+
@@ -247,6 +254,15 @@ func Bash(opts ...Option) core.Tool {
 					result += "\n" + summary
 					if exitCode != 0 && (strings.Contains(strings.ToLower(summary), "fail") || strings.Contains(strings.ToLower(summary), "error")) {
 						result += "\n[hint: read the FULL test failure output above — fix one failure at a time, starting with the first]"
+						// Stale failure detection: warn when the same test failure
+						// appears consecutively, indicating the fix was ineffective.
+						fp := testFailureFingerprint(combined)
+						if fp != "" && fp == lastTestFailFingerprint {
+							result += "\n[hint: this test failure is IDENTICAL to the previous run — your edit did not fix the issue. Re-read the error, verify your edit was applied correctly, and try a fundamentally different approach]"
+						}
+						lastTestFailFingerprint = fp
+					} else {
+						lastTestFailFingerprint = "" // reset on success
 					}
 				} else if summary := compilationErrorSummary(combined, exitCode); summary != "" {
 					result += "\n" + summary
@@ -982,6 +998,21 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// "X/Y tests passed" or "X out of Y" pattern (custom test scripts).
+	// These are common in TB2 tasks that use custom test harnesses.
+	{
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if (strings.Contains(lineLower, "passed") || strings.Contains(lineLower, "failed")) &&
+				(strings.Contains(line, "/") || strings.Contains(lineLower, " out of ") || strings.Contains(lineLower, " of ")) &&
+				!strings.Contains(line, "===") { // skip pytest output
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
 	// Shell test scripts: look for reward/score output (TB2 pattern).
 	if strings.Contains(lower, "reward") || strings.Contains(lower, "score") {
 		lines := strings.Split(output, "\n")
@@ -1128,6 +1159,14 @@ func firstFailureDetail(output string) string {
 	}
 
 	return ""
+}
+
+// testFailureFingerprint creates a stable fingerprint of a test failure.
+// Used to detect when the same test fails identically after edits (stale failure).
+// Uses the first failure's assertion detail as the fingerprint — if the first
+// failure assertion is identical, the agent's fix was ineffective.
+func testFailureFingerprint(output string) string {
+	return firstFailureDetail(output)
 }
 
 // compilationErrorSummary extracts key error lines from compiler output.

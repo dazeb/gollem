@@ -1846,7 +1846,13 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 										strings.HasPrefix(lower, "cp ") || strings.Contains(lower, " && cp ") ||
 										strings.HasPrefix(lower, "mv ") || strings.Contains(lower, " && mv ") ||
 										(strings.Contains(lower, "curl ") && strings.Contains(lower, " -o ")) ||
-										strings.HasPrefix(lower, "wget ") {
+										strings.HasPrefix(lower, "wget ") ||
+										// Commands referencing output directories (TB2 pattern).
+										strings.Contains(lower, "output_data") ||
+										// Solver/generator scripts that typically create output files.
+										(strings.Contains(lower, "python") &&
+											(strings.Contains(lower, "solve") || strings.Contains(lower, "solution") ||
+												strings.Contains(lower, "generate") || strings.Contains(lower, "process"))) {
 										hasWritten = true
 										break
 									}
