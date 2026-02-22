@@ -130,4 +130,12 @@ When solving optimization or scheduling problems:
 2. Pay special attention to GLOBAL constraints — ones that apply across multiple outputs, files, or subsystems (e.g., "max N unique values across ALL outputs", not just per-output)
 3. Write explicit validation code that checks every constraint, including global ones
 4. Run your validation BEFORE declaring success
-5. If tests exist (e.g., in /tests/), read them to understand exactly what will be checked — the tests may enforce constraints that are easy to miss in the prose description`
+5. If tests exist (e.g., in /tests/), read them to understand exactly what will be checked — the tests may enforce constraints that are easy to miss in the prose description
+
+## Exploiting Auto-Read Context
+
+Source files, test files, and scripts from your working directory are automatically loaded into your context at the start. USE THEM:
+- Don't re-read files that are already in your context — check the "auto-read" sections above
+- If test files are auto-loaded, start by analyzing what they check, then write your solution to pass them
+- If scripts (cost models, baselines, evaluators) are auto-loaded, study them to understand the evaluation criteria before coding
+- This saves you 3-5 turns of file reading — go straight to writing your solution`

@@ -202,17 +202,43 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
-	// Discover test files (verifier tests live in /tests/ on Terminal-Bench).
+	// Discover and auto-read test files (verifier tests live in /tests/ on Terminal-Bench).
+	// Auto-reading tests is the single highest-impact context injection — the agent
+	// immediately knows what success looks like without spending turns reading files.
 	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
 	for _, td := range testDirs {
 		if info, err := os.Stat(td); err == nil && info.IsDir() {
 			if testLs := runQuiet(td, "ls", "-1"); testLs != "" {
 				parts = append(parts, "\nTest directory found: "+td)
 				parts = append(parts, testLs)
-				parts = append(parts, "IMPORTANT: Read these test files FIRST to understand exactly what will be verified. Run them EARLY to see what passes/fails. Tests often check for unexpected files in directories — clean up all build artifacts.")
+				parts = append(parts, "IMPORTANT: These test files define what will be verified. Run them EARLY and OFTEN. Tests often check for unexpected files in directories — clean up all build artifacts.")
 			}
+			// Auto-read test files (up to 5KB each, up to 3 files).
+			autoReadDir(td, &parts, "Test", 5000, 3)
 			break
 		}
+	}
+
+	// Auto-read scripts directory — common in Terminal-Bench tasks for cost models,
+	// baselines, and evaluation scripts.
+	scriptDirs := []string{
+		"/app/task_file/scripts",
+		filepath.Join(workDir, "scripts"),
+		filepath.Join(workDir, "task_file", "scripts"),
+	}
+	for _, sd := range scriptDirs {
+		if info, err := os.Stat(sd); err == nil && info.IsDir() {
+			autoReadDir(sd, &parts, "Script", 5000, 4)
+			break
+		}
+	}
+
+	// Auto-read small source files in /app/ — saves 3-5 turns of manual file reading.
+	// Only reads files < 5KB to avoid overwhelming context.
+	appSourceDirs := []string{"/app", workDir}
+	for _, ad := range appSourceDirs {
+		autoReadSourceFiles(ad, &parts, 5000, 5)
+		break // only read from one source directory
 	}
 
 	// Check for output directories that need to be populated.
@@ -302,6 +328,86 @@ func runQuiet(workDir string, name string, args ...string) string {
 		return ""
 	}
 	return strings.TrimSpace(out.String())
+}
+
+// autoReadDir reads small files in a directory and appends them to parts.
+// Only reads files with recognized source extensions up to maxBytes each.
+func autoReadDir(dir string, parts *[]string, label string, maxBytes, maxFiles int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || count >= maxFiles {
+			continue
+		}
+		name := entry.Name()
+		if !isSourceFile(name) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.Size() > int64(maxBytes) || info.Size() == 0 {
+			continue
+		}
+		content := readFileTruncated(filepath.Join(dir, name), maxBytes)
+		if content != "" {
+			*parts = append(*parts, fmt.Sprintf("\n## %s file auto-read: %s/%s", label, dir, name))
+			*parts = append(*parts, content)
+			count++
+		}
+	}
+}
+
+// autoReadSourceFiles reads small source files in a directory (non-recursive).
+// Skips files that are already auto-read from test/script dirs.
+func autoReadSourceFiles(dir string, parts *[]string, maxBytes, maxFiles int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || count >= maxFiles {
+			continue
+		}
+		name := entry.Name()
+		if !isSourceFile(name) {
+			continue
+		}
+		// Skip common non-task files.
+		lower := strings.ToLower(name)
+		if lower == "readme.md" || lower == "readme.txt" || lower == "readme" {
+			continue // Already auto-read separately.
+		}
+		info, err := entry.Info()
+		if err != nil || info.Size() > int64(maxBytes) || info.Size() == 0 {
+			continue
+		}
+		content := readFileTruncated(filepath.Join(dir, name), maxBytes)
+		if content != "" {
+			*parts = append(*parts, fmt.Sprintf("\n## Source file auto-read: %s/%s", dir, name))
+			*parts = append(*parts, content)
+			count++
+		}
+	}
+}
+
+// isSourceFile returns true if the filename has a recognized source code extension.
+func isSourceFile(name string) bool {
+	sourceExts := []string{
+		".py", ".js", ".ts", ".go", ".rs", ".c", ".cpp", ".h", ".hpp",
+		".java", ".rb", ".sh", ".bash", ".pl", ".lua", ".r", ".R",
+		".sql", ".html", ".css", ".json", ".yaml", ".yml", ".toml",
+		".xml", ".md", ".txt", ".cfg", ".ini", ".conf",
+	}
+	lower := strings.ToLower(name)
+	for _, ext := range sourceExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProgressTrackingMiddleware detects when the agent isn't producing output

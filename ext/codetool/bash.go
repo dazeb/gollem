@@ -16,13 +16,28 @@ import (
 // truncateOutput shortens long output by keeping the head and tail, connected
 // by a truncation notice. This preserves error summaries that appear at the
 // end of test or build output.
+//
+// The split ratio adapts based on content: if the output contains error/failure
+// indicators, we keep more of the tail (where error details and summaries live).
 func truncateOutput(s string, maxLen int) string {
 	if maxLen <= 0 || len(s) <= maxLen {
 		return s
 	}
-	// Keep 70% head, 30% tail so the model sees both the start of errors
-	// and the summary at the end.
-	headLen := maxLen * 7 / 10
+
+	// Check if the output looks like it contains errors/test results.
+	// If so, keep more of the tail where summaries and error details appear.
+	headRatio := 70 // default: 70% head, 30% tail
+	lower := strings.ToLower(s[max(0, len(s)-5000):])
+	if strings.Contains(lower, "error") ||
+		strings.Contains(lower, "failed") ||
+		strings.Contains(lower, "failure") ||
+		strings.Contains(lower, "traceback") ||
+		strings.Contains(lower, "panic:") ||
+		strings.Contains(lower, "assertion") {
+		headRatio = 30 // flip: 30% head, 70% tail for error output
+	}
+
+	headLen := maxLen * headRatio / 100
 	tailLen := maxLen - headLen - 100 // reserve space for the separator
 	if tailLen < 0 {
 		tailLen = 0

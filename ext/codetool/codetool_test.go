@@ -753,11 +753,21 @@ func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
 		t.Fatal("middleware did not call next")
 	}
 
-	// Now the validator should accept.
+	// First validator call should trigger pre-completion checklist (retry).
 	rc := &core.RunContext{}
+	_, err = validator(ctx, rc, "Done! All tests pass.")
+	if err == nil {
+		t.Fatal("first validator call should trigger pre-completion checklist retry")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError for checklist, got: %v", err)
+	}
+
+	// Second validator call should accept.
 	output, err := validator(ctx, rc, "Done! All tests pass.")
 	if err != nil {
-		t.Fatalf("validator should accept after verification, got: %v", err)
+		t.Fatalf("validator should accept on second call after verification, got: %v", err)
 	}
 	if output != "Done! All tests pass." {
 		t.Errorf("validator modified output: %q", output)

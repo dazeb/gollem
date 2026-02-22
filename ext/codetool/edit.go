@@ -62,9 +62,13 @@ func Edit(opts ...Option) core.Tool {
 			count := strings.Count(content, params.OldString)
 
 			if count == 0 {
-				return "", &core.ModelRetryError{
-					Message: fmt.Sprintf("old_string not found in %s. Use the view tool to check the file contents and ensure exact match including whitespace.", params.Path),
+				// Show nearby lines to help the model fix the edit without re-reading.
+				hint := findNearestLines(content, params.OldString, 3)
+				msg := fmt.Sprintf("old_string not found in %s. Ensure exact match including whitespace and indentation.", params.Path)
+				if hint != "" {
+					msg += "\n\nMost similar lines in the file:\n" + hint
 				}
+				return "", &core.ModelRetryError{Message: msg}
 			}
 
 			if count > 1 && !params.ReplaceAll {
@@ -91,6 +95,71 @@ func Edit(opts ...Option) core.Tool {
 			return fmt.Sprintf("Replaced %d occurrence(s) in %s", replacements, params.Path), nil
 		},
 	)
+}
+
+// findNearestLines finds lines in the file content that are most similar to
+// the first line of the search string. This helps the model fix failed edits
+// without needing to re-read the entire file.
+func findNearestLines(content, search string, maxResults int) string {
+	searchLines := strings.Split(search, "\n")
+	if len(searchLines) == 0 {
+		return ""
+	}
+	firstLine := strings.TrimSpace(searchLines[0])
+	if len(firstLine) < 3 {
+		return ""
+	}
+
+	contentLines := strings.Split(content, "\n")
+	type scored struct {
+		lineNum int
+		line    string
+		score   int
+	}
+	var candidates []scored
+
+	// Score each line by counting shared words with the search line.
+	searchWords := strings.Fields(strings.ToLower(firstLine))
+	for i, line := range contentLines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) < 3 {
+			continue
+		}
+		lineWords := strings.Fields(strings.ToLower(trimmed))
+		score := 0
+		for _, sw := range searchWords {
+			for _, lw := range lineWords {
+				if sw == lw {
+					score++
+					break
+				}
+			}
+		}
+		if score > 0 {
+			candidates = append(candidates, scored{lineNum: i + 1, line: line, score: score})
+		}
+	}
+
+	// Sort by score descending (simple selection for small N).
+	for i := 0; i < len(candidates) && i < maxResults; i++ {
+		best := i
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[j].score > candidates[best].score {
+				best = j
+			}
+		}
+		candidates[i], candidates[best] = candidates[best], candidates[i]
+	}
+
+	if len(candidates) > maxResults {
+		candidates = candidates[:maxResults]
+	}
+
+	var result strings.Builder
+	for _, c := range candidates {
+		fmt.Fprintf(&result, "  L%d: %s\n", c.lineNum, c.line)
+	}
+	return result.String()
 }
 
 // MultiEditEntry is a single edit operation within a multi-edit batch.
