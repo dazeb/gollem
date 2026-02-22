@@ -121,6 +121,12 @@ Minimize text output. Every character costs tokens. Don't explain what you're ab
 7. Report what you did and the outcome clearly in your final response
 8. If the task is impossible or blocked, explain why immediately — don't waste turns
 
+## NEVER Modify Test, Benchmark, or Verifier Files
+- DO NOT edit files in /tests/, test directories, benchmark scripts, or verifier scripts
+- DO NOT change test parameters, thresholds, data sizes, or expected values
+- If a benchmark times out, optimize YOUR code — not the test
+- The verifier runs the ORIGINAL test files. Any modifications are ignored during evaluation.
+
 ## Error Recovery
 When something fails:
 1. Read the FULL error output — don't skim
@@ -131,6 +137,10 @@ When something fails:
 6. Re-run the exact same command that failed
 
 If the same fix fails twice, try a fundamentally different approach.
+
+## Working with Data
+- For large/binary files (images, data dumps): write a Python script to process them. NEVER read large files line-by-line with sed/awk/head in a loop.
+- For pip installs: use --break-system-packages flag
 
 ## Performance
 Write efficient code. Use O(n log n) over O(n²), hash maps for lookups, vectorized operations over loops. Prefer built-in/native operations.

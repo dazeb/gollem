@@ -678,9 +678,21 @@ func isLongRunningCommand(cmd string) bool {
 		"python3 train", "python train",
 		"python3 benchmark", "python benchmark",
 		"pytest -", // test suites with options often take longer
-		"go test -bench", "go test -count",
+		"pytest /",
+		"go test -bench", "go test -count", "go test -run", "go test ./...",
 		"train.py", "training.py",
 		"fasttext ", "qemu-system",
+		"java -jar", "java -cp",     // JVM programs
+		"mvn ", "gradle ",           // Build tools
+		"npm run ", "npx ",          // npm scripts
+		"yarn ", "pnpm run ",        // Package manager scripts
+		"python3 -m ", "python -m ", // Module execution (e.g., python -m pytest)
+		"docker run",                // Container execution
+		"timeout ",                  // Already has own timeout, don't cut short
+		"lake build",                // Lean 4 proof checking
+		"dune build", "dune test",   // OCaml builds
+		"stack build", "cabal build", // Haskell builds
+		"cargo test",                // Rust tests
 	}
 	for _, p := range longPatterns {
 		if strings.Contains(lower, p) {
@@ -698,11 +710,20 @@ func isBuildCommand(cmd string) bool {
 		"gcc ", "g++ ", "clang ", "cc ",
 		"javac ", "mvn ", "gradle ",
 		"npm install", "npm ci", "yarn install", "pnpm install",
-		"pip install", "pip3 install",
+		"pip install", "pip3 install", "python3 -m pip install", "python -m pip install",
 		"apt-get install", "apt install", "apk add", "yum install", "dnf install",
 		"docker build",
-		"lake build", // Lean 4
+		"lake build",   // Lean 4
+		"dune build",   // OCaml
+		"stack build",  // Haskell
+		"cabal build",  // Haskell
+		"zig build",    // Zig
+		"mix compile",  // Elixir
 		"./configure",
+		"rustup", "cargo install",
+		"gem install", "bundle install",
+		"composer install", // PHP
+		"dotnet restore",  // .NET
 	}
 	for _, p := range buildPatterns {
 		if strings.HasPrefix(lower, p) || strings.Contains(lower, " && "+p) || strings.Contains(lower, "; "+p) {

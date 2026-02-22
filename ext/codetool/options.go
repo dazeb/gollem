@@ -57,8 +57,8 @@ type Option func(*Config)
 func defaults() *Config {
 	return &Config{
 		BashTimeout:  120 * time.Second,
-		MaxFileSize:  1 << 20, // 1MB
-		MaxOutputLen: 50 * 1024,
+		MaxFileSize:  1 << 20,      // 1MB
+		MaxOutputLen: 100 * 1024,   // 100KB — smart head+tail truncation preserves error info
 	}
 }
 

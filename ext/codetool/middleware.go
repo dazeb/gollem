@@ -1436,21 +1436,7 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 		// Handle 413 (Request Entity Too Large) and 400 errors caused by context overflow.
 		// Some providers (OpenAI, xAI) return 400 with "context" or "too long" in the message
 		// instead of a proper 413.
-		var httpErr *core.ModelHTTPError
-		if !errors.As(err, &httpErr) {
-			return nil, err
-		}
-		isContextOverflow := httpErr.StatusCode == http.StatusRequestEntityTooLarge
-		if httpErr.StatusCode == http.StatusBadRequest {
-			lower := strings.ToLower(httpErr.Body + httpErr.Message)
-			if strings.Contains(lower, "context") && (strings.Contains(lower, "too long") || strings.Contains(lower, "too large") || strings.Contains(lower, "exceed") || strings.Contains(lower, "maximum")) {
-				isContextOverflow = true
-			}
-			if strings.Contains(lower, "maximum context length") || strings.Contains(lower, "token limit") {
-				isContextOverflow = true
-			}
-		}
-		if !isContextOverflow {
+		if !isContextOverflowError(err) {
 			return nil, err
 		}
 
@@ -1480,7 +1466,7 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 				return resp, nil
 			}
 
-			if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusRequestEntityTooLarge {
+			if !isContextOverflowError(err) {
 				return nil, err
 			}
 			current = compressed
@@ -1488,6 +1474,29 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 
 		return nil, err
 	}
+}
+
+// isContextOverflowError checks if an error represents a context overflow.
+// This handles both HTTP 413 (Request Entity Too Large) and HTTP 400 errors
+// with context overflow messages from providers like OpenAI and xAI.
+func isContextOverflowError(err error) bool {
+	var httpErr *core.ModelHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	if httpErr.StatusCode == http.StatusRequestEntityTooLarge {
+		return true
+	}
+	if httpErr.StatusCode == http.StatusBadRequest {
+		lower := strings.ToLower(httpErr.Body + httpErr.Message)
+		if strings.Contains(lower, "context") && (strings.Contains(lower, "too long") || strings.Contains(lower, "too large") || strings.Contains(lower, "exceed") || strings.Contains(lower, "maximum")) {
+			return true
+		}
+		if strings.Contains(lower, "maximum context length") || strings.Contains(lower, "token limit") {
+			return true
+		}
+	}
+	return false
 }
 
 // emergencyCompressMessages performs aggressive message truncation for 413 recovery.
@@ -1582,12 +1591,66 @@ func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessa
 // oversized content blocks in the message history. This runs before
 // auto-context compression, ensuring token estimates are more accurate
 // and preventing a single large tool result from dominating the context.
+//
+// Uses smart head+tail truncation: when content contains error indicators
+// (test failures, tracebacks, panics), it keeps more of the tail where
+// error summaries live. This is critical for preserving test failure
+// details that the agent needs to fix issues.
 func ContentTruncationProcessor(maxBytes int) core.HistoryProcessor {
 	return func(_ context.Context, messages []core.ModelMessage) ([]core.ModelMessage, error) {
 		result := make([]core.ModelMessage, len(messages))
 		for i, msg := range messages {
-			result[i] = truncateMessageContent(msg, maxBytes)
+			result[i] = truncateMessageContentSmart(msg, maxBytes)
 		}
 		return result, nil
 	}
+}
+
+// truncateMessageContentSmart truncates oversized content within a single
+// message using the smart head+tail approach from truncateOutput. This
+// preserves error summaries and test results that appear at the end of
+// tool outputs, which is critical for the agent's error recovery.
+func truncateMessageContentSmart(msg core.ModelMessage, maxBytes int) core.ModelMessage {
+	switch m := msg.(type) {
+	case core.ModelRequest:
+		parts := make([]core.ModelRequestPart, len(m.Parts))
+		for i, part := range m.Parts {
+			switch p := part.(type) {
+			case core.ToolReturnPart:
+				if s, ok := p.Content.(string); ok && len(s) > maxBytes {
+					p.Content = truncateOutput(s, maxBytes)
+					parts[i] = p
+					continue
+				}
+			case core.UserPromptPart:
+				if len(p.Content) > maxBytes {
+					p.Content = truncateOutput(p.Content, maxBytes)
+					parts[i] = p
+					continue
+				}
+			case core.RetryPromptPart:
+				if len(p.Content) > maxBytes {
+					p.Content = truncateOutput(p.Content, maxBytes)
+					parts[i] = p
+					continue
+				}
+			}
+			parts[i] = part
+		}
+		m.Parts = parts
+		return m
+	case core.ModelResponse:
+		parts := make([]core.ModelResponsePart, len(m.Parts))
+		for i, part := range m.Parts {
+			if tp, ok := part.(core.TextPart); ok && len(tp.Content) > maxBytes {
+				tp.Content = truncateOutput(tp.Content, maxBytes)
+				parts[i] = tp
+				continue
+			}
+			parts[i] = part
+		}
+		m.Parts = parts
+		return m
+	}
+	return msg
 }
