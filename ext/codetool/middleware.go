@@ -706,6 +706,17 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-detect and install Python packages from source imports.
+	// When no requirements.txt exists, scan .py files for third-party imports
+	// and install them. This saves 2-3 turns of ModuleNotFoundError debugging.
+	if networkAvailable && !foundPyDeps && runQuiet(workDir, "which", "python3") != "" {
+		if pkgs := detectPythonImports(workDir); len(pkgs) > 0 {
+			fmt.Fprintf(os.Stderr, "[gollem] auto-installing detected Python imports: %s\n", strings.Join(pkgs, " "))
+			pipInstall(workDir, append([]string{"-q"}, pkgs...)...)
+			parts = append(parts, "AUTO-INSTALLED: detected Python imports ("+strings.Join(pkgs, ", ")+")")
+		}
+	}
+
 	// Mark dependencies as installed so subagents skip redundant installs.
 	if !depsAlreadyInstalled {
 		os.WriteFile(depsMarker, []byte("1"), 0o644)
@@ -2591,6 +2602,134 @@ func detectShellTask(workDir string) bool {
 	}
 	// Shell task if the majority of source files are shell scripts.
 	return shCount >= 2 && shCount > otherCount
+}
+
+// detectPythonImports scans .py files for third-party imports that aren't
+// installed. Returns the pip package names to install. Only checks the top-level
+// import name and uses a static list of known third-party packages to avoid
+// false positives from standard library modules.
+func detectPythonImports(workDir string) []string {
+	// Known third-party module → pip package mappings.
+	thirdParty := map[string]string{
+		"numpy":        "numpy",
+		"pandas":       "pandas",
+		"scipy":        "scipy",
+		"matplotlib":   "matplotlib",
+		"seaborn":      "seaborn",
+		"sklearn":      "scikit-learn",
+		"skimage":      "scikit-image",
+		"cv2":          "opencv-python",
+		"PIL":          "Pillow",
+		"torch":        "torch",
+		"tensorflow":   "tensorflow",
+		"transformers": "transformers",
+		"datasets":     "datasets",
+		"yaml":         "PyYAML",
+		"bs4":          "beautifulsoup4",
+		"requests":     "requests",
+		"flask":        "flask",
+		"django":       "django",
+		"fastapi":      "fastapi",
+		"uvicorn":      "uvicorn",
+		"pydantic":     "pydantic",
+		"httpx":        "httpx",
+		"aiohttp":      "aiohttp",
+		"sqlalchemy":   "sqlalchemy",
+		"redis":        "redis",
+		"pymongo":      "pymongo",
+		"psycopg2":     "psycopg2-binary",
+		"dotenv":       "python-dotenv",
+		"tqdm":         "tqdm",
+		"click":        "click",
+		"rich":         "rich",
+		"networkx":     "networkx",
+		"sympy":        "sympy",
+		"lxml":         "lxml",
+		"jwt":          "PyJWT",
+		"Crypto":       "pycryptodome",
+		"nacl":         "PyNaCl",
+		"paramiko":     "paramiko",
+		"toml":         "toml",
+		"msgpack":      "msgpack",
+		"pyarrow":      "pyarrow",
+		"h5py":         "h5py",
+		"pytest":       "pytest",
+		"attr":         "attrs",
+		"dateutil":     "python-dateutil",
+		"serial":       "pyserial",
+		"construct":    "construct",
+		"lark":         "lark",
+		"pyparsing":    "pyparsing",
+		"bitstring":    "bitstring",
+		"elftools":     "pyelftools",
+	}
+
+	needed := make(map[string]string) // module → pip package
+
+	// Scan .py files in workDir and /app (non-recursive, limit 20 files).
+	for _, dir := range []string{workDir, "/app"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.py"))
+		if len(matches) > 20 {
+			matches = matches[:20]
+		}
+		for _, m := range matches {
+			info, err := os.Stat(m)
+			if err != nil || info.Size() > 50000 {
+				continue
+			}
+			data, err := os.ReadFile(m)
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				// Match "import foo" or "from foo import bar".
+				var module string
+				if strings.HasPrefix(trimmed, "import ") {
+					// "import foo" or "import foo, bar" or "import foo as f"
+					rest := strings.TrimPrefix(trimmed, "import ")
+					module = strings.Fields(rest)[0]
+					module = strings.TrimRight(module, ",")
+				} else if strings.HasPrefix(trimmed, "from ") {
+					// "from foo import bar"
+					rest := strings.TrimPrefix(trimmed, "from ")
+					parts := strings.Fields(rest)
+					if len(parts) >= 1 {
+						module = parts[0]
+					}
+				}
+				if module == "" {
+					continue
+				}
+				// Use top-level package name.
+				if dot := strings.Index(module, "."); dot > 0 {
+					module = module[:dot]
+				}
+				if pkg, ok := thirdParty[module]; ok {
+					needed[module] = pkg
+				}
+			}
+		}
+	}
+
+	if len(needed) == 0 {
+		return nil
+	}
+
+	// Check which modules are actually missing (import fails).
+	var missing []string
+	for module, pkg := range needed {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cmd := exec.CommandContext(ctx, "python3", "-c", "import "+module)
+		cmd.Dir = workDir
+		err := cmd.Run()
+		cancel()
+		if err != nil {
+			missing = append(missing, pkg)
+		}
+	}
+
+	return missing
 }
 
 // detectCppTask returns true if the working directory looks like a C/C++ compilation task.

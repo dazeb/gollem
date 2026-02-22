@@ -2654,6 +2654,64 @@ func TestDetectGitTask(t *testing.T) {
 	}
 }
 
+func TestDetectPythonImports(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a Python file with third-party imports.
+	os.WriteFile(filepath.Join(dir, "solution.py"), []byte(`
+import numpy as np
+from scipy.optimize import minimize
+import json  # stdlib, should not appear
+import os    # stdlib, should not appear
+import pandas as pd
+`), 0o644)
+
+	pkgs := detectPythonImports(dir)
+	// We can't assert exact results since it depends on what's installed,
+	// but verify the function runs without error and returns a reasonable result.
+	// On a dev machine, numpy/scipy/pandas might already be installed.
+	if pkgs == nil {
+		pkgs = []string{} // normalize
+	}
+
+	// Verify no stdlib packages are in the result.
+	for _, p := range pkgs {
+		if p == "json" || p == "os" || p == "sys" {
+			t.Errorf("stdlib package %q detected as third-party", p)
+		}
+	}
+
+	// Any returned package should be a known pip package.
+	validPkgs := map[string]bool{
+		"numpy": true, "scipy": true, "pandas": true,
+	}
+	for _, p := range pkgs {
+		if !validPkgs[p] {
+			t.Errorf("unexpected package %q in results", p)
+		}
+	}
+}
+
+func TestDetectPythonImportsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	// No Python files: should return nil.
+	pkgs := detectPythonImports(dir)
+	if len(pkgs) != 0 {
+		t.Errorf("expected empty, got %v", pkgs)
+	}
+
+	// Only stdlib imports: should return nil.
+	os.WriteFile(filepath.Join(dir, "main.py"), []byte(`
+import os
+import sys
+import json
+`), 0o644)
+	pkgs = detectPythonImports(dir)
+	if len(pkgs) != 0 {
+		t.Errorf("expected empty for stdlib-only, got %v", pkgs)
+	}
+}
+
 func TestDetectCppTask(t *testing.T) {
 	dir := t.TempDir()
 
