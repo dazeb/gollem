@@ -89,20 +89,50 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 		summaryModel = fallbackModel
 	}
 
-	// Build summary prompt.
+	// Build summary prompt that includes tool calls and results,
+	// not just user/assistant text. This preserves critical context
+	// about what files were modified, what tests were run, and what
+	// errors occurred.
 	var sb strings.Builder
-	sb.WriteString("Summarize this conversation concisely, preserving key information:\n\n")
+	sb.WriteString("Summarize this conversation concisely, preserving:\n")
+	sb.WriteString("- What files were created, edited, or read\n")
+	sb.WriteString("- What commands were run and their results (especially test results and errors)\n")
+	sb.WriteString("- Key decisions made and current approach\n")
+	sb.WriteString("- Any constraints or requirements discovered\n\n")
 	for _, msg := range oldMessages {
 		switch m := msg.(type) {
 		case ModelRequest:
 			for _, part := range m.Parts {
-				if up, ok := part.(UserPromptPart); ok {
-					fmt.Fprintf(&sb, "User: %s\n", up.Content)
+				switch p := part.(type) {
+				case UserPromptPart:
+					content := p.Content
+					if len(content) > 500 {
+						content = content[:500] + "..."
+					}
+					fmt.Fprintf(&sb, "User: %s\n", content)
+				case ToolReturnPart:
+					content := fmt.Sprintf("%v", p.Content)
+					if len(content) > 300 {
+						content = content[:300] + "..."
+					}
+					fmt.Fprintf(&sb, "[Tool result: %s] %s\n", p.ToolName, content)
 				}
 			}
 		case ModelResponse:
 			if text := m.TextContent(); text != "" {
+				if len(text) > 500 {
+					text = text[:500] + "..."
+				}
 				fmt.Fprintf(&sb, "Assistant: %s\n", text)
+			}
+			for _, part := range m.Parts {
+				if tc, ok := part.(ToolCallPart); ok {
+					args := tc.ArgsJSON
+					if len(args) > 200 {
+						args = args[:200] + "..."
+					}
+					fmt.Fprintf(&sb, "[Tool call: %s] %s\n", tc.ToolName, args)
+				}
 			}
 		}
 	}
