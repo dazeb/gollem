@@ -118,10 +118,17 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 			}
 			messages = append(messages, loopMsg)
 
-			// Reset counts so we don't keep injecting.
+			// Reduce counts instead of resetting to zero. This makes
+			// persistent loops trigger warnings faster on recurrence.
+			// First occurrence needs 4 edits; second only 2; third only 1.
 			mu.Lock()
-			for _, path := range loopedFiles {
-				delete(editCounts, path)
+			for _, f := range loopedFiles {
+				if strings.HasPrefix(f, "bash: ") {
+					cmd := strings.TrimPrefix(f, "bash: ")
+					bashCounts[cmd] = bashCounts[cmd] / 2
+				} else {
+					editCounts[f] = editCounts[f] / 2
+				}
 			}
 			mu.Unlock()
 		}

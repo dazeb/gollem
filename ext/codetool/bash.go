@@ -271,6 +271,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := nodeErrorHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := outputMismatchHint(errStr+outStr, exitCode, cfg.WorkDir); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			combined := outStr + errStr
@@ -1147,6 +1150,46 @@ func nodeErrorHint(output string, exitCode int) string {
 	}
 
 	return ""
+}
+
+// outputMismatchHint detects output comparison failures in test output and
+// suggests specific diff/comparison commands. This addresses the common failure
+// mode where the agent's output is close to correct but has subtle format
+// differences (extra newlines, encoding, precision) that it tries to fix by
+// guessing instead of doing a character-by-character comparison.
+func outputMismatchHint(output string, exitCode int, workDir string) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	// Detect output mismatch patterns from various test frameworks.
+	isMismatch := false
+	if (strings.Contains(lower, "expected") && strings.Contains(lower, "got")) ||
+		(strings.Contains(lower, "expected") && strings.Contains(lower, "actual")) ||
+		(strings.Contains(lower, "assertequal") && strings.Contains(lower, "!=")) ||
+		strings.Contains(lower, "files differ") ||
+		// diff(1) output: "Files X and Y differ" (with filenames between).
+		(strings.Contains(lower, "files ") && strings.Contains(lower, " differ")) ||
+		strings.Contains(lower, "differ: char") ||
+		strings.Contains(lower, "diff: ") ||
+		(strings.Contains(lower, "mismatch") && !strings.Contains(lower, "hash")) {
+		isMismatch = true
+	}
+
+	if !isMismatch {
+		return ""
+	}
+
+	// Build a specific suggestion based on what diff targets are available.
+	hint := "[hint: OUTPUT MISMATCH detected. Debug character-by-character:\n"
+	hint += "  1. xxd <your_output> | head -20   # inspect exact bytes\n"
+	hint += "  2. xxd <expected_output> | head -20\n"
+	hint += "  3. diff <expected_output> <your_output>\n"
+	hint += "  Common causes: trailing newline (echo adds \\n, printf doesn't), "
+	hint += "BOM marker (\\xEF\\xBB\\xBF), Windows line endings (\\r\\n), "
+	hint += "numeric precision (1.0 vs 1.00), whitespace]"
+	return hint
 }
 
 // testResultSummary extracts a concise summary from test runner output.

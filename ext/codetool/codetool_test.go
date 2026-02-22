@@ -1890,6 +1890,124 @@ func TestFailureGuidance(t *testing.T) {
 	}
 }
 
+func TestOutputMismatchHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		exitCode int
+		wantHint bool
+	}{
+		{
+			"expected_got",
+			"AssertionError: expected 42, got 43\n[exit code: 1]",
+			1,
+			true,
+		},
+		{
+			"files_differ",
+			"Files output.txt and expected.txt differ\n[exit code: 1]",
+			1,
+			true,
+		},
+		{
+			"assertEqual",
+			"AssertionError: 'hello' != 'world'\n[exit code: 1]",
+			1,
+			false, // needs assertEqual pattern specifically
+		},
+		{
+			"no_mismatch",
+			"ModuleNotFoundError: No module named 'foo'\n[exit code: 1]",
+			1,
+			false,
+		},
+		{
+			"exit_0",
+			"expected 42, got 43",
+			0,
+			false, // exit code 0 means no hint
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := outputMismatchHint(tt.output, tt.exitCode, "")
+			if tt.wantHint && got == "" {
+				t.Error("expected output mismatch hint, got empty")
+			}
+			if !tt.wantHint && got != "" {
+				t.Errorf("expected no hint, got: %s", got)
+			}
+			if tt.wantHint && got != "" {
+				if !strings.Contains(got, "xxd") || !strings.Contains(got, "diff") {
+					t.Errorf("hint should suggest xxd and diff, got: %s", got)
+				}
+			}
+		})
+	}
+}
+
+func TestLoopDetectionMiddleware_PersistentLoop(t *testing.T) {
+	// Test that halving (instead of full reset) causes persistent loops
+	// to trigger warnings more frequently on recurrence.
+	mw := LoopDetectionMiddleware(4)
+	ctx := context.Background()
+	loopWarnings := 0
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		for _, msg := range msgs {
+			if req, ok := msg.(core.ModelRequest); ok {
+				for _, part := range req.Parts {
+					if up, ok := part.(core.UserPromptPart); ok {
+						if strings.Contains(up.Content, "stuck in a loop") {
+							loopWarnings++
+						}
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	editMsg := core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.ToolCallPart{
+				ToolName: "edit",
+				ArgsJSON: `{"path":"/app/main.py"}`,
+			},
+		},
+	}
+
+	// Simulate turns by calling mw with growing message lists.
+	// The middleware scans last 2 messages per call and accumulates counts.
+	messages := []core.ModelMessage{}
+
+	// Keep adding edits until first warning fires.
+	for i := 0; i < 10 && loopWarnings == 0; i++ {
+		messages = append(messages, editMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+	}
+	if loopWarnings != 1 {
+		t.Fatalf("expected first loop warning, got %d after %d edits", loopWarnings, len(messages))
+	}
+	firstWarningAt := len(messages)
+
+	// Continue adding edits until second warning fires.
+	for i := 0; i < 10 && loopWarnings == 1; i++ {
+		messages = append(messages, editMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+	}
+	if loopWarnings != 2 {
+		t.Fatalf("expected second loop warning, got %d after %d more edits", loopWarnings, len(messages)-firstWarningAt)
+	}
+	secondWarningAt := len(messages) - firstWarningAt
+
+	// With halving, the second warning should come faster than the first.
+	// (Counts are halved, not reset to 0, so recurrence is detected sooner.)
+	if secondWarningAt >= firstWarningAt {
+		t.Errorf("persistent loop should be detected faster: first=%d edits, second=%d edits (expected second < first)",
+			firstWarningAt, secondWarningAt)
+	}
+}
+
 func TestValidateOutputFormats_BOM(t *testing.T) {
 	dir := t.TempDir()
 	// Create a file with BOM marker.
