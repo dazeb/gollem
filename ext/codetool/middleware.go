@@ -1742,7 +1742,14 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "Key strategies:")
 		hints = append(hints, "- Use systemd (`systemctl enable/start`), supervisord, or init scripts to ensure the service starts on boot")
 		hints = append(hints, "- If systemd is unavailable, use `nohup <command> &` with a startup script in /etc/rc.local or crontab @reboot")
-		hints = append(hints, "- VERIFY the service is running: `curl localhost:<port>`, `systemctl status <service>`, or `ss -tlnp`")
+		// Detect specific ports from test scripts for actionable verification.
+		if ports := detectTestPorts(workDir); len(ports) > 0 {
+			hints = append(hints, fmt.Sprintf("- Tests connect to port(s): %s — your service MUST listen on %s",
+				strings.Join(ports, ", "), ports[0]))
+			hints = append(hints, fmt.Sprintf("- VERIFY: `curl -s localhost:%s` and `ss -tlnp | grep %s`", ports[0], ports[0]))
+		} else {
+			hints = append(hints, "- VERIFY the service is running: `curl localhost:<port>`, `systemctl status <service>`, or `ss -tlnp`")
+		}
 		hints = append(hints, "- After configuring, test that the service survives: stop and restart it to confirm persistence")
 		hints = append(hints, "- Don't just run the service in the foreground — it will die when your session ends")
 	}
@@ -2202,9 +2209,68 @@ func detectOutputFormat(workDir string) []string {
 		hints = append(hints, "STDIN: Tests pipe input to your program via stdin. Read from stdin (not files) unless task says otherwise.")
 	}
 	if binaryExecFound {
-		hints = append(hints, "EXECUTABLE: Tests run a compiled binary (./solution, ./program, etc). Compile your code and ensure the binary is executable (chmod +x).")
+		// Extract the exact binary name from test content for a specific compilation hint.
+		binaryName := detectExpectedBinaryName(allContent)
+		if binaryName != "" {
+			compileHint := fmt.Sprintf("EXECUTABLE: Tests run `./%s`. ", binaryName)
+			compileHint += suggestCompileCommand(workDir, binaryName)
+			hints = append(hints, compileHint)
+		} else {
+			hints = append(hints, "EXECUTABLE: Tests run a compiled binary (./solution, ./program, etc). Compile your code and ensure the binary is executable (chmod +x).")
+		}
 	}
 	return hints
+}
+
+// detectExpectedBinaryName extracts the exact binary name tests expect
+// from test content (e.g., "./solution", "./program", "./main").
+func detectExpectedBinaryName(testContents []string) string {
+	// Binary names in order of frequency in TB2.
+	candidates := []string{"solution", "program", "main", "a.out", "solve", "app", "answer"}
+	for _, content := range testContents {
+		for _, name := range candidates {
+			// Check for common invocation patterns: "./name", "./name ", "./name\n"
+			marker := "./" + name
+			if strings.Contains(content, marker+" ") || strings.Contains(content, marker+"\n") ||
+				strings.Contains(content, marker+"\"") || strings.Contains(content, marker+"'") ||
+				strings.Contains(content, marker+")") || strings.Contains(content, marker+"|") ||
+				strings.Contains(content, marker+"<") || strings.Contains(content, marker+">") ||
+				strings.HasSuffix(strings.TrimSpace(content), marker) {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// suggestCompileCommand suggests a specific compilation command based on the
+// project's language and the expected binary name.
+func suggestCompileCommand(workDir, binaryName string) string {
+	// Check for language-specific build files.
+	if fileExists(filepath.Join(workDir, "Cargo.toml")) {
+		return fmt.Sprintf("Rust: `cargo build --release && cp target/release/* ./%s` or set binary name in Cargo.toml [[bin]].", binaryName)
+	}
+	if fileExists(filepath.Join(workDir, "go.mod")) {
+		return fmt.Sprintf("Go: `go build -o %s ./...` or `go build -o %s .`", binaryName, binaryName)
+	}
+	if fileExists(filepath.Join(workDir, "Makefile")) || fileExists("/app/Makefile") {
+		return fmt.Sprintf("Use `make` (check Makefile for target). Ensure output is named `%s`.", binaryName)
+	}
+	if fileExists(filepath.Join(workDir, "CMakeLists.txt")) {
+		return fmt.Sprintf("CMake: `mkdir -p build && cd build && cmake .. && make -j$(nproc)`. Ensure output binary is named `%s`.", binaryName)
+	}
+	// Check for C/C++ source files.
+	for _, dir := range []string{workDir, "/app"} {
+		cFiles, _ := filepath.Glob(filepath.Join(dir, "*.c"))
+		cppFiles, _ := filepath.Glob(filepath.Join(dir, "*.cpp"))
+		if len(cppFiles) > 0 {
+			return fmt.Sprintf("C++: `g++ -O2 -o %s *.cpp -lm` (add -lpthread if using threads).", binaryName)
+		}
+		if len(cFiles) > 0 {
+			return fmt.Sprintf("C: `gcc -O2 -o %s *.c -lm` (add -lpthread if using threads).", binaryName)
+		}
+	}
+	return fmt.Sprintf("Compile your code and name the output binary `%s`. Ensure it's executable (chmod +x).", binaryName)
 }
 
 // extractInvocationPatterns scans test scripts to find exactly how the solution
@@ -3338,6 +3404,73 @@ func detectServiceTask(workDir string) bool {
 		}
 	}
 	return false
+}
+
+// detectTestPorts scans test scripts for localhost:PORT or 127.0.0.1:PORT
+// references. Returns the unique ports found, which tells the agent exactly
+// what port the service needs to listen on. Saves 1-2 turns of guessing.
+func detectTestPorts(workDir string) []string {
+	var ports []string
+	seen := make(map[string]bool)
+
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test"), workDir, "/app"}
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if !isSourceFile(name) && !strings.HasSuffix(name, ".sh") {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 30000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, name))
+			if err != nil {
+				continue
+			}
+			content := string(data)
+			// Scan for localhost:PORT and 127.0.0.1:PORT patterns.
+			for _, prefix := range []string{"localhost:", "127.0.0.1:", "0.0.0.0:"} {
+				idx := 0
+				for {
+					pos := strings.Index(content[idx:], prefix)
+					if pos < 0 {
+						break
+					}
+					pos += idx + len(prefix)
+					// Extract the port number.
+					end := pos
+					for end < len(content) && content[end] >= '0' && content[end] <= '9' {
+						end++
+					}
+					if end > pos && end-pos <= 5 {
+						port := content[pos:end]
+						if !seen[port] && port != "0" {
+							seen[port] = true
+							ports = append(ports, port)
+						}
+					}
+					idx = end
+				}
+			}
+		}
+		if len(ports) > 0 {
+			break // found ports in this directory
+		}
+	}
+
+	// Cap to 3 ports.
+	if len(ports) > 3 {
+		ports = ports[:3]
+	}
+	return ports
 }
 
 // detectHashComparisonTask returns true if tests compare files by hash.
