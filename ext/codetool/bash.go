@@ -1111,6 +1111,43 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Ruby minitest: "X runs, Y assertions, Z failures, W errors"
+	if strings.Contains(lower, "runs") && strings.Contains(lower, "assertions") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "runs") && strings.Contains(lineLower, "assertions") {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
+	// Catch2 (C++): "X test cases - Y assertions - Z failures"
+	// or "All tests passed (X assertions in Y test cases)"
+	if strings.Contains(lower, "test case") && strings.Contains(lower, "assertion") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "test case") && strings.Contains(lineLower, "assertion") {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
+	// CTest: "X% tests passed, Y tests failed out of Z"
+	if strings.Contains(lower, "tests passed") && strings.Contains(lower, "tests failed") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "tests passed") && strings.Contains(lineLower, "tests failed") {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
 	// Generic: count PASS/FAIL lines
 	if strings.Contains(upper(output), "FAIL") || strings.Contains(upper(output), "PASS") {
 		passCount := strings.Count(upper(output), "\nPASS")
