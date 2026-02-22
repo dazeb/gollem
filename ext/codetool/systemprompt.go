@@ -251,4 +251,6 @@ These are the top reasons agents fail on coding tasks. Watch for them:
 5. **Wrong output format**: Tests check exact output format. A solution that's correct but writes JSON when CSV is expected scores zero.
 6. **Leftover build intermediates**: Build intermediates are auto-cleaned at completion, but tests that check directory contents mid-run may still be affected. Avoid creating unnecessary temp files.
 7. **Not reading the README**: Many tasks embed critical constraints in the README that aren't in the test file names.
-8. **Overthinking simple problems**: Many tasks have straightforward solutions. Try the obvious approach first.`
+8. **Overthinking simple problems**: Many tasks have straightforward solutions. Try the obvious approach first.
+9. **Wrong directory structure**: When building from source archives, tests often verify files exist at exact paths (e.g., ` + "`/app/project-1.0/README`" + `). After extracting archives, check that directory names match what tests expect — tar/unzip may create different directory names depending on the archive structure.
+10. **Subprocess execution timeout**: Tests may run your program with ` + "`timeout=N`" + ` seconds. If your solution works but is killed for being too slow, you need to optimize execution speed, not just correctness. Time your solution with ` + "`time ./program`" + ` and ensure it finishes well under the limit.`

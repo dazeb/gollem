@@ -3201,6 +3201,53 @@ wc -l output.txt | grep "^100 "
 	}
 }
 
+func TestExtractTestConstraintsTimeout(t *testing.T) {
+	// Python test with timeout constraints.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "test_perf.py", `import subprocess
+def test_runs_fast():
+    result = subprocess.run(["./app"], capture_output=True, timeout=10)
+    assert result.returncode == 0
+
+def test_valgrind():
+    result = subprocess.run(["valgrind", "./app"], timeout=30)
+`)
+	constraints := extractTestConstraints(dir)
+	found := false
+	for _, c := range constraints {
+		if strings.Contains(c, "timeout=") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected timeout constraint to be extracted, got: %v", constraints)
+	}
+}
+
+func TestExtractTestConstraintsHash(t *testing.T) {
+	dir := t.TempDir()
+	// Use a non-assert hash check to test the new hash pattern specifically.
+	writeTestFile(t, dir, "test_source.py", `
+def verify_source():
+    expected = {"file.txt": "d405a7947a5a63e3eb1d74284bf841f9"}
+    actual_md5 = hashlib.md5(data).hexdigest()
+    if actual_md5 == expected["file.txt"]:
+        return True
+`)
+	constraints := extractTestConstraints(dir)
+	found := false
+	for _, c := range constraints {
+		if strings.Contains(c, "md5") || strings.Contains(c, "hashlib") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected hash constraint to be extracted, got: %v", constraints)
+	}
+}
+
 func TestExtractFileStructure(t *testing.T) {
 	dir := t.TempDir()
 
@@ -5800,6 +5847,41 @@ func TestSystemctlNotFoundHint(t *testing.T) {
 
 	t.Run("unrelated error", func(t *testing.T) {
 		hint := systemctlNotFoundHint("python3: syntax error", 1)
+		if hint != "" {
+			t.Errorf("expected no hint for unrelated error, got: %s", hint)
+		}
+	})
+}
+
+func TestSubprocessTimeoutHint(t *testing.T) {
+	t.Run("python TimeoutExpired", func(t *testing.T) {
+		output := `subprocess.TimeoutExpired: Command '/app/debug' timed out after 10 seconds`
+		hint := subprocessTimeoutHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for subprocess timeout")
+		}
+		if !strings.Contains(hint, "too SLOW") {
+			t.Errorf("expected 'too SLOW' in hint, got: %s", hint)
+		}
+	})
+
+	t.Run("timed out after N seconds", func(t *testing.T) {
+		output := `E           subprocess.TimeoutExpired: Command '['valgrind', ...]' timed out after 30 seconds`
+		hint := subprocessTimeoutHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for valgrind timeout")
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := subprocessTimeoutHint("TimeoutExpired", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+
+	t.Run("unrelated error", func(t *testing.T) {
+		hint := subprocessTimeoutHint("ImportError: No module named foo", 1)
 		if hint != "" {
 			t.Errorf("expected no hint for unrelated error, got: %s", hint)
 		}

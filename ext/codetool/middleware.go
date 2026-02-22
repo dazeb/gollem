@@ -489,8 +489,25 @@ func discoverEnvironment(workDir string) string {
 			if constraints := extractTestConstraints(td); len(constraints) > 0 {
 				parts = append(parts, "\n## KEY CONSTRAINTS (extracted from tests)")
 				parts = append(parts, "These constraints MUST be satisfied. Check them BEFORE declaring completion:")
+				hasTimeoutConstraint := false
+				hasHashConstraint := false
 				for _, c := range constraints {
 					parts = append(parts, "  - "+c)
+					cl := strings.ToLower(c)
+					if strings.Contains(cl, "timeout=") || strings.Contains(cl, "timeout =") {
+						hasTimeoutConstraint = true
+					}
+					if strings.Contains(cl, "md5") || strings.Contains(cl, "sha256") || strings.Contains(cl, "hashlib") {
+						hasHashConstraint = true
+					}
+				}
+				if hasTimeoutConstraint {
+					parts = append(parts, "WARNING: Tests have EXECUTION TIME LIMITS (timeout=N). Your solution must be FAST, not just correct. "+
+						"Time your solution with `time ./program` and optimize if it's close to the limit.")
+				}
+				if hasHashConstraint {
+					parts = append(parts, "WARNING: Tests verify FILE HASHES (MD5/SHA). This means exact file contents and directory structure matter. "+
+						"Ensure files are placed at EXACTLY the paths tests expect, with no modifications to source files.")
 				}
 			}
 			break
@@ -5044,6 +5061,22 @@ func extractTestConstraints(testDir string) []string {
 						isConstraintLine = true
 						break
 					}
+				}
+			}
+
+			// Timeout constraints: subprocess.run(..., timeout=N), time limits.
+			// These tell the agent its solution must execute within N seconds.
+			if !isConstraintLine {
+				if strings.Contains(trimmed, "timeout=") || strings.Contains(trimmed, "timeout =") {
+					isConstraintLine = true
+				}
+			}
+
+			// File hash checks: md5/sha verification in Python tests.
+			if !isConstraintLine {
+				if (strings.Contains(trimmed, "md5") || strings.Contains(trimmed, "sha256") || strings.Contains(trimmed, "hashlib")) &&
+					strings.Contains(trimmed, "==") {
+					isConstraintLine = true
 				}
 			}
 

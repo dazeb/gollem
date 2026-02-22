@@ -307,6 +307,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := outputMismatchHint(errStr+outStr, exitCode, cfg.WorkDir); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := subprocessTimeoutHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -1263,6 +1266,32 @@ func systemctlNotFoundHint(output string, exitCode int) string {
 		"(3) For custom processes: `nohup <command> > /var/log/<name>.log 2>&1 &`, " +
 		"(4) Add to `/etc/rc.local` or `crontab -e` with `@reboot <command>` for persistence across container restarts. " +
 		"Do NOT keep trying systemctl — it will never work without systemd]"
+}
+
+// subprocessTimeoutHint detects when test output contains subprocess timeout
+// errors (e.g., Python's subprocess.TimeoutExpired). This indicates the agent's
+// code runs too slowly and needs performance optimization — a different fix
+// strategy than compilation or logic errors.
+func subprocessTimeoutHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	// Python subprocess.TimeoutExpired: "Command '...' timed out after N seconds"
+	if strings.Contains(lower, "timeoutexpired") ||
+		(strings.Contains(lower, "timed out after") && strings.Contains(lower, "seconds")) {
+		return "[hint: A subprocess timed out during testing. Your solution is too SLOW — it works correctly but " +
+			"exceeds the test's time limit. Performance optimizations: " +
+			"(1) Reduce algorithmic complexity (use hash maps, avoid nested loops), " +
+			"(2) Remove debug prints and unnecessary I/O, " +
+			"(3) Pre-compute expensive values, use lookup tables instead of runtime computation, " +
+			"(4) For C/C++: ensure -O2 or -O3 optimization flags, avoid unnecessary memory allocations, " +
+			"(5) For Monte Carlo/simulations: reduce iteration count if the test allows approximate results, " +
+			"(6) Check if the program runs in an infinite loop or unnecessarily waits for input]"
+	}
+
+	return ""
 }
 
 // nodeErrorHint extracts actionable information from Node.js errors.
