@@ -184,24 +184,25 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 		switch {
 		case pct >= 0.90 && !warned90:
 			warned90 = true
-			warning = fmt.Sprintf("🚨 TIME CRITICAL: Only %s remaining (%.0f%% elapsed). "+
-				"Wrap up NOW: ensure output files exist, run final tests, clean up artifacts. "+
-				"Do NOT start new approaches. Do NOT try to fix more issues. Finalize and stop.", remaining.Round(time.Second), pct*100)
+			warning = fmt.Sprintf("TIME CRITICAL: Only %s remaining (%.0f%% elapsed). "+
+				"STOP all new work. Final actions only: "+
+				"(1) ensure output files exist, (2) run final test, (3) rm build artifacts. "+
+				"Do NOT start new approaches or fix more issues.", remaining.Round(time.Second), pct*100)
 		case pct >= 0.75 && !warned75:
 			warned75 = true
-			warning = fmt.Sprintf("⏰ Time warning: %s remaining (%.0f%% elapsed). "+
-				"Start wrapping up. Focus on verifying your current approach works "+
-				"rather than trying alternatives. Run tests and clean up.", remaining.Round(time.Second), pct*100)
+			warning = fmt.Sprintf("TIME WARNING: %s remaining (%.0f%% elapsed). "+
+				"Start wrapping up. Focus on verifying your current approach works. "+
+				"Run tests, fix only critical failures, clean up artifacts.", remaining.Round(time.Second), pct*100)
 		case pct >= 0.50 && !warned50:
 			warned50 = true
-			warning = fmt.Sprintf("⏰ Halfway point: %s remaining (%.0f%% elapsed). "+
+			warning = fmt.Sprintf("HALFWAY: %s remaining (%.0f%% elapsed). "+
 				"If your current approach isn't working, switch strategies NOW. "+
 				"If you haven't created output files yet, do that IMMEDIATELY.",
 				remaining.Round(time.Second), pct*100)
 		case pct >= 0.25 && !warned25:
 			warned25 = true
-			warning = fmt.Sprintf("⏰ Quarter time: %s remaining (%.0f%% elapsed). "+
-				"You should have output files created by now. If not, stop analyzing and write something.",
+			warning = fmt.Sprintf("QUARTER TIME: %s remaining (%.0f%% elapsed). "+
+				"You should have output files created by now. If not, stop analyzing and start writing.",
 				remaining.Round(time.Second), pct*100)
 		}
 
