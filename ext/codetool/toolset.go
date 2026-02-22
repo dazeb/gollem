@@ -149,8 +149,10 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		core.WithDefaultToolTimeout[string](3 * time.Minute),
 
 		// Auto context: compress old messages when context grows too large.
+		// Keep at 100K to stay within API request size limits (xAI/grok
+		// returns 413 at ~130K tokens).
 		core.WithAutoContext[string](core.AutoContextConfig{
-			MaxTokens: 180000,
+			MaxTokens: 100000,
 			KeepLastN: 10,
 		}),
 

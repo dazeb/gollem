@@ -66,7 +66,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				core.WithDefaultToolTimeout[string](2 * time.Minute),
 				// Auto-compress context on long subtasks to prevent context overflow.
 				core.WithAutoContext[string](core.AutoContextConfig{
-					MaxTokens: 120000,
+					MaxTokens: 80000,
 					KeepLastN: 8,
 				}),
 			}
