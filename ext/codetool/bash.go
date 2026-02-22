@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -226,7 +227,7 @@ func Bash(opts ...Option) core.Tool {
 				}
 			}
 			if strings.Contains(errStr, "ModuleNotFoundError") || strings.Contains(errStr, "ImportError") || strings.Contains(outStr, "ModuleNotFoundError") {
-				if hint := moduleNotFoundHint(errStr + outStr); hint != "" {
+				if hint := moduleNotFoundHint(errStr+outStr, cfg.WorkDir); hint != "" {
 					result += "\n" + hint
 				}
 			}
@@ -467,7 +468,9 @@ func commandNotFoundHint(stderr string) string {
 
 // moduleNotFoundHint generates a pip install hint when a Python import fails.
 // This saves a turn of the model figuring out which package to install.
-func moduleNotFoundHint(output string) string {
+// When workDir is provided, it checks whether the module is a local file/package
+// and suggests PYTHONPATH instead of pip install.
+func moduleNotFoundHint(output string, workDir ...string) string {
 	// Common module → pip package mappings where they differ.
 	aliases := map[string]string{
 		"cv2":         "opencv-python",
@@ -566,6 +569,17 @@ func moduleNotFoundHint(output string) string {
 		}
 		if module == "" {
 			continue
+		}
+		// Check if the module is a local file/package in the work directory.
+		// For local modules, PYTHONPATH is the fix — not pip install.
+		if len(workDir) > 0 && workDir[0] != "" {
+			wd := workDir[0]
+			pyFile := filepath.Join(wd, module+".py")
+			pkgDir := filepath.Join(wd, module)
+			if fileExists(pyFile) || (dirExists(pkgDir) && fileExists(filepath.Join(pkgDir, "__init__.py"))) {
+				return fmt.Sprintf("[hint: '%s' is a local module. Run with: cd %s && python3 <script> or PYTHONPATH=%s python3 <script>]",
+					module, wd, wd)
+			}
 		}
 		pkg := module
 		if alias, ok := aliases[module]; ok {

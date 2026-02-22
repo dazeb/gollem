@@ -253,6 +253,41 @@ func TestModuleNotFoundHint(t *testing.T) {
 	}
 }
 
+func TestModuleNotFoundHintLocalModule(t *testing.T) {
+	// Create a temp directory with a local Python module.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "solution.py"), []byte("# solution"), 0o644)
+
+	// Also create a package directory with __init__.py.
+	pkgDir := filepath.Join(dir, "mylib")
+	os.MkdirAll(pkgDir, 0o755)
+	os.WriteFile(filepath.Join(pkgDir, "__init__.py"), []byte(""), 0o644)
+
+	// Local .py file: should suggest PYTHONPATH, not pip install.
+	got := moduleNotFoundHint("ModuleNotFoundError: No module named 'solution'", dir)
+	if !strings.Contains(got, "local module") || !strings.Contains(got, "PYTHONPATH") {
+		t.Errorf("local .py file: got %q, want PYTHONPATH hint", got)
+	}
+
+	// Local package dir: should suggest PYTHONPATH.
+	got = moduleNotFoundHint("ModuleNotFoundError: No module named 'mylib'", dir)
+	if !strings.Contains(got, "local module") || !strings.Contains(got, "PYTHONPATH") {
+		t.Errorf("local package: got %q, want PYTHONPATH hint", got)
+	}
+
+	// Non-local module: should suggest pip install.
+	got = moduleNotFoundHint("ModuleNotFoundError: No module named 'numpy'", dir)
+	if !strings.Contains(got, "pip install") {
+		t.Errorf("non-local module: got %q, want pip install hint", got)
+	}
+
+	// No workDir: should suggest pip install even for "solution".
+	got = moduleNotFoundHint("ModuleNotFoundError: No module named 'solution'")
+	if !strings.Contains(got, "pip install") {
+		t.Errorf("no workDir: got %q, want pip install hint", got)
+	}
+}
+
 func TestTransientErrorHint(t *testing.T) {
 	tests := []struct {
 		name     string

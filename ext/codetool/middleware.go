@@ -273,6 +273,14 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Set Python env vars for all bash commands to prevent common issues:
+	// - PYTHONDONTWRITEBYTECODE: prevents __pycache__/.pyc clutter that causes
+	//   "extra files in directory" test failures. This is the #2 cleanup issue.
+	// - PYTHONUNBUFFERED: ensures real-time output flushing, so error messages
+	//   aren't lost when commands timeout.
+	os.Setenv("PYTHONDONTWRITEBYTECODE", "1")
+	os.Setenv("PYTHONUNBUFFERED", "1")
+
 	// Detect Python virtual environments (venv/conda) that need activation.
 	// Many containers have packages installed in a venv, but the agent's shell
 	// doesn't activate it by default. Detecting and activating saves 2-3 turns
