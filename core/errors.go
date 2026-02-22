@@ -5,6 +5,7 @@ package core
 
 import (
 	"fmt"
+	"time"
 )
 
 // ModelRetryError is returned by tool functions to request that the model
@@ -83,6 +84,7 @@ type ModelHTTPError struct {
 	StatusCode int
 	Body       string
 	ModelName  string
+	RetryAfter time.Duration // parsed from Retry-After header, if present
 }
 
 func (e *ModelHTTPError) Error() string {

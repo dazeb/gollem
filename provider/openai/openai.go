@@ -9,8 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -140,27 +143,11 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+chatCompletionsEndpoint, bytes.NewReader(body))
+	resp, err := p.doWithRetry(ctx, body)
 	if err != nil {
-		return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
-	}
-	p.setHeaders(httpReq)
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("openai: HTTP request failed: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &core.ModelHTTPError{
-			Message:    "openai API error: " + string(respBody),
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
-			ModelName:  p.model,
-		}
-	}
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
@@ -182,29 +169,105 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+chatCompletionsEndpoint, bytes.NewReader(body))
+	resp, err := p.doWithRetry(ctx, body)
 	if err != nil {
-		return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
-	}
-	p.setHeaders(httpReq)
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("openai: HTTP request failed: %w", err)
+		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
+	return newStreamedResponse(resp.Body, p.model), nil
+}
+
+// doWithRetry sends an HTTP request with automatic retry for transient errors
+// (429 rate limits, 500/502/503 server errors). Uses exponential backoff
+// with jitter, respecting Retry-After headers when present.
+func (p *Provider) doWithRetry(ctx context.Context, body []byte) (*http.Response, error) {
+	const maxRetries = 3
+	baseDelay := 2 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 2s, 4s, 8s
+			delay := time.Duration(float64(baseDelay) * math.Pow(2, float64(attempt-1)))
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
+			// Use retryAfter if provided by previous response.
+			if lastErr != nil {
+				if httpErr, ok := lastErr.(*core.ModelHTTPError); ok && httpErr.RetryAfter > 0 {
+					delay = httpErr.RetryAfter
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+chatCompletionsEndpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
+		}
+		p.setHeaders(httpReq)
+
+		resp, err := p.httpClient.Do(httpReq)
+		if err != nil {
+			// Network errors are retryable.
+			lastErr = fmt.Errorf("openai: HTTP request failed: %w", err)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			return resp, nil
+		}
+
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &core.ModelHTTPError{
+		resp.Body.Close()
+
+		httpErr := &core.ModelHTTPError{
 			Message:    "openai API error: " + string(respBody),
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 			ModelName:  p.model,
 		}
+
+		// Parse Retry-After header for 429 responses.
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs, err := strconv.Atoi(ra); err == nil {
+					httpErr.RetryAfter = time.Duration(secs) * time.Second
+				}
+			}
+		}
+
+		// Only retry on transient errors.
+		if !isRetryableStatus(resp.StatusCode) {
+			return nil, httpErr
+		}
+
+		lastErr = httpErr
+		fmt.Fprintf(os.Stderr, "[gollem] openai: retrying after %d (attempt %d/%d)\n",
+			resp.StatusCode, attempt+1, maxRetries)
 	}
 
-	return newStreamedResponse(resp.Body, p.model), nil
+	return nil, lastErr
+}
+
+// isRetryableStatus returns true for HTTP status codes that are worth retrying.
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, // 429 rate limit
+		http.StatusInternalServerError,  // 500
+		http.StatusBadGateway,           // 502
+		http.StatusServiceUnavailable,   // 503
+		http.StatusGatewayTimeout:       // 504
+		return true
+	}
+	return false
 }
 
 func (p *Provider) setHeaders(req *http.Request) {
