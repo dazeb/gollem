@@ -526,10 +526,20 @@ func discoverEnvironment(workDir string) string {
 	// Auto-read small source files in /app/ — now recursive (depth 3).
 	// Reads files < 5KB to avoid overwhelming context, up to 8 files total.
 	// Test-referenced files are prioritized above entry points.
-	if autoReadBudget > 0 {
+	// Guarantee a minimum of 15KB for source files even if tests consumed
+	// most of the budget — source context is still valuable.
+	sourceMinBudget := 15000
+	sourceBudget := autoReadBudget
+	if sourceBudget < sourceMinBudget {
+		sourceBudget = sourceMinBudget
+	}
+	if sourceBudget > 0 {
 		appSourceDirs := []string{"/app", workDir}
 		for _, ad := range appSourceDirs {
-			autoReadBudget = autoReadSourceFilesBudget(ad, &parts, 5000, 8, autoReadBudget, testRefs)
+			newBudget := autoReadSourceFilesBudget(ad, &parts, 5000, 8, sourceBudget, testRefs)
+			// Only deduct from autoReadBudget what was actually consumed.
+			consumed := sourceBudget - newBudget
+			autoReadBudget -= consumed
 			break // only read from one source directory
 		}
 	}
