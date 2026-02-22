@@ -4167,6 +4167,31 @@ func detectPythonImports(workDir string) []string {
 		"jsonschema":     "jsonschema",
 		"more_itertools": "more-itertools",
 		"bitarray":       "bitarray",
+		// Image processing and scientific.
+		"imageio":        "imageio",
+		"skfuzzy":        "scikit-fuzzy",
+		"astropy":        "astropy",
+		"Bio":            "biopython",
+		"rdkit":          "rdkit",
+		"shapely":        "shapely",
+		"fiona":          "fiona",
+		"geopandas":      "geopandas",
+		// Concurrency and async.
+		"trio":           "trio",
+		"anyio":          "anyio",
+		"gevent":         "gevent",
+		// Serialization and compression.
+		"cbor2":          "cbor2",
+		"bson":           "pymongo",
+		"blosc":          "blosc",
+		"zstandard":      "zstandard",
+		"lz4":            "lz4",
+		// Math and optimization.
+		"pulp":           "PuLP",
+		"cvxpy":          "cvxpy",
+		"z3":             "z3-solver",
+		// CLI and config.
+		"typer":          "typer",
 	}
 
 	needed := make(map[string]string) // module → pip package

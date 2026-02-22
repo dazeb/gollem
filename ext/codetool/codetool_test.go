@@ -5960,3 +5960,77 @@ func TestDiskSpaceHint(t *testing.T) {
 	})
 }
 
+func TestMakefileHint(t *testing.T) {
+	t.Run("missing separator", func(t *testing.T) {
+		output := `Makefile:5: *** missing separator.  Stop.`
+		hint := makefileHint(output, 2)
+		if hint == "" {
+			t.Fatal("expected hint for missing separator")
+		}
+		if !strings.Contains(hint, "TAB") {
+			t.Errorf("expected TAB guidance, got: %s", hint)
+		}
+	})
+
+	t.Run("no rule to make target", func(t *testing.T) {
+		output := `make: *** No rule to make target 'libfoo.a', needed by 'all'.  Stop.`
+		hint := makefileHint(output, 2)
+		if hint == "" {
+			t.Fatal("expected hint for no rule")
+		}
+		if !strings.Contains(hint, "libfoo.a") {
+			t.Errorf("expected target name in hint, got: %s", hint)
+		}
+	})
+
+	t.Run("no makefile found", func(t *testing.T) {
+		output := `make: *** No targets specified and no makefile found.  Stop.`
+		hint := makefileHint(output, 2)
+		if hint == "" {
+			t.Fatal("expected hint for no makefile")
+		}
+		if !strings.Contains(hint, "configure") || !strings.Contains(hint, "cmake") {
+			t.Errorf("expected configure/cmake suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := makefileHint("missing separator", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+}
+
+func TestCmakeHint(t *testing.T) {
+	t.Run("could not find openssl", func(t *testing.T) {
+		output := `CMake Error at /usr/share/cmake/Modules/FindPackageHandleStandardArgs.cmake:230 (message):
+  Could NOT find OpenSSL, try to set the path to OpenSSL root folder`
+		hint := cmakeHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for missing OpenSSL")
+		}
+		if !strings.Contains(hint, "libssl-dev") {
+			t.Errorf("expected libssl-dev suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("could not find generic package", func(t *testing.T) {
+		output := `CMake Error: Could NOT find SomeWeirdLib (missing: SOMEWEIRDLIB_LIBRARY)`
+		hint := cmakeHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for generic missing package")
+		}
+		if !strings.Contains(hint, "apt-cache search") {
+			t.Errorf("expected apt-cache search suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := cmakeHint("Could NOT find OpenSSL", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+}
+

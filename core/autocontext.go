@@ -104,13 +104,14 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 	// errors occurred.
 	var sb strings.Builder
 	sb.WriteString("Summarize this conversation concisely, preserving:\n")
-	sb.WriteString("- What files were created, edited, or read\n")
-	sb.WriteString("- What commands were run and their results (especially test results and errors)\n")
-	sb.WriteString("- Key decisions made and current approach\n")
-	sb.WriteString("- Any constraints or requirements discovered\n")
-	sb.WriteString("- What approaches were tried and whether they succeeded or failed\n")
-	sb.WriteString("- BEST RESULT SO FAR: what was the best-scoring or closest-to-correct output, and what produced it\n")
-	sb.WriteString("- Current state: what's done, what's remaining\n\n")
+	sb.WriteString("- What files were created, edited, or read (include EXACT file paths)\n")
+	sb.WriteString("- What commands were run and their results (especially test results with pass/fail COUNTS and specific error messages)\n")
+	sb.WriteString("- Key decisions made and current approach being used\n")
+	sb.WriteString("- Any constraints or requirements discovered (include exact values: sizes, thresholds, formats)\n")
+	sb.WriteString("- What approaches were tried and whether they succeeded or failed (include WHY they failed)\n")
+	sb.WriteString("- BEST RESULT SO FAR: what was the best test pass count or closest-to-correct output, and what exact code/config produced it\n")
+	sb.WriteString("- Current state: what's done, what's remaining, and what the NEXT STEP should be\n")
+	sb.WriteString("- CRITICAL: preserve any discovered format requirements (JSON schema, CSV headers, encoding, trailing newlines)\n\n")
 	for _, msg := range oldMessages {
 		switch m := msg.(type) {
 		case ModelRequest:
@@ -124,8 +125,8 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 					fmt.Fprintf(&sb, "User: %s\n", content)
 				case ToolReturnPart:
 					content := fmt.Sprintf("%v", p.Content)
-					if len(content) > 500 {
-						content = content[:500] + "..."
+					if len(content) > 800 {
+						content = content[:800] + "..."
 					}
 					fmt.Fprintf(&sb, "[Tool result: %s] %s\n", p.ToolName, content)
 				}
@@ -140,8 +141,8 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 			for _, part := range m.Parts {
 				if tc, ok := part.(ToolCallPart); ok {
 					args := tc.ArgsJSON
-					if len(args) > 300 {
-						args = args[:300] + "..."
+					if len(args) > 500 {
+						args = args[:500] + "..."
 					}
 					fmt.Fprintf(&sb, "[Tool call: %s] %s\n", tc.ToolName, args)
 				}

@@ -467,18 +467,35 @@ func isVerificationString(cmd string) bool {
 func autoCleanupIntermediates(workDir string) int {
 	cleaned := 0
 
-	// Remove __pycache__ and .pytest_cache directories recursively.
-	// Both are common intermediates that can cause "extra files" test failures
+	// Remove cache directories recursively.
+	// These are common intermediates that can cause "extra files" test failures
 	// when tests check directory contents with os.listdir/ls.
+	cacheDirs := map[string]bool{
+		"__pycache__":  true,
+		".pytest_cache": true,
+		".mypy_cache":   true,
+		".ruff_cache":   true,
+		".tox":          true,
+	}
 	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() && (info.Name() == "__pycache__" || info.Name() == ".pytest_cache") {
+		if info.IsDir() && cacheDirs[info.Name()] {
 			if os.RemoveAll(path) == nil {
 				cleaned++
 			}
 			return filepath.SkipDir
+		}
+		// Also clean node_modules/.cache if present (build tool caches).
+		if info.IsDir() && info.Name() == ".cache" {
+			parent := filepath.Base(filepath.Dir(path))
+			if parent == "node_modules" {
+				if os.RemoveAll(path) == nil {
+					cleaned++
+				}
+				return filepath.SkipDir
+			}
 		}
 		return nil
 	})

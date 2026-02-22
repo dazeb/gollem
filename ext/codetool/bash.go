@@ -316,6 +316,12 @@ func Bash(opts ...Option) core.Tool {
 			if hint := diskSpaceHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := makefileHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := cmakeHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -677,6 +683,20 @@ func moduleNotFoundHint(output string, workDir ...string) string {
 		"construct":   "construct",
 		"bitstring":   "bitstring",
 		"elftools":    "pyelftools",
+		"imageio":     "imageio",
+		"shapely":     "shapely",
+		"geopandas":   "geopandas",
+		"trio":        "trio",
+		"anyio":       "anyio",
+		"gevent":      "gevent",
+		"cbor2":       "cbor2",
+		"zstandard":   "zstandard",
+		"lz4":         "lz4",
+		"pulp":        "PuLP",
+		"cvxpy":       "cvxpy",
+		"z3":          "z3-solver",
+		"typer":       "typer",
+		"astropy":     "astropy",
 	}
 
 	// Try to extract the module name from common error patterns.
@@ -1367,6 +1387,110 @@ func diskSpaceHint(output string, exitCode int) string {
 			"(4) remove large unnecessary files: `find / -size +100M -type f 2>/dev/null | head -10`, " +
 			"(5) if compiling, consider a smaller build (disable optional features)]"
 	}
+	return ""
+}
+
+// makefileHint detects common Makefile/make errors and provides targeted fixes.
+// This saves 1-2 turns of the agent diagnosing make-specific syntax issues.
+func makefileHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// "missing separator" — usually a tab vs spaces issue in Makefile.
+	if strings.Contains(output, "missing separator") {
+		return "[hint: Makefile syntax error — 'missing separator' means recipe lines must start with a TAB character, not spaces. " +
+			"Use: sed -i 's/^    /\t/' Makefile (replace leading 4 spaces with tab) or rewrite the Makefile with proper tabs]"
+	}
+
+	// "No rule to make target" — missing file or target.
+	if strings.Contains(output, "No rule to make target") {
+		// Try to extract the target name.
+		idx := strings.Index(output, "No rule to make target")
+		if idx >= 0 {
+			rest := output[idx:]
+			// Format: "No rule to make target 'foo'"
+			if qStart := strings.IndexAny(rest, "'`"); qStart > 0 {
+				after := rest[qStart+1:]
+				if qEnd := strings.IndexAny(after, "'`"); qEnd > 0 {
+					target := after[:qEnd]
+					return fmt.Sprintf("[hint: make cannot find target '%s'. Check: "+
+						"(1) is the file/target spelled correctly? "+
+						"(2) does it need to be created first (e.g., extract archive, run configure)? "+
+						"(3) check Makefile target names with: grep '^[a-zA-Z].*:' Makefile]", target)
+				}
+			}
+		}
+		return "[hint: make cannot find the target. Check file names and Makefile target definitions]"
+	}
+
+	// "recipe for target ... failed" — the command itself failed.
+	// Not much we can add beyond what the command output says, but we can
+	// suggest checking the specific failing command.
+	if strings.Contains(output, "recipe for target") && strings.Contains(output, "failed") {
+		return "[hint: a make recipe failed. The error is in the command output above — fix that specific command. " +
+			"Use `make -n <target>` to see what commands would run without executing them]"
+	}
+
+	// "*** No targets specified and no makefile found" — wrong directory.
+	if strings.Contains(output, "No targets specified and no makefile found") ||
+		strings.Contains(output, "No targets.  Stop") {
+		return "[hint: no Makefile found in current directory. Check: " +
+			"(1) ls *.mk Makefile makefile GNUmakefile, " +
+			"(2) you may need to run ./configure or cmake first, " +
+			"(3) check if you're in the right directory]"
+	}
+
+	return ""
+}
+
+// cmakeHint detects CMake configuration errors and suggests fixes.
+// CMake errors are verbose but the fix is usually installing a missing package.
+func cmakeHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// "Could NOT find <Package>" — extremely common CMake error.
+	if strings.Contains(output, "Could NOT find") || strings.Contains(output, "Could not find") {
+		// Map common CMake package names to apt packages.
+		cmakePkgs := map[string]string{
+			"OpenSSL":    "libssl-dev",
+			"ZLIB":       "zlib1g-dev",
+			"CURL":       "libcurl4-openssl-dev",
+			"Boost":      "libboost-all-dev",
+			"PkgConfig":  "pkg-config",
+			"Threads":    "build-essential",
+			"PNG":        "libpng-dev",
+			"JPEG":       "libjpeg-dev",
+			"TIFF":       "libtiff-dev",
+			"GTest":      "libgtest-dev",
+			"Protobuf":   "libprotobuf-dev protobuf-compiler",
+			"Python3":    "python3-dev",
+			"SQLite3":    "libsqlite3-dev",
+			"LibXml2":    "libxml2-dev",
+			"Freetype":   "libfreetype-dev",
+			"X11":        "libx11-dev",
+			"FFmpeg":     "libavcodec-dev libavformat-dev libswscale-dev",
+			"OpenCV":     "libopencv-dev",
+		}
+		for pkg, apt := range cmakePkgs {
+			if strings.Contains(output, pkg) {
+				return fmt.Sprintf("[hint: CMake cannot find %s — install with: apt-get install -y %s]", pkg, apt)
+			}
+		}
+		return "[hint: CMake cannot find a required package. Install the -dev package with apt-get. " +
+			"Use `apt-cache search <name>` to find the right package name]"
+	}
+
+	// "CMake Error at CMakeLists.txt" — general CMake configuration error.
+	if strings.Contains(output, "CMake Error") {
+		if strings.Contains(output, "cmake_minimum_required") || strings.Contains(output, "VERSION") {
+			return "[hint: CMake version may be too old. Check: cmake --version. " +
+				"If needed: apt-get install -y cmake or pip install cmake]"
+		}
+	}
+
 	return ""
 }
 
