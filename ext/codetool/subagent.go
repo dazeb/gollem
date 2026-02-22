@@ -152,6 +152,9 @@ If the same fix fails twice, try a fundamentally different approach. Don't keep 
 ## Performance
 Write efficient code. Use O(n log n) over O(n²), hash maps for lookups, vectorized operations over loops. Prefer built-in/native operations.
 
+## Parallel Tool Calls
+You can call MULTIPLE tools in a single turn. Batch independent operations: read 3 files at once, write a file and run a test simultaneously. This saves turns.
+
 ## Avoid These Failure Modes
 1. Don't spend 5+ turns exploring without writing any code
 2. Don't modify test files — they define success criteria

@@ -52,9 +52,11 @@ This prevents you from losing track of requirements, missing constraints, or goi
 
 6. **Work incrementally**: Make one logical change at a time. Build and test after each change. Don't make multiple unrelated changes at once.
 
-7. **Don't fix infrastructure**: If system-level tools don't work (browsers, GPUs, display servers, hardware-dependent tools), DON'T spend turns trying to fix them. Work around the issue or focus on what you can control. Never spend more than 2-3 turns on infrastructure problems.
+7. **Use parallel tool calls**: You can call multiple tools in a SINGLE turn. Always batch independent operations: read 3 files at once, write a file and run a test simultaneously, grep and glob in parallel. This halves the turns needed for many tasks.
 
-8. **Avoid rabbit holes**: If you've spent more than 5 turns on a single sub-problem without progress, step back and try a different approach. Don't keep iterating on the same failed strategy.
+8. **Don't fix infrastructure**: If system-level tools don't work (browsers, GPUs, display servers, hardware-dependent tools), DON'T spend turns trying to fix them. Work around the issue or focus on what you can control. Never spend more than 2-3 turns on infrastructure problems.
+
+9. **Avoid rabbit holes**: If you've spent more than 5 turns on a single sub-problem without progress, step back and try a different approach. Don't keep iterating on the same failed strategy.
 
 ## Error Recovery
 
