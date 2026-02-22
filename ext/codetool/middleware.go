@@ -518,6 +518,35 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-install Ruby gems (Gemfile with bundle).
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "Gemfile")) && runQuiet(dir, "which", "bundle") != "" {
+				if !dirExists(filepath.Join(dir, "vendor", "bundle")) { // skip if already vendored
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Ruby gems in %s\n", dir)
+					runQuietTimeout(dir, 90*time.Second, "bundle", "install", "--quiet")
+					parts = append(parts, "AUTO-INSTALLED: Ruby gems via bundle install (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
+	// Auto-install from pyproject.toml (modern Python projects without requirements.txt).
+	if networkAvailable && !foundPyDeps {
+		for _, dir := range []string{workDir, "/app"} {
+			pyprojectPath := filepath.Join(dir, "pyproject.toml")
+			if fileExists(pyprojectPath) && runQuiet(workDir, "which", "python3") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing from pyproject.toml in %s\n", dir)
+				installed := pipInstall(dir, "-q", "-e", ".")
+				if installed {
+					parts = append(parts, "AUTO-INSTALLED: Python project from pyproject.toml (already done)")
+				}
+				break
+			}
+		}
+	}
+
 	// Detect .env files and surface environment variable requirements.
 	// Many TB2 tasks need specific env vars set; finding this early saves 2+ turns
 	// of the agent troubleshooting "connection refused" or "missing config" errors.
@@ -1509,6 +1538,16 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Make scripts executable: `chmod +x script.sh`")
 	}
 
+	// Detect Jupyter notebook tasks.
+	if detectNotebookTask(workDir) {
+		hints = append(hints, "\n## Jupyter Notebooks Detected")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Convert notebook to Python script: `jupyter nbconvert --to script *.ipynb` or parse JSON directly")
+		hints = append(hints, "- Run notebook: `jupyter nbconvert --to notebook --execute <notebook>.ipynb` or `papermill <in>.ipynb <out>.ipynb`")
+		hints = append(hints, "- For data analysis tasks: extract code cells and run them as a Python script")
+		hints = append(hints, "- .ipynb files are JSON — you can read/modify them with Python's json module")
+	}
+
 	// Detect tasks with image files that need analysis.
 	if imageFiles := detectImageFiles(workDir); len(imageFiles) > 0 {
 		hints = append(hints, "\n## Image Files Detected")
@@ -2236,6 +2275,16 @@ func detectHaskellTask(workDir string) bool {
 	return false
 }
 
+// detectNotebookTask returns true if the task involves Jupyter notebooks.
+func detectNotebookTask(workDir string) bool {
+	for _, dir := range []string{workDir, "/app"} {
+		if matches, _ := filepath.Glob(filepath.Join(dir, "*.ipynb")); len(matches) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // detectRubyTask returns true if the working directory contains Ruby files.
 func detectRubyTask(workDir string) bool {
 	for _, dir := range []string{workDir, "/app"} {
@@ -2855,6 +2904,9 @@ func detectTestCommands(workDir string) []string {
 		cmds = append(cmds, "Install: pip install --break-system-packages -r requirements.txt")
 	}
 	if fileExists(filepath.Join(workDir, "setup.py")) {
+		cmds = append(cmds, "Install: pip install --break-system-packages -e .")
+	}
+	if fileExists(filepath.Join(workDir, "pyproject.toml")) && !fileExists(filepath.Join(workDir, "setup.py")) {
 		cmds = append(cmds, "Install: pip install --break-system-packages -e .")
 	}
 
