@@ -123,8 +123,8 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 					fmt.Fprintf(&sb, "User: %s\n", content)
 				case ToolReturnPart:
 					content := fmt.Sprintf("%v", p.Content)
-					if len(content) > 300 {
-						content = content[:300] + "..."
+					if len(content) > 500 {
+						content = content[:500] + "..."
 					}
 					fmt.Fprintf(&sb, "[Tool result: %s] %s\n", p.ToolName, content)
 				}
@@ -139,8 +139,8 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 			for _, part := range m.Parts {
 				if tc, ok := part.(ToolCallPart); ok {
 					args := tc.ArgsJSON
-					if len(args) > 200 {
-						args = args[:200] + "..."
+					if len(args) > 300 {
+						args = args[:300] + "..."
 					}
 					fmt.Fprintf(&sb, "[Tool call: %s] %s\n", tc.ToolName, args)
 				}
