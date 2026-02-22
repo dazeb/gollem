@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import subprocess
@@ -29,6 +30,9 @@ from harbor.models.agent.context import AgentContext
 _PKG_DIR = Path(__file__).parent
 _TEMPLATES_DIR = _PKG_DIR / "templates"
 _REPO_ROOT = _PKG_DIR.parent.parent  # gollem repo root
+_TASK_CACHE_DIR = Path.home() / ".cache" / "harbor" / "tasks"
+
+logger = logging.getLogger(__name__)
 
 
 def _find_binary() -> Path:
@@ -107,6 +111,70 @@ class GollemAgent(BaseInstalledAgent):
     def _install_agent_template_path(self) -> Path:
         return _TEMPLATES_DIR / "install.sh.j2"
 
+    async def run(
+        self,
+        instruction: str,
+        environment: BaseEnvironment,
+        context: AgentContext,
+    ) -> None:
+        """Override run() to detect the task-specific timeout before execution.
+
+        Harbor wraps this in asyncio.wait_for(timeout=task_timeout_sec), but
+        the agent binary doesn't know the real deadline. We read the task
+        timeout from the task cache and pass it via GOLLEM_TIMEOUT_SEC.
+        """
+        task_timeout = self._detect_task_timeout()
+        if task_timeout:
+            self._task_timeout_sec = task_timeout
+            logger.info(f"Detected task timeout: {task_timeout}s")
+        else:
+            self._task_timeout_sec = None
+
+        await super().run(instruction, environment, context)
+
+    def _detect_task_timeout(self) -> int | None:
+        """Find the task-specific timeout from Harbor's task cache.
+
+        The trial directory name has format '<task-name>__<random>'.
+        We extract the task name and search the task cache for task.toml.
+        """
+        try:
+            # Extract task name from trial directory name.
+            trial_dir = self.logs_dir.parent
+            trial_name = trial_dir.name
+            task_name = trial_name.rsplit("__", 1)[0]
+            if not task_name:
+                return None
+
+            # Search the task cache for this task's task.toml.
+            if _TASK_CACHE_DIR.exists():
+                for cache_entry in _TASK_CACHE_DIR.iterdir():
+                    task_toml = cache_entry / task_name / "task.toml"
+                    if task_toml.exists():
+                        return self._parse_timeout_from_toml(task_toml)
+        except Exception as e:
+            logger.debug(f"Failed to detect task timeout: {e}")
+        return None
+
+    @staticmethod
+    def _parse_timeout_from_toml(path: Path) -> int | None:
+        """Parse agent.timeout_sec from a task.toml file."""
+        try:
+            text = path.read_text()
+            in_agent = False
+            for line in text.splitlines():
+                line = line.strip()
+                if line == "[agent]":
+                    in_agent = True
+                elif line.startswith("["):
+                    in_agent = False
+                elif in_agent and line.startswith("timeout_sec"):
+                    _, _, val = line.partition("=")
+                    return int(float(val.strip()))
+        except Exception:
+            pass
+        return None
+
     async def setup(self, environment: BaseEnvironment) -> None:
         """Upload the pre-built binary instead of compiling from source."""
         binary_path = _find_binary()
@@ -148,9 +216,17 @@ class GollemAgent(BaseInstalledAgent):
         """Build the shell command to invoke gollem run inside the container."""
         provider, model = self._parse_model_name()
 
-        # Use timeout_minutes - 1 as the agent timeout so it has time to
-        # clean up before Harbor kills it. The exec timeout gets +60s buffer.
-        agent_timeout_secs = max((self._timeout_minutes - 1) * 60, 60)
+        # Use the task-specific timeout if detected, otherwise fall back
+        # to the generic timeout_minutes. Leave 60s buffer for cleanup.
+        task_timeout = getattr(self, "_task_timeout_sec", None)
+        if task_timeout:
+            agent_timeout_secs = max(task_timeout - 60, 60)
+            gollem_timeout_sec = task_timeout
+            exec_timeout_sec = task_timeout + 120
+        else:
+            agent_timeout_secs = max((self._timeout_minutes - 1) * 60, 60)
+            gollem_timeout_sec = self._timeout_minutes * 60
+            exec_timeout_sec = self._timeout_minutes * 60 + 60
 
         cmd_parts = [
             "/usr/local/bin/gollem", "run",
@@ -174,10 +250,9 @@ class GollemAgent(BaseInstalledAgent):
             # Common CA cert bundle paths for TLS verification.
             "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
             "SSL_CERT_DIR": "/etc/ssl/certs",
-            # Pass exec timeout to gollem so it can set accurate time budget
-            # warnings. This is the Harbor-level exec timeout (task timeout + buffer).
-            # gollem will use min(this, its own --timeout) for time budgeting.
-            "GOLLEM_TIMEOUT_SEC": str(self._timeout_minutes * 60),
+            # Pass the REAL task timeout to gollem so TimeBudgetMiddleware
+            # warns at the correct percentages of remaining time.
+            "GOLLEM_TIMEOUT_SEC": str(gollem_timeout_sec),
         }
 
         for key in [
@@ -197,7 +272,7 @@ class GollemAgent(BaseInstalledAgent):
             ExecInput(
                 command=" ".join(cmd_parts),
                 env=env,
-                timeout_sec=self._timeout_minutes * 60 + 60,
+                timeout_sec=exec_timeout_sec,
             ),
         ]
 
