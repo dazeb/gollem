@@ -2764,12 +2764,39 @@ func detectPythonImports(workDir string) []string {
 		"pyparsing":    "pyparsing",
 		"bitstring":    "bitstring",
 		"elftools":     "pyelftools",
+		// Test-related packages (common in TB2 test scripts).
+		"hypothesis":   "hypothesis",
+		"freezegun":    "freezegun",
+		"mock":         "mock",
+		"responses":    "responses",
+		"faker":        "Faker",
+		"factory":      "factory-boy",
+		"parameterized": "parameterized",
+		"colorama":     "colorama",
+		"tabulate":     "tabulate",
+		"jinja2":       "Jinja2",
+		"Levenshtein":  "python-Levenshtein",
+		"regex":        "regex",
+		"orjson":       "orjson",
+		"ujson":        "ujson",
+		"xxhash":       "xxhash",
+		"sortedcontainers": "sortedcontainers",
 	}
 
 	needed := make(map[string]string) // module → pip package
 
-	// Scan .py files in workDir and /app (non-recursive, limit 20 files).
-	for _, dir := range []string{workDir, "/app"} {
+	// Scan .py files in workDir, /app, and test directories (non-recursive, limit 20 per dir).
+	// Including test directories catches test-specific deps like hypothesis,
+	// freezegun, mock, etc. that the agent would otherwise discover via
+	// ModuleNotFoundError during test runs (wasting 2+ turns).
+	scanDirs := []string{workDir, "/app"}
+	for _, td := range []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")} {
+		if dirExists(td) {
+			scanDirs = append(scanDirs, td)
+			break // only one test dir
+		}
+	}
+	for _, dir := range scanDirs {
 		matches, _ := filepath.Glob(filepath.Join(dir, "*.py"))
 		if len(matches) > 20 {
 			matches = matches[:20]
