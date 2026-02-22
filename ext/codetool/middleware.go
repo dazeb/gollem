@@ -26,6 +26,7 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 
 	var mu sync.Mutex
 	editCounts := make(map[string]int) // file path -> edit count
+	bashCounts := make(map[string]int) // command prefix -> run count
 
 	return func(
 		ctx context.Context,
@@ -34,17 +35,22 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 		params *core.ModelRequestParameters,
 		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
 	) (*core.ModelResponse, error) {
-		// Track edits by parsing tool call ArgsJSON directly (more reliable
-		// than parsing return strings).
+		// Track edits and repeated bash commands by parsing ArgsJSON directly.
 		mu.Lock()
 		for _, msg := range messages[max(0, len(messages)-2):] {
 			if resp, ok := msg.(core.ModelResponse); ok {
 				for _, part := range resp.Parts {
 					if tc, ok := part.(core.ToolCallPart); ok {
-						if tc.ToolName == "edit" || tc.ToolName == "multi_edit" || tc.ToolName == "write" {
+						switch tc.ToolName {
+						case "edit", "multi_edit", "write":
 							path := extractPathFromArgs(tc.ArgsJSON)
 							if path != "" {
 								editCounts[path]++
+							}
+						case "bash":
+							prefix := extractCommandPrefix(tc.ArgsJSON)
+							if prefix != "" {
+								bashCounts[prefix]++
 							}
 						}
 					}
@@ -52,11 +58,18 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 			}
 		}
 
-		// Check if any file has been edited too many times.
+		// Check if any file has been edited too many times or
+		// the same command pattern has been run too many times.
 		var loopedFiles []string
 		for path, count := range editCounts {
 			if count >= threshold {
 				loopedFiles = append(loopedFiles, path)
+			}
+		}
+		for cmd, count := range bashCounts {
+			if count >= threshold+2 { // bash loops need higher threshold
+				loopedFiles = append(loopedFiles, "bash: "+cmd)
+				delete(bashCounts, cmd) // reset
 			}
 		}
 		mu.Unlock()
@@ -102,6 +115,29 @@ func extractPathFromArgs(argsJSON string) string {
 		return args.Path
 	}
 	return args.File
+}
+
+// extractCommandPrefix extracts the first word/command from a bash tool call's
+// ArgsJSON. This is used for loop detection — if the same command prefix keeps
+// getting run, the agent is likely stuck.
+func extractCommandPrefix(argsJSON string) string {
+	var args struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	cmd := strings.TrimSpace(args.Command)
+	if cmd == "" {
+		return ""
+	}
+	// Use first token as the prefix (e.g., "python", "npm", "go").
+	// For paths like /usr/bin/python, use the basename.
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return ""
+	}
+	return filepath.Base(fields[0])
 }
 
 // ContextInjectionMiddleware injects environment context at the start of the
@@ -428,6 +464,14 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "\n## Task Type: Data Processing")
 		hints = append(hints, "This task has input_data/ and output_data/ directories.")
 		hints = append(hints, "Strategy: (1) Read input data format, (2) understand output requirements from tests/scripts, (3) write processing code, (4) validate output matches expected format.")
+		// Show first few lines of input data files so agent knows the format immediately.
+		inputDirs := []string{"/app/task_file/input_data", filepath.Join(workDir, "input_data")}
+		for _, id := range inputDirs {
+			if dirExists(id) {
+				previewInputData(id, &hints)
+				break
+			}
+		}
 	}
 	if hasScripts {
 		hints = append(hints, "Scripts are available — study them to understand evaluation criteria and cost models BEFORE implementing.")
@@ -445,6 +489,32 @@ func detectTaskGuidance(workDir string) string {
 		return strings.Join(hints, "\n")
 	}
 	return ""
+}
+
+// previewInputData reads the first few lines of input data files to show format.
+func previewInputData(dir string, hints *[]string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || count >= 3 {
+			continue
+		}
+		name := entry.Name()
+		info, err := entry.Info()
+		if err != nil || info.Size() == 0 {
+			continue
+		}
+		// Read first 500 bytes to show format.
+		content := readFileTruncated(filepath.Join(dir, name), 500)
+		if content != "" {
+			*hints = append(*hints, fmt.Sprintf("Input data preview (%s, %d bytes total):", name, info.Size()))
+			*hints = append(*hints, content)
+			count++
+		}
+	}
 }
 
 func dirExists(path string) bool {
