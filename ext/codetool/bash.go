@@ -204,6 +204,20 @@ func Bash(opts ...Option) core.Tool {
 			}
 			rawLen := len(outStr) + len(errStr)
 
+			// Pre-compute test summary from FULL output before truncation.
+			// This ensures the agent always sees all failing test names and
+			// accurate pass/fail counts, even when output is heavily truncated.
+			fullCombined := outStr + errStr
+			var preTestSummary string
+			var preTestFingerprint string
+			var preTestPassed, preTestFailed int
+			var preTestCountsOK bool
+			if len(fullCombined) > 2000 {
+				preTestSummary = testResultSummary(fullCombined)
+				preTestFingerprint = testFailureFingerprint(fullCombined)
+				preTestPassed, preTestFailed, preTestCountsOK = extractTestCounts(fullCombined)
+			}
+
 			// Truncate long output, keeping head and tail so the model can
 			// see error summaries at the end.
 			outStr = truncateOutput(outStr, cfg.MaxOutputLen)
@@ -276,76 +290,67 @@ func Bash(opts ...Option) core.Tool {
 			}
 
 			// Append summaries for long output to help the model focus.
-			combined := outStr + errStr
-			if len(combined) > 2000 {
-				if summary := testResultSummary(combined); summary != "" {
-					result += "\n" + summary
-					if exitCode != 0 && (strings.Contains(strings.ToLower(summary), "fail") || strings.Contains(strings.ToLower(summary), "error")) {
-						// Surface the first failure detail so the agent knows
-						// exactly what's wrong without scanning the full output.
-						fp := testFailureFingerprint(combined)
-						// Only append if testResultSummary didn't already include it
-						// (Go test and unittest summaries already embed it).
-						if fp != "" && !strings.Contains(summary, fp) {
-							result += "\n" + fp
-						} else if fp == "" {
-							result += "\n[hint: read the FULL test failure output above — fix one failure at a time, starting with the first]"
-						}
-						// Stale failure detection: warn when the same test failure
-						// appears consecutively, indicating the fix was ineffective.
-						if fp != "" && fp == lastTestFailFingerprint {
-							result += "\n[hint: this test failure is IDENTICAL to the previous run — your edit did not fix the issue. Re-read the error, verify your edit was applied correctly, and try a fundamentally different approach]"
-						}
-						lastTestFailFingerprint = fp
-
-						// Pass-rate stagnation detection: track test counts over
-						// multiple runs and warn when no progress is being made.
-						if p, f, ok := extractTestCounts(combined); ok {
-							rec := testRunRecord{passed: p, failed: f}
-							testRunHistory = append(testRunHistory, rec)
-							if len(testRunHistory) > maxTestHistory {
-								testRunHistory = testRunHistory[len(testRunHistory)-maxTestHistory:]
-							}
-							// Detect regression: pass count dropped from previous run.
-							// This catches the case where an edit broke something.
-							if len(testRunHistory) >= 2 {
-								prev := testRunHistory[len(testRunHistory)-2]
-								curr := testRunHistory[len(testRunHistory)-1]
-								if curr.passed < prev.passed && prev.passed > 0 {
-									result += fmt.Sprintf("\n[hint: REGRESSION — pass count dropped from %d/%d to %d/%d. "+
-										"Your last change likely broke something. Consider: "+
-										"(1) reverting the last edit, (2) re-reading what you changed, "+
-										"(3) checking if you introduced a syntax error or typo]",
-										prev.passed, prev.passed+prev.failed,
-										curr.passed, curr.passed+curr.failed)
-								}
-							}
-							// Detect stagnation: 3+ runs with same or worse pass count.
-							if len(testRunHistory) >= 3 {
-								last3 := testRunHistory[len(testRunHistory)-3:]
-								bestPassed := last3[0].passed
-								improving := false
-								for _, r := range last3[1:] {
-									if r.passed > bestPassed {
-										improving = true
-									}
-									if r.passed > bestPassed {
-										bestPassed = r.passed
-									}
-								}
-								if !improving && last3[len(last3)-1].failed > 0 {
-									result += fmt.Sprintf("\n[hint: pass rate has NOT improved over last 3 test runs (%d/%d → %d/%d → %d/%d). Your current approach may be fundamentally wrong — consider: (1) re-reading the task requirements, (2) trying a completely different algorithm, (3) checking if you missed a constraint]",
-										last3[0].passed, last3[0].passed+last3[0].failed,
-										last3[1].passed, last3[1].passed+last3[1].failed,
-										last3[2].passed, last3[2].passed+last3[2].failed)
-								}
-							}
-						}
-					} else {
-						lastTestFailFingerprint = "" // reset on success
-						testRunHistory = nil         // reset on full pass
+			// Use pre-computed values from FULL output (before truncation)
+			// to ensure all failing test names and counts are accurate.
+			if preTestSummary != "" {
+				result += "\n" + preTestSummary
+				if exitCode != 0 && (strings.Contains(strings.ToLower(preTestSummary), "fail") || strings.Contains(strings.ToLower(preTestSummary), "error")) {
+					// Surface the first failure detail so the agent knows
+					// exactly what's wrong without scanning the full output.
+					fp := preTestFingerprint
+					if fp != "" && !strings.Contains(preTestSummary, fp) {
+						result += "\n" + fp
+					} else if fp == "" {
+						result += "\n[hint: read the FULL test failure output above — fix one failure at a time, starting with the first]"
 					}
-				} else if summary := compilationErrorSummary(combined, exitCode); summary != "" {
+					if fp != "" && fp == lastTestFailFingerprint {
+						result += "\n[hint: this test failure is IDENTICAL to the previous run — your edit did not fix the issue. Re-read the error, verify your edit was applied correctly, and try a fundamentally different approach]"
+					}
+					lastTestFailFingerprint = fp
+					if preTestCountsOK {
+						rec := testRunRecord{passed: preTestPassed, failed: preTestFailed}
+						testRunHistory = append(testRunHistory, rec)
+						if len(testRunHistory) > maxTestHistory {
+							testRunHistory = testRunHistory[len(testRunHistory)-maxTestHistory:]
+						}
+						if len(testRunHistory) >= 2 {
+							prev := testRunHistory[len(testRunHistory)-2]
+							curr := testRunHistory[len(testRunHistory)-1]
+							if curr.passed < prev.passed && prev.passed > 0 {
+								result += fmt.Sprintf("\n[hint: REGRESSION — pass count dropped from %d/%d to %d/%d. "+
+									"Your last change likely broke something. Consider: "+
+									"(1) reverting the last edit, (2) re-reading what you changed, "+
+									"(3) checking if you introduced a syntax error or typo]",
+									prev.passed, prev.passed+prev.failed,
+									curr.passed, curr.passed+curr.failed)
+							}
+						}
+						if len(testRunHistory) >= 3 {
+							last3 := testRunHistory[len(testRunHistory)-3:]
+							bestPassed := last3[0].passed
+							improving := false
+							for _, r := range last3[1:] {
+								if r.passed > bestPassed {
+									improving = true
+								}
+								if r.passed > bestPassed {
+									bestPassed = r.passed
+								}
+							}
+							if !improving && last3[len(last3)-1].failed > 0 {
+								result += fmt.Sprintf("\n[hint: pass rate has NOT improved over last 3 test runs (%d/%d → %d/%d → %d/%d). Your current approach may be fundamentally wrong — consider: (1) re-reading the task requirements, (2) trying a completely different algorithm, (3) checking if you missed a constraint]",
+									last3[0].passed, last3[0].passed+last3[0].failed,
+									last3[1].passed, last3[1].passed+last3[1].failed,
+									last3[2].passed, last3[2].passed+last3[2].failed)
+							}
+						}
+					}
+				} else {
+					lastTestFailFingerprint = ""
+					testRunHistory = nil
+				}
+			} else if len(outStr+errStr) > 2000 {
+				if summary := compilationErrorSummary(outStr+errStr, exitCode); summary != "" {
 					result += "\n" + summary
 				}
 			}
