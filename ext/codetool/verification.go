@@ -243,6 +243,8 @@ func isVerificationString(cmd string) bool {
 		"mix test", "mix compile",
 		// Zig build.
 		"zig build", "zig test",
+		// Perl.
+		"prove ", "perl -e",
 	}
 
 	// Build/compile commands.

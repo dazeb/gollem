@@ -242,7 +242,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -965,6 +965,48 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- If the task has a `test()` function, ensure it exists and runs correctly with `source('file.R'); test()`")
 	}
 
+	// Detect Julia language tasks.
+	if detectJuliaTask(workDir) {
+		hints = append(hints, "\n## Task Type: Julia")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Run scripts: `julia <file.jl>` or `julia --project=. <file.jl>` for project mode")
+		hints = append(hints, "- Install packages: `julia -e 'using Pkg; Pkg.instantiate()'` (reads Project.toml)")
+		hints = append(hints, "- For missing packages: `julia -e 'using Pkg; Pkg.add(\"PackageName\")'`")
+		hints = append(hints, "- Julia has high first-run compilation times (JIT). Use `--compile=min` for faster startup if compilation time is an issue.")
+		hints = append(hints, "- Run tests: `julia --project=. -e 'using Pkg; Pkg.test()'`")
+	}
+
+	// Detect Perl tasks.
+	if detectPerlTask(workDir) {
+		hints = append(hints, "\n## Task Type: Perl")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Run scripts: `perl <file.pl>` or `perl -w <file.pl>` for warnings")
+		hints = append(hints, "- Install modules: `cpan install Module::Name` or `cpanm Module::Name`")
+		hints = append(hints, "- Run tests: `prove -v` or `perl -Ilib t/*.t`")
+	}
+
+	// Detect service/daemon tasks (web servers, background services).
+	if detectServiceTask(workDir) {
+		hints = append(hints, "\n## Task Type: Service/Daemon Setup")
+		hints = append(hints, "This task likely requires a service that PERSISTS after your session ends.")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Use systemd (`systemctl enable/start`), supervisord, or init scripts to ensure the service starts on boot")
+		hints = append(hints, "- If systemd is unavailable, use `nohup <command> &` with a startup script in /etc/rc.local or crontab @reboot")
+		hints = append(hints, "- VERIFY the service is running: `curl localhost:<port>`, `systemctl status <service>`, or `ss -tlnp`")
+		hints = append(hints, "- After configuring, test that the service survives: stop and restart it to confirm persistence")
+		hints = append(hints, "- Don't just run the service in the foreground — it will die when your session ends")
+	}
+
+	// Detect tasks with file hash/checksum comparisons.
+	if detectHashComparisonTask(workDir) {
+		hints = append(hints, "\n## Note: Hash/Checksum Comparisons Detected")
+		hints = append(hints, "Tests compare file contents by HASH (MD5, SHA, etc). This means:")
+		hints = append(hints, "- Your output files must match EXACTLY — byte for byte")
+		hints = append(hints, "- Check for trailing newlines, encoding differences (UTF-8 BOM), line ending differences (CRLF vs LF)")
+		hints = append(hints, "- If reference files exist in /app/resources/ or similar, diff your output against them: `diff <your_file> <reference_file>`")
+		hints = append(hints, "- Use `md5sum` or `sha256sum` to check hashes before and after your changes")
+	}
+
 	// Detect cryptography / security analysis tasks.
 	if detectCryptoTask(workDir) {
 		hints = append(hints, "\n## Task Type: Cryptography / Security Analysis")
@@ -1422,6 +1464,106 @@ func detectRTask(workDir string) bool {
 	return false
 }
 
+// detectJuliaTask returns true if the working directory contains Julia project files.
+func detectJuliaTask(workDir string) bool {
+	for _, dir := range []string{workDir, "/app"} {
+		if fileExists(filepath.Join(dir, "Project.toml")) || fileExists(filepath.Join(dir, "Manifest.toml")) {
+			return true
+		}
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.jl"))
+		if len(matches) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// detectPerlTask returns true if the working directory contains Perl files.
+func detectPerlTask(workDir string) bool {
+	for _, dir := range []string{workDir, "/app"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.pl"))
+		if len(matches) > 0 {
+			return true
+		}
+		matches, _ = filepath.Glob(filepath.Join(dir, "*.pm"))
+		if len(matches) > 0 {
+			return true
+		}
+		// Perl project markers.
+		if fileExists(filepath.Join(dir, "Makefile.PL")) || fileExists(filepath.Join(dir, "cpanfile")) ||
+			fileExists(filepath.Join(dir, "Build.PL")) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectServiceTask returns true if the task involves setting up persistent services.
+func detectServiceTask(workDir string) bool {
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range []string{
+		"server", "webserver", "web-server", "daemon", "service",
+		"configure-", "setup-", "deploy-", "nginx", "apache",
+		"pypi-server", "registry", "proxy",
+	} {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for service configuration files.
+	for _, dir := range []string{workDir, "/app"} {
+		if fileExists(filepath.Join(dir, "nginx.conf")) || fileExists(filepath.Join(dir, "supervisord.conf")) ||
+			fileExists(filepath.Join(dir, "httpd.conf")) || fileExists(filepath.Join(dir, "uwsgi.ini")) ||
+			fileExists(filepath.Join(dir, "gunicorn.conf.py")) {
+			return true
+		}
+	}
+	// Check README for service-related keywords.
+	for _, rp := range []string{filepath.Join(workDir, "README.md"), filepath.Join(workDir, "instruction.md"), "/app/instruction.md"} {
+		content := strings.ToLower(readFileTruncated(rp, 3000))
+		if content != "" {
+			if (strings.Contains(content, "server") || strings.Contains(content, "service")) &&
+				(strings.Contains(content, "start") || strings.Contains(content, "running") ||
+					strings.Contains(content, "listen") || strings.Contains(content, "port")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// detectHashComparisonTask returns true if tests compare files by hash.
+func detectHashComparisonTask(workDir string) bool {
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !isSourceFile(entry.Name()) {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 20000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
+			if err != nil {
+				continue
+			}
+			content := strings.ToLower(string(data))
+			if strings.Contains(content, "md5") || strings.Contains(content, "sha256") ||
+				strings.Contains(content, "sha1") || strings.Contains(content, "hashlib") ||
+				strings.Contains(content, "filecmp") || strings.Contains(content, "file_hash") ||
+				(strings.Contains(content, "hash") && strings.Contains(content, "assert")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // detectCodeGolfTask returns true if the task has size constraints on output files.
 // Code golf tasks require specific strategies: create output first, then optimize for size.
 func detectCodeGolfTask(workDir string) bool {
@@ -1789,6 +1931,20 @@ func detectTestCommands(workDir string) []string {
 		cmds = append(cmds, "Build: zig build")
 		cmds = append(cmds, "Test: zig test")
 	}
+	// Julia
+	if fileExists(filepath.Join(workDir, "Project.toml")) {
+		cmds = append(cmds, "Install: julia --project=. -e 'using Pkg; Pkg.instantiate()'")
+		cmds = append(cmds, "Test: julia --project=. -e 'using Pkg; Pkg.test()'")
+	}
+	// Perl
+	if fileExists(filepath.Join(workDir, "Makefile.PL")) {
+		cmds = append(cmds, "Build: perl Makefile.PL && make")
+		cmds = append(cmds, "Test: make test")
+	} else if fileExists(filepath.Join(workDir, "Build.PL")) {
+		cmds = append(cmds, "Build: perl Build.PL && ./Build")
+		cmds = append(cmds, "Test: ./Build test")
+	}
+
 	if fileExists(filepath.Join(workDir, "requirements.txt")) {
 		cmds = append(cmds, "Install: pip install --break-system-packages -r requirements.txt")
 	}
@@ -1977,7 +2133,7 @@ func isSourceFile(name string) bool {
 		".csv", ".tsv", ".jsonl", ".env", ".dockerfile",
 		".jsx", ".tsx", ".vue", ".svelte", ".zig", ".nim",
 		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hs",
-		".jl", ".m", ".swift", ".f90", ".f95",
+		".jl", ".m", ".swift", ".f90", ".f95", ".pm",
 		".lean", ".v", ".agda",          // theorem provers
 		".red",                          // Redcode (CoreWars)
 		".cu", ".cuh",                   // CUDA

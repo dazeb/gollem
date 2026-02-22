@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -528,31 +529,38 @@ func detectProvider() string {
 }
 
 func createModel(provider, modelName string) (core.Model, error) {
+	// Use an HTTP client with a per-request timeout to prevent individual API
+	// calls from hanging forever. Without this, a single hanging connection
+	// (Docker networking, API overload) blocks the entire agent timeout,
+	// producing zero output. 10 minutes is generous enough for extended
+	// thinking responses while still recovering from network hangs.
+	httpClient := &http.Client{Timeout: 10 * time.Minute}
+
 	switch provider {
 	case "test":
 		return core.NewTestModel(
 			core.TextResponse("Hello! I'm a test model. This is a demonstration of the TUI debugger."),
 		), nil
 	case "anthropic":
-		var opts []anthropic.Option
+		opts := []anthropic.Option{anthropic.WithHTTPClient(httpClient)}
 		if modelName != "" {
 			opts = append(opts, anthropic.WithModel(modelName))
 		}
 		return anthropic.New(opts...), nil
 	case "openai":
-		var opts []openai.Option
+		opts := []openai.Option{openai.WithHTTPClient(httpClient)}
 		if modelName != "" {
 			opts = append(opts, openai.WithModel(modelName))
 		}
 		return openai.New(opts...), nil
 	case "vertexai":
-		var opts []vertexai.Option
+		opts := []vertexai.Option{vertexai.WithHTTPClient(httpClient)}
 		if modelName != "" {
 			opts = append(opts, vertexai.WithModel(modelName))
 		}
 		return vertexai.New(opts...), nil
 	case "vertexai-anthropic":
-		var opts []vertexai_anthropic.Option
+		opts := []vertexai_anthropic.Option{vertexai_anthropic.WithHTTPClient(httpClient)}
 		if modelName != "" {
 			opts = append(opts, vertexai_anthropic.WithModel(modelName))
 		}

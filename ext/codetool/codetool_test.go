@@ -2241,3 +2241,99 @@ func TestDetectRTask(t *testing.T) {
 		t.Error("expected no R task from non-R DESCRIPTION file")
 	}
 }
+
+func TestDetectJuliaTask(t *testing.T) {
+	// Directory with .jl file.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "solution.jl", "function solve()\nend\n")
+	if !detectJuliaTask(dir) {
+		t.Error("expected Julia task detection with .jl file")
+	}
+
+	// Directory with Project.toml.
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "Project.toml", "[deps]\nLinearAlgebra = \"37e2e46d\"\n")
+	if !detectJuliaTask(dir2) {
+		t.Error("expected Julia task detection with Project.toml")
+	}
+
+	// Empty directory.
+	dir3 := t.TempDir()
+	if detectJuliaTask(dir3) {
+		t.Error("expected no Julia task in empty directory")
+	}
+}
+
+func TestDetectPerlTask(t *testing.T) {
+	// Directory with .pl file.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "script.pl", "#!/usr/bin/perl\nprint \"hello\\n\";\n")
+	if !detectPerlTask(dir) {
+		t.Error("expected Perl task detection with .pl file")
+	}
+
+	// Directory with .pm file.
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "MyModule.pm", "package MyModule;\n1;\n")
+	if !detectPerlTask(dir2) {
+		t.Error("expected Perl task detection with .pm file")
+	}
+
+	// Directory with Makefile.PL.
+	dir3 := t.TempDir()
+	writeTestFile(t, dir3, "Makefile.PL", "use ExtUtils::MakeMaker;\n")
+	if !detectPerlTask(dir3) {
+		t.Error("expected Perl task detection with Makefile.PL")
+	}
+
+	// Empty directory.
+	dir4 := t.TempDir()
+	if detectPerlTask(dir4) {
+		t.Error("expected no Perl task in empty directory")
+	}
+}
+
+func TestDetectServiceTask(t *testing.T) {
+	// Directory name containing "server".
+	dir := t.TempDir()
+	serverDir := filepath.Join(dir, "configure-git-webserver")
+	os.MkdirAll(serverDir, 0o755)
+	if !detectServiceTask(serverDir) {
+		t.Error("expected service task detection from directory name 'configure-git-webserver'")
+	}
+
+	// Directory with nginx.conf.
+	dir2 := t.TempDir()
+	writeTestFile(t, dir2, "nginx.conf", "server { listen 80; }\n")
+	if !detectServiceTask(dir2) {
+		t.Error("expected service task detection with nginx.conf")
+	}
+
+	// Empty directory with no indicators.
+	dir3 := t.TempDir()
+	if detectServiceTask(dir3) {
+		t.Error("expected no service task in empty directory")
+	}
+}
+
+func TestDetectHashComparisonTask(t *testing.T) {
+	// Test directory with hash comparisons.
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+	writeTestFile(t, testDir, "test_output.py", `import hashlib
+def test_about_file():
+    with open("/app/output/about.md", "rb") as f:
+        actual = hashlib.md5(f.read()).hexdigest()
+    assert actual == "abc123"
+`)
+	if !detectHashComparisonTask(dir) {
+		t.Error("expected hash comparison detection with hashlib in test")
+	}
+
+	// No tests directory.
+	dir2 := t.TempDir()
+	if detectHashComparisonTask(dir2) {
+		t.Error("expected no hash comparison in empty directory")
+	}
+}
