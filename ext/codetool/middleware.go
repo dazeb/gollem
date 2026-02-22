@@ -550,9 +550,14 @@ func discoverEnvironment(workDir string) string {
 		chmodScripts(verifyScripts)
 	}
 
-	// Also chmod +x any shell scripts in test directories.
+	// chmod +x shell/Python scripts in test directories and working directory.
+	// This prevents "Permission denied" errors that waste 1-2 agent turns.
 	for _, td := range testDirs {
 		chmodScriptsInDir(td)
+	}
+	chmodScriptsInDir(workDir)
+	if workDir != "/app" {
+		chmodScriptsInDir("/app")
 	}
 
 	// Check for output directories that need to be populated.
@@ -2776,6 +2781,18 @@ func detectTestCommands(workDir string) []string {
 	}
 	if hasPyTests {
 		cmds = append(cmds, "Test: pytest -xvs")
+	}
+
+	// Ruby (Gemfile with rspec or Rakefile).
+	if fileExists(filepath.Join(workDir, "Gemfile")) {
+		cmds = append(cmds, "Install: bundle install")
+		// Check if rspec is a dependency.
+		if content := readFileTruncated(filepath.Join(workDir, "Gemfile"), 2000); strings.Contains(content, "rspec") {
+			cmds = append(cmds, "Test: bundle exec rspec")
+		}
+	}
+	if fileExists(filepath.Join(workDir, "Rakefile")) {
+		cmds = append(cmds, "Test: rake test")
 	}
 
 	// Cap to prevent context bloat.
