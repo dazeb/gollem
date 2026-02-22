@@ -253,6 +253,11 @@ func discoverEnvironment(workDir string) string {
 		filepath.Join(workDir, "problem.md"),
 		filepath.Join(workDir, "prompt.md"),
 		filepath.Join(workDir, "prompt.txt"),
+		// Harbor task format: instruction lives in instruction.md or prompts/agent.md.
+		filepath.Join(workDir, "instruction.md"),
+		filepath.Join(workDir, "prompts", "agent.md"),
+		"/app/instruction.md",
+		"/app/prompts/agent.md",
 	}
 	for _, rp := range readmePaths {
 		if content := readFileTruncated(rp, 5000); content != "" {
@@ -295,11 +300,12 @@ func discoverEnvironment(workDir string) string {
 				parts = append(parts, testLs)
 				parts = append(parts, "IMPORTANT: These test files define what will be verified. Run them EARLY and OFTEN. Tests often check for unexpected files in directories — clean up all build artifacts.")
 			}
-			// Auto-read test files (up to 12KB each, up to 6 files).
+			// Auto-read test files recursively (up to 12KB each, up to 8 files).
 			// Tests are the highest-value context — knowing what's verified
 			// prevents wasted turns writing solutions that don't match.
-			// With 75KB budget, we allocate generously for tests.
-			autoReadBudget = autoReadDirBudget(td, &parts, "Test (DO NOT MODIFY)", 12000, 6, autoReadBudget)
+			// Recursive because tests may be in subdirs like /tests/unit/.
+			testFileCount := 8
+			autoReadTestRecursive(td, &parts, 12000, &testFileCount, &autoReadBudget, 0, 2)
 			// Extract and highlight key constraints from test assertions.
 			if constraints := extractTestConstraints(td); len(constraints) > 0 {
 				parts = append(parts, "\n## KEY CONSTRAINTS (extracted from tests)")
@@ -548,6 +554,63 @@ func autoReadDirBudget(dir string, parts *[]string, label string, maxBytes, maxF
 		}
 	}
 	return budget
+}
+
+// autoReadTestRecursive reads test files recursively (depth-limited). Test files
+// are the highest-value context for coding agents — they define what success
+// looks like. Some tasks nest tests in subdirs like /tests/unit/ or /tests/e2e/.
+func autoReadTestRecursive(dir string, parts *[]string, maxBytes int, remaining *int, budget *int, depth, maxDepth int) {
+	if depth > maxDepth || *remaining <= 0 || *budget <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	// Read files first, then recurse into subdirectories.
+	for _, entry := range entries {
+		if *remaining <= 0 || *budget <= 0 {
+			return
+		}
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !isSourceFile(name) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.Size() > int64(maxBytes) || info.Size() == 0 {
+			continue
+		}
+		limit := maxBytes
+		if limit > *budget {
+			limit = *budget
+		}
+		content := readFileTruncated(filepath.Join(dir, name), limit)
+		if content != "" {
+			*parts = append(*parts, fmt.Sprintf("\n## Test file auto-read (DO NOT MODIFY): %s/%s", dir, name))
+			*parts = append(*parts, content)
+			*budget -= len(content)
+			*remaining--
+		}
+	}
+
+	// Recurse into subdirectories.
+	for _, entry := range entries {
+		if *remaining <= 0 || *budget <= 0 {
+			return
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || name == "__pycache__" || name == "node_modules" {
+			continue
+		}
+		autoReadTestRecursive(filepath.Join(dir, name), parts, maxBytes, remaining, budget, depth+1, maxDepth)
+	}
 }
 
 // autoReadSourceFilesBudget reads small source files in a directory recursively
