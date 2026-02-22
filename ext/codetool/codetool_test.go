@@ -2909,3 +2909,128 @@ func TestDetectTestCommandsPytestInWorkdir(t *testing.T) {
 		t.Errorf("expected pytest command for test_*.py in workdir, got: %v", cmds)
 	}
 }
+
+func TestDetectOutputFormat(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	// Test with JSON format detection.
+	os.WriteFile(filepath.Join(testDir, "test_output.py"), []byte(`
+import json
+def test_json():
+    with open("output.json") as f:
+        data = json.loads(f.read())
+    assert data["key"] == "value"
+`), 0o644)
+
+	hints := detectOutputFormat(dir)
+	foundJSON := false
+	for _, h := range hints {
+		if strings.Contains(h, "FORMAT=JSON") {
+			foundJSON = true
+		}
+	}
+	if !foundJSON {
+		t.Errorf("expected JSON format hint, got: %v", hints)
+	}
+}
+
+func TestDetectOutputFormatCSV(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	os.WriteFile(filepath.Join(testDir, "test_csv.py"), []byte(`
+import csv
+def test_csv():
+    with open("output.csv") as f:
+        reader = csv.reader(f)
+        rows = list(reader)
+    assert len(rows) > 0
+`), 0o644)
+
+	hints := detectOutputFormat(dir)
+	foundCSV := false
+	for _, h := range hints {
+		if strings.Contains(h, "FORMAT=CSV") {
+			foundCSV = true
+		}
+	}
+	if !foundCSV {
+		t.Errorf("expected CSV format hint, got: %v", hints)
+	}
+}
+
+func TestDetectOutputFormatStdin(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	os.WriteFile(filepath.Join(testDir, "test.sh"), []byte(`#!/bin/bash
+echo "hello" | ./solution
+`), 0o644)
+
+	hints := detectOutputFormat(dir)
+	foundStdin := false
+	for _, h := range hints {
+		if strings.Contains(h, "STDIN") {
+			foundStdin = true
+		}
+	}
+	if !foundStdin {
+		t.Errorf("expected STDIN hint, got: %v", hints)
+	}
+}
+
+func TestDetectOutputFormatExecutable(t *testing.T) {
+	dir := t.TempDir()
+	testDir := filepath.Join(dir, "tests")
+	os.MkdirAll(testDir, 0o755)
+
+	os.WriteFile(filepath.Join(testDir, "test.sh"), []byte(`#!/bin/bash
+chmod +x ./solution
+./solution input.txt > output.txt
+diff output.txt expected.txt
+`), 0o644)
+
+	hints := detectOutputFormat(dir)
+	foundExec := false
+	for _, h := range hints {
+		if strings.Contains(h, "EXECUTABLE") {
+			foundExec = true
+		}
+	}
+	if !foundExec {
+		t.Errorf("expected EXECUTABLE hint, got: %v", hints)
+	}
+}
+
+func TestIsBinaryExtension(t *testing.T) {
+	tests := []struct {
+		name   string
+		binary bool
+	}{
+		{"file.png", true},
+		{"file.wav", true},
+		{"file.mp3", true},
+		{"file.zip", true},
+		{"file.db", true},
+		{"file.pyc", true},
+		{"file.o", true},
+		{"file.so", true},
+		{"file.py", false},
+		{"file.txt", false},
+		{"file.json", false},
+		{"file.go", false},
+		{"file.csv", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isBinaryExtension(strings.ToLower(tt.name))
+			if got != tt.binary {
+				t.Errorf("isBinaryExtension(%q) = %v, want %v", tt.name, got, tt.binary)
+			}
+		})
+	}
+}

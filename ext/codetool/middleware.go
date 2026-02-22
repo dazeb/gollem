@@ -772,6 +772,15 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Create these files EARLY — even with placeholder content — then refine.")
 	}
 
+	// Detect output format and execution patterns from test code.
+	// This addresses failure mode #5: correct logic but wrong output format.
+	if formatHints := detectOutputFormat(workDir); len(formatHints) > 0 {
+		parts = append(parts, "\n## Output Format & Execution (from test analysis)")
+		for _, h := range formatHints {
+			parts = append(parts, "  - "+h)
+		}
+	}
+
 	// Auto-read example/reference output files that show expected format.
 	// These save the agent from guessing output format — the #4 failure mode.
 	if autoReadBudget > 0 {
@@ -1067,13 +1076,7 @@ func autoReadSmallFiles(dir string, parts *[]string, label string, maxBytes, max
 		}
 		// Skip binary-looking files by extension.
 		lower := strings.ToLower(entry.Name())
-		if strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".jpg") ||
-			strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".gif") ||
-			strings.HasSuffix(lower, ".bmp") || strings.HasSuffix(lower, ".pdf") ||
-			strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar") ||
-			strings.HasSuffix(lower, ".gz") || strings.HasSuffix(lower, ".db") ||
-			strings.HasSuffix(lower, ".sqlite") || strings.HasSuffix(lower, ".pickle") ||
-			strings.HasSuffix(lower, ".pkl") || strings.HasSuffix(lower, ".bin") {
+		if isBinaryExtension(lower) {
 			continue
 		}
 		limit := maxBytes
@@ -1831,6 +1834,170 @@ func detectExpectedOutputs(workDir string) []string {
 		outputs = outputs[:15]
 	}
 	return outputs
+}
+
+// detectOutputFormat scans test files to determine the expected output format
+// and execution pattern. Returns specific hints that help the agent produce
+// correctly-formatted output and invoke their solution correctly.
+// This addresses failure mode #5: correct logic but wrong output format.
+func detectOutputFormat(workDir string) []string {
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+
+	jsonFound, csvFound, yamlFound, xmlFound := false, false, false, false
+	stdinFound, binaryExecFound := false, false
+
+	// Also check README/instruction files and scripts in root.
+	var allContent []string
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !isSourceFile(entry.Name()) {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 30000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
+			if err != nil {
+				continue
+			}
+			allContent = append(allContent, string(data))
+		}
+	}
+
+	// Also scan verification scripts in workDir and /app for format clues.
+	for _, dir := range []string{workDir, "/app", "/app/task_file"} {
+		for _, pattern := range []string{"verify*", "check*", "test.sh", "test.py", "run_test*"} {
+			matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+			for _, m := range matches {
+				info, err := os.Stat(m)
+				if err != nil || info.IsDir() || info.Size() > 30000 {
+					continue
+				}
+				data, err := os.ReadFile(m)
+				if err != nil {
+					continue
+				}
+				allContent = append(allContent, string(data))
+			}
+		}
+	}
+
+	for _, content := range allContent {
+		// JSON format detection.
+		if !jsonFound {
+			for _, p := range []string{
+				"json.load(", "json.loads(", "json.dump(", "json.dumps(",
+				"JSON.parse(", "JSON.stringify(",
+				"encoding/json", "json.Unmarshal(", "json.NewDecoder(",
+				"JsonParser", "ObjectMapper",
+			} {
+				if strings.Contains(content, p) {
+					jsonFound = true
+					break
+				}
+			}
+		}
+
+		// CSV format detection.
+		if !csvFound {
+			for _, p := range []string{
+				"csv.reader(", "csv.writer(", "csv.DictReader(", "csv.DictWriter(",
+				"read_csv(", "to_csv(", "pd.read_csv(",
+				"encoding/csv", "csv.NewReader(",
+			} {
+				if strings.Contains(content, p) {
+					csvFound = true
+					break
+				}
+			}
+		}
+
+		// YAML format detection.
+		if !yamlFound {
+			for _, p := range []string{
+				"yaml.safe_load(", "yaml.load(", "yaml.safe_dump(",
+				"YAML.load(", "YAML.dump(",
+				"gopkg.in/yaml", "yaml.Unmarshal(",
+			} {
+				if strings.Contains(content, p) {
+					yamlFound = true
+					break
+				}
+			}
+		}
+
+		// XML format detection.
+		if !xmlFound {
+			for _, p := range []string{
+				"xml.etree", "lxml.etree", "xml.dom",
+				"xml.sax", "xmllint",
+				"encoding/xml", "xml.Unmarshal(",
+				"DocumentBuilder", "SAXParser",
+			} {
+				if strings.Contains(content, p) {
+					xmlFound = true
+					break
+				}
+			}
+		}
+
+		// Stdin usage detection — tells agent to read from stdin not files.
+		if !stdinFound {
+			for _, p := range []string{
+				"sys.stdin", "process.stdin", "os.Stdin",
+				"bufio.NewScanner(os.Stdin)",
+				// Pipe and redirect patterns in shell tests.
+				"| ./solution", "| ./program", "| ./main", "| ./a.out",
+				"| python3 solution", "| python solution", "| python3 main",
+				"| node solution", "| node main",
+				"< input", "< /app/",
+			} {
+				if strings.Contains(content, p) {
+					stdinFound = true
+					break
+				}
+			}
+		}
+
+		// Compiled binary execution detection.
+		if !binaryExecFound {
+			for _, p := range []string{
+				"./solution ", "./program ", "./a.out", "./main ",
+				"test -x ./", "chmod +x ./solution", "chmod +x ./program",
+			} {
+				if strings.Contains(content, p) {
+					binaryExecFound = true
+					break
+				}
+			}
+		}
+	}
+
+	var hints []string
+	if jsonFound {
+		hints = append(hints, "FORMAT=JSON: Tests parse output as JSON. Use json.dumps()/json.Marshal() with proper structure.")
+	}
+	if csvFound {
+		hints = append(hints, "FORMAT=CSV: Tests parse output as CSV. Match exact headers, delimiters, and quoting.")
+	}
+	if yamlFound {
+		hints = append(hints, "FORMAT=YAML: Tests parse output as YAML. Ensure valid YAML syntax and proper indentation.")
+	}
+	if xmlFound {
+		hints = append(hints, "FORMAT=XML: Tests parse output as XML. Ensure well-formed XML with correct tags and encoding declaration.")
+	}
+	if stdinFound {
+		hints = append(hints, "STDIN: Tests pipe input to your program via stdin. Read from stdin (not files) unless task says otherwise.")
+	}
+	if binaryExecFound {
+		hints = append(hints, "EXECUTABLE: Tests run a compiled binary (./solution, ./program, etc). Compile your code and ensure the binary is executable (chmod +x).")
+	}
+	return hints
 }
 
 // extractPathFromLine extracts a file path starting at position idx in a line.
@@ -3418,6 +3585,41 @@ func fileExists(path string) bool {
 }
 
 // isSourceFile returns true if the filename has a recognized source code extension.
+// isBinaryExtension returns true if the lowercased filename has an extension
+// associated with binary files. Used to skip binary files in auto-read.
+func isBinaryExtension(lower string) bool {
+	binaryExts := []string{
+		// Images
+		".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".ppm", ".pgm",
+		".svg", ".webp", ".ico",
+		// Audio
+		".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4a", ".aiff", ".wma",
+		// Video
+		".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm",
+		// Archives
+		".zip", ".tar", ".gz", ".xz", ".bz2", ".7z", ".rar", ".zst",
+		// Documents
+		".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+		// Databases
+		".db", ".sqlite", ".sqlite3",
+		// Python compiled/data
+		".pyc", ".pyo", ".pickle", ".pkl", ".npy", ".npz", ".h5", ".hdf5",
+		// Compiled objects/libraries
+		".o", ".obj", ".a", ".so", ".dylib", ".dll", ".lib", ".exe",
+		".class", ".jar", ".war", ".whl", ".egg",
+		// Binary data
+		".bin", ".dat", ".raw", ".img", ".iso",
+		// Fonts
+		".ttf", ".otf", ".woff", ".woff2",
+	}
+	for _, ext := range binaryExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
 func isSourceFile(name string) bool {
 	sourceExts := []string{
 		".py", ".pyx", ".pyi",                          // Python
