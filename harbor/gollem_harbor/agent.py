@@ -89,7 +89,7 @@ class GollemAgent(BaseInstalledAgent):
     def __init__(
         self,
         *args,
-        timeout_minutes: int = 45,
+        timeout_minutes: int = 15,
         thinking_budget: int = 0,
         reasoning_effort: str = "",
         **kwargs,
@@ -111,31 +111,26 @@ class GollemAgent(BaseInstalledAgent):
         """Upload the pre-built binary instead of compiling from source."""
         binary_path = _find_binary()
 
-        # Fix broken dpkg state (some images have interrupted installs).
-        await environment.exec(
-            command="dpkg --configure -a > /dev/null 2>&1 || true"
-        )
-
-        # Ensure essential tools are available for TLS and verifier dependencies.
-        # Install CA certs + curl in one pass to minimize apt-get update calls.
-        # Use a 90-second timeout to prevent setup from hanging on slow networks.
+        # Combined setup: fix dpkg, install CA certs, create bin dir — all in one exec.
+        # This saves multiple exec round-trips. Only install CA certs (not curl —
+        # gollem handles HTTPS natively). Use a 60-second timeout to prevent hanging.
         await environment.exec(
             command=(
-                "if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] "
-                "|| ! command -v curl > /dev/null 2>&1; then "
-                "timeout 90 sh -c '("
-                "  apt-get update -qq && apt-get install -y -qq ca-certificates curl"
-                "  || apk add --no-cache ca-certificates curl"
-                "  || yum install -y ca-certificates curl"
-                "  || dnf install -y ca-certificates curl"
-                ") 2>&1 | tail -5' || true; "
+                "dpkg --configure -a > /dev/null 2>&1 || true; "
+                "mkdir -p /usr/local/bin; "
+                "if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ]; then "
+                "timeout 60 sh -c '("
+                "  apt-get update -qq && apt-get install -y -qq ca-certificates"
+                "  || apk add --no-cache ca-certificates"
+                "  || yum install -y ca-certificates"
+                "  || dnf install -y ca-certificates"
+                ") 2>&1 | tail -3' || true; "
                 "update-ca-certificates > /dev/null 2>&1 || true; "
                 "fi"
             )
         )
 
-        # Upload binary to container.
-        await environment.exec(command="mkdir -p /usr/local/bin")
+        # Upload binary to container and make executable.
         await environment.upload_file(
             source_path=binary_path,
             target_path="/usr/local/bin/gollem",
@@ -179,6 +174,10 @@ class GollemAgent(BaseInstalledAgent):
             # Common CA cert bundle paths for TLS verification.
             "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
             "SSL_CERT_DIR": "/etc/ssl/certs",
+            # Pass exec timeout to gollem so it can set accurate time budget
+            # warnings. This is the Harbor-level exec timeout (task timeout + buffer).
+            # gollem will use min(this, its own --timeout) for time budgeting.
+            "GOLLEM_TIMEOUT_SEC": str(self._timeout_minutes * 60),
         }
 
         for key in [

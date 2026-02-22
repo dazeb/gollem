@@ -138,12 +138,22 @@ func runAgent() {
 		os.Exit(1)
 	}
 
-	// Auto-detect task timeout from task.toml (Terminal-Bench format).
-	// This ensures the agent's internal timeout matches the benchmark's
-	// task-level timeout, so time budget warnings are accurate.
+	// Auto-detect task timeout from multiple sources (in priority order):
+	// 1. task.toml in working directory or /app/task_file/ (Terminal-Bench format)
+	// 2. GOLLEM_TIMEOUT_SEC environment variable (set by Harbor agent)
+	// This ensures time budget warnings are accurate for the actual deadline.
 	if taskTimeout := detectTaskTimeout(f.workDir); taskTimeout > 0 && taskTimeout < f.timeout {
 		fmt.Fprintf(os.Stderr, "gollem: detected task timeout: %v (overriding %v)\n", taskTimeout, f.timeout)
 		f.timeout = taskTimeout
+	} else if envTimeout := os.Getenv("GOLLEM_TIMEOUT_SEC"); envTimeout != "" {
+		var secs float64
+		if _, err := fmt.Sscanf(envTimeout, "%f", &secs); err == nil && secs > 0 {
+			envDuration := time.Duration(secs) * time.Second
+			if envDuration < f.timeout {
+				fmt.Fprintf(os.Stderr, "gollem: using env timeout: %v (overriding %v)\n", envDuration, f.timeout)
+				f.timeout = envDuration
+			}
+		}
 	}
 
 	if f.provider == "" {
