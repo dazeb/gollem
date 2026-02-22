@@ -2586,6 +2586,30 @@ func TestDetectCppTask(t *testing.T) {
 	}
 }
 
+func TestDetectShellTask(t *testing.T) {
+	dir := t.TempDir()
+
+	// Directory with multiple shell scripts.
+	shDir := filepath.Join(dir, "shell-task")
+	os.MkdirAll(shDir, 0o755)
+	writeTestFile(t, dir, "shell-task/setup.sh", "#!/bin/bash\necho setup\n")
+	writeTestFile(t, dir, "shell-task/run.sh", "#!/bin/bash\necho run\n")
+	writeTestFile(t, dir, "shell-task/clean.sh", "#!/bin/bash\necho clean\n")
+	if !detectShellTask(shDir) {
+		t.Error("expected shell task for dir with multiple .sh files")
+	}
+
+	// Directory with more Python than shell should not be a shell task.
+	pyDir := filepath.Join(dir, "python-project")
+	os.MkdirAll(pyDir, 0o755)
+	writeTestFile(t, dir, "python-project/main.py", "print('hello')\n")
+	writeTestFile(t, dir, "python-project/utils.py", "def add(a,b): return a+b\n")
+	writeTestFile(t, dir, "python-project/run.sh", "#!/bin/bash\npython3 main.py\n")
+	if detectShellTask(pyDir) {
+		t.Error("did not expect shell task for Python-majority dir")
+	}
+}
+
 func TestPipInstall(t *testing.T) {
 	// Just test that pipInstall doesn't panic on a nonexistent dir.
 	// Actual pip installation can't be tested without Python.

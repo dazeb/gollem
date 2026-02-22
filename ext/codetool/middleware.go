@@ -592,6 +592,12 @@ func discoverEnvironment(workDir string) string {
 				parts = append(parts, strings.Join(lines, "\n"))
 				parts = append(parts, "NOTE: Tests may compare your output against files in this directory.")
 			}
+			// Auto-read small resource files (< 3KB) — these are often reference
+			// data that the agent needs to match or process. Saves 1-2 turns of
+			// manual cat/head commands.
+			if autoReadBudget > 0 {
+				autoReadBudget = autoReadSmallFiles(rd, &parts, "Resource", 3000, 5, autoReadBudget)
+			}
 			break
 		}
 	}
@@ -806,6 +812,50 @@ func autoReadExampleOutputs(workDir string, parts *[]string, budget int) int {
 				budget -= len(content)
 				count++
 			}
+		}
+	}
+	return budget
+}
+
+// autoReadSmallFiles reads small files (any type, not just source) in a directory
+// up to maxBytes per file, capping at maxFiles total. Used for resources/ and
+// input_data/ where files may be .txt, .dat, .csv, or extensionless.
+// Returns remaining budget.
+func autoReadSmallFiles(dir string, parts *[]string, label string, maxBytes, maxFiles, budget int) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return budget
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || count >= maxFiles || budget <= 0 {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.Size() > int64(maxBytes) || info.Size() == 0 {
+			continue
+		}
+		// Skip binary-looking files by extension.
+		lower := strings.ToLower(entry.Name())
+		if strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".jpg") ||
+			strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".gif") ||
+			strings.HasSuffix(lower, ".bmp") || strings.HasSuffix(lower, ".pdf") ||
+			strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar") ||
+			strings.HasSuffix(lower, ".gz") || strings.HasSuffix(lower, ".db") ||
+			strings.HasSuffix(lower, ".sqlite") || strings.HasSuffix(lower, ".pickle") ||
+			strings.HasSuffix(lower, ".pkl") || strings.HasSuffix(lower, ".bin") {
+			continue
+		}
+		limit := maxBytes
+		if limit > budget {
+			limit = budget
+		}
+		content := readFileTruncated(filepath.Join(dir, entry.Name()), limit)
+		if content != "" {
+			*parts = append(*parts, fmt.Sprintf("\n## %s file auto-read: %s/%s", label, dir, entry.Name()))
+			*parts = append(*parts, content)
+			budget -= len(content)
+			count++
 		}
 	}
 	return budget
@@ -1299,6 +1349,19 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- After git operations: verify the result with `git log`, `git diff`, and run tests")
 	}
 
+	// Detect shell scripting tasks — many TB2 tasks are primarily bash/shell.
+	if detectShellTask(workDir) {
+		hints = append(hints, "\n## Task Type: Shell Scripting")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Use `set -euo pipefail` at the top for strict error handling")
+		hints = append(hints, "- Quote all variable expansions: \"$var\" not $var (prevents word splitting)")
+		hints = append(hints, "- Use `shellcheck <script>` if available to catch common bugs")
+		hints = append(hints, "- For text processing: prefer awk/sed over loops. `awk '{print $1}'` is faster than while-read loops.")
+		hints = append(hints, "- Use `[[ ]]` over `[ ]` for comparisons (supports regex, no word splitting)")
+		hints = append(hints, "- For file operations: check if files exist before operating on them")
+		hints = append(hints, "- Make scripts executable: `chmod +x script.sh`")
+	}
+
 	// Detect tasks with image files that need analysis.
 	if imageFiles := detectImageFiles(workDir); len(imageFiles) > 0 {
 		hints = append(hints, "\n## Image Files Detected")
@@ -1669,6 +1732,39 @@ func chmodScriptsInDirRecursive(dir string, depth, maxDepth int) {
 			os.Chmod(filepath.Join(dir, entry.Name()), 0o755)
 		}
 	}
+}
+
+// detectShellTask returns true if the task is primarily a shell scripting task.
+func detectShellTask(workDir string) bool {
+	// Check directory name for shell-related keywords.
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range []string{"bash", "shell", "scripting", "awk", "sed"} {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Count shell scripts vs other source files.
+	shCount := 0
+	otherCount := 0
+	for _, dir := range []string{workDir, "/app"} {
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := strings.ToLower(e.Name())
+			if strings.HasSuffix(name, ".sh") || strings.HasSuffix(name, ".bash") {
+				shCount++
+			} else if strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".go") ||
+				strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".rs") ||
+				strings.HasSuffix(name, ".c") || strings.HasSuffix(name, ".cpp") ||
+				strings.HasSuffix(name, ".java") || strings.HasSuffix(name, ".rb") {
+				otherCount++
+			}
+		}
+	}
+	// Shell task if the majority of source files are shell scripts.
+	return shCount >= 2 && shCount > otherCount
 }
 
 // detectCppTask returns true if the working directory looks like a C/C++ compilation task.
