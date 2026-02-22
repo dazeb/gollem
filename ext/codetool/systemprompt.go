@@ -115,6 +115,14 @@ When an approach isn't working after sustained effort:
 3. **Prefer well-known solutions**: If the problem domain has established solutions (sorting algorithms, graph traversals, protocol implementations), use them instead of inventing your own.
 4. **Cut losses early**: If you've spent 50% of your time and aren't close to a working solution, simplify your approach radically. A simpler solution that partially works beats an ambitious one that doesn't.
 
+## Package Installation
+
+When you need to install packages in an isolated environment:
+1. **Python**: Use pip install --break-system-packages (or pip3). If pip is missing, try python3 -m ensurepip or apt-get install python3-pip.
+2. **Node.js**: Use npm install. If npm is missing, use apt-get install nodejs npm.
+3. **System packages**: Try apt-get install -y first, fall back to apk add or yum install -y.
+4. **Don't waste turns on broken package managers**: If apt-get fails after 2 attempts, work around the missing package or use a different approach.
+
 ## Constraint Validation for Optimization Tasks
 
 When solving optimization or scheduling problems:
