@@ -2851,3 +2851,61 @@ func TestBuildActionSummaryCached(t *testing.T) {
 		t.Error("expected VERIFY line for test commands")
 	}
 }
+
+func TestDetectTestCommandsWorkdirScripts(t *testing.T) {
+	dir := t.TempDir()
+
+	// No scripts = no test commands from workDir.
+	cmds := detectTestCommands(dir)
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, dir) {
+			t.Errorf("unexpected command referencing workdir: %s", cmd)
+		}
+	}
+
+	// Create test.sh in workDir — should be detected.
+	os.WriteFile(filepath.Join(dir, "test.sh"), []byte("#!/bin/bash\necho test"), 0o755)
+	cmds = detectTestCommands(dir)
+	found := false
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, "test.sh") && strings.Contains(cmd, dir) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected test.sh in workdir to be detected, got: %v", cmds)
+	}
+
+	// Create verify.py — should also be detected.
+	os.WriteFile(filepath.Join(dir, "verify.py"), []byte("print('ok')"), 0o644)
+	cmds = detectTestCommands(dir)
+	foundVerify := false
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, "verify.py") && strings.Contains(cmd, "python3") {
+			foundVerify = true
+			break
+		}
+	}
+	if !foundVerify {
+		t.Errorf("expected verify.py in workdir to be detected, got: %v", cmds)
+	}
+}
+
+func TestDetectTestCommandsPytestInWorkdir(t *testing.T) {
+	dir := t.TempDir()
+
+	// test_*.py in workDir should trigger pytest suggestion.
+	os.WriteFile(filepath.Join(dir, "test_solution.py"), []byte("def test_it(): pass"), 0o644)
+	cmds := detectTestCommands(dir)
+	found := false
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, "pytest") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected pytest command for test_*.py in workdir, got: %v", cmds)
+	}
+}

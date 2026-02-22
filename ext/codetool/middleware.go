@@ -2775,7 +2775,20 @@ func detectTestCommands(workDir string) []string {
 	var cmds []string
 
 	// Detect test directories for explicit test commands.
-	for _, td := range []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")} {
+	// Include /app/tests and /app/task_file/tests for TB2 tasks that nest under /app.
+	testDirCandidates := []string{
+		"/tests",
+		filepath.Join(workDir, "tests"),
+		filepath.Join(workDir, "test"),
+	}
+	if workDir != "/app" {
+		testDirCandidates = append(testDirCandidates,
+			"/app/tests",
+			"/app/test",
+			"/app/task_file/tests",
+		)
+	}
+	for _, td := range testDirCandidates {
 		if dirExists(td) {
 			entries, _ := os.ReadDir(td)
 			// Priority 1: test.sh or test.py (standard verification scripts).
@@ -2803,6 +2816,39 @@ func detectTestCommands(workDir string) []string {
 				}
 			}
 			break
+		}
+	}
+
+	// Detect standalone test/verification scripts in workDir and /app.
+	// Many TB2 tasks place test.sh, verify.py, etc. directly in the working
+	// directory rather than in a tests/ subdirectory.
+	seen := make(map[string]bool)
+	for _, cmd := range cmds {
+		seen[cmd] = true
+	}
+	for _, dir := range []string{workDir, "/app", "/app/task_file"} {
+		for _, scriptName := range []string{
+			"test.sh", "test.py", "test.rb",
+			"run_tests.sh", "run_tests.py", "run_test.sh", "run_test.py",
+			"verify.sh", "verify.py", "check.sh", "check.py",
+			"validate.sh", "validate.py",
+		} {
+			path := filepath.Join(dir, scriptName)
+			if !fileExists(path) {
+				continue
+			}
+			var cmd string
+			if strings.HasSuffix(scriptName, ".sh") {
+				cmd = "Test: bash " + path
+			} else if strings.HasSuffix(scriptName, ".py") {
+				cmd = "Test: python3 " + path
+			} else if strings.HasSuffix(scriptName, ".rb") {
+				cmd = "Test: ruby " + path
+			}
+			if cmd != "" && !seen[cmd] {
+				seen[cmd] = true
+				cmds = append(cmds, cmd)
+			}
 		}
 	}
 
@@ -2911,6 +2957,7 @@ func detectTestCommands(workDir string) []string {
 	}
 
 	// pytest detection (common across all Python projects).
+	// Check test directories AND workDir itself for test_*.py files.
 	hasPyTests := false
 	for _, td := range []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")} {
 		if dirExists(td) {
@@ -2922,6 +2969,12 @@ func detectTestCommands(workDir string) []string {
 				}
 			}
 			break
+		}
+	}
+	if !hasPyTests {
+		// Also check workDir for test_*.py files (some projects keep tests alongside code).
+		if matches, _ := filepath.Glob(filepath.Join(workDir, "test_*.py")); len(matches) > 0 {
+			hasPyTests = true
 		}
 	}
 	if hasPyTests {
