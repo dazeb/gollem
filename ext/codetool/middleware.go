@@ -311,6 +311,46 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-read build system files — critical for compilation/build tasks.
+	// These files define how the project is built and what dependencies are needed.
+	// Reading them saves the agent from wasting turns on `cat Makefile`.
+	if autoReadBudget > 0 {
+		buildFiles := []string{
+			"Makefile", "CMakeLists.txt", "Cargo.toml",
+			"go.mod", "pyproject.toml", "setup.py", "setup.cfg",
+			"package.json", "pom.xml", "build.gradle",
+			"configure.ac", "meson.build", "BUILD",
+			"docker-compose.yml", "docker-compose.yaml",
+		}
+		for _, bf := range buildFiles {
+			if autoReadBudget <= 0 {
+				break
+			}
+			for _, dir := range []string{workDir, "/app"} {
+				path := filepath.Join(dir, bf)
+				content := readFileTruncated(path, min(5000, autoReadBudget))
+				if content != "" {
+					parts = append(parts, fmt.Sprintf("\n## Build file auto-read: %s", path))
+					parts = append(parts, content)
+					autoReadBudget -= len(content)
+					break
+				}
+			}
+		}
+	}
+
+	// Detect Python requirements files and hint the agent to install early.
+	// This is one of the most common first steps that wastes turns.
+	for _, dir := range []string{workDir, "/app"} {
+		reqPath := filepath.Join(dir, "requirements.txt")
+		if content := readFileTruncated(reqPath, 2000); content != "" {
+			parts = append(parts, fmt.Sprintf("\n## Python dependencies found: %s", reqPath))
+			parts = append(parts, content)
+			parts = append(parts, "HINT: Install these FIRST with: pip install --break-system-packages -r "+reqPath)
+			break
+		}
+	}
+
 	// Auto-read small source files in /app/ — now recursive (depth 3).
 	// Reads files < 5KB to avoid overwhelming context, up to 8 files total.
 	if autoReadBudget > 0 {

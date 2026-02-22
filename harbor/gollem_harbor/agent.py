@@ -179,22 +179,26 @@ class GollemAgent(BaseInstalledAgent):
         """Upload the pre-built binary instead of compiling from source."""
         binary_path = _find_binary()
 
-        # Combined setup: fix dpkg, install CA certs, create bin dir — all in one exec.
-        # This saves multiple exec round-trips. Only install CA certs (not curl —
-        # gollem handles HTTPS natively). Use a 60-second timeout to prevent hanging.
+        # Combined setup: fix dpkg, install CA certs and common tools, create bin dir.
+        # This saves multiple exec round-trips. Use a 120-second timeout to prevent hanging.
+        # Pre-installing python3-pip and build-essential saves the agent 2-3 turns per task
+        # since these are the most commonly needed packages. Setup time doesn't count
+        # against the agent's timeout, so this is free from the agent's perspective.
         await environment.exec(
             command=(
                 "dpkg --configure -a > /dev/null 2>&1 || true; "
                 "mkdir -p /usr/local/bin; "
-                "if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ]; then "
-                "timeout 60 sh -c '("
-                "  apt-get update -qq && apt-get install -y -qq ca-certificates"
-                "  || apk add --no-cache ca-certificates"
-                "  || yum install -y ca-certificates"
-                "  || dnf install -y ca-certificates"
-                ") 2>&1 | tail -3' || true; "
-                "update-ca-certificates > /dev/null 2>&1 || true; "
-                "fi"
+                "timeout 120 sh -c '("
+                "  if command -v apt-get >/dev/null 2>&1; then "
+                "    apt-get update -qq 2>/dev/null && "
+                "    apt-get install -y -qq ca-certificates python3-pip build-essential curl wget git jq unzip 2>/dev/null; "
+                "  elif command -v apk >/dev/null 2>&1; then "
+                "    apk add --no-cache ca-certificates python3 py3-pip build-base curl wget git jq unzip 2>/dev/null; "
+                "  elif command -v yum >/dev/null 2>&1; then "
+                "    yum install -y ca-certificates python3-pip gcc make curl wget git jq unzip 2>/dev/null; "
+                "  fi"
+                ") 2>&1 | tail -5' || true; "
+                "update-ca-certificates > /dev/null 2>&1 || true"
             )
         )
 
