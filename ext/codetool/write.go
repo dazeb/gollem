@@ -41,6 +41,13 @@ func Write(opts ...Option) core.Tool {
 				return "", protectedFileError(params.Path)
 			}
 
+			// Check if overwriting an existing file — track previous size
+			// for the overwrite warning that catches accidental truncation.
+			var prevSize int64 = -1
+			if info, err := os.Stat(path); err == nil {
+				prevSize = info.Size()
+			}
+
 			// Create parent directories.
 			dir := filepath.Dir(path)
 			if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -58,6 +65,14 @@ func Write(opts ...Option) core.Tool {
 				lineCount = 0
 			}
 			result := fmt.Sprintf("Wrote %d bytes (%d lines) to %s", len(params.Content), lineCount, params.Path)
+
+			// Warn when overwriting reduced file size by more than 50%.
+			// This catches accidental truncation — the #1 write-related bug
+			// where the agent rewrites a file but forgets to include all content.
+			if prevSize > 100 && int64(len(params.Content)) < prevSize/2 {
+				result += fmt.Sprintf("\n[warning: file shrank from %d to %d bytes (%.0f%% reduction) — verify you included all content]",
+					prevSize, len(params.Content), float64(prevSize-int64(len(params.Content)))/float64(prevSize)*100)
+			}
 
 			// Include a preview for small files (< 30 lines) to save a view call.
 			if lineCount > 0 && lineCount <= 30 {

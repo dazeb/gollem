@@ -1503,6 +1503,30 @@ func TestWritePreview(t *testing.T) {
 	}
 }
 
+func TestWriteOverwriteWarning(t *testing.T) {
+	dir := t.TempDir()
+	tool := Write(WithWorkDir(dir))
+
+	// Create a large file first.
+	bigContent := strings.Repeat("line of content\n", 100) // ~1600 bytes
+	call(t, tool, fmt.Sprintf(`{"path":"big.txt","content":%q}`, bigContent))
+
+	// Overwrite with much smaller content — should trigger warning.
+	result := call(t, tool, `{"path":"big.txt","content":"tiny\n"}`)
+	if !strings.Contains(result, "warning") {
+		t.Errorf("expected overwrite warning, got: %s", result)
+	}
+	if !strings.Contains(result, "reduction") {
+		t.Errorf("expected reduction percentage in warning, got: %s", result)
+	}
+
+	// Overwrite with similar-sized content — should NOT trigger warning.
+	result2 := call(t, tool, fmt.Sprintf(`{"path":"big.txt","content":%q}`, bigContent[:len(bigContent)-10]))
+	if strings.Contains(result2, "warning") {
+		t.Errorf("expected no warning for similar-size overwrite, got: %s", result2)
+	}
+}
+
 func TestMultiEdit_Atomic(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "a.txt", "hello world\ngoodbye world\n")
