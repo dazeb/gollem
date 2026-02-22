@@ -422,6 +422,22 @@ func commandNotFoundHint(stderr string) string {
 		"tcl":        "tcl",
 		"wish":       "tk",
 		"tclsh":      "tcl",
+		"swift":      "swift",
+		"swiftc":     "swift",
+		"nim":        "nim",
+		"choosenim":  "nim",
+		"elixir":     "elixir",
+		"mix":        "elixir",
+		"iex":        "elixir",
+		"erlc":       "erlang",
+		"erl":        "erlang",
+		"zig":        "zig",
+		"opam":       "opam",
+		"dune":       "ocaml-dune",
+		"ocamlfind":  "ocaml-findlib",
+		"coqc":       "coq",
+		"pmars":      "pmars",
+		"xmllint":    "libxml2-utils",
 	}
 
 	// Extract the missing command name from stderr.

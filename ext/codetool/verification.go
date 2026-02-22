@@ -247,9 +247,15 @@ func isVerificationString(cmd string) bool {
 		"prove ", "perl -e",
 		// R language.
 		"rscript ", "rscript -e",
+		// Swift.
+		"swift test", "swift build",
+		// Nim.
+		"nim c ", "nim compile", "nim test",
 		// Inline output validation patterns.
 		"python3 -c \"open(", "python -c \"open(",
 		"python3 -c 'open(", "python -c 'open(",
+		// Solution execution with output redirect (common test pattern).
+		"./solution >", "./program >", "./main >",
 	}
 
 	// Build/compile commands.
@@ -266,6 +272,16 @@ func isVerificationString(cmd string) bool {
 		"python3 -c",
 		"rustc ",
 		"gfortran ", "gdc ", "ldc2 ",
+		// Assembly.
+		"nasm ", "yasm ",
+		// Swift.
+		"swiftc ",
+		// Nim.
+		"nim c ",
+		// OCaml direct compilation.
+		"ocamlopt ", "ocamlfind ",
+		// Haskell direct compilation.
+		"ghc ",
 	}
 
 	// Lint/check commands.
