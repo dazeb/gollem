@@ -199,7 +199,8 @@ class GollemAgent(BaseInstalledAgent):
                 "    apt-get update -qq 2>/dev/null && "
                 "    apt-get install -y -qq ca-certificates python3-pip build-essential "
                 "      curl wget git jq unzip file bc sqlite3 xxd pkg-config "
-                "      cmake autoconf automake libtool libssl-dev 2>/dev/null; "
+                "      cmake autoconf automake libtool libssl-dev "
+                "      netcat-openbsd socat nginx-light 2>/dev/null; "
                 "  elif command -v apk >/dev/null 2>&1; then "
                 "    apk add --no-cache ca-certificates python3 py3-pip build-base "
                 "      curl wget git jq unzip file bc sqlite cmake openssl-dev 2>/dev/null; "
@@ -234,10 +235,15 @@ class GollemAgent(BaseInstalledAgent):
             command=(
                 "timeout 180 sh -c '"
                 # Install pytest and commonly needed Python packages. Nearly all
-                # verifier tests use pytest, and numpy/requests/pyyaml cover ~60%
-                # of TB2 task dependencies. Installing here is free (setup time).
-                "pip install --break-system-packages -q pytest numpy requests pyyaml 2>/dev/null || "
-                "pip3 install --break-system-packages -q pytest numpy requests pyyaml 2>/dev/null || true; "
+                # verifier tests use pytest. numpy/scipy/pandas/requests/pyyaml
+                # cover ~80% of TB2 task dependencies. Installing here is free
+                # (setup time doesn't count against agent timeout).
+                "pip install --break-system-packages -q "
+                "  pytest numpy scipy pandas requests pyyaml matplotlib "
+                "  scikit-learn pillow sympy 2>/dev/null || "
+                "pip3 install --break-system-packages -q "
+                "  pytest numpy scipy pandas requests pyyaml matplotlib "
+                "  scikit-learn pillow sympy 2>/dev/null || true; "
                 # Python: requirements.txt
                 "for f in /app/requirements.txt /requirements.txt; do "
                 "  if [ -f \"$f\" ]; then "
