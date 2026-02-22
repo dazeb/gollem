@@ -3,6 +3,7 @@ package codetool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -235,12 +236,12 @@ func TestModuleNotFoundHint(t *testing.T) {
 		output string
 		want   string
 	}{
-		{"simple module", "ModuleNotFoundError: No module named 'numpy'", "[hint: try: pip install numpy]"},
-		{"aliased module", "ModuleNotFoundError: No module named 'cv2'", "[hint: try: pip install opencv-python]"},
-		{"submodule", "ModuleNotFoundError: No module named 'sklearn.ensemble'", "[hint: try: pip install scikit-learn]"},
-		{"double quotes", `ModuleNotFoundError: No module named "yaml"`, "[hint: try: pip install PyYAML]"},
+		{"simple module", "ModuleNotFoundError: No module named 'numpy'", "[hint: try: pip install --break-system-packages numpy]"},
+		{"aliased module", "ModuleNotFoundError: No module named 'cv2'", "[hint: try: pip install --break-system-packages opencv-python]"},
+		{"submodule", "ModuleNotFoundError: No module named 'sklearn.ensemble'", "[hint: try: pip install --break-system-packages scikit-learn]"},
+		{"double quotes", `ModuleNotFoundError: No module named "yaml"`, "[hint: try: pip install --break-system-packages PyYAML]"},
 		{"no match", "some random error output", ""},
-		{"PIL alias", "ModuleNotFoundError: No module named 'PIL'", "[hint: try: pip install Pillow]"},
+		{"PIL alias", "ModuleNotFoundError: No module named 'PIL'", "[hint: try: pip install --break-system-packages Pillow]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -271,6 +272,104 @@ func TestTransientErrorHint(t *testing.T) {
 			got := transientErrorHint(tt.output, tt.exitCode)
 			if got != tt.want {
 				t.Errorf("transientErrorHint() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSignalHint(t *testing.T) {
+	tests := []struct {
+		exitCode int
+		contains string
+	}{
+		{137, "SIGKILL"},
+		{139, "SIGSEGV"},
+		{134, "SIGABRT"},
+		{1, ""},
+		{0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("exit_%d", tt.exitCode), func(t *testing.T) {
+			got := signalHint(tt.exitCode)
+			if tt.contains == "" && got != "" {
+				t.Errorf("signalHint(%d) = %q, want empty", tt.exitCode, got)
+			}
+			if tt.contains != "" && !strings.Contains(got, tt.contains) {
+				t.Errorf("signalHint(%d) = %q, want containing %q", tt.exitCode, got, tt.contains)
+			}
+		})
+	}
+}
+
+func TestTestResultSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		contains string
+	}{
+		{
+			"pytest summary",
+			"test_foo.py::test_a PASSED\ntest_foo.py::test_b FAILED\n======= 1 passed, 1 failed =======",
+			"1 passed, 1 failed",
+		},
+		{
+			"go test failures",
+			"--- FAIL: TestFoo (0.01s)\n--- FAIL: TestBar (0.02s)\nFAIL\tgithub.com/example",
+			"2 test(s) FAILED",
+		},
+		{
+			"no test output",
+			"hello world\nsome random output\ndone",
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := testResultSummary(tt.output)
+			if tt.contains == "" && got != "" {
+				t.Errorf("testResultSummary() = %q, want empty", got)
+			}
+			if tt.contains != "" && !strings.Contains(got, tt.contains) {
+				t.Errorf("testResultSummary() = %q, want containing %q", got, tt.contains)
+			}
+		})
+	}
+}
+
+func TestCompilationErrorSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		exitCode int
+		contains string
+	}{
+		{
+			"gcc errors",
+			"main.c:10:5: error: expected ';' after expression\nmain.c:15:1: error: unknown type name 'foo'",
+			1,
+			"2 error(s) found",
+		},
+		{
+			"success output",
+			"main.c:10:5: error: something",
+			0,
+			"",
+		},
+		{
+			"no errors",
+			"Building project...\nDone.",
+			1,
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compilationErrorSummary(tt.output, tt.exitCode)
+			if tt.contains == "" && got != "" {
+				t.Errorf("compilationErrorSummary() = %q, want empty", got)
+			}
+			if tt.contains != "" && !strings.Contains(got, tt.contains) {
+				t.Errorf("compilationErrorSummary() = %q, want containing %q", got, tt.contains)
 			}
 		})
 	}

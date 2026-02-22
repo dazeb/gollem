@@ -69,6 +69,9 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 					MaxTokens: 80000,
 					KeepLastN: 8,
 				}),
+				// Truncate oversized content blocks before auto-context sees them.
+				// Prevents a single large tool result from dominating subagent context.
+				core.WithHistoryProcessor[string](ContentTruncationProcessor(50000)),
 				// Environment discovery: give the subagent awareness of directory
 				// structure, README, tests, and task type so it doesn't waste turns
 				// on basic orientation. #1 source of wasted subagent turns.

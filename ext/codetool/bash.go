@@ -151,6 +151,19 @@ func Bash(opts ...Option) core.Tool {
 			if hint := transientErrorHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := signalHint(exitCode); hint != "" {
+				result += "\n" + hint
+			}
+
+			// Append summaries for long output to help the model focus.
+			combined := outStr + errStr
+			if len(combined) > 2000 {
+				if summary := testResultSummary(combined); summary != "" {
+					result += "\n" + summary
+				} else if summary := compilationErrorSummary(combined, exitCode); summary != "" {
+					result += "\n" + summary
+				}
+			}
 
 			return result, nil
 		},
@@ -313,7 +326,7 @@ func moduleNotFoundHint(output string) string {
 		if alias, ok := aliases[module]; ok {
 			pkg = alias
 		}
-		return fmt.Sprintf("[hint: try: pip install %s]", pkg)
+		return fmt.Sprintf("[hint: try: pip install --break-system-packages %s]", pkg)
 	}
 
 	return ""
@@ -358,6 +371,177 @@ func transientErrorHint(output string, exitCode int) string {
 	}
 
 	return ""
+}
+
+// signalHint detects when a process was killed by a signal and provides guidance.
+// Exit code 137 = SIGKILL (often OOM), 139 = SIGSEGV, 134 = SIGABRT.
+func signalHint(exitCode int) string {
+	switch exitCode {
+	case 137:
+		return "[hint: process was killed (SIGKILL) — likely out of memory. " +
+			"Try: reduce batch size, process data in chunks, use less memory-intensive approach, " +
+			"or add swap with: dd if=/dev/zero of=/swapfile bs=1M count=1024 && mkswap /swapfile && swapon /swapfile]"
+	case 139:
+		return "[hint: segmentation fault (SIGSEGV) — likely a memory access bug. " +
+			"Check: array bounds, null pointers, use-after-free, stack overflow from deep recursion]"
+	case 134:
+		return "[hint: process aborted (SIGABRT) — likely an assertion failure or double-free. " +
+			"Check: assert() failures, memory corruption, C++ exception in destructor]"
+	}
+	return ""
+}
+
+// testResultSummary extracts a concise summary from test runner output.
+// Returns empty string if the output doesn't look like test results.
+// This helps the model quickly understand what passed/failed without
+// parsing the entire output itself — especially valuable after truncation.
+func testResultSummary(output string) string {
+	lower := strings.ToLower(output)
+
+	// pytest: "X passed", "X failed", "X error"
+	if strings.Contains(lower, "passed") && (strings.Contains(lower, "failed") || strings.Contains(lower, "error")) ||
+		strings.Contains(lower, "===") && strings.Contains(lower, "passed") {
+		// Find the pytest summary line (usually the last line with "passed" and/or "failed")
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if (strings.Contains(lineLower, "passed") || strings.Contains(lineLower, "failed")) &&
+				(strings.Contains(line, "=") || strings.Contains(lineLower, "error")) {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
+	// Go test: look for "--- FAIL:" and "ok" lines
+	if strings.Contains(output, "--- FAIL:") || strings.Contains(output, "FAIL\t") {
+		var fails []string
+		var passes []string
+		for _, line := range strings.Split(output, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "--- FAIL: ") {
+				// Extract test name
+				name := strings.TrimPrefix(trimmed, "--- FAIL: ")
+				if paren := strings.Index(name, " ("); paren > 0 {
+					name = name[:paren]
+				}
+				fails = append(fails, name)
+			} else if strings.HasPrefix(trimmed, "ok \t") || strings.HasPrefix(trimmed, "ok  \t") {
+				passes = append(passes, trimmed)
+			}
+		}
+		if len(fails) > 0 {
+			summary := fmt.Sprintf("[test summary: %d test(s) FAILED", len(fails))
+			if len(passes) > 0 {
+				summary += fmt.Sprintf(", %d package(s) passed", len(passes))
+			}
+			// Show failing test names (up to 10)
+			shown := fails
+			if len(shown) > 10 {
+				shown = shown[:10]
+			}
+			summary += ": " + strings.Join(shown, ", ")
+			if len(fails) > 10 {
+				summary += fmt.Sprintf("... and %d more", len(fails)-10)
+			}
+			summary += "]"
+			return summary
+		}
+	}
+
+	// npm/jest: "Tests: X failed, Y passed, Z total"
+	if strings.Contains(lower, "tests:") && strings.Contains(lower, "total") {
+		for _, line := range strings.Split(output, "\n") {
+			lineLower := strings.ToLower(strings.TrimSpace(line))
+			if strings.Contains(lineLower, "tests:") && strings.Contains(lineLower, "total") {
+				return "[test summary: " + strings.TrimSpace(line) + "]"
+			}
+		}
+	}
+
+	// Generic: count PASS/FAIL lines
+	if strings.Contains(upper(output), "FAIL") || strings.Contains(upper(output), "PASS") {
+		passCount := strings.Count(upper(output), "\nPASS")
+		failCount := strings.Count(upper(output), "\nFAIL")
+		if passCount+failCount >= 3 {
+			return fmt.Sprintf("[test summary: %d PASS, %d FAIL out of %d tests]",
+				passCount, failCount, passCount+failCount)
+		}
+	}
+
+	return ""
+}
+
+func upper(s string) string {
+	return strings.ToUpper(s)
+}
+
+// compilationErrorSummary extracts key error lines from compiler output.
+// Returns empty string if no compilation errors are detected.
+func compilationErrorSummary(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Only process if it looks like compiler output
+	hasCompilerError := false
+	errorPatterns := []string{
+		": error:", ": error[", "error:", "Error:",
+		": fatal error:", "undefined reference",
+		"SyntaxError:", "IndentationError:", "TypeError:",
+		"cannot find symbol", "not found in scope",
+	}
+	for _, p := range errorPatterns {
+		if strings.Contains(output, p) {
+			hasCompilerError = true
+			break
+		}
+	}
+	if !hasCompilerError {
+		return ""
+	}
+
+	// Extract error lines (lines containing ": error" or similar patterns)
+	var errorLines []string
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) < 5 || len(trimmed) > 200 {
+			continue
+		}
+		isError := false
+		for _, p := range errorPatterns {
+			if strings.Contains(trimmed, p) {
+				isError = true
+				break
+			}
+		}
+		if isError && !seen[trimmed] {
+			seen[trimmed] = true
+			errorLines = append(errorLines, trimmed)
+		}
+	}
+
+	if len(errorLines) == 0 {
+		return ""
+	}
+
+	// Show up to 8 error lines
+	shown := errorLines
+	if len(shown) > 8 {
+		shown = shown[:8]
+	}
+
+	summary := fmt.Sprintf("[compilation: %d error(s) found", len(errorLines))
+	if len(errorLines) > 8 {
+		summary += fmt.Sprintf(" (showing first 8)")
+	}
+	summary += ":\n"
+	for _, line := range shown {
+		summary += "  " + line + "\n"
+	}
+	summary += "]"
+	return summary
 }
 
 // isBuildCommand detects commands that typically need longer timeouts.
