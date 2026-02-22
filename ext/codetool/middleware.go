@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -255,6 +256,15 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Python: "+pyVer)
 	}
 
+	// Quick network connectivity check — many TB2 containers have no internet.
+	// Detecting this early prevents the agent from wasting 2-3 turns on failed
+	// pip install or apt-get commands.
+	if !hasNetworkAccess() {
+		parts = append(parts, "\nWARNING: No internet access detected. Use only locally installed packages and tools.")
+		parts = append(parts, "For Python: check with `python3 -c \"import <module>\"` before trying to install.")
+		parts = append(parts, "For system packages: check with `dpkg -l | grep <pkg>` or `which <tool>`.")
+	}
+
 	// Top-level directory listing (first 30 entries, one level deep).
 	if ls := runQuiet(workDir, "ls", "-1"); ls != "" {
 		entries := strings.Split(strings.TrimSpace(ls), "\n")
@@ -473,6 +483,8 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Check for output directories that need to be populated.
+	// List any pre-existing files (templates/references) so the agent knows
+	// the expected format from turn 1.
 	outputDirs := []string{
 		filepath.Join(workDir, "output_data"),
 		"/app/task_file/output_data",
@@ -481,6 +493,22 @@ func discoverEnvironment(workDir string) string {
 	for _, od := range outputDirs {
 		if info, err := os.Stat(od); err == nil && info.IsDir() {
 			parts = append(parts, "\nOutput directory: "+od+" (your deliverables go here)")
+			// List pre-existing files — these may be templates or expected output format examples.
+			if entries, err := os.ReadDir(od); err == nil && len(entries) > 0 {
+				var fileNames []string
+				for _, e := range entries {
+					if !e.IsDir() {
+						fileNames = append(fileNames, e.Name())
+					}
+				}
+				if len(fileNames) > 0 {
+					if len(fileNames) > 10 {
+						fileNames = append(fileNames[:10], fmt.Sprintf("... and %d more", len(fileNames)-10))
+					}
+					parts = append(parts, "Pre-existing output files: "+strings.Join(fileNames, ", "))
+					parts = append(parts, "NOTE: These may be templates or expected format examples. Study them before creating your output.")
+				}
+			}
 			break
 		}
 	}
@@ -2342,6 +2370,16 @@ func detectEnvFiles(workDir string) string {
 		}
 	}
 	return ""
+}
+
+// hasNetworkAccess performs a quick DNS lookup to check if the container
+// has internet connectivity. Uses a short timeout to avoid blocking startup.
+func hasNetworkAccess() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	resolver := &net.Resolver{}
+	_, err := resolver.LookupHost(ctx, "pypi.org")
+	return err == nil
 }
 
 func dirExists(path string) bool {
