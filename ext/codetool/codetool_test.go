@@ -3202,3 +3202,122 @@ func TestCheckExpectedOutputsExistEmptySolution(t *testing.T) {
 		t.Errorf("expected warning about empty solution.py, got: %s", result)
 	}
 }
+
+func TestDetectTodoStubs(t *testing.T) {
+	dir := t.TempDir()
+
+	// No source files — should return empty.
+	stubs := detectTodoStubs(dir)
+	if len(stubs) != 0 {
+		t.Errorf("expected 0 stubs, got %d", len(stubs))
+	}
+
+	// Create a Python file with TODO stubs.
+	os.WriteFile(filepath.Join(dir, "solution.py"), []byte(`
+def calculate_score(data):
+    # TODO: implement scoring algorithm
+    pass
+
+def process_input(filename):
+    raise NotImplementedError("process_input not implemented")
+
+def validate_output(result):
+    # FIXME: add validation logic
+    return True
+`), 0o644)
+
+	stubs = detectTodoStubs(dir)
+	if len(stubs) == 0 {
+		t.Fatal("expected TODO stubs to be detected")
+	}
+	foundTodo := false
+	foundNotImpl := false
+	foundFixme := false
+	for _, s := range stubs {
+		if strings.Contains(s, "TODO") {
+			foundTodo = true
+		}
+		if strings.Contains(s, "NotImplementedError") {
+			foundNotImpl = true
+		}
+		if strings.Contains(s, "FIXME") {
+			foundFixme = true
+		}
+	}
+	if !foundTodo {
+		t.Error("expected TODO pattern in stubs")
+	}
+	if !foundNotImpl {
+		t.Error("expected NotImplementedError pattern in stubs")
+	}
+	if !foundFixme {
+		t.Error("expected FIXME pattern in stubs")
+	}
+}
+
+func TestDetectTodoStubsRust(t *testing.T) {
+	dir := t.TempDir()
+
+	os.WriteFile(filepath.Join(dir, "main.rs"), []byte(`
+fn process() -> Result<(), Box<dyn Error>> {
+    todo!()
+}
+
+fn validate() {
+    unimplemented!()
+}
+`), 0o644)
+
+	stubs := detectTodoStubs(dir)
+	if len(stubs) == 0 {
+		t.Fatal("expected Rust todo!/unimplemented! stubs")
+	}
+	foundTodo := false
+	foundUnimpl := false
+	for _, s := range stubs {
+		if strings.Contains(s, "todo!()") {
+			foundTodo = true
+		}
+		if strings.Contains(s, "unimplemented!()") {
+			foundUnimpl = true
+		}
+	}
+	if !foundTodo {
+		t.Error("expected todo!() in stubs")
+	}
+	if !foundUnimpl {
+		t.Error("expected unimplemented!() in stubs")
+	}
+}
+
+func TestExtractInvocationPatternsPythonSubprocess(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a Python test script with subprocess invocations.
+	os.WriteFile(filepath.Join(dir, "test.py"), []byte(`
+import subprocess
+import os
+
+def test_solution():
+    result = subprocess.run(["./solution", "input.txt"], capture_output=True, text=True)
+    assert result.returncode == 0
+
+def test_main():
+    output = subprocess.check_output(["python3", "main.py", "--verbose"])
+    assert b"success" in output
+`), 0o644)
+
+	patterns := extractInvocationPatterns(dir)
+	if len(patterns) == 0 {
+		t.Fatal("expected invocation patterns from Python subprocess calls")
+	}
+	foundSubprocess := false
+	for _, p := range patterns {
+		if strings.Contains(p, "subprocess") && strings.Contains(p, "solution") {
+			foundSubprocess = true
+		}
+	}
+	if !foundSubprocess {
+		t.Errorf("expected subprocess invocation with solution, got: %v", patterns)
+	}
+}

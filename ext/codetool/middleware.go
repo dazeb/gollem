@@ -707,6 +707,15 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Detect TODO/FIXME/stub patterns in source files — tells the agent
+	// exactly what needs to be implemented in skeleton code.
+	if todoStubs := detectTodoStubs(workDir); len(todoStubs) > 0 {
+		parts = append(parts, "\n## Implementation Stubs Found (TODOs in source code)")
+		parts = append(parts, "These locations need implementation:")
+		parts = append(parts, todoStubs...)
+		parts = append(parts, "Implement these stubs as part of your solution.")
+	}
+
 	// Surface solution files that tests expect but don't exist yet.
 	// If a test imports "from solution import X" and solution.py doesn't exist,
 	// the agent needs to CREATE it. This is the #1 thing to do first.
@@ -2114,9 +2123,8 @@ func extractInvocationPatterns(workDir string) []string {
 	var patterns []string
 	seen := make(map[string]bool)
 
-	// Collect test/verification script paths (shell only — invocation
-	// patterns are most explicit in shell scripts).
-	var scriptPaths []string
+	// Collect test/verification script paths.
+	var shellScripts, pyScripts []string
 	for _, dir := range []string{
 		"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test"),
 		workDir, "/app", "/app/task_file",
@@ -2127,12 +2135,21 @@ func extractInvocationPatterns(workDir string) []string {
 		} {
 			path := filepath.Join(dir, name)
 			if fileExists(path) {
-				scriptPaths = append(scriptPaths, path)
+				shellScripts = append(shellScripts, path)
+			}
+		}
+		for _, name := range []string{
+			"test.py", "test_output.py", "test_outputs.py", "run_tests.py",
+			"run_test.py", "verify.py", "check.py", "grade.py",
+		} {
+			path := filepath.Join(dir, name)
+			if fileExists(path) {
+				pyScripts = append(pyScripts, path)
 			}
 		}
 	}
 
-	// Invocation indicators: substrings that mark a line as invoking the solution.
+	// Invocation indicators for shell scripts.
 	invocationMarkers := []string{
 		"./solution", "./program", "./main", "./a.out",
 		"./solve", "./answer", "./app",
@@ -2144,14 +2161,14 @@ func extractInvocationPatterns(workDir string) []string {
 		"java -", "java Solution", "java Main",
 	}
 
-	for _, scriptPath := range scriptPaths {
+	// Phase 1: Shell scripts — raw invocation lines.
+	for _, scriptPath := range shellScripts {
 		data, err := os.ReadFile(scriptPath)
 		if err != nil || len(data) > 50000 {
 			continue
 		}
 		for _, line := range strings.Split(string(data), "\n") {
 			trimmed := strings.TrimSpace(line)
-			// Skip comments, empty lines, and variable-only lines.
 			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 				continue
 			}
@@ -2171,6 +2188,57 @@ func extractInvocationPatterns(workDir string) []string {
 		}
 		if len(patterns) >= 5 {
 			break
+		}
+	}
+
+	// Phase 2: Python test scripts — subprocess invocations.
+	// Patterns: subprocess.run(["./solution", ...]), os.system("./solution ..."),
+	// subprocess.check_output(["python3", "solution.py", ...])
+	if len(patterns) < 5 {
+		pyInvocationMarkers := []string{
+			"subprocess.run(", "subprocess.check_output(", "subprocess.call(",
+			"subprocess.Popen(", "os.system(",
+		}
+		for _, scriptPath := range pyScripts {
+			data, err := os.ReadFile(scriptPath)
+			if err != nil || len(data) > 50000 {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+				for _, marker := range pyInvocationMarkers {
+					if strings.Contains(trimmed, marker) {
+						// Check that this line also references the solution.
+						lower := strings.ToLower(trimmed)
+						hasSolution := false
+						for _, sm := range []string{
+							"solution", "program", "main", "a.out",
+							"solve", "answer",
+						} {
+							if strings.Contains(lower, sm) {
+								hasSolution = true
+								break
+							}
+						}
+						if hasSolution {
+							if len(trimmed) > 200 {
+								trimmed = trimmed[:200] + "..."
+							}
+							if !seen[trimmed] {
+								seen[trimmed] = true
+								patterns = append(patterns, trimmed)
+							}
+						}
+						break
+					}
+				}
+			}
+			if len(patterns) >= 5 {
+				break
+			}
 		}
 	}
 
@@ -3752,6 +3820,71 @@ func extractFileStructure(path string) string {
 		sizeInfo = fmt.Sprintf(" (%s, %d lines)", humanSize(info.Size()), len(lines))
 	}
 	return fmt.Sprintf("Definitions in %s%s:\n%s", filepath.Base(path), sizeInfo, strings.Join(defs, "\n"))
+}
+
+// detectTodoStubs scans source files in the working directory for TODO, FIXME,
+// IMPLEMENT, NotImplementedError, and pass-only function stubs. Returns a list
+// of actionable lines showing what the agent needs to implement.
+// This catches the common TB2 pattern of providing skeleton code with stubs.
+func detectTodoStubs(workDir string) []string {
+	var stubs []string
+	seen := make(map[string]bool)
+
+	todoPatterns := []string{
+		"TODO", "FIXME", "IMPLEMENT", "HACK", "XXX",
+		"NotImplementedError", "NotImplemented",
+		"raise NotImplementedError", "pass  # TODO",
+		"pass # TODO", "pass  # FIXME", "pass # FIXME",
+		"todo!()", "unimplemented!()", "panic(\"not implemented\")",
+		"throw new Error(\"not implemented\")",
+		"throw new UnsupportedOperationException",
+	}
+
+	for _, dir := range []string{workDir, "/app"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !isSourceFile(entry.Name()) {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 50000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				continue
+			}
+			for lineNum, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				for _, pat := range todoPatterns {
+					if strings.Contains(trimmed, pat) {
+						key := entry.Name() + ":" + trimmed
+						if !seen[key] {
+							seen[key] = true
+							stub := fmt.Sprintf("  %s:%d: %s", entry.Name(), lineNum+1, trimmed)
+							if len(stub) > 150 {
+								stub = stub[:150] + "..."
+							}
+							stubs = append(stubs, stub)
+						}
+						break
+					}
+				}
+			}
+		}
+		if len(stubs) > 0 {
+			break
+		}
+	}
+
+	// Cap to avoid context bloat.
+	if len(stubs) > 15 {
+		stubs = append(stubs[:15], fmt.Sprintf("  ... and %d more TODOs", len(stubs)-15))
+	}
+	return stubs
 }
 
 func dirExists(path string) bool {
