@@ -1423,19 +1423,19 @@ func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessa
 			switch p := part.(type) {
 			case core.ToolReturnPart:
 				if s, ok := p.Content.(string); ok && len(s) > maxBytes {
-					p.Content = s[:maxBytes] + "\n... [truncated: context overflow recovery]"
+					p.Content = s[:maxBytes] + "\n... [truncated for context management]"
 					parts[i] = p
 					continue
 				}
 			case core.UserPromptPart:
 				if len(p.Content) > maxBytes {
-					p.Content = p.Content[:maxBytes] + "\n... [truncated: context overflow recovery]"
+					p.Content = p.Content[:maxBytes] + "\n... [truncated for context management]"
 					parts[i] = p
 					continue
 				}
 			case core.RetryPromptPart:
 				if len(p.Content) > maxBytes {
-					p.Content = p.Content[:maxBytes] + "\n... [truncated: context overflow recovery]"
+					p.Content = p.Content[:maxBytes] + "\n... [truncated for context management]"
 					parts[i] = p
 					continue
 				}
