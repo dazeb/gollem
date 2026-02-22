@@ -125,7 +125,8 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// 1. Loop detection — break doom loops of repeated edits.
 		core.WithAgentMiddleware[string](LoopDetectionMiddleware(4)),
 		// 2. Progress tracking — nudge agent to produce output files early.
-		core.WithAgentMiddleware[string](ProgressTrackingMiddleware(workDir)),
+		//    Pass timeout so it can also use time-based triggers.
+		core.WithAgentMiddleware[string](ProgressTrackingMiddleware(workDir, cfg.Timeout)),
 		// 3. Context injection — discover environment on first turn.
 		core.WithAgentMiddleware[string](ContextInjectionMiddleware(workDir, cfg.Timeout)),
 		// 4. Reasoning sandwich — vary thinking budget by phase.

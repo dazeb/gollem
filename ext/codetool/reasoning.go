@@ -171,6 +171,7 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 	warned50 := false
 	warned75 := false
 	warned90 := false
+	warned95 := false
 
 	return func(
 		ctx context.Context,
@@ -185,6 +186,14 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 
 		var warning string
 		switch {
+		case pct >= 0.95 && !warned95:
+			warned95 = true
+			warning = fmt.Sprintf("EMERGENCY: Only %s remaining (%.0f%% elapsed). "+
+				"This is your LAST CHANCE. You will be killed soon. "+
+				"DO ONLY: (1) if output files don't exist, write them NOW with whatever you have, "+
+				"(2) rm -rf __pycache__ *.pyc *.o build/ dist/ — remove ALL build artifacts, "+
+				"(3) STOP. Do nothing else. Any further exploration or debugging is wasted.",
+				remaining.Round(time.Second), pct*100)
 		case pct >= 0.90 && !warned90:
 			warned90 = true
 			warning = fmt.Sprintf("TIME CRITICAL: Only %s remaining (%.0f%% elapsed). "+

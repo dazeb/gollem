@@ -222,12 +222,20 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Top-level files:\n"+strings.Join(entries, "\n"))
 	}
 
-	// Read README if present — many tasks embed critical requirements here.
+	// Read README / task description if present — many tasks embed critical requirements here.
 	readmePaths := []string{
 		filepath.Join(workDir, "README.md"),
 		filepath.Join(workDir, "README.txt"),
 		filepath.Join(workDir, "README"),
 		filepath.Join(workDir, "readme.md"),
+		filepath.Join(workDir, "TASK.md"),
+		filepath.Join(workDir, "task.md"),
+		filepath.Join(workDir, "INSTRUCTIONS.md"),
+		filepath.Join(workDir, "instructions.md"),
+		filepath.Join(workDir, "PROBLEM.md"),
+		filepath.Join(workDir, "problem.md"),
+		filepath.Join(workDir, "prompt.md"),
+		filepath.Join(workDir, "prompt.txt"),
 	}
 	for _, rp := range readmePaths {
 		if content := readFileTruncated(rp, 3000); content != "" {
@@ -332,6 +340,17 @@ func discoverEnvironment(workDir string) string {
 			parts = append(parts, "\nOutput directory: "+od+" (your deliverables go here)")
 			break
 		}
+	}
+
+	// Detect expected output files from test analysis.
+	// This tells the agent exactly WHAT to create from the start.
+	if expectedOutputs := detectExpectedOutputs(workDir); len(expectedOutputs) > 0 {
+		parts = append(parts, "\n## Expected Output Files (from test analysis)")
+		parts = append(parts, "Tests expect these files/paths to exist:")
+		for _, o := range expectedOutputs {
+			parts = append(parts, "  - "+o)
+		}
+		parts = append(parts, "Create these files EARLY — even with placeholder content — then refine.")
 	}
 
 	// Task-type specific guidance based on detected patterns.
@@ -572,6 +591,28 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- If no GPU, use CPU-compatible approaches (sklearn, small models)")
 	}
 
+	// Detect formal verification / theorem proving tasks.
+	if fileExists(filepath.Join(workDir, "lakefile.lean")) || fileExists(filepath.Join(workDir, "leanpkg.toml")) ||
+		fileExists(filepath.Join(workDir, "lakefile.toml")) {
+		hints = append(hints, "\n## Task Type: Theorem Proving (Lean 4)")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Read the goal and any existing proof structure carefully")
+		hints = append(hints, "- Use `lake build` to check proofs incrementally")
+		hints = append(hints, "- Use `sorry` as placeholder, then fill in proofs step by step")
+		hints = append(hints, "- Common tactics: simp, omega, ring, exact, apply, intro, induction")
+		hints = append(hints, "- If stuck, try `decide` for decidable propositions or `norm_num` for numeric goals")
+	}
+
+	// Detect cryptography / security analysis tasks.
+	if detectCryptoTask(workDir) {
+		hints = append(hints, "\n## Task Type: Cryptography / Security Analysis")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Study the cipher/protocol implementation carefully before attacking")
+		hints = append(hints, "- Use well-known cryptanalysis techniques (linear, differential, meet-in-the-middle)")
+		hints = append(hints, "- For password recovery: try common patterns, dictionary attacks, then brute force")
+		hints = append(hints, "- Use Python's pycryptodome or built-in hashlib for crypto operations")
+	}
+
 	// Detect Dockerfile/container tasks.
 	if fileExists(filepath.Join(workDir, "Dockerfile")) || fileExists(filepath.Join(workDir, "docker-compose.yml")) {
 		hints = append(hints, "\n## Note: Docker files detected")
@@ -583,6 +624,105 @@ func detectTaskGuidance(workDir string) string {
 		return strings.Join(hints, "\n")
 	}
 	return ""
+}
+
+// detectExpectedOutputs scans test files and README to identify the output
+// files the agent is expected to create. This gives the agent a concrete
+// target list from turn 1, preventing wasted time figuring out what to produce.
+func detectExpectedOutputs(workDir string) []string {
+	var outputs []string
+	seen := make(map[string]bool)
+
+	// Search test files for references to output file paths.
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !isSourceFile(entry.Name()) {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 30000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
+			if err != nil {
+				continue
+			}
+			content := string(data)
+			// Look for file path references in test code.
+			outputPatterns := []string{
+				"output_data/", "output/", "/app/output",
+				"result.", "results.", "solution.", "answer.",
+			}
+			for _, line := range strings.Split(content, "\n") {
+				trimmed := strings.TrimSpace(line)
+				// Skip comments.
+				if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+					continue
+				}
+				for _, pat := range outputPatterns {
+					idx := strings.Index(trimmed, pat)
+					if idx < 0 {
+						continue
+					}
+					// Extract the file path from surrounding quotes or path syntax.
+					path := extractPathFromLine(trimmed, idx)
+					if path != "" && !seen[path] {
+						seen[path] = true
+						outputs = append(outputs, path)
+					}
+				}
+			}
+		}
+		if len(outputs) > 0 {
+			break // found expected outputs in one test dir
+		}
+	}
+
+	// Cap to 15 to prevent context bloat.
+	if len(outputs) > 15 {
+		outputs = outputs[:15]
+	}
+	return outputs
+}
+
+// extractPathFromLine extracts a file path starting at position idx in a line.
+// It looks for surrounding quotes or extracts until whitespace/punctuation.
+func extractPathFromLine(line string, idx int) string {
+	// Walk backward to find the start of the path (quote or path separator).
+	start := idx
+	for start > 0 {
+		c := line[start-1]
+		if c == '"' || c == '\'' || c == '(' || c == ' ' || c == ',' {
+			break
+		}
+		start--
+	}
+
+	// Walk forward to find the end of the path.
+	end := idx
+	for end < len(line) {
+		c := line[end]
+		if c == '"' || c == '\'' || c == ')' || c == ' ' || c == ',' || c == ';' || c == ']' {
+			break
+		}
+		end++
+	}
+
+	path := strings.TrimSpace(line[start:end])
+	// Clean up common prefixes.
+	path = strings.TrimLeft(path, "\"'(")
+	path = strings.TrimRight(path, "\"');,]")
+
+	// Only return paths that look like file references.
+	if len(path) < 3 || !strings.Contains(path, "/") && !strings.Contains(path, ".") {
+		return ""
+	}
+	return path
 }
 
 // discoverVerificationScripts finds test/verification scripts outside of standard test directories.
@@ -657,6 +797,31 @@ func detectMLTask(workDir string) bool {
 		content := readFileTruncated(m, 2000)
 		if strings.Contains(content, "torch") || strings.Contains(content, "tensorflow") ||
 			strings.Contains(content, "transformers") || strings.Contains(content, "sklearn") {
+			return true
+		}
+	}
+	return false
+}
+
+// detectCryptoTask returns true if the working directory looks like a cryptography task.
+func detectCryptoTask(workDir string) bool {
+	indicators := []string{
+		"crypto", "cipher", "encrypt", "decrypt", "hash",
+		"password", "recovery", "feal", "aes", "rsa", "des",
+		"cryptanalysis", "xor", "hmac",
+	}
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range indicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	// Check for crypto-related imports in source files.
+	matches, _ := filepath.Glob(filepath.Join(workDir, "*.py"))
+	for _, m := range matches {
+		content := readFileTruncated(m, 2000)
+		if strings.Contains(content, "Crypto.") || strings.Contains(content, "cryptography") ||
+			strings.Contains(content, "hashlib") || strings.Contains(content, "hmac") {
 			return true
 		}
 	}
@@ -921,6 +1086,11 @@ func isSourceFile(name string) bool {
 		".jsx", ".tsx", ".vue", ".svelte", ".zig", ".nim",
 		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hs",
 		".jl", ".m", ".swift", ".f90", ".f95",
+		".lean", ".v", ".agda",          // theorem provers
+		".cu", ".cuh",                   // CUDA
+		".s", ".asm", ".wat",            // assembly / WebAssembly text
+		".proto", ".thrift", ".graphql", // schema files
+		".cmake",                        // build config
 	}
 	lower := strings.ToLower(name)
 	for _, ext := range sourceExts {
@@ -940,12 +1110,52 @@ func isSourceFile(name string) bool {
 // files and nudges it to stop researching and start writing. This combats
 // the "analysis paralysis" failure mode where agents spend all turns
 // exploring without creating deliverables.
-func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
+//
+// When a timeout is provided, the middleware also uses time-based triggers
+// in addition to turn-based ones. For sprint tasks (≤15 min), thresholds
+// are lowered aggressively. This was the #1 cause of timeouts in evals.
+func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.AgentMiddleware {
 	var mu sync.Mutex
 	turn := 0
 	hasWritten := false
-	warned7 := false
-	warned15 := false
+	warnedTurn1 := false
+	warnedTurn2 := false
+	warnedTime30 := false
+	warnedTime50 := false
+
+	startTime := time.Now()
+	effectiveTimeout := time.Duration(0)
+	if len(timeout) > 0 && timeout[0] > 0 {
+		effectiveTimeout = timeout[0]
+	}
+	// Also check GOLLEM_TIMEOUT_SEC env var (set by Harbor).
+	if effectiveTimeout == 0 {
+		if envTimeout := os.Getenv("GOLLEM_TIMEOUT_SEC"); envTimeout != "" {
+			var secs float64
+			if _, err := fmt.Sscanf(envTimeout, "%f", &secs); err == nil && secs > 0 {
+				effectiveTimeout = time.Duration(secs) * time.Second
+			}
+		}
+	}
+
+	// Adaptive turn thresholds based on timeout duration.
+	// Sprint tasks need much earlier warnings to prevent wasting time.
+	turnWarning := 7
+	turnCritical := 15
+	if effectiveTimeout > 0 {
+		mins := int(effectiveTimeout.Minutes())
+		switch {
+		case mins <= 15:
+			turnWarning = 3
+			turnCritical = 6
+		case mins <= 30:
+			turnWarning = 5
+			turnCritical = 10
+		case mins <= 60:
+			turnWarning = 6
+			turnCritical = 12
+		}
+	}
 
 	return func(
 		ctx context.Context,
@@ -994,17 +1204,57 @@ func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
 		}
 
 		needsWarning := !hasWritten
-		w7 := warned7
-		w15 := warned15
-		if needsWarning && currentTurn >= 7 && !w7 {
-			warned7 = true
+
+		// Compute time percentage if timeout is known.
+		var timePct float64
+		if effectiveTimeout > 0 {
+			timePct = float64(time.Since(startTime)) / float64(effectiveTimeout)
 		}
-		if needsWarning && currentTurn >= 15 && !w15 {
-			warned15 = true
+
+		w1 := warnedTurn1
+		w2 := warnedTurn2
+		wt30 := warnedTime30
+		wt50 := warnedTime50
+		if needsWarning && currentTurn >= turnWarning && !w1 {
+			warnedTurn1 = true
+		}
+		if needsWarning && currentTurn >= turnCritical && !w2 {
+			warnedTurn2 = true
+		}
+		if needsWarning && timePct >= 0.30 && !wt30 {
+			warnedTime30 = true
+		}
+		if needsWarning && timePct >= 0.50 && !wt50 {
+			warnedTime50 = true
 		}
 		mu.Unlock()
 
-		if needsWarning && currentTurn >= 15 && !w15 {
+		// Time-based warnings take priority over turn-based ones.
+		if needsWarning && timePct >= 0.50 && !wt50 {
+			fmt.Fprintf(os.Stderr, "[gollem] progress: CRITICAL — %.0f%% time used with no output files\n", timePct*100)
+			urgentMsg := core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{
+						Content: fmt.Sprintf("CRITICAL: %.0f%% of your time is gone and you have NOT created any output files. "+
+							"You MUST produce output NOW. Stop ALL research, analysis, and debugging. "+
+							"Write your best attempt at a solution IMMEDIATELY using write or bash redirects. "+
+							"An imperfect solution that exists scores infinitely higher than a perfect solution that doesn't.", timePct*100),
+					},
+				},
+			}
+			messages = append(messages, urgentMsg)
+		} else if needsWarning && timePct >= 0.30 && !wt30 {
+			fmt.Fprintf(os.Stderr, "[gollem] progress: warning — %.0f%% time used with no output files\n", timePct*100)
+			warningMsg := core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{
+						Content: fmt.Sprintf("PROGRESS WARNING: %.0f%% of your time is used and no output files exist yet. "+
+							"Rule #1: Output First, Perfect Later. Write your best attempt NOW, then iterate.", timePct*100),
+					},
+				},
+			}
+			messages = append(messages, warningMsg)
+		} else if needsWarning && currentTurn >= turnCritical && !w2 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: CRITICAL — turn %d with no output files created\n", currentTurn)
 			urgentMsg := core.ModelRequest{
 				Parts: []core.ModelRequestPart{
@@ -1018,7 +1268,7 @@ func ProgressTrackingMiddleware(workDir string) core.AgentMiddleware {
 				},
 			}
 			messages = append(messages, urgentMsg)
-		} else if needsWarning && currentTurn >= 7 && !w7 {
+		} else if needsWarning && currentTurn >= turnWarning && !w1 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: warning — turn %d with no output files created\n", currentTurn)
 			warningMsg := core.ModelRequest{
 				Parts: []core.ModelRequestPart{

@@ -133,9 +133,12 @@ func buildSystemPrompt(toolName string, tools map[string]*core.Tool, schemas map
 
 	b.WriteString("### Usage Notes\n\n")
 	b.WriteString("- Always use keyword arguments: `search(query=\"test\")` not `search(\"test\")`\n")
-	b.WriteString("- Call multiple functions in one code block to avoid round trips\n")
+	b.WriteString("- **Batch aggressively**: Call multiple functions in one code block to save round trips. ")
+	b.WriteString("Each execute_code call costs one API turn — batch 3-5 operations per call.\n")
+	b.WriteString("- Example: read 3 files, run a command, and write output — all in one code block\n")
 	b.WriteString("- Use try/except for error handling\n")
 	b.WriteString("- Functions return Python objects (dicts, lists, strings, numbers)\n")
+	b.WriteString("- You can mix execute_code with direct tool calls — use whichever is more efficient\n")
 
 	return b.String()
 }
