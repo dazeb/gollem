@@ -221,11 +221,20 @@ func runAgent() {
 					f.thinkingBudget, maxTokens)
 			}
 		case "openai":
-			if f.reasoningEffort == "" {
-				f.reasoningEffort = "high" // Default to high for reasoning models
+			// Only enable reasoning effort for O-series models (o3, o4-mini, etc.)
+			// that actually support the parameter. Other OpenAI-compatible models
+			// (grok, together, etc.) may not support it.
+			isOSeries := strings.HasPrefix(f.modelName, "o") && len(f.modelName) >= 2
+			if isOSeries {
+				if f.reasoningEffort == "" {
+					f.reasoningEffort = "high"
+				}
+				agentOpts = append(agentOpts, core.WithReasoningEffort[string](f.reasoningEffort))
+				fmt.Fprintf(os.Stderr, "gollem: reasoning effort enabled (%s)\n", f.reasoningEffort)
+			} else if f.reasoningEffort != "" {
+				agentOpts = append(agentOpts, core.WithReasoningEffort[string](f.reasoningEffort))
+				fmt.Fprintf(os.Stderr, "gollem: reasoning effort enabled (%s)\n", f.reasoningEffort)
 			}
-			agentOpts = append(agentOpts, core.WithReasoningEffort[string](f.reasoningEffort))
-			fmt.Fprintf(os.Stderr, "gollem: reasoning effort enabled (%s)\n", f.reasoningEffort)
 		case "vertexai":
 			// Gemini 2.5+ and 3.x support thinkingConfig.
 			if f.thinkingBudget < 0 {
