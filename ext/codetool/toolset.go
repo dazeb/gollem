@@ -157,13 +157,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		core.WithHistoryProcessor[string](ContentTruncationProcessor(50000)),
 
 		// Auto context: compress old messages when context grows too large.
-		// Set to 80K to leave headroom before provider limits (xAI/grok
-		// returns 413 at ~130K tokens). ContextOverflowMiddleware provides
-		// a safety net if we still exceed the limit.
-		core.WithAutoContext[string](core.AutoContextConfig{
-			MaxTokens: 80000,
-			KeepLastN: 10,
-		}),
+		// Default: 80K to leave headroom before provider limits (xAI/grok
+		// returns 413 at ~130K tokens). Provider-aware configs override this
+		// (e.g., 150K for Claude's 200K context). ContextOverflowMiddleware
+		// provides a safety net if we still exceed the limit.
+		core.WithAutoContext[string](autoContextForConfig(cfg)),
 
 		// Tracing: capture full execution trace for post-run analysis.
 		core.WithTracing[string](),
@@ -221,6 +219,34 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	}
 
 	return opts
+}
+
+// autoContextForConfig returns the auto-context config to use, preferring
+// an explicit override from WithAutoContextConfig, with sensible defaults.
+func autoContextForConfig(cfg *Config) core.AutoContextConfig {
+	if cfg.AutoContextConfig != nil {
+		return *cfg.AutoContextConfig
+	}
+	return core.AutoContextConfig{
+		MaxTokens: 80000,
+		KeepLastN: 10,
+	}
+}
+
+// subagentAutoContextConfig returns auto-context config scaled for subagents.
+// Subagents get the same provider-aware limits but with fewer kept messages
+// since they run shorter tasks.
+func subagentAutoContextConfig(cfg *Config) core.AutoContextConfig {
+	if cfg.AutoContextConfig != nil {
+		return core.AutoContextConfig{
+			MaxTokens: cfg.AutoContextConfig.MaxTokens,
+			KeepLastN: max(cfg.AutoContextConfig.KeepLastN-2, 8),
+		}
+	}
+	return core.AutoContextConfig{
+		MaxTokens: 80000,
+		KeepLastN: 8,
+	}
 }
 
 // stderrLoggingMiddleware logs each model turn to stderr with timing.

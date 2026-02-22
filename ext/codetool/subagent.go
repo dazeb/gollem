@@ -57,6 +57,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 
 			// Build a lightweight subagent with coding tools but no delegation
 			// (prevents infinite recursion).
+			acConfig := subagentAutoContextConfig(cfg)
 			subOpts := []core.AgentOption[string]{
 				core.WithSystemPrompt[string](systemPrompt),
 				core.WithToolsets[string](Toolset(opts...)),
@@ -65,10 +66,8 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(50)),
 				core.WithDefaultToolTimeout[string](2 * time.Minute),
 				// Auto-compress context on long subtasks to prevent context overflow.
-				core.WithAutoContext[string](core.AutoContextConfig{
-					MaxTokens: 80000,
-					KeepLastN: 8,
-				}),
+				// Uses provider-aware limits when configured (e.g., 150K for Claude).
+				core.WithAutoContext[string](acConfig),
 				// Truncate oversized content blocks before auto-context sees them.
 				// Prevents a single large tool result from dominating subagent context.
 				core.WithHistoryProcessor[string](ContentTruncationProcessor(50000)),
@@ -82,7 +81,8 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 
 			agent := core.NewAgent[string](model, subOpts...)
 
-			fmt.Fprintf(os.Stderr, "[gollem] subagent:start task=%q\n", truncateForLog(params.Task, 100))
+			fmt.Fprintf(os.Stderr, "[gollem] subagent:start task=%q (context: %dK tokens)\n",
+				truncateForLog(params.Task, 100), acConfig.MaxTokens/1000)
 
 			result, err := agent.Run(ctx, params.Task)
 			if err != nil {

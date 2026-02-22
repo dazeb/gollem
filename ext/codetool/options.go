@@ -49,6 +49,11 @@ type Config struct {
 	// subagents and teammates. When set, each spawned agent gets a
 	// dynamically generated personality tailored to its assigned task.
 	PersonalityGenerator modelutil.PersonalityGeneratorFunc
+
+	// AutoContextConfig overrides the default auto-context compression settings.
+	// When set, both the main agent and subagents use these limits. This allows
+	// provider-aware tuning (e.g., 150K for Claude's 200K context vs 80K for grok).
+	AutoContextConfig *core.AutoContextConfig
 }
 
 // Option configures coding tools.
@@ -126,4 +131,11 @@ func WithTeamMode() Option {
 // to create a generator backed by an LLM, or provide a custom function.
 func WithPersonalityGenerator(gen modelutil.PersonalityGeneratorFunc) Option {
 	return func(c *Config) { c.PersonalityGenerator = gen }
+}
+
+// WithAutoContextConfig overrides the default auto-context compression settings
+// for both the main agent and subagents. Use this to tune context limits per
+// provider (e.g., 150K for Claude, 80K for grok).
+func WithAutoContextConfig(cfg core.AutoContextConfig) Option {
+	return func(c *Config) { c.AutoContextConfig = &cfg }
 }

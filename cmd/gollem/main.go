@@ -225,28 +225,28 @@ func runAgent() {
 	// This is separate from f.timeout (exec timeout) which may be shorter.
 	toolOpts = append(toolOpts, codetool.WithTimeout(budgetTimeout))
 
+	// Provider-aware auto-context limits. This flows through to BOTH the main
+	// agent AND subagents via WithAutoContextConfig. Previously, only the main
+	// agent got the override and subagents were stuck at 80K — wasting 70K of
+	// Claude's context window on every subagent invocation.
+	switch f.provider {
+	case "anthropic", "vertexai-anthropic":
+		toolOpts = append(toolOpts, codetool.WithAutoContextConfig(core.AutoContextConfig{
+			MaxTokens: 150000,
+			KeepLastN: 12,
+		}))
+		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 150K tokens (Claude) — main + subagents\n")
+	case "vertexai":
+		toolOpts = append(toolOpts, codetool.WithAutoContextConfig(core.AutoContextConfig{
+			MaxTokens: 150000,
+			KeepLastN: 12,
+		}))
+		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 150K tokens (Gemini) — main + subagents\n")
+	}
+
 	// Build the coding agent with the full recommended setup.
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
 	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(f.timeout)))
-
-	// Override auto-context limit based on provider's context window.
-	// Anthropic Claude models have 200K context — we can safely use 150K.
-	// Gemini models also have large context windows (1M+).
-	// OpenAI-compatible (including xAI/grok) defaults to 80K (from AgentOptions).
-	switch f.provider {
-	case "anthropic", "vertexai-anthropic":
-		agentOpts = append(agentOpts, core.WithAutoContext[string](core.AutoContextConfig{
-			MaxTokens: 150000,
-			KeepLastN: 12,
-		}))
-		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 150K tokens (Claude)\n")
-	case "vertexai":
-		agentOpts = append(agentOpts, core.WithAutoContext[string](core.AutoContextConfig{
-			MaxTokens: 150000,
-			KeepLastN: 12,
-		}))
-		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 150K tokens (Gemini)\n")
-	}
 
 	// Enable reasoning by default for providers that support it.
 	// This is provider-agnostic: Anthropic uses ThinkingBudget,
