@@ -927,6 +927,10 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Create these files EARLY — even with placeholder content — then refine.")
 	}
 
+	// Auto-create output directories that tests reference but don't exist.
+	// This saves 1 turn of "mkdir: no such file or directory" errors.
+	autoMkdirOutputDirs(workDir, expectedOutputs)
+
 	// Detect output format and execution patterns from test code.
 	// This addresses failure mode #5: correct logic but wrong output format.
 	formatHints := detectOutputFormat(workDir)
@@ -991,6 +995,24 @@ func discoverEnvironment(workDir string) string {
 	if cwdHint := detectExpectedWorkingDir(workDir); cwdHint != "" {
 		parts = append(parts, "\n## Working Directory (from test analysis)")
 		parts = append(parts, cwdHint)
+	}
+
+	// Extract per-test timeouts from test scripts (timeout N, signal.alarm, ulimit).
+	// Surfaces performance requirements so the agent knows how fast its solution must be.
+	if perTestTimeouts := extractPerTestTimeouts(workDir); len(perTestTimeouts) > 0 {
+		parts = append(parts, "\n## Per-Test Timeouts (from test scripts)")
+		parts = append(parts, "Individual test cases have these time limits:")
+		for _, t := range perTestTimeouts {
+			parts = append(parts, "  - "+t)
+		}
+		parts = append(parts, "Your solution MUST complete within these limits. Profile with `time` if close to the limit.")
+	}
+
+	// Auto-read expected output files referenced by diff/cmp in test scripts.
+	// This is the #1 way to produce correct output — seeing the exact expected
+	// format eliminates guessing about whitespace, encoding, and structure.
+	if autoReadBudget > 0 {
+		autoReadBudget = autoReadDiffExpectedFiles(workDir, &parts, autoReadBudget)
 	}
 
 	// Auto-read example/reference output files that show expected format.
@@ -3193,6 +3215,482 @@ func detectExpectedWorkingDir(workDir string) string {
 	}
 
 	return ""
+}
+
+// autoMkdirOutputDirs creates output directories that tests reference but don't
+// exist yet. This saves 1 turn of "No such file or directory" errors when the
+// agent writes output files. Only creates directories from well-known output
+// paths detected in test analysis — not arbitrary paths.
+func autoMkdirOutputDirs(workDir string, expectedOutputs []string) {
+	created := make(map[string]bool)
+	for _, o := range expectedOutputs {
+		dir := filepath.Dir(o)
+		if dir == "." || dir == "" || dir == "/" {
+			continue
+		}
+		// Resolve relative paths against workDir.
+		fullDir := dir
+		if !filepath.IsAbs(dir) {
+			fullDir = filepath.Join(workDir, dir)
+		}
+		if created[fullDir] || dirExists(fullDir) {
+			continue
+		}
+		if err := os.MkdirAll(fullDir, 0o755); err == nil {
+			created[fullDir] = true
+			fmt.Fprintf(os.Stderr, "[gollem] auto-mkdir: %s\n", fullDir)
+		}
+	}
+}
+
+// extractPerTestTimeouts scans test scripts for per-test timeout settings.
+// Returns human-readable descriptions like "30s per test case".
+// Many TB2 test scripts wrap commands with `timeout N` or set ulimits,
+// and agents that don't know about these limits produce solutions that are
+// correct but too slow.
+func extractPerTestTimeouts(workDir string) []string {
+	var timeouts []string
+	seen := make(map[string]bool)
+
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if !strings.HasSuffix(name, ".sh") && !strings.HasSuffix(name, ".py") {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 50000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, name))
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+
+				// Shell: timeout N command...
+				if strings.Contains(trimmed, "timeout ") {
+					fields := strings.Fields(trimmed)
+					for i, f := range fields {
+						if f == "timeout" && i+1 < len(fields) {
+							secs := fields[i+1]
+							if isNumericOrFloat(secs) {
+								desc := secs + "s per test case"
+								if !seen[desc] {
+									seen[desc] = true
+									timeouts = append(timeouts, desc)
+								}
+							}
+							break
+						}
+					}
+				}
+
+				// Shell: ulimit -t N (CPU time limit)
+				if strings.Contains(trimmed, "ulimit -t ") {
+					fields := strings.Fields(trimmed)
+					for i, f := range fields {
+						if f == "-t" && i+1 < len(fields) {
+							secs := fields[i+1]
+							if isNumericOrFloat(secs) {
+								desc := secs + "s CPU time limit (ulimit)"
+								if !seen[desc] {
+									seen[desc] = true
+									timeouts = append(timeouts, desc)
+								}
+							}
+							break
+						}
+					}
+				}
+
+				// Python: signal.alarm(N)
+				if strings.Contains(trimmed, "signal.alarm(") {
+					start := strings.Index(trimmed, "signal.alarm(") + len("signal.alarm(")
+					end := strings.Index(trimmed[start:], ")")
+					if end > 0 {
+						secs := strings.TrimSpace(trimmed[start : start+end])
+						if isNumericOrFloat(secs) {
+							desc := secs + "s per test case (signal.alarm)"
+							if !seen[desc] {
+								seen[desc] = true
+								timeouts = append(timeouts, desc)
+							}
+						}
+					}
+				}
+
+				// Variable assignments: TIME_LIMIT=N, TIMEOUT=N, TIME_BUDGET=N
+				lower := strings.ToLower(trimmed)
+				for _, prefix := range []string{"time_limit", "timeout", "time_budget"} {
+					if strings.HasPrefix(lower, prefix) && strings.Contains(trimmed, "=") {
+						eqParts := strings.SplitN(trimmed, "=", 2)
+						if len(eqParts) == 2 {
+							val := strings.TrimSpace(eqParts[1])
+							val = strings.Trim(val, "\"' ")
+							if isNumericOrFloat(val) {
+								desc := val + "s time limit (" + strings.TrimSpace(eqParts[0]) + ")"
+								if !seen[desc] {
+									seen[desc] = true
+									timeouts = append(timeouts, desc)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if len(timeouts) > 0 {
+			break
+		}
+	}
+
+	if len(timeouts) > 5 {
+		timeouts = timeouts[:5]
+	}
+	return timeouts
+}
+
+// isNumericOrFloat returns true if s looks like a positive number (int or float).
+func isNumericOrFloat(s string) bool {
+	if s == "" {
+		return false
+	}
+	dotSeen := false
+	for _, c := range s {
+		if c == '.' && !dotSeen {
+			dotSeen = true
+			continue
+		}
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// diffTarget represents a diff/cmp comparison found in a test script.
+type diffTarget struct {
+	expectedRef string // path to the reference/expected output file
+	flags       string // diff flags (empty for exact match)
+}
+
+// autoReadDiffExpectedFiles scans test scripts for diff/cmp comparisons,
+// identifies expected reference files, and auto-reads them into context.
+// Seeing the exact expected output is the #1 way to produce correct output —
+// it eliminates guessing about format, whitespace, encoding, and structure.
+// Returns remaining auto-read budget.
+func autoReadDiffExpectedFiles(workDir string, parts *[]string, budget int) int {
+	targets := extractDiffTargets(workDir)
+	if len(targets) == 0 {
+		return budget
+	}
+
+	// Surface comparison mode hints.
+	var comparisonHints []string
+	for _, t := range targets {
+		if t.flags != "" {
+			comparisonHints = append(comparisonHints, t.flags)
+		}
+	}
+	if len(comparisonHints) > 0 {
+		*parts = append(*parts, "\n## Comparison Mode (from test scripts)")
+		seen := make(map[string]bool)
+		for _, h := range comparisonHints {
+			if !seen[h] {
+				seen[h] = true
+				*parts = append(*parts, "  - "+h)
+			}
+		}
+	}
+
+	// Auto-read expected reference files.
+	count := 0
+	for _, t := range targets {
+		if budget <= 0 || count >= 3 {
+			break
+		}
+		// Try multiple locations for the expected file.
+		candidates := []string{t.expectedRef}
+		if !filepath.IsAbs(t.expectedRef) {
+			candidates = append(candidates,
+				filepath.Join(workDir, t.expectedRef),
+				filepath.Join("/app", t.expectedRef),
+				filepath.Join("/app/task_file", t.expectedRef),
+			)
+		}
+		for _, candidate := range candidates {
+			info, err := os.Stat(candidate)
+			if err != nil || info.IsDir() || info.Size() == 0 || info.Size() > 5000 {
+				continue
+			}
+			limit := 5000
+			if limit > budget {
+				limit = budget
+			}
+			content := readFileTruncated(candidate, limit)
+			if content != "" {
+				*parts = append(*parts, fmt.Sprintf("\n## Expected output reference (from test diff): %s", candidate))
+				*parts = append(*parts, content)
+				*parts = append(*parts, "Your output MUST match this file exactly. Verify with: diff <expected> <your_output>")
+				budget -= len(content)
+				count++
+			}
+			break
+		}
+	}
+
+	return budget
+}
+
+// extractDiffTargets scans test scripts for diff/cmp commands and returns
+// the expected reference file paths. Uses heuristics to determine which file
+// is the reference: files that already exist, files in /tests/, files named
+// "expected*", "reference*", etc.
+func extractDiffTargets(workDir string) []diffTarget {
+	var targets []diffTarget
+	seen := make(map[string]bool)
+
+	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
+	for _, td := range testDirs {
+		entries, err := os.ReadDir(td)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if !strings.HasSuffix(name, ".sh") && !strings.HasSuffix(name, ".py") {
+				continue
+			}
+			info, _ := entry.Info()
+			if info == nil || info.Size() > 50000 {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(td, name))
+			if err != nil {
+				continue
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "#") {
+					continue
+				}
+
+				// Shell: diff [flags] file1 file2
+				if strings.Contains(trimmed, "diff ") {
+					if t := parseDiffLine(trimmed, workDir); t.expectedRef != "" && !seen[t.expectedRef] {
+						seen[t.expectedRef] = true
+						targets = append(targets, t)
+					}
+				}
+
+				// Shell: cmp [flags] file1 file2
+				if strings.Contains(trimmed, "cmp ") {
+					if t := parseCmpLine(trimmed, workDir); t.expectedRef != "" && !seen[t.expectedRef] {
+						seen[t.expectedRef] = true
+						targets = append(targets, t)
+					}
+				}
+			}
+		}
+		if len(targets) > 0 {
+			break
+		}
+	}
+
+	if len(targets) > 5 {
+		targets = targets[:5]
+	}
+	return targets
+}
+
+// parseDiffLine extracts a diff target from a shell diff command line.
+// Returns the expected reference file path and any flags.
+// Heuristic: the file that exists is the reference; if both exist, use
+// naming conventions (expected, reference, gold → reference file).
+func parseDiffLine(line, workDir string) diffTarget {
+	idx := strings.Index(line, "diff ")
+	if idx < 0 {
+		return diffTarget{}
+	}
+	rest := line[idx:]
+
+	fields := strings.Fields(rest)
+	if len(fields) < 3 {
+		return diffTarget{}
+	}
+
+	var flags []string
+	var files []string
+	for _, f := range fields[1:] { // skip "diff"
+		if strings.HasPrefix(f, "-") {
+			flags = append(flags, f)
+		} else if strings.HasPrefix(f, "<(") || strings.HasPrefix(f, ">(") || strings.HasPrefix(f, "$") {
+			// Process substitution or variable — skip.
+			continue
+		} else {
+			files = append(files, f)
+		}
+	}
+
+	if len(files) < 2 {
+		return diffTarget{}
+	}
+
+	ref := classifyDiffReference(files[0], files[1], workDir)
+	if ref == "" {
+		return diffTarget{}
+	}
+
+	flagStr := ""
+	if len(flags) > 0 {
+		flagStr = describeDiffFlags(flags)
+	} else {
+		flagStr = "Exact match required (diff with no flags)"
+	}
+
+	return diffTarget{expectedRef: ref, flags: flagStr}
+}
+
+// parseCmpLine extracts a diff target from a shell cmp command line.
+func parseCmpLine(line, workDir string) diffTarget {
+	idx := strings.Index(line, "cmp ")
+	if idx < 0 {
+		return diffTarget{}
+	}
+	rest := line[idx:]
+
+	fields := strings.Fields(rest)
+	var files []string
+	for _, f := range fields[1:] {
+		if !strings.HasPrefix(f, "-") {
+			files = append(files, f)
+		}
+	}
+
+	if len(files) < 2 {
+		return diffTarget{}
+	}
+
+	ref := classifyDiffReference(files[0], files[1], workDir)
+	if ref == "" {
+		return diffTarget{}
+	}
+
+	return diffTarget{expectedRef: ref, flags: "Byte-exact comparison (cmp)"}
+}
+
+// classifyDiffReference determines which of two files is the reference/expected
+// file and returns it. Returns empty string if neither looks like a reference.
+func classifyDiffReference(file1, file2, workDir string) string {
+	// Score each file: higher score = more likely to be the reference.
+	score1 := diffRefScore(file1)
+	score2 := diffRefScore(file2)
+
+	// Files that exist are more likely to be references (pre-placed).
+	if fileExistsAnywhere(file1, workDir) {
+		score1 += 2
+	}
+	if fileExistsAnywhere(file2, workDir) {
+		score2 += 2
+	}
+
+	// If only one exists, it's the reference.
+	exists1 := fileExistsAnywhere(file1, workDir)
+	exists2 := fileExistsAnywhere(file2, workDir)
+	if exists1 && !exists2 {
+		return file1
+	}
+	if exists2 && !exists1 {
+		return file2
+	}
+
+	// Both exist or neither exists — use name heuristics.
+	if score1 > score2 {
+		return file1
+	}
+	if score2 > score1 {
+		return file2
+	}
+
+	// Tie: default to first arg (conventional: diff expected actual).
+	if exists1 {
+		return file1
+	}
+	return ""
+}
+
+// diffRefScore scores a file path on how likely it is to be a reference/expected file.
+func diffRefScore(path string) int {
+	lower := strings.ToLower(path)
+	score := 0
+	// Reference indicators.
+	for _, kw := range []string{"expected", "reference", "gold", "correct", "baseline", "answer_key"} {
+		if strings.Contains(lower, kw) {
+			score += 3
+		}
+	}
+	// /tests/ directory files are usually references.
+	if strings.Contains(lower, "/tests/") {
+		score += 2
+	}
+	// Output indicators (less likely to be reference).
+	for _, kw := range []string{"output", "result", "actual", "my_", "student"} {
+		if strings.Contains(lower, kw) {
+			score -= 2
+		}
+	}
+	return score
+}
+
+// fileExistsAnywhere checks if a file exists at the given path, or resolved
+// against workDir, /app, or /app/task_file.
+func fileExistsAnywhere(path, workDir string) bool {
+	if filepath.IsAbs(path) {
+		return fileExists(path)
+	}
+	for _, base := range []string{workDir, "/app", "/app/task_file", "/tests"} {
+		if fileExists(filepath.Join(base, path)) {
+			return true
+		}
+	}
+	return false
+}
+
+// describeDiffFlags returns a human-readable description of diff flags.
+func describeDiffFlags(flags []string) string {
+	for _, f := range flags {
+		switch f {
+		case "-b":
+			return "Ignores trailing whitespace changes (diff -b)"
+		case "-w", "--ignore-all-space":
+			return "Ignores all whitespace differences (diff -w)"
+		case "-i", "--ignore-case":
+			return "Case-insensitive comparison (diff -i)"
+		case "-B", "--ignore-blank-lines":
+			return "Ignores blank line differences (diff -B)"
+		case "-q", "--brief":
+			return "Quick check — only reports whether files differ (diff -q)"
+		case "--strip-trailing-cr":
+			return "Ignores CR/LF differences (diff --strip-trailing-cr)"
+		}
+	}
+	return "Comparison with flags: " + strings.Join(flags, " ")
 }
 
 func extractTestReferencedFiles(parts []string) map[string]bool {

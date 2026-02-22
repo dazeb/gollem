@@ -4021,3 +4021,176 @@ func TestExtractKVFromLine(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractPerTestTimeouts(t *testing.T) {
+	t.Run("timeout_command", func(t *testing.T) {
+		dir := t.TempDir()
+		testsDir := filepath.Join(dir, "tests")
+		os.Mkdir(testsDir, 0o755)
+		os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte("#!/bin/bash\ntimeout 30 python3 /app/solution.py < input1.txt\n"), 0o644)
+
+		timeouts := extractPerTestTimeouts(dir)
+		if len(timeouts) == 0 {
+			t.Fatal("expected at least one timeout, got none")
+		}
+		if !strings.Contains(timeouts[0], "30") {
+			t.Errorf("expected timeout to mention 30, got %q", timeouts[0])
+		}
+	})
+
+	t.Run("signal_alarm", func(t *testing.T) {
+		dir := t.TempDir()
+		testsDir := filepath.Join(dir, "tests")
+		os.Mkdir(testsDir, 0o755)
+		os.WriteFile(filepath.Join(testsDir, "test.py"), []byte("import signal\nsignal.alarm(60)\nresult = run_solution()\n"), 0o644)
+
+		timeouts := extractPerTestTimeouts(dir)
+		if len(timeouts) == 0 {
+			t.Fatal("expected at least one timeout, got none")
+		}
+		if !strings.Contains(timeouts[0], "60") {
+			t.Errorf("expected timeout to mention 60, got %q", timeouts[0])
+		}
+	})
+
+	t.Run("ulimit", func(t *testing.T) {
+		dir := t.TempDir()
+		testsDir := filepath.Join(dir, "tests")
+		os.Mkdir(testsDir, 0o755)
+		os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte("#!/bin/bash\nulimit -t 45\n./solution < input.txt\n"), 0o644)
+
+		timeouts := extractPerTestTimeouts(dir)
+		if len(timeouts) == 0 {
+			t.Fatal("expected at least one timeout, got none")
+		}
+		if !strings.Contains(timeouts[0], "45") {
+			t.Errorf("expected timeout to mention 45, got %q", timeouts[0])
+		}
+	})
+}
+
+func TestAutoMkdirOutputDirs(t *testing.T) {
+	dir := t.TempDir()
+	expectedOutputs := []string{"output_data/results.csv", "output_data/summary.json"}
+	autoMkdirOutputDirs(dir, expectedOutputs)
+
+	outputDir := filepath.Join(dir, "output_data")
+	if !dirExists(outputDir) {
+		t.Errorf("expected output_data/ to be created, but it doesn't exist")
+	}
+}
+
+func TestAutoMkdirOutputDirsNoopWhenExists(t *testing.T) {
+	dir := t.TempDir()
+	outputDir := filepath.Join(dir, "output_data")
+	os.Mkdir(outputDir, 0o755)
+
+	autoMkdirOutputDirs(dir, []string{"output_data/test.txt"})
+	if !dirExists(outputDir) {
+		t.Errorf("expected output_data/ to still exist")
+	}
+}
+
+func TestExtractDiffTargets(t *testing.T) {
+	t.Run("simple_diff", func(t *testing.T) {
+		dir := t.TempDir()
+		testsDir := filepath.Join(dir, "tests")
+		os.Mkdir(testsDir, 0o755)
+
+		expectedFile := filepath.Join(testsDir, "expected_output.txt")
+		os.WriteFile(expectedFile, []byte("hello world\n"), 0o644)
+
+		os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte("#!/bin/bash\ndiff "+expectedFile+" /app/output.txt\n"), 0o644)
+
+		targets := extractDiffTargets(dir)
+		if len(targets) == 0 {
+			t.Fatal("expected at least one diff target, got none")
+		}
+		if targets[0].expectedRef != expectedFile {
+			t.Errorf("expected ref %q, got %q", expectedFile, targets[0].expectedRef)
+		}
+	})
+
+	t.Run("diff_with_flags", func(t *testing.T) {
+		dir := t.TempDir()
+		testsDir := filepath.Join(dir, "tests")
+		os.Mkdir(testsDir, 0o755)
+
+		expectedFile := filepath.Join(testsDir, "reference.csv")
+		os.WriteFile(expectedFile, []byte("a,b,c\n1,2,3\n"), 0o644)
+
+		os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte("#!/bin/bash\ndiff -b "+expectedFile+" output.csv\n"), 0o644)
+
+		targets := extractDiffTargets(dir)
+		if len(targets) == 0 {
+			t.Fatal("expected at least one diff target, got none")
+		}
+		if !strings.Contains(targets[0].flags, "whitespace") {
+			t.Errorf("expected flags to mention whitespace, got %q", targets[0].flags)
+		}
+	})
+
+	t.Run("cmp_command", func(t *testing.T) {
+		dir := t.TempDir()
+		testsDir := filepath.Join(dir, "tests")
+		os.Mkdir(testsDir, 0o755)
+
+		expectedFile := filepath.Join(testsDir, "expected.bin")
+		os.WriteFile(expectedFile, []byte{0x00, 0x01, 0x02}, 0o644)
+
+		os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte("#!/bin/bash\ncmp "+expectedFile+" output.bin\n"), 0o644)
+
+		targets := extractDiffTargets(dir)
+		if len(targets) == 0 {
+			t.Fatal("expected at least one diff target, got none")
+		}
+		if !strings.Contains(targets[0].flags, "Byte-exact") {
+			t.Errorf("expected flags to mention byte-exact, got %q", targets[0].flags)
+		}
+	})
+}
+
+func TestIsNumericOrFloat(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"30", true},
+		{"30.5", true},
+		{"0.001", true},
+		{"abc", false},
+		{"", false},
+		{"30s", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input+"_"+fmt.Sprint(tt.want), func(t *testing.T) {
+			got := isNumericOrFloat(tt.input)
+			if got != tt.want {
+				t.Errorf("isNumericOrFloat(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifyDiffReference(t *testing.T) {
+	dir := t.TempDir()
+	file1 := filepath.Join(dir, "expected.txt")
+	os.WriteFile(file1, []byte("hello"), 0o644)
+
+	ref := classifyDiffReference(file1, filepath.Join(dir, "output.txt"), dir)
+	if ref != file1 {
+		t.Errorf("expected %q to be classified as reference, got %q", file1, ref)
+	}
+}
+
+func TestDescribeDiffFlags(t *testing.T) {
+	if got := describeDiffFlags([]string{"-b"}); got != "Ignores trailing whitespace changes (diff -b)" {
+		t.Errorf("unexpected: %q", got)
+	}
+	if got := describeDiffFlags([]string{"-w"}); got != "Ignores all whitespace differences (diff -w)" {
+		t.Errorf("unexpected: %q", got)
+	}
+	if got := describeDiffFlags([]string{"-i"}); got != "Case-insensitive comparison (diff -i)" {
+		t.Errorf("unexpected: %q", got)
+	}
+}
