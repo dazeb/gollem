@@ -106,20 +106,19 @@ class GollemAgent(BaseInstalledAgent):
         binary_path = _find_binary()
 
         # Ensure CA certificates are available for TLS (some task images lack them).
-        # Try multiple package managers since images vary (Debian, Alpine, etc.).
+        # Skip if certs already exist to avoid slow apt-get update.
         await environment.exec(
             command=(
+                "if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -d /etc/ssl/certs ]; then "
                 "("
                 "  apt-get update -qq && apt-get install -y -qq ca-certificates"
                 "  || apk add --no-cache ca-certificates"
                 "  || yum install -y ca-certificates"
                 "  || dnf install -y ca-certificates"
-                ") > /dev/null 2>&1 || true"
+                ") > /dev/null 2>&1; "
+                "update-ca-certificates > /dev/null 2>&1 || true; "
+                "fi"
             )
-        )
-        # Also ensure update-ca-certificates runs if available.
-        await environment.exec(
-            command="update-ca-certificates > /dev/null 2>&1 || true"
         )
 
         # Upload binary to container.

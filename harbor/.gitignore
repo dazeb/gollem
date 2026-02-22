@@ -1,0 +1,5 @@
+jobs/
+uv.lock
+*.pyc
+__pycache__/
+gollem-linux-amd64
