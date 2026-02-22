@@ -2648,3 +2648,106 @@ func TestPipInstall(t *testing.T) {
 		t.Error("expected pipInstall to fail for nonexistent package")
 	}
 }
+
+func TestDetectHaskellTask(t *testing.T) {
+	dir := t.TempDir()
+
+	// .hs file
+	hsDir := filepath.Join(dir, "haskell-task")
+	os.MkdirAll(hsDir, 0o755)
+	writeTestFile(t, dir, "haskell-task/Main.hs", "module Main where\nmain = putStrLn \"hello\"\n")
+	if !detectHaskellTask(hsDir) {
+		t.Error("expected Haskell task for dir with .hs file")
+	}
+
+	// stack.yaml
+	stackDir := filepath.Join(dir, "stack-project")
+	os.MkdirAll(stackDir, 0o755)
+	writeTestFile(t, dir, "stack-project/stack.yaml", "resolver: lts-21.0\n")
+	if !detectHaskellTask(stackDir) {
+		t.Error("expected Haskell task for dir with stack.yaml")
+	}
+
+	// empty dir
+	emptyDir := filepath.Join(dir, "empty")
+	os.MkdirAll(emptyDir, 0o755)
+	if detectHaskellTask(emptyDir) {
+		t.Error("did not expect Haskell task for empty dir")
+	}
+}
+
+func TestDetectRubyTask(t *testing.T) {
+	dir := t.TempDir()
+
+	// .rb file
+	rbDir := filepath.Join(dir, "ruby-task")
+	os.MkdirAll(rbDir, 0o755)
+	writeTestFile(t, dir, "ruby-task/main.rb", "puts 'hello'\n")
+	if !detectRubyTask(rbDir) {
+		t.Error("expected Ruby task for dir with .rb file")
+	}
+
+	// Gemfile
+	gemDir := filepath.Join(dir, "gem-project")
+	os.MkdirAll(gemDir, 0o755)
+	writeTestFile(t, dir, "gem-project/Gemfile", "source 'https://rubygems.org'\ngem 'rspec'\n")
+	if !detectRubyTask(gemDir) {
+		t.Error("expected Ruby task for dir with Gemfile")
+	}
+
+	// empty dir
+	emptyDir := filepath.Join(dir, "empty")
+	os.MkdirAll(emptyDir, 0o755)
+	if detectRubyTask(emptyDir) {
+		t.Error("did not expect Ruby task for empty dir")
+	}
+}
+
+func TestDetectAndActivateVenv(t *testing.T) {
+	dir := t.TempDir()
+
+	// No venv — should return empty.
+	if hint := detectAndActivateVenv(dir); hint != "" {
+		t.Errorf("expected empty hint for no venv, got %q", hint)
+	}
+
+	// Create a fake venv with activate script.
+	venvBin := filepath.Join(dir, "venv", "bin")
+	os.MkdirAll(venvBin, 0o755)
+	writeTestFile(t, dir, "venv/bin/activate", "# fake activate script\n")
+
+	hint := detectAndActivateVenv(dir)
+	if hint == "" {
+		t.Error("expected hint for dir with venv/bin/activate")
+	}
+	if !strings.Contains(hint, "venv detected") {
+		t.Errorf("expected venv hint, got %q", hint)
+	}
+}
+
+func TestBuildActionSummaryCached(t *testing.T) {
+	dir := t.TempDir()
+
+	// With no data, should still return something (has FIRST and REMEMBER lines).
+	summary := buildActionSummaryCached(dir, nil, nil)
+	if summary == "" {
+		t.Error("expected non-empty summary even with no expected outputs")
+	}
+	if !strings.Contains(summary, "ACTION SUMMARY") {
+		t.Error("expected ACTION SUMMARY header")
+	}
+	if !strings.Contains(summary, "REMEMBER") {
+		t.Error("expected REMEMBER line")
+	}
+
+	// With expected outputs and test commands.
+	outputs := []string{"output_data/result.csv", "output_data/summary.json"}
+	cmds := []string{"Test: bash /tests/test.sh", "Build: go build ./..."}
+	summary = buildActionSummaryCached(dir, outputs, cmds)
+	if !strings.Contains(summary, "CREATE:") {
+		t.Error("expected CREATE line for expected outputs")
+	}
+	if !strings.Contains(summary, "VERIFY:") {
+		t.Error("expected VERIFY line for test commands")
+	}
+}

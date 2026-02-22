@@ -256,6 +256,14 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Python: "+pyVer)
 	}
 
+	// Detect Python virtual environments (venv/conda) that need activation.
+	// Many containers have packages installed in a venv, but the agent's shell
+	// doesn't activate it by default. Detecting and activating saves 2-3 turns
+	// of "ModuleNotFoundError" debugging.
+	if venvHint := detectAndActivateVenv(workDir); venvHint != "" {
+		parts = append(parts, venvHint)
+	}
+
 	// Quick network connectivity check — many TB2 containers have no internet.
 	// Detecting this early prevents the agent from wasting 2-3 turns on failed
 	// pip install or apt-get commands. Cached for reuse by auto-install logic below.
@@ -604,7 +612,8 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect expected output files from test analysis.
 	// This tells the agent exactly WHAT to create from the start.
-	if expectedOutputs := detectExpectedOutputs(workDir); len(expectedOutputs) > 0 {
+	expectedOutputs := detectExpectedOutputs(workDir)
+	if len(expectedOutputs) > 0 {
 		parts = append(parts, "\n## Expected Output Files (from test analysis)")
 		parts = append(parts, "Tests expect these files/paths to exist:")
 		for _, o := range expectedOutputs {
@@ -619,14 +628,30 @@ func discoverEnvironment(workDir string) string {
 		autoReadBudget = autoReadExampleOutputs(workDir, &parts, autoReadBudget)
 	}
 
+	// Auto-read small files from input_data/ — understanding the input format
+	// immediately saves 1-2 turns the agent would spend on head/cat/wc commands.
+	if autoReadBudget > 0 {
+		inputDirs := []string{
+			"/app/task_file/input_data",
+			filepath.Join(workDir, "input_data"),
+		}
+		for _, id := range inputDirs {
+			if dirExists(id) {
+				autoReadBudget = autoReadSmallFiles(id, &parts, "Input data", 3000, 5, autoReadBudget)
+				break
+			}
+		}
+	}
+
 	// Task-type specific guidance based on detected patterns.
 	parts = append(parts, detectTaskGuidance(workDir))
 
 	// Suggest specific test/build commands so the agent doesn't waste turns
-	// figuring out how to verify its work.
-	if cmds := detectTestCommands(workDir); len(cmds) > 0 {
+	// figuring out how to verify its work. Cache for buildActionSummary below.
+	testCmds := detectTestCommands(workDir)
+	if len(testCmds) > 0 {
 		parts = append(parts, "\n## Quick Commands")
-		for _, cmd := range cmds {
+		for _, cmd := range testCmds {
 			parts = append(parts, "  "+cmd)
 		}
 	}
@@ -638,34 +663,34 @@ func discoverEnvironment(workDir string) string {
 
 	// Add a compact action summary at the very end. This exploits recency bias —
 	// the last thing the model reads before starting work is a focused summary
-	// of what to do. This prevents the key info from being lost in the middle
-	// of a large context dump.
-	if summary := buildActionSummary(workDir); summary != "" {
+	// of what to do. Reuses cached expectedOutputs/testCmds to avoid
+	// re-scanning test files.
+	if summary := buildActionSummaryCached(workDir, expectedOutputs, testCmds); summary != "" {
 		parts = append(parts, summary)
 	}
 
 	return strings.Join(parts, "\n")
 }
 
-// buildActionSummary creates a focused, compact summary that appears at the
-// very end of context injection. It synthesizes the most critical info:
+// buildActionSummaryCached creates a focused, compact summary that appears at
+// the very end of context injection. It synthesizes the most critical info:
 // what to create, how to test, and what to do first.
-func buildActionSummary(workDir string) string {
+// Takes pre-computed expectedOutputs and testCmds to avoid re-scanning test files.
+func buildActionSummaryCached(workDir string, expectedOutputs []string, testCmds []string) string {
 	var lines []string
 	lines = append(lines, "\n## ACTION SUMMARY (start here)")
 
 	// What expected outputs need to be created?
-	expectedOutputs := detectExpectedOutputs(workDir)
 	if len(expectedOutputs) > 0 {
-		if len(expectedOutputs) > 5 {
-			expectedOutputs = expectedOutputs[:5]
+		display := expectedOutputs
+		if len(display) > 5 {
+			display = display[:5]
 		}
-		lines = append(lines, "CREATE: "+strings.Join(expectedOutputs, ", "))
+		lines = append(lines, "CREATE: "+strings.Join(display, ", "))
 	}
 
 	// What test command to run?
-	cmds := detectTestCommands(workDir)
-	for _, cmd := range cmds {
+	for _, cmd := range testCmds {
 		if strings.HasPrefix(cmd, "Test:") {
 			lines = append(lines, "VERIFY: "+strings.TrimPrefix(cmd, "Test: "))
 			break
@@ -1304,6 +1329,29 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Run tests: `prove -v` or `perl -Ilib t/*.t`")
 	}
 
+	// Detect Haskell tasks.
+	if detectHaskellTask(workDir) {
+		hints = append(hints, "\n## Task Type: Haskell")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Check build system: `stack build` (stack.yaml) or `cabal build` (*.cabal)")
+		hints = append(hints, "- Run: `stack run` or `cabal run`, tests: `stack test` or `cabal test`")
+		hints = append(hints, "- For GHC directly: `ghc -o main Main.hs && ./main`")
+		hints = append(hints, "- Install missing packages: `stack install <pkg>` or `cabal install <pkg>`")
+		hints = append(hints, "- Haskell type errors are verbose — read the 'Expected type' vs 'Actual type' lines")
+		hints = append(hints, "- If stack build is slow (first run downloads GHC), be patient — check logs for errors after 60 seconds")
+	}
+
+	// Detect Ruby tasks.
+	if detectRubyTask(workDir) {
+		hints = append(hints, "\n## Task Type: Ruby")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Run scripts: `ruby <file.rb>`")
+		hints = append(hints, "- Install gems: `gem install <name>` or `bundle install` (if Gemfile exists)")
+		hints = append(hints, "- Run tests: `bundle exec rspec`, `ruby -Itest test_*.rb`, or `rake test`")
+		hints = append(hints, "- For Rails: `bundle exec rails <command>`")
+		hints = append(hints, "- Check Ruby version: `ruby --version`. Version mismatches cause syntax errors.")
+	}
+
 	// Detect service/daemon tasks (web servers, background services).
 	if detectServiceTask(workDir) {
 		hints = append(hints, "\n## Task Type: Service/Daemon Setup")
@@ -1789,6 +1837,40 @@ func chmodScriptsInDirRecursive(dir string, depth, maxDepth int) {
 	}
 }
 
+// detectAndActivateVenv detects Python virtual environments (venv, conda) and
+// returns a hint string if one is found. Also modifies PATH environment variable
+// so subsequent pip/python commands use the venv's interpreter.
+func detectAndActivateVenv(workDir string) string {
+	// Common venv locations.
+	venvPaths := []string{
+		filepath.Join(workDir, "venv"),
+		filepath.Join(workDir, ".venv"),
+		filepath.Join("/app", "venv"),
+		filepath.Join("/app", ".venv"),
+		filepath.Join(workDir, "env"),
+	}
+	for _, vp := range venvPaths {
+		activate := filepath.Join(vp, "bin", "activate")
+		if fileExists(activate) {
+			// Add venv bin to PATH so python/pip resolve to the venv.
+			binDir := filepath.Join(vp, "bin")
+			currentPath := os.Getenv("PATH")
+			if !strings.Contains(currentPath, binDir) {
+				os.Setenv("PATH", binDir+":"+currentPath)
+			}
+			return fmt.Sprintf("Python venv detected: %s (auto-activated — python/pip resolve to venv)", vp)
+		}
+	}
+
+	// Check for conda environment.
+	condaPrefix := os.Getenv("CONDA_PREFIX")
+	if condaPrefix != "" {
+		return "Conda environment active: " + condaPrefix
+	}
+
+	return ""
+}
+
 // detectShellTask returns true if the task is primarily a shell scripting task.
 func detectShellTask(workDir string) bool {
 	// Check directory name for shell-related keywords.
@@ -2083,6 +2165,38 @@ func detectPerlTask(workDir string) bool {
 		// Perl project markers.
 		if fileExists(filepath.Join(dir, "Makefile.PL")) || fileExists(filepath.Join(dir, "cpanfile")) ||
 			fileExists(filepath.Join(dir, "Build.PL")) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectHaskellTask returns true if the working directory contains Haskell project files.
+func detectHaskellTask(workDir string) bool {
+	for _, dir := range []string{workDir, "/app"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.hs"))
+		if len(matches) > 0 {
+			return true
+		}
+		matches, _ = filepath.Glob(filepath.Join(dir, "*.cabal"))
+		if len(matches) > 0 {
+			return true
+		}
+		if fileExists(filepath.Join(dir, "stack.yaml")) || fileExists(filepath.Join(dir, "cabal.project")) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectRubyTask returns true if the working directory contains Ruby files.
+func detectRubyTask(workDir string) bool {
+	for _, dir := range []string{workDir, "/app"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.rb"))
+		if len(matches) > 0 {
+			return true
+		}
+		if fileExists(filepath.Join(dir, "Gemfile")) || fileExists(filepath.Join(dir, "Rakefile")) {
 			return true
 		}
 	}
