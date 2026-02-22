@@ -1318,15 +1318,28 @@ func detectTestCommands(workDir string) []string {
 	for _, td := range []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")} {
 		if dirExists(td) {
 			entries, _ := os.ReadDir(td)
+			// Priority 1: test.sh or test.py (standard verification scripts).
 			for _, e := range entries {
+				name := e.Name()
+				if name == "test.sh" {
+					cmds = append(cmds, "Test: bash "+filepath.Join(td, name))
+				} else if name == "test.py" {
+					cmds = append(cmds, "Test: python3 "+filepath.Join(td, name))
+				}
+			}
+			// Priority 2: test_*.py or test_*.sh files (up to 3).
+			testCount := 0
+			for _, e := range entries {
+				if testCount >= 3 {
+					break
+				}
 				name := e.Name()
 				if strings.HasPrefix(name, "test_") && strings.HasSuffix(name, ".py") {
 					cmds = append(cmds, "Test: python3 "+filepath.Join(td, name))
-					break
-				}
-				if strings.HasPrefix(name, "test_") && strings.HasSuffix(name, ".sh") {
+					testCount++
+				} else if strings.HasPrefix(name, "test_") && strings.HasSuffix(name, ".sh") {
 					cmds = append(cmds, "Test: bash "+filepath.Join(td, name))
-					break
+					testCount++
 				}
 			}
 			break
@@ -1530,17 +1543,22 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 								hasWritten = true
 								break
 							}
-							// Also check bash for redirects/tee that create files.
+							// Also check bash for commands that create files.
 							if tc.ToolName == "bash" {
 								var args struct {
 									Command string `json:"command"`
 								}
 								if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil {
 									cmd := args.Command
+									lower := strings.ToLower(cmd)
 									if strings.Contains(cmd, " > ") ||
 										strings.Contains(cmd, " >> ") ||
 										strings.Contains(cmd, " tee ") ||
-										strings.Contains(cmd, "echo ") && strings.Contains(cmd, ">") {
+										(strings.Contains(cmd, "echo ") && strings.Contains(cmd, ">")) ||
+										strings.HasPrefix(lower, "cp ") || strings.Contains(lower, " && cp ") ||
+										strings.HasPrefix(lower, "mv ") || strings.Contains(lower, " && mv ") ||
+										(strings.Contains(lower, "curl ") && strings.Contains(lower, " -o ")) ||
+										strings.HasPrefix(lower, "wget ") {
 										hasWritten = true
 										break
 									}

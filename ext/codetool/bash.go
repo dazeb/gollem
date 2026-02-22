@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -99,6 +100,13 @@ func Bash(opts ...Option) core.Tool {
 				cmd.Dir = cfg.WorkDir
 			}
 
+			// Auto-set PIP_BREAK_SYSTEM_PACKAGES=1 for pip commands to prevent
+			// externally-managed-environment errors in Docker containers.
+			// This saves a full turn of error → hint → retry.
+			if isPipCommand(params.Command) {
+				cmd.Env = append(os.Environ(), "PIP_BREAK_SYSTEM_PACKAGES=1")
+			}
+
 			// Run in a new process group so we can kill all children on timeout.
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			cmd.Cancel = func() error {
@@ -170,6 +178,9 @@ func Bash(opts ...Option) core.Tool {
 			if len(combined) > 2000 {
 				if summary := testResultSummary(combined); summary != "" {
 					result += "\n" + summary
+					if exitCode != 0 && (strings.Contains(strings.ToLower(summary), "fail") || strings.Contains(strings.ToLower(summary), "error")) {
+						result += "\n[hint: read the FULL test failure output above — fix one failure at a time, starting with the first]"
+					}
 				} else if summary := compilationErrorSummary(combined, exitCode); summary != "" {
 					result += "\n" + summary
 				}
@@ -755,6 +766,12 @@ func isLongRunningCommand(cmd string) bool {
 		"dune build", "dune test",   // OCaml builds
 		"stack build", "cabal build", // Haskell builds
 		"cargo test",                // Rust tests
+		"python3 /app/", "python /app/", // app scripts
+		"python3 solve", "python solve", // solver scripts
+		"python3 process", "python process", // data processing
+		"python3 run", "python run",     // generic runner scripts
+		"bash /app/", "sh /app/",        // shell scripts in /app/
+		"bash /tests/", "sh /tests/",    // test scripts
 	}
 	for _, p := range longPatterns {
 		if strings.Contains(lower, p) {
@@ -762,6 +779,16 @@ func isLongRunningCommand(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// isPipCommand returns true if the command involves pip installing packages.
+// Used to auto-set PIP_BREAK_SYSTEM_PACKAGES=1 for container environments.
+func isPipCommand(cmd string) bool {
+	lower := strings.ToLower(cmd)
+	return strings.Contains(lower, "pip install") ||
+		strings.Contains(lower, "pip3 install") ||
+		strings.Contains(lower, "python -m pip") ||
+		strings.Contains(lower, "python3 -m pip")
 }
 
 func isBuildCommand(cmd string) bool {

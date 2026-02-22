@@ -1139,6 +1139,31 @@ func TestIsVerificationCode(t *testing.T) {
 	}
 }
 
+func TestIsPipCommand(t *testing.T) {
+	tests := []struct {
+		cmd  string
+		want bool
+	}{
+		{"pip install numpy", true},
+		{"pip3 install --break-system-packages scipy", true},
+		{"python3 -m pip install torch", true},
+		{"python -m pip install -r requirements.txt", true},
+		{"sudo pip install pandas", true},
+		{"echo hello", false},
+		{"pip freeze", false},
+		{"npm install", false},
+		{"apt-get install python3-pip", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			got := isPipCommand(tt.cmd)
+			if got != tt.want {
+				t.Errorf("isPipCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
 	mw, validator := VerificationCheckpoint()
 
