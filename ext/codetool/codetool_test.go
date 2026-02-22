@@ -2550,3 +2550,47 @@ func TestDetectGitTask(t *testing.T) {
 		t.Error("did not expect git task for empty dir")
 	}
 }
+
+func TestDetectCppTask(t *testing.T) {
+	dir := t.TempDir()
+
+	// Directory with .c file.
+	cDir := filepath.Join(dir, "build-app")
+	os.MkdirAll(cDir, 0o755)
+	writeTestFile(t, dir, "build-app/main.c", "#include <stdio.h>\nint main() { return 0; }\n")
+	if !detectCppTask(cDir) {
+		t.Error("expected C++ task for dir with .c file")
+	}
+
+	// Directory with .cpp file.
+	cppDir := filepath.Join(dir, "project-cpp")
+	os.MkdirAll(cppDir, 0o755)
+	writeTestFile(t, dir, "project-cpp/solver.cpp", "#include <iostream>\nint main() {}\n")
+	if !detectCppTask(cppDir) {
+		t.Error("expected C++ task for dir with .cpp file")
+	}
+
+	// Directory with CMakeLists.txt.
+	cmakeDir := filepath.Join(dir, "cmake-project")
+	os.MkdirAll(cmakeDir, 0o755)
+	writeTestFile(t, dir, "cmake-project/CMakeLists.txt", "cmake_minimum_required(VERSION 3.10)\n")
+	if !detectCppTask(cmakeDir) {
+		t.Error("expected C++ task for dir with CMakeLists.txt")
+	}
+
+	// Empty directory should not be a C++ task.
+	emptyDir := filepath.Join(dir, "python-task")
+	os.MkdirAll(emptyDir, 0o755)
+	if detectCppTask(emptyDir) {
+		t.Error("did not expect C++ task for empty dir")
+	}
+}
+
+func TestPipInstall(t *testing.T) {
+	// Just test that pipInstall doesn't panic on a nonexistent dir.
+	// Actual pip installation can't be tested without Python.
+	result := pipInstall(t.TempDir(), "-q", "nonexistent-package-xyz")
+	if result {
+		t.Error("expected pipInstall to fail for nonexistent package")
+	}
+}

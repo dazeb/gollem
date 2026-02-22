@@ -435,9 +435,8 @@ func discoverEnvironment(workDir string) string {
 			// Auto-install if network is available and python3/pip exist.
 			if networkAvailable && runQuiet(workDir, "which", "python3") != "" {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Python dependencies from %s\n", reqPath)
-				result := runQuietTimeout(workDir, 60*time.Second,
-					"pip", "install", "--break-system-packages", "-q", "-r", reqPath)
-				if result != "" {
+				installed := pipInstall(workDir, "-q", "-r", reqPath)
+				if installed {
 					parts = append(parts, "AUTO-INSTALLED: Python dependencies from "+reqPath+" (already done, no need to install again)")
 				} else {
 					parts = append(parts, "NOTE: Auto-install attempted but may have failed. Verify with: pip install --break-system-packages -r "+reqPath)
@@ -463,7 +462,8 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Auto-install npm dependencies for Node.js projects.
-	if !foundPyDeps && networkAvailable {
+	// Note: don't gate on !foundPyDeps — projects can need both Python and npm deps.
+	if networkAvailable {
 		for _, dir := range []string{workDir, "/app"} {
 			pkgPath := filepath.Join(dir, "package.json")
 			if fileExists(pkgPath) && runQuiet(workDir, "which", "npm") != "" {
@@ -473,6 +473,32 @@ func discoverEnvironment(workDir string) string {
 					runQuietTimeout(dir, 60*time.Second, "npm", "install", "--no-audit", "--no-fund")
 					parts = append(parts, "AUTO-INSTALLED: npm dependencies (already done, no need to install again)")
 				}
+				break
+			}
+		}
+	}
+
+	// Auto-download Go module dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "go.mod")) && runQuiet(dir, "which", "go") != "" {
+				if !dirExists(filepath.Join(dir, "vendor")) { // skip if vendor/ already exists
+					fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Go module dependencies in %s\n", dir)
+					runQuietTimeout(dir, 60*time.Second, "go", "mod", "download")
+					parts = append(parts, "AUTO-INSTALLED: Go module dependencies (already done, no need to download again)")
+				}
+				break
+			}
+		}
+	}
+
+	// Auto-fetch Rust/Cargo dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "Cargo.toml")) && runQuiet(dir, "which", "cargo") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-fetching Cargo dependencies in %s\n", dir)
+				runQuietTimeout(dir, 60*time.Second, "cargo", "fetch", "--quiet")
+				parts = append(parts, "AUTO-INSTALLED: Cargo dependencies (already done, no need to fetch again)")
 				break
 			}
 		}
@@ -669,6 +695,26 @@ func detectProject(workDir string) (language, buildSystem string) {
 		return "Haskell", "cabal"
 	}
 	return language, buildSystem
+}
+
+// pipInstall tries to install Python packages using multiple pip variants.
+// Many Docker containers have pip3 but not pip, or python3 -m pip but neither.
+// Returns true if any variant succeeds.
+func pipInstall(workDir string, args ...string) bool {
+	// Try pip variants in order of preference.
+	pipCommands := [][]string{
+		append([]string{"pip", "install", "--break-system-packages"}, args...),
+		append([]string{"pip3", "install", "--break-system-packages"}, args...),
+		append([]string{"python3", "-m", "pip", "install", "--break-system-packages"}, args...),
+		append([]string{"python", "-m", "pip", "install", "--break-system-packages"}, args...),
+	}
+	for _, cmd := range pipCommands {
+		result := runQuietTimeout(workDir, 60*time.Second, cmd[0], cmd[1:]...)
+		if result != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // runQuiet runs a command in workDir and returns trimmed stdout, or empty
@@ -1073,6 +1119,21 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Use small batch sizes and few epochs initially to verify the pipeline works")
 		hints = append(hints, "- Save checkpoints frequently for long training runs")
 		hints = append(hints, "- If no GPU, use CPU-compatible approaches (sklearn, small models)")
+	}
+
+	// Detect C/C++ compilation tasks.
+	if detectCppTask(workDir) {
+		hints = append(hints, "\n## Task Type: C/C++ Compilation")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Check available compilers: `which gcc g++ clang clang++ cc`")
+		hints = append(hints, "- If Makefile exists, use `make -j$(nproc)` for parallel builds")
+		hints = append(hints, "- If CMakeLists.txt exists: `mkdir -p build && cd build && cmake .. && make -j$(nproc)`")
+		hints = append(hints, "- Common flags: -Wall -Wextra -std=c11 (C) or -std=c++17 (C++), -lm for math")
+		hints = append(hints, "- Link order matters: put -l flags AFTER source files (`gcc main.c -lm`, not `gcc -lm main.c`)")
+		hints = append(hints, "- For undefined reference errors: check that all required .c/.cpp files are compiled and linked")
+		hints = append(hints, "- For header errors: check include paths with -I flags")
+		hints = append(hints, "- If tests use valgrind: ensure no memory leaks (free all malloc'd memory)")
+		hints = append(hints, "- Compile with -g for debug info if you need to debug with gdb")
 	}
 
 	// Detect formal verification / theorem proving tasks.
@@ -1578,22 +1639,61 @@ func chmodScripts(scripts []string) {
 	}
 }
 
-// chmodScriptsInDir makes all shell/Python scripts in a directory executable.
+// chmodScriptsInDir makes all shell/Python scripts in a directory executable,
+// including subdirectories (depth 2). This prevents "Permission denied" errors
+// that waste 1-2 agent turns on TB2 tasks with nested test structures.
 func chmodScriptsInDir(dir string) {
+	chmodScriptsInDirRecursive(dir, 0, 2)
+}
+
+func chmodScriptsInDirRecursive(dir string, depth, maxDepth int) {
+	if depth > maxDepth {
+		return
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
+			name := entry.Name()
+			if !strings.HasPrefix(name, ".") && name != "__pycache__" && name != "node_modules" {
+				chmodScriptsInDirRecursive(filepath.Join(dir, name), depth+1, maxDepth)
+			}
 			continue
 		}
 		lower := strings.ToLower(entry.Name())
 		if strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash") ||
-			strings.HasSuffix(lower, ".py") {
+			strings.HasSuffix(lower, ".py") || strings.HasSuffix(lower, ".rb") ||
+			strings.HasSuffix(lower, ".pl") {
 			os.Chmod(filepath.Join(dir, entry.Name()), 0o755)
 		}
 	}
+}
+
+// detectCppTask returns true if the working directory looks like a C/C++ compilation task.
+func detectCppTask(workDir string) bool {
+	// Check for C/C++ source files.
+	for _, dir := range []string{workDir, "/app"} {
+		for _, ext := range []string{"*.c", "*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp"} {
+			matches, _ := filepath.Glob(filepath.Join(dir, ext))
+			if len(matches) > 0 {
+				return true
+			}
+		}
+	}
+	// Check for CMake/Make build systems alongside any source.
+	if fileExists(filepath.Join(workDir, "CMakeLists.txt")) {
+		return true
+	}
+	// Check directory name for C/C++ indicators.
+	lower := strings.ToLower(filepath.Base(workDir))
+	for _, ind := range []string{"gcc", "clang", "compile", "linker", "segfault", "valgrind"} {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	return false
 }
 
 // detectSciCompute returns true if the working directory looks like a scientific computing task.
