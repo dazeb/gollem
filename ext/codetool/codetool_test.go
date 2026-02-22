@@ -1681,7 +1681,13 @@ func TestCompilationErrorHint(t *testing.T) {
 		contains string
 	}{
 		{
-			name:     "gcc_error",
+			name:     "gcc_error_with_message",
+			output:   "main.c:42:5: error: expected ';' after expression",
+			exitCode: 1,
+			contains: "expected ';' after expression",
+		},
+		{
+			name:     "gcc_error_file_line",
 			output:   "main.c:42:5: error: expected ';' after expression",
 			exitCode: 1,
 			contains: "main.c:42",
@@ -1693,7 +1699,13 @@ func TestCompilationErrorHint(t *testing.T) {
 			contains: "main.go:15",
 		},
 		{
-			name:     "rust_error",
+			name:     "rust_error_with_message",
+			output:   "error[E0308]: mismatched types\n --> src/main.rs:10:5\n  |\n10 |     foo()\n  |     ^^^^^ expected u32",
+			exitCode: 101,
+			contains: "mismatched types",
+		},
+		{
+			name:     "rust_error_file_line",
 			output:   "error[E0308]: mismatched types\n --> src/main.rs:10:5\n  |\n10 |     foo()\n  |     ^^^^^ expected u32",
 			exitCode: 101,
 			contains: "src/main.rs:10",
@@ -1939,6 +1951,44 @@ thread 'test_multiply' panicked at 'assertion ` + "`" + `left == right` + "`" + 
   left: 42
   right: 43'`,
 			contains: "panicked at",
+		},
+		{
+			name: "junit_expected_but_was",
+			output: `Tests run: 5, Failures: 1, Errors: 0, Skipped: 0
+org.junit.ComparisonFailure: expected:<[hello]> but was:<[world]>
+	at org.junit.Assert.assertEquals(Assert.java:115)`,
+			contains: "expected:<[hello]> but was:<[world]>",
+		},
+		{
+			name: "junit5_expected_but_was",
+			output: `expected: <42> but was: <43>
+	at org.junit.jupiter.api.AssertionUtils.fail`,
+			contains: "expected: <42> but was: <43>",
+		},
+		{
+			name: "mocha_assertion",
+			output: `  1 passing (10ms)
+  1 failing
+
+  1) Array #indexOf should return -1:
+     AssertionError: expected 0 to equal -1`,
+			contains: "expected 0 to equal -1",
+		},
+		{
+			name: "phpunit_assertion",
+			output: `1) ExampleTest::testAddition
+Failed asserting that 4 matches expected 5.
+
+FAILURES!
+Tests: 3, Assertions: 3, Failures: 1`,
+			contains: "Failed asserting that 4 matches expected 5",
+		},
+		{
+			name: "shell_fail_expected_got",
+			output: `Test 1: PASS
+FAIL: expected 'hello world', got 'hello wrold'
+Test 3: PASS`,
+			contains: "expected",
 		},
 		{
 			name: "no_failure",
@@ -3699,6 +3749,31 @@ func TestExtractTestCounts(t *testing.T) {
 			name:   "rspec",
 			output: "Finished in 0.5 seconds\n3 examples, 1 failure",
 			passed: 2, failed: 1, ok: true,
+		},
+		{
+			name:   "mocha",
+			output: "  3 passing (15ms)\n  1 failing\n\n  1) test suite should work:\n     Error: expected true",
+			passed: 3, failed: 1, ok: true,
+		},
+		{
+			name:   "mocha all pass",
+			output: "  5 passing (22ms)",
+			passed: 5, failed: 0, ok: true,
+		},
+		{
+			name:   "phpunit failures",
+			output: "PHPUnit 9.5.10\n..F.\n\nTests: 4, Assertions: 6, Failures: 1",
+			passed: 3, failed: 1, ok: true,
+		},
+		{
+			name:   "phpunit ok",
+			output: "PHPUnit 9.5.10\n....\n\nOK (4 tests, 8 assertions)",
+			passed: 4, failed: 0, ok: true,
+		},
+		{
+			name:   "maven junit",
+			output: "Tests run: 10, Failures: 2, Errors: 1, Skipped: 0",
+			passed: 7, failed: 3, ok: true,
 		},
 		{
 			name:   "not test output",

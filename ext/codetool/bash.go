@@ -217,6 +217,10 @@ func Bash(opts ...Option) core.Tool {
 				if hint := timeoutContextHint(params.Command); hint != "" {
 					result += "\n" + hint
 				}
+				// Add optimization-specific hints when tests/builds timeout.
+				if hint := testTimeoutOptimizationHint(params.Command); hint != "" {
+					result += "\n" + hint
+				}
 			}
 
 			// Note when the command succeeded after auto-retry.
@@ -818,8 +822,9 @@ func truncateErrorLine(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// compilationErrorHint extracts the first file:line from C/C++, Go, and Rust
-// compiler errors so the agent can jump directly to the error location.
+// compilationErrorHint extracts the first file:line and error message from
+// C/C++, Go, and Rust compiler errors so the agent can jump directly to the
+// error location AND understand what's wrong without re-reading the output.
 // Saves 1-2 turns of the agent reading the full error output and figuring out
 // which file and line to view/edit.
 func compilationErrorHint(output string, exitCode int) string {
@@ -848,14 +853,28 @@ func compilationErrorHint(output string, exitCode int) string {
 	// C/C++/clang: "file.c:42:5: error: ..."
 	// Go: "./main.go:42:5: ..." or "main.go:42:5: ..."
 	// Rust (cargo): " --> src/main.rs:42:5"
-	for _, line := range lines {
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
 		// Rust: " --> file:line:col"
+		// Error message is on the preceding "error[EXXXX]: message" line.
 		if strings.HasPrefix(trimmed, "--> ") {
 			rest := strings.TrimPrefix(trimmed, "--> ")
 			parts := strings.SplitN(rest, ":", 3)
 			if len(parts) >= 2 && isNumeric(parts[1]) {
+				// Look back for the "error:" line that precedes " -->"
+				errMsg := ""
+				for k := i - 1; k >= max(0, i-3); k-- {
+					prev := strings.TrimSpace(lines[k])
+					if strings.HasPrefix(prev, "error") && strings.Contains(prev, ":") {
+						errMsg = prev
+						break
+					}
+				}
+				if errMsg != "" {
+					return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+						truncateErrorLine(errMsg, 120), parts[0], parts[1], parts[1])
+				}
 				return fmt.Sprintf("[hint: error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
 					parts[0], parts[1], parts[1])
 			}
@@ -874,6 +893,21 @@ func compilationErrorHint(output string, exitCode int) string {
 			// Skip very long file paths (probably not real file references)
 			if len(file) > 200 {
 				continue
+			}
+			// Extract the error message portion after file:line:col.
+			// For "file.c:42:5: error: undeclared identifier 'x'", extract "error: undeclared identifier 'x'"
+			errMsg := ""
+			if len(parts) >= 4 {
+				// parts[3] contains everything after file:line:col:
+				errMsg = strings.TrimSpace(parts[3])
+				// For "col: error: msg", skip the col part.
+				if colIdx := strings.Index(errMsg, ": "); colIdx > 0 && colIdx < 8 {
+					errMsg = strings.TrimSpace(errMsg[colIdx+2:])
+				}
+			}
+			if errMsg != "" {
+				return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+					truncateErrorLine(errMsg, 120), file, line, line)
 			}
 			return fmt.Sprintf("[hint: error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
 				file, line, line)
@@ -1544,6 +1578,62 @@ func firstFailureDetail(output string) string {
 			}
 			return "[first failure: " + detail + "]"
 		}
+
+		// JUnit/Maven: "expected:<X> but was:<Y>" (Java test frameworks)
+		if strings.Contains(lower, "expected:<") && strings.Contains(lower, "but was:<") {
+			if len(trimmed) > 200 {
+				trimmed = trimmed[:200] + "..."
+			}
+			return "[first failure: " + trimmed + "]"
+		}
+
+		// JUnit5: "expected: <X> but was: <Y>" (with spaces around angle brackets)
+		if strings.Contains(lower, "expected: <") && strings.Contains(lower, "but was: <") {
+			if len(trimmed) > 200 {
+				trimmed = trimmed[:200] + "..."
+			}
+			return "[first failure: " + trimmed + "]"
+		}
+
+		// Mocha/Chai: "AssertionError: expected X to equal Y" or "to deeply equal"
+		if strings.Contains(trimmed, "AssertionError:") && strings.Contains(lower, " to ") {
+			if len(trimmed) > 200 {
+				trimmed = trimmed[:200] + "..."
+			}
+			return "[first failure: " + trimmed + "]"
+		}
+
+		// PHPUnit: "Failed asserting that X matches/equals/is Y"
+		if strings.HasPrefix(trimmed, "Failed asserting that") {
+			if len(trimmed) > 200 {
+				trimmed = trimmed[:200] + "..."
+			}
+			return "[first failure: " + trimmed + "]"
+		}
+
+		// Shell test scripts: "FAIL: expected 'X', got 'Y'" or "FAIL - expected X got Y"
+		// Common in TB2 custom test harnesses.
+		if (strings.HasPrefix(upper(trimmed), "FAIL") || strings.HasPrefix(trimmed, "ERROR")) &&
+			(strings.Contains(lower, "expected") || strings.Contains(lower, "mismatch")) {
+			if len(trimmed) > 200 {
+				trimmed = trimmed[:200] + "..."
+			}
+			return "[first failure: " + trimmed + "]"
+		}
+
+		// CTest/CMake: "The following tests FAILED:" followed by test list
+		if strings.Contains(trimmed, "The following tests FAILED:") {
+			// Look ahead for specific test names
+			for j := i + 1; j < min(i+5, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				if ahead != "" && !strings.HasPrefix(ahead, "Errors while") {
+					if len(ahead) > 150 {
+						ahead = ahead[:150] + "..."
+					}
+					return "[first failure: " + ahead + "]"
+				}
+			}
+		}
 	}
 
 	return ""
@@ -1740,6 +1830,84 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
+	// Mocha: "N passing" / "M failing" (separate lines near end of output)
+	if strings.Contains(lower, "passing") && (strings.Contains(lower, "failing") || !strings.Contains(lower, "fail")) {
+		var p, f int
+		foundPassing := false
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			words := strings.Fields(lineLower)
+			if len(words) >= 2 {
+				if words[1] == "passing" && isNumeric(words[0]) {
+					fmt.Sscanf(words[0], "%d", &p)
+					foundPassing = true
+				} else if words[1] == "failing" && isNumeric(words[0]) {
+					fmt.Sscanf(words[0], "%d", &f)
+				}
+			}
+		}
+		if foundPassing {
+			passed = p
+			failed = f
+			ok = true
+			return
+		}
+	}
+
+	// PHPUnit: "Tests: N, Assertions: M, Failures: F, Errors: E"
+	// or "OK (N tests, M assertions)"
+	if strings.Contains(lower, "phpunit") || (strings.Contains(lower, "tests:") && strings.Contains(lower, "assertions:")) {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "tests:") && strings.Contains(lineLower, "assertions:") {
+				var t, f, e int
+				// Parse "Tests: N, Assertions: M, Failures: F, Errors: E"
+				fmt.Sscanf(extractAfter(lineLower, "tests:"), "%d", &t)
+				fmt.Sscanf(extractAfter(lineLower, "failures:"), "%d", &f)
+				fmt.Sscanf(extractAfter(lineLower, "errors:"), "%d", &e)
+				if t > 0 {
+					failed = f + e
+					passed = t - failed
+					ok = true
+					return
+				}
+			}
+			// PHPUnit OK format: "OK (N tests, M assertions)"
+			if strings.HasPrefix(lineLower, "ok (") && strings.Contains(lineLower, "test") {
+				var t int
+				fmt.Sscanf(strings.TrimPrefix(lineLower, "ok ("), "%d", &t)
+				if t > 0 {
+					passed = t
+					ok = true
+					return
+				}
+			}
+		}
+	}
+
+	// Maven/JUnit: "Tests run: N, Failures: F, Errors: E, Skipped: S"
+	if strings.Contains(lower, "tests run:") && strings.Contains(lower, "failures:") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "tests run:") {
+				var t, f, e, s int
+				fmt.Sscanf(extractAfter(lineLower, "tests run:"), "%d", &t)
+				fmt.Sscanf(extractAfter(lineLower, "failures:"), "%d", &f)
+				fmt.Sscanf(extractAfter(lineLower, "errors:"), "%d", &e)
+				fmt.Sscanf(extractAfter(lineLower, "skipped:"), "%d", &s)
+				if t > 0 {
+					failed = f + e
+					passed = t - failed - s
+					ok = true
+					return
+				}
+			}
+		}
+	}
+
 	// Generic: "X/Y tests passed" or "N out of M"
 	for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
 		line := strings.TrimSpace(lines[i])
@@ -1843,6 +2011,12 @@ func compilationErrorSummary(output string, exitCode int) string {
 		summary += "  " + line + "\n"
 	}
 	summary += "]"
+
+	// Cascade hint: when many errors exist, fixing the first one often
+	// resolves many others (e.g., missing include → dozens of "undeclared").
+	if len(errorLines) > 5 {
+		summary += "\n[hint: fix the FIRST error and recompile — later errors often cascade from the first one]"
+	}
 	return summary
 }
 
@@ -1915,6 +2089,36 @@ func timeoutContextHint(cmd string) string {
 	if strings.Contains(lower, "tail -f") || strings.Contains(lower, "watch ") {
 		return "[hint: this is a blocking monitoring command. Use a non-blocking alternative " +
 			"(e.g., tail -n 20 instead of tail -f, or run checks with individual commands)]"
+	}
+
+	return ""
+}
+
+// testTimeoutOptimizationHint provides language-specific optimization advice
+// when a test or build command times out. The generic timeout message says
+// "optimize YOUR code" but language-specific hints are more actionable.
+func testTimeoutOptimizationHint(cmd string) string {
+	lower := strings.ToLower(strings.TrimSpace(cmd))
+
+	// Detect test commands and provide language-specific optimization hints.
+	switch {
+	case strings.Contains(lower, "pytest") || strings.Contains(lower, "python3 -m pytest") ||
+		strings.Contains(lower, "python3 test") || strings.Contains(lower, "python test"):
+		return "[optimization hints: (1) use numpy/vectorized ops instead of Python loops, " +
+			"(2) use dict/set for O(1) lookups instead of list scans, " +
+			"(3) use generators for large data, (4) profile with: python3 -m cProfile -s cumulative your_script.py]"
+	case strings.Contains(lower, "go test") || strings.Contains(lower, "go run"):
+		return "[optimization hints: (1) use map for lookups, (2) pre-allocate slices with make([]T, 0, n), " +
+			"(3) avoid string concatenation in loops (use strings.Builder), (4) profile with: go test -cpuprofile=cpu.prof -run TestName]"
+	case strings.Contains(lower, "cargo test") || strings.Contains(lower, "cargo run"):
+		return "[optimization hints: (1) use HashMap for lookups, (2) avoid unnecessary cloning, " +
+			"(3) use iterators instead of collect+loop, (4) compile with --release for benchmarks]"
+	case strings.Contains(lower, "gcc") || strings.Contains(lower, "g++") || strings.Contains(lower, "clang") || strings.Contains(lower, "make"):
+		return "[optimization hints: (1) add -O2 flag for optimization, " +
+			"(2) use efficient data structures, (3) minimize memory allocations in hot loops]"
+	case strings.Contains(lower, "npm test") || strings.Contains(lower, "jest") || strings.Contains(lower, "mocha") || strings.Contains(lower, "node "):
+		return "[optimization hints: (1) use Map/Set for lookups instead of array.find/includes, " +
+			"(2) avoid unnecessary object spread/creation in loops, (3) use streams for large data]"
 	}
 
 	return ""
