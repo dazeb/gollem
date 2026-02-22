@@ -1661,21 +1661,71 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "For chess positions: analyze piece positions programmatically, don't try to 'see' the image")
 	}
 
+	// Detect tasks with audio files.
+	if audioFiles := detectAudioFiles(workDir); len(audioFiles) > 0 {
+		hints = append(hints, "\n## Audio Files Detected")
+		for _, f := range audioFiles {
+			hints = append(hints, "  - "+f)
+		}
+		hints = append(hints, "To analyze audio, use Python with librosa, scipy, or built-in wave module:")
+		hints = append(hints, "  python3 -c \"import wave; w = wave.open('file.wav'); print(w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes())\"")
+		hints = append(hints, "For spectral analysis: pip install --break-system-packages librosa numpy scipy")
+		hints = append(hints, "For conversion: ffmpeg -i input.mp3 output.wav (if ffmpeg is available)")
+	}
+
+	// Detect tasks with database files.
+	if dbFiles := detectDatabaseFiles(workDir); len(dbFiles) > 0 {
+		hints = append(hints, "\n## Database Files Detected")
+		for _, f := range dbFiles {
+			hints = append(hints, "  - "+f)
+		}
+		hints = append(hints, "For SQLite: `sqlite3 <file> '.tables'` to list tables, `.schema` for schema")
+		hints = append(hints, "Use Python sqlite3 module for programmatic access: `import sqlite3; conn = sqlite3.connect('file.db')`")
+	}
+
 	if len(hints) > 0 {
 		return strings.Join(hints, "\n")
 	}
 	return ""
 }
 
+// detectAudioFiles returns audio file paths found in the working directory.
+func detectAudioFiles(workDir string) []string {
+	var files []string
+	for _, dir := range []string{workDir, "/app", "/app/task_file"} {
+		for _, ext := range []string{"*.wav", "*.mp3", "*.flac", "*.ogg", "*.aac", "*.m4a", "*.aiff"} {
+			matches, _ := filepath.Glob(filepath.Join(dir, ext))
+			files = append(files, matches...)
+		}
+	}
+	if len(files) > 10 {
+		files = files[:10]
+	}
+	return files
+}
+
+// detectDatabaseFiles returns database file paths found in the working directory.
+func detectDatabaseFiles(workDir string) []string {
+	var files []string
+	for _, dir := range []string{workDir, "/app", "/app/task_file"} {
+		for _, ext := range []string{"*.db", "*.sqlite", "*.sqlite3"} {
+			matches, _ := filepath.Glob(filepath.Join(dir, ext))
+			files = append(files, matches...)
+		}
+	}
+	if len(files) > 5 {
+		files = files[:5]
+	}
+	return files
+}
+
 // detectImageFiles returns image file paths found in the working directory.
 func detectImageFiles(workDir string) []string {
 	var images []string
-	for _, dir := range []string{workDir, "/app"} {
-		for _, ext := range []string{"*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.tiff", "*.ppm", "*.pgm"} {
+	for _, dir := range []string{workDir, "/app", "/app/task_file", "/app/task_file/input_data"} {
+		for _, ext := range []string{"*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.tiff", "*.ppm", "*.pgm", "*.svg", "*.webp"} {
 			matches, _ := filepath.Glob(filepath.Join(dir, ext))
-			for _, m := range matches {
-				images = append(images, m)
-			}
+			images = append(images, matches...)
 		}
 	}
 	// Cap to 10 to prevent context bloat.
