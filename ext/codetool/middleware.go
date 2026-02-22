@@ -440,7 +440,7 @@ func discoverEnvironment(workDir string) string {
 	if autoReadBudget > 0 {
 		appSourceDirs := []string{"/app", workDir}
 		for _, ad := range appSourceDirs {
-			autoReadSourceFilesBudget(ad, &parts, 5000, 8, autoReadBudget)
+			autoReadBudget = autoReadSourceFilesBudget(ad, &parts, 5000, 8, autoReadBudget)
 			break // only read from one source directory
 		}
 	}
@@ -572,6 +572,9 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"mix.exs", "Elixir", "mix"},
 		{"build.zig", "Zig", "zig"},
 		{"Project.toml", "Julia", "julia"},
+		{"Makefile.PL", "Perl", "perl"},
+		{"Build.PL", "Perl", "perl"},
+		{"cpanfile", "Perl", "cpanm"},
 		{"Makefile", "unknown", "make"},
 	}
 
@@ -777,8 +780,10 @@ func autoReadTestRecursive(dir string, parts *[]string, maxBytes int, remaining 
 // autoReadSourceFilesBudget reads small source files in a directory recursively
 // (up to depth 3), respecting a total byte budget. This ensures the agent sees
 // code in subdirectories like src/, lib/, utils/ without wasting turns.
-func autoReadSourceFilesBudget(dir string, parts *[]string, maxBytes, maxFiles, budget int) {
+// Returns the remaining byte budget.
+func autoReadSourceFilesBudget(dir string, parts *[]string, maxBytes, maxFiles, budget int) int {
 	autoReadSourceRecursive(dir, parts, maxBytes, &maxFiles, &budget, 0, 3)
+	return budget
 }
 
 // autoReadSourceRecursive walks a directory tree reading source files.
