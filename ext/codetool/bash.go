@@ -306,6 +306,20 @@ func Bash(opts ...Option) core.Tool {
 							if len(testRunHistory) > maxTestHistory {
 								testRunHistory = testRunHistory[len(testRunHistory)-maxTestHistory:]
 							}
+							// Detect regression: pass count dropped from previous run.
+							// This catches the case where an edit broke something.
+							if len(testRunHistory) >= 2 {
+								prev := testRunHistory[len(testRunHistory)-2]
+								curr := testRunHistory[len(testRunHistory)-1]
+								if curr.passed < prev.passed && prev.passed > 0 {
+									result += fmt.Sprintf("\n[hint: REGRESSION — pass count dropped from %d/%d to %d/%d. "+
+										"Your last change likely broke something. Consider: "+
+										"(1) reverting the last edit, (2) re-reading what you changed, "+
+										"(3) checking if you introduced a syntax error or typo]",
+										prev.passed, prev.passed+prev.failed,
+										curr.passed, curr.passed+curr.failed)
+								}
+							}
 							// Detect stagnation: 3+ runs with same or worse pass count.
 							if len(testRunHistory) >= 3 {
 								last3 := testRunHistory[len(testRunHistory)-3:]

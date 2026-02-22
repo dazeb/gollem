@@ -77,6 +77,10 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				core.WithAgentMiddleware[string](ContextInjectionMiddleware(cfg.WorkDir)),
 				// Loop detection: catch subagent doom loops early (3 repeated edits).
 				core.WithAgentMiddleware[string](LoopDetectionMiddleware(3)),
+				// Progress tracking: nudge subagent to produce output files early.
+				// Subagents are prone to analysis paralysis just like the parent.
+				// No timeout arg — subagents use turn-based triggers only.
+				core.WithAgentMiddleware[string](ProgressTrackingMiddleware(cfg.WorkDir)),
 				// Reasoning sandwich: vary thinking budget by phase (planning vs
 				// implementation vs verification). Helps subagent reason carefully
 				// when analyzing errors and verifying fixes.

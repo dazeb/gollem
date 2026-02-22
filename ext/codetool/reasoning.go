@@ -90,7 +90,7 @@ func subagentReasoningConfig() ReasoningSandwichConfig {
 func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddleware {
 	var mu sync.Mutex
 	turn := 0
-	inVerification := false
+	verificationCooldown := 0 // turns remaining in verification mode after detection
 
 	return func(
 		ctx context.Context,
@@ -103,11 +103,18 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddlewa
 		turn++
 		currentTurn := turn
 
-		// Detect if we're in verification phase by checking recent tool calls.
-		if !inVerification {
-			inVerification = detectVerificationPhase(messages)
+		// Detect verification phase from recent messages every turn.
+		// Unlike the old one-way latch (which stayed in verification forever
+		// once triggered), this re-evaluates on each turn with a cooldown.
+		// The 3-turn cooldown ensures high reasoning persists through the
+		// critical test→analyze→fix cycle before dropping back to
+		// implementation-level reasoning.
+		if detectVerificationPhase(messages) {
+			verificationCooldown = 3
+		} else if verificationCooldown > 0 {
+			verificationCooldown--
 		}
-		isVerifying := inVerification
+		isVerifying := verificationCooldown > 0
 		mu.Unlock()
 
 		// Only modify settings if reasoning is configured (either provider).
