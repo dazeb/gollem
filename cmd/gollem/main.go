@@ -229,6 +229,25 @@ func runAgent() {
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
 	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(f.timeout)))
 
+	// Override auto-context limit based on provider's context window.
+	// Anthropic Claude models have 200K context — we can safely use 150K.
+	// Gemini models also have large context windows (1M+).
+	// OpenAI-compatible (including xAI/grok) defaults to 80K (from AgentOptions).
+	switch f.provider {
+	case "anthropic", "vertexai-anthropic":
+		agentOpts = append(agentOpts, core.WithAutoContext[string](core.AutoContextConfig{
+			MaxTokens: 150000,
+			KeepLastN: 12,
+		}))
+		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 150K tokens (Claude)\n")
+	case "vertexai":
+		agentOpts = append(agentOpts, core.WithAutoContext[string](core.AutoContextConfig{
+			MaxTokens: 150000,
+			KeepLastN: 12,
+		}))
+		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 150K tokens (Gemini)\n")
+	}
+
 	// Enable reasoning by default for providers that support it.
 	// This is provider-agnostic: Anthropic uses ThinkingBudget,
 	// OpenAI uses ReasoningEffort. The reasoning sandwich middleware

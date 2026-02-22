@@ -180,14 +180,20 @@ class GollemAgent(BaseInstalledAgent):
         binary_path = _find_binary()
 
         # Combined setup: fix dpkg, install CA certs and common tools, create bin dir.
-        # This saves multiple exec round-trips. Use a 120-second timeout to prevent hanging.
-        # Pre-installing python3-pip and build-essential saves the agent 2-3 turns per task
-        # since these are the most commonly needed packages. Setup time doesn't count
+        # Also create swap space to prevent OOM kills (Anthropic's research found
+        # 5.8% of TB2 failures are from container OOM). Setup time doesn't count
         # against the agent's timeout, so this is free from the agent's perspective.
         await environment.exec(
             command=(
                 "dpkg --configure -a > /dev/null 2>&1 || true; "
                 "mkdir -p /usr/local/bin; "
+                # Create 1GB swap to prevent OOM kills on memory-intensive tasks.
+                "if [ ! -f /swapfile ]; then "
+                "  dd if=/dev/zero of=/swapfile bs=1M count=1024 2>/dev/null && "
+                "  chmod 600 /swapfile && "
+                "  mkswap /swapfile 2>/dev/null && "
+                "  swapon /swapfile 2>/dev/null || true; "
+                "fi; "
                 "timeout 120 sh -c '("
                 "  if command -v apt-get >/dev/null 2>&1; then "
                 "    apt-get update -qq 2>/dev/null && "
