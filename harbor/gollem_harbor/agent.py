@@ -201,6 +201,10 @@ class GollemAgent(BaseInstalledAgent):
             else -1
         )
 
+        # Harbor's Docker exec merges stderr into stdout, so stderr.txt
+        # may not exist or may be empty. Search both for log data.
+        combined_output = stdout + "\n" + stderr
+
         trajectory = {
             "agent": "gollem",
             "model": self.model_name,
@@ -211,17 +215,18 @@ class GollemAgent(BaseInstalledAgent):
 
         # Parse token usage from gollem's "done" line.
         # Format: "gollem: done (tokens: 12345 in, 6789 out, tools: 42)"
+        # Search combined output since stderr may be merged into stdout.
         done_match = re.search(
             r"tokens:\s*(\d+)\s*in,\s*(\d+)\s*out,\s*tools:\s*(\d+)",
-            stderr,
+            combined_output,
         )
         if done_match:
             trajectory["input_tokens"] = int(done_match.group(1))
             trajectory["output_tokens"] = int(done_match.group(2))
             trajectory["tool_calls"] = int(done_match.group(3))
 
-        # Count tool invocations from stderr hooks.
-        tool_starts = stderr.count("[gollem] tool:start")
+        # Count tool invocations from log hooks.
+        tool_starts = combined_output.count("[gollem] tool:start")
         if tool_starts > 0:
             trajectory["tool_invocations"] = tool_starts
 

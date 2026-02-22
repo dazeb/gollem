@@ -4,6 +4,8 @@ import (
 	"time"
 
 	montygo "github.com/fugue-labs/monty-go"
+
+	"github.com/fugue-labs/gollem/core"
 )
 
 // Config holds shared configuration for coding tools.
@@ -28,6 +30,10 @@ type Config struct {
 	// When set, the agent gets an execute_code tool that lets it batch
 	// multiple tool calls into a single Python script (N calls per round-trip).
 	Runner *montygo.Runner
+
+	// Model is the LLM model used for subagent delegation.
+	// When set, the agent gets a delegate tool for spawning subagents.
+	Model core.Model
 }
 
 // Option configures coding tools.
@@ -76,4 +82,12 @@ func WithMaxOutputLen(n int) Option {
 // when done).
 func WithCodeMode(runner *montygo.Runner) Option {
 	return func(c *Config) { c.Runner = runner }
+}
+
+// WithModel sets the model for subagent delegation. When provided, the
+// agent gets a "delegate" tool that can spawn focused subagents for
+// subtask execution. The subagent uses the same coding tools but runs
+// with its own context and limited turns.
+func WithModel(model core.Model) Option {
+	return func(c *Config) { c.Model = model }
 }

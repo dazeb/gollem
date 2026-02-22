@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/ext/deep"
 	"github.com/fugue-labs/gollem/ext/monty"
 )
 
@@ -70,6 +71,14 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		cm := monty.New(cfg.Runner, AllTools(toolOpts...))
 		toolOptions = append(toolOptions, core.WithTools[string](cm.Tool()))
 		systemPrompt += "\n\n" + cm.SystemPrompt()
+	}
+
+	// Planning tool: persistent task list for tracking progress on multi-step work.
+	toolOptions = append(toolOptions, core.WithTools[string](deep.PlanningTool()))
+
+	// SubAgent delegation: spawn focused subagents for subtask execution.
+	if cfg.Model != nil {
+		toolOptions = append(toolOptions, core.WithTools[string](SubAgentTool(cfg.Model, toolOpts...)))
 	}
 
 	opts := []core.AgentOption[string]{

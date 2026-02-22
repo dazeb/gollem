@@ -187,6 +187,9 @@ func runAgent() {
 		defer runner.Close()
 	}
 
+	// Pass the model so the coding agent can spawn subagents for delegation.
+	toolOpts = append(toolOpts, codetool.WithModel(model))
+
 	// Build the coding agent with the full recommended setup.
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
 	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(f.timeout)))

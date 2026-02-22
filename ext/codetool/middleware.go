@@ -180,8 +180,8 @@ func discoverEnvironment(workDir string) string {
 	}
 
 	// Available tools.
-	parts = append(parts, "\nAvailable tools: bash, view, edit, multi_edit, write, grep, glob, ls")
-	parts = append(parts, "Start by reading the task-relevant files, then proceed with changes.")
+	parts = append(parts, "\nAvailable tools: bash, view, edit, multi_edit, write, grep, glob, ls, planning, delegate")
+	parts = append(parts, "Start by reading the task-relevant files. For complex tasks, create a plan first using the planning tool, then proceed with changes.")
 
 	return strings.Join(parts, "\n")
 }
