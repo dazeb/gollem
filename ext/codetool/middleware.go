@@ -646,6 +646,8 @@ func autoReadSourceFilesBudget(dir string, parts *[]string, maxBytes, maxFiles, 
 }
 
 // autoReadSourceRecursive walks a directory tree reading source files.
+// Files are prioritized: entry-point files (main.*, app.*, index.*) are
+// read first since they define the program structure.
 func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remaining *int, budget *int, depth, maxDepth int) {
 	if depth > maxDepth || *remaining <= 0 || *budget <= 0 {
 		return
@@ -655,11 +657,9 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 		return
 	}
 
-	// Read files first, then recurse into subdirectories.
+	// Partition files into priority tiers: entry points first, then rest.
+	var priority, regular []os.DirEntry
 	for _, entry := range entries {
-		if *remaining <= 0 || *budget <= 0 {
-			return
-		}
 		if entry.IsDir() {
 			continue
 		}
@@ -667,11 +667,23 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 		if !isSourceFile(name) {
 			continue
 		}
-		// Skip common non-task files.
 		lower := strings.ToLower(name)
 		if lower == "readme.md" || lower == "readme.txt" || lower == "readme" {
 			continue // Already auto-read separately.
 		}
+		if isEntryPointFile(lower) {
+			priority = append(priority, entry)
+		} else {
+			regular = append(regular, entry)
+		}
+	}
+
+	// Read priority files first, then regular files.
+	for _, entry := range append(priority, regular...) {
+		if *remaining <= 0 || *budget <= 0 {
+			return
+		}
+		name := entry.Name()
 		info, err := entry.Info()
 		if err != nil || info.Size() > int64(maxBytes) || info.Size() == 0 {
 			continue
@@ -1453,6 +1465,26 @@ func detectTestCommands(workDir string) []string {
 		cmds = cmds[:10]
 	}
 	return cmds
+}
+
+// isEntryPointFile returns true for filenames that are likely program entry
+// points or high-priority configuration files. These are read first during
+// auto-read to give the agent the most important context upfront.
+func isEntryPointFile(lowerName string) bool {
+	entryPoints := []string{
+		"main.", "app.", "index.", "server.", "cli.",
+		"__init__.py", "__main__.py",
+		"conftest.py", // pytest fixtures
+		"manage.py",   // Django
+		"wsgi.py", "asgi.py",
+		"solution.", "solve.", "answer.", // common TB2 deliverable names
+	}
+	for _, ep := range entryPoints {
+		if strings.HasPrefix(lowerName, ep) || lowerName == ep {
+			return true
+		}
+	}
+	return false
 }
 
 func dirExists(path string) bool {

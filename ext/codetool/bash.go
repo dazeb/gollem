@@ -561,7 +561,10 @@ func transientErrorHint(output string, exitCode int) string {
 			strings.Contains(lower, "connection refused") && strings.Contains(lower, "apt") ||
 			strings.Contains(lower, "failed to fetch") ||
 			strings.Contains(lower, "retrying") && strings.Contains(lower, "download")) {
-		return "[hint: transient network error — retry the command]"
+		return "[hint: network error — this container may not have internet access. " +
+			"Use only locally available packages and tools. " +
+			"For Python: check if the package is already installed with 'python3 -c \"import <module>\"'. " +
+			"For apt: try 'dpkg -l | grep <package>' to check installed packages]"
 	}
 
 	// Permission errors in common locations.

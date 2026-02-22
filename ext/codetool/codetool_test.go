@@ -262,7 +262,7 @@ func TestTransientErrorHint(t *testing.T) {
 	}{
 		{"externally managed", "error: externally-managed-environment\n× pip install failed", 1, "[hint: add --break-system-packages flag to pip install]"},
 		{"dpkg lock", "E: Could not get lock /var/lib/dpkg/lock", 100, "[hint: try: dpkg --configure -a && apt-get install -f]"},
-		{"network error", "Temporary failure resolving 'archive.ubuntu.com'", 100, "[hint: transient network error — retry the command]"},
+		{"network error", "Temporary failure resolving 'archive.ubuntu.com'", 100, "[hint: network error — this container may not have internet access. Use only locally available packages and tools. For Python: check if the package is already installed with 'python3 -c \"import <module>\"'. For apt: try 'dpkg -l | grep <package>' to check installed packages]"},
 		{"permission denied /usr", "bash: /usr/local/bin/foo: Permission denied", 126, "[hint: try running with sudo or use --user flag for pip]"},
 		{"no match", "some other error", 1, ""},
 		{"success ignores", "externally-managed-environment", 0, "[hint: add --break-system-packages flag to pip install]"},
