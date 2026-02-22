@@ -588,12 +588,59 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Python unittest: "Ran X tests in Y.ZZZs" + "OK" or "FAILED (failures=N, errors=M)"
+	if strings.Contains(output, "Ran ") && strings.Contains(lower, "tests") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "failed") && strings.Contains(lineLower, "failures") {
+				// Find the "Ran X tests" line too.
+				for j := i - 1; j >= max(0, i-3); j-- {
+					if strings.HasPrefix(strings.TrimSpace(lines[j]), "Ran ") {
+						return "[test summary: " + strings.TrimSpace(lines[j]) + " — " + line + "]"
+					}
+				}
+				return "[test summary: " + line + "]"
+			}
+			if line == "OK" && i > 0 {
+				prev := strings.TrimSpace(lines[i-1])
+				if strings.HasPrefix(prev, "Ran ") {
+					return "[test summary: " + prev + " — OK]"
+				}
+			}
+		}
+	}
+
 	// npm/jest: "Tests: X failed, Y passed, Z total"
 	if strings.Contains(lower, "tests:") && strings.Contains(lower, "total") {
 		for _, line := range strings.Split(output, "\n") {
 			lineLower := strings.ToLower(strings.TrimSpace(line))
 			if strings.Contains(lineLower, "tests:") && strings.Contains(lineLower, "total") {
 				return "[test summary: " + strings.TrimSpace(line) + "]"
+			}
+		}
+	}
+
+	// Cargo test: "test result: ok. X passed; Y failed; Z ignored"
+	if strings.Contains(output, "test result:") {
+		for _, line := range strings.Split(output, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "test result:") {
+				return "[test summary: " + trimmed + "]"
+			}
+		}
+	}
+
+	// Shell test scripts: look for reward/score output (TB2 pattern).
+	if strings.Contains(lower, "reward") || strings.Contains(lower, "score") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if (strings.Contains(lineLower, "reward") || strings.Contains(lineLower, "score")) &&
+				(strings.Contains(line, ":") || strings.Contains(line, "=")) {
+				return "[test summary: " + line + "]"
 			}
 		}
 	}

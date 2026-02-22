@@ -694,6 +694,10 @@ func detectTaskGuidance(workDir string) string {
 	if hasInputData && hasOutputData {
 		hints = append(hints, "\n## Task Type: Data Processing")
 		hints = append(hints, "This task has input_data/ and output_data/ directories.")
+		hints = append(hints, "QUICK START (do these in order):")
+		hints = append(hints, "  Turn 1: Read test code + examine input data format (head/wc -l)")
+		hints = append(hints, "  Turn 2: Write processing script to output_data/")
+		hints = append(hints, "  Turn 3: Run test, read failures, iterate")
 		hints = append(hints, "Strategy: (1) Read input data format, (2) understand output requirements from tests/scripts, (3) write processing code, (4) validate output matches expected format.")
 		// Show first few lines of input data files so agent knows the format immediately.
 		inputDirs := []string{"/app/task_file/input_data", filepath.Join(workDir, "input_data")}
@@ -709,10 +713,18 @@ func detectTaskGuidance(workDir string) string {
 	}
 	if hasFilter {
 		hints = append(hints, "\n## Task Type: Security/Bypass")
+		hints = append(hints, "QUICK START:")
+		hints = append(hints, "  Turn 1: Read filter.py THOROUGHLY — understand what it blocks/allows")
+		hints = append(hints, "  Turn 2: Write payloads to output, test against filter")
+		hints = append(hints, "  Turn 3: Run verifier tests, iterate")
 		hints = append(hints, "Strategy: (1) Read and understand the filter code thoroughly, (2) identify what it blocks vs allows, (3) craft payloads that exploit gaps, (4) test each payload against the filter before writing to output.")
 	}
 	if hasTests && !hasInputData {
 		hints = append(hints, "\n## Task Type: Code Implementation")
+		hints = append(hints, "QUICK START:")
+		hints = append(hints, "  Turn 1: Read test code to understand expected behavior and API")
+		hints = append(hints, "  Turn 2: Write initial implementation")
+		hints = append(hints, "  Turn 3: Run tests, read failures carefully, fix one at a time")
 		hints = append(hints, "Strategy: (1) Read test files to understand expected behavior, (2) implement solution, (3) run tests iteratively until passing, (4) clean up build artifacts.")
 	}
 
@@ -904,9 +916,10 @@ func discoverVerificationScripts(workDir string) []string {
 	// Check these directories for verification scripts.
 	searchDirs := []string{workDir, "/app", "/app/task_file"}
 	verifyPatterns := []string{
-		"verify*", "check*", "validate*", "test_*", "run_test*",
+		"verify*", "check*", "validate*",
+		"test.sh", "test.py", "test_*",
+		"run_test*", "run.sh", "run.py", "run_*.sh", "run_*.py",
 		"score*", "eval*", "grade*",
-		"run.sh", "run.py", "run_*.sh", "run_*.py",
 		"judge*", "compare*",
 	}
 
