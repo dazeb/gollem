@@ -961,13 +961,21 @@ func testResultSummary(output string) string {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "failed") && strings.Contains(lineLower, "failures") {
+				var summary string
 				// Find the "Ran X tests" line too.
 				for j := i - 1; j >= max(0, i-3); j-- {
 					if strings.HasPrefix(strings.TrimSpace(lines[j]), "Ran ") {
-						return "[test summary: " + strings.TrimSpace(lines[j]) + " — " + line + "]"
+						summary = "[test summary: " + strings.TrimSpace(lines[j]) + " — " + line + "]"
+						break
 					}
 				}
-				return "[test summary: " + line + "]"
+				if summary == "" {
+					summary = "[test summary: " + line + "]"
+				}
+				if detail := firstFailureDetail(output); detail != "" {
+					summary += "\n" + detail
+				}
+				return summary
 			}
 			if line == "OK" && i > 0 {
 				prev := strings.TrimSpace(lines[i-1])
@@ -1021,6 +1029,18 @@ func testResultSummary(output string) string {
 			lineLower := strings.ToLower(line)
 			if (strings.Contains(lineLower, "reward") || strings.Contains(lineLower, "score")) &&
 				(strings.Contains(line, ":") || strings.Contains(line, "=")) {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
+	// RSpec: "3 examples, 1 failure" or "5 examples, 0 failures"
+	if strings.Contains(lower, "example") && strings.Contains(lower, "failure") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "example") && strings.Contains(lineLower, "failure") {
 				return "[test summary: " + line + "]"
 			}
 		}
@@ -1123,6 +1143,59 @@ func firstFailureDetail(output string) string {
 						}
 					}
 				}
+			}
+		}
+
+		// Classic diff format: "< expected\n---\n> actual" (common in TB2 test.sh scripts)
+		if strings.HasPrefix(trimmed, "< ") && i+2 < len(lines) {
+			sep := strings.TrimSpace(lines[i+1])
+			nextLine := strings.TrimSpace(lines[i+2])
+			if sep == "---" && strings.HasPrefix(nextLine, "> ") {
+				expected := strings.TrimPrefix(trimmed, "< ")
+				actual := strings.TrimPrefix(nextLine, "> ")
+				detail := fmt.Sprintf("diff: expected %q, got %q", expected, actual)
+				if len(detail) > 200 {
+					detail = detail[:200] + "..."
+				}
+				return "[first failure: " + detail + "]"
+			}
+		}
+
+		// Unified diff header: "@@ -N,M +N,M @@" — extract first changed line pair
+		if strings.HasPrefix(trimmed, "@@ ") && len(trimmed) > 3 && strings.Contains(trimmed[3:], " @@") {
+			for j := i + 1; j < min(i+20, len(lines)); j++ {
+				jLine := lines[j]
+				if strings.HasPrefix(jLine, "-") && !strings.HasPrefix(jLine, "---") {
+					expected := strings.TrimPrefix(jLine, "-")
+					if j+1 < len(lines) && strings.HasPrefix(lines[j+1], "+") && !strings.HasPrefix(lines[j+1], "+++") {
+						actual := strings.TrimPrefix(lines[j+1], "+")
+						detail := fmt.Sprintf("diff: expected %q, got %q", strings.TrimSpace(expected), strings.TrimSpace(actual))
+						if len(detail) > 200 {
+							detail = detail[:200] + "..."
+						}
+						return "[first failure: " + detail + "]"
+					}
+					break
+				}
+			}
+		}
+
+		// Rust: thread 'test_name' panicked at 'assertion `left == right` failed'
+		if strings.Contains(trimmed, "panicked at") {
+			lower := strings.ToLower(trimmed)
+			if strings.Contains(lower, "assert") || strings.Contains(lower, "left") || strings.Contains(lower, "unwrap") {
+				detail := trimmed
+				for j := i + 1; j < min(i+5, len(lines)); j++ {
+					ahead := strings.TrimSpace(lines[j])
+					aheadLower := strings.ToLower(ahead)
+					if strings.HasPrefix(aheadLower, "left:") || strings.HasPrefix(aheadLower, "right:") {
+						detail += " / " + ahead
+					}
+				}
+				if len(detail) > 200 {
+					detail = detail[:200] + "..."
+				}
+				return "[first failure: " + detail + "]"
 			}
 		}
 

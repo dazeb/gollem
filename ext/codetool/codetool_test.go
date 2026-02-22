@@ -1844,6 +1844,38 @@ Test 3: PASS`,
 			contains: `Expected "hello" but got "world"`,
 		},
 		{
+			name: "classic_diff",
+			output: `Comparing outputs:
+1c1
+< hello world
+---
+> hello wrold
+2c2
+< line two`,
+			contains: `diff: expected "hello world", got "hello wrold"`,
+		},
+		{
+			name: "unified_diff",
+			output: `--- expected.txt
++++ actual.txt
+@@ -1,3 +1,3 @@
+ line1
+-expected_line2
++actual_line2
+ line3`,
+			contains: `diff: expected "expected_line2", got "actual_line2"`,
+		},
+		{
+			name: "rust_panic",
+			output: `running 3 tests
+test test_add ... ok
+test test_multiply ... FAILED
+thread 'test_multiply' panicked at 'assertion ` + "`" + `left == right` + "`" + ` failed
+  left: 42
+  right: 43'`,
+			contains: "panicked at",
+		},
+		{
 			name: "no_failure",
 			output: `All tests passed!
 3 passed, 0 failed`,
