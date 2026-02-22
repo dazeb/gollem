@@ -222,7 +222,7 @@ class GollemAgent(BaseInstalledAgent):
         # All installs are best-effort with timeouts — failures are ignored.
         await environment.exec(
             command=(
-                "timeout 120 sh -c '"
+                "timeout 180 sh -c '"
                 # Install pytest first — nearly all verifier tests use it, and
                 # the agent needs it to verify its work. Also install common
                 # packages that many tasks require.

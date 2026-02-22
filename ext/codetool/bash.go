@@ -85,6 +85,10 @@ func Bash(opts ...Option) core.Tool {
 				// Auto-extend timeout for build/compile commands which often
 				// need much longer than the 120s default.
 				timeout = 5 * time.Minute
+			} else if isLongRunningCommand(params.Command) && timeout < 5*time.Minute {
+				// Auto-extend timeout for benchmarks, model training, and data
+				// processing commands that typically exceed the 120s default.
+				timeout = 5 * time.Minute
 			}
 
 			ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -665,6 +669,27 @@ func compilationErrorSummary(output string, exitCode int) string {
 }
 
 // isBuildCommand detects commands that typically need longer timeouts.
+// isLongRunningCommand returns true for commands that typically need more than
+// the default 120s timeout: benchmarks, model training, data processing, etc.
+func isLongRunningCommand(cmd string) bool {
+	lower := strings.ToLower(strings.TrimSpace(cmd))
+	longPatterns := []string{
+		"benchmark", "bench.",
+		"python3 train", "python train",
+		"python3 benchmark", "python benchmark",
+		"pytest -", // test suites with options often take longer
+		"go test -bench", "go test -count",
+		"train.py", "training.py",
+		"fasttext ", "qemu-system",
+	}
+	for _, p := range longPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func isBuildCommand(cmd string) bool {
 	lower := strings.ToLower(strings.TrimSpace(cmd))
 	buildPatterns := []string{
