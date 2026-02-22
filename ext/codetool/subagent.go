@@ -64,6 +64,11 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(50)}),
 				core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(50)),
 				core.WithDefaultToolTimeout[string](2 * time.Minute),
+				// Auto-compress context on long subtasks to prevent context overflow.
+				core.WithAutoContext[string](core.AutoContextConfig{
+					MaxTokens: 120000,
+					KeepLastN: 8,
+				}),
 			}
 
 			agent := core.NewAgent[string](model, subOpts...)
