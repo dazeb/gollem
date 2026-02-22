@@ -175,7 +175,7 @@ func discoverEnvironment(workDir string) string {
 			if testLs := runQuiet(td, "ls", "-1"); testLs != "" {
 				parts = append(parts, "\nTest directory found: "+td)
 				parts = append(parts, testLs)
-				parts = append(parts, "IMPORTANT: Read these test files FIRST to understand exactly what will be verified.")
+				parts = append(parts, "IMPORTANT: Read these test files FIRST to understand exactly what will be verified. Run them EARLY to see what passes/fails. Tests often check for unexpected files in directories — clean up all build artifacts.")
 			}
 			break
 		}

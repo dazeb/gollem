@@ -80,12 +80,12 @@ Common pitfalls to avoid:
 ## Before Declaring Completion
 
 You MUST run verification commands using bash before stopping:
-1. Look for existing test suites FIRST — check /tests/, tests/, test/ directories. Read the test code to understand exactly what will be verified. Your solution must pass THESE tests, not just your own.
+1. **Read the verifier tests FIRST** — check /tests/, tests/, test/ directories. Read the test code BEFORE you start coding to understand exactly what will be verified. Your solution must pass THESE tests. Run them early and often — don't wait until the end.
 2. Build/compile the code successfully (e.g., ` + "`go build ./...`" + `, ` + "`cargo build`" + `, ` + "`npm run build`" + `, ` + "`make`" + `)
 3. Run all relevant tests and confirm they pass (e.g., ` + "`go test ./...`" + `, ` + "`pytest`" + `, ` + "`npm test`" + `)
 4. If you modified a config, verify it loads correctly
 5. If you fixed a bug, confirm the fix with a test or manual verification
-6. **Clean up build artifacts** (CRITICAL): Remove ALL intermediate files from output/working directories: compiled binaries, .o files, .pyc files, __pycache__, temp files, and any files YOU created during development that aren't part of the deliverable. Tests frequently check directory contents with ` + "`os.listdir()`" + ` or ` + "`ls`" + ` — even one extra file (e.g., a compiled binary left behind) will cause test failure. After finishing, list the output directory and remove anything that isn't explicitly required.
+6. **Clean up build artifacts** (CRITICAL): Remove ALL intermediate files from output/working directories: compiled binaries, .o files, .pyc files, __pycache__, temp files, and any files YOU created during development that aren't part of the deliverable. Tests frequently check directory contents with ` + "`os.listdir()`" + ` or ` + "`ls`" + ` — even one extra file (e.g., a compiled binary left behind) will cause test failure. After finishing, ` + "`ls`" + ` the output directory and ` + "`rm`" + ` anything that isn't explicitly required.
 7. **Browser-dependent tests**: If a verifier test uses Selenium, Playwright, or browser automation, do NOT try to set up or run the browser yourself. Focus on the core task — create the required files, verify them with available tools (run scripts, check output). The verifier handles browser testing.
 
 NEVER declare the task complete without running tests and builds. The most common failure mode is writing a solution, glancing at it, deciding "looks good," and stopping without actually testing it. You will be rejected if you try to complete without evidence of verification.
