@@ -105,18 +105,23 @@ class GollemAgent(BaseInstalledAgent):
         """Upload the pre-built binary instead of compiling from source."""
         binary_path = _find_binary()
 
-        # Ensure CA certificates are available for TLS (some task images lack them).
-        # Only install if the actual cert bundle file is missing — the directory
-        # /etc/ssl/certs often exists even without certs installed.
-        # Use a 60-second timeout to prevent setup from hanging on slow networks.
+        # Fix broken dpkg state (some images have interrupted installs).
+        await environment.exec(
+            command="dpkg --configure -a > /dev/null 2>&1 || true"
+        )
+
+        # Ensure essential tools are available for TLS and verifier dependencies.
+        # Install CA certs + curl in one pass to minimize apt-get update calls.
+        # Use a 90-second timeout to prevent setup from hanging on slow networks.
         await environment.exec(
             command=(
-                "if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ]; then "
-                "timeout 60 sh -c '("
-                "  apt-get update -qq && apt-get install -y -qq ca-certificates"
-                "  || apk add --no-cache ca-certificates"
-                "  || yum install -y ca-certificates"
-                "  || dnf install -y ca-certificates"
+                "if [ ! -f /etc/ssl/certs/ca-certificates.crt ] && [ ! -f /etc/pki/tls/certs/ca-bundle.crt ] "
+                "|| ! command -v curl > /dev/null 2>&1; then "
+                "timeout 90 sh -c '("
+                "  apt-get update -qq && apt-get install -y -qq ca-certificates curl"
+                "  || apk add --no-cache ca-certificates curl"
+                "  || yum install -y ca-certificates curl"
+                "  || dnf install -y ca-certificates curl"
                 ") 2>&1 | tail -5' || true; "
                 "update-ca-certificates > /dev/null 2>&1 || true; "
                 "fi"
