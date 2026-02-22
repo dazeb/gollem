@@ -4652,6 +4652,196 @@ func TestIsNumericOrFloat(t *testing.T) {
 	}
 }
 
+func TestBuildContextRecoverySummary(t *testing.T) {
+	// Build a set of dropped messages that include reads, edits, and verification.
+	dropped := []core.ModelMessage{
+		// Agent reads a file.
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "read",
+					ArgsJSON: `{"path":"/app/main.py"}`,
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName: "read",
+					Content:  "def main():\n    print('hello')\n",
+				},
+			},
+		},
+		// Agent edits a file.
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "edit",
+					ArgsJSON: `{"path":"/app/main.py"}`,
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName: "edit",
+					Content:  "ok",
+				},
+			},
+		},
+		// Agent writes a new file.
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "write",
+					ArgsJSON: `{"path":"/app/output.txt"}`,
+				},
+			},
+		},
+		// Agent runs tests (fail).
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest test_main.py"}`,
+					ToolCallID: "v1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 failed, 2 passed\n[exit code: 1]",
+					ToolCallID: "v1",
+				},
+			},
+		},
+		// Agent runs tests again (pass).
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest test_main.py"}`,
+					ToolCallID: "v2",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "3 passed\n[exit code: 0]",
+					ToolCallID: "v2",
+				},
+			},
+		},
+	}
+
+	summary := buildContextRecoverySummary(dropped)
+
+	// Should mention files read.
+	if !strings.Contains(summary, "/app/main.py") {
+		t.Error("summary should mention files read")
+	}
+	// Should mention files modified.
+	if !strings.Contains(summary, "FILES YOU MODIFIED") {
+		t.Error("summary should have FILES YOU MODIFIED section")
+	}
+	if !strings.Contains(summary, "/app/output.txt") {
+		t.Error("summary should mention written files")
+	}
+	// Should mention verification history.
+	if !strings.Contains(summary, "VERIFICATION HISTORY") {
+		t.Error("summary should have VERIFICATION HISTORY section")
+	}
+	if !strings.Contains(summary, "FAILED") {
+		t.Error("summary should mention failed verification run")
+	}
+	if !strings.Contains(summary, "PASSED") {
+		t.Error("summary should mention passed verification run")
+	}
+}
+
+func TestEmergencyCompressWithSummary(t *testing.T) {
+	// Build a conversation with enough messages to trigger compression.
+	messages := make([]core.ModelMessage, 0, 20)
+
+	// First message: task description.
+	messages = append(messages, core.ModelRequest{
+		Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "Solve this coding problem"},
+		},
+	})
+
+	// Middle: agent reads files and edits.
+	for i := 0; i < 10; i++ {
+		callID := fmt.Sprintf("read%d", i)
+		messages = append(messages,
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{
+						ToolName:   "read",
+						ArgsJSON:   fmt.Sprintf(`{"path":"/app/file%d.py"}`, i),
+						ToolCallID: callID,
+					},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.ToolReturnPart{
+						ToolName:   "read",
+						Content:    strings.Repeat("x", 1000),
+						ToolCallID: callID,
+					},
+				},
+			},
+		)
+	}
+
+	// Tail: recent messages.
+	messages = append(messages,
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "I'll fix the issue now."},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Please hurry."},
+			},
+		},
+	)
+
+	compressed := emergencyCompressMessagesWithConfig(messages, 20000, 4)
+
+	// Should have: first message + recovery summary + last 4 messages = 6.
+	if len(compressed) != 6 {
+		t.Errorf("expected 6 compressed messages, got %d", len(compressed))
+	}
+
+	// Second message should be the recovery summary.
+	if req, ok := compressed[1].(core.ModelRequest); ok {
+		foundSummary := false
+		for _, part := range req.Parts {
+			if sp, ok := part.(core.SystemPromptPart); ok {
+				if strings.Contains(sp.Content, "EMERGENCY CONTEXT RECOVERY") {
+					foundSummary = true
+					// Should mention the files that were read.
+					if !strings.Contains(sp.Content, "FILES PREVIOUSLY READ") {
+						t.Error("recovery summary should list files that were read")
+					}
+				}
+			}
+		}
+		if !foundSummary {
+			t.Error("second message should be the recovery summary")
+		}
+	} else {
+		t.Error("second compressed message should be a ModelRequest")
+	}
+}
+
 func TestClassifyDiffReference(t *testing.T) {
 	dir := t.TempDir()
 	file1 := filepath.Join(dir, "expected.txt")

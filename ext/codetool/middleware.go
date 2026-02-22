@@ -6021,8 +6021,14 @@ func emergencyCompressMessages(messages []core.ModelMessage) []core.ModelMessage
 }
 
 // emergencyCompressMessagesWithConfig performs message truncation with configurable parameters.
-// Keeps the first message (task description), adds an emergency note, and keeps the
-// last keepLast messages with content truncated to maxContentBytes per block.
+// Keeps the first message (task description), builds a context recovery summary from
+// dropped messages, and keeps the last keepLast messages with content truncated.
+//
+// The context recovery summary preserves key information from dropped messages:
+// - Files that were read (so the agent knows what it already explored)
+// - Files that were edited/written (so the agent knows its current code state)
+// - Verification history (so the agent knows what tests passed/failed)
+// This prevents the agent from re-doing work or losing track of its approach.
 func emergencyCompressMessagesWithConfig(messages []core.ModelMessage, maxContentBytes, keepLast int) []core.ModelMessage {
 	if len(messages) <= keepLast+1 {
 		// Can't drop messages, but still try truncating content.
@@ -6033,17 +6039,17 @@ func emergencyCompressMessagesWithConfig(messages []core.ModelMessage, maxConten
 		return result
 	}
 
-	result := make([]core.ModelMessage, 0, keepLast+2)
+	result := make([]core.ModelMessage, 0, keepLast+3)
 	result = append(result, messages[0]) // first message (task + system prompt)
 
-	// Emergency recovery note.
+	// Build a context recovery summary from dropped messages.
+	dropped := messages[1 : len(messages)-keepLast]
+	summary := buildContextRecoverySummary(dropped)
+
 	result = append(result, core.ModelRequest{
 		Parts: []core.ModelRequestPart{
 			core.SystemPromptPart{
-				Content: "[EMERGENCY CONTEXT RECOVERY] Previous conversation history was too large " +
-					"and has been truncated to recover from a 413 error. Focus on completing " +
-					"the task with the remaining context. Check output files and test results " +
-					"to understand current state.",
+				Content: summary,
 			},
 		},
 	})
@@ -6055,6 +6061,138 @@ func emergencyCompressMessagesWithConfig(messages []core.ModelMessage, maxConten
 	}
 
 	return result
+}
+
+// buildContextRecoverySummary extracts key information from dropped messages
+// to create a recovery note that preserves the agent's working state.
+func buildContextRecoverySummary(dropped []core.ModelMessage) string {
+	var filesRead []string
+	var filesModified []string
+	var verifyRuns []string
+
+	seenRead := make(map[string]bool)
+	seenModified := make(map[string]bool)
+
+	// Scan dropped messages for tool calls and their results.
+	// Track the last pending verification call ID to match with its result.
+	var pendingVerifyCallID string
+	var pendingVerifyCmd string
+
+	for _, msg := range dropped {
+		if resp, ok := msg.(core.ModelResponse); ok {
+			for _, part := range resp.Parts {
+				tc, ok := part.(core.ToolCallPart)
+				if !ok {
+					continue
+				}
+				switch tc.ToolName {
+				case "read":
+					path := extractPathFromArgs(tc.ArgsJSON)
+					if path != "" && !seenRead[path] {
+						seenRead[path] = true
+						filesRead = append(filesRead, path)
+					}
+				case "edit", "multi_edit":
+					path := extractPathFromArgs(tc.ArgsJSON)
+					if path != "" && !seenModified[path] {
+						seenModified[path] = true
+						filesModified = append(filesModified, path)
+					}
+				case "write":
+					path := extractPathFromArgs(tc.ArgsJSON)
+					if path != "" && !seenModified[path] {
+						seenModified[path] = true
+						filesModified = append(filesModified, path)
+					}
+				case "bash":
+					if isVerificationCommand(tc.ArgsJSON) {
+						var args struct {
+							Command string `json:"command"`
+						}
+						if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil {
+							pendingVerifyCallID = tc.ToolCallID
+							pendingVerifyCmd = args.Command
+							if len(pendingVerifyCmd) > 80 {
+								pendingVerifyCmd = pendingVerifyCmd[:80] + "..."
+							}
+						}
+					}
+				}
+			}
+		}
+		if req, ok := msg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				tr, ok := part.(core.ToolReturnPart)
+				if !ok {
+					continue
+				}
+				if pendingVerifyCallID != "" && tr.ToolCallID == pendingVerifyCallID {
+					content := ""
+					if s, ok := tr.Content.(string); ok {
+						content = s
+					}
+					failed, summary := verificationResultFailed(content)
+					status := "PASSED"
+					if failed {
+						status = "FAILED"
+						if summary != "" {
+							status += ": " + summary
+						}
+					}
+					verifyRuns = append(verifyRuns, fmt.Sprintf("`%s` → %s", pendingVerifyCmd, status))
+					pendingVerifyCallID = ""
+					pendingVerifyCmd = ""
+				}
+			}
+		}
+	}
+
+	// Build the summary.
+	var b strings.Builder
+	b.WriteString("[EMERGENCY CONTEXT RECOVERY] Previous conversation history was too large " +
+		"and has been truncated to recover from a 413 error.\n\n")
+
+	if len(filesRead) > 0 {
+		b.WriteString("FILES PREVIOUSLY READ (you can re-read if needed):\n")
+		limit := len(filesRead)
+		if limit > 20 {
+			limit = 20
+		}
+		for _, f := range filesRead[:limit] {
+			b.WriteString("  - ")
+			b.WriteString(f)
+			b.WriteString("\n")
+		}
+		if len(filesRead) > 20 {
+			fmt.Fprintf(&b, "  ... and %d more\n", len(filesRead)-20)
+		}
+		b.WriteString("\n")
+	}
+
+	if len(filesModified) > 0 {
+		b.WriteString("FILES YOU MODIFIED (your changes are still on disk):\n")
+		for _, f := range filesModified {
+			b.WriteString("  - ")
+			b.WriteString(f)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	if len(verifyRuns) > 0 {
+		b.WriteString("VERIFICATION HISTORY:\n")
+		for _, r := range verifyRuns {
+			b.WriteString("  - ")
+			b.WriteString(r)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("Focus on completing the task with the remaining context. " +
+		"Your previous work is preserved on disk — check output files and run tests to understand current state.")
+
+	return b.String()
 }
 
 // truncateMessageContent truncates oversized content within a single message.
