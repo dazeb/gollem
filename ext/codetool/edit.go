@@ -10,6 +10,28 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
+// isProtectedTestFile returns true if the path is inside a verifier test
+// directory (e.g. /tests/). On Harbor, the verifier runs the ORIGINAL test
+// files — edits are silently ignored, so allowing the agent to modify them
+// wastes turns and produces false confidence that tests pass.
+func isProtectedTestFile(path string) bool {
+	normalized := filepath.Clean(path)
+	// /tests/ is the standard Harbor verifier directory.
+	if strings.HasPrefix(normalized, "/tests/") || normalized == "/tests" {
+		return true
+	}
+	return false
+}
+
+// protectedFileError returns a ModelRetryError for protected test files.
+func protectedFileError(path string) error {
+	return &core.ModelRetryError{
+		Message: "BLOCKED: " + path + " is a verifier test file and must NOT be modified. " +
+			"The verifier runs the ORIGINAL tests — your changes will be ignored during evaluation. " +
+			"Fix YOUR code to pass the tests instead.",
+	}
+}
+
 // EditParams are the parameters for the edit tool.
 type EditParams struct {
 	// Path is the file path to edit.
@@ -48,6 +70,10 @@ func Edit(opts ...Option) core.Tool {
 			path := params.Path
 			if !filepath.IsAbs(path) && cfg.WorkDir != "" {
 				path = filepath.Join(cfg.WorkDir, path)
+			}
+
+			if isProtectedTestFile(path) {
+				return "", protectedFileError(params.Path)
 			}
 
 			data, err := os.ReadFile(path)
@@ -334,6 +360,10 @@ func MultiEdit(opts ...Option) core.Tool {
 				path := edit.Path
 				if !filepath.IsAbs(path) && cfg.WorkDir != "" {
 					path = filepath.Join(cfg.WorkDir, path)
+				}
+
+				if isProtectedTestFile(path) {
+					return "", protectedFileError(edit.Path)
 				}
 
 				data, err := os.ReadFile(path)

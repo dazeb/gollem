@@ -36,6 +36,10 @@ func Write(opts ...Option) core.Tool {
 				path = filepath.Join(cfg.WorkDir, path)
 			}
 
+			if isProtectedTestFile(path) {
+				return "", protectedFileError(params.Path)
+			}
+
 			// Create parent directories.
 			dir := filepath.Dir(path)
 			if err := os.MkdirAll(dir, 0o755); err != nil {

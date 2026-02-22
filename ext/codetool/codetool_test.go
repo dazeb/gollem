@@ -1164,6 +1164,81 @@ func TestIsPipCommand(t *testing.T) {
 	}
 }
 
+func TestIsProtectedTestFile(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/tests/test.sh", true},
+		{"/tests/unit/test_check.py", true},
+		{"/tests/e2e/verify.sh", true},
+		{"/tests", true},
+		{"/app/tests/test.py", false},       // not root /tests/
+		{"/home/user/tests/foo.py", false},   // not root /tests/
+		{"/src/main.py", false},              // unrelated
+		{"/app/solution.py", false},          // unrelated
+		{"tests/test.sh", false},             // relative, not /tests/
+		{"/testing/foo.py", false},           // /testing != /tests
+		{"/tests/../app/foo.py", false},      // cleaned to /app/foo.py
+		{"/tests/./nested/test.sh", true},    // cleaned to /tests/nested/test.sh
+	}
+	for _, tt := range tests {
+		got := isProtectedTestFile(tt.path)
+		if got != tt.want {
+			t.Errorf("isProtectedTestFile(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestEdit_ProtectedTestFile(t *testing.T) {
+	// Edit should block modifications to /tests/ files.
+	tool := Edit()
+	err := callErr(t, tool, `{"path":"/tests/test.sh","old_string":"echo hello","new_string":"echo bye"}`)
+	if err == nil {
+		t.Fatal("expected error for protected test file")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got %T: %v", err, err)
+	}
+	if !strings.Contains(retryErr.Message, "BLOCKED") {
+		t.Errorf("expected BLOCKED message, got: %s", retryErr.Message)
+	}
+}
+
+func TestWrite_ProtectedTestFile(t *testing.T) {
+	// Write should block creation/overwrite of /tests/ files.
+	tool := Write()
+	err := callErr(t, tool, `{"path":"/tests/test_new.py","content":"print('hello')"}`)
+	if err == nil {
+		t.Fatal("expected error for protected test file")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got %T: %v", err, err)
+	}
+	if !strings.Contains(retryErr.Message, "BLOCKED") {
+		t.Errorf("expected BLOCKED message, got: %s", retryErr.Message)
+	}
+}
+
+func TestMultiEdit_ProtectedTestFile(t *testing.T) {
+	dir := setupTestDir(t)
+	// MultiEdit should block if any edit targets /tests/.
+	tool := MultiEdit(WithWorkDir(dir))
+	err := callErr(t, tool, `{"edits":[{"path":"/tests/test.sh","old_string":"echo hello","new_string":"echo bye"}]}`)
+	if err == nil {
+		t.Fatal("expected error for protected test file")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got %T: %v", err, err)
+	}
+	if !strings.Contains(retryErr.Message, "BLOCKED") {
+		t.Errorf("expected BLOCKED message, got: %s", retryErr.Message)
+	}
+}
+
 func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
 	mw, validator := VerificationCheckpoint()
 
