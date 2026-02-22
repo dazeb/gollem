@@ -6034,3 +6034,101 @@ func TestCmakeHint(t *testing.T) {
 	})
 }
 
+func TestCargoHint(t *testing.T) {
+	t.Run("missing crate", func(t *testing.T) {
+		output := `error[E0463]: can't find crate for 'serde'
+ --> src/main.rs:1:5`
+		hint := cargoHint(output, 101)
+		if hint == "" {
+			t.Fatal("expected hint for missing crate")
+		}
+		if !strings.Contains(hint, "serde") || !strings.Contains(hint, "cargo add") {
+			t.Errorf("expected serde + cargo add suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("unresolved import", func(t *testing.T) {
+		output := `error[E0432]: unresolved import 'tokio'
+ --> src/main.rs:1:5`
+		hint := cargoHint(output, 101)
+		if hint == "" {
+			t.Fatal("expected hint for unresolved import")
+		}
+		if !strings.Contains(hint, "Cargo.toml") {
+			t.Errorf("expected Cargo.toml suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("borrow checker", func(t *testing.T) {
+		output := `error[E0502]: cannot borrow 'v' as mutable because it is also borrowed as immutable`
+		hint := cargoHint(output, 101)
+		if hint == "" {
+			t.Fatal("expected hint for borrow checker error")
+		}
+		if !strings.Contains(hint, "clone") {
+			t.Errorf("expected clone suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("lifetime error", func(t *testing.T) {
+		output := `error[E0597]: 's' does not live long enough`
+		hint := cargoHint(output, 101)
+		if hint == "" {
+			t.Fatal("expected hint for lifetime error")
+		}
+		if !strings.Contains(hint, "ownership") {
+			t.Errorf("expected ownership suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := cargoHint("can't find crate for `serde`", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+}
+
+func TestGoModuleHint(t *testing.T) {
+	t.Run("no required module", func(t *testing.T) {
+		output := `main.go:3:2: no required module provides package github.com/gin-gonic/gin; to add it:
+	go get github.com/gin-gonic/gin`
+		hint := goModuleHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for missing module")
+		}
+		if !strings.Contains(hint, "go get") {
+			t.Errorf("expected go get suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("cannot find module", func(t *testing.T) {
+		output := `cannot find module providing package example.com/foo/bar`
+		hint := goModuleHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for cannot find module")
+		}
+		if !strings.Contains(hint, "go mod tidy") {
+			t.Errorf("expected go mod tidy suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("build constraints", func(t *testing.T) {
+		output := `build constraints exclude all Go files in /app/pkg/cgo`
+		hint := goModuleHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for build constraints")
+		}
+		if !strings.Contains(hint, "CGO_ENABLED") {
+			t.Errorf("expected CGO_ENABLED suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := goModuleHint("no required module provides package foo", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+}
+

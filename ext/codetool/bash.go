@@ -322,6 +322,12 @@ func Bash(opts ...Option) core.Tool {
 			if hint := cmakeHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := cargoHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := goModuleHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -583,6 +589,18 @@ func commandNotFoundHint(stderr string) string {
 		"coqc":       "coq",
 		"pmars":      "pmars",
 		"xmllint":    "libxml2-utils",
+		"mvn":        "maven",
+		"gradle":     "gradle",
+		"ant":        "ant",
+		"sbt":        "sbt",
+		"docker":     "docker.io",
+		"podman":     "podman",
+		"xsltproc":   "xsltproc",
+		"tput":       "ncurses-bin",
+		"column":     "bsdmainutils",
+		"rename":     "rename",
+		"iconv":      "libc-bin",
+		"openssl":    "openssl",
 	}
 
 	// Extract the missing command name from stderr.
@@ -1489,6 +1507,125 @@ func cmakeHint(output string, exitCode int) string {
 			return "[hint: CMake version may be too old. Check: cmake --version. " +
 				"If needed: apt-get install -y cmake or pip install cmake]"
 		}
+	}
+
+	return ""
+}
+
+// cargoHint detects Rust/Cargo-specific errors and provides targeted fixes.
+// The compilationErrorHint already handles Rust compiler file:line extraction,
+// but this covers cargo-level errors that don't produce file references.
+func cargoHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Missing crate — suggest cargo add.
+	// "error[E0432]: unresolved import `serde`" or "can't find crate for `serde`"
+	if strings.Contains(output, "can't find crate for") {
+		for _, pattern := range []string{"can't find crate for `", "can't find crate for '"} {
+			if idx := strings.Index(output, pattern); idx >= 0 {
+				start := idx + len(pattern)
+				rest := output[start:]
+				if end := strings.IndexAny(rest, "`'"); end > 0 {
+					crate := rest[:end]
+					return fmt.Sprintf("[hint: missing Rust crate '%s' — try: cargo add %s, or add it to [dependencies] in Cargo.toml]",
+						crate, crate)
+				}
+			}
+		}
+		return "[hint: missing Rust crate — add it to Cargo.toml [dependencies] or use: cargo add <crate>]"
+	}
+
+	// Unresolved import — often a missing dependency or wrong path.
+	if strings.Contains(output, "unresolved import") {
+		return "[hint: unresolved import — check: (1) is the crate listed in Cargo.toml [dependencies]? " +
+			"(2) does it need a feature flag? (e.g., serde = { version = \"1\", features = [\"derive\"] }) " +
+			"(3) is the module path correct? (use `mod` declarations or `use crate::` for local modules)]"
+	}
+
+	// Edition-related errors (e.g., async/await requires edition 2018+).
+	if strings.Contains(output, "edition") && strings.Contains(output, "required") {
+		return "[hint: Rust edition may be too old. Check/set edition in Cargo.toml: [package] edition = \"2021\"]"
+	}
+
+	// cargo fetch/build network error.
+	if strings.Contains(output, "failed to download") || strings.Contains(output, "failed to fetch") {
+		if strings.Contains(output, "Couldn't resolve host") || strings.Contains(output, "network") {
+			return "[hint: cargo network error — try again, or if offline, check if crate sources are already cached in target/]"
+		}
+	}
+
+	// "no matching package" or version mismatch.
+	if strings.Contains(output, "no matching package") || strings.Contains(output, "failed to select a version") {
+		return "[hint: cargo can't find a matching version. Check crate version in Cargo.toml — " +
+			"use `cargo search <crate>` to find available versions, or use a looser version bound (e.g., \"1\" instead of \"1.2.3\")]"
+	}
+
+	// Common borrow checker patterns — don't try to explain borrow checking,
+	// just tell the agent where to look and suggest common fixes.
+	if strings.Contains(output, "cannot borrow") && strings.Contains(output, "as mutable") {
+		return "[hint: borrow checker error — cannot have a mutable reference while other references exist. " +
+			"Common fixes: (1) clone the value, (2) restructure to avoid simultaneous borrows, " +
+			"(3) use RefCell/Rc for interior mutability]"
+	}
+	if strings.Contains(output, "does not live long enough") {
+		return "[hint: lifetime error — a value is being dropped while still borrowed. " +
+			"Common fixes: (1) clone the data, (2) restructure ownership so the value lives longer, " +
+			"(3) use String instead of &str for owned strings]"
+	}
+
+	return ""
+}
+
+// goModuleHint detects Go module errors and suggests fixes.
+// These are common when working with Go projects in containers.
+func goModuleHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// "no required module provides package" — missing dependency.
+	if strings.Contains(output, "no required module provides package") {
+		// Extract the package path.
+		pattern := "no required module provides package "
+		if idx := strings.Index(output, pattern); idx >= 0 {
+			rest := output[idx+len(pattern):]
+			// Package path ends at semicolon, comma, or newline.
+			end := strings.IndexAny(rest, ";,\n ")
+			if end > 0 {
+				pkg := strings.TrimSpace(rest[:end])
+				return fmt.Sprintf("[hint: missing Go module — try: go get %s && go mod tidy]", pkg)
+			}
+		}
+		return "[hint: missing Go module — try: go mod tidy, or go get <package>]"
+	}
+
+	// "go.sum mismatch" or checksum errors.
+	if strings.Contains(output, "verifying") && strings.Contains(output, "checksum mismatch") ||
+		strings.Contains(output, "go.sum") && strings.Contains(output, "mismatch") {
+		return "[hint: go.sum checksum mismatch — try: go mod tidy, or if that fails: rm go.sum && go mod tidy]"
+	}
+
+	// "cannot find module" — GOPATH vs module mode confusion.
+	if strings.Contains(output, "cannot find module") {
+		return "[hint: cannot find Go module — check: (1) go.mod exists in the project root, " +
+			"(2) try: go mod init <module-name> if starting fresh, " +
+			"(3) run: go mod tidy to resolve dependencies]"
+	}
+
+	// "go: module ... found but does not contain package"
+	if strings.Contains(output, "found") && strings.Contains(output, "does not contain package") {
+		return "[hint: Go module found but doesn't contain the expected package. " +
+			"Check the import path — it may need a /v2 or /v3 suffix for major versions, " +
+			"or the package may have moved. Try: go doc <module> to see available packages]"
+	}
+
+	// "build constraints exclude all Go files"
+	if strings.Contains(output, "build constraints exclude all Go files") {
+		return "[hint: build tags or OS/arch constraints exclude all files. " +
+			"Check //go:build or // +build tags in source files. " +
+			"For CGo: set CGO_ENABLED=1 if the code requires C bindings]"
 	}
 
 	return ""
