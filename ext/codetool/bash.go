@@ -148,6 +148,9 @@ func Bash(opts ...Option) core.Tool {
 					result += "\n" + hint
 				}
 			}
+			if hint := transientErrorHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			return result, nil
 		},
@@ -311,6 +314,47 @@ func moduleNotFoundHint(output string) string {
 			pkg = alias
 		}
 		return fmt.Sprintf("[hint: try: pip install %s]", pkg)
+	}
+
+	return ""
+}
+
+// transientErrorHint detects common transient errors and suggests fixes.
+// These are errors that waste turns if the model has to diagnose them itself.
+func transientErrorHint(output string, exitCode int) string {
+	lower := strings.ToLower(output)
+
+	// pip: externally-managed-environment error.
+	// Extremely common in Docker containers — wastes 1-2 turns without a hint.
+	if strings.Contains(lower, "externally-managed-environment") ||
+		strings.Contains(output, "externally managed") {
+		return "[hint: add --break-system-packages flag to pip install]"
+	}
+
+	// apt/dpkg lock errors — another process is running dpkg.
+	if strings.Contains(lower, "could not get lock") ||
+		strings.Contains(lower, "dpkg was interrupted") ||
+		strings.Contains(lower, "dpkg --configure -a") {
+		return "[hint: try: dpkg --configure -a && apt-get install -f]"
+	}
+
+	// Network/download errors during package installs.
+	if exitCode != 0 &&
+		(strings.Contains(lower, "temporary failure resolving") ||
+			strings.Contains(lower, "could not resolve") ||
+			strings.Contains(lower, "connection timed out") ||
+			strings.Contains(lower, "connection refused") && strings.Contains(lower, "apt") ||
+			strings.Contains(lower, "failed to fetch") ||
+			strings.Contains(lower, "retrying") && strings.Contains(lower, "download")) {
+		return "[hint: transient network error — retry the command]"
+	}
+
+	// Permission errors in common locations.
+	if strings.Contains(lower, "permission denied") && exitCode != 0 {
+		if strings.Contains(lower, "/usr/") || strings.Contains(lower, "/etc/") ||
+			strings.Contains(lower, "/var/") {
+			return "[hint: try running with sudo or use --user flag for pip]"
+		}
 	}
 
 	return ""

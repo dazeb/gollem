@@ -207,14 +207,20 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 				"Run tests, fix only critical failures, clean up artifacts.", remaining.Round(time.Second), pct*100)
 		case pct >= 0.50 && !warned50:
 			warned50 = true
-			warning = fmt.Sprintf("HALFWAY: %s remaining (%.0f%% elapsed). "+
-				"If your current approach isn't working, switch strategies NOW. "+
-				"If you haven't created output files yet, do that IMMEDIATELY.",
+			warning = fmt.Sprintf("HALFWAY CHECK: %s remaining (%.0f%% elapsed). "+
+				"Do these NOW: "+
+				"(1) Verify your output files exist — if not, create them IMMEDIATELY. "+
+				"(2) Run the test suite and note which tests pass/fail. "+
+				"(3) Read test FAILURE output carefully — it tells you EXACTLY what's wrong. "+
+				"(4) If your approach has fundamental problems (< 30%% passing), switch to a simpler approach. "+
+				"(5) Focus on fixing the HIGHEST-VALUE failures first.",
 				remaining.Round(time.Second), pct*100)
 		case pct >= 0.25 && !warned25:
 			warned25 = true
 			warning = fmt.Sprintf("QUARTER TIME: %s remaining (%.0f%% elapsed). "+
-				"You should have output files created by now. If not, stop analyzing and start writing.",
+				"Checkpoint: (1) Output files should exist by now — if not, stop analyzing and start writing. "+
+				"(2) You should have run tests at least once. "+
+				"(3) If stuck on infrastructure (packages, compilation, networking), give it 2 more turns max then work around it.",
 				remaining.Round(time.Second), pct*100)
 		}
 

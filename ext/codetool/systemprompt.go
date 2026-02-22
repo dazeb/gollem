@@ -90,6 +90,16 @@ Do NOT wait until the end to run tests. Follow this pattern:
 3. Fix failures one at a time, re-running tests after each fix
 4. This iterative loop is much more effective than trying to write a perfect solution in one shot
 
+## Reading Test Output
+
+Test failures contain EXACT information about what's wrong. Read them carefully:
+- **"Expected X, got Y"**: Your output is wrong — compare X and Y character by character
+- **"File not found"**: You forgot to create a required file
+- **AssertionError with numbers**: Check your math, precision, or data processing
+- **Timeout in tests**: Your solution is too slow — optimize the hot path
+- **Extra files in directory**: Clean up build artifacts (rm *.o *.pyc __pycache__)
+- When fixing a test failure, fix EXACTLY what the error says is wrong — don't guess at a different problem
+
 ## Constraint Awareness
 
 Many tasks have hard constraints (size limits, performance thresholds, file counts). If constraints are highlighted in the environment context above, write them down and check them at EVERY stage:

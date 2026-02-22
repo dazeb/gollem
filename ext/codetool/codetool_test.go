@@ -252,6 +252,30 @@ func TestModuleNotFoundHint(t *testing.T) {
 	}
 }
 
+func TestTransientErrorHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		exitCode int
+		want     string
+	}{
+		{"externally managed", "error: externally-managed-environment\n× pip install failed", 1, "[hint: add --break-system-packages flag to pip install]"},
+		{"dpkg lock", "E: Could not get lock /var/lib/dpkg/lock", 100, "[hint: try: dpkg --configure -a && apt-get install -f]"},
+		{"network error", "Temporary failure resolving 'archive.ubuntu.com'", 100, "[hint: transient network error — retry the command]"},
+		{"permission denied /usr", "bash: /usr/local/bin/foo: Permission denied", 126, "[hint: try running with sudo or use --user flag for pip]"},
+		{"no match", "some other error", 1, ""},
+		{"success ignores", "externally-managed-environment", 0, "[hint: add --break-system-packages flag to pip install]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := transientErrorHint(tt.output, tt.exitCode)
+			if got != tt.want {
+				t.Errorf("transientErrorHint() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // --- View Tests ---
 
 func TestView_ReadFile(t *testing.T) {
