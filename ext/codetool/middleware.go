@@ -302,6 +302,12 @@ func discoverEnvironment(workDir string) string {
 		filepath.Join(workDir, "prompts", "agent.md"),
 		"/app/instruction.md",
 		"/app/prompts/agent.md",
+		// task_file layout: some TB2 tasks nest everything under /app/task_file/.
+		"/app/task_file/README.md",
+		"/app/task_file/instruction.md",
+		"/app/task_file/TASK.md",
+		"/app/task_file/INSTRUCTIONS.md",
+		"/app/task_file/prompts/agent.md",
 	}
 	for _, rp := range readmePaths {
 		if content := readFileTruncated(rp, 5000); content != "" {
@@ -1367,6 +1373,29 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Check Ruby version: `ruby --version`. Version mismatches cause syntax errors.")
 	}
 
+	// Detect Java tasks.
+	if detectJavaTask(workDir) {
+		hints = append(hints, "\n## Task Type: Java/Kotlin")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Check build system: Maven (`pom.xml`), Gradle (`build.gradle`), or plain javac")
+		hints = append(hints, "- Maven: `mvn compile -q` to build, `mvn test -q` to test, `mvn package -q` to create JAR")
+		hints = append(hints, "- Gradle: `gradle build --quiet`, `gradle test --quiet`, `gradle run`")
+		hints = append(hints, "- Plain javac: `javac -d out *.java && java -cp out MainClass`")
+		hints = append(hints, "- For 'cannot find symbol' errors: check import statements and classpath")
+		hints = append(hints, "- JVM startup is slow — combine compile+test into single mvn/gradle invocation")
+		hints = append(hints, "- Check Java version: `java -version`. Version mismatches cause compilation errors.")
+	}
+
+	// Detect .NET tasks.
+	if detectDotNetTask(workDir) {
+		hints = append(hints, "\n## Task Type: .NET/C#")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Build: `dotnet build`, Test: `dotnet test`, Run: `dotnet run`")
+		hints = append(hints, "- Restore packages first: `dotnet restore`")
+		hints = append(hints, "- Check .NET version: `dotnet --version`")
+		hints = append(hints, "- For 'could not resolve' errors: run `dotnet restore` first")
+	}
+
 	// Detect service/daemon tasks (web servers, background services).
 	if detectServiceTask(workDir) {
 		hints = append(hints, "\n## Task Type: Service/Daemon Setup")
@@ -1582,6 +1611,9 @@ func detectExpectedOutputs(workDir string) []string {
 		"/app/instruction.md",
 		filepath.Join(workDir, "prompts", "agent.md"),
 		"/app/prompts/agent.md",
+		"/app/task_file/README.md",
+		"/app/task_file/instruction.md",
+		"/app/task_file/prompts/agent.md",
 	}
 	for _, rp := range readmePaths {
 		data, err := os.ReadFile(rp)
@@ -2218,6 +2250,34 @@ func detectRubyTask(workDir string) bool {
 	return false
 }
 
+// detectJavaTask returns true if the task involves Java or Kotlin code.
+func detectJavaTask(workDir string) bool {
+	for _, dir := range []string{workDir, "/app"} {
+		for _, ext := range []string{"*.java", "*.kt", "*.kts"} {
+			if matches, _ := filepath.Glob(filepath.Join(dir, ext)); len(matches) > 0 {
+				return true
+			}
+		}
+		if fileExists(filepath.Join(dir, "pom.xml")) || fileExists(filepath.Join(dir, "build.gradle")) ||
+			fileExists(filepath.Join(dir, "build.gradle.kts")) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectDotNetTask returns true if the task involves .NET/C# code.
+func detectDotNetTask(workDir string) bool {
+	for _, dir := range []string{workDir, "/app"} {
+		for _, ext := range []string{"*.cs", "*.csproj", "*.sln", "*.fsproj"} {
+			if matches, _ := filepath.Glob(filepath.Join(dir, ext)); len(matches) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // detectServiceTask returns true if the task involves setting up persistent services.
 func detectServiceTask(workDir string) bool {
 	lower := strings.ToLower(filepath.Base(workDir))
@@ -2758,6 +2818,29 @@ func detectTestCommands(workDir string) []string {
 	if fileExists(filepath.Join(workDir, "Project.toml")) {
 		cmds = append(cmds, "Install: julia --project=. -e 'using Pkg; Pkg.instantiate()'")
 		cmds = append(cmds, "Test: julia --project=. -e 'using Pkg; Pkg.test()'")
+	}
+	// Java/Maven
+	if fileExists(filepath.Join(workDir, "pom.xml")) {
+		cmds = append(cmds, "Build: mvn compile -q")
+		cmds = append(cmds, "Test: mvn test -q")
+	}
+	// Java/Gradle
+	if fileExists(filepath.Join(workDir, "build.gradle")) || fileExists(filepath.Join(workDir, "build.gradle.kts")) {
+		cmds = append(cmds, "Build: gradle build --quiet")
+		cmds = append(cmds, "Test: gradle test --quiet")
+	}
+	// .NET
+	for _, dir := range []string{workDir, "/app"} {
+		if matches, _ := filepath.Glob(filepath.Join(dir, "*.csproj")); len(matches) > 0 {
+			cmds = append(cmds, "Build: dotnet build")
+			cmds = append(cmds, "Test: dotnet test")
+			break
+		}
+		if matches, _ := filepath.Glob(filepath.Join(dir, "*.sln")); len(matches) > 0 {
+			cmds = append(cmds, "Build: dotnet build")
+			cmds = append(cmds, "Test: dotnet test")
+			break
+		}
 	}
 	// Perl
 	if fileExists(filepath.Join(workDir, "Makefile.PL")) {

@@ -1136,6 +1136,43 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Maven/JUnit: "Tests run: X, Failures: Y, Errors: Z, Skipped: W"
+	if strings.Contains(lower, "tests run:") && strings.Contains(lower, "failures:") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "tests run:") && strings.Contains(lineLower, "failures:") {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
+	// Gradle: "X tests completed, Y failed" or "BUILD SUCCESSFUL/FAILED"
+	if strings.Contains(lower, "tests completed") || (strings.Contains(lower, "build ") && (strings.Contains(lower, "successful") || strings.Contains(lower, "failed"))) {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "tests completed") ||
+				(strings.HasPrefix(lineLower, "build ") && (strings.Contains(lineLower, "successful") || strings.Contains(lineLower, "failed"))) {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
+	// .NET: "Total tests: X, Passed: Y, Failed: Z"
+	if strings.Contains(lower, "total tests:") && strings.Contains(lower, "passed:") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "total tests:") && strings.Contains(lineLower, "passed:") {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
 	// CTest: "X% tests passed, Y tests failed out of Z"
 	if strings.Contains(lower, "tests passed") && strings.Contains(lower, "tests failed") {
 		lines := strings.Split(output, "\n")

@@ -2030,6 +2030,44 @@ Passed 7 out of 10 tests`,
 	}
 }
 
+func TestTestResultSummaryMavenAndDotNet(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name: "Maven/JUnit",
+			output: `[INFO] Running com.example.AppTest
+[ERROR] Tests run: 10, Failures: 2, Errors: 0, Skipped: 1
+[INFO] BUILD FAILURE`,
+			want: "Tests run: 10, Failures: 2",
+		},
+		{
+			name: "dotnet test",
+			output: `Starting test execution, please wait...
+Passed!  - Failed: 0, Passed: 5, Skipped: 0, Total: 5
+Total tests: 5, Passed: 5, Failed: 0`,
+			want: "Total tests: 5, Passed: 5",
+		},
+		{
+			name: "Gradle",
+			output: `> Task :test
+2 tests completed, 1 failed
+BUILD FAILED`,
+			want: "BUILD FAILED",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := testResultSummary(tt.output)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("expected summary containing %q, got: %s", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestTestFailureFingerprint(t *testing.T) {
 	// Same output should produce same fingerprint.
 	output1 := `test_calc.py::test_add FAILED
@@ -2700,6 +2738,68 @@ func TestDetectRubyTask(t *testing.T) {
 	os.MkdirAll(emptyDir, 0o755)
 	if detectRubyTask(emptyDir) {
 		t.Error("did not expect Ruby task for empty dir")
+	}
+}
+
+func TestDetectJavaTask(t *testing.T) {
+	dir := t.TempDir()
+
+	// .java file
+	javaDir := filepath.Join(dir, "java-task")
+	os.MkdirAll(javaDir, 0o755)
+	writeTestFile(t, dir, "java-task/Main.java", "public class Main {}\n")
+	if !detectJavaTask(javaDir) {
+		t.Error("expected Java task for dir with .java file")
+	}
+
+	// pom.xml
+	mvnDir := filepath.Join(dir, "maven-project")
+	os.MkdirAll(mvnDir, 0o755)
+	writeTestFile(t, dir, "maven-project/pom.xml", "<project></project>\n")
+	if !detectJavaTask(mvnDir) {
+		t.Error("expected Java task for dir with pom.xml")
+	}
+
+	// build.gradle
+	gradleDir := filepath.Join(dir, "gradle-project")
+	os.MkdirAll(gradleDir, 0o755)
+	writeTestFile(t, dir, "gradle-project/build.gradle", "plugins { id 'java' }\n")
+	if !detectJavaTask(gradleDir) {
+		t.Error("expected Java task for dir with build.gradle")
+	}
+
+	// empty dir
+	emptyDir := filepath.Join(dir, "empty")
+	os.MkdirAll(emptyDir, 0o755)
+	if detectJavaTask(emptyDir) {
+		t.Error("did not expect Java task for empty dir")
+	}
+}
+
+func TestDetectDotNetTask(t *testing.T) {
+	dir := t.TempDir()
+
+	// .cs file
+	csDir := filepath.Join(dir, "dotnet-task")
+	os.MkdirAll(csDir, 0o755)
+	writeTestFile(t, dir, "dotnet-task/Program.cs", "class Program {}\n")
+	if !detectDotNetTask(csDir) {
+		t.Error("expected .NET task for dir with .cs file")
+	}
+
+	// .csproj file
+	projDir := filepath.Join(dir, "proj")
+	os.MkdirAll(projDir, 0o755)
+	writeTestFile(t, dir, "proj/MyApp.csproj", "<Project></Project>\n")
+	if !detectDotNetTask(projDir) {
+		t.Error("expected .NET task for dir with .csproj file")
+	}
+
+	// empty dir
+	emptyDir := filepath.Join(dir, "empty")
+	os.MkdirAll(emptyDir, 0o755)
+	if detectDotNetTask(emptyDir) {
+		t.Error("did not expect .NET task for empty dir")
 	}
 }
 
