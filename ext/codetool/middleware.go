@@ -25,7 +25,7 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 	}
 
 	var mu sync.Mutex
-	editCounts := make(map[string]int) // file path -> consecutive edit count
+	editCounts := make(map[string]int) // file path -> edit count
 
 	return func(
 		ctx context.Context,
@@ -34,31 +34,17 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 		params *core.ModelRequestParameters,
 		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
 	) (*core.ModelResponse, error) {
-		// Check the last message for repeated edits.
+		// Track edits by parsing tool call ArgsJSON directly (more reliable
+		// than parsing return strings).
 		mu.Lock()
-		if len(messages) > 0 {
-			if req, ok := messages[len(messages)-1].(core.ModelRequest); ok {
-				for _, part := range req.Parts {
-					if tr, ok := part.(core.ToolReturnPart); ok {
-						if tr.ToolName == "edit" || tr.ToolName == "multi_edit" {
-							// Extract file path from the return content.
-							content, _ := tr.Content.(string)
-							for path, count := range editCounts {
-								if strings.Contains(content, path) {
-									editCounts[path] = count + 1
-								}
-							}
-							// Track new paths mentioned in the result.
-							if strings.Contains(content, "Replaced") || strings.Contains(content, "edited") {
-								// Parse path from result like "Replaced 1 occurrence(s) in foo.go"
-								parts := strings.Fields(content)
-								for _, p := range parts {
-									if strings.Contains(p, ".") && !strings.HasPrefix(p, "occurrence") {
-										if _, exists := editCounts[p]; !exists {
-											editCounts[p] = 1
-										}
-									}
-								}
+		for _, msg := range messages[max(0, len(messages)-2):] {
+			if resp, ok := msg.(core.ModelResponse); ok {
+				for _, part := range resp.Parts {
+					if tc, ok := part.(core.ToolCallPart); ok {
+						if tc.ToolName == "edit" || tc.ToolName == "multi_edit" || tc.ToolName == "write" {
+							path := extractPathFromArgs(tc.ArgsJSON)
+							if path != "" {
+								editCounts[path]++
 							}
 						}
 					}
@@ -82,8 +68,10 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 					core.UserPromptPart{
 						Content: "WARNING: You appear to be stuck in a loop, repeatedly editing " +
 							strings.Join(loopedFiles, ", ") + ". " +
-							"Step back and reconsider your approach. Try a different strategy: " +
-							"re-read the file, check error messages carefully, or try a completely different solution path.",
+							"Step back and reconsider your approach. Try a FUNDAMENTALLY DIFFERENT strategy: " +
+							"(1) re-read the FULL error output, (2) consider if your approach is wrong, " +
+							"(3) try a completely different algorithm or implementation. " +
+							"Do NOT keep making small tweaks to the same failing approach.",
 					},
 				},
 			}
@@ -99,6 +87,21 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 
 		return next(ctx, messages, settings, params)
 	}
+}
+
+// extractPathFromArgs extracts a file path from a tool call's ArgsJSON.
+func extractPathFromArgs(argsJSON string) string {
+	var args struct {
+		Path string `json:"path"`
+		File string `json:"file"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	if args.Path != "" {
+		return args.Path
+	}
+	return args.File
 }
 
 // ContextInjectionMiddleware injects environment context at the start of the
@@ -168,6 +171,37 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Top-level files:\n"+strings.Join(entries, "\n"))
 	}
 
+	// Read README if present — many tasks embed critical requirements here.
+	readmePaths := []string{
+		filepath.Join(workDir, "README.md"),
+		filepath.Join(workDir, "README.txt"),
+		filepath.Join(workDir, "README"),
+		filepath.Join(workDir, "readme.md"),
+	}
+	for _, rp := range readmePaths {
+		if content := readFileTruncated(rp, 3000); content != "" {
+			parts = append(parts, "\n## README Contents (auto-read)")
+			parts = append(parts, content)
+			break
+		}
+	}
+
+	// Check /app/task_file — common Terminal-Bench layout with input/output/scripts.
+	taskFileDirs := []string{"/app/task_file", filepath.Join(workDir, "task_file")}
+	for _, tf := range taskFileDirs {
+		if info, err := os.Stat(tf); err == nil && info.IsDir() {
+			if tfLs := runQuiet(tf, "ls", "-1R"); tfLs != "" {
+				lines := strings.Split(strings.TrimSpace(tfLs), "\n")
+				if len(lines) > 40 {
+					lines = append(lines[:40], "... (truncated)")
+				}
+				parts = append(parts, "\nTask file structure ("+tf+"):")
+				parts = append(parts, strings.Join(lines, "\n"))
+			}
+			break
+		}
+	}
+
 	// Discover test files (verifier tests live in /tests/ on Terminal-Bench).
 	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
 	for _, td := range testDirs {
@@ -181,11 +215,37 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Check for output directories that need to be populated.
+	outputDirs := []string{
+		filepath.Join(workDir, "output_data"),
+		"/app/task_file/output_data",
+		filepath.Join(workDir, "output"),
+	}
+	for _, od := range outputDirs {
+		if info, err := os.Stat(od); err == nil && info.IsDir() {
+			parts = append(parts, "\nOutput directory: "+od+" (your deliverables go here)")
+			break
+		}
+	}
+
 	// Available tools.
 	parts = append(parts, "\nAvailable tools: bash, view, edit, multi_edit, write, grep, glob, ls, planning, delegate")
 	parts = append(parts, "Start by reading the task-relevant files. For complex tasks, create a plan first using the planning tool, then proceed with changes.")
 
 	return strings.Join(parts, "\n")
+}
+
+// readFileTruncated reads a file and returns its content truncated to maxBytes.
+// Returns empty string on any error.
+func readFileTruncated(path string, maxBytes int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if len(data) > maxBytes {
+		return string(data[:maxBytes]) + "\n... (truncated)"
+	}
+	return string(data)
 }
 
 // detectProject identifies the project language and build system from marker

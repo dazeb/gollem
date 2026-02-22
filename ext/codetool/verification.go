@@ -95,22 +95,31 @@ func isVerificationCommand(argsJSON string) bool {
 	// Test commands.
 	testPatterns := []string{
 		"go test",
-		"pytest", "python -m pytest",
+		"pytest", "python -m pytest", "python -m unittest", "python3 -m unittest",
 		"npm test", "npm run test", "yarn test", "pnpm test",
 		"npx jest", "npx mocha", "npx vitest",
 		"cargo test",
 		"make test", "make check",
 		"mvn test", "gradle test",
 		"dotnet test",
-		"ruby -e", "rake test", "rspec", "bundle exec",
+		"ruby -e", "rake test", "rspec", "bundle exec", "ruby -itest",
 		"phpunit",
+		"ctest",
+		"julia -e", "julia --project",
 		// Terminal-Bench patterns: tasks often have test scripts.
 		"test_outputs", "test_output", "run_tests",
 		"python3 /app/test", "python /app/test",
 		"python3 /tests/", "python /tests/",
 		"python3 test_", "python test_",
 		"bash /tests/", "sh /tests/",
-		"./test", "./run_test", "./check",
+		"bash run_", "sh run_",
+		"./test", "./run_test", "./check", "./verify", "./run_verify",
+		"./run_", // common script naming pattern
+		"node test", "node /tests/", "node /app/test",
+		"python3 verify", "python verify",
+		"python3 check", "python check",
+		"python3 /app/scripts/", "python /app/scripts/",
+		"bash /app/scripts/", "sh /app/scripts/",
 	}
 
 	// Build/compile commands.
@@ -119,12 +128,14 @@ func isVerificationCommand(argsJSON string) bool {
 		"npm run build", "yarn build", "pnpm build",
 		"cargo build", "cargo check", "cargo clippy",
 		"make", "cmake",
-		"gcc ", "g++ ", "clang ",
+		"gcc ", "g++ ", "clang ", "cc ",
 		"javac ", "mvn compile", "gradle build",
 		"dotnet build",
 		"tsc",
 		"python -m py_compile", "python -c",
 		"python3 -c",
+		"rustc ",
+		"gfortran ", "gdc ", "ldc2 ",
 	}
 
 	// Lint/check commands.
@@ -132,6 +143,7 @@ func isVerificationCommand(argsJSON string) bool {
 		"eslint", "pylint", "flake8", "mypy",
 		"golangci-lint", "staticcheck", "go vet",
 		"rubocop", "shellcheck",
+		"black --check", "ruff check",
 	}
 
 	for _, p := range testPatterns {

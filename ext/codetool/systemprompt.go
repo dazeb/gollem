@@ -28,7 +28,7 @@ This prevents you from losing track of requirements, missing constraints, or goi
 
 ## Working Principles
 
-1. **Read, then act quickly**: Read relevant files before modifying them, but don't over-research. Spend at most 3-5 turns understanding the problem before attempting a solution. When given a task with constraints, read the ENTIRE specification first and make a checklist of ALL constraints — especially global constraints that span multiple components, files, or subsystems.
+1. **Read, then act quickly**: Read README.md and any task description files first — they often contain critical requirements. Read relevant source files before modifying them, but don't over-research. Spend at most 3-5 turns understanding the problem before attempting a solution. When given a task with constraints, read the ENTIRE specification first and make a checklist of ALL constraints — especially global constraints that span multiple components, files, or subsystems.
 
 2. **Try simple solutions first**: Before attempting a complex approach, try the simplest thing that might work. Often a straightforward solution is correct. If it fails, you'll learn from the error what the real issue is.
 
