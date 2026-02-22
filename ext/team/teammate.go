@@ -98,6 +98,7 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 	}()
 
 	prompt := initialTask
+	consecutiveErrors := 0
 
 	for {
 		tm.setState(TeammateRunning)
@@ -109,8 +110,32 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 				// Context cancelled — shut down.
 				return
 			}
-			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s error: %v\n", tm.team.name, tm.name, err)
+			consecutiveErrors++
+			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s error (%d): %v\n",
+				tm.team.name, tm.name, consecutiveErrors, err)
+
+			// Notify leader of error.
+			if tm.team.leader != "" {
+				if leaderMB := tm.team.getMailbox(tm.team.leader); leaderMB != nil {
+					leaderMB.Send(Message{
+						From:      tm.name,
+						To:        tm.team.leader,
+						Type:      MessageStatusUpdate,
+						Content:   fmt.Sprintf("Error on attempt %d: %v", consecutiveErrors, err),
+						Summary:   fmt.Sprintf("%s encountered an error", tm.name),
+						Timestamp: time.Now(),
+					})
+				}
+			}
+
+			// Stop after 3 consecutive errors to prevent hot retry loops.
+			if consecutiveErrors >= 3 {
+				fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s stopping after %d consecutive errors\n",
+					tm.team.name, tm.name, consecutiveErrors)
+				return
+			}
 		} else {
+			consecutiveErrors = 0
 			// Notify leader of completion via their mailbox.
 			if tm.team.leader != "" {
 				leaderMB := tm.team.getMailbox(tm.team.leader)

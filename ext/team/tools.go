@@ -243,7 +243,14 @@ func taskUpdateTool(t *Team) core.Tool {
 
 			var opts []TaskUpdateOption
 			if params.Status != "" {
-				opts = append(opts, WithStatus(TaskStatus(params.Status)))
+				switch TaskStatus(params.Status) {
+				case TaskPending, TaskInProgress, TaskCompleted, TaskBlocked:
+					opts = append(opts, WithStatus(TaskStatus(params.Status)))
+				default:
+					return nil, &core.ModelRetryError{
+						Message: fmt.Sprintf("invalid status %q: must be pending, in_progress, completed, or blocked", params.Status),
+					}
+				}
 			}
 			if params.Owner != "" {
 				opts = append(opts, WithOwner(params.Owner))

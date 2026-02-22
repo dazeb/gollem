@@ -47,8 +47,12 @@ func TeamAwarenessMiddleware(tm *Teammate) core.AgentMiddleware {
 				core.UserPromptPart{Content: injection},
 			},
 		}
-		messages = append(messages, injectedMsg)
 
-		return next(ctx, messages, settings, params)
+		// Copy to avoid corrupting the caller's slice backing array.
+		newMessages := make([]core.ModelMessage, len(messages)+1)
+		copy(newMessages, messages)
+		newMessages[len(messages)] = injectedMsg
+
+		return next(ctx, newMessages, settings, params)
 	}
 }

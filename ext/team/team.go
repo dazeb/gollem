@@ -52,6 +52,7 @@ type Team struct {
 	mailboxSize    int
 	personalityGen modelutil.PersonalityGeneratorFunc
 	done           chan struct{}
+	closeOnce      sync.Once
 	wg             sync.WaitGroup
 }
 
@@ -190,9 +191,12 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 func (t *Team) Shutdown(ctx context.Context) error {
 	fmt.Fprintf(os.Stderr, "[gollem] team:%s shutting down\n", t.name)
 
-	// Signal all teammates to stop.
+	// Signal all teammates to stop (skip the leader — it's the caller).
 	t.mu.RLock()
 	for _, tm := range t.members {
+		if tm.name == t.leader {
+			continue
+		}
 		tm.mailbox.Send(Message{
 			From:      "team",
 			To:        tm.name,
@@ -204,8 +208,8 @@ func (t *Team) Shutdown(ctx context.Context) error {
 	}
 	t.mu.RUnlock()
 
-	// Close done channel to unblock any waiting teammates.
-	close(t.done)
+	// Close done channel to unblock any waiting teammates (safe to call twice).
+	t.closeOnce.Do(func() { close(t.done) })
 
 	// Wait for all goroutines with context deadline.
 	doneCh := make(chan struct{})

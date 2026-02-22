@@ -1,6 +1,10 @@
 package team
 
-import "time"
+import (
+	"fmt"
+	"os"
+	"time"
+)
 
 // MessageType classifies a team message.
 type MessageType string
@@ -38,7 +42,8 @@ func (m *Mailbox) Send(msg Message) {
 	select {
 	case m.ch <- msg:
 	default:
-		// Buffer full — drop message rather than blocking the sender.
+		fmt.Fprintf(os.Stderr, "[gollem] WARNING: mailbox full, dropping message from %s to %s (type: %s)\n",
+			msg.From, msg.To, msg.Type)
 	}
 }
 
