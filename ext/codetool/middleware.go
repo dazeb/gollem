@@ -1024,6 +1024,20 @@ func discoverEnvironment(workDir string) string {
 	// may not be installed in the container. Detecting and installing them
 	// preemptively saves 1-2 turns of "command not found" debugging.
 	if networkAvailable && !depsAlreadyInstalled {
+		// Fix broken dpkg state before any apt operations. Many containers have
+		// interrupted dpkg from a prior build, causing all apt-get installs to fail
+		// with "dpkg was interrupted" until configured. This is the #1 container
+		// package manager failure mode.
+		runQuietTimeout(workDir, 30*time.Second, "dpkg", "--configure", "-a")
+
+		// Ensure curl is available — many verifiers and Python installers (uv, pip)
+		// need curl but containers often omit it. Auto-install preemptively.
+		if runQuiet(workDir, "which", "curl") == "" {
+			fmt.Fprintf(os.Stderr, "[gollem] auto-installing curl (required for package installers)\n")
+			runQuietTimeout(workDir, 30*time.Second, "apt-get", "update", "-qq")
+			runQuietTimeout(workDir, 30*time.Second, "apt-get", "install", "-y", "-q", "curl")
+		}
+
 		if sysPkgs := detectSystemPackagesFromTests(workDir); len(sysPkgs) > 0 {
 			fmt.Fprintf(os.Stderr, "[gollem] auto-installing system packages from test scripts: %s\n", strings.Join(sysPkgs, " "))
 			// Run apt-get update first — many containers have stale package lists
