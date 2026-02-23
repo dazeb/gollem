@@ -995,8 +995,8 @@ func TestToolset_AllTools(t *testing.T) {
 	if ts.Name != "codetool" {
 		t.Errorf("expected toolset name 'codetool', got %q", ts.Name)
 	}
-	if len(ts.Tools) != 8 {
-		t.Errorf("expected 8 tools, got %d", len(ts.Tools))
+	if len(ts.Tools) != 9 {
+		t.Errorf("expected 9 tools, got %d", len(ts.Tools))
 	}
 
 	names := make(map[string]bool)
@@ -1004,7 +1004,7 @@ func TestToolset_AllTools(t *testing.T) {
 		names[tool.Definition.Name] = true
 	}
 
-	expected := []string{"bash", "view", "write", "edit", "multi_edit", "grep", "glob", "ls"}
+	expected := []string{"bash", "view", "write", "edit", "multi_edit", "grep", "glob", "ls", "lsp"}
 	for _, name := range expected {
 		if !names[name] {
 			t.Errorf("missing tool: %s", name)
@@ -1014,8 +1014,8 @@ func TestToolset_AllTools(t *testing.T) {
 
 func TestAllTools_Count(t *testing.T) {
 	tools := AllTools()
-	if len(tools) != 8 {
-		t.Errorf("expected 8 tools, got %d", len(tools))
+	if len(tools) != 9 {
+		t.Errorf("expected 9 tools, got %d", len(tools))
 	}
 }
 

@@ -83,6 +83,7 @@ Common pitfalls to avoid:
 - **grep**: Use specific patterns. Combine with glob patterns to narrow scope.
 - **view**: Use offset/limit for large files instead of reading the whole thing.
 - **delegate**: Use for self-contained subtasks that benefit from a fresh context. The subagent sees the same environment (files, tests, README) automatically, but has NO memory of your conversation. Good uses: implementing a self-contained module, debugging a specific component, researching an unfamiliar API. Bad uses: tasks that depend on your in-progress work, trivial one-step operations. Include all necessary context about WHAT to do in the task description — the subagent already knows WHERE (same working directory).
+- **lsp**: Use for semantic code navigation when available. Methods: definition (go to definition), references (find all usages), hover (type info), diagnostics (errors), symbols (search by name). Requires a language server installed (gopls, pyright, etc). Falls back gracefully if unavailable — use grep/view instead.
 - **planning**: Use for multi-step tasks. Create a plan with task IDs, then update each task's status as you progress.
 - **Parallel tool calls**: You can invoke multiple tools in a single turn. When reading multiple files or performing independent operations, call them all at once instead of one per turn. This dramatically reduces the number of turns needed. Example: read 3 files simultaneously, or write a file and run a test in the same turn.
 

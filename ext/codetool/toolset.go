@@ -29,6 +29,7 @@ func Toolset(opts ...Option) *core.Toolset {
 		Grep(opts...),
 		Glob(opts...),
 		Ls(opts...),
+		LSP(opts...),
 	)
 }
 
@@ -43,6 +44,7 @@ func AllTools(opts ...Option) []core.Tool {
 		Grep(opts...),
 		Glob(opts...),
 		Ls(opts...),
+		LSP(opts...),
 	}
 }
 
