@@ -195,7 +195,40 @@ func View(opts ...Option) core.Tool {
 				}
 			}
 
+			// Warn about lock files and generated dependency manifests.
+			// These are machine-generated, often 1000+ lines, and waste
+			// context tokens. The agent should use grep instead.
+			if lineNum > 200 && isLockFile(filepath.Base(params.Path)) {
+				result += "\n[hint: this is a generated lock/dependency file — reading it wastes context. " +
+					"Use grep to search for specific package versions instead of reading the whole file.]"
+			}
+
 			return result, nil
 		},
 	)
+}
+
+// isLockFile returns true for machine-generated dependency lock files
+// that are rarely useful to read in full. These files can be thousands of
+// lines and waste context tokens — agents should grep for specific packages.
+func isLockFile(name string) bool {
+	switch strings.ToLower(name) {
+	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+		"bun.lockb", "bun.lock",
+		"go.sum",
+		"cargo.lock",
+		"poetry.lock", "pipfile.lock", "pdm.lock", "uv.lock",
+		"gemfile.lock",
+		"composer.lock",
+		"pubspec.lock",        // Dart/Flutter
+		"packages.lock.json",  // .NET NuGet
+		"mix.lock",            // Elixir
+		"flake.lock",          // Nix
+		"pom.xml.sha1",        // Maven checksum
+		"gradle.lockfile",     // Gradle
+		"shrinkwrap.yaml",     // pnpm
+		"package-resolved.json": // Swift Package Manager
+		return true
+	}
+	return false
 }

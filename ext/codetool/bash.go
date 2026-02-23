@@ -288,6 +288,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := pythonErrorHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := pipInstallHint(combinedOutput, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 			if hint := compilationErrorHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
@@ -1074,6 +1077,45 @@ func truncateErrorLine(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// pipInstallHint detects pip, poetry, and uv install failures and suggests
+// fixes. These are common in eval containers and unfamiliar environments.
+func pipInstallHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Build failures during pip install (missing C compiler, headers).
+	if (strings.Contains(output, "pip install") || strings.Contains(output, "pip3 install") ||
+		strings.Contains(output, "uv pip install")) &&
+		(strings.Contains(output, "error: command") || strings.Contains(output, "Failed building wheel")) {
+		return "[hint: package build failed — install build dependencies: " +
+			"apt-get install -y build-essential python3-dev, then retry. " +
+			"Or try installing a pre-built wheel: pip install --only-binary :all: <package>]"
+	}
+
+	// Version conflict.
+	if strings.Contains(output, "ResolutionImpossible") || strings.Contains(output, "version conflict") ||
+		strings.Contains(output, "incompatible versions") {
+		return "[hint: dependency version conflict — try: pip install --use-deprecated=legacy-resolver <package>, " +
+			"or pin specific versions to resolve conflicts]"
+	}
+
+	// No matching distribution (wrong Python version or platform).
+	if strings.Contains(output, "No matching distribution") || strings.Contains(output, "Could not find a version") {
+		return "[hint: package not found for this Python version or platform — " +
+			"check: python3 --version, and verify the package name is correct. " +
+			"Some packages have different names: e.g., Pillow not PIL, opencv-python not cv2]"
+	}
+
+	// Externally managed environment (PEP 668 — common on newer distros).
+	if strings.Contains(output, "externally-managed-environment") {
+		return "[hint: PEP 668 managed environment — use: python3 -m venv .venv && source .venv/bin/activate, " +
+			"then install packages. Or use: pip install --break-system-packages <package> (not recommended)]"
+	}
+
+	return ""
 }
 
 // compilationErrorHint extracts the first file:line and error message from
@@ -3115,6 +3157,23 @@ func nodeErrorHint(output string, exitCode int, workDir ...string) string {
 				}
 			}
 		}
+	}
+
+	// npm/yarn/pnpm install failures.
+	if strings.Contains(output, "ERESOLVE") || strings.Contains(output, "peer dep") {
+		return "[hint: dependency conflict — try: npm install --legacy-peer-deps, " +
+			"or pin specific versions to resolve peer dependency conflicts]"
+	}
+	if strings.Contains(output, "EACCES") && strings.Contains(output, "npm") {
+		return "[hint: npm permission error — avoid sudo. Use: npm config set prefix ~/.npm-global " +
+			"and add ~/.npm-global/bin to PATH]"
+	}
+	if strings.Contains(output, "ERR_SOCKET_TIMEOUT") || strings.Contains(output, "ETIMEDOUT") ||
+		(strings.Contains(output, "npm") && strings.Contains(output, "registry")) {
+		return "[hint: npm registry timeout — try again, or use: npm config set registry https://registry.npmjs.org/]"
+	}
+	if strings.Contains(output, "ENOENT") && strings.Contains(output, "package.json") {
+		return "[hint: no package.json found — run npm init -y first, or cd to the project root]"
 	}
 
 	return ""
