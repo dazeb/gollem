@@ -158,6 +158,25 @@ func Edit(opts ...Option) core.Tool {
 					}
 				}
 
+				// Auto-correct internal blank line count differences: models
+				// commonly generate 2 blank lines between functions when the file
+				// has 1 (or vice versa). Normalize runs of 2+ blank lines to 1
+				// and retry — this is the #3 edit failure.
+				if actualOld, adjustedNew, ok := autoCorrectInternalBlankLines(content, params.OldString, params.NewString); ok {
+					if strings.Count(content, actualOld) == 1 {
+						newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+						if hasCRLF {
+							newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+						}
+						if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+							return "", fmt.Errorf("write file: %w", err)
+						}
+						result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+						result += "\n[auto-corrected internal blank line count]"
+						return result, nil
+					}
+				}
+
 				msg := fmt.Sprintf("old_string not found in %s.", params.Path)
 
 				// Check for whitespace-only mismatch that couldn't be auto-corrected
@@ -524,6 +543,9 @@ func MultiEdit(opts ...Option) core.Tool {
 					} else if trimmedOld, trimmedNew, okBl := autoCorrectBlankLines(content, edit.OldString, edit.NewString); okBl && strings.Count(content, trimmedOld) == 1 {
 						newContent = strings.Replace(content, trimmedOld, trimmedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected extra blank lines", i)
+					} else if actualOld, adjustedNew, okIbl := autoCorrectInternalBlankLines(content, edit.OldString, edit.NewString); okIbl && strings.Count(content, actualOld) == 1 {
+						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
+						msg = fmt.Sprintf("edit[%d]: auto-corrected internal blank line count", i)
 					} else {
 						errMsg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
 						if wsHint := detectWhitespaceMismatch(content, edit.OldString); wsHint != "" {
@@ -857,6 +879,112 @@ func autoCorrectBlankLines(content, oldStr, newStr string) (trimmedOld, trimmedN
 		return "", "", false
 	}
 	return trimmedOld, trimmedNew, true
+}
+
+// autoCorrectInternalBlankLines normalizes runs of consecutive blank lines
+// to a single blank line in both old_string and content, then tries matching.
+// Models commonly generate 2 blank lines between functions when the file has 1
+// (or vice versa). This is the #3 edit failure after indentation and
+// leading/trailing blank lines.
+//
+// Returns:
+//   - actualOld: the actual content region in the file (with original blank lines)
+//   - adjustedNew: new_string (kept as-is — model's intended blank lines)
+//   - ok: true if normalization produced a unique match
+func autoCorrectInternalBlankLines(content, oldStr, newStr string) (actualOld, adjustedNew string, ok bool) {
+	// Normalize runs of 2+ blank lines to 1 blank line.
+	normalizeBlankRuns := func(s string) string {
+		lines := strings.Split(s, "\n")
+		var result []string
+		prevBlank := false
+		for _, line := range lines {
+			blank := strings.TrimSpace(line) == ""
+			if blank && prevBlank {
+				continue
+			}
+			result = append(result, line)
+			prevBlank = blank
+		}
+		return strings.Join(result, "\n")
+	}
+
+	normalizedOld := normalizeBlankRuns(oldStr)
+	normalizedContent := normalizeBlankRuns(content)
+
+	// Only proceed if normalization actually changed something.
+	if normalizedOld == oldStr && normalizedContent == content {
+		return "", "", false
+	}
+
+	// Must match exactly once in normalized content.
+	idx := strings.Index(normalizedContent, normalizedOld)
+	if idx < 0 {
+		return "", "", false
+	}
+	// Check uniqueness.
+	if strings.Index(normalizedContent[idx+1:], normalizedOld) >= 0 {
+		return "", "", false
+	}
+
+	// Build a mapping from normalized line index → actual content line index.
+	// This handles the case where the actual file has runs of blank lines
+	// that were collapsed during normalization.
+	contentLines := strings.Split(content, "\n")
+	normalizedToActual := make([]int, 0, len(contentLines))
+	prevBlank := false
+	for i, line := range contentLines {
+		blank := strings.TrimSpace(line) == ""
+		if blank && prevBlank {
+			continue // collapsed in normalization
+		}
+		normalizedToActual = append(normalizedToActual, i)
+		prevBlank = blank
+	}
+
+	// Find the normalized line range of the match.
+	normalizedStartLine := strings.Count(normalizedContent[:idx], "\n")
+	normalizedEndLine := normalizedStartLine + strings.Count(normalizedOld, "\n")
+
+	if normalizedStartLine >= len(normalizedToActual) || normalizedEndLine >= len(normalizedToActual) {
+		return "", "", false
+	}
+
+	actualStartLine := normalizedToActual[normalizedStartLine]
+
+	// The actual end line is the line AFTER the last matched normalized line,
+	// plus any consecutive blank lines that were collapsed.
+	actualEndLine := normalizedToActual[normalizedEndLine] + 1
+	// Include any blank lines immediately after the match that were part of
+	// the collapsed run (they belong to this region in the actual file).
+	for actualEndLine < len(contentLines) {
+		if normalizedEndLine+1 < len(normalizedToActual) && actualEndLine >= normalizedToActual[normalizedEndLine+1] {
+			break // reached the next normalized line's actual position
+		}
+		if strings.TrimSpace(contentLines[actualEndLine]) != "" {
+			break
+		}
+		actualEndLine++
+	}
+
+	if actualEndLine > len(contentLines) {
+		actualEndLine = len(contentLines)
+	}
+	if actualEndLine <= actualStartLine {
+		return "", "", false
+	}
+
+	actualOld = strings.Join(contentLines[actualStartLine:actualEndLine], "\n")
+
+	// Verify the normalized versions match (sanity check).
+	if normalizeBlankRuns(actualOld) != normalizedOld {
+		return "", "", false
+	}
+
+	// Keep new_string as-is — the model's intended blank lines are
+	// probably correct for the replacement.
+	adjustedNew = newStr
+
+	return actualOld, adjustedNew, true
 }
 
 // indentWidth computes the visual width of an indent string (tabs = 4 cols).

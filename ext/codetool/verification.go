@@ -479,6 +479,28 @@ func isVerificationString(cmd string) bool {
 		"python3 -c 'open(", "python -c 'open(",
 		// Solution execution with output redirect (common test pattern).
 		"./solution >", "./program >", "./main >",
+		// E2E testing frameworks.
+		"playwright test", "npx playwright test",
+		"cypress run", "npx cypress run",
+		// Python packaging tool runners.
+		"tox", "python -m tox", "python3 -m tox",
+		"nox", "python -m nox", "python3 -m nox",
+		"hatch test", "hatch run test",
+		"pdm run test", "pdm test",
+		"uv run pytest", "uv run test",
+		"poetry run pytest", "poetry run test",
+		// Maven wrapper (matches ./gradlew pattern).
+		"./mvnw",
+		// Deno task runner.
+		"deno task test", "deno task check",
+		// Blockchain / smart contract testing.
+		"forge test",  // Foundry (Solidity)
+		"anchor test", // Solana
+		"hardhat test", "npx hardhat test",
+		// WebAssembly.
+		"wasm-pack test",
+		// Gleam.
+		"gleam test",
 	}
 
 	// Build/compile commands.
@@ -513,6 +535,10 @@ func isVerificationString(cmd string) bool {
 		"golangci-lint", "staticcheck",
 		"rubocop", "shellcheck",
 		"black --check", "ruff check",
+		"biome check", "biome lint",
+		"clippy", // rustfmt is format-only, clippy is lint
+		"pyright", "basedpyright",
+		"tsc --noEmit", // typecheck only
 	}
 
 	// Constraint verification commands (size checks, output validation).
