@@ -225,19 +225,21 @@ func isBinaryFilename(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp", ".tiff", ".tif",
+		".ppm", ".pgm", ".icns", // uncommon image formats
 		".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".zst",
-		".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib", ".obj",
+		".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib", ".obj", ".wasm",
 		".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-		".wasm", ".pyc", ".pyo", ".class", ".jar",
+		".pyc", ".pyo", ".class", ".jar", ".war", ".whl", ".egg", // compiled/packaged
 		".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac", ".ogg",
+		".aac", ".m4a", ".aiff", ".wma",                 // additional audio
+		".wmv", ".flv", ".webm",                         // additional video
 		".ttf", ".otf", ".woff", ".woff2", ".eot",
-		".sqlite", ".db", ".db3",
-		".qcow2", ".img", ".iso", ".vmdk", ".vdi",     // disk images
+		".sqlite", ".sqlite3", ".db", ".db3",
+		".qcow2", ".img", ".iso", ".vmdk", ".vdi",      // disk images
 		".bin", ".dat", ".raw", ".pak",                  // generic binary
 		".npy", ".npz", ".pkl", ".pickle", ".pt", ".pth", // ML data/models
 		".h5", ".hdf5", ".parquet", ".feather",          // data formats
 		".cab", ".deb", ".rpm",                          // packages
-		".icns",                                         // icons
 		".DS_Store", ".lock":                            // system/lock files
 		return true
 	}

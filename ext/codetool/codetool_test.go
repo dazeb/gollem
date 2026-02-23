@@ -4073,7 +4073,7 @@ def test_solve():
 	}
 }
 
-func TestIsBinaryExtension(t *testing.T) {
+func TestIsBinaryFilename(t *testing.T) {
 	tests := []struct {
 		name   string
 		binary bool
@@ -4086,6 +4086,13 @@ func TestIsBinaryExtension(t *testing.T) {
 		{"file.pyc", true},
 		{"file.o", true},
 		{"file.so", true},
+		{"file.aac", true},
+		{"file.wmv", true},
+		{"file.webm", true},
+		{"file.sqlite3", true},
+		{"file.war", true},
+		{"file.whl", true},
+		{"file.ppm", true},
 		{"file.py", false},
 		{"file.txt", false},
 		{"file.json", false},
@@ -4094,9 +4101,9 @@ func TestIsBinaryExtension(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isBinaryExtension(strings.ToLower(tt.name))
+			got := isBinaryFilename(tt.name)
 			if got != tt.binary {
-				t.Errorf("isBinaryExtension(%q) = %v, want %v", tt.name, got, tt.binary)
+				t.Errorf("isBinaryFilename(%q) = %v, want %v", tt.name, got, tt.binary)
 			}
 		})
 	}

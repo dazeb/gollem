@@ -1602,8 +1602,7 @@ func autoReadSmallFiles(dir string, parts *[]string, label string, maxBytes, max
 			continue
 		}
 		// Skip binary-looking files by extension.
-		lower := strings.ToLower(entry.Name())
-		if isBinaryExtension(lower) {
+		if isBinaryFilename(entry.Name()) {
 			continue
 		}
 		limit := maxBytes
@@ -1727,7 +1726,7 @@ func autoReadTestRecursive(dir string, parts *[]string, maxBytes int, remaining 
 			continue
 		}
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") || name == "__pycache__" || name == "node_modules" {
+		if strings.HasPrefix(name, ".") || isSkippableDir(name) {
 			continue
 		}
 		autoReadTestRecursive(filepath.Join(dir, name), parts, maxBytes, remaining, budget, depth+1, maxDepth)
@@ -1855,8 +1854,7 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 			continue
 		}
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" ||
-			name == "__pycache__" || name == ".git" || name == "venv" || name == ".venv" ||
+		if strings.HasPrefix(name, ".") || isSkippableDir(name) ||
 			name == "build" || name == "dist" || name == "target" {
 			continue
 		}
@@ -4621,7 +4619,7 @@ func chmodScriptsInDirRecursive(dir string, depth, maxDepth int) {
 	for _, entry := range entries {
 		if entry.IsDir() {
 			name := entry.Name()
-			if !strings.HasPrefix(name, ".") && name != "__pycache__" && name != "node_modules" {
+			if !strings.HasPrefix(name, ".") && !isSkippableDir(name) {
 				chmodScriptsInDirRecursive(filepath.Join(dir, name), depth+1, maxDepth)
 			}
 			continue
@@ -6565,68 +6563,29 @@ func depsMarkerPath(workDir string) string {
 	return fmt.Sprintf("%s/gollem-deps-%08x", os.TempDir(), h)
 }
 
-// isSourceFile returns true if the filename has a recognized source code extension.
-// isBinaryExtension returns true if the lowercased filename has an extension
-// associated with binary files. Used to skip binary files in auto-read.
-func isBinaryExtension(lower string) bool {
-	binaryExts := []string{
-		// Images
-		".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".ppm", ".pgm",
-		".svg", ".webp", ".ico",
-		// Audio
-		".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4a", ".aiff", ".wma",
-		// Video
-		".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm",
-		// Archives
-		".zip", ".tar", ".gz", ".xz", ".bz2", ".7z", ".rar", ".zst",
-		// Documents
-		".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
-		// Databases
-		".db", ".sqlite", ".sqlite3",
-		// Python compiled/data
-		".pyc", ".pyo", ".pickle", ".pkl", ".npy", ".npz", ".h5", ".hdf5",
-		// Compiled objects/libraries
-		".o", ".obj", ".a", ".so", ".dylib", ".dll", ".lib", ".exe",
-		".class", ".jar", ".war", ".whl", ".egg",
-		// Binary data
-		".bin", ".dat", ".raw", ".img", ".iso",
-		// Fonts
-		".ttf", ".otf", ".woff", ".woff2",
-	}
-	for _, ext := range binaryExts {
-		if strings.HasSuffix(lower, ext) {
-			return true
-		}
-	}
-	return false
-}
-
 func isSourceFile(name string) bool {
-	sourceExts := []string{
-		".py", ".pyx", ".pyi",                          // Python
-		".js", ".ts", ".go", ".rs",                     // popular languages
-		".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", // C/C++
-		".java", ".rb", ".sh", ".bash", ".pl", ".lua", ".r", ".R",
+	lower := strings.ToLower(name)
+	ext := filepath.Ext(lower)
+	switch ext {
+	case ".py", ".pyx", ".pyi",
+		".js", ".ts", ".jsx", ".tsx", ".go", ".rs",
+		".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh",
+		".java", ".rb", ".sh", ".bash", ".pl", ".lua", ".r",
 		".sql", ".html", ".css", ".json", ".yaml", ".yml", ".toml",
 		".xml", ".md", ".txt", ".cfg", ".ini", ".conf",
 		".csv", ".tsv", ".jsonl", ".env", ".dockerfile",
-		".jsx", ".tsx", ".vue", ".svelte", ".zig", ".nim",
+		".vue", ".svelte", ".zig", ".nim",
 		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hs",
 		".jl", ".m", ".swift", ".f90", ".f95", ".pm",
-		".ml", ".mli",                   // OCaml
-		".lean", ".v", ".agda",          // theorem provers
-		".red",                          // Redcode (CoreWars)
-		".cu", ".cuh",                   // CUDA
-		".s", ".asm", ".wat",            // assembly / WebAssembly text
-		".proto", ".thrift", ".graphql", // schema files
-		".cmake",                        // build config
-		".rkt", ".scm", ".lisp", ".cl", // Lisp/Scheme/Racket
-	}
-	lower := strings.ToLower(name)
-	for _, ext := range sourceExts {
-		if strings.HasSuffix(lower, ext) {
-			return true
-		}
+		".ml", ".mli",
+		".lean", ".v", ".agda",
+		".red",
+		".cu", ".cuh",
+		".s", ".asm", ".wat",
+		".proto", ".thrift", ".graphql",
+		".cmake",
+		".rkt", ".scm", ".lisp", ".cl":
+		return true
 	}
 	// Extensionless files that are commonly source/config.
 	switch lower {
