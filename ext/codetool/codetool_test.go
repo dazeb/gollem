@@ -5344,7 +5344,7 @@ func TestTimeoutContextHint(t *testing.T) {
 		{
 			name:     "tail -f",
 			cmd:      "tail -f /var/log/app.log",
-			contains: "blocking monitoring",
+			contains: "blocking/interactive",
 		},
 		{
 			name:  "normal build command",

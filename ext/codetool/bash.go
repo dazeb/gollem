@@ -6281,6 +6281,8 @@ func isLongRunningCommand(cmd string) bool {
 		"python3 benchmark", "python benchmark",
 		"pytest -", // test suites with options often take longer
 		"pytest /",
+		"make test", "make check",  // test targets through make
+		"ctest",                     // CMake test runner
 		"go test -bench", "go test -count", "go test -run", "go test ./...",
 		"train.py", "training.py",
 		"fasttext ", "qemu-system",
@@ -6379,6 +6381,20 @@ func timeoutContextHint(cmd string) string {
 		"caddy run", "caddy start", // Caddy web server
 		"hypercorn", "daphne",     // ASGI servers
 		"php -s ", "php artisan serve", // PHP built-in server
+		// Modern JS/TS dev servers — extremely common to accidentally run blocking.
+		"vite", "next dev", "nuxt dev",
+		"ng serve",                          // Angular CLI
+		"gatsby develop",                    // Gatsby
+		"astro dev",                         // Astro
+		"remix dev",                         // Remix
+		"turbo dev",                         // Turborepo
+		"webpack serve", "webpack-dev-server", // Webpack
+		// Python application servers and workers.
+		"streamlit run",          // Streamlit
+		"celery worker", "celery -a", // Celery task worker
+		"jupyter notebook", "jupyter lab", // Jupyter (runs indefinitely)
+		// Background services.
+		"consul agent", "vault server", "nomad agent", // HashiCorp
 	}
 	for _, p := range serverPatterns {
 		if strings.Contains(lower, p) {
@@ -6388,10 +6404,21 @@ func timeoutContextHint(cmd string) string {
 		}
 	}
 
-	// Interactive/blocking commands that should be backgrounded.
-	if strings.Contains(lower, "tail -f") || strings.Contains(lower, "watch ") {
-		return "[hint: this is a blocking monitoring command. Use a non-blocking alternative " +
-			"(e.g., tail -n 20 instead of tail -f, or run checks with individual commands)]"
+	// Interactive/blocking commands that should not be run directly.
+	blockingPatterns := []string{
+		"tail -f", "watch ",
+		"top", "htop", "btop", "nmon",     // System monitors
+		"less ", "more ",                   // Pagers
+		"journalctl -f", "journalctl --follow", // Log following
+		"docker logs -f", "docker attach",      // Docker live streams
+		"kubectl logs -f",                      // Kubernetes log following
+	}
+	for _, p := range blockingPatterns {
+		if strings.Contains(lower, p) {
+			return "[hint: this is a blocking/interactive command. Use a non-blocking alternative " +
+				"(e.g., tail -n 50 instead of tail -f, cat instead of less, " +
+				"journalctl -n 50 instead of journalctl -f)]"
+		}
 	}
 
 	return ""
@@ -6475,6 +6502,34 @@ func testTimeoutOptimizationHint(cmd string) string {
 		return "[optimization hints: (1) use maps for O(1) lookups instead of lists:keyfind, " +
 			"(2) use binary matching instead of string operations, (3) avoid list comprehensions over large datasets — use ets tables, " +
 			"(4) use binary:compile_pattern for repeated pattern matching]"
+	case strings.Contains(lower, "crystal spec") || strings.Contains(lower, "crystal build"):
+		return "[optimization hints: (1) use Hash/Set for O(1) lookups instead of Array#includes?, " +
+			"(2) use IO::Memory and String.build for string construction, (3) avoid unnecessary object allocations in hot loops, " +
+			"(4) compile with --release for optimized builds]"
+	case strings.Contains(lower, "busted") || strings.Contains(lower, "lua ") || strings.Contains(lower, "luajit "):
+		return "[optimization hints: (1) use table keys for O(1) lookups instead of linear search, " +
+			"(2) localize frequently used functions (local insert = table.insert), (3) pre-size tables with table.new if using LuaJIT, " +
+			"(4) avoid creating closures or tables inside tight loops]"
+	case strings.Contains(lower, "julia ") || strings.Contains(lower, "julia -e"):
+		return "[optimization hints: (1) avoid global variables in hot paths (pass as function args), " +
+			"(2) use type annotations for function arguments, (3) pre-allocate arrays with similar() or zeros(), " +
+			"(4) use @views for array slices to avoid copies, (5) Julia JIT compiles on first call — subsequent runs are faster]"
+	case strings.Contains(lower, "rscript ") || strings.Contains(lower, "r -e ") || strings.Contains(lower, "r --vanilla"):
+		return "[optimization hints: (1) vectorize operations instead of using for loops, " +
+			"(2) use data.table instead of data.frame for large datasets, (3) pre-allocate vectors instead of growing in loops, " +
+			"(4) use Rcpp for computation-heavy inner loops]"
+	case strings.Contains(lower, "fpc ") || strings.Contains(lower, "fpc -"):
+		return "[optimization hints: (1) compile with -O2 for optimization, (2) use arrays instead of linked lists for sequential data, " +
+			"(3) use SetLength to pre-allocate dynamic arrays, (4) avoid string concatenation in loops — use TStringBuilder]"
+	case strings.Contains(lower, "v test") || strings.Contains(lower, "v run"):
+		return "[optimization hints: (1) use maps for O(1) lookups instead of array linear search, " +
+			"(2) use -prod flag for optimized compilation, (3) avoid unnecessary allocations in tight loops, " +
+			"(4) use @[cap:n]T{} to pre-allocate arrays]"
+	// Catch-all for generic python/python3 invocations (scripts, not test runners).
+	case strings.Contains(lower, "python3 ") || strings.Contains(lower, "python "):
+		return "[optimization hints: (1) use numpy/vectorized ops instead of Python loops for numeric work, " +
+			"(2) use dict/set for O(1) lookups instead of list scans, " +
+			"(3) use generators for large data, (4) profile with: python3 -m cProfile -s cumulative your_script.py]"
 	}
 
 	return ""
