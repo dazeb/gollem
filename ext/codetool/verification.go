@@ -795,17 +795,30 @@ func validateOutputFormats(workDir string) string {
 func failureGuidance(summary string) string {
 	lower := strings.ToLower(summary)
 	switch {
-	case strings.Contains(lower, "timed out"):
+	case strings.Contains(lower, "timed out") || strings.Contains(lower, "timeout"):
 		return "Your solution is TOO SLOW. Profile with `time` and optimize the hot path. " +
-			"Consider: more efficient algorithm, caching, avoiding redundant computation.\n"
+			"Consider: more efficient algorithm, caching, avoiding redundant computation. " +
+			"If using Python: use numpy/vectorized ops, dict/set for lookups, generators for large data.\n"
 	case strings.Contains(lower, "compilation") || strings.Contains(lower, "compile") ||
 		strings.Contains(lower, "syntax error") || strings.Contains(lower, "undefined"):
 		return "Fix the COMPILATION ERRORS first — read the error messages for exact file:line locations.\n"
 	case strings.Contains(lower, "expected") && strings.Contains(lower, "got"):
 		return "Output MISMATCH — compare expected vs actual values character-by-character. " +
-			"Check: trailing newlines, whitespace, numeric precision, encoding.\n"
+			"Check: trailing newlines, whitespace, numeric precision, encoding. " +
+			"Use `xxd <your_output> | head -5` and `xxd <expected_output> | head -5` to compare bytes.\n"
 	case strings.Contains(lower, "not found") || strings.Contains(lower, "no such file"):
-		return "MISSING FILE — check that you created all required output files in the right location.\n"
+		return "MISSING FILE — check that you created all required output files in the right location. " +
+			"Use `ls -la` to verify file existence and paths.\n"
+	case strings.Contains(lower, "permission denied"):
+		return "PERMISSION ERROR — try: chmod +x <script> or chmod 644 <file>. " +
+			"For services: check if the process needs root or a specific user.\n"
+	case strings.Contains(lower, "connection refused") || strings.Contains(lower, "connection reset"):
+		return "SERVICE NOT RUNNING — check if the server/daemon started successfully. " +
+			"Use: ss -tlnp to check listening ports, service <name> status for service state.\n"
+	case strings.Contains(lower, "import") && (strings.Contains(lower, "error") || strings.Contains(lower, "module")):
+		return "IMPORT ERROR — a required module is missing. " +
+			"Install with: pip install --break-system-packages <module>. " +
+			"If it's a local module, check PYTHONPATH or run from the correct directory.\n"
 	case strings.Contains(lower, "assert"):
 		return "ASSERTION FAILURE — read the test code to understand exactly what's expected. " +
 			"Fix one failure at a time, starting with the first.\n"

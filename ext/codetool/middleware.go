@@ -5041,16 +5041,30 @@ func humanSize(bytes int64) string {
 // numeric thresholds, size limits, or performance requirements. These are the
 // constraints most likely to cause failures if missed.
 func extractTestConstraints(testDir string) []string {
-	entries, err := os.ReadDir(testDir)
-	if err != nil {
-		return nil
-	}
-
 	var constraints []string
 	seen := make(map[string]bool)
+	extractTestConstraintsRecursive(testDir, &constraints, seen, 0, 3)
+	return constraints
+}
+
+// extractTestConstraintsRecursive walks test directories up to maxDepth to
+// find constraint patterns. Previously this was non-recursive and missed tests
+// in subdirectories like /tests/unit/test_foo.py.
+func extractTestConstraintsRecursive(dir string, constraints *[]string, seen map[string]bool, depth, maxDepth int) {
+	if depth > maxDepth || len(*constraints) >= 15 {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
 
 	for _, entry := range entries {
 		if entry.IsDir() {
+			// Recurse into subdirectories.
+			if depth < maxDepth {
+				extractTestConstraintsRecursive(filepath.Join(dir, entry.Name()), constraints, seen, depth+1, maxDepth)
+			}
 			continue
 		}
 		if !isSourceFile(entry.Name()) {
@@ -5060,7 +5074,7 @@ func extractTestConstraints(testDir string) []string {
 		if err != nil || info.Size() > 10000 {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(testDir, entry.Name()))
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -5124,16 +5138,15 @@ func extractTestConstraints(testDir string) []string {
 				if len(trimmed) > 200 {
 					trimmed = trimmed[:200] + "..."
 				}
-				constraints = append(constraints, trimmed)
+				*constraints = append(*constraints, trimmed)
 				seen[trimmed] = true
 			}
 		}
 		// Cap at 15 constraints to avoid overwhelming context.
-		if len(constraints) >= 15 {
-			break
+		if len(*constraints) >= 15 {
+			return
 		}
 	}
-	return constraints
 }
 
 // timeStrategyGuidance returns time-proportional strategy guidance based on
