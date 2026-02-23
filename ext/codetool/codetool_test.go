@@ -6739,3 +6739,81 @@ func TestBuildContextRecoverySummary_TestTrajectory(t *testing.T) {
 	}
 }
 
+func TestBrowserHint(t *testing.T) {
+	t.Run("chrome_not_found", func(t *testing.T) {
+		hint := browserHint("Error: Failed to launch chrome! No chrome binary at /usr/bin/chromium", 1)
+		if hint == "" || !strings.Contains(hint, "Browser") {
+			t.Errorf("expected browser hint for chrome failure, got: %q", hint)
+		}
+	})
+	t.Run("selenium_error", func(t *testing.T) {
+		hint := browserHint("selenium.common.exceptions.WebDriverException: Message: 'chromedriver' not found", 1)
+		if hint == "" || !strings.Contains(hint, "Selenium") {
+			t.Errorf("expected browser hint for selenium, got: %q", hint)
+		}
+	})
+	t.Run("playwright_error", func(t *testing.T) {
+		hint := browserHint("playwright._impl._errors.Error: Executable doesn't exist at /ms-playwright/chromium", 1)
+		if hint == "" || !strings.Contains(hint, "Playwright") {
+			t.Errorf("expected browser hint for playwright, got: %q", hint)
+		}
+	})
+	t.Run("x11_display_error", func(t *testing.T) {
+		hint := browserHint("Error: could not connect to display :0 — X11 not set", 1)
+		if hint == "" || !strings.Contains(hint, "display") {
+			t.Errorf("expected display hint, got: %q", hint)
+		}
+	})
+	t.Run("exit_code_0", func(t *testing.T) {
+		hint := browserHint("Chrome started successfully", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %q", hint)
+		}
+	})
+	t.Run("unrelated_error", func(t *testing.T) {
+		hint := browserHint("ImportError: No module named 'numpy'", 1)
+		if hint != "" {
+			t.Errorf("expected no hint for unrelated error, got: %q", hint)
+		}
+	})
+}
+
+func TestSSLHint(t *testing.T) {
+	t.Run("pip_ssl_error", func(t *testing.T) {
+		hint := sslHint("pip install numpy\nSSL: CERTIFICATE_VERIFY_FAILED from pypi.org", 1)
+		if hint == "" || !strings.Contains(hint, "trusted-host") {
+			t.Errorf("expected pip SSL hint, got: %q", hint)
+		}
+	})
+	t.Run("curl_ssl_error", func(t *testing.T) {
+		hint := sslHint("curl: (60) SSL certificate problem: certificate verify failed", 1)
+		if hint == "" || !strings.Contains(hint, "curl") {
+			t.Errorf("expected curl SSL hint, got: %q", hint)
+		}
+	})
+	t.Run("git_ssl_error", func(t *testing.T) {
+		hint := sslHint("fatal: unable to access 'https://github.com/...': SSL certificate problem: certificate verify failed", 1)
+		if hint == "" || !strings.Contains(hint, "git") {
+			t.Errorf("expected git SSL hint, got: %q", hint)
+		}
+	})
+	t.Run("generic_ssl_error", func(t *testing.T) {
+		hint := sslHint("requests.exceptions.SSLError: SSL: CERTIFICATE_VERIFY_FAILED", 1)
+		if hint == "" || !strings.Contains(hint, "SSL") {
+			t.Errorf("expected generic SSL hint, got: %q", hint)
+		}
+	})
+	t.Run("exit_code_0", func(t *testing.T) {
+		hint := sslHint("SSL handshake completed", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %q", hint)
+		}
+	})
+	t.Run("unrelated_error", func(t *testing.T) {
+		hint := sslHint("SyntaxError: invalid syntax", 1)
+		if hint != "" {
+			t.Errorf("expected no hint for unrelated error, got: %q", hint)
+		}
+	})
+}
+

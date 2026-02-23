@@ -337,6 +337,12 @@ func Bash(opts ...Option) core.Tool {
 			if hint := memoryHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := browserHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := sslHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -1801,6 +1807,94 @@ func memoryHint(output string, exitCode int) string {
 				"(4) Stack overflow from deep recursion. Debug with: compile with -g and run under gdb, " +
 				"or add bounds checking. For C: use -fsanitize=address]"
 		}
+	}
+
+	return ""
+}
+
+// browserHint detects when the agent is trying to use browser/GUI tools
+// (Selenium, Playwright, Puppeteer, Chromium) in a headless container.
+// This wastes many turns. The verifier handles browser testing — the agent
+// should focus on creating the required files, not setting up browsers.
+func browserHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	// Chromium/Chrome not found or failed to launch.
+	if (strings.Contains(lower, "chrome") || strings.Contains(lower, "chromium")) &&
+		(strings.Contains(lower, "not found") || strings.Contains(lower, "failed to launch") ||
+			strings.Contains(lower, "no such file") || strings.Contains(lower, "cannot find")) {
+		return "[hint: Browser (Chrome/Chromium) is not available in this environment. " +
+			"DO NOT try to install or configure a browser — it wastes turns. " +
+			"If tests use browser automation (Selenium/Playwright), the verifier runs them separately. " +
+			"Focus on creating the required files and verifying with non-browser tests.]"
+	}
+
+	// Selenium-specific errors.
+	if strings.Contains(output, "selenium.common.exceptions") ||
+		(strings.Contains(lower, "webdriver") && (strings.Contains(lower, "not found") || strings.Contains(lower, "error"))) {
+		return "[hint: Selenium WebDriver error — browser automation is not available in this environment. " +
+			"DO NOT spend turns installing chromedriver or browser packages. " +
+			"The verifier handles browser tests. Focus on your core code.]"
+	}
+
+	// Playwright-specific errors.
+	if strings.Contains(output, "playwright._impl") ||
+		(strings.Contains(lower, "playwright") && strings.Contains(lower, "browser")) {
+		return "[hint: Playwright browser error — browsers are not installed in this environment. " +
+			"DO NOT run 'playwright install' or try to set up browsers. " +
+			"The verifier handles browser tests. Focus on your core code.]"
+	}
+
+	// X11/display errors (GUI tools in headless container).
+	if (strings.Contains(lower, "display") || strings.Contains(lower, "x11")) &&
+		(strings.Contains(lower, "not set") || strings.Contains(lower, "cannot open") ||
+			strings.Contains(lower, "could not connect") || strings.Contains(lower, "no protocol")) {
+		return "[hint: No display server (X11) available — this is a headless environment. " +
+			"DO NOT try to set up Xvfb or GUI tools. If you need headless rendering, " +
+			"use a non-GUI library (e.g., matplotlib with Agg backend: matplotlib.use('Agg')). " +
+			"For browser tests, the verifier handles them separately.]"
+	}
+
+	return ""
+}
+
+// sslHint detects SSL/TLS certificate errors that commonly occur in
+// container environments where CA certificates may not be configured.
+// Provides workarounds for pip, curl, wget, and git.
+func sslHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	if strings.Contains(lower, "certificate verify failed") ||
+		strings.Contains(lower, "ssl: certificate_verify_failed") ||
+		strings.Contains(lower, "ssl_error_syscall") ||
+		(strings.Contains(lower, "ssl") && strings.Contains(lower, "certificate") && strings.Contains(lower, "error")) {
+
+		// Detect if this is a pip-related SSL error.
+		if strings.Contains(lower, "pip") || strings.Contains(lower, "pypi") {
+			return "[hint: SSL certificate error during pip install. Fix: " +
+				"pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org <package>]"
+		}
+		// Curl SSL error.
+		if strings.Contains(lower, "curl") {
+			return "[hint: SSL certificate error with curl. Fix: use curl -k (insecure) or " +
+				"install CA certificates: apt-get install -y ca-certificates && update-ca-certificates]"
+		}
+		// Git SSL error.
+		if strings.Contains(lower, "git") {
+			return "[hint: SSL certificate error with git. Fix: " +
+				"git config --global http.sslVerify false (for this session only)]"
+		}
+		// Generic SSL error.
+		return "[hint: SSL certificate verification failed. This is common in container environments. " +
+			"Try: (1) apt-get install -y ca-certificates && update-ca-certificates, " +
+			"(2) For Python: set PYTHONHTTPSVERIFY=0 or use --trusted-host flags with pip, " +
+			"(3) For curl: use -k flag]"
 	}
 
 	return ""
