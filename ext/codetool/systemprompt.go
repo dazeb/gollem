@@ -80,7 +80,8 @@ Common pitfalls to avoid:
 - **edit**: Always include enough context in old_string to be unique. If the edit fails with "multiple occurrences", add more surrounding lines.
 - **multi_edit**: Batch multiple edits across one or more files in one call. More efficient than sequential edit calls when making related changes. Each edit needs a unique old_string within its file.
 - **bash**: Set appropriate timeouts for long-running commands. Check exit codes. Do NOT use bash (sed, awk, echo, printf) for file editing — use edit, multi_edit, or write instead.
-- **grep**: Use specific patterns. Combine with glob patterns to narrow scope.
+- **grep**: Use specific patterns. Use include to filter by extension (supports {a,b} braces, e.g. '*.{ts,tsx}'). Use files_only to survey which files match.
+- **glob**: Use ** for recursive matching and {a,b} for multiple extensions (e.g. '**/*.{ts,tsx}').
 - **view**: Use offset/limit for large files instead of reading the whole thing. Use negative offset to read from end of file (e.g. offset=-20 for last 20 lines).
 - **delegate**: Use for self-contained subtasks that benefit from a fresh context. The subagent sees the same environment (files, tests, README) automatically, but has NO memory of your conversation. Good uses: implementing a self-contained module, debugging a specific component, researching an unfamiliar API. Bad uses: tasks that depend on your in-progress work, trivial one-step operations. Include all necessary context about WHAT to do in the task description — the subagent already knows WHERE (same working directory).
 - **lsp**: Use for semantic code navigation when available. Methods: definition (go to definition), references (find all usages), hover (type info), diagnostics (errors), symbols (search by name). Requires a language server installed (gopls, pyright, etc). Falls back gracefully if unavailable — use grep/view instead.
