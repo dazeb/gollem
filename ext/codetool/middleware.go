@@ -305,7 +305,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "bun", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}

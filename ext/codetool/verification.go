@@ -396,7 +396,7 @@ func isVerificationString(cmd string) bool {
 		"go test",
 		"pytest", "python -m pytest", "python -m unittest", "python3 -m unittest",
 		"npm test", "npm run test", "yarn test", "pnpm test",
-		"npx jest", "npx mocha", "npx vitest", "bun test", "bunx vitest",
+		"npx jest", "npx mocha", "npx vitest", "bun test", "bunx vitest", "deno test",
 		"cargo test",
 		"make test", "make check",
 		"mvn test", "gradle test", "gradlew test", "./gradlew",
