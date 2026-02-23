@@ -2449,6 +2449,35 @@ func cargoHint(output string, exitCode int) string {
 			"(3) use String instead of &str for owned strings]"
 	}
 
+	// Trait bound not satisfied — very common with generics.
+	if strings.Contains(output, "the trait bound") && strings.Contains(output, "is not satisfied") {
+		return "[hint: trait bound not satisfied — the type doesn't implement the required trait. " +
+			"Common fixes: (1) add #[derive(Trait)] to your type, (2) implement the trait manually, " +
+			"(3) check if you need a different type that already implements the trait]"
+	}
+
+	// Move error — common ownership issue.
+	if strings.Contains(output, "value used here after move") || strings.Contains(output, "move occurs because") {
+		return "[hint: ownership/move error — a value was used after being moved. " +
+			"Common fixes: (1) clone the value before the move, (2) use references (&/&mut) instead, " +
+			"(3) for iterators, use .iter() instead of .into_iter() to borrow rather than consume]"
+	}
+
+	// Missing lifetime specifier.
+	if strings.Contains(output, "missing lifetime specifier") {
+		return "[hint: missing lifetime specifier — the compiler can't infer lifetimes. " +
+			"Common fixes: (1) add explicit lifetime annotations (fn foo<'a>(x: &'a str) -> &'a str), " +
+			"(2) return an owned type (String instead of &str) to avoid lifetimes entirely, " +
+			"(3) use 'static for string literals and compile-time constants]"
+	}
+
+	// Mismatched types — common generic/type error.
+	if strings.Contains(output, "mismatched types") {
+		return "[hint: type mismatch — check the expected vs actual types in the error. " +
+			"Common causes: (1) &str vs String (use .to_string() or &*s), " +
+			"(2) Option<T> vs T (use .unwrap() or match), (3) Result<T,E> vs T (use ? operator)]"
+	}
+
 	return ""
 }
 

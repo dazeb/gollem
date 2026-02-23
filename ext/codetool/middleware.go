@@ -964,6 +964,20 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Gleam: download dependencies from gleam.toml.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "gleam.toml")) && runQuiet(dir, "which", "gleam") != "" {
+				if !dirExists(filepath.Join(dir, "build")) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Gleam dependencies in %s\n", dir)
+					runQuietTimeout(dir, 90*time.Second, "gleam", "deps", "download")
+					parts = append(parts, "AUTO-INSTALLED: Gleam dependencies via gleam deps download (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
 	// OCaml/Dune: install opam dependencies if available.
 	if networkAvailable && !depsAlreadyInstalled {
 		for _, dir := range []string{workDir, "/app"} {
@@ -5554,8 +5568,49 @@ func detectPythonImports(workDir string) []string {
 		"pulp":           "PuLP",
 		"cvxpy":          "cvxpy",
 		"z3":             "z3-solver",
+		"ortools":        "ortools",
+		"statsmodels":    "statsmodels",
 		// CLI and config.
 		"typer":          "typer",
+		// NLP and text processing.
+		"nltk":           "nltk",
+		"spacy":          "spacy",
+		"rapidfuzz":      "rapidfuzz",
+		"editdistance":   "editdistance",
+		// Audio processing.
+		"librosa":        "librosa",
+		"soundfile":      "soundfile",
+		// ML frameworks (additional).
+		"xgboost":        "xgboost",
+		"lightgbm":       "lightgbm",
+		// Visualization.
+		"plotly":         "plotly",
+		"pygments":       "Pygments",
+		"graphviz":       "graphviz",
+		"pydot":          "pydot",
+		// Performance and compilation.
+		"numba":          "numba",
+		// Game/simulation.
+		"pygame":         "pygame",
+		"chess":          "chess",
+		// Date/time.
+		"arrow":          "arrow",
+		"pendulum":       "pendulum",
+		// Parsing.
+		"ply":            "ply",
+		"parsimonious":   "parsimonious",
+		// TOML (for Python < 3.11).
+		"tomlkit":        "tomlkit",
+		"tomli":          "tomli",
+		// Security / CTF.
+		"pwn":            "pwntools",
+		"pwnlib":         "pwntools",
+		"capstone":       "capstone",
+		"angr":           "angr",
+		// Data structures.
+		"intervaltree":   "intervaltree",
+		"sortedcollections": "sortedcollections",
+		"cachetools":     "cachetools",
 	}
 
 	needed := make(map[string]string) // module → pip package
@@ -5696,6 +5751,22 @@ func detectSystemPackagesFromTests(workDir string) []string {
 		"ffprobe":   "ffmpeg",
 		"sox":       "sox",
 		"pandoc":    "pandoc",
+		// Build tools — needed when test scripts invoke compilers directly.
+		"cmake":     "cmake",
+		"pkg-config": "pkg-config",
+		"gfortran":  "gfortran",
+		"m4":        "m4",
+		"bison":     "bison",
+		"flex":      "flex",
+		"autoconf":  "autoconf",
+		"automake":  "automake",
+		// Other common tools.
+		"column":    "bsdmainutils",
+		"tput":      "ncurses-bin",
+		"timeout":   "coreutils",
+		"numfmt":    "coreutils",
+		"shuf":      "coreutils",
+		"realpath":  "coreutils",
 	}
 
 	// Scan .sh and .py files in test directories.
