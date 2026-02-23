@@ -9539,3 +9539,182 @@ func TestIsSkippableDir(t *testing.T) {
 	}
 }
 
+// --- Meson test output parsing ---
+
+func TestTestResultSummary_Meson(t *testing.T) {
+	output := `1/3 myproject:test_add          OK              0.03s
+2/3 myproject:test_sub          FAIL            0.02s
+3/3 myproject:test_mul          OK              0.01s
+
+Ok:                 2
+Expected Fail:      0
+Fail:               1
+Unexpected Pass:    0
+Skipped:            0
+Timeout:            0`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected Meson summary")
+	}
+	if !strings.Contains(summary, "meson") {
+		t.Errorf("expected 'meson' in summary, got: %q", summary)
+	}
+	if !strings.Contains(summary, "Ok:") {
+		t.Errorf("expected 'Ok:' in summary, got: %q", summary)
+	}
+	if !strings.Contains(summary, "Fail:") {
+		t.Errorf("expected 'Fail:' in summary, got: %q", summary)
+	}
+}
+
+func TestTestResultSummary_MesonAllPassing(t *testing.T) {
+	output := `1/3 myproject:test_add          OK              0.03s
+2/3 myproject:test_sub          OK              0.02s
+3/3 myproject:test_mul          OK              0.01s
+
+Ok:                 3
+Expected Fail:      0
+Fail:               0
+Unexpected Pass:    0
+Skipped:            0
+Timeout:            0`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected Meson summary")
+	}
+	if !strings.Contains(summary, "meson") {
+		t.Errorf("expected 'meson' in summary, got: %q", summary)
+	}
+}
+
+func TestExtractTestCounts_Meson(t *testing.T) {
+	output := `1/3 myproject:test_add          OK              0.03s
+2/3 myproject:test_sub          FAIL            0.02s
+3/3 myproject:test_mul          OK              0.01s
+
+Ok:                 2
+Expected Fail:      0
+Fail:               1
+Unexpected Pass:    0
+Skipped:            0
+Timeout:            0`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected Meson test counts")
+	}
+	if p != 2 {
+		t.Errorf("expected 2 passed, got %d", p)
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failed, got %d", f)
+	}
+}
+
+func TestExtractTestCounts_MesonAllPassing(t *testing.T) {
+	output := `1/3 myproject:test_add          OK              0.03s
+2/3 myproject:test_sub          OK              0.02s
+3/3 myproject:test_mul          OK              0.01s
+
+Ok:                 3
+Expected Fail:      0
+Fail:               0
+Unexpected Pass:    0
+Skipped:            0
+Timeout:            0`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected Meson test counts")
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed, got %d", p)
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failed, got %d", f)
+	}
+}
+
+// --- Bazel test output parsing ---
+
+func TestTestResultSummary_Bazel(t *testing.T) {
+	output := `INFO: Analyzed 3 targets (0 packages loaded, 0 targets configured).
+INFO: Found 3 test targets...
+INFO: Elapsed time: 2.234s, Critical Path: 1.5s
+INFO: 5 processes: 2 internal, 3 linux-sandbox.
+//src:add_test                                                       PASSED in 0.3s
+//src:sub_test                                                       FAILED in 0.5s
+  /home/user/.cache/bazel/sandbox/testlogs/src/sub_test/test.log
+//src:mul_test                                                       PASSED in 0.2s
+
+Executed 3 out of 3 tests: 2 tests pass and 1 fails locally.`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected Bazel summary")
+	}
+	if !strings.Contains(summary, "Executed 3 out of 3 tests") {
+		t.Errorf("expected Bazel summary line, got: %q", summary)
+	}
+	if !strings.Contains(summary, "//src:sub_test") {
+		t.Errorf("expected failed target name, got: %q", summary)
+	}
+}
+
+func TestTestResultSummary_BazelAllPassing(t *testing.T) {
+	output := `INFO: Analyzed 3 targets (0 packages loaded, 0 targets configured).
+INFO: Found 3 test targets...
+//src:add_test                                                       PASSED in 0.3s
+//src:sub_test                                                       PASSED in 0.5s
+//src:mul_test                                                       PASSED in 0.2s
+
+Executed 3 out of 3 tests: 3 tests pass.`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected Bazel summary")
+	}
+	if !strings.Contains(summary, "3 tests pass") {
+		t.Errorf("expected all-passing summary, got: %q", summary)
+	}
+}
+
+func TestExtractTestCounts_Bazel(t *testing.T) {
+	output := `//src:add_test                                                       PASSED in 0.3s
+//src:sub_test                                                       FAILED in 0.5s
+//src:mul_test                                                       PASSED in 0.2s
+
+Executed 3 out of 3 tests: 2 tests pass and 1 fails locally.`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected Bazel test counts")
+	}
+	if p != 2 {
+		t.Errorf("expected 2 passed, got %d", p)
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failed, got %d", f)
+	}
+}
+
+func TestExtractTestCounts_BazelAllPassing(t *testing.T) {
+	output := `//src:add_test                                                       PASSED in 0.3s
+//src:sub_test                                                       PASSED in 0.5s
+
+Executed 2 out of 2 tests: 2 tests pass.`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected Bazel test counts")
+	}
+	if p != 2 {
+		t.Errorf("expected 2 passed, got %d", p)
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failed, got %d", f)
+	}
+}
+

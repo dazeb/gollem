@@ -2897,6 +2897,77 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Meson test: "Ok: N", "Fail: N", "Skipped: N", "Timeout: N" summary block.
+	// Individual test lines: "1/3 test_name  OK  0.03s" / "2/3 test_name  FAIL  0.02s"
+	if strings.Contains(output, "Ok:") &&
+		(strings.Contains(output, "Timeout:") || strings.Contains(output, "Expected Fail:")) {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
+			line := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(line, "Ok:") {
+				// Gather the full summary block (Ok, Expected Fail, Fail, etc.)
+				var parts []string
+				for j := i; j < min(i+7, len(lines)); j++ {
+					part := strings.TrimSpace(lines[j])
+					if part == "" {
+						break
+					}
+					parts = append(parts, part)
+				}
+				summary := "[test summary: meson — " + strings.Join(parts, " | ") + "]"
+				if detail := firstFailureDetail(output); detail != "" {
+					summary += "\n" + detail
+				}
+				return summary
+			}
+		}
+	}
+
+	// Bazel test: "Executed N out of N tests: X tests pass and Y fails locally."
+	// Per-target: "//target:name  PASSED in 0.3s" / "//target:name  FAILED in 0.5s"
+	if strings.Contains(lower, "executed") && strings.Contains(lower, " out of ") &&
+		strings.Contains(lower, "test") {
+		lines := strings.Split(output, "\n")
+		var summary string
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.HasPrefix(lineLower, "executed") && strings.Contains(lineLower, "out of") &&
+				strings.Contains(lineLower, "test") {
+				summary = "[test summary: " + line + "]"
+				break
+			}
+		}
+		if summary != "" {
+			// Extract failing target names (//target:name FAILED in Xs).
+			var failedTargets []string
+			for _, fline := range lines {
+				trimmed := strings.TrimSpace(fline)
+				if strings.HasPrefix(trimmed, "//") && strings.Contains(trimmed, "FAILED") {
+					idx := strings.Index(trimmed, "FAILED")
+					if idx > 0 {
+						failedTargets = append(failedTargets, strings.TrimSpace(trimmed[:idx]))
+					}
+				}
+			}
+			if len(failedTargets) > 0 {
+				shown := failedTargets
+				if len(shown) > 10 {
+					shown = shown[:10]
+				}
+				summary += "\n[failed targets: " + strings.Join(shown, ", ")
+				if len(failedTargets) > 10 {
+					summary += fmt.Sprintf("... and %d more", len(failedTargets)-10)
+				}
+				summary += "]"
+			}
+			if detail := firstFailureDetail(output); detail != "" {
+				summary += "\n" + detail
+			}
+			return summary
+		}
+	}
+
 	// "X/Y tests passed" or "X out of Y" pattern (custom test scripts).
 	// These are common in TB2 tasks that use custom test harnesses.
 	{
@@ -3997,6 +4068,66 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				}
 			}
 			if ok {
+				return
+			}
+		}
+	}
+
+	// Meson test: "Ok: N", "Fail: N" summary lines.
+	if strings.Contains(output, "Ok:") &&
+		(strings.Contains(output, "Timeout:") || strings.Contains(output, "Expected Fail:")) {
+		var mesonOk, mesonFail int
+		foundMeson := false
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "Ok:") {
+				fmt.Sscanf(extractAfter(trimmed, "Ok:"), "%d", &mesonOk)
+				foundMeson = true
+			} else if strings.HasPrefix(trimmed, "Fail:") {
+				fmt.Sscanf(extractAfter(trimmed, "Fail:"), "%d", &mesonFail)
+			}
+		}
+		if foundMeson {
+			passed = mesonOk
+			failed = mesonFail
+			ok = true
+			return
+		}
+	}
+
+	// Bazel test: "Executed N out of N tests: X tests pass and Y fails locally."
+	if strings.Contains(lower, "executed") && strings.Contains(lower, " out of ") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if !strings.HasPrefix(lineLower, "executed") || !strings.Contains(lineLower, "out of") ||
+				!strings.Contains(lineLower, "test") {
+				continue
+			}
+			words := strings.Fields(lineLower)
+			var p, f int
+			foundBazel := false
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					if nextWord == "tests" && j+2 < len(words) {
+						nextNextWord := strings.TrimRight(words[j+2], ",.;:")
+						if nextNextWord == "pass" {
+							p = n
+							foundBazel = true
+						}
+					} else if nextWord == "fails" || nextWord == "fail" {
+						f = n
+						foundBazel = true
+					}
+				}
+			}
+			if foundBazel {
+				passed = p
+				failed = f
+				ok = true
 				return
 			}
 		}
