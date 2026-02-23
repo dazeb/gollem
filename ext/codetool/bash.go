@@ -630,6 +630,26 @@ func commandNotFoundHint(stderr string) string {
 		"rename":     "rename",
 		"iconv":      "libc-bin",
 		"openssl":    "openssl",
+		"php":        "php",
+		"clang":      "clang",
+		"lldb":       "lldb",
+		"tree":       "tree",
+		"tmux":       "tmux",
+		"screen":     "screen",
+		"dig":        "dnsutils",
+		"nslookup":   "dnsutils",
+		"host":       "dnsutils",
+		"traceroute": "traceroute",
+		"ifconfig":   "net-tools",
+		"inotifywait": "inotify-tools",
+		"rg":         "ripgrep",
+		"fd":         "fd-find",
+		"pigz":       "pigz",
+		"pv":         "pv",
+		"entr":       "entr",
+		"sshfs":      "sshfs",
+		"parallel":   "parallel",
+		"csvtool":    "csvtool",
 	}
 
 	// Extract the missing command name from stderr.
@@ -1012,6 +1032,58 @@ func compilationErrorHint(output string, exitCode int) string {
 
 	lines := strings.Split(output, "\n")
 
+	// Kotlin: "e: file.kt: (42, 5): message" or "e: file:///path.kt:42:5 message"
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "e: ") {
+			continue
+		}
+		rest := trimmed[3:] // strip "e: "
+		// Format 1: "file.kt: (42, 5): message"
+		if parenIdx := strings.Index(rest, ": ("); parenIdx > 0 {
+			file := rest[:parenIdx]
+			afterParen := rest[parenIdx+3:]
+			closeIdx := strings.Index(afterParen, ")")
+			if closeIdx > 0 {
+				coords := afterParen[:closeIdx]
+				parts := strings.SplitN(coords, ",", 2)
+				if len(parts) >= 1 {
+					lineNum := strings.TrimSpace(parts[0])
+					if isNumeric(lineNum) {
+						errMsg := ""
+						if msgStart := strings.Index(afterParen[closeIdx:], ": "); msgStart >= 0 {
+							errMsg = strings.TrimSpace(afterParen[closeIdx+msgStart+2:])
+						}
+						if errMsg != "" {
+							return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+								truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+						}
+						return fmt.Sprintf("[hint: Kotlin error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+							file, lineNum, lineNum)
+					}
+				}
+			}
+		}
+		// Format 2: "file.kt:42:5 message" (no parens)
+		colonParts := strings.SplitN(rest, ":", 4)
+		if len(colonParts) >= 3 && isNumeric(colonParts[1]) {
+			file := colonParts[0]
+			lineNum := colonParts[1]
+			errMsg := ""
+			if len(colonParts) >= 4 {
+				errMsg = strings.TrimSpace(colonParts[3])
+			} else if len(colonParts) == 3 && !isNumeric(colonParts[2]) {
+				errMsg = strings.TrimSpace(colonParts[2])
+			}
+			if errMsg != "" {
+				return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+					truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+			}
+			return fmt.Sprintf("[hint: Kotlin error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				file, lineNum, lineNum)
+		}
+	}
+
 	// TypeScript (tsc): "src/index.ts(42,5): error TS2322: message"
 	// C#/MSBuild:       "Program.cs(5,17): error CS0029: message"
 	// VB.NET:           "Module1.vb(3,5): error BC30451: message"
@@ -1159,10 +1231,19 @@ func linkerHint(output string) string {
 		{[]string{"dlopen", "dlsym", "dlclose"}, "-ldl", "dynamic loading functions"},
 		{[]string{"curl_easy", "curl_global"}, "-lcurl", "libcurl functions"},
 		{[]string{"ssl_", "ssl_new", "ssl_ctx"}, "-lssl -lcrypto", "OpenSSL functions"},
+		// jpeg/png before zlib — zlib's "compress" substring-matches "jpeg_start_compress".
+		{[]string{"jpeg_start_compress", "jpeg_create_compress", "jpeg_create_decompress"}, "-ljpeg", "libjpeg functions"},
+		{[]string{"png_create_write_struct", "png_create_read_struct", "png_init_io"}, "-lpng", "libpng functions"},
 		{[]string{"deflate", "inflate", "compress", "uncompress"}, "-lz", "zlib functions"},
 		{[]string{"sqlite3_"}, "-lsqlite3", "SQLite functions"},
 		{[]string{"readline"}, "-lreadline", "readline functions"},
 		{[]string{"ncurses", "initscr", "endwin", "printw", "mvprintw"}, "-lncurses", "ncurses functions"},
+		{[]string{"clock_gettime", "timer_create", "timer_settime", "shm_open"}, "-lrt", "POSIX realtime functions"},
+		{[]string{"__gmpz_init", "mpz_init", "mpz_set", "mpq_init"}, "-lgmp", "GMP (arbitrary precision) functions"},
+		{[]string{"snd_pcm_open", "snd_mixer_open", "snd_ctl_open"}, "-lasound", "ALSA audio functions"},
+		{[]string{"pcap_open_live", "pcap_lookupdev", "pcap_compile"}, "-lpcap", "libpcap packet capture functions"},
+		{[]string{"xmlparsefile", "xmlnewdoc", "xmlfreedoc", "xmlreadfile"}, "-lxml2", "libxml2 functions"},
+		{[]string{"ft_init_freetype", "ft_new_face", "ft_load_glyph"}, "-lfreetype", "FreeType font functions"},
 	}
 
 	for _, lh := range libHints {
@@ -1214,6 +1295,23 @@ func missingHeaderHint(output string) string {
 		"MagickWand/":          "libmagickwand-dev",
 		"cairo.h":              "libcairo2-dev",
 		"lapacke.h":            "liblapack-dev",
+		"gmp.h":                "libgmp-dev",
+		"mpfr.h":               "libmpfr-dev",
+		"alsa/asoundlib.h":     "libasound2-dev",
+		"pcap.h":               "libpcap-dev",
+		"pcap/pcap.h":          "libpcap-dev",
+		"libxml/parser.h":      "libxml2-dev",
+		"libxml/tree.h":        "libxml2-dev",
+		"ft2build.h":           "libfreetype-dev",
+		"sndfile.h":            "libsndfile1-dev",
+		"hdf5.h":               "libhdf5-dev",
+		"archive.h":            "libarchive-dev",
+		"X11/extensions/Xrandr.h": "libxrandr-dev",
+		"X11/Xft/Xft.h":       "libxft-dev",
+		"netcdf.h":             "libnetcdf-dev",
+		"pcre2.h":              "libpcre2-dev",
+		"cblas.h":              "libopenblas-dev",
+		"openblas/":            "libopenblas-dev",
 	}
 
 	for header, pkg := range headerPkgs {

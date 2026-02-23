@@ -7945,3 +7945,131 @@ func TestFirstFailureDetail_ScalaTest_WasNotEqual(t *testing.T) {
 	}
 }
 
+// Test expanded missingHeaderHint mappings.
+func TestMissingHeaderHint_Expanded(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		pkg    string
+	}{
+		{"gmp", "fatal error: gmp.h: No such file or directory", "libgmp-dev"},
+		{"mpfr", "fatal error: mpfr.h: No such file or directory", "libmpfr-dev"},
+		{"alsa", "fatal error: alsa/asoundlib.h: No such file or directory", "libasound2-dev"},
+		{"pcap", "fatal error: pcap.h: No such file or directory", "libpcap-dev"},
+		{"libxml2", "fatal error: libxml/parser.h: No such file or directory", "libxml2-dev"},
+		{"freetype", "fatal error: ft2build.h: No such file or directory", "libfreetype-dev"},
+		{"sndfile", "fatal error: sndfile.h: No such file or directory", "libsndfile1-dev"},
+		{"hdf5", "fatal error: hdf5.h: No such file or directory", "libhdf5-dev"},
+		{"archive", "fatal error: archive.h: No such file or directory", "libarchive-dev"},
+		{"xrandr", "fatal error: X11/extensions/Xrandr.h: No such file or directory", "libxrandr-dev"},
+		{"xft", "fatal error: X11/Xft/Xft.h: No such file or directory", "libxft-dev"},
+		{"netcdf", "fatal error: netcdf.h: No such file or directory", "libnetcdf-dev"},
+		{"pcre2", "fatal error: pcre2.h: No such file or directory", "libpcre2-dev"},
+		{"cblas", "fatal error: cblas.h: No such file or directory", "libopenblas-dev"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hint := missingHeaderHint(tt.output)
+			if hint == "" {
+				t.Fatalf("expected hint for %s header, got empty", tt.name)
+			}
+			if !strings.Contains(hint, tt.pkg) {
+				t.Errorf("expected hint to contain %q, got %q", tt.pkg, hint)
+			}
+		})
+	}
+}
+
+// Test expanded linkerHint mappings.
+func TestLinkerHint_Expanded(t *testing.T) {
+	tests := []struct {
+		name string
+		output string
+		flag string
+	}{
+		{"rt_clock", "undefined reference to `clock_gettime'", "-lrt"},
+		{"rt_timer", "undefined reference to `timer_create'", "-lrt"},
+		{"jpeg", "undefined reference to `jpeg_start_compress'", "-ljpeg"},
+		{"png", "undefined reference to `png_create_write_struct'", "-lpng"},
+		{"gmp", "undefined reference to `mpz_init'", "-lgmp"},
+		{"alsa", "undefined reference to `snd_pcm_open'", "-lasound"},
+		{"pcap", "undefined reference to `pcap_open_live'", "-lpcap"},
+		{"xml2", "undefined reference to `xmlParseFile'", "-lxml2"},
+		{"freetype", "undefined reference to `FT_Init_FreeType'", "-lfreetype"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hint := linkerHint(tt.output)
+			if hint == "" {
+				t.Fatalf("expected hint for %s, got empty", tt.name)
+			}
+			if !strings.Contains(hint, tt.flag) {
+				t.Errorf("expected hint to contain %q, got %q", tt.flag, hint)
+			}
+		})
+	}
+}
+
+// Test expanded commandNotFoundHint mappings.
+func TestCommandNotFoundHint_Expanded(t *testing.T) {
+	tests := []struct {
+		cmd string
+		pkg string
+	}{
+		{"php", "php"},
+		{"clang", "clang"},
+		{"lldb", "lldb"},
+		{"tree", "tree"},
+		{"tmux", "tmux"},
+		{"screen", "screen"},
+		{"dig", "dnsutils"},
+		{"nslookup", "dnsutils"},
+		{"traceroute", "traceroute"},
+		{"ifconfig", "net-tools"},
+		{"inotifywait", "inotify-tools"},
+		{"rg", "ripgrep"},
+		{"fd", "fd-find"},
+		{"parallel", "parallel"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			stderr := tt.cmd + ": command not found"
+			hint := commandNotFoundHint(stderr)
+			if hint == "" {
+				t.Fatalf("expected hint for %q, got empty", tt.cmd)
+			}
+			if !strings.Contains(hint, tt.pkg) {
+				t.Errorf("expected hint to contain %q, got %q", tt.pkg, hint)
+			}
+		})
+	}
+}
+
+// Test Kotlin compilation error hint (format 1: e: file.kt: (line, col): message).
+func TestCompilationErrorHint_Kotlin_ParenFormat(t *testing.T) {
+	output := `e: Main.kt: (42, 5): Unresolved reference: foo
+e: Main.kt: (43, 10): Type mismatch`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Kotlin error, got empty")
+	}
+	if !strings.Contains(hint, "Main.kt") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to contain file and line, got %q", hint)
+	}
+	if !strings.Contains(hint, "Unresolved reference") {
+		t.Errorf("expected hint to contain error message, got %q", hint)
+	}
+}
+
+// Test Kotlin compilation error hint (format 2: e: file.kt:line:col message).
+func TestCompilationErrorHint_Kotlin_ColonFormat(t *testing.T) {
+	output := `e: Utils.kt:15:8 Expecting member declaration`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Kotlin colon-format error, got empty")
+	}
+	if !strings.Contains(hint, "Utils.kt") || !strings.Contains(hint, "15") {
+		t.Errorf("expected hint to contain file and line, got %q", hint)
+	}
+}
+
