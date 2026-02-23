@@ -139,13 +139,45 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 			}
 		}
 
+		// Detect regression: pass count decreased between the last two runs.
+		// This means the agent's last change BROKE something that was working.
+		// Distinct from stagnation — regression needs a "revert" nudge.
+		isRegression := false
+		if len(runPassed) >= 2 {
+			prev := runPassed[len(runPassed)-2]
+			curr := runPassed[len(runPassed)-1]
+			if prev >= 0 && curr >= 0 && curr < prev {
+				isRegression = true
+			}
+		}
+
 		sw := stagnationWarned
 		mu.Unlock()
 
-		// Inject stagnation guidance when the agent isn't making progress.
-		// Only inject when the stagnation level increases past a threshold
-		// we haven't warned about yet, and skip if improving.
-		if consecutiveFails >= 2 && consecutiveFails > sw && !isImproving {
+		// Inject regression warning when the agent's last change broke tests.
+		// This takes priority over stagnation guidance since it's more actionable.
+		if isRegression && len(runPassed) >= 2 {
+			prev := runPassed[len(runPassed)-2]
+			curr := runPassed[len(runPassed)-1]
+			guidance := fmt.Sprintf(
+				"REGRESSION DETECTED: Your last change BROKE tests — passed went from %d → %d.\n"+
+					"Your most recent edit caused previously passing tests to FAIL.\n"+
+					"1. UNDO your last change (revert the file or restore the working version)\n"+
+					"2. Re-run tests to confirm the revert restores the pass count to %d\n"+
+					"3. Then try a DIFFERENT fix that doesn't break existing tests\n"+
+					"NEVER fix one test by breaking another. All tests must pass simultaneously.",
+				prev, curr, prev)
+			fmt.Fprintf(os.Stderr, "[gollem] verification: regression detected — %d → %d passed\n", prev, curr)
+			regressionMsg := core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{Content: guidance},
+				},
+			}
+			messages = append(messages, regressionMsg)
+		} else if consecutiveFails >= 2 && consecutiveFails > sw && !isImproving {
+			// Inject stagnation guidance when the agent isn't making progress.
+			// Only inject when the stagnation level increases past a threshold
+			// we haven't warned about yet, and skip if improving.
 			mu.Lock()
 			stagnationWarned = consecutiveFails
 			mu.Unlock()

@@ -4279,39 +4279,62 @@ func detectPythonImports(workDir string) []string {
 func detectSystemPackagesFromTests(workDir string) []string {
 	// Map of commands commonly used in test scripts → apt packages.
 	cmdPackages := map[string]string{
-		"jq":       "jq",
-		"bc":       "bc",
-		"xmllint":  "libxml2-utils",
-		"xxd":      "xxd",
-		"hexdump":  "bsdmainutils",
-		"socat":    "socat",
-		"netcat":   "netcat-openbsd",
-		"nc":       "netcat-openbsd",
-		"nmap":     "nmap",
-		"expect":   "expect",
-		"sshpass":  "sshpass",
-		"valgrind": "valgrind",
-		"strace":   "strace",
-		"file":     "file",
-		"dos2unix": "dos2unix",
-		"iconv":    "libc-bin",
-		"patch":    "patch",
-		"diffstat": "diffstat",
-		"entr":     "entr",
-		"parallel": "parallel",
-		"pv":       "pv",
-		"tree":     "tree",
-		"rsync":    "rsync",
-		"sqlite3":  "sqlite3",
-		"csvtool":  "csvtool",
-		"gnuplot":  "gnuplot-nox",
-		"convert":  "imagemagick",
-		"identify": "imagemagick",
-		"dot":      "graphviz",
-		"nasm":     "nasm",
+		"jq":        "jq",
+		"bc":        "bc",
+		"xmllint":   "libxml2-utils",
+		"xxd":       "xxd",
+		"hexdump":   "bsdmainutils",
+		"socat":     "socat",
+		"netcat":    "netcat-openbsd",
+		"nc":        "netcat-openbsd",
+		"nmap":      "nmap",
+		"expect":    "expect",
+		"sshpass":   "sshpass",
+		"valgrind":  "valgrind",
+		"strace":    "strace",
+		"file":      "file",
+		"dos2unix":  "dos2unix",
+		"iconv":     "libc-bin",
+		"patch":     "patch",
+		"diffstat":  "diffstat",
+		"entr":      "entr",
+		"parallel":  "parallel",
+		"pv":        "pv",
+		"tree":      "tree",
+		"rsync":     "rsync",
+		"sqlite3":   "sqlite3",
+		"csvtool":   "csvtool",
+		"gnuplot":   "gnuplot-nox",
+		"convert":   "imagemagick",
+		"identify":  "imagemagick",
+		"dot":       "graphviz",
+		"nasm":      "nasm",
+		"zip":       "zip",
+		"unzip":     "unzip",
+		"bzip2":     "bzip2",
+		"xz":        "xz-utils",
+		"7z":        "p7zip-full",
+		"curl":      "curl",
+		"wget":      "wget",
+		"netstat":   "net-tools",
+		"ifconfig":  "net-tools",
+		"dig":       "dnsutils",
+		"nslookup":  "dnsutils",
+		"host":      "dnsutils",
+		"ssh":       "openssh-client",
+		"scp":       "openssh-client",
+		"htop":      "htop",
+		"lsof":      "lsof",
+		"tcpdump":   "tcpdump",
+		"iptables":  "iptables",
+		"tesseract": "tesseract-ocr",
+		"ffmpeg":    "ffmpeg",
+		"ffprobe":   "ffmpeg",
+		"sox":       "sox",
+		"pandoc":    "pandoc",
 	}
 
-	// Scan .sh files in test directories.
+	// Scan .sh and .py files in test directories.
 	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
 	needed := make(map[string]string) // cmd → pkg
 
@@ -4319,11 +4342,12 @@ func detectSystemPackagesFromTests(workDir string) []string {
 		if !dirExists(td) {
 			continue
 		}
-		matches, _ := filepath.Glob(filepath.Join(td, "*.sh"))
-		if len(matches) > 10 {
-			matches = matches[:10]
+		// Scan shell scripts for direct command usage.
+		shMatches, _ := filepath.Glob(filepath.Join(td, "*.sh"))
+		if len(shMatches) > 10 {
+			shMatches = shMatches[:10]
 		}
-		for _, f := range matches {
+		for _, f := range shMatches {
 			data, err := os.ReadFile(f)
 			if err != nil || len(data) > 50000 {
 				continue
@@ -4339,6 +4363,28 @@ func detectSystemPackagesFromTests(workDir string) []string {
 					strings.Contains(content, "|"+cmd) ||
 					strings.Contains(content, "| "+cmd) ||
 					strings.Contains(content, "$("+cmd) {
+					needed[cmd] = pkg
+				}
+			}
+		}
+		// Scan Python test scripts for subprocess calls to system commands.
+		// Tests often use subprocess.run(["jq", ...]) or os.system("valgrind ...")
+		pyMatches, _ := filepath.Glob(filepath.Join(td, "*.py"))
+		if len(pyMatches) > 10 {
+			pyMatches = pyMatches[:10]
+		}
+		for _, f := range pyMatches {
+			data, err := os.ReadFile(f)
+			if err != nil || len(data) > 50000 {
+				continue
+			}
+			content := string(data)
+			for cmd, pkg := range cmdPackages {
+				// Match subprocess patterns: subprocess.run(["cmd", ...]),
+				// os.system("cmd ..."), shutil.which("cmd"), Popen(["cmd"])
+				if strings.Contains(content, "\""+cmd+"\"") ||
+					strings.Contains(content, "'"+cmd+"'") ||
+					strings.Contains(content, "\""+cmd+" ") {
 					needed[cmd] = pkg
 				}
 			}

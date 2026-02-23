@@ -1783,6 +1783,122 @@ func TestVerificationCheckpoint_NoStagnationWhenImproving(t *testing.T) {
 	}
 }
 
+func TestVerificationCheckpoint_RegressionDetection(t *testing.T) {
+	mw, _ := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	regressionInjected := false
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		lastMsg := msgs[len(msgs)-1]
+		if req, ok := lastMsg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					if strings.Contains(up.Content, "REGRESSION") {
+						regressionInjected = true
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	// Build messages with a regression: pass count goes DOWN.
+	// Run 1: 5 passed, 1 failed. Run 2: 3 passed, 3 failed (regression).
+	messages := []core.ModelMessage{}
+	passCounts := []int{5, 3}
+	failCounts := []int{1, 3}
+	for i := 0; i < 2; i++ {
+		callID := fmt.Sprintf("reg%d", i+1)
+		output := fmt.Sprintf("%d passed, %d failed\n[exit code: 1]", passCounts[i], failCounts[i])
+		messages = append(messages,
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{
+						ToolName:   "bash",
+						ArgsJSON:   `{"command":"pytest"}`,
+						ToolCallID: callID,
+					},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.ToolReturnPart{
+						ToolName:   "bash",
+						Content:    output,
+						ToolCallID: callID,
+					},
+				},
+			},
+		)
+	}
+
+	_, err := mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !regressionInjected {
+		t.Error("should inject regression warning when pass count decreases")
+	}
+}
+
+func TestVerificationCheckpoint_NoRegressionWhenImproving(t *testing.T) {
+	mw, _ := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	regressionInjected := false
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		lastMsg := msgs[len(msgs)-1]
+		if req, ok := lastMsg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					if strings.Contains(up.Content, "REGRESSION") {
+						regressionInjected = true
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	// Build messages with improving pass count (no regression).
+	// Run 1: 2 passed, 4 failed. Run 2: 4 passed, 2 failed.
+	messages := []core.ModelMessage{}
+	passCounts := []int{2, 4}
+	failCounts := []int{4, 2}
+	for i := 0; i < 2; i++ {
+		callID := fmt.Sprintf("noreg%d", i+1)
+		output := fmt.Sprintf("%d passed, %d failed\n[exit code: 1]", passCounts[i], failCounts[i])
+		messages = append(messages,
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{
+						ToolName:   "bash",
+						ArgsJSON:   `{"command":"pytest"}`,
+						ToolCallID: callID,
+					},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.ToolReturnPart{
+						ToolName:   "bash",
+						Content:    output,
+						ToolCallID: callID,
+					},
+				},
+			},
+		)
+	}
+
+	_, err := mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if regressionInjected {
+		t.Error("should NOT inject regression warning when pass count improves")
+	}
+}
+
 func TestStagnationGuidance(t *testing.T) {
 	tests := []struct {
 		name            string
