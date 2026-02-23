@@ -1045,6 +1045,35 @@ line9
 	assertContains(t, result, "matchB")
 }
 
+func TestGrep_ContextOverlap_CloseMatchesHighlighted(t *testing.T) {
+	// When two matches are close together (within each other's context
+	// window), both must still be highlighted with ">". Before the fix,
+	// if match2 fell inside match1's context window, match2's line was
+	// shown as unhighlighted context for match1, and the overlap trimming
+	// skipped past it so it never got its own ">" marker.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "close.txt", `line1
+line2
+matchA
+line4
+matchB
+line6
+line7
+`)
+	tool := Grep(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "match[AB]", "context_lines": 2}`)
+
+	// Both matches must appear with ">" prefix.
+	countA := strings.Count(result, ">close.txt:3: matchA")
+	countB := strings.Count(result, ">close.txt:5: matchB")
+	if countA != 1 {
+		t.Errorf("expected matchA with > prefix once, got %d in:\n%s", countA, result)
+	}
+	if countB != 1 {
+		t.Errorf("expected matchB with > prefix once, got %d in:\n%s", countB, result)
+	}
+}
+
 func TestGrep_MaxResultsCountsMatches(t *testing.T) {
 	// max_results should count actual regex matches, not context/separator lines.
 	dir := t.TempDir()

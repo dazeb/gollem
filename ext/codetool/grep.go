@@ -269,8 +269,13 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 			}
 			// Skip lines already shown by previous match's context.
 			if start <= lastContextEnd {
-				// Add separator only if there's a gap.
 				start = lastContextEnd + 1
+				// Never skip past the match line itself — it must always
+				// appear with ">" even if it was already shown as context
+				// for a previous match.
+				if start > i {
+					start = i
+				}
 			} else if lastContextEnd >= 0 {
 				// Non-contiguous: add separator between blocks.
 				*matches = append(*matches, "---")
