@@ -1499,6 +1499,14 @@ func (a *Agent[T]) executeSingleTool(
 		}
 	}
 
+	// Reset the per-tool retry counter on success. Without this,
+	// cumulative ModelRetryError failures across separate (unrelated)
+	// invocations would accumulate and eventually trigger "exceeded
+	// maximum retries" even when the tool recovered each time.
+	state.mu.Lock()
+	delete(state.toolRetries, call.ToolName)
+	state.mu.Unlock()
+
 	return ToolReturnPart{
 		ToolName:   call.ToolName,
 		Content:    content,

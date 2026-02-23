@@ -444,6 +444,77 @@ func TestAgentRunToolRetryExactLimit(t *testing.T) {
 	_ = result
 }
 
+// --- Test: Tool retry counter resets on success ---
+// Regression: toolRetries was never reset on success, so cumulative
+// ModelRetryError failures across separate (unrelated) invocations would
+// eventually hit the max-retries limit even when the tool recovered each time.
+func TestAgentRunToolRetryResetsOnSuccess(t *testing.T) {
+	callCount := 0
+
+	type Params struct {
+		Query string `json:"query"`
+	}
+
+	// Sequence: fail → succeed → fail → succeed → done.
+	// With maxRetries=1, each failure should get 1 retry allowance.
+	// Without the fix, the second failure would immediately hit "exceeded
+	// maximum retries" because the counter accumulated from the first failure.
+	model := NewTestModel(
+		ToolCallResponse("search", `{"query":"bad1"}`),  // call 1: fails
+		ToolCallResponse("search", `{"query":"good1"}`), // call 2: succeeds (retry)
+		ToolCallResponse("search", `{"query":"bad2"}`),  // call 3: fails (new attempt)
+		ToolCallResponse("search", `{"query":"good2"}`), // call 4: succeeds (retry)
+		TextResponse("All done."),
+	)
+
+	searchTool := FuncTool[Params]("search", "Search",
+		func(_ context.Context, params Params) (string, error) {
+			callCount++
+			if strings.HasPrefix(params.Query, "bad") {
+				return "", NewModelRetryError("invalid query: " + params.Query)
+			}
+			return "results for: " + params.Query, nil
+		},
+	)
+
+	agent := NewAgent[string](model,
+		WithTools[string](searchTool),
+		WithMaxRetries[string](1),
+	)
+
+	result, err := agent.Run(context.Background(), "Search twice")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Output != "All done." {
+		t.Errorf("output = %q, want 'All done.'", result.Output)
+	}
+	// All 4 tool calls should execute (2 failures + 2 successes).
+	if callCount != 4 {
+		t.Errorf("tool called %d times, want 4 (fail+succeed, fail+succeed)", callCount)
+	}
+
+	// Verify the model never saw "exceeded maximum retries" — a successful
+	// tool call should reset the per-tool retry counter so subsequent
+	// failures get a fresh retry allowance.
+	for i, call := range model.Calls() {
+		for _, msg := range call.Messages {
+			req, ok := msg.(ModelRequest)
+			if !ok {
+				continue
+			}
+			for _, part := range req.Parts {
+				switch p := part.(type) {
+				case RetryPromptPart:
+					if strings.Contains(p.Content, "exceeded maximum retries") {
+						t.Errorf("call %d: model saw 'exceeded maximum retries' — retry counter not reset on success: %s", i, p.Content)
+					}
+				}
+			}
+		}
+	}
+}
+
 // --- Test: Message history ---
 
 func TestAgentRunWithMessageHistory(t *testing.T) {
