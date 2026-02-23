@@ -1759,6 +1759,47 @@ func compilationErrorHint(output string, exitCode int) string {
 			file, lineNum, lineNum)
 	}
 
+	// Gleam: "error: Unknown variable" followed by "  ┌─ src/main.gleam:42:5"
+	// The error message is on a preceding line; the file reference uses box-drawing chars.
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Match the distinctive Gleam file reference: "┌─ file:line:col"
+		// The box-drawing prefix is "┌─ " (U+250C, U+2500, space).
+		if !strings.Contains(trimmed, "─ ") {
+			continue
+		}
+		// Find the file reference after "┌─ " or "┌── ".
+		refIdx := strings.Index(trimmed, "─ ")
+		if refIdx < 0 {
+			continue
+		}
+		ref := strings.TrimSpace(trimmed[refIdx+len("─ "):])
+		colonParts := strings.SplitN(ref, ":", 3)
+		if len(colonParts) < 2 || !isNumeric(colonParts[1]) {
+			continue
+		}
+		file := colonParts[0]
+		if len(file) > 200 || !strings.HasSuffix(file, ".gleam") {
+			continue
+		}
+		lineNum := colonParts[1]
+		// Look back for the "error:" line.
+		errMsg := ""
+		for k := i - 1; k >= max(0, i-3); k-- {
+			prev := strings.TrimSpace(lines[k])
+			if strings.HasPrefix(prev, "error:") {
+				errMsg = strings.TrimSpace(strings.TrimPrefix(prev, "error:"))
+				break
+			}
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Gleam error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
 	// C/C++/clang: "file.c:42:5: error: ..."
 	// Go: "./main.go:42:5: ..." or "main.go:42:5: ..."
 	// Rust (cargo): " --> src/main.rs:42:5"

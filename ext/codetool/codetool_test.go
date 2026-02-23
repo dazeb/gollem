@@ -10961,6 +10961,79 @@ func TestCompilationErrorHint_Luac(t *testing.T) {
 	}
 }
 
+func TestCompilationErrorHint_Gleam(t *testing.T) {
+	output := `error: Unknown variable
+  ┌─ src/main.gleam:42:5
+  │
+42 │   let x = foo
+  │           ^^^ Did you mean ` + "`bar`" + `?
+`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Gleam error hint")
+	}
+	if !strings.Contains(hint, "main.gleam") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference main.gleam:42, got: %s", hint)
+	}
+	if !strings.Contains(hint, "Unknown variable") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Gleam_TypeError(t *testing.T) {
+	output := `error: Type mismatch
+  ┌─ src/lib.gleam:15:10
+  │
+15 │   name + 1
+  │          ^
+
+Expected type:
+
+    String
+
+Found type:
+
+    Int
+`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Gleam type error hint")
+	}
+	if !strings.Contains(hint, "lib.gleam") || !strings.Contains(hint, "15") {
+		t.Errorf("expected hint to reference lib.gleam:15, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Clojure(t *testing.T) {
+	output := `Syntax error compiling at (src/core.clj:42:5).
+No such var: clojure.core/foobar`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Clojure error hint")
+	}
+	if !strings.Contains(hint, "core.clj") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference core.clj:42, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Erlang(t *testing.T) {
+	output := `src/module.erl:42: function foo/1 undefined`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Erlang error hint")
+	}
+	if !strings.Contains(hint, "module.erl") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference module.erl:42, got: %s", hint)
+	}
+	if !strings.Contains(hint, "function foo/1 undefined") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
 func TestEdit_PreservesFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	// Create an executable script.
