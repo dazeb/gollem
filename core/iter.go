@@ -196,13 +196,14 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 		}
 
 		turnRC := &RunContext{
-			Deps:     ar.deps,
-			Usage:    ar.state.usage,
-			Prompt:   ar.prompt,
-			Messages: messages,
-			RunStep:  ar.state.runStep,
-			RunID:    ar.state.runID,
-			EventBus: ar.agent.eventBus,
+			Deps:         ar.deps,
+			Usage:        ar.state.usage,
+			Prompt:       ar.prompt,
+			Messages:     messages,
+			RunStep:      ar.state.runStep,
+			RunID:        ar.state.runID,
+			RunStartTime: ar.state.startTime,
+			EventBus:     ar.agent.eventBus,
 		}
 		for _, g := range ar.agent.turnGuardrails {
 			if gErr := g.fn(ar.ctx, turnRC, messages); gErr != nil {
@@ -217,13 +218,14 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 		}
 
 		modelRC := &RunContext{
-			Deps:     ar.deps,
-			Usage:    ar.state.usage,
-			Prompt:   ar.prompt,
-			Messages: messages,
-			RunStep:  ar.state.runStep,
-			RunID:    ar.state.runID,
-			EventBus: ar.agent.eventBus,
+			Deps:         ar.deps,
+			Usage:        ar.state.usage,
+			Prompt:       ar.prompt,
+			Messages:     messages,
+			RunStep:      ar.state.runStep,
+			RunID:        ar.state.runID,
+			RunStartTime: ar.state.startTime,
+			EventBus:     ar.agent.eventBus,
 		}
 		ar.agent.fireHook(func(h Hook) {
 			if h.OnModelRequest != nil {
@@ -302,12 +304,13 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 
 		if len(ar.agent.runConditions) > 0 {
 			condRC := &RunContext{
-				Deps:     ar.deps,
-				Usage:    ar.state.usage,
-				Prompt:   ar.prompt,
-				Messages: ar.state.messages,
-				RunStep:  ar.state.runStep,
-				RunID:    ar.state.runID,
+				Deps:         ar.deps,
+				Usage:        ar.state.usage,
+				Prompt:       ar.prompt,
+				Messages:     ar.state.messages,
+				RunStep:      ar.state.runStep,
+				RunID:        ar.state.runID,
+				RunStartTime: ar.state.startTime,
 			}
 			for _, cond := range ar.agent.runConditions {
 				if stop, reason := cond(ar.ctx, condRC, resp); stop {

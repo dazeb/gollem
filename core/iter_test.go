@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 )
 
 // TestIterBasicText verifies that Iter returns a text response and completes.
@@ -237,6 +238,51 @@ func TestIterMultipleToolCalls(t *testing.T) {
 	}
 	if result.Output != "done" {
 		t.Errorf("expected 'done', got %q", result.Output)
+	}
+}
+
+// TestIterMaxRunDuration verifies that MaxRunDuration works correctly with Iter.
+// Before the fix, Iter's RunContext was missing RunStartTime, causing
+// time.Since(zero) to return ~50 years and immediately trigger MaxRunDuration.
+func TestIterMaxRunDuration(t *testing.T) {
+	model := NewTestModel(
+		ToolCallResponse("echo", `{"n":1}`),
+		TextResponse("done"),
+	)
+	type Params struct{ N int `json:"n"` }
+	echoTool := FuncTool[Params]("echo", "echo", func(ctx context.Context, p Params) (string, error) {
+		return fmt.Sprintf("echo_%d", p.N), nil
+	})
+
+	agent := NewAgent[string](model,
+		WithTools[string](echoTool),
+		WithRunCondition[string](MaxRunDuration(5*time.Second)),
+	)
+
+	iter := agent.Iter(context.Background(), "echo once")
+
+	// Step 1: tool call — should NOT trigger MaxRunDuration (run just started).
+	resp1, err := iter.Next()
+	if err != nil {
+		t.Fatalf("step 1 error: %v", err)
+	}
+	if len(resp1.ToolCalls()) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(resp1.ToolCalls()))
+	}
+	if iter.Done() {
+		t.Error("expected iter to not be done after tool call — MaxRunDuration should not trigger immediately")
+	}
+
+	// Step 2: text response — should complete normally.
+	resp2, err := iter.Next()
+	if err != nil {
+		t.Fatalf("step 2 error: %v", err)
+	}
+	if resp2.TextContent() != "done" {
+		t.Errorf("expected 'done', got %q", resp2.TextContent())
+	}
+	if !iter.Done() {
+		t.Error("expected iter to be done after text response")
 	}
 }
 
