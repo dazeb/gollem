@@ -122,6 +122,12 @@ func languageForFile(name string) string {
 		return "dart"
 	case ".ml", ".mli":
 		return "ocaml"
+	case ".erl", ".hrl":
+		return "erlang"
+	case ".nim", ".nims":
+		return "nim"
+	case ".cr":
+		return "crystal"
 	default:
 		return ""
 	}
@@ -192,6 +198,16 @@ var serverConfigs = map[string][]lspServerConfig{
 	},
 	"ocaml": {
 		{command: "ocamllsp", args: nil, installHint: "opam install ocaml-lsp-server"},
+	},
+	"erlang": {
+		{command: "erlang_ls", args: nil, installHint: "install erlang_ls from https://github.com/erlang-ls/erlang_ls"},
+	},
+	"nim": {
+		{command: "nimlangserver", args: nil, installHint: "nimble install nimlangserver"},
+		{command: "nimlsp", args: nil, installHint: "nimble install nimlsp"},
+	},
+	"crystal": {
+		{command: "crystalline", args: nil, installHint: "install crystalline from https://github.com/elbywan/crystalline"},
 	},
 }
 

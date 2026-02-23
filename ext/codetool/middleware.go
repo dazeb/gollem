@@ -447,6 +447,11 @@ func discoverEnvironment(workDir string) string {
 		{"ocamllsp (OCaml)", "ocamllsp"},
 		{"elixir-ls (Elixir)", "elixir-ls"},
 		{"nextls (Elixir)", "nextls"},
+		{"dart (Dart)", "dart"},
+		{"phpactor (PHP)", "phpactor"},
+		{"erlang_ls (Erlang)", "erlang_ls"},
+		{"nimlangserver (Nim)", "nimlangserver"},
+		{"crystalline (Crystal)", "crystalline"},
 	}
 	for _, ls := range lspServers {
 		if runQuiet(workDir, "which", ls.cmd) != "" {
