@@ -7266,7 +7266,7 @@ func isSourceFile(name string) bool {
 		".csv", ".tsv", ".jsonl", ".env", ".dockerfile",
 		".vue", ".svelte", ".zig", ".nim",
 		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hs",
-		".jl", ".m", ".swift", ".f90", ".f95", ".pm",
+		".jl", ".m", ".swift", ".f90", ".f95", ".f03", ".f08", ".f", ".for", ".pm",
 		".ml", ".mli",
 		".lean", ".v", ".agda",
 		".red",

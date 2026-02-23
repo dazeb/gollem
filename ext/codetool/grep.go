@@ -251,7 +251,20 @@ func isSkippableDir(name string) bool {
 		".turbo",    // Turborepo cache
 		"coverage",  // test coverage reports
 		".coverage", // Python coverage
-		".DS_Store": // macOS metadata (file, not dir, but harmless to check)
+		".DS_Store", // macOS metadata (file, not dir, but harmless to check)
+		// Language-specific build/cache directories.
+		".stack-work", // Haskell Stack build artifacts
+		"_opam",       // OCaml opam local switch
+		".dart_tool",  // Dart tool cache
+		".packages",   // Dart package links
+		"elm-stuff",   // Elm build artifacts
+		".elixir_ls",  // Elixir language server cache
+		".cargo",      // Rust cargo registry (when local)
+		".cabal-sandbox", // Haskell Cabal sandbox
+		"_esy",        // OCaml esy package cache
+		".lake",       // Lean 4 Lake build cache
+		".eunit",      // Erlang EUnit output
+		"_rel":        // Erlang release directory
 		return true
 	}
 	return false
@@ -274,8 +287,11 @@ func isBinaryFilename(name string) bool {
 		".qcow2", ".img", ".iso", ".vmdk", ".vdi",      // disk images
 		".bin", ".dat", ".raw", ".pak",                  // generic binary
 		".npy", ".npz", ".pkl", ".pickle", ".pt", ".pth", // ML data/models
+		".onnx", ".safetensors", ".tflite", ".gguf",    // ML model formats
+		".pb",                                           // protobuf binary
 		".h5", ".hdf5", ".parquet", ".feather",          // data formats
-		".cab", ".deb", ".rpm",                          // packages
+		".arrow", ".avro", ".orc",                       // columnar data formats
+		".cab", ".deb", ".rpm", ".snap", ".flatpak",     // packages
 		".DS_Store", ".lock":                            // system/lock files
 		return true
 	}
