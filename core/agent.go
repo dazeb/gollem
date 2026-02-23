@@ -1386,7 +1386,7 @@ func (a *Agent[T]) executeSingleTool(
 		defer cancel()
 	}
 
-	result, err := tool.Handler(toolCtx, rc, call.ArgsJSON)
+	result, err := safeCallHandler(tool.Handler, toolCtx, rc, call.ArgsJSON)
 
 	// Fire OnToolEnd hooks with the result or error.
 	{
@@ -1505,6 +1505,17 @@ func (a *Agent[T]) executeSingleTool(
 		ToolCallID: call.ToolCallID,
 		Timestamp:  time.Now(),
 	}
+}
+
+// safeCallHandler executes a tool handler with panic recovery, converting any
+// panic into an error so a misbehaving tool doesn't crash the entire process.
+func safeCallHandler(handler ToolHandler, ctx context.Context, rc *RunContext, argsJSON string) (result any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("tool handler panicked: %v", r)
+		}
+	}()
+	return handler(ctx, rc, argsJSON)
 }
 
 // serializeToolResult converts a tool result to a string.

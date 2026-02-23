@@ -777,3 +777,69 @@ func TestBuildRequestMultipleSystemPrompts(t *testing.T) {
 		t.Fatalf("expected 2 contents, got %d", len(req.Contents))
 	}
 }
+
+// TestParseSSEStreamNoSpaceAfterColon verifies the Gemini stream parser
+// handles SSE data lines without the optional space after the colon,
+// per the SSE specification.
+func TestParseSSEStreamNoSpaceAfterColon(t *testing.T) {
+	// "data:" without trailing space is valid per SSE spec.
+	sseData := `data:{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]},"finishReason":""}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":1}}
+
+data:{"candidates":[{"content":{"role":"model","parts":[{"text":" world"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-2.5-flash")
+
+	// First event: text start.
+	event1, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := event1.(core.PartStartEvent)
+	if !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event1)
+	}
+	tp, ok := start.Part.(core.TextPart)
+	if !ok {
+		t.Fatal("expected TextPart")
+	}
+	if tp.Content != "Hello" {
+		t.Errorf("expected 'Hello', got '%s'", tp.Content)
+	}
+
+	// Second event: text delta.
+	event2, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta, ok := event2.(core.PartDeltaEvent)
+	if !ok {
+		t.Fatalf("expected PartDeltaEvent, got %T", event2)
+	}
+	td, ok := delta.Delta.(core.TextPartDelta)
+	if !ok {
+		t.Fatal("expected TextPartDelta")
+	}
+	if td.ContentDelta != " world" {
+		t.Errorf("expected ' world', got '%s'", td.ContentDelta)
+	}
+
+	// EOF.
+	_, err = stream.Next()
+	if err != io.EOF {
+		t.Errorf("expected io.EOF, got %v", err)
+	}
+
+	resp := stream.Response()
+	if len(resp.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(resp.Parts))
+	}
+	finalTp, ok := resp.Parts[0].(core.TextPart)
+	if !ok {
+		t.Fatal("expected TextPart")
+	}
+	if finalTp.Content != "Hello world" {
+		t.Errorf("expected 'Hello world', got '%s'", finalTp.Content)
+	}
+}
