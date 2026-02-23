@@ -7646,8 +7646,8 @@ func extractFileStructure(path string) string {
 
 		matched := false
 		switch ext {
-		case ".py":
-			// Python: top-level and class-level def/class
+		case ".py", ".pyx", ".pyi":
+			// Python (including Cython and type stubs): top-level and class-level def/class
 			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "class ") ||
 				strings.HasPrefix(trimmed, "async def ") {
 				matched = true
@@ -7675,7 +7675,7 @@ func extractFileStructure(path string) string {
 				strings.HasPrefix(trimmed, "const ") || strings.HasPrefix(trimmed, "pub const ") {
 				matched = true
 			}
-		case ".c", ".cpp", ".h", ".hpp", ".cc", ".cxx":
+		case ".c", ".cpp", ".h", ".hpp", ".cc", ".cxx", ".hh", ".cu", ".cuh":
 			// C/C++: function definitions, struct/class declarations
 			if strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "class ") ||
 				strings.HasPrefix(trimmed, "typedef ") || strings.HasPrefix(trimmed, "enum ") {
@@ -7861,6 +7861,101 @@ func extractFileStructure(path string) string {
 				strings.HasPrefix(trimmed, "(defprotocol ") || strings.HasPrefix(trimmed, "(defrecord ") ||
 				strings.HasPrefix(trimmed, "(deftype ") || strings.HasPrefix(trimmed, "(defmulti ") ||
 				strings.HasPrefix(trimmed, "(defmethod ") || strings.HasPrefix(trimmed, "(ns ") {
+				matched = true
+			}
+		case ".sh", ".bash", ".ksh":
+			// Shell: function definitions.
+			if strings.HasPrefix(trimmed, "function ") ||
+				(!strings.HasPrefix(trimmed, "if ") && !strings.HasPrefix(trimmed, "for ") &&
+					!strings.HasPrefix(trimmed, "while ") && !strings.HasPrefix(trimmed, "case ") &&
+					strings.Contains(trimmed, "() {")) {
+				matched = true
+			}
+		case ".fish":
+			// Fish shell: function definitions.
+			if strings.HasPrefix(trimmed, "function ") {
+				matched = true
+			}
+		case ".groovy", ".gradle":
+			// Groovy/Gradle: class/method/interface/trait definitions.
+			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "interface ") || strings.HasPrefix(trimmed, "enum ") ||
+				strings.HasPrefix(trimmed, "trait ") || strings.HasPrefix(trimmed, "abstract ") ||
+				strings.HasPrefix(trimmed, "static ") || strings.HasPrefix(trimmed, "private ") ||
+				strings.HasPrefix(trimmed, "public ") || strings.HasPrefix(trimmed, "protected ") {
+				matched = true
+			}
+		case ".rkt", ".scm", ".lisp", ".cl":
+			// Scheme/Racket/Common Lisp: top-level forms.
+			if strings.HasPrefix(trimmed, "(define ") || strings.HasPrefix(trimmed, "(define-") ||
+				strings.HasPrefix(trimmed, "(defun ") || strings.HasPrefix(trimmed, "(defmacro ") ||
+				strings.HasPrefix(trimmed, "(defvar ") || strings.HasPrefix(trimmed, "(defparameter ") ||
+				strings.HasPrefix(trimmed, "(defclass ") || strings.HasPrefix(trimmed, "(defgeneric ") ||
+				strings.HasPrefix(trimmed, "(defmethod ") || strings.HasPrefix(trimmed, "(defstruct ") ||
+				strings.HasPrefix(trimmed, "(provide ") || strings.HasPrefix(trimmed, "(module ") ||
+				strings.HasPrefix(trimmed, "(struct ") {
+				matched = true
+			}
+		case ".pas", ".pp":
+			// Pascal/Free Pascal (case-insensitive).
+			tLower := strings.ToLower(trimmed)
+			if strings.HasPrefix(tLower, "procedure ") || strings.HasPrefix(tLower, "function ") ||
+				strings.HasPrefix(tLower, "type ") || strings.HasPrefix(tLower, "unit ") ||
+				strings.HasPrefix(tLower, "program ") || strings.HasPrefix(tLower, "class ") ||
+				strings.HasPrefix(tLower, "constructor ") || strings.HasPrefix(tLower, "destructor ") {
+				matched = true
+			}
+		case ".ada", ".adb", ".ads":
+			// Ada (case-insensitive).
+			tLower := strings.ToLower(trimmed)
+			if strings.HasPrefix(tLower, "procedure ") || strings.HasPrefix(tLower, "function ") ||
+				strings.HasPrefix(tLower, "package ") || strings.HasPrefix(tLower, "type ") ||
+				strings.HasPrefix(tLower, "task ") || strings.HasPrefix(tLower, "protected ") ||
+				strings.HasPrefix(tLower, "entry ") {
+				matched = true
+			}
+		case ".m":
+			// Objective-C: @interface, @implementation, method definitions.
+			if strings.HasPrefix(trimmed, "@interface ") || strings.HasPrefix(trimmed, "@implementation ") ||
+				strings.HasPrefix(trimmed, "@protocol ") ||
+				strings.HasPrefix(trimmed, "- (") || strings.HasPrefix(trimmed, "+ (") {
+				matched = true
+			}
+			// MATLAB: function definitions.
+			if !matched && strings.HasPrefix(trimmed, "function ") {
+				matched = true
+			}
+		case ".sol":
+			// Solidity: contract, function, event definitions.
+			if strings.HasPrefix(trimmed, "contract ") || strings.HasPrefix(trimmed, "interface ") ||
+				strings.HasPrefix(trimmed, "library ") || strings.HasPrefix(trimmed, "function ") ||
+				strings.HasPrefix(trimmed, "event ") || strings.HasPrefix(trimmed, "modifier ") ||
+				strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "enum ") ||
+				strings.HasPrefix(trimmed, "error ") {
+				matched = true
+			}
+		case ".tf", ".hcl":
+			// Terraform/HCL: resource, variable, output, module definitions.
+			if strings.HasPrefix(trimmed, "resource ") || strings.HasPrefix(trimmed, "data ") ||
+				strings.HasPrefix(trimmed, "variable ") || strings.HasPrefix(trimmed, "output ") ||
+				strings.HasPrefix(trimmed, "module ") || strings.HasPrefix(trimmed, "provider ") ||
+				strings.HasPrefix(trimmed, "locals ") || strings.HasPrefix(trimmed, "terraform ") {
+				matched = true
+			}
+		case ".elm":
+			// Elm: type, module, port definitions plus type annotations.
+			if strings.HasPrefix(trimmed, "type ") || strings.HasPrefix(trimmed, "module ") ||
+				strings.HasPrefix(trimmed, "port ") {
+				matched = true
+			}
+			// Type signatures: name : Type (not comments).
+			if !matched && !strings.HasPrefix(trimmed, "--") && strings.Contains(trimmed, " : ") {
+				matched = true
+			}
+		case ".tcl":
+			// Tcl: proc, namespace, OO class definitions.
+			if strings.HasPrefix(trimmed, "proc ") || strings.HasPrefix(trimmed, "namespace ") ||
+				strings.HasPrefix(trimmed, "oo::class ") || strings.HasPrefix(trimmed, "method ") {
 				matched = true
 			}
 		}
