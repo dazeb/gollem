@@ -1732,6 +1732,41 @@ func compilationErrorHint(output string, exitCode int) string {
 		}
 	}
 
+	// Elixir: "** (CompileError) lib/app.ex:42: undefined function foo/1"
+	// Also: "== Compilation error in file lib/app.ex ==" followed by "** (CompileError) ..."
+	// Must run before Erlang parser since Elixir stacktraces contain .erl file references.
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "** (") {
+			continue
+		}
+		// Extract after the closing paren: "** (CompileError) lib/app.ex:42: msg"
+		parenClose := strings.Index(trimmed, ") ")
+		if parenClose < 0 {
+			continue
+		}
+		rest := trimmed[parenClose+2:]
+		parts := strings.SplitN(rest, ":", 3)
+		if len(parts) < 2 || !isNumeric(parts[1]) {
+			continue
+		}
+		file := parts[0]
+		if len(file) > 200 || (!strings.HasSuffix(file, ".ex") && !strings.HasSuffix(file, ".exs")) {
+			continue
+		}
+		lineNum := parts[1]
+		errMsg := ""
+		if len(parts) >= 3 {
+			errMsg = strings.TrimSpace(parts[2])
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Elixir error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
 	// Erlang: "src/module.erl:42: function foo/1 undefined" or
 	// "src/module.erl:42: head mismatch" or "src/module.erl:42: syntax error before: 'X'"
 	// Format: file.erl:line: message (doesn't use ": error" like C/C++).
@@ -1800,9 +1835,75 @@ func compilationErrorHint(output string, exitCode int) string {
 			file, lineNum, lineNum)
 	}
 
+	// PHP: "PHP Parse error: syntax error, ... in /path/file.php on line 42"
+	// Also: "PHP Fatal error: Call to undefined function ... in /path/file.php on line 42"
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "PHP ") || !strings.Contains(trimmed, " in ") || !strings.Contains(trimmed, " on line ") {
+			continue
+		}
+		// Extract "in /path/file.php on line 42".
+		inIdx := strings.LastIndex(trimmed, " in ")
+		if inIdx < 0 {
+			continue
+		}
+		tail := trimmed[inIdx+4:]
+		onLineIdx := strings.LastIndex(tail, " on line ")
+		if onLineIdx < 0 {
+			continue
+		}
+		file := tail[:onLineIdx]
+		lineNum := strings.TrimSpace(tail[onLineIdx+9:])
+		if !isNumeric(lineNum) || len(file) > 200 || !strings.HasSuffix(file, ".php") {
+			continue
+		}
+		// Error message is between "PHP Parse error:" and " in ".
+		errMsg := ""
+		if colonIdx := strings.Index(trimmed, ": "); colonIdx > 0 && colonIdx < inIdx {
+			errMsg = strings.TrimSpace(trimmed[colonIdx+2 : inIdx])
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: PHP error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
+	// Crystal: "Error in src/main.cr:42: undefined local variable or method 'foo'"
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Error in ") {
+			continue
+		}
+		rest := trimmed[9:] // strip "Error in "
+		parts := strings.SplitN(rest, ":", 3)
+		if len(parts) < 2 || !isNumeric(parts[1]) {
+			continue
+		}
+		file := parts[0]
+		if len(file) > 200 || !strings.HasSuffix(file, ".cr") {
+			continue
+		}
+		lineNum := parts[1]
+		errMsg := ""
+		if len(parts) >= 3 {
+			errMsg = strings.TrimSpace(parts[2])
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Crystal error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
 	// C/C++/clang: "file.c:42:5: error: ..."
 	// Go: "./main.go:42:5: ..." or "main.go:42:5: ..."
 	// Rust (cargo): " --> src/main.rs:42:5"
+	// Dart: "lib/main.dart:42:5: Error: ..."
+	// Java (javac): "Main.java:42: error: ..."
+	// Swift: "main.swift:10:5: error: ..."
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
@@ -1830,8 +1931,9 @@ func compilationErrorHint(output string, exitCode int) string {
 			}
 		}
 
-		// C/C++/Go: "file:line:col: error:" or "file:line: error:"
-		if !strings.Contains(trimmed, ": error") && !strings.Contains(trimmed, ": fatal error") &&
+		// C/C++/Go/Dart/Java/Swift: "file:line:col: error:" or "file:line: error:"
+		if !strings.Contains(trimmed, ": error") && !strings.Contains(trimmed, ": Error") &&
+			!strings.Contains(trimmed, ": fatal error") &&
 			!strings.Contains(trimmed, ": cannot ") && !strings.Contains(trimmed, ": undefined") &&
 			!strings.Contains(trimmed, "cannot find") {
 			continue

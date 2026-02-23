@@ -11034,6 +11034,97 @@ func TestCompilationErrorHint_Erlang(t *testing.T) {
 	}
 }
 
+func TestCompilationErrorHint_Elixir(t *testing.T) {
+	output := `== Compilation error in file lib/app.ex ==
+** (CompileError) lib/app.ex:42: undefined function foo/1
+    (elixir) src/elixir.erl:355: :elixir.eval_forms/3`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Elixir compilation error")
+	}
+	if !strings.Contains(hint, "lib/app.ex:42") {
+		t.Errorf("expected hint to contain file:line, got: %s", hint)
+	}
+	if !strings.Contains(hint, "undefined function foo/1") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_PHP(t *testing.T) {
+	output := `PHP Parse error:  syntax error, unexpected '}' in /var/www/app.php on line 42`
+	hint := compilationErrorHint(output, 255)
+	if hint == "" {
+		t.Fatal("expected hint for PHP parse error")
+	}
+	if !strings.Contains(hint, "app.php:42") {
+		t.Errorf("expected hint to contain file:line, got: %s", hint)
+	}
+	if !strings.Contains(hint, "syntax error") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Crystal(t *testing.T) {
+	output := `Error in src/main.cr:42: undefined local variable or method 'foo' for Main`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Crystal compilation error")
+	}
+	if !strings.Contains(hint, "src/main.cr:42") {
+		t.Errorf("expected hint to contain file:line, got: %s", hint)
+	}
+	if !strings.Contains(hint, "undefined local variable") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Dart(t *testing.T) {
+	output := `lib/main.dart:42:5: Error: Undefined name 'foo'.
+    foo();
+    ^^^`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Dart compilation error")
+	}
+	if !strings.Contains(hint, "lib/main.dart:42") {
+		t.Errorf("expected hint to contain file:line, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Java(t *testing.T) {
+	output := `MainClass.java:42: error: cannot find symbol
+        System.out.println(foo);
+                           ^
+  symbol:   variable foo
+  location: class MainClass`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Java compilation error")
+	}
+	if !strings.Contains(hint, "MainClass.java:42") {
+		t.Errorf("expected hint to contain file:line, got: %s", hint)
+	}
+	if !strings.Contains(hint, "cannot find symbol") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Swift(t *testing.T) {
+	output := `main.swift:10:5: error: use of unresolved identifier 'foo'
+    let x = foo
+            ^~~`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Swift compilation error")
+	}
+	if !strings.Contains(hint, "main.swift:10") {
+		t.Errorf("expected hint to contain file:line, got: %s", hint)
+	}
+	if !strings.Contains(hint, "unresolved identifier") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
 func TestEdit_PreservesFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	// Create an executable script.
