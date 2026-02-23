@@ -265,6 +265,7 @@ done:
 		"node": true, "nodejs": true,
 		"ruby": true, "perl": true, "lua": true,
 		"julia": true, "Rscript": true, "rscript": true, "php": true,
+		"bash": true, "sh": true, "zsh": true, "dash": true,
 	}
 	if interpreters[base] && len(fields) >= 2 {
 		arg := fields[1]
@@ -274,6 +275,27 @@ done:
 		}
 		// For script paths, use just the basename.
 		return base + " " + filepath.Base(arg)
+	}
+
+	// For subcommand tools, include the subcommand to distinguish
+	// "go test" from "go build", "cargo test" from "cargo run", etc.
+	subcommandTools := map[string]bool{
+		"go": true, "cargo": true, "make": true, "dotnet": true,
+		"npm": true, "yarn": true, "pnpm": true, "bun": true,
+		"pip": true, "pip3": true, "poetry": true, "uv": true,
+		"docker": true, "git": true, "gh": true,
+		"mvn": true, "gradle": true, "gradlew": true,
+		"sbt": true, "mix": true, "stack": true, "cabal": true,
+		"swift": true, "zig": true, "dune": true, "lake": true,
+		"bazel": true, "cmake": true, "nimble": true, "dub": true,
+		"flutter": true, "dart": true, "crystal": true,
+	}
+	if subcommandTools[base] && len(fields) >= 2 {
+		sub := fields[1]
+		// Only include subcommand if it's not a flag.
+		if !strings.HasPrefix(sub, "-") {
+			return base + " " + sub
+		}
 	}
 
 	return base

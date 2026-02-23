@@ -6503,7 +6503,7 @@ func TestExtractCommandPrefix(t *testing.T) {
 		{
 			name:     "simple command",
 			argsJSON: `{"command": "make test"}`,
-			expected: "make",
+			expected: "make test",
 		},
 		{
 			name:     "python with script",
@@ -6536,14 +6536,39 @@ func TestExtractCommandPrefix(t *testing.T) {
 			expected: "node test.js",
 		},
 		{
-			name:     "go test stays simple",
+			name:     "go test includes subcommand",
 			argsJSON: `{"command": "go test ./..."}`,
-			expected: "go",
+			expected: "go test",
 		},
 		{
-			name:     "cargo test stays simple",
+			name:     "cargo test includes subcommand",
 			argsJSON: `{"command": "cargo test"}`,
-			expected: "cargo",
+			expected: "cargo test",
+		},
+		{
+			name:     "bash with script",
+			argsJSON: `{"command": "bash test.sh"}`,
+			expected: "bash test.sh",
+		},
+		{
+			name:     "bash different script",
+			argsJSON: `{"command": "bash solution.sh"}`,
+			expected: "bash solution.sh",
+		},
+		{
+			name:     "npm test includes subcommand",
+			argsJSON: `{"command": "npm test"}`,
+			expected: "npm test",
+		},
+		{
+			name:     "dotnet test includes subcommand",
+			argsJSON: `{"command": "dotnet test"}`,
+			expected: "dotnet test",
+		},
+		{
+			name:     "git with flag stays simple",
+			argsJSON: `{"command": "git -C /app status"}`,
+			expected: "git",
 		},
 		{
 			name:     "timeout skips duration",
