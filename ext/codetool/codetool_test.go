@@ -5423,6 +5423,68 @@ func TestAutoCleanupIntermediates(t *testing.T) {
 	}
 }
 
+func TestAutoCleanupIntermediates_JavaClassFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create Java .class files (compilation artifacts).
+	os.WriteFile(filepath.Join(dir, "Main.class"), []byte("classdata"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "pkg"), 0o755)
+	os.WriteFile(filepath.Join(dir, "pkg", "Helper.class"), []byte("classdata"), 0o644)
+
+	// Real .java source should NOT be deleted.
+	os.WriteFile(filepath.Join(dir, "Main.java"), []byte("class Main {}"), 0o644)
+
+	cleaned := autoCleanupIntermediates(dir)
+	if cleaned < 2 {
+		t.Errorf("expected at least 2 .class files cleaned, got %d", cleaned)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Main.class")); !os.IsNotExist(err) {
+		t.Error("Main.class should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pkg", "Helper.class")); !os.IsNotExist(err) {
+		t.Error("pkg/Helper.class should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Main.java")); err != nil {
+		t.Error("Main.java should NOT be removed")
+	}
+}
+
+func TestAutoCleanupIntermediates_HaskellHiFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create Haskell .hi files (interface files).
+	os.WriteFile(filepath.Join(dir, "Main.hi"), []byte("hidata"), 0o644)
+	os.WriteFile(filepath.Join(dir, "Main.hs"), []byte("main = putStrLn \"hi\""), 0o644)
+
+	cleaned := autoCleanupIntermediates(dir)
+	if cleaned < 1 {
+		t.Errorf("expected at least 1 .hi file cleaned, got %d", cleaned)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Main.hi")); !os.IsNotExist(err) {
+		t.Error("Main.hi should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Main.hs")); err != nil {
+		t.Error("Main.hs should NOT be removed")
+	}
+}
+
+func TestAutoCleanupIntermediates_EggInfo(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create *.egg-info directory (Python packaging artifact).
+	eggDir := filepath.Join(dir, "mypackage.egg-info")
+	os.MkdirAll(eggDir, 0o755)
+	os.WriteFile(filepath.Join(eggDir, "PKG-INFO"), []byte("metadata"), 0o644)
+
+	cleaned := autoCleanupIntermediates(dir)
+	if cleaned < 1 {
+		t.Errorf("expected at least 1 egg-info cleaned, got %d", cleaned)
+	}
+	if _, err := os.Stat(eggDir); !os.IsNotExist(err) {
+		t.Error("*.egg-info directory should be removed")
+	}
+}
+
 func TestPytestFailedTestExtraction(t *testing.T) {
 	output := `============================= test session starts ==============================
 collected 5 items

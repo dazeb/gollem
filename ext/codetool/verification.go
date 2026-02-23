@@ -292,6 +292,11 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 				// Doing this programmatically saves the agent 1 turn.
 				if workDir != "" {
 					cleaned := autoCleanupIntermediates(workDir)
+					// Also clean /app if workDir differs — tests often check
+					// directory contents in /app even when the agent works elsewhere.
+					if workDir != "/app" {
+						cleaned += autoCleanupIntermediates("/app")
+					}
 					if cleaned > 0 {
 						fmt.Fprintf(os.Stderr, "[gollem] verification: auto-cleaned %d intermediate artifacts\n", cleaned)
 					}
@@ -439,6 +444,12 @@ func isVerificationString(cmd string) bool {
 		"swift test", "swift build",
 		// Nim.
 		"nim c ", "nim compile", "nim test",
+		// Python doctests.
+		"python3 -m doctest", "python -m doctest",
+		// Haskell execution.
+		"stack exec", "cabal exec",
+		// Free Pascal.
+		"fpc ",
 		// Inline output validation patterns.
 		"python3 -c \"open(", "python -c \"open(",
 		"python3 -c 'open(", "python -c 'open(",
@@ -553,12 +564,23 @@ func autoCleanupIntermediates(workDir string) int {
 		".mypy_cache":   true,
 		".ruff_cache":   true,
 		".tox":          true,
+		".eggs":         true,
 	}
+	// Also clean *.egg-info directories — Python packaging artifacts
+	// that cause "extra files" failures in directory content tests.
+	eggInfoSuffix := ".egg-info"
 	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
 		if info.IsDir() && cacheDirs[info.Name()] {
+			if os.RemoveAll(path) == nil {
+				cleaned++
+			}
+			return filepath.SkipDir
+		}
+		// Clean *.egg-info directories (Python packaging artifacts).
+		if info.IsDir() && strings.HasSuffix(info.Name(), eggInfoSuffix) {
 			if os.RemoveAll(path) == nil {
 				cleaned++
 			}
@@ -577,14 +599,21 @@ func autoCleanupIntermediates(workDir string) int {
 		return nil
 	})
 
-	// Remove *.pyc files.
+	// Remove intermediate files: *.pyc (Python), *.class (Java), *.hi (Haskell).
+	// These can all cause "extra files" test failures.
+	intermediateExts := []string{".pyc", ".class", ".hi"}
 	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if !info.IsDir() && strings.HasSuffix(info.Name(), ".pyc") {
-			if os.Remove(path) == nil {
-				cleaned++
+		if !info.IsDir() {
+			for _, ext := range intermediateExts {
+				if strings.HasSuffix(info.Name(), ext) {
+					if os.Remove(path) == nil {
+						cleaned++
+					}
+					break
+				}
 			}
 		}
 		return nil

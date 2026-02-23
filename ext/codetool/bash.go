@@ -3330,6 +3330,16 @@ func isLongRunningCommand(cmd string) bool {
 		"python3 run", "python run",     // generic runner scripts
 		"bash /app/", "sh /app/",        // shell scripts in /app/
 		"bash /tests/", "sh /tests/",    // test scripts
+		"julia ",                        // Julia JIT compilation is slow on first run
+		"coqc ",                         // Coq proof checking
+		"opam ",                         // OCaml package manager
+		"stack setup", "stack exec",     // Haskell GHC download / execution
+		"rscript ", "r -e ",             // R scripts
+		"dotnet test", "dotnet run",     // .NET execution
+		"mix test",                      // Elixir tests
+		"bundle exec",                   // Ruby with bundler
+		"cabal test", "cabal run",       // Haskell
+		"fpc ",                          // Free Pascal compilation
 	}
 	for _, p := range longPatterns {
 		if strings.Contains(lower, p) {
@@ -3434,7 +3444,17 @@ func isBuildCommand(cmd string) bool {
 		"rustup", "cargo install",
 		"gem install", "bundle install",
 		"composer install", // PHP
-		"dotnet restore",  // .NET
+		"dotnet restore", "dotnet build", // .NET
+		"gfortran ",   // Fortran
+		"nasm ", "yasm ", // Assembly
+		"fpc ",         // Free Pascal
+		"coqc ", "coq_makefile", // Coq proof checker
+		"nim c ", "nim compile", // Nim
+		"opam install", // OCaml
+		"stack setup",  // Haskell GHC download
+		"swiftc ",      // Swift
+		"ldc2 ", "gdc ", // D language
+		"julia -e \"using Pkg", // Julia package operations
 	}
 	for _, p := range buildPatterns {
 		if strings.HasPrefix(lower, p) || strings.Contains(lower, " && "+p) || strings.Contains(lower, "; "+p) {
