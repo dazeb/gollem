@@ -256,6 +256,42 @@ func TestIsPermanent429(t *testing.T) {
 	}
 }
 
+func TestRetryModel_GatewayTimeoutRetries(t *testing.T) {
+	// Verify that 504 Gateway Timeout, 529 Overloaded, and 408 Request Timeout
+	// are all treated as retryable.
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{"504 Gateway Timeout", 504},
+		{"529 Overloaded", 529},
+		{"408 Request Timeout", 408},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fm := &retryFailingModel{
+				failCount:  1,
+				failErr:    &core.ModelHTTPError{StatusCode: tc.status, Message: "transient error"},
+				successMsg: "recovered",
+			}
+			rm := NewRetryModel(fm, RetryConfig{
+				MaxRetries:     2,
+				InitialBackoff: time.Millisecond,
+				Jitter:         false,
+			})
+			resp, err := rm.Request(context.Background(), nil, nil, &core.ModelRequestParameters{AllowTextOutput: true})
+			if err != nil {
+				t.Fatalf("expected success after retry, got: %v", err)
+			}
+			if resp.TextContent() != "recovered" {
+				t.Errorf("expected 'recovered', got %q", resp.TextContent())
+			}
+			if int(fm.attempts.Load()) != 2 {
+				t.Errorf("expected 2 attempts, got %d", fm.attempts.Load())
+			}
+		})
+	}
+}
+
 func TestRetryModel_StreamRetry(t *testing.T) {
 	fm := &retryFailingModel{
 		failCount:  1,

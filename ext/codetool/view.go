@@ -263,6 +263,8 @@ func isLockFile(name string) bool {
 		"packages.lock.json",  // .NET NuGet
 		"mix.lock",            // Elixir
 		"flake.lock",          // Nix
+		"pixi.lock",           // Pixi (conda ecosystem)
+		"podfile.lock",        // CocoaPods (iOS)
 		"pom.xml.sha1",        // Maven checksum
 		"gradle.lockfile",     // Gradle
 		"shrinkwrap.yaml",      // pnpm

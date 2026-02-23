@@ -67,7 +67,13 @@ func defaultIsRetryable(err error) bool {
 				return false
 			}
 			return true
-		case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+		case http.StatusRequestTimeout,                                    // 408
+			http.StatusInternalServerError,                                // 500
+			http.StatusBadGateway,                                         // 502
+			http.StatusServiceUnavailable,                                 // 503
+			http.StatusGatewayTimeout:                                     // 504
+			return true
+		case 529: // Anthropic "Overloaded" — too many concurrent requests
 			return true
 		}
 	}
@@ -183,5 +189,8 @@ func retryLoop[T any](ctx context.Context, cfg RetryConfig, fn func() (T, error)
 		}
 	}
 
+	if lastErr != nil {
+		fmt.Fprintf(os.Stderr, "[gollem] retry: all %d attempts exhausted, giving up: %v\n", cfg.MaxRetries+1, lastErr)
+	}
 	return zero, lastErr
 }
