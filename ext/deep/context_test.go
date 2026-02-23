@@ -150,15 +150,17 @@ func TestContextManager_Tier1_WithStore(t *testing.T) {
 func TestContextManager_Tier2_OffloadInputs(t *testing.T) {
 	model := core.NewTestModel(core.TextResponse("summary"))
 
-	// Low thresholds to trigger tier 2.
+	// Use large content (1000 chars) so that after offloading (which replaces
+	// with a ~200-char preview summary), the total drops below compression
+	// threshold, preventing tier 3 from also firing.
 	cm := NewContextManager(model,
-		WithMaxContextTokens(100),
+		WithMaxContextTokens(500),
 		WithOffloadThreshold(5),
 		WithCompressionThreshold(0.5),
 	)
 
 	// Create messages with large tool call args that exceed the threshold.
-	largeArgs := `{"data":"` + strings.Repeat("b", 200) + `"}`
+	largeArgs := `{"data":"` + strings.Repeat("b", 1000) + `"}`
 	messages := []core.ModelMessage{
 		core.ModelRequest{
 			Parts: []core.ModelRequestPart{
@@ -187,13 +189,13 @@ func TestContextManager_Tier2_OffloadInputs(t *testing.T) {
 	// The tool call args should be offloaded in the response.
 	resp, ok := result[1].(core.ModelResponse)
 	if !ok {
-		t.Fatal("expected ModelResponse at index 1")
+		t.Fatalf("expected ModelResponse at index 1, got %T", result[1])
 	}
 	tcp, ok := resp.Parts[0].(core.ToolCallPart)
 	if !ok {
-		t.Fatal("expected ToolCallPart")
+		t.Fatalf("expected ToolCallPart, got %T", resp.Parts[0])
 	}
-	if strings.Contains(tcp.ArgsJSON, strings.Repeat("b", 200)) {
+	if strings.Contains(tcp.ArgsJSON, strings.Repeat("b", 1000)) {
 		t.Error("original large args should not be present")
 	}
 	if !strings.Contains(tcp.ArgsJSON, "_offloaded") {
@@ -242,16 +244,19 @@ func TestContextManager_Tier3_Summarization(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Result should be shorter — first messages summarized.
-	if len(result) >= len(messages) {
-		t.Errorf("expected fewer messages after summarization, got %d (was %d)", len(result), len(messages))
+	// First message (task description + system prompt) must be preserved.
+	if _, ok := result[0].(core.ModelRequest); !ok {
+		t.Fatalf("expected first message (ModelRequest) to be preserved, got %T", result[0])
 	}
 
-	// First message should be the summary (emitted as ModelResponse for
+	// Second message should be the summary (emitted as ModelResponse for
 	// proper user/assistant alternation with Anthropic's API).
-	resp, ok := result[0].(core.ModelResponse)
+	if len(result) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d", len(result))
+	}
+	resp, ok := result[1].(core.ModelResponse)
 	if !ok {
-		t.Fatalf("expected ModelResponse at index 0, got %T", result[0])
+		t.Fatalf("expected ModelResponse at index 1, got %T", result[1])
 	}
 	if !strings.Contains(resp.TextContent(), "Conversation Summary") {
 		t.Errorf("expected conversation summary, got: %s", resp.TextContent())
@@ -312,20 +317,30 @@ func TestContextManager_Tier3_MessageAlternation(t *testing.T) {
 		}
 	}
 
-	// First message should be a ModelResponse (summary emitted as assistant
-	// role for proper alternation with Anthropic's API).
-	firstResp, ok := result[0].(core.ModelResponse)
-	if !ok {
-		t.Fatalf("expected ModelResponse at index 0, got %T", result[0])
+	// First message should be the preserved original ModelRequest (task description).
+	if _, ok := result[0].(core.ModelRequest); !ok {
+		t.Fatalf("expected first message (ModelRequest) to be preserved, got %T", result[0])
 	}
-	if !strings.Contains(firstResp.TextContent(), "Conversation Summary") {
+
+	// Second message should be a ModelResponse (summary emitted as assistant
+	// role for proper alternation with Anthropic's API).
+	if len(result) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d", len(result))
+	}
+	summaryResp, ok := result[1].(core.ModelResponse)
+	if !ok {
+		t.Fatalf("expected ModelResponse at index 1, got %T", result[1])
+	}
+	if !strings.Contains(summaryResp.TextContent(), "Conversation Summary") {
 		t.Error("summary message should contain conversation summary text")
 	}
 
-	// Second message should be ModelRequest (user) — the remaining messages
+	// Third message should be ModelRequest (user) — the remaining messages
 	// start with a ModelRequest after the summary (ModelResponse).
-	if _, ok := result[1].(core.ModelRequest); !ok {
-		t.Errorf("expected ModelRequest at index 1, got %T", result[1])
+	if len(result) > 2 {
+		if _, ok := result[2].(core.ModelRequest); !ok {
+			t.Errorf("expected ModelRequest at index 2, got %T", result[2])
+		}
 	}
 }
 
@@ -449,15 +464,15 @@ func TestContextManager_CustomTokenCounter(t *testing.T) {
 func TestContextManager_Tier2_PreservesMetadata(t *testing.T) {
 	model := core.NewTestModel(core.TextResponse("summary"))
 
-	// Low thresholds to trigger tier 2.
+	// Use large content so offloading reduces size enough to prevent tier 3.
 	cm := NewContextManager(model,
-		WithMaxContextTokens(100),
+		WithMaxContextTokens(500),
 		WithOffloadThreshold(5),
 		WithCompressionThreshold(0.5),
 	)
 
 	// Create messages with large tool call args AND metadata (e.g., Gemini 3.x thought signature).
-	largeArgs := `{"data":"` + strings.Repeat("z", 200) + `"}`
+	largeArgs := `{"data":"` + strings.Repeat("z", 1000) + `"}`
 	messages := []core.ModelMessage{
 		core.ModelRequest{
 			Parts: []core.ModelRequestPart{

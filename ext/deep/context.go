@@ -230,15 +230,29 @@ func (cm *ContextManager) tier3Summarize(ctx context.Context, messages []core.Mo
 		return messages, nil
 	}
 
-	// Find the split point: summarize the first half of messages.
+	// Always preserve the first message (task description, system prompt,
+	// environment context). Losing the original task requirements is a
+	// common failure mode — the agent forgets what it was asked to do.
+	// This aligns with autoCompressMessages and emergencyCompressMessages.
+	firstMsg := messages[0]
+
+	// Find the split point: summarize messages[1:splitIdx].
 	splitIdx := len(messages) / 2
-	if splitIdx < 1 {
-		splitIdx = 1
+	if splitIdx < 2 {
+		splitIdx = 2 // need at least messages[1:2] to summarize
+	}
+	if splitIdx > len(messages) {
+		return messages, nil
+	}
+
+	oldMessages := messages[1:splitIdx]
+	if len(oldMessages) == 0 {
+		return messages, nil
 	}
 
 	// Build a text representation of the messages to summarize.
 	var sb strings.Builder
-	for _, msg := range messages[:splitIdx] {
+	for _, msg := range oldMessages {
 		switch m := msg.(type) {
 		case core.ModelRequest:
 			for _, part := range m.Parts {
@@ -297,14 +311,15 @@ func (cm *ContextManager) tier3Summarize(ctx context.Context, messages []core.Mo
 		}
 	}
 
-	// Build new message list: summary + remaining messages.
+	// Build new message list: first message + summary + remaining messages.
 	// Emit the summary as a ModelResponse (assistant role) to maintain
 	// proper user/assistant alternation. Using a ModelRequest with
 	// SystemPromptPart caused Anthropic's provider (which extracts system
-	// prompts to a top-level field) to produce no API message, resulting
+	// prompts to a separate field) to produce no API message, resulting
 	// in adjacent user messages. This aligns with autoCompressMessages
 	// and emergencyCompressMessagesWithConfig.
-	newMessages := make([]core.ModelMessage, 0, 1+len(messages)-splitIdx)
+	newMessages := make([]core.ModelMessage, 0, 2+len(messages)-splitIdx)
+	newMessages = append(newMessages, firstMsg)
 	newMessages = append(newMessages, core.ModelResponse{
 		Parts: []core.ModelResponsePart{
 			core.TextPart{Content: "[Conversation Summary]\n" + summaryText},
