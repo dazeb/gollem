@@ -10410,6 +10410,17 @@ func TestIsSkippableDir(t *testing.T) {
 		{".angular", true},
 		{".parcel-cache", true},
 		{".svelte-kit", true},
+		// Infrastructure/deployment directories.
+		{".terraform", true},
+		{".serverless", true},
+		{".pulumi", true},
+		{".yarn", true},
+		{".expo", true},
+		// Bazel build outputs.
+		{"bazel-bin", true},
+		{"bazel-out", true},
+		{"bazel-testlogs", true},
+		{"bazel-genfiles", true},
 		// Should NOT skip.
 		{"src", false},
 		{"lib", false},
@@ -11046,5 +11057,49 @@ func TestGlob_ExcludeFilter(t *testing.T) {
 	result = call(t, tool, `{"pattern": "**/*.go", "exclude": "*_test.go"}`)
 	assertNotContains(t, result, "utils_test.go")
 	assertContains(t, result, "utils.go")
+}
+
+func TestView_NegativeOffset(t *testing.T) {
+	dir := t.TempDir()
+	// Create a 10-line file.
+	var content strings.Builder
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&content, "line %d\n", i)
+	}
+	writeTestFile(t, dir, "ten.txt", content.String())
+
+	tool := View(WithWorkDir(dir))
+
+	// offset=-3 should show last 3 lines (8, 9, 10).
+	result := call(t, tool, `{"path": "ten.txt", "offset": -3}`)
+	assertContains(t, result, "line 8")
+	assertContains(t, result, "line 9")
+	assertContains(t, result, "line 10")
+	assertNotContains(t, result, "line 7")
+	assertContains(t, result, "10 total lines, showing 8-10")
+}
+
+func TestView_NegativeOffsetLargerThanFile(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "small.txt", "alpha\nbeta\ngamma\n")
+
+	tool := View(WithWorkDir(dir))
+
+	// offset=-100 on a 3-line file should show all lines.
+	result := call(t, tool, `{"path": "small.txt", "offset": -100}`)
+	assertContains(t, result, "alpha")
+	assertContains(t, result, "beta")
+	assertContains(t, result, "gamma")
+	assertContains(t, result, "showing 1-3")
+}
+
+func TestView_NegativeOffsetEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "empty.txt", "")
+
+	tool := View(WithWorkDir(dir))
+
+	result := call(t, tool, `{"path": "empty.txt", "offset": -5}`)
+	assertContains(t, result, "empty file")
 }
 

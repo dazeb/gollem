@@ -356,7 +356,16 @@ func isSkippableDir(name string) bool {
 		".angular",    // Angular cache
 		".parcel-cache", // Parcel bundler cache
 		".svelte-kit",   // SvelteKit build
-		"_rel":        // Erlang release directory
+		"_rel",        // Erlang release directory
+		// Infrastructure/deployment directories.
+		".terraform",  // Terraform providers and state (can be huge)
+		".serverless", // Serverless Framework
+		".pulumi",     // Pulumi state
+		".yarn",       // Yarn v2+ PnP cache
+		".pnp",        // Yarn PnP runtime
+		".expo",       // React Native Expo cache
+		// Bazel build outputs.
+		"bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles":
 		return true
 	}
 	return false

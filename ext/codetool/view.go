@@ -17,7 +17,8 @@ type ViewParams struct {
 	Path string `json:"path" jsonschema:"description=Absolute or relative file path to read"`
 
 	// Offset is the 1-based line number to start reading from.
-	Offset *int `json:"offset,omitempty" jsonschema:"description=Start reading from this line number (1-based). Default: 1"`
+	// Negative values count from the end of the file (e.g. -20 = last 20 lines).
+	Offset *int `json:"offset,omitempty" jsonschema:"description=Start reading from this line number (1-based). Use negative values to read from end of file (e.g. -20 = last 20 lines). Default: 1"`
 
 	// Limit is the maximum number of lines to read.
 	Limit *int `json:"limit,omitempty" jsonschema:"description=Maximum number of lines to return. Default: 2000"`
@@ -30,6 +31,7 @@ func View(opts ...Option) core.Tool {
 		"view",
 		"Read the contents of a file. Returns the file content with line numbers. "+
 			"Use offset and limit to read specific sections of large files. "+
+			"Use negative offset to read from end of file (e.g. offset=-20 for last 20 lines). "+
 			"Always use this to read a file before editing it.",
 		func(ctx context.Context, params ViewParams) (string, error) {
 			if params.Path == "" {
@@ -83,18 +85,60 @@ func View(opts ...Option) core.Tool {
 			}
 			defer f.Close()
 
-			offset := 1
-			if params.Offset != nil && *params.Offset > 0 {
-				offset = *params.Offset
-			}
 			limit := 2000
 			if params.Limit != nil && *params.Limit > 0 {
 				limit = *params.Limit
 			}
 
-			var lines []string
 			scanner := bufio.NewScanner(f)
 			scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // handle long lines
+
+			// Negative offset: read from end of file. Read all lines
+			// into memory and select the tail. MaxFileSize guard above
+			// prevents this from blowing up on huge files.
+			if params.Offset != nil && *params.Offset < 0 {
+				var allLines []string
+				for scanner.Scan() {
+					allLines = append(allLines, scanner.Text())
+				}
+				if err := scanner.Err(); err != nil {
+					return "", fmt.Errorf("reading file: %w", err)
+				}
+				if len(allLines) == 0 {
+					return "(empty file)", nil
+				}
+
+				// -N means "last N lines" (capped by limit).
+				tailCount := -*params.Offset
+				if tailCount > len(allLines) {
+					tailCount = len(allLines)
+				}
+				if tailCount > limit {
+					tailCount = limit
+				}
+				start := len(allLines) - tailCount
+
+				var lines []string
+				for i := start; i < len(allLines); i++ {
+					line := allLines[i]
+					if len(line) > 2000 {
+						line = line[:2000] + "..."
+					}
+					lines = append(lines, fmt.Sprintf("%6d\t%s", i+1, line))
+				}
+
+				result := strings.Join(lines, "\n")
+				result += fmt.Sprintf("\n(%d total lines, showing %d-%d)", len(allLines), start+1, len(allLines))
+				return result, nil
+			}
+
+			// Positive offset: standard forward reading.
+			offset := 1
+			if params.Offset != nil && *params.Offset > 0 {
+				offset = *params.Offset
+			}
+
+			var lines []string
 			lineNum := 0
 			for scanner.Scan() {
 				lineNum++
