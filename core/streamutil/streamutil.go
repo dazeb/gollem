@@ -40,17 +40,26 @@ func StreamText(stream core.StreamedResponse, opts StreamTextOptions) iter.Seq2[
 				return
 			}
 
-			delta, ok := event.(core.PartDeltaEvent)
-			if !ok {
-				continue
+			// Extract text content from both PartStartEvent and PartDeltaEvent.
+			// PartStartEvent carries the first text chunk (OpenAI, Gemini);
+			// PartDeltaEvent carries subsequent chunks.
+			var textContent string
+			switch e := event.(type) {
+			case core.PartStartEvent:
+				if tp, ok := e.Part.(core.TextPart); ok {
+					textContent = tp.Content
+				}
+			case core.PartDeltaEvent:
+				if td, ok := e.Delta.(core.TextPartDelta); ok {
+					textContent = td.ContentDelta
+				}
 			}
-			textDelta, ok := delta.Delta.(core.TextPartDelta)
-			if !ok {
+			if textContent == "" {
 				continue
 			}
 
-			accumulated += textDelta.ContentDelta
-			pending += textDelta.ContentDelta
+			accumulated += textContent
+			pending += textContent
 
 			// Apply debounce.
 			if opts.Debounce > 0 && time.Since(lastYield) < opts.Debounce {

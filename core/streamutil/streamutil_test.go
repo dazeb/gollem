@@ -110,6 +110,76 @@ func TestStreamTextAccumulated_Convenience(t *testing.T) {
 	}
 }
 
+// TestStreamText_PartStartEvent verifies that the initial text content from
+// PartStartEvent is captured, not dropped. OpenAI, Gemini, and compatible
+// providers send the first text chunk as PartStartEvent, not PartDeltaEvent.
+// Without the fix, this first chunk was silently lost.
+func TestStreamText_PartStartEvent(t *testing.T) {
+	stream := &testStreamedResponseWithStartEvent{
+		events: []core.ModelResponseStreamEvent{
+			core.PartStartEvent{Index: 0, Part: core.TextPart{Content: "Hello"}},
+			core.PartDeltaEvent{Index: 0, Delta: core.TextPartDelta{ContentDelta: " world"}},
+			core.PartDeltaEvent{Index: 0, Delta: core.TextPartDelta{ContentDelta: "!"}},
+		},
+	}
+
+	var chunks []string
+	for text, err := range streamutil.StreamTextDelta(stream) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunks = append(chunks, text)
+	}
+
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 chunks, got %d: %v", len(chunks), chunks)
+	}
+	if chunks[0] != "Hello" {
+		t.Errorf("first chunk should be 'Hello' (from PartStartEvent), got %q", chunks[0])
+	}
+
+	// Also verify accumulated mode gets the full text.
+	stream2 := &testStreamedResponseWithStartEvent{
+		events: []core.ModelResponseStreamEvent{
+			core.PartStartEvent{Index: 0, Part: core.TextPart{Content: "Hello"}},
+			core.PartDeltaEvent{Index: 0, Delta: core.TextPartDelta{ContentDelta: " world"}},
+		},
+	}
+	var last string
+	for text, err := range streamutil.StreamTextAccumulated(stream2) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = text
+	}
+	if last != "Hello world" {
+		t.Errorf("accumulated text should be 'Hello world', got %q", last)
+	}
+}
+
+// testStreamedResponseWithStartEvent emits a mix of PartStartEvent and PartDeltaEvent,
+// matching real provider behavior (OpenAI, Gemini).
+type testStreamedResponseWithStartEvent struct {
+	events []core.ModelResponseStreamEvent
+	idx    int
+}
+
+func (s *testStreamedResponseWithStartEvent) Next() (core.ModelResponseStreamEvent, error) {
+	if s.idx >= len(s.events) {
+		return nil, io.EOF
+	}
+	event := s.events[s.idx]
+	s.idx++
+	return event, nil
+}
+
+func (s *testStreamedResponseWithStartEvent) Response() *core.ModelResponse {
+	return &core.ModelResponse{}
+}
+
+func (s *testStreamedResponseWithStartEvent) Usage() core.Usage { return core.Usage{} }
+func (s *testStreamedResponseWithStartEvent) Close() error      { return nil }
+
 // testStreamedResponseWithDeltas emits text deltas for testing stream options.
 type testStreamedResponseWithDeltas struct {
 	deltas []string
