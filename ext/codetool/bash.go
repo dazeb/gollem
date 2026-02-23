@@ -4141,6 +4141,61 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// GoogleTest (C++): "[  PASSED  ] N test(s)." / "[  FAILED  ] N test(s), listed below:"
+	// Individual failures: "[  FAILED  ] TestSuite.TestCase"
+	// Final line: "N FAILED TEST(S)"
+	if strings.Contains(output, "[  PASSED  ]") || strings.Contains(output, "[  FAILED  ]") {
+		lines := strings.Split(output, "\n")
+		var passLine, failLine string
+		var failedTests []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "[  PASSED  ]") {
+				passLine = trimmed
+			} else if strings.HasPrefix(trimmed, "[  FAILED  ]") {
+				if strings.Contains(trimmed, "listed below") || strings.Contains(trimmed, "test,") || strings.Contains(trimmed, "tests,") {
+					failLine = trimmed
+				} else {
+					// Individual failing test name.
+					name := strings.TrimPrefix(trimmed, "[  FAILED  ] ")
+					// Strip timing suffix like " (0 ms)".
+					if paren := strings.LastIndex(name, " ("); paren > 0 {
+						name = name[:paren]
+					}
+					failedTests = append(failedTests, name)
+				}
+			}
+		}
+		if passLine != "" || failLine != "" {
+			summary := "[test summary: "
+			if passLine != "" {
+				summary += passLine
+			}
+			if failLine != "" {
+				if passLine != "" {
+					summary += " / "
+				}
+				summary += failLine
+			}
+			summary += "]"
+			if len(failedTests) > 0 {
+				shown := failedTests
+				if len(shown) > 10 {
+					shown = shown[:10]
+				}
+				summary += "\n[failed tests: " + strings.Join(shown, ", ")
+				if len(failedTests) > 10 {
+					summary += fmt.Sprintf("... and %d more", len(failedTests)-10)
+				}
+				summary += "]"
+			}
+			if detail := firstFailureDetail(output); detail != "" {
+				summary += "\n" + detail
+			}
+			return summary
+		}
+	}
+
 	// Catch2 (C++): "X test cases - Y assertions - Z failures"
 	// or "All tests passed (X assertions in Y test cases)"
 	if strings.Contains(lower, "test case") && strings.Contains(lower, "assertion") {
@@ -5945,6 +6000,42 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 	// TAP (Test Anything Protocol): "ok 1 - desc" / "not ok 2 - desc"
 	if strings.Contains(output, "ok ") && (strings.Contains(output, "1..") || strings.Contains(output, "not ok")) {
 		if p, f, tapOK := extractTAPCounts(output); tapOK {
+			passed = p
+			failed = f
+			ok = true
+			return
+		}
+	}
+
+	// GoogleTest (C++): "[  PASSED  ] N test(s)." and "[  FAILED  ] N test(s), listed below:"
+	// Parse the bracketed summary lines that appear at the end of GoogleTest output.
+	// Also handles standalone "N FAILED TEST(S)" final line.
+	if strings.Contains(output, "[  PASSED  ]") || strings.Contains(output, "[  FAILED  ]") {
+		var p, f int
+		foundGTest := false
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			trimmed := strings.TrimSpace(lines[i])
+			words := strings.Fields(trimmed)
+			if strings.HasPrefix(trimmed, "[  PASSED  ]") {
+				// "[  PASSED  ] N test(s)." — Fields: ["[", "PASSED", "]", "N", "test(s)."]
+				if len(words) >= 4 && isNumeric(words[3]) {
+					fmt.Sscanf(words[3], "%d", &p)
+					foundGTest = true
+				}
+			} else if strings.HasPrefix(trimmed, "[  FAILED  ]") && strings.Contains(trimmed, "listed below") {
+				// "[  FAILED  ] N test(s), listed below:" — Fields: ["[", "FAILED", "]", "N", ...]
+				if len(words) >= 4 && isNumeric(words[3]) {
+					fmt.Sscanf(words[3], "%d", &f)
+					foundGTest = true
+				}
+			} else if len(words) >= 3 && isNumeric(words[0]) &&
+				words[1] == "FAILED" && (words[2] == "TEST" || words[2] == "TESTS") {
+				// Standalone "N FAILED TEST(S)" final line.
+				fmt.Sscanf(words[0], "%d", &f)
+				foundGTest = true
+			}
+		}
+		if foundGTest {
 			passed = p
 			failed = f
 			ok = true

@@ -8867,6 +8867,86 @@ Expected equality of these values:
 	}
 }
 
+// Test GoogleTest summary parsing.
+func TestTestResultSummary_GoogleTest(t *testing.T) {
+	output := `[==========] Running 3 tests from 1 test suite.
+[----------] 3 tests from Calculator
+[ RUN      ] Calculator.Add
+[       OK ] Calculator.Add (0 ms)
+[ RUN      ] Calculator.Subtract
+/test/calculator_test.cpp:22: Failure
+Value of: calc.Subtract(5, 3)
+  Actual: 3
+Expected: 2
+[  FAILED  ] Calculator.Subtract (0 ms)
+[ RUN      ] Calculator.Multiply
+[       OK ] Calculator.Multiply (0 ms)
+[----------] 3 tests from Calculator (0 ms total)
+[==========] 3 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 2 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] Calculator.Subtract
+
+ 1 FAILED TEST`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for GoogleTest output")
+	}
+	if !strings.Contains(summary, "[  PASSED  ] 2 tests") {
+		t.Errorf("expected summary to contain pass count, got %q", summary)
+	}
+	if !strings.Contains(summary, "Calculator.Subtract") {
+		t.Errorf("expected summary to contain failing test name, got %q", summary)
+	}
+}
+
+func TestTestResultSummary_GoogleTest_AllPassing(t *testing.T) {
+	output := `[==========] 2 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 2 tests.`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for all-passing GoogleTest output")
+	}
+	if !strings.Contains(summary, "[  PASSED  ] 2 tests") {
+		t.Errorf("expected summary to contain pass count, got %q", summary)
+	}
+}
+
+func TestExtractTestCounts_GoogleTest(t *testing.T) {
+	output := `[==========] 5 tests from 2 test suites ran. (0 ms total)
+[  PASSED  ] 3 tests.
+[  FAILED  ] 2 tests, listed below:
+[  FAILED  ] Suite.Test1
+[  FAILED  ] Suite.Test2
+
+ 2 FAILED TESTS`
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for GoogleTest output")
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed, got %d", p)
+	}
+	if f != 2 {
+		t.Errorf("expected 2 failed, got %d", f)
+	}
+}
+
+func TestExtractTestCounts_GoogleTest_AllPassing(t *testing.T) {
+	output := `[==========] 4 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 4 tests.`
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for all-passing GoogleTest output")
+	}
+	if p != 4 {
+		t.Errorf("expected 4 passed, got %d", p)
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failed, got %d", f)
+	}
+}
+
 // Test Lua busted test result summary parsing.
 func TestTestResultSummary_LuaBusted(t *testing.T) {
 	output := `●●●○

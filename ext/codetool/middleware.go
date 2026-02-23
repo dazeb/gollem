@@ -7784,8 +7784,16 @@ func extractFileStructure(path string) string {
 				matched = true
 			}
 		case ".v":
-			// Coq: definitions, theorems, lemmas, inductive types.
-			if strings.HasPrefix(trimmed, "Definition ") || strings.HasPrefix(trimmed, "Theorem ") ||
+			// V language (vlang): fn/pub fn/struct/enum/interface/module definitions.
+			// Coq: Definition/Theorem/Lemma/Fixpoint/Inductive/Module/Record.
+			// Both use .v — disambiguate by keyword case (V=lowercase, Coq=capitalized).
+			if strings.HasPrefix(trimmed, "fn ") || strings.HasPrefix(trimmed, "pub fn ") ||
+				strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "pub struct ") ||
+				strings.HasPrefix(trimmed, "enum ") || strings.HasPrefix(trimmed, "pub enum ") ||
+				strings.HasPrefix(trimmed, "interface ") || strings.HasPrefix(trimmed, "pub interface ") ||
+				strings.HasPrefix(trimmed, "module ") ||
+				// Coq patterns (capitalized keywords).
+				strings.HasPrefix(trimmed, "Definition ") || strings.HasPrefix(trimmed, "Theorem ") ||
 				strings.HasPrefix(trimmed, "Lemma ") || strings.HasPrefix(trimmed, "Fixpoint ") ||
 				strings.HasPrefix(trimmed, "Inductive ") || strings.HasPrefix(trimmed, "Module ") ||
 				strings.HasPrefix(trimmed, "Record ") || strings.HasPrefix(trimmed, "Program ") ||
