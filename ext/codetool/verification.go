@@ -407,7 +407,7 @@ func isVerificationString(cmd string) bool {
 		"dart test", "flutter test",
 		"stack test", "cabal test",
 		"busted", "lua test",
-		"Rscript", "testthat",
+		"testthat",
 		"ctest",
 		"julia -e", "julia --project",
 		// Terminal-Bench patterns: tasks often have test scripts.
@@ -433,8 +433,8 @@ func isVerificationString(cmd string) bool {
 		"lake build", "lake env",
 		// OCaml build systems.
 		"dune build", "dune test", "dune exec",
-		// Haskell build systems.
-		"stack build", "stack test", "cabal build", "cabal test",
+		// Haskell build systems (test entries above, build-only here).
+		"stack build", "cabal build",
 		// Coq proof checker.
 		"coqc ", "coq_makefile",
 		// Elixir/Erlang.
@@ -490,26 +490,16 @@ func isVerificationString(cmd string) bool {
 		"nasm ", "yasm ",
 		// Swift.
 		"swiftc ",
-		// Nim.
-		"nim c ",
 		// OCaml direct compilation.
 		"ocamlopt ", "ocamlfind ",
 		// Haskell direct compilation.
 		"ghc ",
-		// Kotlin.
-		"kotlinc ",
-		// D language.
-		"dmd ",
-		// Crystal.
-		"crystal build",
-		// V language.
-		"v build",
 	}
 
 	// Lint/check commands.
 	lintPatterns := []string{
 		"eslint", "pylint", "flake8", "mypy",
-		"golangci-lint", "staticcheck", "go vet",
+		"golangci-lint", "staticcheck",
 		"rubocop", "shellcheck",
 		"black --check", "ruff check",
 	}

@@ -6194,6 +6194,26 @@ func TestExtractCommandPrefix(t *testing.T) {
 			argsJSON: `{"command": "cargo test"}`,
 			expected: "cargo",
 		},
+		{
+			name:     "timeout skips duration",
+			argsJSON: `{"command": "timeout 30 python3 test.py"}`,
+			expected: "python3 test.py",
+		},
+		{
+			name:     "sudo skips to real command",
+			argsJSON: `{"command": "sudo python3 test.py"}`,
+			expected: "python3 test.py",
+		},
+		{
+			name:     "cd as direct preamble",
+			argsJSON: `{"command": "cd /app python3 test.py"}`,
+			expected: "python3 test.py",
+		},
+		{
+			name:     "env with var assignment",
+			argsJSON: `{"command": "env FOO=bar python3 test.py"}`,
+			expected: "python3 test.py",
+		},
 	}
 
 	for _, tt := range tests {

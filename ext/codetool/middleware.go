@@ -224,17 +224,36 @@ func extractCommandPrefix(argsJSON string) string {
 	}
 
 	// Skip common preamble commands that aren't the real action.
-	skipPrefixes := map[string]bool{
-		"cd": true, "env": true, "sudo": true, "time": true,
-		"timeout": true, "nice": true, "nohup": true, "exec": true,
-	}
-	for len(fields) > 1 && skipPrefixes[filepath.Base(fields[0])] {
-		fields = fields[1:]
-		// Skip cd's target directory argument.
-		if filepath.Base(fields[0]) == "cd" {
+	// Some preambles consume extra arguments (cd takes a directory,
+	// timeout takes a duration, env takes NAME=VALUE pairs).
+	for len(fields) > 1 {
+		base := filepath.Base(fields[0])
+		switch base {
+		case "cd":
+			// cd DIR — skip both cd and its directory argument.
 			fields = fields[1:]
+			if len(fields) > 1 {
+				fields = fields[1:]
+			}
+		case "timeout":
+			// timeout DURATION COMMAND — skip both timeout and its duration.
+			fields = fields[1:]
+			if len(fields) > 1 {
+				fields = fields[1:]
+			}
+		case "env":
+			// env [NAME=VALUE]... COMMAND — skip env and any var assignments.
+			fields = fields[1:]
+			for len(fields) > 1 && strings.Contains(fields[0], "=") {
+				fields = fields[1:]
+			}
+		case "sudo", "time", "nice", "nohup", "exec":
+			fields = fields[1:]
+		default:
+			goto done
 		}
 	}
+done:
 
 	base := filepath.Base(fields[0])
 
@@ -245,7 +264,7 @@ func extractCommandPrefix(argsJSON string) string {
 		"python": true, "python3": true, "python2": true,
 		"node": true, "nodejs": true,
 		"ruby": true, "perl": true, "lua": true,
-		"julia": true, "Rscript": true, "php": true,
+		"julia": true, "Rscript": true, "rscript": true, "php": true,
 	}
 	if interpreters[base] && len(fields) >= 2 {
 		arg := fields[1]
