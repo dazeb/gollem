@@ -3143,6 +3143,11 @@ func nodeErrorHint(output string, exitCode int, workDir ...string) string {
 			"Use tsx (npx tsx file.ts), ts-node (npx ts-node file.ts), " +
 			"or compile first with tsc]"
 	}
+	// ESM-specific module not found (different from CJS MODULE_NOT_FOUND).
+	if strings.Contains(output, "ERR_MODULE_NOT_FOUND") {
+		return "[hint: ESM module not found — check import paths include file extensions " +
+			"(e.g., import './foo.js' not import './foo'). ESM requires explicit extensions.]"
+	}
 
 	// ReferenceError, TypeError with stack trace — extract file:line.
 	for _, errType := range []string{"ReferenceError:", "TypeError:", "SyntaxError:"} {
@@ -3183,6 +3188,18 @@ func nodeErrorHint(output string, exitCode int, workDir ...string) string {
 	}
 	if strings.Contains(output, "ENOENT") && strings.Contains(output, "package.json") {
 		return "[hint: no package.json found — run npm init -y first, or cd to the project root]"
+	}
+
+	// Node.js heap out of memory.
+	if strings.Contains(output, "FATAL ERROR") && strings.Contains(output, "heap") {
+		return "[hint: Node.js ran out of heap memory. " +
+			"Increase with: NODE_OPTIONS='--max-old-space-size=4096' node script.js " +
+			"Or optimize: use streams instead of loading entire files, process data in chunks.]"
+	}
+
+	// Experimental feature warnings that block execution.
+	if strings.Contains(output, "ExperimentalWarning") || strings.Contains(output, "--experimental") {
+		return "[hint: Node.js experimental feature — run with the required flag (e.g., --experimental-vm-modules, --experimental-specifier-resolution=node)]"
 	}
 
 	return ""

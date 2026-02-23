@@ -6954,6 +6954,11 @@ func detectTestCommands(workDir string) []string {
 		cmds = append(cmds, "Build: coq_makefile -f _CoqProject -o Makefile.coq && make -f Makefile.coq")
 	}
 
+	// Gleam
+	if fileExists(filepath.Join(workDir, "gleam.toml")) {
+		cmds = append(cmds, "Build: gleam build")
+		cmds = append(cmds, "Test: gleam test")
+	}
 	// PHP (Composer)
 	if fileExists(filepath.Join(workDir, "composer.json")) {
 		cmds = append(cmds, "Install: composer install")
@@ -7000,17 +7005,24 @@ func isEntryPointFile(lowerName string) bool {
 		"conftest.py", // pytest fixtures
 		"manage.py",   // Django
 		"wsgi.py", "asgi.py",
+		"urls.py",              // Django URL routing
 		"solution.", "solve.", "answer.", // common TB2 deliverable names
 		"lib.", "mod.",          // Rust lib.rs, mod.rs
 		"build.rs",             // Rust build script
 		"setup.py", "setup.cfg", // Python packaging
 		"program.", "run.",     // common names
+		"handler.", "handlers.", // common API handler files
+		"routes.", "router.",   // routing files
+		"config.",              // configuration modules
 	}
 	// Also check exact matches for config/build files the agent should see.
 	exactMatches := []string{
 		"makefile", "dockerfile", "rakefile", "gemfile",
 		"cargo.toml", "go.mod", "package.json",
-		"cmakelists.txt", "build.gradle", "pom.xml",
+		"cmakelists.txt", "build.gradle", "build.gradle.kts", "pom.xml",
+		"build.sbt", "mix.exs", "dune-project", "build.zig",
+		"gleam.toml", "pubspec.yaml",
+		"tsconfig.json", "pyproject.toml",
 	}
 	for _, ep := range entryPoints {
 		if strings.HasPrefix(lowerName, ep) || lowerName == ep {
@@ -7407,6 +7419,19 @@ func detectTodoStubs(workDir string) []string {
 		"todo!()", "unimplemented!()", "panic(\"not implemented\")",
 		"throw new Error(\"not implemented\")",
 		"throw new UnsupportedOperationException",
+		// Go: common stub patterns.
+		"panic(\"todo\")", "panic(\"TODO\")",
+		"return nil, fmt.Errorf(\"not implemented\")",
+		// Kotlin: built-in TODO function.
+		"TODO()",
+		// Swift: fatalError as placeholder.
+		"fatalError(\"not implemented\")", "fatalError(\"TODO\")",
+		// Ruby/Elixir: raise as placeholder.
+		"raise \"not implemented\"", "raise \"TODO\"",
+		// Placeholder comments (language-agnostic).
+		"// placeholder", "# placeholder", "-- placeholder",
+		"// your code here", "# your code here",
+		"// implement", "# implement",
 	}
 
 	for _, dir := range []string{workDir, "/app"} {
@@ -7865,11 +7890,13 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	var testTrajectory []string // compact "passed/total" per verification run
 	var packagesInstalled []string
 	var subagentTasks []string
-	var lastAssistantText string // last assistant text block — captures current approach/thinking
+	var searchesPerformed []string // grep/glob searches that the agent already did
+	var lastAssistantText string   // last assistant text block — captures current approach/thinking
 
 	seenRead := make(map[string]bool)
 	seenModified := make(map[string]bool)
 	seenPackages := make(map[string]bool)
+	seenSearches := make(map[string]bool)
 
 	// Scan dropped messages for tool calls and their results.
 	// Track the last pending verification call ID to match with its result.
@@ -7907,6 +7934,36 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 					if path != "" && !seenModified[path] {
 						seenModified[path] = true
 						filesModified = append(filesModified, path)
+					}
+				case "grep":
+					var args struct {
+						Pattern string `json:"pattern"`
+						Path    string `json:"path"`
+					}
+					if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil && args.Pattern != "" {
+						key := "grep: " + args.Pattern
+						if args.Path != "" {
+							key += " in " + args.Path
+						}
+						if !seenSearches[key] && len(searchesPerformed) < 10 {
+							seenSearches[key] = true
+							searchesPerformed = append(searchesPerformed, key)
+						}
+					}
+				case "glob":
+					var args struct {
+						Pattern string `json:"pattern"`
+						Path    string `json:"path"`
+					}
+					if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil && args.Pattern != "" {
+						key := "glob: " + args.Pattern
+						if args.Path != "" {
+							key += " in " + args.Path
+						}
+						if !seenSearches[key] && len(searchesPerformed) < 10 {
+							seenSearches[key] = true
+							searchesPerformed = append(searchesPerformed, key)
+						}
 					}
 				case "bash":
 					var args struct {
@@ -8109,6 +8166,16 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 		for _, t := range subagentTasks[:limit] {
 			b.WriteString("  - ")
 			b.WriteString(t)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	if len(searchesPerformed) > 0 {
+		b.WriteString("SEARCHES ALREADY PERFORMED (avoid repeating):\n")
+		for _, s := range searchesPerformed {
+			b.WriteString("  - ")
+			b.WriteString(s)
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
