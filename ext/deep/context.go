@@ -287,32 +287,27 @@ func (cm *ContextManager) tier3Summarize(ctx context.Context, messages []core.Mo
 		return messages, nil
 	}
 
-	// Ensure the second half starts with a ModelResponse so that the
-	// summary (user role) followed by the remaining messages maintains
-	// proper user/assistant alternation (required by Anthropic's API).
+	// Ensure the remaining messages start with a ModelRequest (user role)
+	// so that the summary (assistant role) → remaining maintains proper
+	// user/assistant alternation (required by Anthropic's API).
+	// Back up one position if we'd start with a ModelResponse.
 	if splitIdx < len(messages) {
-		if _, isReq := messages[splitIdx].(core.ModelRequest); isReq && splitIdx+1 < len(messages) {
-			splitIdx++
+		if _, isResp := messages[splitIdx].(core.ModelResponse); isResp && splitIdx > 1 {
+			splitIdx--
 		}
 	}
 
 	// Build new message list: summary + remaining messages.
-	// The summary includes both a SystemPromptPart (for the system context)
-	// and a UserPromptPart (to produce a proper "user" API message).
-	// Without the UserPromptPart, providers that extract system prompts to a
-	// top-level field (e.g., Anthropic) would produce no API message for the
-	// summary, breaking message alternation.
+	// Emit the summary as a ModelResponse (assistant role) to maintain
+	// proper user/assistant alternation. Using a ModelRequest with
+	// SystemPromptPart caused Anthropic's provider (which extracts system
+	// prompts to a top-level field) to produce no API message, resulting
+	// in adjacent user messages. This aligns with autoCompressMessages
+	// and emergencyCompressMessagesWithConfig.
 	newMessages := make([]core.ModelMessage, 0, 1+len(messages)-splitIdx)
-	newMessages = append(newMessages, core.ModelRequest{
-		Parts: []core.ModelRequestPart{
-			core.SystemPromptPart{
-				Content:   "[Conversation Summary]\n" + summaryText,
-				Timestamp: time.Now(),
-			},
-			core.UserPromptPart{
-				Content:   "Continue based on the conversation summary above.",
-				Timestamp: time.Now(),
-			},
+	newMessages = append(newMessages, core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.TextPart{Content: "[Conversation Summary]\n" + summaryText},
 		},
 		Timestamp: time.Now(),
 	})

@@ -247,17 +247,14 @@ func TestContextManager_Tier3_Summarization(t *testing.T) {
 		t.Errorf("expected fewer messages after summarization, got %d (was %d)", len(result), len(messages))
 	}
 
-	// First message should contain the summary.
-	req, ok := result[0].(core.ModelRequest)
+	// First message should be the summary (emitted as ModelResponse for
+	// proper user/assistant alternation with Anthropic's API).
+	resp, ok := result[0].(core.ModelResponse)
 	if !ok {
-		t.Fatal("expected ModelRequest at index 0")
+		t.Fatalf("expected ModelResponse at index 0, got %T", result[0])
 	}
-	spp, ok := req.Parts[0].(core.SystemPromptPart)
-	if !ok {
-		t.Fatal("expected SystemPromptPart")
-	}
-	if !strings.Contains(spp.Content, "Conversation Summary") {
-		t.Errorf("expected conversation summary, got: %s", spp.Content)
+	if !strings.Contains(resp.TextContent(), "Conversation Summary") {
+		t.Errorf("expected conversation summary, got: %s", resp.TextContent())
 	}
 }
 
@@ -315,33 +312,20 @@ func TestContextManager_Tier3_MessageAlternation(t *testing.T) {
 		}
 	}
 
-	// First message should be a ModelRequest (summary with user prompt).
-	firstReq, ok := result[0].(core.ModelRequest)
+	// First message should be a ModelResponse (summary emitted as assistant
+	// role for proper alternation with Anthropic's API).
+	firstResp, ok := result[0].(core.ModelResponse)
 	if !ok {
-		t.Fatalf("expected ModelRequest at index 0, got %T", result[0])
+		t.Fatalf("expected ModelResponse at index 0, got %T", result[0])
+	}
+	if !strings.Contains(firstResp.TextContent(), "Conversation Summary") {
+		t.Error("summary message should contain conversation summary text")
 	}
 
-	// Should have both SystemPromptPart and UserPromptPart.
-	hasSystem := false
-	hasUser := false
-	for _, part := range firstReq.Parts {
-		if _, ok := part.(core.SystemPromptPart); ok {
-			hasSystem = true
-		}
-		if _, ok := part.(core.UserPromptPart); ok {
-			hasUser = true
-		}
-	}
-	if !hasSystem {
-		t.Error("summary message should contain SystemPromptPart")
-	}
-	if !hasUser {
-		t.Error("summary message should contain UserPromptPart for proper API message generation")
-	}
-
-	// Second message should be ModelResponse (assistant).
-	if _, ok := result[1].(core.ModelResponse); !ok {
-		t.Errorf("expected ModelResponse at index 1, got %T", result[1])
+	// Second message should be ModelRequest (user) — the remaining messages
+	// start with a ModelRequest after the summary (ModelResponse).
+	if _, ok := result[1].(core.ModelRequest); !ok {
+		t.Errorf("expected ModelRequest at index 1, got %T", result[1])
 	}
 }
 
@@ -561,4 +545,88 @@ func (f *fixedTokenCounter) CountMessageTokens(messages []core.ModelMessage) int
 		}
 	}
 	return total
+}
+
+// TestTier3_NoDroppedMessages verifies that tier3Summarize doesn't drop
+// messages when adjusting the split point for alternation.
+// Regression: when the message at splitIdx was a ModelRequest, the code
+// incremented splitIdx to ensure the remaining messages started with a
+// ModelResponse. But this skipped a message that was neither in the
+// summary (messages[:original_splitIdx]) nor in the remaining messages.
+func TestTier3_NoDroppedMessages(t *testing.T) {
+	// The summary model returns a fixed summary.
+	model := core.NewTestModel(core.TextResponse("Conversation summary."))
+
+	// Use a token counter where every character = 1 token.
+	// Set max context to 30 tokens with compression threshold at 0.5 (15 tokens).
+	// This ensures tier3 kicks in with our test messages.
+	cm := NewContextManager(model,
+		WithMaxContextTokens(30),
+		WithCompressionThreshold(0.5),
+		WithTokenCounter(&fixedTokenCounter{tokensPerChar: 1}),
+	)
+
+	// Build 4 alternating messages (properly alternating).
+	// len/2 = 2, so splitIdx=2. messages[2] is a ModelRequest.
+	// The adjustment should NOT lose messages[2].
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "AAAA"}},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "BBBB"}},
+		},
+		core.ModelRequest{
+			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "CCCC"}},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "DDDD"}},
+		},
+	}
+
+	// Call tier3Summarize directly.
+	result, err := cm.tier3Summarize(context.Background(), messages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The result should contain the summary + the remaining messages.
+	// With 4 messages and splitIdx=2, we expect:
+	// - summary (1 message)
+	// - remaining messages (at least 2: messages[2] and messages[3])
+	//
+	// Check that the "CCCC" content is preserved somewhere in the result.
+	// It should either be in the remaining messages or (if included in the
+	// summary) referenced there.
+	foundCCCC := false
+	foundDDDD := false
+	for _, msg := range result {
+		switch m := msg.(type) {
+		case core.ModelRequest:
+			for _, part := range m.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					if strings.Contains(up.Content, "CCCC") {
+						foundCCCC = true
+					}
+				}
+			}
+		case core.ModelResponse:
+			if strings.Contains(m.TextContent(), "DDDD") {
+				foundDDDD = true
+			}
+		}
+	}
+
+	if !foundDDDD {
+		t.Error("messages[3] ('DDDD') was lost during tier3 summarization")
+	}
+	if !foundCCCC {
+		// This is the bug: messages[2] ('CCCC') gets dropped when the
+		// split point is adjusted forward for alternation.
+		t.Error("messages[2] ('CCCC') was dropped during tier3 summarization — " +
+			"the alternation adjustment skips a message that is neither in " +
+			"the summary nor in the remaining messages")
+	}
 }
