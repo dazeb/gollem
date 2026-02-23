@@ -5761,6 +5761,19 @@ func detectPythonImports(workDir string) []string {
 		"intervaltree":   "intervaltree",
 		"sortedcollections": "sortedcollections",
 		"cachetools":     "cachetools",
+		// Modern data processing.
+		"polars":         "polars",
+		"duckdb":         "duckdb",
+		"xmltodict":      "xmltodict",
+		"ijson":          "ijson",
+		"msgspec":        "msgspec",
+		// Database drivers.
+		"peewee":         "peewee",
+		"aiosqlite":      "aiosqlite",
+		"pymysql":        "PyMySQL",
+		// Protobuf / gRPC.
+		"google.protobuf": "protobuf",
+		"grpc_tools":     "grpcio-tools",
 	}
 
 	needed := make(map[string]string) // module → pip package

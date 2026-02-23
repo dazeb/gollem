@@ -227,8 +227,11 @@ func isLockFile(name string) bool {
 		"flake.lock",          // Nix
 		"pom.xml.sha1",        // Maven checksum
 		"gradle.lockfile",     // Gradle
-		"shrinkwrap.yaml",     // pnpm
-		"package-resolved.json": // Swift Package Manager
+		"shrinkwrap.yaml",      // pnpm
+		"package-resolved.json", // Swift Package Manager
+		"rebar.lock",            // Erlang Rebar3
+		"stack.yaml.lock",       // Haskell Stack
+		"shard.lock":            // Crystal
 		return true
 	}
 	return false

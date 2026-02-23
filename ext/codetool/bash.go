@@ -5820,6 +5820,14 @@ func compilationErrorSummary(output string, exitCode int) string {
 		"Variable not in scope",                     // GHC: newer format
 		"Not a valid type signature",                // GHC: invalid type signature
 		"Parse error",             // GHC: syntax error
+		// Clojure compilation errors.
+		"Syntax error compiling",  // Clojure: Syntax error compiling at (file.clj:line:col)
+		"CompilerException",       // Clojure: older format
+		"Execution error",         // Clojure: runtime error with file reference
+		// Erlang compilation errors.
+		"head mismatch",           // Erlang: function clause head mismatch
+		"syntax error before",     // Erlang: syntax error before: 'token'
+		"illegal pattern",         // Erlang: illegal pattern in clause
 	}
 	for _, p := range errorPatterns {
 		if strings.Contains(output, p) {
