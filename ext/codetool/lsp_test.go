@@ -617,6 +617,84 @@ func TestFormatDocumentSymbols(t *testing.T) {
 	}
 }
 
+func TestNormalizedChanges(t *testing.T) {
+	t.Run("plain_changes", func(t *testing.T) {
+		we := lspWorkspaceEdit{
+			Changes: map[string][]lspTextEdit{
+				"file:///a.go": {{NewText: "x"}},
+			},
+		}
+		got := we.normalizedChanges()
+		if len(got) != 1 || len(got["file:///a.go"]) != 1 {
+			t.Fatalf("expected 1 file with 1 edit, got %v", got)
+		}
+	})
+
+	t.Run("document_changes", func(t *testing.T) {
+		dc, _ := json.Marshal([]lspTextDocumentEdit{
+			{
+				TextDocument: struct {
+					URI string `json:"uri"`
+				}{URI: "file:///b.go"},
+				Edits: []lspTextEdit{{NewText: "y"}, {NewText: "z"}},
+			},
+			{
+				TextDocument: struct {
+					URI string `json:"uri"`
+				}{URI: "file:///c.go"},
+				Edits: []lspTextEdit{{NewText: "w"}},
+			},
+		})
+		we := lspWorkspaceEdit{DocumentChanges: dc}
+		got := we.normalizedChanges()
+		if len(got) != 2 {
+			t.Fatalf("expected 2 files, got %d", len(got))
+		}
+		if len(got["file:///b.go"]) != 2 {
+			t.Errorf("expected 2 edits for b.go, got %d", len(got["file:///b.go"]))
+		}
+		if len(got["file:///c.go"]) != 1 {
+			t.Errorf("expected 1 edit for c.go, got %d", len(got["file:///c.go"]))
+		}
+	})
+
+	t.Run("both_prefers_changes", func(t *testing.T) {
+		dc, _ := json.Marshal([]lspTextDocumentEdit{
+			{
+				TextDocument: struct {
+					URI string `json:"uri"`
+				}{URI: "file:///ignored.go"},
+				Edits: []lspTextEdit{{NewText: "ignored"}},
+			},
+		})
+		we := lspWorkspaceEdit{
+			Changes:         map[string][]lspTextEdit{"file:///a.go": {{NewText: "x"}}},
+			DocumentChanges: dc,
+		}
+		got := we.normalizedChanges()
+		if _, ok := got["file:///a.go"]; !ok {
+			t.Error("expected plain changes to take priority")
+		}
+		if _, ok := got["file:///ignored.go"]; ok {
+			t.Error("documentChanges should be ignored when changes is present")
+		}
+	})
+
+	t.Run("empty_returns_nil", func(t *testing.T) {
+		we := lspWorkspaceEdit{}
+		if got := we.normalizedChanges(); got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("invalid_json_returns_nil", func(t *testing.T) {
+		we := lspWorkspaceEdit{DocumentChanges: json.RawMessage(`not json`)}
+		if got := we.normalizedChanges(); got != nil {
+			t.Errorf("expected nil for invalid json, got %v", got)
+		}
+	})
+}
+
 func TestLspOutlineFormatsHierarchicalSymbols(t *testing.T) {
 	// Create pipes: server writes to serverWrite, readLoop reads from clientRead.
 	clientRead, serverWrite, err := os.Pipe()

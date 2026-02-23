@@ -414,7 +414,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix", "gleam", "crystal", "gfortran", "lein", "clj", "rebar3", "erl"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "just", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix", "gleam", "crystal", "gfortran", "lein", "clj", "rebar3", "erl"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -710,9 +710,14 @@ func discoverEnvironment(workDir string) string {
 			"docker-compose.yml", "docker-compose.yaml",
 			"Dockerfile",
 			"deno.json", "deno.jsonc",
-			"Taskfile.yml",
+			"Taskfile.yml", "Justfile",
+			"tsconfig.json",                // TypeScript config (compilation/path mapping)
 			"project.clj", "deps.edn",     // Clojure
 			"rebar.config",                 // Erlang
+			"Gemfile",                      // Ruby
+			"mix.exs",                      // Elixir
+			"shard.yml",                    // Crystal
+			"gleam.toml",                   // Gleam
 		}
 		for _, bf := range buildFiles {
 			if autoReadBudget <= 0 {

@@ -1097,6 +1097,25 @@ func lspSymbols(ctx context.Context, srv *lspServer, query, workDir string) (str
 }
 
 func lspRename(ctx context.Context, srv *lspServer, filePath string, line, char int, newName, absWorkDir, cfgWorkDir string) (string, error) {
+	// Pre-check with prepareRename to verify the symbol can be renamed
+	// and get the current symbol name. This gives better error messages
+	// than a cryptic null response from the rename itself.
+	prepResult, prepErr := srv.call(ctx, "textDocument/prepareRename", map[string]any{
+		"textDocument": map[string]any{"uri": fileURI(filePath)},
+		"position":     map[string]any{"line": line - 1, "character": char - 1},
+	})
+	if prepErr != nil {
+		// Server may not support prepareRename — fall through to rename.
+		// Only treat as fatal if the error is clearly "can't rename here".
+		errMsg := prepErr.Error()
+		if strings.Contains(errMsg, "cannot rename") || strings.Contains(errMsg, "not renameable") ||
+			strings.Contains(errMsg, "no identifier") {
+			return fmt.Sprintf("Cannot rename at this location: %s", errMsg), nil
+		}
+	} else if string(prepResult) == "null" || len(prepResult) == 0 {
+		return "No renamable symbol found at this location. Check file, line, and character position.", nil
+	}
+
 	result, err := srv.call(ctx, "textDocument/rename", map[string]any{
 		"textDocument": map[string]any{"uri": fileURI(filePath)},
 		"position":     map[string]any{"line": line - 1, "character": char - 1},

@@ -6250,6 +6250,7 @@ func isBuildCommand(cmd string) bool {
 		"rebar3 compile", "rebar3 get-deps", // Erlang
 		"nimble install",                     // Nim packages
 		"pub add",                            // Dart add dependency
+		"just build", "just compile", "just install", // Just task runner
 	}
 	for _, p := range buildPatterns {
 		if strings.HasPrefix(lower, p) || strings.Contains(lower, " && "+p) || strings.Contains(lower, "; "+p) {

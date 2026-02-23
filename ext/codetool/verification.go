@@ -513,6 +513,8 @@ func isVerificationString(cmd string) bool {
 		"mvn verify",
 		// Gradle comprehensive check.
 		"gradle check",
+		// Just task runner (modern Make alternative).
+		"just test", "just check", "just verify",
 	}
 
 	// Build/compile commands.
@@ -541,6 +543,8 @@ func isVerificationString(cmd string) bool {
 		"meson compile", "bazel build",
 		// Modern CMake build (cmake --build <dir>).
 		"cmake --build",
+		// Just task runner (modern Make alternative).
+		"just build", "just compile",
 		// Clojure build.
 		"lein compile", "lein jar", "lein uberjar",
 		// Erlang build.
