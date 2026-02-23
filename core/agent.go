@@ -1616,6 +1616,11 @@ func (a *Agent[T]) availableToolNames() string {
 	for _, t := range a.tools {
 		names = append(names, t.Definition.Name)
 	}
+	for _, ts := range a.toolsets {
+		for _, t := range ts.Tools {
+			names = append(names, t.Definition.Name)
+		}
+	}
 	for _, ot := range a.outputSchema.OutputTools {
 		names = append(names, ot.Name)
 	}
