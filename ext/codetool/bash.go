@@ -6279,8 +6279,7 @@ func isLongRunningCommand(cmd string) bool {
 		"benchmark", "bench.",
 		"python3 train", "python train",
 		"python3 benchmark", "python benchmark",
-		"pytest -", // test suites with options often take longer
-		"pytest /",
+		"pytest",                    // any pytest invocation (bare, with args, etc.)
 		"make test", "make check",  // test targets through make
 		"ctest",                     // CMake test runner
 		"go test -bench", "go test -count", "go test -run", "go test ./...",
@@ -6297,10 +6296,13 @@ func isLongRunningCommand(cmd string) bool {
 		"dune build", "dune test",   // OCaml builds
 		"stack build", "cabal build", // Haskell builds
 		"cargo test",                // Rust tests
-		"python3 /app/", "python /app/", // app scripts
-		"python3 solve", "python solve", // solver scripts
-		"python3 process", "python process", // data processing
-		"python3 run", "python run",     // generic runner scripts
+		"python3 /app/", "python /app/",         // app scripts
+		"python3 solve", "python solve",         // solver scripts
+		"python3 process", "python process",     // data processing
+		"python3 run", "python run",             // generic runner scripts
+		"python3 main", "python main",           // main entry points
+		"python3 solution", "python solution",   // solution scripts
+		"node main", "node solution",            // Node.js entry points
 		"bash /app/", "sh /app/",        // shell scripts in /app/
 		"bash /tests/", "sh /tests/",    // test scripts
 		"julia ",                        // Julia JIT compilation is slow on first run
