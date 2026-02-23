@@ -409,7 +409,7 @@ func langfuseSummarizeMessages(messages []core.ModelMessage) []map[string]any {
 					result = append(result, map[string]any{"role": "tool", "tool": p.ToolName, "content": content})
 				}
 			}
-		case *core.ModelResponse:
+		case core.ModelResponse:
 			result = append(result, map[string]any{"role": "assistant", "content": m.TextContent()})
 		}
 	}
