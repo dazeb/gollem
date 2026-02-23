@@ -334,6 +334,13 @@ func isSkippableDir(name string) bool {
 		"coverage",  // test coverage reports
 		".coverage", // Python coverage
 		".DS_Store", // macOS metadata (file, not dir, but harmless to check)
+		// IDE and editor directories.
+		".idea",        // JetBrains (IntelliJ, PyCharm, GoLand, etc.)
+		".vscode",      // VS Code settings
+		".vs",          // Visual Studio
+		".eclipse",     // Eclipse metadata
+		".settings",    // Eclipse settings
+		"__snapshots__", // Jest test snapshots
 		// Language-specific build/cache directories.
 		".stack-work", // Haskell Stack build artifacts
 		"_opam",       // OCaml opam local switch
@@ -346,6 +353,9 @@ func isSkippableDir(name string) bool {
 		"_esy",        // OCaml esy package cache
 		".lake",       // Lean 4 Lake build cache
 		".eunit",      // Erlang EUnit output
+		".angular",    // Angular cache
+		".parcel-cache", // Parcel bundler cache
+		".svelte-kit",   // SvelteKit build
 		"_rel":        // Erlang release directory
 		return true
 	}

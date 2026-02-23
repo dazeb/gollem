@@ -10402,6 +10402,14 @@ func TestIsSkippableDir(t *testing.T) {
 		{"dist", true},
 		{"target", true},
 		{"out", true},
+		// IDE directories.
+		{".idea", true},
+		{".vscode", true},
+		{".vs", true},
+		{"__snapshots__", true},
+		{".angular", true},
+		{".parcel-cache", true},
+		{".svelte-kit", true},
 		// Should NOT skip.
 		{"src", false},
 		{"lib", false},

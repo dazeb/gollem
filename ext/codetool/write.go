@@ -70,9 +70,13 @@ func Write(opts ...Option) core.Tool {
 			isScript := strings.HasPrefix(params.Content, "#!") ||
 				strings.HasSuffix(lower, ".sh") ||
 				strings.HasSuffix(lower, ".bash") ||
+				strings.HasSuffix(lower, ".zsh") ||
 				strings.HasSuffix(lower, ".py") ||
 				strings.HasSuffix(lower, ".rb") ||
-				strings.HasSuffix(lower, ".pl")
+				strings.HasSuffix(lower, ".pl") ||
+				strings.HasSuffix(lower, ".lua") ||
+				strings.HasSuffix(lower, ".tcl") ||
+				strings.HasSuffix(lower, ".expect")
 			if isScript && perm&0o111 == 0 {
 				perm = 0o755
 			}

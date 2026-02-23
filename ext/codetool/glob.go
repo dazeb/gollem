@@ -34,6 +34,7 @@ func Glob(opts ...Option) core.Tool {
 		"glob",
 		"Find files matching a glob pattern. Supports ** for recursive directory matching. "+
 			"Returns file paths sorted by modification time (most recent first). "+
+			"Use exclude to skip files (e.g. '*_test.go'). "+
 			"Use this to discover files by name or extension (e.g. '**/*.go', 'src/**/*.test.ts').",
 		func(ctx context.Context, params GlobParams) (string, error) {
 			if params.Pattern == "" {
