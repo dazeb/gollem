@@ -7824,3 +7824,113 @@ func TestExtractTestCounts_LuaBusted_AllPassing(t *testing.T) {
 	}
 }
 
+// Test R testthat test result summary parsing.
+func TestTestResultSummary_RTestthat(t *testing.T) {
+	output := `ℹ Testing mypackage
+✔ | F W  S  OK | Context
+✖ | 1        2 | math [0.1s]
+───────────────────────────────────
+[ FAIL 1 | WARN 0 | SKIP 0 | PASS 2 ]`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for R testthat output")
+	}
+	if !strings.Contains(summary, "FAIL 1") {
+		t.Errorf("expected summary to contain 'FAIL 1', got %q", summary)
+	}
+	if !strings.Contains(summary, "PASS 2") {
+		t.Errorf("expected summary to contain 'PASS 2', got %q", summary)
+	}
+}
+
+// Test R testthat all passing.
+func TestTestResultSummary_RTestthat_AllPassing(t *testing.T) {
+	output := `ℹ Testing mypackage
+✔ | F W  S  OK | Context
+✔ |          5 | math [0.1s]
+───────────────────────────────────
+[ FAIL 0 | WARN 0 | SKIP 0 | PASS 5 ]`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for R testthat all-passing output")
+	}
+	if !strings.Contains(summary, "PASS 5") {
+		t.Errorf("expected summary to contain 'PASS 5', got %q", summary)
+	}
+}
+
+// Test R testthat test count extraction.
+func TestExtractTestCounts_RTestthat(t *testing.T) {
+	output := `[ FAIL 2 | WARN 0 | SKIP 1 | PASS 10 ]`
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for R testthat output")
+	}
+	if passed != 10 {
+		t.Errorf("expected passed=10, got %d", passed)
+	}
+	if failed != 2 {
+		t.Errorf("expected failed=2, got %d", failed)
+	}
+}
+
+// Test R testthat all passing count extraction.
+func TestExtractTestCounts_RTestthat_AllPassing(t *testing.T) {
+	output := `[ FAIL 0 | WARN 0 | SKIP 0 | PASS 8 ]`
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for R testthat all-passing output")
+	}
+	if passed != 8 {
+		t.Errorf("expected passed=8, got %d", passed)
+	}
+	if failed != 0 {
+		t.Errorf("expected failed=0, got %d", failed)
+	}
+}
+
+// Test R testthat first failure detail.
+func TestFirstFailureDetail_RTestthat(t *testing.T) {
+	output := `── Failure (test-math.R:5:3): addition works ──
+` + "`add(2, 3)` not equal to expected." + `
+  1/1 mismatches
+  [1] 6 - 5 == 1`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected non-empty detail for R testthat output")
+	}
+	if !strings.Contains(detail, "Failure") {
+		t.Errorf("expected detail to contain 'Failure', got %q", detail)
+	}
+	if !strings.Contains(detail, "not equal") {
+		t.Errorf("expected detail to contain 'not equal', got %q", detail)
+	}
+}
+
+// Test ScalaTest first failure detail.
+func TestFirstFailureDetail_ScalaTest(t *testing.T) {
+	output := `- should add numbers correctly *** FAILED ***
+  42 did not equal 43 (MathSpec.scala:15)
+  at org.scalatest.Assertions.fail(Assertions.scala:56)`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected non-empty detail for ScalaTest output")
+	}
+	if !strings.Contains(detail, "did not equal") {
+		t.Errorf("expected detail to contain 'did not equal', got %q", detail)
+	}
+}
+
+// Test ScalaTest "was not equal to" variant.
+func TestFirstFailureDetail_ScalaTest_WasNotEqual(t *testing.T) {
+	output := `[info] - should compute sum *** FAILED ***
+[info]   List(1, 2, 3) was not equal to List(1, 2, 4) (CollectionSpec.scala:22)`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected non-empty detail for ScalaTest 'was not equal to' output")
+	}
+	if !strings.Contains(detail, "was not equal to") {
+		t.Errorf("expected detail to contain 'was not equal to', got %q", detail)
+	}
+}
+

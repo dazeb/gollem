@@ -2901,6 +2901,25 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// R testthat: "[ FAIL 1 | WARN 0 | SKIP 0 | PASS 2 ]"
+	if strings.Contains(output, "[ FAIL") || strings.Contains(output, "[ PASS") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(line, "[ FAIL") || strings.HasPrefix(line, "[ PASS") {
+				if strings.Contains(line, "|") && strings.Contains(line, "]") {
+					summary := "[test summary: " + line + "]"
+					if strings.Contains(line, "FAIL") && !strings.HasPrefix(line, "[ FAIL 0") {
+						if detail := firstFailureDetail(output); detail != "" {
+							summary += "\n" + detail
+						}
+					}
+					return summary
+				}
+			}
+		}
+	}
+
 	// TAP (Test Anything Protocol): used by Perl prove, Node tap/tape, pg_prove, etc.
 	// Format: "ok 1 - test name" / "not ok 2 - test name", plan "1..N"
 	if strings.Contains(output, "ok ") && (strings.Contains(output, "1..") || strings.Contains(output, "not ok")) {
@@ -3252,6 +3271,36 @@ func firstFailureDetail(output string) string {
 		// Common in TB2 custom test harnesses.
 		if (strings.HasPrefix(upper(trimmed), "FAIL") || strings.HasPrefix(trimmed, "ERROR")) &&
 			(strings.Contains(lower, "expected") || strings.Contains(lower, "mismatch")) {
+			if len(trimmed) > 200 {
+				trimmed = trimmed[:200] + "..."
+			}
+			return "[first failure: " + trimmed + "]"
+		}
+
+		// R testthat: "Failure (test-file.R:line:col): description" followed by
+		// "`expr` not equal to expected." or "value` not identical to ..."
+		if strings.Contains(trimmed, "Failure (") && strings.HasSuffix(trimmed, ")") ||
+			(strings.Contains(trimmed, "Failure") && strings.Contains(trimmed, ".R:")) {
+			detail := trimmed
+			// Look ahead for the assertion detail.
+			for j := i + 1; j < min(i+4, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.Contains(aheadLower, "not equal") || strings.Contains(aheadLower, "not identical") ||
+					strings.Contains(aheadLower, "not true") || strings.Contains(aheadLower, "threw an error") {
+					detail += " — " + ahead
+					break
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// ScalaTest: "X did not equal Y" or "X was not equal to Y"
+		if (strings.Contains(lower, "did not equal") || strings.Contains(lower, "was not equal to")) &&
+			!strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "//") {
 			if len(trimmed) > 200 {
 				trimmed = trimmed[:200] + "..."
 			}
@@ -3928,6 +3977,46 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 					ok = true
 					return
 				}
+			}
+		}
+	}
+
+	// R testthat: "[ FAIL 1 | WARN 0 | SKIP 0 | PASS 2 ]"
+	if strings.Contains(output, "[ FAIL") || strings.Contains(output, "[ PASS") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			if !strings.HasPrefix(line, "[ FAIL") && !strings.HasPrefix(line, "[ PASS") {
+				continue
+			}
+			if !strings.Contains(line, "|") || !strings.Contains(line, "]") {
+				continue
+			}
+			// Parse "FAIL N" and "PASS N" from the pipe-separated format.
+			segments := strings.Split(line, "|")
+			var p, f int
+			foundR := false
+			for _, seg := range segments {
+				seg = strings.TrimSpace(seg)
+				seg = strings.Trim(seg, "[] ")
+				words := strings.Fields(seg)
+				if len(words) >= 2 && isNumeric(words[1]) {
+					var n int
+					fmt.Sscanf(words[1], "%d", &n)
+					switch words[0] {
+					case "PASS":
+						p = n
+						foundR = true
+					case "FAIL":
+						f = n
+						foundR = true
+					}
+				}
+			}
+			if foundR {
+				passed = p
+				failed = f
+				ok = true
+				return
 			}
 		}
 	}
