@@ -740,6 +740,17 @@ func commandNotFoundHint(stderr string) string {
 		"mypy":       "mypy (install via: pip install mypy)",
 		"black":      "black (install via: pip install black)",
 		"isort":      "isort (install via: pip install isort)",
+		"pyright":    "pyright (install via: pip install pyright)",
+		// Language servers (for LSP tool).
+		"gopls":      "gopls (install via: go install golang.org/x/tools/gopls@latest)",
+		"clangd":     "clangd",
+		// Haskell tools.
+		"stack":      "haskell-stack",
+		"cabal":      "cabal-install",
+		"ghcup":      "ghcup (install via: curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh)",
+		// Clojure.
+		"lein":       "leiningen (install via: apt-get install -y leiningen)",
+		"clj":        "clojure (install via: apt-get install -y clojure)",
 	}
 
 	// Extract the missing command name from stderr.

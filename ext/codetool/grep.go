@@ -374,6 +374,9 @@ func isSkippableDir(name string) bool {
 		".yarn",       // Yarn v2+ PnP cache
 		".pnp",        // Yarn PnP runtime
 		".expo",       // React Native Expo cache
+		".metals",     // Scala Metals LSP cache
+		".bsp",        // Build Server Protocol
+		".coursier",   // Scala/Java dependency cache
 		// Bazel build outputs.
 		"bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles",
 		// CMake build artifacts (generated files, object directories).
@@ -400,7 +403,9 @@ func isBinaryFilename(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp", ".tiff", ".tif",
-		".ppm", ".pgm", ".icns", // uncommon image formats
+		".ppm", ".pgm", ".icns",                    // uncommon image formats
+		".heic", ".heif", ".avif", ".jxl",           // modern image formats
+		".psd", ".ai", ".sketch", ".fig", ".blend", // design/3D files
 		".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".zst",
 		".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib", ".obj", ".wasm",
 		".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
@@ -409,7 +414,7 @@ func isBinaryFilename(name string) bool {
 		".aac", ".m4a", ".aiff", ".wma",                 // additional audio
 		".wmv", ".flv", ".webm",                         // additional video
 		".ttf", ".otf", ".woff", ".woff2", ".eot",
-		".sqlite", ".sqlite3", ".db", ".db3",
+		".sqlite", ".sqlite3", ".db", ".db3", ".mdb", ".accdb", // databases
 		".qcow2", ".img", ".iso", ".vmdk", ".vdi",      // disk images
 		".bin", ".dat", ".raw", ".pak",                  // generic binary
 		".lockb",                                        // binary lock files (Bun)
@@ -420,6 +425,7 @@ func isBinaryFilename(name string) bool {
 		".h5", ".hdf5", ".parquet", ".feather",          // data formats
 		".arrow", ".avro", ".orc",                       // columnar data formats
 		".cab", ".deb", ".rpm", ".snap", ".flatpak",     // packages
+		".lz4", ".lzo", ".br",                           // additional compression
 		".DS_Store", ".lock":                            // system/lock files
 		return true
 	}

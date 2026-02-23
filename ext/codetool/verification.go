@@ -501,6 +501,17 @@ func isVerificationString(cmd string) bool {
 		"wasm-pack test",
 		// Gleam.
 		"gleam test",
+		// Node.js built-in test runner (Node 18+).
+		"node --test",
+		// Clojure.
+		"lein test", "lein check",
+		"clj -M:test", "clj -X:test",
+		// Python coverage (runs tests under coverage).
+		"coverage run", "python3 -m coverage", "python -m coverage",
+		// Maven integration test lifecycle.
+		"mvn verify",
+		// Gradle comprehensive check.
+		"gradle check",
 	}
 
 	// Build/compile commands.
@@ -527,6 +538,14 @@ func isVerificationString(cmd string) bool {
 		"ghc ",
 		// Meson/Bazel build.
 		"meson compile", "bazel build",
+		// Modern CMake build (cmake --build <dir>).
+		"cmake --build",
+		// Clojure build.
+		"lein compile", "lein jar", "lein uberjar",
+		// D language.
+		"dmd ",
+		// MSBuild (.NET Framework).
+		"msbuild",
 	}
 
 	// Lint/check commands.
