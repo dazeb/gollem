@@ -53,6 +53,8 @@ func estimateTokens(messages []ModelMessage) int {
 					total += estimateStringTokens(p.Content)
 				case ToolCallPart:
 					total += estimateStringTokens(p.ArgsJSON)
+				case ThinkingPart:
+					total += estimateStringTokens(p.Content)
 				}
 			}
 		}

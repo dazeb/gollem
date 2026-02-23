@@ -87,6 +87,8 @@ func estimateMessageTokens(messages []core.ModelMessage) int {
 					total += len(p.Content) / 4
 				case core.ToolCallPart:
 					total += len(p.ArgsJSON) / 4
+				case core.ThinkingPart:
+					total += len(p.Content) / 4
 				}
 			}
 		}
