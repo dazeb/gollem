@@ -76,11 +76,21 @@ func Edit(opts ...Option) core.Tool {
 				return "", protectedFileError(params.Path)
 			}
 
-			data, err := os.ReadFile(path)
+			// Preserve existing file permissions so we don't strip
+			// executable bits when editing scripts. The write tool
+			// auto-sets 0o755 for scripts, but edit should preserve
+			// whatever permissions the file already has.
+			fi, err := os.Stat(path)
 			if err != nil {
 				if os.IsNotExist(err) {
 					return "", &core.ModelRetryError{Message: fmt.Sprintf("file not found: %s. Use the write tool to create new files.", params.Path)}
 				}
+				return "", fmt.Errorf("stat file: %w", err)
+			}
+			filePerm := fi.Mode().Perm()
+
+			data, err := os.ReadFile(path)
+			if err != nil {
 				return "", fmt.Errorf("read file: %w", err)
 			}
 
@@ -107,7 +117,7 @@ func Edit(opts ...Option) core.Tool {
 					if hasCRLF {
 						newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
 					}
-					if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
+					if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
 						return "", fmt.Errorf("write file: %w", err)
 					}
 					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -159,7 +169,7 @@ func Edit(opts ...Option) core.Tool {
 			if hasCRLF {
 				newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
 			}
-			if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
+			if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 
@@ -417,6 +427,8 @@ func MultiEdit(opts ...Option) core.Tool {
 			fileContents := make(map[string]string)
 			// Track which files had CRLF line endings for restoration on write.
 			fileCRLF := make(map[string]bool)
+			// Track original file permissions so we don't strip executable bits.
+			filePerms := make(map[string]os.FileMode)
 
 			for i, edit := range params.Edits {
 				if edit.Path == "" {
@@ -439,6 +451,11 @@ func MultiEdit(opts ...Option) core.Tool {
 				// in an earlier edit within this batch.
 				content, ok := fileContents[path]
 				if !ok {
+					fi, err := os.Stat(path)
+					if err != nil {
+						return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: %v", i, err)}
+					}
+					filePerms[path] = fi.Mode().Perm()
 					data, err := os.ReadFile(path)
 					if err != nil {
 						return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: %v", i, err)}
@@ -495,7 +512,11 @@ func MultiEdit(opts ...Option) core.Tool {
 				if fileCRLF[pw.path] {
 					writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 				}
-				if err := os.WriteFile(pw.path, []byte(writeContent), 0o644); err != nil {
+				perm := filePerms[pw.path]
+				if perm == 0 {
+					perm = 0o644
+				}
+				if err := os.WriteFile(pw.path, []byte(writeContent), perm); err != nil {
 					return "", fmt.Errorf("edit[%d]: write file: %w", i, err)
 				}
 				if pw.message != "" {

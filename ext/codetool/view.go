@@ -129,6 +129,14 @@ func View(opts ...Option) core.Tool {
 			result := strings.Join(lines, "\n")
 			if lineNum >= offset+limit-1 {
 				result += fmt.Sprintf("\n... (%d total lines, showing %d-%d)", lineNum, offset, offset+len(lines)-1)
+			} else if offset > 1 {
+				// Show total line count even when not truncated at the end,
+				// if the user started at an offset.
+				result += fmt.Sprintf("\n(%d total lines, showing %d-%d)", lineNum, offset, offset+len(lines)-1)
+			} else {
+				// Show total line count for full file reads to help agents
+				// plan reading strategies without needing `wc -l`.
+				result += fmt.Sprintf("\n(%d lines)", lineNum)
 			}
 
 			// Warn about minified files: very few lines relative to file size

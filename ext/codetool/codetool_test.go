@@ -10904,3 +10904,69 @@ func TestCompilationErrorHint_Luac(t *testing.T) {
 	}
 }
 
+func TestEdit_PreservesFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	// Create an executable script.
+	scriptPath := filepath.Join(dir, "run.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\necho hello\n"), 0o755)
+
+	tool := Edit(WithWorkDir(dir))
+	result := call(t, tool, `{"path": "run.sh", "old_string": "echo hello", "new_string": "echo world"}`)
+	assertContains(t, result, "Replaced 1")
+
+	// Verify permissions are preserved (not reset to 0644).
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perm := info.Mode().Perm()
+	if perm&0o111 == 0 {
+		t.Errorf("expected executable permissions to be preserved, got %o", perm)
+	}
+}
+
+func TestMultiEdit_PreservesFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "build.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\nmake all\n"), 0o755)
+
+	tool := MultiEdit(WithWorkDir(dir))
+	result := call(t, tool, `{"edits": [{"path": "build.sh", "old_string": "make all", "new_string": "make clean all"}]}`)
+	assertContains(t, result, "Replaced 1")
+
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perm := info.Mode().Perm()
+	if perm&0o111 == 0 {
+		t.Errorf("expected executable permissions to be preserved, got %o", perm)
+	}
+}
+
+func TestGrep_LongLinesTruncated(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file with a very long line (e.g., minified JS).
+	longLine := "var x=" + strings.Repeat("a", 5000) + ";"
+	os.WriteFile(filepath.Join(dir, "bundle.js"), []byte(longLine), 0o644)
+
+	tool := Grep(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "var x"}`)
+	assertContains(t, result, "bundle.js")
+	// Should be truncated — result should be much shorter than 5000 chars.
+	if len(result) > 3000 {
+		t.Errorf("expected grep output to truncate long lines, got %d chars", len(result))
+	}
+	assertContains(t, result, "...")
+}
+
+func TestView_ShowsTotalLineCount(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "small.txt"), []byte("line1\nline2\nline3\n"), 0o644)
+
+	tool := View(WithWorkDir(dir))
+	result := call(t, tool, `{"path": "small.txt"}`)
+	// Should show total line count even for fully-read files.
+	assertContains(t, result, "lines)")
+}
+

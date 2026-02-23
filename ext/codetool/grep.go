@@ -221,13 +221,21 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 					if j == i {
 						prefix = ">"
 					}
-					*matches = append(*matches, fmt.Sprintf("%s%s:%d: %s", prefix, relPath, j+1, allLines[j]))
+					lineText := allLines[j]
+					if len(lineText) > 2000 {
+						lineText = lineText[:2000] + "..."
+					}
+					*matches = append(*matches, fmt.Sprintf("%s%s:%d: %s", prefix, relPath, j+1, lineText))
 				}
 				if end-1 > lastContextEnd {
 					lastContextEnd = end - 1
 				}
 			} else {
-				*matches = append(*matches, fmt.Sprintf("%s:%d: %s", relPath, i+1, line))
+				lineText := line
+				if len(lineText) > 2000 {
+					lineText = lineText[:2000] + "..."
+				}
+				*matches = append(*matches, fmt.Sprintf("%s:%d: %s", relPath, i+1, lineText))
 			}
 		}
 	}
