@@ -378,6 +378,15 @@ func Bash(opts ...Option) core.Tool {
 			if hint := dockerHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := envVarHint(combinedOutput, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := downloadHint(combinedOutput, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := sedHint(combinedOutput, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Test and compilation tracking: detect stagnation, regression, and
 			// stale failures. Tracking always runs (even for short output) to
@@ -5879,6 +5888,155 @@ func isDestructiveTestCommand(cmd string) bool {
 	}
 
 	return false
+}
+
+// envVarHint detects missing environment variable errors.
+// Common in eval containers and local dev: commands fail because JAVA_HOME,
+// GOPATH, ANDROID_HOME, or custom env vars aren't set. The hint saves 1-2
+// turns of the agent trying to figure out what's missing.
+func envVarHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	// Bash "unbound variable" — set -u or set -e with unset var.
+	if strings.Contains(output, ": unbound variable") {
+		return "[hint: unbound variable — a required environment variable is not set. " +
+			"Check the script for ${VAR} references and export the variable: export VAR=value]"
+	}
+
+	// Common env var not-set patterns from various languages and tools.
+	envPatterns := []string{
+		"java_home", "gopath", "goroot", "android_home", "android_sdk",
+		"ndk_home", "flutter_home", "dart_home",
+		"node_path", "npm_config_prefix",
+		"cargo_home", "rustup_home",
+		"virtual_env", "conda_prefix",
+		"database_url", "redis_url", "mongodb_uri",
+	}
+	for _, env := range envPatterns {
+		if strings.Contains(lower, env) && (strings.Contains(lower, "not set") ||
+			strings.Contains(lower, "not defined") ||
+			strings.Contains(lower, "is not configured") ||
+			strings.Contains(lower, "must be set") ||
+			strings.Contains(lower, "environment variable")) {
+			envUpper := strings.ToUpper(strings.ReplaceAll(env, "_", "_"))
+			return fmt.Sprintf("[hint: %s environment variable is not set. "+
+				"Find the install path and set it: export %s=/path/to/installation]",
+				envUpper, envUpper)
+		}
+	}
+
+	// Generic "environment variable not set/defined" pattern.
+	if (strings.Contains(lower, "environment variable") || strings.Contains(lower, "env var")) &&
+		(strings.Contains(lower, "not set") || strings.Contains(lower, "not defined") ||
+			strings.Contains(lower, "not found") || strings.Contains(lower, "is required") ||
+			strings.Contains(lower, "must be set") || strings.Contains(lower, "is missing")) {
+		return "[hint: a required environment variable is not set. Check the error message for the variable name " +
+			"and set it with: export VAR_NAME=value]"
+	}
+
+	// Python KeyError on env var access (os.environ['FOO']).
+	if strings.Contains(output, "KeyError:") && strings.Contains(lower, "os.environ") {
+		return "[hint: Python KeyError on os.environ — a required environment variable is missing. " +
+			"Set it with: export VAR_NAME=value, or use os.environ.get('VAR', 'default') in the code]"
+	}
+
+	return ""
+}
+
+// downloadHint detects curl, wget, and other download tool failures.
+// Common in eval containers with limited network, or when downloading assets.
+func downloadHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	// curl-specific errors (curl exit codes are well-defined).
+	if strings.Contains(lower, "curl:") || strings.Contains(lower, "curl error") {
+		if strings.Contains(lower, "could not resolve host") {
+			return "[hint: curl DNS resolution failed — the hostname can't be resolved. " +
+				"Check internet connectivity, or try a different mirror/URL. " +
+				"If offline, look for locally cached files instead.]"
+		}
+		if strings.Contains(lower, "failed to connect") || strings.Contains(lower, "connection refused") {
+			return "[hint: curl connection failed — the server refused the connection. " +
+				"Check if the URL is correct and the service is running. " +
+				"For local services, verify the port with: ss -tlnp | grep <port>]"
+		}
+		if strings.Contains(lower, "operation timed out") || strings.Contains(lower, "connection timed out") {
+			return "[hint: curl timed out — try increasing timeout with: curl --connect-timeout 30 --max-time 120 <url>, " +
+				"or try a different mirror/URL]"
+		}
+		if strings.Contains(lower, "ssl") || strings.Contains(lower, "certificate") {
+			return "[hint: curl SSL/certificate error — try: curl -k <url> (skip verification), " +
+				"or update CA certificates: apt-get install -y ca-certificates]"
+		}
+		if strings.Contains(lower, "404") || strings.Contains(lower, "not found") {
+			return "[hint: curl got 404 Not Found — the URL doesn't exist. " +
+				"Check the URL for typos, or find the correct download URL from the project's releases page]"
+		}
+	}
+
+	// wget-specific errors.
+	if strings.Contains(lower, "wget:") || strings.Contains(lower, "wget error") {
+		if strings.Contains(lower, "unable to resolve") {
+			return "[hint: wget DNS resolution failed — check internet connectivity or try a different URL]"
+		}
+		if strings.Contains(lower, "failed") && strings.Contains(lower, "retrying") {
+			return "[hint: wget download failed — try with --no-check-certificate if it's an SSL issue, " +
+				"or use curl as an alternative]"
+		}
+	}
+
+	// Generic download failure patterns (Python requests, Node fetch, etc.).
+	if strings.Contains(lower, "connectionerror") && (strings.Contains(lower, "requests") || strings.Contains(lower, "urllib")) {
+		return "[hint: Python HTTP request failed — check network connectivity. " +
+			"If offline, look for cached data or local alternatives]"
+	}
+	if strings.Contains(lower, "fetch failed") || (strings.Contains(lower, "enotfound") && strings.Contains(lower, "getaddrinfo")) {
+		return "[hint: network fetch failed — DNS resolution or connection error. " +
+			"Check if the URL is correct and network is available]"
+	}
+
+	return ""
+}
+
+// sedHint detects common sed syntax and usage errors.
+// Agents frequently misuse sed (wrong delimiters, missing flags, escaping issues).
+// This saves 1-2 turns of trial-and-error.
+func sedHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	// sed: unterminated / unmatched / incomplete expression.
+	if strings.Contains(lower, "sed:") || strings.Contains(lower, "sed -") {
+		if strings.Contains(lower, "unterminated") {
+			return "[hint: sed syntax error — unterminated expression. Check that all s/old/new/ delimiters are balanced. " +
+				"If your pattern contains '/', use a different delimiter: s|old|new|g. " +
+				"IMPORTANT: prefer the edit tool over sed for file modifications — it's safer and more reliable.]"
+		}
+		if strings.Contains(lower, "unknown option") || strings.Contains(lower, "invalid option") {
+			return "[hint: sed option error — on macOS, use sed -i '' (empty string arg) instead of sed -i. " +
+				"On Linux, sed -i works without the extra argument. " +
+				"IMPORTANT: prefer the edit tool over sed for file modifications.]"
+		}
+		if strings.Contains(lower, "no such file") {
+			return "[hint: sed can't find the target file. Check the file path. " +
+				"IMPORTANT: prefer the edit tool for modifying files — it has better error handling.]"
+		}
+		// Generic sed error.
+		if strings.Contains(lower, "expression") || strings.Contains(lower, "command") {
+			return "[hint: sed syntax error — check delimiter escaping and expression format. " +
+				"IMPORTANT: prefer the edit tool over sed for file modifications — it handles whitespace and multi-line edits safely.]"
+		}
+	}
+
+	return ""
 }
 
 // isTransientBashFailure returns true if the bash output suggests a transient

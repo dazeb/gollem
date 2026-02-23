@@ -125,6 +125,39 @@ func Edit(opts ...Option) core.Tool {
 					return result, nil
 				}
 
+				// Auto-correct leading/trailing blank lines: models often include
+				// extra blank lines at the start or end of old_string that don't
+				// exist in the file. Strip them and retry — this is the #2 edit
+				// failure after whitespace mismatches.
+				if trimmedOld, trimmedNew, ok := autoCorrectBlankLines(content, params.OldString, params.NewString); ok {
+					// Try exact match with stripped version first.
+					if strings.Count(content, trimmedOld) == 1 {
+						newContent := strings.Replace(content, trimmedOld, trimmedNew, 1)
+						if hasCRLF {
+							newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+						}
+						if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+							return "", fmt.Errorf("write file: %w", err)
+						}
+						result := editResultWithContext(newContent, trimmedNew, 1, params.Path)
+						result += "\n[auto-corrected extra blank lines in old_string]"
+						return result, nil
+					}
+					// Also try whitespace auto-correct on the stripped version.
+					if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, trimmedOld, trimmedNew); ok {
+						newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+						if hasCRLF {
+							newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+						}
+						if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+							return "", fmt.Errorf("write file: %w", err)
+						}
+						result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+						result += "\n[auto-corrected blank lines and whitespace]"
+						return result, nil
+					}
+				}
+
 				msg := fmt.Sprintf("old_string not found in %s.", params.Path)
 
 				// Check for whitespace-only mismatch that couldn't be auto-corrected
@@ -488,6 +521,9 @@ func MultiEdit(opts ...Option) core.Tool {
 					if actualOld, adjustedNew, okWs := autoCorrectWhitespace(content, edit.OldString, edit.NewString); okWs {
 						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected whitespace mismatch", i)
+					} else if trimmedOld, trimmedNew, okBl := autoCorrectBlankLines(content, edit.OldString, edit.NewString); okBl && strings.Count(content, trimmedOld) == 1 {
+						newContent = strings.Replace(content, trimmedOld, trimmedNew, 1)
+						msg = fmt.Sprintf("edit[%d]: auto-corrected extra blank lines", i)
 					} else {
 						errMsg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
 						if wsHint := detectWhitespaceMismatch(content, edit.OldString); wsHint != "" {
@@ -764,6 +800,63 @@ func fileSnippetForEdit(content, search string) string {
 		b.WriteString("       ...\n")
 	}
 	return b.String()
+}
+
+// autoCorrectBlankLines strips leading and trailing blank lines from old_string
+// and corresponding lines from new_string. Models often include extra blank lines
+// at boundaries that don't exist in the file. Returns the trimmed strings and
+// true if any blank lines were stripped.
+func autoCorrectBlankLines(content, oldStr, newStr string) (trimmedOld, trimmedNew string, ok bool) {
+	oldLines := strings.Split(oldStr, "\n")
+	newLines := strings.Split(newStr, "\n")
+
+	// Count leading blank lines in old_string.
+	leadingBlanks := 0
+	for _, line := range oldLines {
+		if strings.TrimSpace(line) == "" {
+			leadingBlanks++
+		} else {
+			break
+		}
+	}
+
+	// Count trailing blank lines in old_string.
+	trailingBlanks := 0
+	for i := len(oldLines) - 1; i >= leadingBlanks; i-- {
+		if strings.TrimSpace(oldLines[i]) == "" {
+			trailingBlanks++
+		} else {
+			break
+		}
+	}
+
+	if leadingBlanks == 0 && trailingBlanks == 0 {
+		return "", "", false // nothing to strip
+	}
+
+	// Strip the same number of leading/trailing lines from old and new.
+	oldEnd := len(oldLines) - trailingBlanks
+	if oldEnd <= leadingBlanks {
+		return "", "", false // all blank lines
+	}
+	trimmedOld = strings.Join(oldLines[leadingBlanks:oldEnd], "\n")
+
+	// Strip corresponding lines from new_string. If new has fewer lines
+	// than we need to strip, just return what we can.
+	newStart := min(leadingBlanks, len(newLines))
+	newEnd := len(newLines) - min(trailingBlanks, len(newLines)-newStart)
+	if newEnd <= newStart {
+		trimmedNew = ""
+	} else {
+		trimmedNew = strings.Join(newLines[newStart:newEnd], "\n")
+	}
+
+	// Only return true if the trimmed old_string is different from the original
+	// (i.e., we actually stripped something).
+	if trimmedOld == oldStr {
+		return "", "", false
+	}
+	return trimmedOld, trimmedNew, true
 }
 
 // indentWidth computes the visual width of an indent string (tabs = 4 cols).
