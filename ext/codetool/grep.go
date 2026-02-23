@@ -318,7 +318,7 @@ func searchFileExists(ctx context.Context, absPath, relPath string, re *regexp.R
 func isSkippableDir(name string) bool {
 	switch name {
 	case ".git", ".svn", ".hg", // version control
-		"node_modules", "__pycache__", ".tox", "vendor",
+		"node_modules", "__pycache__", "__pypackages__", ".tox", "vendor",
 		// Build output directories.
 		"build",     // Gradle, generic
 		"_build",    // OCaml (dune), Elixir (mix)
@@ -403,7 +403,7 @@ func isSkippableDir(name string) bool {
 func isBinaryFilename(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
-	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp", ".tiff", ".tif",
+	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff", ".tif",
 		".ppm", ".pgm", ".icns",                    // uncommon image formats
 		".heic", ".heif", ".avif", ".jxl",           // modern image formats
 		".psd", ".ai", ".sketch", ".fig", ".blend", // design/3D files
