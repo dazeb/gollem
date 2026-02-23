@@ -4103,23 +4103,9 @@ func detectExpectedWorkingDir(workDir string) string {
 	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
 
 	for _, td := range testDirs {
-		entries, err := os.ReadDir(td)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !isSourceFile(entry.Name()) {
-				continue
-			}
-			info, _ := entry.Info()
-			if info == nil || info.Size() > 30000 {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
-			if err != nil {
-				continue
-			}
-			content := string(data)
+		var allContent []string
+		collectTestFileContents(td, &allContent, 0, 2)
+		for _, content := range allContent {
 			for _, line := range strings.Split(content, "\n") {
 				trimmed := strings.TrimSpace(line)
 				if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
@@ -5759,23 +5745,10 @@ func detectTestPorts(workDir string) []string {
 func detectHashComparisonTask(workDir string) bool {
 	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
 	for _, td := range testDirs {
-		entries, err := os.ReadDir(td)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !isSourceFile(entry.Name()) {
-				continue
-			}
-			info, _ := entry.Info()
-			if info == nil || info.Size() > 20000 {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
-			if err != nil {
-				continue
-			}
-			content := strings.ToLower(string(data))
+		var allContent []string
+		collectTestFileContents(td, &allContent, 0, 2)
+		for _, raw := range allContent {
+			content := strings.ToLower(raw)
 			if strings.Contains(content, "md5") || strings.Contains(content, "sha256") ||
 				strings.Contains(content, "sha1") || strings.Contains(content, "hashlib") ||
 				strings.Contains(content, "filecmp") || strings.Contains(content, "file_hash") ||
