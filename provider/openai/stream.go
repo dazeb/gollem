@@ -90,12 +90,15 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		line, err := s.reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				s.done = true
-				// Finalize any remaining parts.
-				s.finalizeAll()
-				return nil, io.EOF
+				if strings.TrimSpace(line) == "" {
+					s.done = true
+					s.finalizeAll()
+					return nil, io.EOF
+				}
+				// Data received with EOF; process this line, finalize on next read.
+			} else {
+				return nil, err
 			}
-			return nil, err
 		}
 
 		line = strings.TrimSpace(line)
