@@ -2743,6 +2743,21 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Zig test: "All N tests passed." (success-only format, no assertions/test cases
+	// like Catch2). Zig failure format "N passed; N skipped; N failed." is already
+	// caught by the pytest parser above.
+	if strings.Contains(lower, "all") && strings.Contains(lower, "tests passed") &&
+		!strings.Contains(lower, "assertion") && !strings.Contains(lower, "test case") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.HasPrefix(lineLower, "all ") && strings.Contains(lineLower, "tests passed") {
+				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
 	// TAP (Test Anything Protocol): used by Perl prove, Node tap/tape, pg_prove, etc.
 	// Format: "ok 1 - test name" / "not ok 2 - test name", plan "1..N"
 	if strings.Contains(output, "ok ") && (strings.Contains(output, "1..") || strings.Contains(output, "not ok")) {
@@ -3591,6 +3606,25 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				failed = failures
 				ok = true
 				return
+			}
+		}
+	}
+
+	// Zig test: "All N tests passed." (success-only format).
+	// Zig failure format "N passed; N skipped; N failed." is caught by pytest above.
+	if strings.Contains(lower, "all") && strings.Contains(lower, "tests passed") &&
+		!strings.Contains(lower, "assertion") && !strings.Contains(lower, "test case") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			lineLower := strings.ToLower(strings.TrimSpace(lines[i]))
+			if strings.HasPrefix(lineLower, "all ") && strings.Contains(lineLower, "tests passed") {
+				words := strings.Fields(lineLower)
+				if len(words) >= 3 && isNumeric(words[1]) {
+					var n int
+					fmt.Sscanf(words[1], "%d", &n)
+					passed = n
+					ok = true
+					return
+				}
 			}
 		}
 	}

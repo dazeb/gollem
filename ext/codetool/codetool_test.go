@@ -7506,3 +7506,47 @@ Ran 5 tests across 2 files. [1.00s]`
 	}
 }
 
+func TestExtractTestCounts_Zig(t *testing.T) {
+	output := `Test [1/5] test.add... OK
+Test [2/5] test.remove... OK
+Test [3/5] test.update... OK
+Test [4/5] test.delete... OK
+Test [5/5] test.list... OK
+All 5 tests passed.`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected extractTestCounts to parse Zig output")
+	}
+	if p != 5 || f != 0 {
+		t.Errorf("expected 5 passed 0 failed, got %d passed %d failed", p, f)
+	}
+}
+
+func TestExtractTestCounts_Zig_LargeCount(t *testing.T) {
+	output := `All 42 tests passed.`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected extractTestCounts to parse Zig output")
+	}
+	if p != 42 || f != 0 {
+		t.Errorf("expected 42 passed 0 failed, got %d passed %d failed", p, f)
+	}
+}
+
+func TestTestResultSummary_Zig(t *testing.T) {
+	output := `Test [1/3] test.parse_config... OK
+Test [2/3] test.validate_input... OK
+Test [3/3] test.process_data... OK
+All 3 tests passed.`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for Zig output")
+	}
+	if !strings.Contains(summary, "All 3 tests passed") {
+		t.Errorf("expected summary to contain 'All 3 tests passed', got: %s", summary)
+	}
+}
+
