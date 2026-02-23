@@ -6922,3 +6922,165 @@ collect2: error: ld returned 1 exit status`
 	}
 }
 
+func TestSignalHint_SIGPIPE(t *testing.T) {
+	hint := signalHint(141)
+	if hint == "" {
+		t.Fatal("expected SIGPIPE hint for exit code 141")
+	}
+	if !strings.Contains(hint, "SIGPIPE") {
+		t.Errorf("expected SIGPIPE in hint, got: %q", hint)
+	}
+	if !strings.Contains(hint, "broken pipe") || !strings.Contains(strings.ToLower(hint), "harmless") {
+		t.Errorf("expected guidance that broken pipe is usually harmless, got: %q", hint)
+	}
+}
+
+func TestShellLimitHint_ArgumentListTooLong(t *testing.T) {
+	output := "bash: /usr/bin/rm: Argument list too long"
+	hint := shellLimitHint(output, 126)
+	if hint == "" {
+		t.Fatal("expected hint for 'Argument list too long'")
+	}
+	if !strings.Contains(hint, "find") || !strings.Contains(hint, "xargs") {
+		t.Errorf("expected find/xargs advice, got: %q", hint)
+	}
+}
+
+func TestShellLimitHint_TooManyOpenFiles(t *testing.T) {
+	output := "OSError: [Errno 24] Too many open files: '/tmp/data.txt'"
+	hint := shellLimitHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for 'Too many open files'")
+	}
+	if !strings.Contains(hint, "ulimit") {
+		t.Errorf("expected ulimit advice, got: %q", hint)
+	}
+}
+
+func TestShellLimitHint_EMFILE(t *testing.T) {
+	output := "Error: EMFILE: too many open files, watch"
+	hint := shellLimitHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for EMFILE")
+	}
+}
+
+func TestPerlModuleHint(t *testing.T) {
+	output := `Can't locate JSON/PP.pm in @INC (you may need to install the JSON::PP module) (@INC contains: ...)`
+	hint := perlModuleHint(output, 2)
+	if hint == "" {
+		t.Fatal("expected hint for missing Perl module")
+	}
+	if !strings.Contains(hint, "JSON::PP") {
+		t.Errorf("expected JSON::PP module name, got: %q", hint)
+	}
+	if !strings.Contains(hint, "cpanm") {
+		t.Errorf("expected cpanm install advice, got: %q", hint)
+	}
+}
+
+func TestPerlModuleHint_NoError(t *testing.T) {
+	hint := perlModuleHint("All tests passed", 0)
+	if hint != "" {
+		t.Errorf("expected no hint on exit code 0, got: %q", hint)
+	}
+}
+
+func TestExtractTAPCounts_BasicOkNotOk(t *testing.T) {
+	output := `1..5
+ok 1 - should add numbers
+ok 2 - should subtract
+not ok 3 - should multiply
+ok 4 - should divide
+not ok 5 - should modulo`
+
+	p, f, ok := extractTAPCounts(output)
+	if !ok {
+		t.Fatal("expected TAP counts to be detected")
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed, got %d", p)
+	}
+	if f != 2 {
+		t.Errorf("expected 2 failed, got %d", f)
+	}
+}
+
+func TestExtractTAPCounts_NodeSummary(t *testing.T) {
+	output := `TAP version 13
+# test addition
+ok 1 should add
+# test subtraction
+ok 2 should subtract
+# tests 2
+# pass 2
+# fail 0
+# ok`
+
+	p, f, ok := extractTAPCounts(output)
+	if !ok {
+		t.Fatal("expected TAP counts from summary")
+	}
+	if p != 2 {
+		t.Errorf("expected 2 passed, got %d", p)
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failed, got %d", f)
+	}
+}
+
+func TestExtractTAPCounts_AllPassing(t *testing.T) {
+	output := `1..3
+ok 1 - first test
+ok 2 - second test
+ok 3 - third test`
+
+	p, f, ok := extractTAPCounts(output)
+	if !ok {
+		t.Fatal("expected TAP counts")
+	}
+	if p != 3 || f != 0 {
+		t.Errorf("expected 3/0, got %d/%d", p, f)
+	}
+}
+
+func TestTestResultSummary_TAP(t *testing.T) {
+	output := `1..3
+ok 1 - first
+not ok 2 - second
+ok 3 - third`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected TAP summary")
+	}
+	if !strings.Contains(summary, "TAP") {
+		t.Errorf("expected 'TAP' in summary, got: %q", summary)
+	}
+	if !strings.Contains(summary, "2/3") {
+		t.Errorf("expected 2/3 passed in summary, got: %q", summary)
+	}
+	if !strings.Contains(summary, "not ok 2") {
+		t.Errorf("expected first failure detail, got: %q", summary)
+	}
+}
+
+func TestExtractTestCounts_TAP(t *testing.T) {
+	output := `1..4
+ok 1 - test A
+not ok 2 - test B
+ok 3 - test C
+ok 4 - test D`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected TAP test counts")
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed, got %d", p)
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failed, got %d", f)
+	}
+}
+

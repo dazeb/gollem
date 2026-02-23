@@ -436,8 +436,10 @@ func isVerificationString(cmd string) bool {
 		"mix test", "mix compile",
 		// Zig build.
 		"zig build", "zig test",
-		// Perl.
+		// Perl / TAP.
 		"prove ", "perl -e",
+		"pg_prove",         // PostgreSQL TAP runner
+		"npx tape", "npx tap", // Node.js TAP runners
 		// R language.
 		"rscript ", "rscript -e",
 		// Swift.

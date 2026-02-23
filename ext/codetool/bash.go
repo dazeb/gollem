@@ -343,6 +343,12 @@ func Bash(opts ...Option) core.Tool {
 			if hint := sslHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := shellLimitHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := perlModuleHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -860,6 +866,12 @@ func signalHint(exitCode int) string {
 	case 134:
 		return "[hint: process aborted (SIGABRT) — likely an assertion failure or double-free. " +
 			"Check: assert() failures, memory corruption, C++ exception in destructor]"
+	case 141:
+		return "[hint: process received SIGPIPE (broken pipe) — this usually happens when piping " +
+			"to head, grep -m1, or a process that exits early. This is typically HARMLESS — the " +
+			"program's output was likely correct before the pipe broke. If the actual output was " +
+			"captured correctly, ignore this error. If you need to suppress it: redirect stderr " +
+			"with 2>/dev/null or use `set +o pipefail` in bash scripts]"
 	}
 	return ""
 }
@@ -1928,6 +1940,65 @@ func sslHint(output string, exitCode int) string {
 	return ""
 }
 
+// shellLimitHint detects common shell/OS resource limit errors and provides fixes.
+// These are general-purpose errors that waste turns if the agent has to diagnose them.
+func shellLimitHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	// "Argument list too long" (E2BIG) — common when glob expands to too many files.
+	// e.g., `rm *.log` in a directory with 100K log files.
+	if strings.Contains(lower, "argument list too long") {
+		return "[hint: 'Argument list too long' — the shell glob expanded to too many files. " +
+			"Use find with -exec or xargs instead:\n" +
+			"  find . -name '*.log' -delete              # delete matching files\n" +
+			"  find . -name '*.txt' | xargs rm            # rm via xargs\n" +
+			"  find . -name '*.py' -exec command {} \\;   # exec on each file\n" +
+			"  ls | head -100                             # list first 100 files]"
+	}
+
+	// "Too many open files" (EMFILE/ENFILE) — process ran out of file descriptors.
+	if strings.Contains(lower, "too many open files") || strings.Contains(output, "EMFILE") ||
+		strings.Contains(output, "ENFILE") {
+		return "[hint: 'Too many open files' — process exhausted file descriptor limit. Fix: " +
+			"(1) ulimit -n 65535 (increase limit for current shell), " +
+			"(2) close files in your code (use 'with open()' in Python, defer f.Close() in Go), " +
+			"(3) check for file descriptor leaks (opening files in loops without closing)]"
+	}
+
+	return ""
+}
+
+// perlModuleHint detects Perl module load failures and suggests installation.
+// Perl's "Can't locate Foo/Bar.pm" is the equivalent of Python's ModuleNotFoundError.
+func perlModuleHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Perl: "Can't locate Foo/Bar.pm in @INC"
+	if idx := strings.Index(output, "Can't locate "); idx >= 0 {
+		rest := output[idx+len("Can't locate "):]
+		end := strings.Index(rest, " in @INC")
+		if end < 0 {
+			end = strings.IndexAny(rest, " \n")
+		}
+		if end > 0 {
+			module := rest[:end]
+			// Convert path to module name: Foo/Bar.pm → Foo::Bar
+			modName := strings.TrimSuffix(module, ".pm")
+			modName = strings.ReplaceAll(modName, "/", "::")
+			return fmt.Sprintf("[hint: missing Perl module '%s' — install with: "+
+				"cpanm %s || apt-get install -y lib%s-perl (lowercase, dashes for ::)]",
+				modName, modName, strings.ToLower(strings.ReplaceAll(modName, "::", "-")))
+		}
+	}
+
+	return ""
+}
+
 // nodeErrorHint extracts actionable information from Node.js errors.
 // Maps MODULE_NOT_FOUND to npm install hints and extracts file:line from stacks.
 func nodeErrorHint(output string, exitCode int) string {
@@ -2455,6 +2526,33 @@ func testResultSummary(output string) string {
 			if strings.Contains(lineLower, "tests passed") && strings.Contains(lineLower, "tests failed") {
 				return "[test summary: " + line + "]"
 			}
+		}
+	}
+
+	// TAP (Test Anything Protocol): used by Perl prove, Node tap/tape, pg_prove, etc.
+	// Format: "ok 1 - test name" / "not ok 2 - test name", plan "1..N"
+	if strings.Contains(output, "ok ") && (strings.Contains(output, "1..") || strings.Contains(output, "not ok")) {
+		p, f, tapOK := extractTAPCounts(output)
+		if tapOK {
+			total := p + f
+			summary := fmt.Sprintf("[test summary: TAP %d/%d passed", p, total)
+			if f > 0 {
+				summary += fmt.Sprintf(", %d failed", f)
+			}
+			summary += "]"
+			// Extract first failing test name.
+			for _, line := range strings.Split(output, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "not ok ") {
+					detail := trimmed
+					if len(detail) > 150 {
+						detail = detail[:150] + "..."
+					}
+					summary += "\n[first failure: " + detail + "]"
+					break
+				}
+			}
+			return summary
 		}
 	}
 
@@ -3180,6 +3278,16 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
+	// TAP (Test Anything Protocol): "ok 1 - desc" / "not ok 2 - desc"
+	if strings.Contains(output, "ok ") && (strings.Contains(output, "1..") || strings.Contains(output, "not ok")) {
+		if p, f, tapOK := extractTAPCounts(output); tapOK {
+			passed = p
+			failed = f
+			ok = true
+			return
+		}
+	}
+
 	// Count PASS/FAIL lines.
 	passCount := strings.Count(strings.ToUpper(output), "\nPASS")
 	failCount := strings.Count(strings.ToUpper(output), "\nFAIL")
@@ -3191,6 +3299,64 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 	}
 
 	return 0, 0, false
+}
+
+// extractTAPCounts parses TAP (Test Anything Protocol) output and returns
+// pass/fail counts. TAP is used by Perl prove, Node tap/tape, pg_prove,
+// and many other test tools across languages.
+//
+// TAP format:
+//
+//	1..5
+//	ok 1 - test description
+//	not ok 2 - failing test
+//	ok 3 - another test
+//
+// Also handles TAP summary lines: "# tests 5" / "# pass 3" / "# fail 2"
+func extractTAPCounts(output string) (passed, failed int, ok bool) {
+	lines := strings.Split(output, "\n")
+
+	// First check for TAP summary comments (Node tap/tape style):
+	// "# tests 5", "# pass 3", "# fail 2"
+	var summaryTests, summaryPass, summaryFail int
+	hasSummary := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "# tests ") {
+			fmt.Sscanf(lower[len("# tests "):], "%d", &summaryTests)
+			hasSummary = true
+		} else if strings.HasPrefix(lower, "# pass ") {
+			fmt.Sscanf(lower[len("# pass "):], "%d", &summaryPass)
+			hasSummary = true
+		} else if strings.HasPrefix(lower, "# fail ") {
+			fmt.Sscanf(lower[len("# fail "):], "%d", &summaryFail)
+			hasSummary = true
+		}
+	}
+	if hasSummary && summaryTests > 0 {
+		return summaryPass, summaryFail, true
+	}
+
+	// Count "ok N" and "not ok N" lines.
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "not ok ") {
+			// Verify it's followed by a number (TAP format).
+			rest := strings.TrimSpace(trimmed[7:])
+			if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
+				failed++
+				ok = true
+			}
+		} else if strings.HasPrefix(trimmed, "ok ") {
+			rest := strings.TrimSpace(trimmed[3:])
+			if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
+				passed++
+				ok = true
+			}
+		}
+	}
+	return
 }
 
 // extractAfter returns the substring after the given prefix in s.
