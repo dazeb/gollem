@@ -331,6 +331,12 @@ func Bash(opts ...Option) core.Tool {
 			if hint := archiveHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := databaseHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := memoryHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -1681,6 +1687,113 @@ func archiveHint(output string, exitCode int) string {
 		if strings.Contains(output, "already has .gz suffix") {
 			return "[hint: gunzip: file already decompressed. Use the file without .gz extension]"
 		}
+	}
+
+	return ""
+}
+
+// databaseHint detects common database errors (SQLite, PostgreSQL, MySQL) and
+// provides actionable fix suggestions. Database tasks are common in coding
+// benchmarks and agents waste turns debugging connection/schema issues.
+func databaseHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+	lower := strings.ToLower(output)
+
+	// SQLite errors.
+	if strings.Contains(lower, "sqlite") || strings.Contains(lower, "operationalerror") {
+		if strings.Contains(lower, "no such table") {
+			return "[hint: SQLite table missing — your schema hasn't been applied. " +
+				"Create tables before inserting data. Check if there's a schema.sql or migrations file to run first]"
+		}
+		if strings.Contains(lower, "database is locked") {
+			return "[hint: SQLite database is locked — another process has an open transaction. " +
+				"Close other connections, use WAL mode (PRAGMA journal_mode=WAL), or add timeout: sqlite3_busy_timeout()]"
+		}
+		if strings.Contains(lower, "unable to open database") || strings.Contains(lower, "no such file or directory") {
+			return "[hint: SQLite database file not found. Check: (1) path is correct, (2) directory exists (mkdir -p), " +
+				"(3) file permissions]"
+		}
+		if strings.Contains(lower, "near \"") && strings.Contains(lower, "syntax error") {
+			return "[hint: SQL syntax error — check your query. Common causes: missing quotes around strings, " +
+				"reserved words used as column names (wrap in double quotes or backticks), missing commas]"
+		}
+	}
+
+	// PostgreSQL errors.
+	if strings.Contains(lower, "psycopg") || strings.Contains(lower, "postgresql") || strings.Contains(lower, "pg_") ||
+		strings.Contains(output, "FATAL:") && strings.Contains(lower, "role") {
+		if strings.Contains(lower, "connection refused") {
+			return "[hint: PostgreSQL not running. Start with: service postgresql start. " +
+				"If that fails: pg_ctlcluster <version> main start, or su - postgres -c 'pg_ctl start -D /var/lib/postgresql/data']"
+		}
+		if strings.Contains(lower, "role") && strings.Contains(lower, "does not exist") {
+			return "[hint: PostgreSQL role missing. Create with: su - postgres -c \"createuser --superuser <username>\". " +
+				"Or use the postgres superuser: psql -U postgres]"
+		}
+		if strings.Contains(lower, "database") && strings.Contains(lower, "does not exist") {
+			return "[hint: PostgreSQL database missing. Create with: su - postgres -c \"createdb <dbname>\". " +
+				"Or: psql -U postgres -c 'CREATE DATABASE <dbname>']"
+		}
+		if strings.Contains(lower, "password authentication failed") || strings.Contains(lower, "peer authentication failed") {
+			return "[hint: PostgreSQL auth failed. Options: " +
+				"(1) Edit pg_hba.conf to use 'trust' for local connections, " +
+				"(2) Set password: ALTER USER <user> PASSWORD '<pass>', " +
+				"(3) Use -U postgres with sudo/su]"
+		}
+	}
+
+	// MySQL/MariaDB errors.
+	if strings.Contains(lower, "mysql") || strings.Contains(lower, "mariadb") ||
+		strings.Contains(output, "ERROR 1") || strings.Contains(output, "ERROR 2") {
+		if strings.Contains(lower, "can't connect") || strings.Contains(lower, "connection refused") {
+			return "[hint: MySQL/MariaDB not running. Start with: service mysql start || service mariadb start. " +
+				"Check status with: mysqladmin ping]"
+		}
+		if strings.Contains(lower, "access denied") {
+			return "[hint: MySQL access denied. Try: mysql -u root (no password), or " +
+				"mysql -u root -p, or set up: mysqladmin -u root password '<newpass>']"
+		}
+		if strings.Contains(lower, "unknown database") {
+			return "[hint: MySQL database doesn't exist. Create with: mysql -u root -e 'CREATE DATABASE <dbname>']"
+		}
+	}
+
+	return ""
+}
+
+// memoryHint detects out-of-memory errors and segfaults, suggesting optimization
+// strategies. OOM is a common failure mode for agents processing large datasets
+// or running inefficient algorithms.
+func memoryHint(output string, exitCode int) string {
+	lower := strings.ToLower(output)
+
+	// Python MemoryError.
+	if strings.Contains(output, "MemoryError") {
+		return "[hint: Python MemoryError — your program ran out of RAM. Strategies: " +
+			"(1) Process data in chunks/streaming instead of loading all at once, " +
+			"(2) Use generators instead of lists, " +
+			"(3) Use numpy arrays instead of Python lists (10x less memory), " +
+			"(4) Delete large objects with 'del' when no longer needed, " +
+			"(5) For pandas: use read_csv(chunksize=N) or dtype optimizations]"
+	}
+
+	// OOM killer (Linux).
+	if exitCode == 137 || (strings.Contains(lower, "killed") && strings.Contains(lower, "memory")) ||
+		strings.Contains(lower, "out of memory") || strings.Contains(lower, "oom") && strings.Contains(lower, "kill") {
+		return "[hint: Process was killed (likely OOM). Your program uses too much memory. " +
+			"Reduce memory usage: (1) process data in streaming/chunked fashion, " +
+			"(2) use memory-efficient data structures, (3) avoid loading entire files into memory, " +
+			"(4) for C/C++: check for memory leaks with valgrind]"
+	}
+
+	// Segmentation fault.
+	if exitCode == 139 || strings.Contains(lower, "segmentation fault") || strings.Contains(lower, "segfault") {
+		return "[hint: Segmentation fault — your program accessed invalid memory. Common causes: " +
+			"(1) Array/buffer out of bounds, (2) NULL pointer dereference, (3) Use-after-free, " +
+			"(4) Stack overflow from deep recursion. Debug with: compile with -g and run under gdb, " +
+			"or add bounds checking. For C: use -fsanitize=address]"
 	}
 
 	return ""

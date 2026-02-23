@@ -6315,3 +6315,125 @@ tar: Error is not recoverable`
 	})
 }
 
+func TestDatabaseHint(t *testing.T) {
+	t.Run("sqlite no such table", func(t *testing.T) {
+		output := `sqlite3.OperationalError: no such table: users`
+		hint := databaseHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for missing SQLite table")
+		}
+		if !strings.Contains(hint, "schema") {
+			t.Errorf("expected schema suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("sqlite locked", func(t *testing.T) {
+		output := `sqlite3.OperationalError: database is locked`
+		hint := databaseHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for locked database")
+		}
+		if !strings.Contains(hint, "WAL") {
+			t.Errorf("expected WAL suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("postgres connection refused", func(t *testing.T) {
+		output := `psycopg2.OperationalError: could not connect to server: Connection refused
+	Is the server running on host "localhost" and accepting
+	TCP/IP connections on port 5432?`
+		hint := databaseHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for postgres connection refused")
+		}
+		if !strings.Contains(hint, "postgresql start") {
+			t.Errorf("expected start suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("postgres role does not exist", func(t *testing.T) {
+		output := `FATAL:  role "testuser" does not exist`
+		hint := databaseHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for missing postgres role")
+		}
+		if !strings.Contains(hint, "createuser") {
+			t.Errorf("expected createuser suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("mysql access denied", func(t *testing.T) {
+		output := `ERROR 1045 (28000): Access denied for user 'root'@'localhost' (using password: NO)
+mysql connection failed`
+		hint := databaseHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for MySQL access denied")
+		}
+		if !strings.Contains(hint, "access denied") {
+			t.Errorf("expected access denied hint, got: %s", hint)
+		}
+	})
+
+	t.Run("sqlite sql syntax error", func(t *testing.T) {
+		output := `sqlite3.OperationalError: near "FROM": syntax error`
+		hint := databaseHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for SQL syntax error")
+		}
+		if !strings.Contains(hint, "syntax error") {
+			t.Errorf("expected syntax error hint, got: %s", hint)
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := databaseHint("sqlite3.OperationalError: no such table: users", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+}
+
+func TestMemoryHint(t *testing.T) {
+	t.Run("python memory error", func(t *testing.T) {
+		output := `Traceback (most recent call last):
+  File "solution.py", line 42, in <module>
+MemoryError`
+		hint := memoryHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for MemoryError")
+		}
+		if !strings.Contains(hint, "chunks") {
+			t.Errorf("expected chunked processing suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("oom killed", func(t *testing.T) {
+		output := `Killed`
+		hint := memoryHint(output, 137)
+		if hint == "" {
+			t.Fatal("expected hint for OOM kill (exit 137)")
+		}
+		if !strings.Contains(hint, "memory") {
+			t.Errorf("expected memory hint, got: %s", hint)
+		}
+	})
+
+	t.Run("segfault", func(t *testing.T) {
+		output := `Segmentation fault (core dumped)`
+		hint := memoryHint(output, 139)
+		if hint == "" {
+			t.Fatal("expected hint for segfault")
+		}
+		if !strings.Contains(hint, "bounds") {
+			t.Errorf("expected bounds check suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("normal exit", func(t *testing.T) {
+		hint := memoryHint("all good", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+}
+
