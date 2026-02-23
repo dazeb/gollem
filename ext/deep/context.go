@@ -245,6 +245,18 @@ func (cm *ContextManager) tier3Summarize(ctx context.Context, messages []core.Mo
 		return messages, nil
 	}
 
+	// Ensure the remaining messages start with a ModelRequest (user role)
+	// so that the summary (assistant role) → remaining maintains proper
+	// user/assistant alternation (required by Anthropic's API).
+	// Back up one position if we'd start with a ModelResponse.
+	// This MUST happen before computing oldMessages to avoid overlap
+	// between summarized and remaining messages.
+	if splitIdx < len(messages) {
+		if _, isResp := messages[splitIdx].(core.ModelResponse); isResp && splitIdx > 2 {
+			splitIdx--
+		}
+	}
+
 	oldMessages := messages[1:splitIdx]
 	if len(oldMessages) == 0 {
 		return messages, nil
@@ -299,16 +311,6 @@ func (cm *ContextManager) tier3Summarize(ctx context.Context, messages []core.Mo
 	summaryText := resp.TextContent()
 	if summaryText == "" {
 		return messages, nil
-	}
-
-	// Ensure the remaining messages start with a ModelRequest (user role)
-	// so that the summary (assistant role) → remaining maintains proper
-	// user/assistant alternation (required by Anthropic's API).
-	// Back up one position if we'd start with a ModelResponse.
-	if splitIdx < len(messages) {
-		if _, isResp := messages[splitIdx].(core.ModelResponse); isResp && splitIdx > 1 {
-			splitIdx--
-		}
 	}
 
 	// Build new message list: first message + summary + remaining messages.

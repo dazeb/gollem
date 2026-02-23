@@ -524,6 +524,92 @@ func TestContextManager_Tier2_PreservesMetadata(t *testing.T) {
 	}
 }
 
+// TestTier3_NoDuplicateMessages verifies that tier3Summarize doesn't include
+// the same message both in the summarized portion and in the remaining messages.
+// Bug: The alternation adjustment (backing up splitIdx when messages[splitIdx]
+// is a ModelResponse) happened AFTER oldMessages was computed from the original
+// splitIdx. This caused messages in the overlap range to be summarized AND kept
+// verbatim — wasting tokens and producing redundant context.
+func TestTier3_NoDuplicateMessages(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("Summary of the earlier conversation."))
+
+	cm := NewContextManager(model,
+		WithMaxContextTokens(30),
+		WithCompressionThreshold(0.5),
+		WithTokenCounter(&fixedTokenCounter{tokensPerChar: 1}),
+	)
+
+	// 6 alternating messages. splitIdx = 6/2 = 3.
+	// messages[3] is a ModelResponse, so the alternation adjustment backs
+	// splitIdx to 2. Without the fix, oldMessages = messages[1:3] (computed
+	// before adjustment) but remaining = messages[2:] (computed after), so
+	// messages[2] ("TURN2") is both summarized and kept verbatim.
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "TASK"}},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "RESP1"}},
+		},
+		core.ModelRequest{
+			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "TURN2"}},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "RESP2"}},
+		},
+		core.ModelRequest{
+			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "TURN3"}},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "RESP3"}},
+		},
+	}
+
+	result, err := cm.tier3Summarize(context.Background(), messages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Inspect what text was sent to the summarizer model.
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call for summarization")
+	}
+	// The summarization input is the UserPromptPart of the first model call.
+	var summaryInput string
+	for _, msg := range calls[0].Messages {
+		if req, ok := msg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					summaryInput = up.Content
+				}
+			}
+		}
+	}
+
+	// Check remaining messages (after first + summary) for content overlap.
+	for _, msg := range result[2:] {
+		if req, ok := msg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					if up.Content != "" && strings.Contains(summaryInput, up.Content) {
+						t.Errorf("message %q appears in both summary input and remaining messages (duplicated)", up.Content)
+					}
+				}
+			}
+		}
+		if resp, ok := msg.(core.ModelResponse); ok {
+			text := resp.TextContent()
+			if text != "" && strings.Contains(summaryInput, text) {
+				t.Errorf("message %q appears in both summary input and remaining messages (duplicated)", text)
+			}
+		}
+	}
+}
+
 // fixedTokenCounter counts 1 token per character.
 type fixedTokenCounter struct {
 	tokensPerChar int
