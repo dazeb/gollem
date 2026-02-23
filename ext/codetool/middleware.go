@@ -28,9 +28,10 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 	}
 
 	var mu sync.Mutex
-	editCounts := make(map[string]int) // file path -> edit count
-	bashCounts := make(map[string]int) // command prefix -> run count
-	readCounts := make(map[string]int) // file path -> read-without-edit count
+	editCounts := make(map[string]int)   // file path -> edit count
+	bashCounts := make(map[string]int)   // command prefix -> run count
+	readCounts := make(map[string]int)   // file path -> read-without-edit count
+	searchCounts := make(map[string]int) // grep pattern -> search count
 
 	return func(
 		ctx context.Context,
@@ -63,6 +64,11 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 							if prefix != "" {
 								bashCounts[prefix]++
 							}
+						case "grep", "glob":
+							pattern := extractSearchPattern(tc.ArgsJSON)
+							if pattern != "" {
+								searchCounts[pattern]++
+							}
 						}
 					}
 				}
@@ -92,6 +98,16 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 				loopedFiles = append(loopedFiles, "read: "+path)
 			}
 		}
+		// Search loop: same grep/glob pattern run repeatedly.
+		// Higher threshold — iterating on search queries is common, but
+		// running the exact same pattern 4+ times signals stuck behavior.
+		searchLoopThreshold := threshold + 1
+		for pattern, count := range searchCounts {
+			if count >= searchLoopThreshold {
+				loopedFiles = append(loopedFiles, "search: "+pattern)
+				searchCounts[pattern] = searchCounts[pattern] / 2
+			}
+		}
 		mu.Unlock()
 
 		if len(loopedFiles) > 0 {
@@ -100,18 +116,23 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 			hasEditLoop := false
 			hasBashLoop := false
 			hasReadLoop := false
+			hasSearchLoop := false
 			for _, f := range loopedFiles {
 				if strings.HasPrefix(f, "bash: ") {
 					hasBashLoop = true
 				} else if strings.HasPrefix(f, "read: ") {
 					hasReadLoop = true
+				} else if strings.HasPrefix(f, "search: ") {
+					hasSearchLoop = true
 				} else {
 					hasEditLoop = true
 				}
 			}
 
 			guidance = "WARNING: You appear to be stuck in a loop, repeatedly "
-			if hasReadLoop && !hasEditLoop && !hasBashLoop {
+			if hasSearchLoop && !hasEditLoop && !hasBashLoop && !hasReadLoop {
+				guidance += "searching for the same patterns without acting on results. "
+			} else if hasReadLoop && !hasEditLoop && !hasBashLoop {
 				guidance += "reading " + strings.Join(loopedFiles, ", ") + " without making changes. "
 			} else if hasEditLoop && hasBashLoop {
 				guidance += "editing " + strings.Join(loopedFiles, ", ") + ". "
@@ -131,8 +152,8 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 				guidance += "- If the same command keeps failing: check if you're missing a dependency, wrong directory, or misconfigured environment\n"
 				guidance += "- If a test keeps failing with the same error: the issue is in your code, not in how you're running the test\n"
 			}
-			if hasReadLoop {
-				guidance += "- You've been reading the same file(s) repeatedly without making changes — this is analysis paralysis\n"
+			if hasReadLoop || hasSearchLoop {
+				guidance += "- You've been reading/searching the same content repeatedly without making changes — this is analysis paralysis\n"
 				guidance += "- STOP analyzing and START implementing. Write code based on what you already know\n"
 				guidance += "- If you're stuck on how to proceed, try the simplest possible solution first\n"
 			}
@@ -180,6 +201,19 @@ func extractPathFromArgs(argsJSON string) string {
 		return args.Path
 	}
 	return args.File
+}
+
+// extractSearchPattern extracts the search pattern from a grep or glob tool call.
+// Used by LoopDetectionMiddleware to detect when the agent keeps running the same
+// search query without making progress.
+func extractSearchPattern(argsJSON string) string {
+	var args struct {
+		Pattern string `json:"pattern"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	return args.Pattern
 }
 
 // extractCommandPrefix extracts a fingerprint from a bash tool call's ArgsJSON
