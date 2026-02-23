@@ -202,9 +202,16 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 			for _, part := range m.Parts {
 				switch p := part.(type) {
 				case core.SystemPromptPart:
-					req.SystemInstruction = &geminiContent{
-						Role:  "user",
-						Parts: []geminiPart{{Text: p.Content}},
+					if req.SystemInstruction == nil {
+						req.SystemInstruction = &geminiContent{
+							Role:  "user",
+							Parts: []geminiPart{{Text: p.Content}},
+						}
+					} else {
+						req.SystemInstruction.Parts = append(
+							req.SystemInstruction.Parts,
+							geminiPart{Text: p.Content},
+						)
 					}
 				case core.UserPromptPart:
 					userParts = append(userParts, geminiPart{Text: p.Content})

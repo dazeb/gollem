@@ -727,3 +727,53 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	}
 	return transport.RoundTrip(req)
 }
+
+// TestBuildRequestMultipleSystemPrompts verifies that multiple SystemPromptParts
+// across different ModelRequest messages are concatenated, not overwritten.
+// This is critical for auto-context compression, which inserts a conversation
+// summary as a second SystemPromptPart after the original task system prompt.
+func TestBuildRequestMultipleSystemPrompts(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "You are a coding assistant."},
+				core.UserPromptPart{Content: "Fix the bug"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "[Conversation Summary] Previously edited main.go and ran tests."},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Continue fixing"},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if req.SystemInstruction == nil {
+		t.Fatal("expected SystemInstruction to be set")
+	}
+
+	// Both system prompts should be preserved as separate parts.
+	if len(req.SystemInstruction.Parts) != 2 {
+		t.Fatalf("expected 2 system instruction parts, got %d", len(req.SystemInstruction.Parts))
+	}
+	if req.SystemInstruction.Parts[0].Text != "You are a coding assistant." {
+		t.Errorf("first system part = %q, want %q", req.SystemInstruction.Parts[0].Text, "You are a coding assistant.")
+	}
+	if req.SystemInstruction.Parts[1].Text != "[Conversation Summary] Previously edited main.go and ran tests." {
+		t.Errorf("second system part = %q, want summary", req.SystemInstruction.Parts[1].Text)
+	}
+
+	// Should have 2 user content messages.
+	if len(req.Contents) != 2 {
+		t.Fatalf("expected 2 contents, got %d", len(req.Contents))
+	}
+}
