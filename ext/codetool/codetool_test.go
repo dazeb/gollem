@@ -11641,6 +11641,40 @@ func TestWrite_NoNewlineWarningForBinary(t *testing.T) {
 	}
 }
 
+func TestWrite_PreservesCRLF(t *testing.T) {
+	dir := t.TempDir()
+	// Create an existing CRLF file.
+	os.WriteFile(filepath.Join(dir, "crlf.txt"), []byte("old\r\ncontent\r\n"), 0o644)
+
+	tool := Write(WithWorkDir(dir))
+	// Overwrite with LF-only content (what models generate).
+	result := call(t, tool, `{"path": "crlf.txt", "content": "new\ncontent\n"}`)
+	assertContains(t, result, "Wrote")
+
+	data, _ := os.ReadFile(filepath.Join(dir, "crlf.txt"))
+	content := string(data)
+	if !strings.Contains(content, "\r\n") {
+		t.Error("expected CRLF line endings to be preserved when overwriting a CRLF file")
+	}
+	if !strings.Contains(content, "new\r\ncontent\r\n") {
+		t.Errorf("unexpected content: %q", content)
+	}
+}
+
+func TestWrite_NewFileLF(t *testing.T) {
+	dir := t.TempDir()
+	tool := Write(WithWorkDir(dir))
+	// New file (no existing file) — should NOT add CRLF.
+	result := call(t, tool, `{"path": "new.txt", "content": "line1\nline2\n"}`)
+	assertContains(t, result, "Wrote")
+
+	data, _ := os.ReadFile(filepath.Join(dir, "new.txt"))
+	content := string(data)
+	if strings.Contains(content, "\r\n") {
+		t.Error("new file should not gain CRLF line endings")
+	}
+}
+
 func TestExpandBraces(t *testing.T) {
 	tests := []struct {
 		input    string

@@ -43,9 +43,22 @@ func Write(opts ...Option) core.Tool {
 
 			// Check if overwriting an existing file — track previous size
 			// for the overwrite warning that catches accidental truncation.
+			// Also detect CRLF line endings so we can preserve them.
 			var prevSize int64 = -1
+			var prevCRLF bool
 			if info, err := os.Stat(path); err == nil {
 				prevSize = info.Size()
+				// Sample the first 4K to detect CRLF. This is consistent
+				// with the edit tool's CRLF preservation behavior — without
+				// it, using write for a full-file rewrite would silently
+				// convert Windows line endings to Unix.
+				if data, err := os.ReadFile(path); err == nil {
+					sample := string(data)
+					if len(sample) > 4096 {
+						sample = sample[:4096]
+					}
+					prevCRLF = strings.Contains(sample, "\r\n")
+				}
 			}
 
 			// Create parent directories.
@@ -83,7 +96,15 @@ func Write(opts ...Option) core.Tool {
 				perm = 0o755
 			}
 
-			if err := os.WriteFile(path, []byte(params.Content), perm); err != nil {
+			// Preserve CRLF line endings when overwriting an existing
+			// CRLF file (consistent with the edit tool). Models generate
+			// LF-only content, so convert LF→CRLF before writing.
+			writeContent := params.Content
+			if prevCRLF && !strings.Contains(writeContent, "\r\n") {
+				writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
+			}
+
+			if err := os.WriteFile(path, []byte(writeContent), perm); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 

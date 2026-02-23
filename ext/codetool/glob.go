@@ -64,18 +64,18 @@ func Glob(opts ...Option) core.Tool {
 			var results []fileEntry
 
 			// Handle ** pattern with recursive walk.
+			// WalkDir is faster than Walk because it avoids Stat on every
+			// entry — we only call Info() on matching files.
 			if strings.Contains(params.Pattern, "**") {
-				// Split pattern into directory prefix and file pattern.
-				err := filepath.Walk(searchPath, func(path string, info os.FileInfo, walkErr error) error {
+				err := filepath.WalkDir(searchPath, func(path string, d os.DirEntry, walkErr error) error {
 					if walkErr != nil {
 						return walkErr
 					}
 					if ctx.Err() != nil {
 						return ctx.Err()
 					}
-					if info.IsDir() {
-						base := info.Name()
-						if isSkippableDir(base) {
+					if d.IsDir() {
+						if isSkippableDir(d.Name()) {
 							return filepath.SkipDir
 						}
 						return nil
@@ -83,13 +83,19 @@ func Glob(opts ...Option) core.Tool {
 
 					// Apply exclude filter (with brace expansion).
 					if params.Exclude != "" {
-						if matchWithBraces(params.Exclude, info.Name()) {
+						if matchWithBraces(params.Exclude, d.Name()) {
 							return nil
 						}
 					}
 
 					relPath, _ := filepath.Rel(searchPath, path)
 					if matchDoublestar(params.Pattern, relPath) {
+						// Only call Info() on matches — avoids Stat on
+						// the vast majority of non-matching files.
+						info, err := d.Info()
+						if err != nil {
+							return nil // skip files we can't stat
+						}
 						results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})
 					}
 					return nil
