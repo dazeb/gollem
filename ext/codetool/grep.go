@@ -66,11 +66,14 @@ func Grep(opts ...Option) core.Tool {
 
 			pattern := params.Pattern
 			if params.IgnoreCase {
-				// Prepend (?i) for case-insensitive matching unless the pattern
-				// already contains case flags.
-				if !strings.HasPrefix(pattern, "(?") || !strings.ContainsRune(pattern[2:], 'i') {
-					pattern = "(?i)" + pattern
-				}
+				// Always prepend (?i) for case-insensitive matching.
+				// Duplicate flags are harmless in Go regex. The previous
+				// check tried to skip patterns that "already had" (?i),
+				// but used ContainsRune(pattern[2:], 'i') which matched
+				// the letter 'i' anywhere in the pattern text — not just
+				// in flag groups. E.g., (?m)identifier with ignore_case
+				// would silently stay case-sensitive.
+				pattern = "(?i)" + pattern
 			}
 
 			re, err := regexp.Compile(pattern)

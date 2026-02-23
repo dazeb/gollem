@@ -1100,6 +1100,21 @@ func TestGrep_IgnoreCase(t *testing.T) {
 	assertContains(t, result, "func Add")
 }
 
+// TestGrep_IgnoreCaseWithExistingFlags verifies that ignore_case works
+// correctly when the pattern already has regex flags like (?m).
+// Bug: the old check used ContainsRune(pattern[2:], 'i') which matched
+// the letter 'i' anywhere in the pattern text — not just in flag groups.
+// Pattern "(?m)multiply" with ignore_case would silently stay case-sensitive
+// because 'i' appears in "multiply".
+func TestGrep_IgnoreCaseWithExistingFlags(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := Grep(WithWorkDir(dir))
+	// Pattern uses (?m) multiline flag and contains 'i' in the text.
+	// With ignore_case, "multiply" should match "Multiply" in utils.go.
+	result := call(t, tool, `{"pattern": "(?m)multiply", "ignore_case": true}`)
+	assertContains(t, result, "Multiply")
+}
+
 func TestGrep_FilesOnly(t *testing.T) {
 	dir := setupTestDir(t)
 	tool := Grep(WithWorkDir(dir))
