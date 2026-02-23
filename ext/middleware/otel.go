@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"errors"
+	"io"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
@@ -271,6 +273,12 @@ func (t *trackedStreamResponse) finalize(streamErr error) {
 		}
 	}
 
-	t.span.SetStatus(codes.Ok, "")
+	if streamErr != nil && !errors.Is(streamErr, io.EOF) {
+		t.span.RecordError(streamErr)
+		t.span.SetStatus(codes.Error, streamErr.Error())
+		t.otel.errorCounter.Add(t.ctx, 1)
+	} else {
+		t.span.SetStatus(codes.Ok, "")
+	}
 	t.span.End()
 }

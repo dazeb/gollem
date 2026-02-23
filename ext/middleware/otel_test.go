@@ -564,5 +564,92 @@ func TestStreamFuncNilHandlers(t *testing.T) {
 	}
 }
 
+// TestOTelMiddlewareStreamMidStreamError verifies that when a stream returns
+// a non-EOF error during consumption, the OTel span records the error status
+// and the error counter is incremented.
+func TestOTelMiddlewareStreamMidStreamError(t *testing.T) {
+	otelMW, spanExporter, metricReader := setupOTel(t)
+
+	resp := &core.ModelResponse{
+		Parts:        []core.ModelResponsePart{core.TextPart{Content: "hello"}},
+		ModelName:    "test-model",
+		Usage:        core.Usage{InputTokens: 20, OutputTokens: 10},
+		FinishReason: core.FinishReasonStop,
+	}
+	errModel := &errorStreamModel{
+		response:  resp,
+		streamErr: errors.New("connection reset"),
+	}
+
+	wrapped := Wrap(errModel, otelMW)
+
+	stream, err := wrapped.RequestStream(context.Background(), nil, nil, nil)
+	if err != nil {
+		t.Fatalf("RequestStream failed: %v", err)
+	}
+
+	// Consume the stream until error.
+	for {
+		_, err := stream.Next()
+		if err != nil {
+			break
+		}
+	}
+
+	// The span should have error status.
+	spans := spanExporter.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+
+	if spans[0].Status.Code != codes.Error {
+		t.Errorf("expected error status code for mid-stream error, got %v", spans[0].Status.Code)
+	}
+
+	// The error counter should be incremented.
+	var rm metricdata.ResourceMetrics
+	if err := metricReader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("failed to collect metrics: %v", err)
+	}
+
+	metricMap := collectMetrics(rm)
+	if v, ok := metricMap["core.errors"]; !ok || v != int64(1) {
+		t.Errorf("expected core.errors=1 for mid-stream error, got %v", v)
+	}
+}
+
+// errorStreamResponse is a mock stream that returns an error after one valid event.
+type errorStreamResponse struct {
+	response *core.ModelResponse
+	err      error
+	called   int
+}
+
+func (s *errorStreamResponse) Next() (core.ModelResponseStreamEvent, error) {
+	s.called++
+	if s.called == 1 {
+		return core.PartStartEvent{Index: 0, Part: s.response.Parts[0]}, nil
+	}
+	return nil, s.err
+}
+
+func (s *errorStreamResponse) Response() *core.ModelResponse { return s.response }
+func (s *errorStreamResponse) Usage() core.Usage              { return s.response.Usage }
+func (s *errorStreamResponse) Close() error                   { return nil }
+
+// errorStreamModel returns a stream that errors mid-consumption.
+type errorStreamModel struct {
+	response  *core.ModelResponse
+	streamErr error
+}
+
+func (m *errorStreamModel) ModelName() string { return "test-model" }
+func (m *errorStreamModel) Request(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	return m.response, nil
+}
+func (m *errorStreamModel) RequestStream(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	return &errorStreamResponse{response: m.response, err: m.streamErr}, nil
+}
+
 // Ensure OTelMiddleware implements StreamMiddleware.
 var _ StreamMiddleware = (*OTelMiddleware)(nil)
