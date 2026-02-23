@@ -10310,6 +10310,79 @@ func TestLoopDetectionMiddleware_ReadThenEdit(t *testing.T) {
 	}
 }
 
+func TestLoopDetectionMiddleware_LSPLoopCounterResets(t *testing.T) {
+	// Test that an LSP loop warning halves the counter so it doesn't fire
+	// on every subsequent turn. Before the fix, the reset code wrote to
+	// searchCounts instead of lspCounts, so the LSP counter never decreased
+	// and the warning fired on every turn after the first detection.
+	mw := LoopDetectionMiddleware(3) // threshold=3, searchLoopThreshold=4
+	ctx := context.Background()
+	warnings := 0
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		for _, msg := range msgs {
+			if req, ok := msg.(core.ModelRequest); ok {
+				for _, part := range req.Parts {
+					if up, ok := part.(core.UserPromptPart); ok {
+						if strings.Contains(up.Content, "stuck in a loop") {
+							warnings++
+						}
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	lspMsg := core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.ToolCallPart{
+				ToolName: "lsp",
+				ArgsJSON: `{"method":"definition","file":"/app/main.go","line":10}`,
+			},
+		},
+	}
+	// In production, messages alternate: ModelResponse then ModelRequest
+	// (tool result). The middleware only counts tool calls from ModelResponse.
+	toolResultMsg := core.ModelRequest{
+		Parts: []core.ModelRequestPart{
+			core.ToolReturnPart{Content: "definition at main.go:42"},
+		},
+	}
+
+	// Phase 1: Accumulate LSP calls until the loop warning fires.
+	messages := []core.ModelMessage{}
+	for i := 0; i < 10 && warnings == 0; i++ {
+		messages = append(messages, lspMsg, toolResultMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+	}
+	if warnings == 0 {
+		t.Fatal("expected loop warning after repeated LSP calls")
+	}
+
+	firstWarningCount := warnings
+
+	// Phase 2: After the warning fires and the counter is halved, we need
+	// more calls before it fires again. Without the fix, the counter was
+	// never halved so it would fire on the very next turn.
+	// Track how many additional turns before the next warning.
+	turnsUntilNextWarning := 0
+	for i := 0; i < 3; i++ {
+		messages = append(messages, lspMsg, toolResultMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+		turnsUntilNextWarning++
+		if warnings > firstWarningCount {
+			break
+		}
+	}
+	// With halving, the counter drops from ~4 to ~2, so it should take at
+	// least 2 more turns (+1 each) to reach the threshold of 4 again.
+	// Without the fix (counter never halved), it would fire immediately.
+	if turnsUntilNextWarning < 2 {
+		t.Errorf("LSP loop counter not resetting properly: next warning fired after only %d turn(s), expected at least 2",
+			turnsUntilNextWarning)
+	}
+}
+
 func TestIsVerificationString_ClearsTracking(t *testing.T) {
 	// Verify that isVerificationString matches commands that should
 	// clear test tracking state on success.

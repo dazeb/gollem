@@ -199,6 +199,9 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 				} else if strings.HasPrefix(f, "read: ") {
 					path := strings.TrimPrefix(f, "read: ")
 					readCounts[path] = readCounts[path] / 2
+				} else if strings.HasPrefix(f, "search: lsp ") {
+					key := strings.TrimPrefix(f, "search: lsp ")
+					lspCounts[key] = lspCounts[key] / 2
 				} else if strings.HasPrefix(f, "search: ") {
 					pattern := strings.TrimPrefix(f, "search: ")
 					searchCounts[pattern] = searchCounts[pattern] / 2
