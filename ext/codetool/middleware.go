@@ -7664,9 +7664,15 @@ func extractFileStructure(path string) string {
 			}
 		case ".rs":
 			if strings.HasPrefix(trimmed, "fn ") || strings.HasPrefix(trimmed, "pub fn ") ||
+				strings.HasPrefix(trimmed, "pub(crate) fn ") || strings.HasPrefix(trimmed, "pub(super) fn ") ||
 				strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "pub struct ") ||
-				strings.HasPrefix(trimmed, "impl ") || strings.HasPrefix(trimmed, "enum ") ||
-				strings.HasPrefix(trimmed, "pub enum ") || strings.HasPrefix(trimmed, "trait ") {
+				strings.HasPrefix(trimmed, "pub(crate) struct ") ||
+				strings.HasPrefix(trimmed, "impl ") || strings.HasPrefix(trimmed, "impl<") ||
+				strings.HasPrefix(trimmed, "enum ") || strings.HasPrefix(trimmed, "pub enum ") ||
+				strings.HasPrefix(trimmed, "trait ") || strings.HasPrefix(trimmed, "pub trait ") ||
+				strings.HasPrefix(trimmed, "mod ") || strings.HasPrefix(trimmed, "pub mod ") ||
+				strings.HasPrefix(trimmed, "type ") || strings.HasPrefix(trimmed, "pub type ") ||
+				strings.HasPrefix(trimmed, "const ") || strings.HasPrefix(trimmed, "pub const ") {
 				matched = true
 			}
 		case ".c", ".cpp", ".h", ".hpp", ".cc", ".cxx":
@@ -7686,8 +7692,13 @@ func extractFileStructure(path string) string {
 		case ".java", ".kt", ".kts", ".scala":
 			if strings.HasPrefix(trimmed, "public ") || strings.HasPrefix(trimmed, "private ") ||
 				strings.HasPrefix(trimmed, "protected ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "abstract ") || strings.HasPrefix(trimmed, "data class ") ||
+				strings.HasPrefix(trimmed, "sealed ") || strings.HasPrefix(trimmed, "enum class ") ||
 				strings.HasPrefix(trimmed, "interface ") || strings.HasPrefix(trimmed, "fun ") ||
-				strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "object ") {
+				strings.HasPrefix(trimmed, "override fun ") || strings.HasPrefix(trimmed, "suspend fun ") ||
+				strings.HasPrefix(trimmed, "inline fun ") || strings.HasPrefix(trimmed, "internal fun ") ||
+				strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "object ") ||
+				strings.HasPrefix(trimmed, "case class ") || strings.HasPrefix(trimmed, "trait ") {
 				matched = true
 			}
 		case ".rb", ".cr":
@@ -7710,7 +7721,10 @@ func extractFileStructure(path string) string {
 		case ".swift":
 			if strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "class ") ||
 				strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "enum ") ||
-				strings.HasPrefix(trimmed, "protocol ") || strings.HasPrefix(trimmed, "extension ") {
+				strings.HasPrefix(trimmed, "protocol ") || strings.HasPrefix(trimmed, "extension ") ||
+				strings.HasPrefix(trimmed, "public ") || strings.HasPrefix(trimmed, "private ") ||
+				strings.HasPrefix(trimmed, "internal ") || strings.HasPrefix(trimmed, "open ") ||
+				strings.HasPrefix(trimmed, "static func ") || strings.HasPrefix(trimmed, "override func ") {
 				matched = true
 			}
 		case ".php":
