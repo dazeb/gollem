@@ -7717,3 +7717,110 @@ func TestExtractTestCounts_Dart_AllPassing(t *testing.T) {
 	}
 }
 
+// Test NUnit first failure detail extraction ("Expected: X" / "But was: Y").
+func TestFirstFailureDetail_NUnit(t *testing.T) {
+	output := `NUnit Console Runner 3.16.3
+  Expected: 42
+  But was:  17
+
+1 test(s) failed`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected non-empty detail for NUnit output")
+	}
+	if !strings.Contains(detail, "Expected: 42") {
+		t.Errorf("expected detail to contain 'Expected: 42', got %q", detail)
+	}
+	if !strings.Contains(detail, "But was:") {
+		t.Errorf("expected detail to contain 'But was:', got %q", detail)
+	}
+}
+
+// Test GoogleTest first failure detail extraction ("Value of:" pattern).
+func TestFirstFailureDetail_GoogleTest(t *testing.T) {
+	output := `[==========] Running 3 tests from 1 test suite.
+[----------] 3 tests from Calculator
+[ RUN      ] Calculator.Add
+/test/calculator_test.cpp:15: Failure
+Value of: calc.Add(2, 3)
+  Actual: 6
+Expected: 5
+[  FAILED  ] Calculator.Add (0 ms)`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected non-empty detail for GoogleTest output")
+	}
+	if !strings.Contains(detail, "Value of:") {
+		t.Errorf("expected detail to contain 'Value of:', got %q", detail)
+	}
+	if !strings.Contains(detail, "Actual:") {
+		t.Errorf("expected detail to contain 'Actual:', got %q", detail)
+	}
+}
+
+// Test GoogleTest "Expected equality" pattern.
+func TestFirstFailureDetail_GoogleTest_Equality(t *testing.T) {
+	output := `[ RUN      ] Calculator.Multiply
+/test/calculator_test.cpp:22: Failure
+Expected equality of these values:
+  calc.Multiply(3, 4)
+    Which is: 11
+  12
+[  FAILED  ] Calculator.Multiply (0 ms)`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected non-empty detail for GoogleTest equality output")
+	}
+	if !strings.Contains(detail, "Expected equality") {
+		t.Errorf("expected detail to contain 'Expected equality', got %q", detail)
+	}
+}
+
+// Test Lua busted test result summary parsing.
+func TestTestResultSummary_LuaBusted(t *testing.T) {
+	output := `●●●○
+4 successes / 1 failure / 0 errors / 1 pending : 0.012 seconds`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for Lua busted output")
+	}
+	if !strings.Contains(summary, "4 successes") {
+		t.Errorf("expected summary to contain '4 successes', got %q", summary)
+	}
+	if !strings.Contains(summary, "1 failure") {
+		t.Errorf("expected summary to contain '1 failure', got %q", summary)
+	}
+}
+
+// Test Lua busted test count extraction.
+func TestExtractTestCounts_LuaBusted(t *testing.T) {
+	output := `●●●○
+4 successes / 1 failure / 0 errors / 1 pending : 0.012 seconds`
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for Lua busted output")
+	}
+	if passed != 4 {
+		t.Errorf("expected passed=4, got %d", passed)
+	}
+	if failed != 1 {
+		t.Errorf("expected failed=1, got %d", failed)
+	}
+}
+
+// Test Lua busted all passing.
+func TestExtractTestCounts_LuaBusted_AllPassing(t *testing.T) {
+	output := `●●●●●
+5 successes / 0 failures / 0 errors / 0 pending : 0.008 seconds`
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for Lua busted all-passing output")
+	}
+	if passed != 5 {
+		t.Errorf("expected passed=5, got %d", passed)
+	}
+	if failed != 0 {
+		t.Errorf("expected failed=0, got %d", failed)
+	}
+}
+

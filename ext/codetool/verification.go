@@ -406,6 +406,7 @@ func isVerificationString(cmd string) bool {
 		"sbt test", "sbt compile",
 		"dart test", "flutter test",
 		"stack test", "cabal test",
+		"busted", "lua test",
 		"ctest",
 		"julia -e", "julia --project",
 		// Terminal-Bench patterns: tasks often have test scripts.

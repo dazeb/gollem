@@ -2789,6 +2789,26 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Lua busted: "X successes / Y failures / Z errors / W pending : T seconds"
+	// Note: busted uses "failure" (singular) or "failures" (plural).
+	if strings.Contains(lower, "successes") && strings.Contains(lower, "failure") &&
+		!strings.Contains(lower, "test result:") && !strings.Contains(lower, "test case") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "successes") && strings.Contains(lineLower, "failure") {
+				summary := "[test summary: " + line + "]"
+				if !strings.Contains(lineLower, "0 failure") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
+			}
+		}
+	}
+
 	// ExUnit (Elixir): "5 tests, 1 failure" or "3 doctests, 5 tests, 0 failures"
 	// ExUnit uses "failure"/"failures", NOT "failed"/"passed" like most frameworks.
 	if strings.Contains(lower, "failure") && !strings.Contains(lower, "examples") &&
@@ -3075,6 +3095,56 @@ func firstFailureDetail(output string) string {
 				trimmed = trimmed[:200] + "..."
 			}
 			return "[first failure: " + trimmed + "]"
+		}
+
+		// NUnit (.NET): "Expected: X" / "But was:  Y" on consecutive lines.
+		// NUnit uses "But was:" instead of "Got:" or "Actual:".
+		if strings.HasPrefix(trimmed, "Expected:") && i+1 < len(lines) {
+			nextTrimmed := strings.TrimSpace(lines[i+1])
+			if strings.HasPrefix(nextTrimmed, "But was:") {
+				detail := trimmed + " / " + nextTrimmed
+				if len(detail) > 200 {
+					detail = detail[:200] + "..."
+				}
+				return "[first failure: " + detail + "]"
+			}
+		}
+
+		// GoogleTest (C++): "Value of: X" / "  Actual: Y" / "Expected: Z"
+		// or "Expected equality of these values:" followed by values on next lines.
+		if strings.HasPrefix(trimmed, "Value of:") && i+2 < len(lines) {
+			detail := trimmed
+			for j := i + 1; j < min(i+4, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.HasPrefix(aheadLower, "actual:") || strings.HasPrefix(aheadLower, "expected:") ||
+					strings.HasPrefix(aheadLower, "which is:") {
+					detail += " / " + ahead
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+		if strings.HasPrefix(trimmed, "Expected equality of these values:") && i+1 < len(lines) {
+			detail := trimmed
+			for j := i + 1; j < min(i+5, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				if ahead == "" {
+					break
+				}
+				aheadLower := strings.ToLower(ahead)
+				if strings.HasPrefix(aheadLower, "which is:") {
+					detail += " / " + ahead
+				} else if !strings.HasPrefix(ahead, "#") {
+					detail += " / " + ahead
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
 		}
 
 		// Rust: thread 'test_name' panicked at 'assertion `left == right` failed'
@@ -3636,6 +3706,43 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
+	// Lua busted: "X successes / Y failures / Z errors / W pending : T seconds"
+	// Note: busted uses "failure" (singular) or "failures" (plural).
+	if strings.Contains(lower, "successes") && strings.Contains(lower, "failure") &&
+		!strings.Contains(lower, "test result:") && !strings.Contains(lower, "test case") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "successes") || !strings.Contains(line, "failure") {
+				continue
+			}
+			words := strings.Fields(line)
+			var successes, failures, errs int
+			foundBusted := false
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:/")
+					switch {
+					case strings.HasPrefix(nextWord, "success"):
+						successes = n
+						foundBusted = true
+					case strings.HasPrefix(nextWord, "failure"):
+						failures = n
+					case strings.HasPrefix(nextWord, "error"):
+						errs = n
+					}
+				}
+			}
+			if foundBusted {
+				passed = successes
+				failed = failures + errs
+				ok = true
+				return
+			}
+		}
+	}
+
 	// Gradle: "X tests completed, Y failed" or "X tests, Y failures"
 	if strings.Contains(lower, "tests completed") || (strings.Contains(lower, "tests") && strings.Contains(lower, "gradle")) {
 		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
@@ -4071,6 +4178,7 @@ func isLongRunningCommand(cmd string) bool {
 		"mix test",                      // Elixir tests
 		"bundle exec",                   // Ruby with bundler
 		"cabal test", "cabal run",       // Haskell
+		"busted",                        // Lua tests
 		"fpc ",                          // Free Pascal compilation
 	}
 	for _, p := range longPatterns {

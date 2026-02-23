@@ -305,7 +305,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -823,6 +823,26 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-install Dart/Flutter dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "pubspec.yaml")) {
+				if !dirExists(filepath.Join(dir, ".dart_tool")) {
+					if runQuiet(dir, "which", "flutter") != "" {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Flutter dependencies in %s\n", dir)
+						runQuietTimeout(dir, 120*time.Second, "flutter", "pub", "get")
+						parts = append(parts, "AUTO-INSTALLED: Flutter dependencies via flutter pub get (already done, no need to install again)")
+					} else if runQuiet(dir, "which", "dart") != "" {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Dart dependencies in %s\n", dir)
+						runQuietTimeout(dir, 90*time.Second, "dart", "pub", "get")
+						parts = append(parts, "AUTO-INSTALLED: Dart dependencies via dart pub get (already done, no need to install again)")
+					}
+				}
+				break
+			}
+		}
+	}
+
 	// Julia: instantiate packages from Project.toml.
 	if networkAvailable {
 		for _, dir := range []string{workDir, "/app"} {
@@ -1323,6 +1343,8 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"build.sbt", "Scala", "sbt"},
 		{"pubspec.yaml", "Dart", "dart"},
 		{"composer.json", "PHP", "composer"},
+		{".busted", "Lua", "busted"},
+		{".luarocks", "Lua", "luarocks"},
 		{"Makefile.PL", "Perl", "perl"},
 		{"Build.PL", "Perl", "perl"},
 		{"cpanfile", "Perl", "cpanm"},
@@ -1953,6 +1975,18 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- Restore packages first: `dotnet restore`")
 		hints = append(hints, "- Check .NET version: `dotnet --version`")
 		hints = append(hints, "- For 'could not resolve' errors: run `dotnet restore` first")
+	}
+
+	// Detect Lua tasks.
+	luaFiles, _ := filepath.Glob(filepath.Join(workDir, "*.lua"))
+	if fileExists(filepath.Join(workDir, ".busted")) || fileExists(filepath.Join(workDir, ".luarocks")) ||
+		len(luaFiles) > 0 {
+		hints = append(hints, "\n## Task Type: Lua")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Run: `lua <script>.lua`, Test: `busted` (if .busted config exists)")
+		hints = append(hints, "- Install packages: `luarocks install <pkg>`")
+		hints = append(hints, "- Lua arrays are 1-indexed; table.insert, table.remove for array ops")
+		hints = append(hints, "- Use `local` for all variables to avoid polluting global scope")
 	}
 
 	// Detect service/daemon tasks (web servers, background services).
