@@ -5654,6 +5654,46 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
+	// Erlang Common Test: "All N test cases passed." or "X of Y test cases failed"
+	// Must run before generic section since CT uses "test cases" not "tests".
+	if strings.Contains(lower, "test case") && !strings.Contains(lower, "assertion") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			lineLower := strings.ToLower(strings.TrimSpace(lines[i]))
+			// "All N test cases passed."
+			if strings.HasPrefix(lineLower, "all ") && strings.Contains(lineLower, "test case") &&
+				strings.Contains(lineLower, "passed") {
+				words := strings.Fields(lineLower)
+				if len(words) >= 2 && isNumeric(words[1]) {
+					var n int
+					fmt.Sscanf(words[1], "%d", &n)
+					if n > 0 {
+						passed = n
+						ok = true
+						return
+					}
+				}
+			}
+			// "X of Y test cases failed"
+			if strings.Contains(lineLower, "of") && strings.Contains(lineLower, "test case") &&
+				strings.Contains(lineLower, "failed") {
+				words := strings.Fields(lineLower)
+				for j := 0; j+3 < len(words); j++ {
+					if isNumeric(words[j]) && words[j+1] == "of" && isNumeric(words[j+2]) {
+						var f, total int
+						fmt.Sscanf(words[j], "%d", &f)
+						fmt.Sscanf(words[j+2], "%d", &total)
+						if total > 0 && f <= total {
+							failed = f
+							passed = total - f
+							ok = true
+							return
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Generic: "N tests, M failures" (Gleam, EUnit, common format).
 	if strings.Contains(lower, " tests") && strings.Contains(lower, " failure") {
 		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
@@ -6520,7 +6560,12 @@ func isTransientBashFailure(exitCode int, output string, command string) bool {
 		"connectionerror",          // Python requests ConnectionError
 		"econnreset",               // Node.js connection reset
 		"etimedout",                // Node.js timeout
+		"esockettimedout",          // Node.js socket timeout
 		"socket hang up",           // Node.js socket drop
+		"enotfound",                // Node.js DNS resolution failure
+		"getaddrinfo enotfound",    // Node.js DNS lookup failure
+		"getaddrinfo failed",       // Python/curl DNS lookup failure
+		"err_name_not_resolved",    // Chromium DNS failure
 	}
 	for _, p := range transientPatterns {
 		if strings.Contains(lower, p) {

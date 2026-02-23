@@ -177,6 +177,23 @@ func Edit(opts ...Option) core.Tool {
 					}
 				}
 
+				// Auto-correct extra context lines: models often include an extra
+				// line of context at the beginning or end of old_string that either
+				// doesn't exist in the file or has slightly different content.
+				// Only trims lines that are identical in old and new (pure context).
+				if actualOld, adjustedNew, ok := autoCorrectLineTrim(content, params.OldString, params.NewString); ok {
+					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+					if hasCRLF {
+						newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+					}
+					if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+						return "", fmt.Errorf("write file: %w", err)
+					}
+					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+					result += "\n[auto-corrected by trimming extra context line]"
+					return result, nil
+				}
+
 				msg := fmt.Sprintf("old_string not found in %s.", params.Path)
 
 				// Check for whitespace-only mismatch that couldn't be auto-corrected
@@ -546,6 +563,9 @@ func MultiEdit(opts ...Option) core.Tool {
 					} else if actualOld, adjustedNew, okIbl := autoCorrectInternalBlankLines(content, edit.OldString, edit.NewString); okIbl && strings.Count(content, actualOld) == 1 {
 						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected internal blank line count", i)
+					} else if actualOld, adjustedNew, okLt := autoCorrectLineTrim(content, edit.OldString, edit.NewString); okLt {
+						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
+						msg = fmt.Sprintf("edit[%d]: auto-corrected by trimming extra context line", i)
 					} else {
 						errMsg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
 						if wsHint := detectWhitespaceMismatch(content, edit.OldString); wsHint != "" {
@@ -985,6 +1005,48 @@ func autoCorrectInternalBlankLines(content, oldStr, newStr string) (actualOld, a
 	adjustedNew = newStr
 
 	return actualOld, adjustedNew, true
+}
+
+// autoCorrectLineTrim handles the case where the model included an extra
+// context line at the beginning or end of old_string that doesn't exist in
+// the file (or exists with different content). This is a common failure mode:
+// the model copies a nearby line for context but gets it slightly wrong.
+//
+// Safety: only trims if (1) old_string has 3+ lines, (2) the trimmed line is
+// unchanged between old and new (pure context, not an intended edit), and
+// (3) the trimmed version matches exactly once in the file.
+func autoCorrectLineTrim(content, oldStr, newStr string) (actualOld, adjustedNew string, ok bool) {
+	oldLines := strings.Split(oldStr, "\n")
+	newLines := strings.Split(newStr, "\n")
+
+	// Need at least 3 lines to try trimming — too aggressive on shorter edits.
+	if len(oldLines) < 3 || len(newLines) < 3 {
+		return "", "", false
+	}
+
+	// Try dropping the first line (if first lines are identical context).
+	if len(oldLines) > 0 && len(newLines) > 0 && oldLines[0] == newLines[0] {
+		trimmedOld := strings.Join(oldLines[1:], "\n")
+		if strings.Count(content, trimmedOld) == 1 {
+			trimmedNew := strings.Join(newLines[1:], "\n")
+			return trimmedOld, trimmedNew, true
+		}
+	}
+
+	// Try dropping the last line (if last lines are identical context).
+	if len(oldLines) > 0 && len(newLines) > 0 {
+		lastOld := oldLines[len(oldLines)-1]
+		lastNew := newLines[len(newLines)-1]
+		if lastOld == lastNew {
+			trimmedOld := strings.Join(oldLines[:len(oldLines)-1], "\n")
+			if strings.Count(content, trimmedOld) == 1 {
+				trimmedNew := strings.Join(newLines[:len(newLines)-1], "\n")
+				return trimmedOld, trimmedNew, true
+			}
+		}
+	}
+
+	return "", "", false
 }
 
 // indentWidth computes the visual width of an indent string (tabs = 4 cols).
