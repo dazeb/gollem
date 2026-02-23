@@ -6,7 +6,8 @@ import "sync"
 type ModelPricing struct {
 	InputTokenCost  float64 // cost per input token (e.g., 0.000003 for $3/1M)
 	OutputTokenCost float64 // cost per output token
-	CachedInputCost float64 // cost per cached input token (0 = same as input)
+	CachedInputCost float64 // cost per cached input token read (0 = same as input)
+	CacheWriteCost  float64 // cost per cache write token (0 = same as input)
 }
 
 // CostTracker tracks estimated costs across model requests.
@@ -44,11 +45,20 @@ func (ct *CostTracker) Record(modelName string, usage RunUsage) {
 	inputCost := float64(usage.InputTokens) * pricing.InputTokenCost
 	outputCost := float64(usage.OutputTokens) * pricing.OutputTokenCost
 
-	// Apply cached token discount if configured.
+	// Apply cached read token discount if configured.
+	// InputTokens includes cache read tokens (normalized across providers),
+	// so we subtract the difference to apply the discounted rate.
 	if pricing.CachedInputCost > 0 && usage.CacheReadTokens > 0 {
-		// Subtract the difference for cached tokens.
 		discount := float64(usage.CacheReadTokens) * (pricing.InputTokenCost - pricing.CachedInputCost)
 		inputCost -= discount
+	}
+
+	// Apply cache write token surcharge if configured.
+	// InputTokens includes cache write tokens (normalized across providers),
+	// so we add the difference to apply the higher write rate.
+	if pricing.CacheWriteCost > 0 && usage.CacheWriteTokens > 0 {
+		surcharge := float64(usage.CacheWriteTokens) * (pricing.CacheWriteCost - pricing.InputTokenCost)
+		inputCost += surcharge
 	}
 
 	cost := inputCost + outputCost

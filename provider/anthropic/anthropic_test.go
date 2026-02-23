@@ -281,6 +281,42 @@ func TestParseResponse(t *testing.T) {
 	}
 }
 
+func TestMapUsageIncludesCacheTokens(t *testing.T) {
+	// Anthropic reports non-cached tokens in InputTokens and cached tokens
+	// separately. After normalization, core.Usage.InputTokens should be the
+	// total (non-cached + cache_read + cache_write), matching OpenAI semantics.
+	u := apiUsage{
+		InputTokens:              500,
+		OutputTokens:             100,
+		CacheCreationInputTokens: 200,
+		CacheReadInputTokens:     1000,
+	}
+	usage := mapUsage(u)
+
+	// Total input = 500 + 200 + 1000 = 1700
+	if usage.InputTokens != 1700 {
+		t.Errorf("InputTokens = %d, want 1700 (500 non-cached + 200 cache write + 1000 cache read)", usage.InputTokens)
+	}
+	if usage.OutputTokens != 100 {
+		t.Errorf("OutputTokens = %d, want 100", usage.OutputTokens)
+	}
+	if usage.CacheWriteTokens != 200 {
+		t.Errorf("CacheWriteTokens = %d, want 200", usage.CacheWriteTokens)
+	}
+	if usage.CacheReadTokens != 1000 {
+		t.Errorf("CacheReadTokens = %d, want 1000", usage.CacheReadTokens)
+	}
+}
+
+func TestMapUsageNoCacheTokens(t *testing.T) {
+	// Without cache tokens, InputTokens should be unchanged.
+	u := apiUsage{InputTokens: 42, OutputTokens: 10}
+	usage := mapUsage(u)
+	if usage.InputTokens != 42 {
+		t.Errorf("InputTokens = %d, want 42", usage.InputTokens)
+	}
+}
+
 func TestParseResponseToolCall(t *testing.T) {
 	resp := &apiResponse{
 		Content: []apiContentBlock{

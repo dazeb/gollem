@@ -295,7 +295,10 @@ func mapStopReason(reason string) core.FinishReason {
 // mapUsage converts Anthropic usage to gollem Usage.
 func mapUsage(u apiUsage) core.Usage {
 	return core.Usage{
-		InputTokens:      u.InputTokens,
+		// InputTokens is the total prompt token count including cached tokens,
+		// normalized to match OpenAI semantics. Anthropic's API reports non-cached
+		// tokens separately, so we sum all three categories.
+		InputTokens:      u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens,
 		OutputTokens:     u.OutputTokens,
 		CacheWriteTokens: u.CacheCreationInputTokens,
 		CacheReadTokens:  u.CacheReadInputTokens,
