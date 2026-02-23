@@ -1693,6 +1693,72 @@ func compilationErrorHint(output string, exitCode int) string {
 			file, lineNum, lineNum)
 	}
 
+	// Clojure: "Syntax error compiling at (src/core.clj:42:5)." or
+	// "Syntax error (ExceptionType) compiling at (file.clj:42:5)."
+	// Also: "compiling:(file.clj:42:5)" for inline compile errors.
+	if strings.Contains(lower, "compiling") && (strings.Contains(output, ".clj:") || strings.Contains(output, ".cljc:") || strings.Contains(output, ".cljs:")) {
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			// Find the file reference in parentheses: "(file.clj:line:col)"
+			parenIdx := strings.LastIndex(trimmed, "(")
+			if parenIdx < 0 {
+				continue
+			}
+			closeIdx := strings.Index(trimmed[parenIdx:], ")")
+			if closeIdx <= 0 {
+				continue
+			}
+			ref := trimmed[parenIdx+1 : parenIdx+closeIdx]
+			colonParts := strings.SplitN(ref, ":", 3)
+			if len(colonParts) < 2 || !isNumeric(colonParts[1]) {
+				continue
+			}
+			file := colonParts[0]
+			lineNum := colonParts[1]
+			if len(file) > 200 {
+				continue
+			}
+			// Check it's a Clojure file.
+			if !strings.HasSuffix(file, ".clj") && !strings.HasSuffix(file, ".cljc") && !strings.HasSuffix(file, ".cljs") {
+				continue
+			}
+			// Extract error type from the line.
+			errMsg := trimmed
+			if len(errMsg) > 150 {
+				errMsg = errMsg[:150] + "..."
+			}
+			return fmt.Sprintf("[hint: %s — use view tool with offset=%s to see %s, then fix with edit]",
+				truncateErrorLine(errMsg, 120), lineNum, file)
+		}
+	}
+
+	// Erlang: "src/module.erl:42: function foo/1 undefined" or
+	// "src/module.erl:42: head mismatch" or "src/module.erl:42: syntax error before: 'X'"
+	// Format: file.erl:line: message (doesn't use ": error" like C/C++).
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		colonParts := strings.SplitN(trimmed, ":", 3)
+		if len(colonParts) < 3 || !isNumeric(colonParts[1]) {
+			continue
+		}
+		file := colonParts[0]
+		if len(file) > 200 {
+			continue
+		}
+		// Only match Erlang source files.
+		if !strings.HasSuffix(file, ".erl") && !strings.HasSuffix(file, ".hrl") {
+			continue
+		}
+		lineNum := colonParts[1]
+		errMsg := strings.TrimSpace(colonParts[2])
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Erlang error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
 	// C/C++/clang: "file.c:42:5: error: ..."
 	// Go: "./main.go:42:5: ..." or "main.go:42:5: ..."
 	// Rust (cargo): " --> src/main.rs:42:5"
@@ -4667,6 +4733,64 @@ func firstFailureDetail(output string) string {
 				if strings.HasPrefix(aheadLower, "error:") ||
 					strings.Contains(aheadLower, "expected") {
 					detail += " — " + ahead
+					break
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// Clojure (lein test): "FAIL in (test-name) (file.clj:42)" or
+		// "ERROR in (test-name) (file.clj:42)" followed by
+		// "expected: (= X Y)" and "  actual: (not (= X Y))".
+		if (strings.HasPrefix(trimmed, "FAIL in (") || strings.HasPrefix(trimmed, "ERROR in (")) &&
+			(strings.Contains(trimmed, ".clj:") || strings.Contains(trimmed, ".cljc:") || strings.Contains(trimmed, ".cljs:")) {
+			detail := trimmed
+			for j := i + 1; j < min(i+4, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.HasPrefix(aheadLower, "expected:") || strings.HasPrefix(aheadLower, "actual:") {
+					detail += " / " + ahead
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// Erlang EUnit: "module_tests: test_name...*failed*" followed by
+		// error detail lines containing assertEqual/assertMatch info.
+		if strings.Contains(trimmed, "*failed*") && strings.Contains(trimmed, "...*") {
+			detail := trimmed
+			for j := i + 1; j < min(i+8, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.Contains(aheadLower, "expected") || strings.Contains(aheadLower, "value") ||
+					strings.Contains(aheadLower, "assertequal") || strings.Contains(aheadLower, "assertmatch") {
+					detail += " / " + ahead
+					break
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// Erlang Common Test: "%%% suite ==> test_case: FAILED" or
+		// "=== Test failed ===" followed by reason on next lines.
+		if (strings.Contains(trimmed, ": FAILED") && strings.HasPrefix(trimmed, "%%%")) ||
+			strings.Contains(trimmed, "=== Test failed ===") {
+			detail := trimmed
+			for j := i + 1; j < min(i+5, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.HasPrefix(aheadLower, "reason") || strings.Contains(aheadLower, "assertEqual") ||
+					strings.Contains(aheadLower, "error") {
+					detail += " / " + ahead
 					break
 				}
 			}

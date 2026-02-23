@@ -1694,6 +1694,7 @@ func autoReadExampleOutputs(workDir string, parts *[]string, budget int) int {
 	examplePrefixes := []string{
 		"example", "sample", "reference", "expected",
 		"template", "demo", "baseline",
+		"gold", "correct",
 	}
 
 	count := 0
@@ -7179,6 +7180,19 @@ func detectTestCommands(workDir string) []string {
 		cmds = append(cmds, "Build: gleam build")
 		cmds = append(cmds, "Test: gleam test")
 	}
+	// Clojure (Leiningen)
+	if fileExists(filepath.Join(workDir, "project.clj")) {
+		cmds = append(cmds, "Install: lein deps")
+		cmds = append(cmds, "Test: lein test")
+	} else if fileExists(filepath.Join(workDir, "deps.edn")) {
+		// Clojure (tools.deps)
+		cmds = append(cmds, "Test: clj -M:test")
+	}
+	// Erlang (Rebar3)
+	if fileExists(filepath.Join(workDir, "rebar.config")) {
+		cmds = append(cmds, "Build: rebar3 compile")
+		cmds = append(cmds, "Test: rebar3 eunit")
+	}
 	// Deno
 	if fileExists(filepath.Join(workDir, "deno.json")) || fileExists(filepath.Join(workDir, "deno.jsonc")) {
 		cmds = append(cmds, "Test: deno test")
@@ -7247,6 +7261,8 @@ func isEntryPointFile(lowerName string) bool {
 		"build.sbt", "mix.exs", "dune-project", "build.zig",
 		"gleam.toml", "pubspec.yaml",
 		"tsconfig.json", "pyproject.toml",
+		"project.clj", "deps.edn",  // Clojure
+		"rebar.config",              // Erlang
 	}
 	for _, ep := range entryPoints {
 		if strings.HasPrefix(lowerName, ep) || lowerName == ep {
@@ -7598,6 +7614,15 @@ func extractFileStructure(path string) string {
 					strings.Contains(trimmed, "(") && strings.Contains(trimmed, "->")) {
 				matched = true
 			}
+		case ".clj", ".cljs", ".cljc":
+			// Clojure: top-level definitions (defn, def, defmacro, ns, etc.)
+			if strings.HasPrefix(trimmed, "(defn ") || strings.HasPrefix(trimmed, "(defn- ") ||
+				strings.HasPrefix(trimmed, "(def ") || strings.HasPrefix(trimmed, "(defmacro ") ||
+				strings.HasPrefix(trimmed, "(defprotocol ") || strings.HasPrefix(trimmed, "(defrecord ") ||
+				strings.HasPrefix(trimmed, "(deftype ") || strings.HasPrefix(trimmed, "(defmulti ") ||
+				strings.HasPrefix(trimmed, "(defmethod ") || strings.HasPrefix(trimmed, "(ns ") {
+				matched = true
+			}
 		}
 
 		if matched {
@@ -7656,6 +7681,15 @@ func detectTodoStubs(workDir string) []string {
 		"fatalError(\"not implemented\")", "fatalError(\"TODO\")",
 		// Ruby/Elixir: raise as placeholder.
 		"raise \"not implemented\"", "raise \"TODO\"",
+		// Clojure: throw as placeholder.
+		"(throw (UnsupportedOperationException.",
+		"(throw (ex-info \"not implemented\"",
+		";; TODO", ";; FIXME", ";; IMPLEMENT",
+		// Erlang: error as placeholder.
+		"erlang:error(not_implemented)",
+		"throw(not_implemented)",
+		"exit(not_implemented)",
+		"%% TODO", "%% FIXME", "%% IMPLEMENT",
 		// Placeholder comments (language-agnostic).
 		"// placeholder", "# placeholder", "-- placeholder",
 		"// your code here", "# your code here",
