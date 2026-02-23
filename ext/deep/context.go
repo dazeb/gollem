@@ -205,6 +205,7 @@ func (cm *ContextManager) tier2OffloadInputs(messages []core.ModelMessage) []cor
 				ToolName:   tcp.ToolName,
 				ArgsJSON:   fmt.Sprintf(`{"_offloaded": %q}`, summary),
 				ToolCallID: tcp.ToolCallID,
+				Metadata:   tcp.Metadata,
 			}
 		}
 

@@ -378,6 +378,69 @@ func TestContextManager_CustomTokenCounter(t *testing.T) {
 	}
 }
 
+func TestContextManager_Tier2_PreservesMetadata(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("summary"))
+
+	// Low thresholds to trigger tier 2.
+	cm := NewContextManager(model,
+		WithMaxContextTokens(100),
+		WithOffloadThreshold(5),
+		WithCompressionThreshold(0.5),
+	)
+
+	// Create messages with large tool call args AND metadata (e.g., Gemini 3.x thought signature).
+	largeArgs := `{"data":"` + strings.Repeat("z", 200) + `"}`
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Do something"},
+			},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   largeArgs,
+					ToolCallID: "tc1",
+					Metadata:   map[string]string{"thoughtSignature": "sig_abc123"},
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{ToolName: "bash", Content: "ok", ToolCallID: "tc1", Timestamp: time.Now()},
+			},
+			Timestamp: time.Now(),
+		},
+	}
+
+	result, err := cm.ProcessMessages(context.Background(), messages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The tool call args should be offloaded but metadata preserved.
+	resp, ok := result[1].(core.ModelResponse)
+	if !ok {
+		t.Fatal("expected ModelResponse at index 1")
+	}
+	tcp, ok := resp.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatal("expected ToolCallPart")
+	}
+	if !strings.Contains(tcp.ArgsJSON, "_offloaded") {
+		t.Errorf("expected offloaded args, got: %s", tcp.ArgsJSON)
+	}
+	// Metadata must be preserved through offloading.
+	if tcp.Metadata == nil {
+		t.Fatal("expected Metadata to be preserved after tier 2 offload, got nil")
+	}
+	if sig := tcp.Metadata["thoughtSignature"]; sig != "sig_abc123" {
+		t.Errorf("thoughtSignature = %q, want %q", sig, "sig_abc123")
+	}
+}
+
 // fixedTokenCounter counts 1 token per character.
 type fixedTokenCounter struct {
 	tokensPerChar int
