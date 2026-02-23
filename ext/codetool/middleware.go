@@ -7610,6 +7610,10 @@ func detectTodoStubs(workDir string) []string {
 		"todo!()", "unimplemented!()", "panic(\"not implemented\")",
 		"throw new Error(\"not implemented\")",
 		"throw new UnsupportedOperationException",
+		// C#: built-in not-implemented exception.
+		"throw new NotImplementedException",
+		// Dart: built-in not-implemented error.
+		"throw UnimplementedError",
 		// Go: common stub patterns.
 		"panic(\"todo\")", "panic(\"TODO\")",
 		"return nil, fmt.Errorf(\"not implemented\")",
@@ -7626,7 +7630,7 @@ func detectTodoStubs(workDir string) []string {
 	}
 
 	for _, dir := range []string{workDir, "/app"} {
-		detectTodoStubsRecursive(dir, &stubs, seen, todoPatterns, 0, 3)
+		detectTodoStubsRecursive(dir, dir, &stubs, seen, todoPatterns, 0, 3)
 		if len(stubs) > 0 {
 			break
 		}
@@ -7642,7 +7646,7 @@ func detectTodoStubs(workDir string) []string {
 // detectTodoStubsRecursive walks directories recursively to find TODO/stub
 // patterns in source files. Previously non-recursive, missing stubs in
 // subdirectories like src/, lib/, pkg/.
-func detectTodoStubsRecursive(dir string, stubs *[]string, seen map[string]bool, patterns []string, depth, maxDepth int) {
+func detectTodoStubsRecursive(rootDir, dir string, stubs *[]string, seen map[string]bool, patterns []string, depth, maxDepth int) {
 	if depth > maxDepth || len(*stubs) >= 15 {
 		return
 	}
@@ -7653,7 +7657,7 @@ func detectTodoStubsRecursive(dir string, stubs *[]string, seen map[string]bool,
 	for _, entry := range entries {
 		if entry.IsDir() {
 			if depth < maxDepth && !strings.HasPrefix(entry.Name(), ".") && !isSkippableDir(entry.Name()) {
-				detectTodoStubsRecursive(filepath.Join(dir, entry.Name()), stubs, seen, patterns, depth+1, maxDepth)
+				detectTodoStubsRecursive(rootDir, filepath.Join(dir, entry.Name()), stubs, seen, patterns, depth+1, maxDepth)
 			}
 			continue
 		}
@@ -7669,9 +7673,10 @@ func detectTodoStubsRecursive(dir string, stubs *[]string, seen map[string]bool,
 			continue
 		}
 		// Use relative path from the search root for cleaner output.
+		fullPath := filepath.Join(dir, entry.Name())
 		relPath := entry.Name()
-		if depth > 0 {
-			relPath = filepath.Join(filepath.Base(dir), entry.Name())
+		if rel, err := filepath.Rel(rootDir, fullPath); err == nil {
+			relPath = rel
 		}
 		for lineNum, line := range strings.Split(string(data), "\n") {
 			trimmed := strings.TrimSpace(line)

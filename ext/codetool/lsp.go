@@ -67,9 +67,9 @@ func languageForFile(name string) string {
 		return "go"
 	case ".py", ".pyi":
 		return "python"
-	case ".ts", ".tsx":
+	case ".ts", ".tsx", ".mts", ".cts":
 		return "typescript"
-	case ".js", ".jsx":
+	case ".js", ".jsx", ".mjs", ".cjs":
 		return "javascript"
 	case ".rs":
 		return "rust"
