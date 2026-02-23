@@ -491,8 +491,8 @@ func isVerificationString(cmd string) bool {
 		"poetry run pytest", "poetry run test",
 		// Maven wrapper (matches ./gradlew pattern).
 		"./mvnw",
-		// Deno task runner.
-		"deno task test", "deno task check",
+		// Deno task runner and benchmarks.
+		"deno task test", "deno task check", "deno bench",
 		// Blockchain / smart contract testing.
 		"forge test",  // Foundry (Solidity)
 		"anchor test", // Solana

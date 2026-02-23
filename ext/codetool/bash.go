@@ -728,6 +728,18 @@ func commandNotFoundHint(stderr string) string {
 		"sshfs":      "sshfs",
 		"parallel":   "parallel",
 		"csvtool":    "csvtool",
+		// JS/TS runtimes and package managers not covered above.
+		"bun":        "bun (install via: curl -fsSL https://bun.sh/install | bash)",
+		"deno":       "deno (install via: curl -fsSL https://deno.land/install.sh | sh)",
+		"pnpm":       "pnpm (install via: npm install -g pnpm)",
+		"npx":        "npm",
+		"tsx":        "tsx (install via: npm install -g tsx)",
+		// Python tool runners.
+		"uv":         "uv (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)",
+		"ruff":       "ruff (install via: pip install ruff)",
+		"mypy":       "mypy (install via: pip install mypy)",
+		"black":      "black (install via: pip install black)",
+		"isort":      "isort (install via: pip install isort)",
 	}
 
 	// Extract the missing command name from stderr.
@@ -3235,6 +3247,43 @@ func nodeErrorHint(output string, exitCode int, workDir ...string) string {
 		return "[hint: Node.js experimental feature — run with the required flag (e.g., --experimental-vm-modules, --experimental-specifier-resolution=node)]"
 	}
 
+	// Deno-specific errors (Deno shares the JS/TS ecosystem but has different error formats).
+	if strings.Contains(output, "error: Module not found") || strings.Contains(output, "error: Relative import path") {
+		return "[hint: Deno module not found — check import paths use full URLs or file extensions. " +
+			"Local imports need extensions: import { foo } from './foo.ts' (not './foo'). " +
+			"For npm packages: import pkg from 'npm:package-name']"
+	}
+	if strings.Contains(output, "error: Uncaught") {
+		// Extract the error type from "error: Uncaught (in promise) TypeError: ..."
+		lines := strings.Split(output, "\n")
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "error: Uncaught") {
+				return "[hint: " + truncateErrorLine(trimmed, 150) +
+					" — check the stack trace below for file and line number]"
+			}
+		}
+		return "[hint: Deno uncaught error — read the stack trace to find the file and line]"
+	}
+	if strings.Contains(output, "error: TS") && strings.Contains(output, "[ERROR]") {
+		// Deno TypeScript errors: "error: TS2345 [ERROR]: ..."
+		lines := strings.Split(output, "\n")
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "error: TS") {
+				return "[hint: " + truncateErrorLine(trimmed, 150) +
+					" — check the 'at' line below for file:line location]"
+			}
+		}
+	}
+	if strings.Contains(output, "error: The source code is invalid") {
+		return "[hint: Deno syntax error — check for typos, missing brackets, or invalid TypeScript syntax]"
+	}
+	if strings.Contains(output, "PermissionDenied") && strings.Contains(output, "deno") {
+		return "[hint: Deno permission denied — add the required flags: --allow-read, --allow-write, " +
+			"--allow-net, --allow-env, --allow-run, or use --allow-all (deno run --allow-all script.ts)]"
+	}
+
 	return ""
 }
 
@@ -3299,7 +3348,7 @@ func testResultSummary(output string) string {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if (strings.Contains(lineLower, "passed") || strings.Contains(lineLower, "failed")) &&
-				(strings.Contains(line, "=") || strings.Contains(lineLower, "error")) {
+				(strings.Contains(line, "=") || strings.Contains(line, "|") || strings.Contains(lineLower, "error")) {
 				summary = "[test summary: " + line + "]"
 				break
 			}
@@ -5717,6 +5766,7 @@ func isLongRunningCommand(cmd string) bool {
 		"tox ", "tox -e",                // Tox test environments
 		"hatch run ",                    // Hatch scripts
 		"deno test",                     // Deno tests
+		"deno run ",                     // Deno scripts
 		"swift test",                    // Swift package tests
 		"gleam run",                     // Gleam execution
 		"mix phx.",                      // Phoenix (Elixir) tasks
@@ -5901,6 +5951,8 @@ func isBuildCommand(cmd string) bool {
 		"bun install",       // Bun package manager
 		"bun build",         // Bun bundler
 		"gleam build",       // Gleam
+		"deno install",      // Deno dependencies
+		"deno cache",        // Deno dependency caching
 		"mix deps.get",      // Elixir dependencies
 		"stack install",     // Haskell
 		"cargo check",       // Rust quick check

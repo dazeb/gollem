@@ -7146,6 +7146,10 @@ func detectTestCommands(workDir string) []string {
 		cmds = append(cmds, "Build: gleam build")
 		cmds = append(cmds, "Test: gleam test")
 	}
+	// Deno
+	if fileExists(filepath.Join(workDir, "deno.json")) || fileExists(filepath.Join(workDir, "deno.jsonc")) {
+		cmds = append(cmds, "Test: deno test")
+	}
 	// PHP (Composer)
 	if fileExists(filepath.Join(workDir, "composer.json")) {
 		cmds = append(cmds, "Install: composer install")
