@@ -881,12 +881,32 @@ func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []stri
 		}
 	}
 
+	// Detect if the same error is repeating across runs. When two consecutive
+	// summaries contain the same failure detail, the agent's edits aren't
+	// addressing the root cause — a stronger nudge is needed.
+	sameError := false
+	if len(runSummary) >= 2 {
+		prev := runSummary[len(runSummary)-2]
+		curr := runSummary[len(runSummary)-1]
+		if prev != "" && curr != "" && prev == curr {
+			sameError = true
+		}
+	}
+
+	sameErrorHint := ""
+	if sameError {
+		sameErrorHint = "NOTE: The EXACT SAME error appeared in the last two runs. " +
+			"Your edits are NOT fixing the root cause. " +
+			"Stop, re-read the error, and fix the ACTUAL problem — not what you think the problem is.\n"
+	}
+
 	switch {
 	case consecutiveFails == 2:
 		msg := "VERIFICATION STAGNATION: Tests have failed 2 times in a row.\n"
 		if history != "" {
 			msg += "Run history:\n" + history
 		}
+		msg += sameErrorHint
 		msg += "Re-read the FULL error output from the last test run — you may be " +
 			"misunderstanding the requirement or fixing the wrong thing.\n" +
 			"Before making more changes, re-read the test file to confirm what's actually expected."
@@ -897,6 +917,7 @@ func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []stri
 		if history != "" {
 			msg += "Run history:\n" + history
 		}
+		msg += sameErrorHint
 		msg += "Your current approach may be fundamentally wrong. Do these NOW:\n" +
 			"1. Re-read the ORIGINAL task description from scratch\n" +
 			"2. Re-read the test file assertions character by character\n" +
@@ -910,6 +931,7 @@ func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []stri
 		if history != "" {
 			msg += "Run history:\n" + history
 		}
+		msg += sameErrorHint
 		msg += "You MUST try a FUNDAMENTALLY DIFFERENT approach:\n" +
 			"- If output format is wrong: dump the expected output in hex (xxd) and compare byte-by-byte\n" +
 			"- If algorithm is wrong: switch to a simpler brute-force approach, then optimize\n" +

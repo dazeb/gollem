@@ -1926,6 +1926,28 @@ func TestStagnationGuidance(t *testing.T) {
 	}
 }
 
+func TestStagnationGuidance_SameErrorHint(t *testing.T) {
+	// When two consecutive runs have the exact same error summary,
+	// stagnationGuidance should include the same-error hint.
+	runPassed := []int{2, 2, 2}
+	runSummary := []string{"1 failed, 2 passed", "1 failed, 2 passed", "1 failed, 2 passed"}
+	got := stagnationGuidance(3, runPassed, runSummary)
+	if !strings.Contains(got, "EXACT SAME error") {
+		t.Errorf("stagnationGuidance with same errors should include same-error hint, got: %q", got)
+	}
+}
+
+func TestStagnationGuidance_NoSameErrorHintWhenDifferent(t *testing.T) {
+	// When consecutive runs have different error summaries,
+	// stagnationGuidance should NOT include the same-error hint.
+	runPassed := []int{2, 2}
+	runSummary := []string{"1 failed: test_foo", "1 failed: test_bar"}
+	got := stagnationGuidance(2, runPassed, runSummary)
+	if strings.Contains(got, "EXACT SAME error") {
+		t.Errorf("stagnationGuidance with different errors should NOT include same-error hint, got: %q", got)
+	}
+}
+
 func TestVerificationResultFailed(t *testing.T) {
 	tests := []struct {
 		name       string
