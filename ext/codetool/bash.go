@@ -1031,8 +1031,11 @@ func pythonErrorHint(output string, exitCode int) string {
 		return ""
 	}
 
-	// Only process if it looks like a Python error.
-	if !strings.Contains(output, "Error:") && !strings.Contains(output, "Error (") {
+	// Only process if it looks like a Python traceback or error.
+	// Check for "Traceback" (standard traceback), "Error:" (exception line),
+	// or "Error (" (parenthesized exceptions like "Error (from subclass)").
+	if !strings.Contains(output, "Error:") && !strings.Contains(output, "Error (") &&
+		!strings.Contains(output, "Traceback") {
 		return ""
 	}
 
@@ -1072,10 +1075,28 @@ func pythonErrorHint(output string, exitCode int) string {
 			"NotImplementedError:", "ConnectionError:", "TimeoutError:",
 			"BrokenPipeError:", "ProcessLookupError:",
 			"json.decoder.JSONDecodeError:",
+			// Framework-specific exceptions.
+			"django.core.exceptions.", "pydantic.ValidationError:",
+			"pydantic_core._pydantic_core.ValidationError:",
+			"requests.exceptions.", "httpx.",
+			"sqlalchemy.exc.", "celery.exceptions.",
+			"fastapi.exceptions.", "starlette.exceptions.",
+			"marshmallow.exceptions.", "werkzeug.exceptions.",
+			"jwt.exceptions.", "paramiko.",
 		} {
 			if strings.Contains(trimmed, errPrefix) {
 				errorType = trimmed
 				break
+			}
+		}
+		// Generic Python exception detection: catch custom/unknown exception
+		// types that aren't in the hardcoded list. Python exception lines are
+		// unindented and match "SomeName: message" or "module.path.Name: message".
+		// Only set errorType if we haven't matched a known prefix yet, and the
+		// line starts at column 0 (not indented in the traceback).
+		if errorType == "" && len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+			if looksLikePythonException(trimmed) {
+				errorType = trimmed
 			}
 		}
 	}
@@ -1113,6 +1134,45 @@ func pythonErrorHint(output string, exitCode int) string {
 	}
 
 	return ""
+}
+
+// looksLikePythonException checks if a line looks like a Python exception.
+// Python exception lines follow the pattern: "ExceptionName: message" or
+// "module.path.ExceptionName: message". The exception name must start with
+// a capital letter. This catches custom/third-party exceptions that aren't
+// in the hardcoded known-prefix list.
+func looksLikePythonException(line string) bool {
+	colonIdx := strings.Index(line, ": ")
+	if colonIdx <= 0 || colonIdx > 100 {
+		return false
+	}
+	name := line[:colonIdx]
+	// Must start with a capital letter or module path (dotted name ending in capital).
+	if len(name) == 0 {
+		return false
+	}
+	// Reject lines that are clearly not exceptions: shell commands, paths, URLs.
+	if strings.ContainsAny(name, " /\\=<>()[]{}\"'`@#$%^&*+~|") {
+		return false
+	}
+	// For dotted names (module.path.ExceptionName), check the last segment.
+	lastDot := strings.LastIndex(name, ".")
+	var className string
+	if lastDot >= 0 {
+		className = name[lastDot+1:]
+	} else {
+		className = name
+	}
+	// Exception class names start with a capital letter and contain only letters/digits.
+	if len(className) == 0 || className[0] < 'A' || className[0] > 'Z' {
+		return false
+	}
+	for _, c := range className {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // truncateErrorLine shortens an error line for hint display.

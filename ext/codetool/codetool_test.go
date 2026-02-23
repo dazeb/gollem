@@ -11125,6 +11125,110 @@ func TestCompilationErrorHint_Swift(t *testing.T) {
 	}
 }
 
+func TestPythonErrorHint_CustomException(t *testing.T) {
+	output := `Traceback (most recent call last):
+  File "app/views.py", line 42, in process_form
+    validate_input(data)
+  File "app/validators.py", line 15, in validate_input
+    raise InvalidInputError("missing required field 'name'")
+InvalidInputError: missing required field 'name'`
+	hint := pythonErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for custom Python exception")
+	}
+	if !strings.Contains(hint, "InvalidInputError") {
+		t.Errorf("expected hint to contain custom exception name, got: %s", hint)
+	}
+	if !strings.Contains(hint, "app/validators.py:15") {
+		t.Errorf("expected hint to contain innermost file:line, got: %s", hint)
+	}
+}
+
+func TestPythonErrorHint_DottedModuleException(t *testing.T) {
+	output := `Traceback (most recent call last):
+  File "manage.py", line 10, in <module>
+    execute_from_command_line(sys.argv)
+  File "/app/myproject/settings.py", line 5, in <module>
+    raise django.core.exceptions.ImproperlyConfigured("SECRET_KEY not set")
+django.core.exceptions.ImproperlyConfigured: SECRET_KEY not set`
+	hint := pythonErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for dotted module Python exception")
+	}
+	if !strings.Contains(hint, "ImproperlyConfigured") {
+		t.Errorf("expected hint to contain exception name, got: %s", hint)
+	}
+}
+
+func TestLooksLikePythonException(t *testing.T) {
+	tests := []struct {
+		line     string
+		expected bool
+	}{
+		{"ValueError: invalid literal", true},
+		{"CustomError: something failed", true},
+		{"django.core.exceptions.ImproperlyConfigured: SECRET_KEY", true},
+		{"myapp.errors.ValidationError: bad input", true},
+		{"error: command not found", false},          // lowercase start
+		{"This is not an error: just a note", false},  // spaces in name
+		{"  IndentedError: not at column 0", false},   // leading space is treated as non-exception
+		{"/usr/bin/python: can't open file", false},   // path, not exception
+		{"", false},
+		{"NoColonHere", false},
+	}
+	for _, tt := range tests {
+		got := looksLikePythonException(tt.line)
+		if got != tt.expected {
+			t.Errorf("looksLikePythonException(%q) = %v, want %v", tt.line, got, tt.expected)
+		}
+	}
+}
+
+func TestParseJustfileTargets(t *testing.T) {
+	justfile := `# Build the project
+build:
+    cargo build --release
+
+# Run tests with optional filter
+test filter="":
+    cargo test {{filter}}
+
+# Start the dev server
+dev:
+    cargo run
+
+# Private recipe (should be skipped)
+_setup:
+    mkdir -p build
+
+# Clean artifacts
+clean:
+    rm -rf target/
+
+# Settings (should be skipped)
+set dotenv-load
+
+# Alias (should be skipped)
+alias b := build
+`
+	targets := parseJustfileTargets(justfile)
+	expected := map[string]bool{
+		"build": true,
+		"test":  true,
+		"dev":   true,
+		"clean": true,
+	}
+	for _, t2 := range targets {
+		if !expected[t2] {
+			t.Errorf("unexpected target: %s", t2)
+		}
+		delete(expected, t2)
+	}
+	for missing := range expected {
+		t.Errorf("missing expected target: %s", missing)
+	}
+}
+
 func TestEdit_PreservesFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	// Create an executable script.

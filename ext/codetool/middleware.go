@@ -7122,6 +7122,23 @@ func detectTestCommands(workDir string) []string {
 			}
 		}
 	}
+	// Justfile (Just task runner) — parse targets like Makefile.
+	if fileExists(filepath.Join(workDir, "Justfile")) || fileExists(filepath.Join(workDir, "justfile")) ||
+		fileExists("/app/Justfile") || fileExists("/app/justfile") {
+		cmds = append(cmds, "Run: just")
+		for _, dir := range []string{workDir, "/app"} {
+			for _, name := range []string{"Justfile", "justfile"} {
+				jfPath := filepath.Join(dir, name)
+				if content := readFileTruncated(jfPath, 3000); content != "" {
+					targets := parseJustfileTargets(content)
+					for _, t := range targets {
+						cmds = append(cmds, "Just: just "+t)
+					}
+					break
+				}
+			}
+		}
+	}
 	if fileExists(filepath.Join(workDir, "CMakeLists.txt")) {
 		cmds = append(cmds, "Build: mkdir -p build && cd build && cmake .. && make")
 	}
@@ -7367,6 +7384,8 @@ func isEntryPointFile(lowerName string) bool {
 		"tsconfig.json", "pyproject.toml",
 		"project.clj", "deps.edn",  // Clojure
 		"rebar.config",              // Erlang
+		"justfile",                  // Just task runner
+		"taskfile.yml",              // Task task runner
 	}
 	for _, ep := range entryPoints {
 		if strings.HasPrefix(lowerName, ep) || lowerName == ep {
@@ -7427,6 +7446,66 @@ func parseMakefileTargets(content string) []string {
 	}
 
 	// Cap at 6 targets to avoid bloat
+	if len(targets) > 6 {
+		targets = targets[:6]
+	}
+	return targets
+}
+
+// parseJustfileTargets extracts useful recipe names from a Justfile.
+// Justfile syntax: recipe names start at column 0, followed by optional
+// parameters and ":", e.g. "build:", "test filter="":", "run arg:".
+// Private recipes start with "_" and are skipped.
+func parseJustfileTargets(content string) []string {
+	interestingTargets := map[string]bool{
+		"test": true, "tests": true, "check": true, "verify": true,
+		"run": true, "start": true, "serve": true, "dev": true,
+		"build": true, "compile": true, "install": true,
+		"clean": true, "lint": true, "fmt": true, "format": true,
+		"benchmark": true, "bench": true,
+		"debug": true, "release": true,
+		"setup": true, "init": true,
+	}
+
+	var targets []string
+	seen := make(map[string]bool)
+
+	for _, line := range strings.Split(content, "\n") {
+		// Skip empty, comments, indented (recipe body), and directives.
+		if len(line) == 0 || line[0] == ' ' || line[0] == '\t' || line[0] == '#' {
+			continue
+		}
+		// Skip Justfile settings: "set ...", "export ...", "alias ...".
+		if strings.HasPrefix(line, "set ") || strings.HasPrefix(line, "export ") || strings.HasPrefix(line, "alias ") {
+			continue
+		}
+		// Skip attribute annotations like "[no-cd]", "[private]".
+		if line[0] == '[' {
+			continue
+		}
+
+		colonIdx := strings.Index(line, ":")
+		if colonIdx <= 0 {
+			continue
+		}
+		// Extract recipe name (first word before any parameters or ":").
+		nameAndParams := strings.TrimSpace(line[:colonIdx])
+		name := nameAndParams
+		// Strip parameters: "test filter=''" → "test"
+		if spaceIdx := strings.IndexAny(nameAndParams, " \t"); spaceIdx > 0 {
+			name = nameAndParams[:spaceIdx]
+		}
+		// Skip private recipes (start with "_") and special characters.
+		if strings.HasPrefix(name, "_") || strings.ContainsAny(name, "%$(){}") {
+			continue
+		}
+
+		if interestingTargets[name] && !seen[name] {
+			seen[name] = true
+			targets = append(targets, name)
+		}
+	}
+
 	if len(targets) > 6 {
 		targets = targets[:6]
 	}
