@@ -1533,6 +1533,71 @@ func compilationErrorHint(output string, exitCode int) string {
 			truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
 	}
 
+	// GHC (Haskell): error message is on the NEXT line(s), indented.
+	// Modern format:
+	//   Main.hs:42:5: error: [GHC-88464]
+	//       Variable not in scope: fooBar :: Int -> Bool
+	// Or without error code:
+	//   Main.hs:42:5: error:
+	//       • Could not deduce (Num String) arising from a use of '+'
+	// Older format (no "error:" keyword):
+	//   Main.hs:42:5:
+	//       Not in scope: 'foo'
+	// Must run BEFORE the generic C/C++/Go parser which would catch "file.hs:42:5: error:"
+	// but extract only "error:" as the message (useless).
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Match file.hs:line:col: pattern (Haskell source files).
+		if !strings.HasSuffix(strings.SplitN(trimmed, ":", 2)[0], ".hs") &&
+			!strings.HasSuffix(strings.SplitN(trimmed, ":", 2)[0], ".lhs") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, ":", 4)
+		if len(parts) < 3 || !isNumeric(parts[1]) {
+			continue
+		}
+		file := parts[0]
+		lineNum := parts[1]
+		if len(file) > 200 {
+			continue
+		}
+		// Check if this line ends with "error:" or "error: [GHC-XXXXX]" or just ":"
+		// (older format). The actual error detail is on subsequent indented lines.
+		rest := ""
+		if len(parts) >= 4 {
+			rest = strings.TrimSpace(parts[3])
+		}
+		// Skip "warning:" lines — only process errors.
+		if strings.HasPrefix(rest, " warning") || strings.HasPrefix(rest, "warning") {
+			continue
+		}
+		// Look ahead for the actual error message on indented continuation lines.
+		errMsg := ""
+		for j := i + 1; j < min(i+6, len(lines)); j++ {
+			ahead := lines[j]
+			// GHC continuation lines are indented with spaces.
+			if len(ahead) == 0 || (ahead[0] != ' ' && ahead[0] != '\t') {
+				break
+			}
+			candidate := strings.TrimSpace(ahead)
+			if candidate == "" || candidate == "|" {
+				continue
+			}
+			// Skip Unicode bullet markers and grab the message.
+			candidate = strings.TrimPrefix(candidate, "• ")
+			candidate = strings.TrimPrefix(candidate, "· ")
+			if candidate != "" && errMsg == "" {
+				errMsg = candidate
+			}
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Haskell error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
 	// C/C++/clang: "file.c:42:5: error: ..."
 	// Go: "./main.go:42:5: ..." or "main.go:42:5: ..."
 	// Rust (cargo): " --> src/main.rs:42:5"
@@ -4676,6 +4741,35 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
+	// Haskell Tasty / HUnit: "N out of M tests failed (T seconds)"
+	// Success: "All N tests passed (T seconds)" — handled by the Zig/generic section below.
+	// Failure format: "2 out of 5 tests failed (0.01s)"
+	// Must not conflict with Bazel ("Executed N out of N tests:") or CTest.
+	if strings.Contains(lower, "out of") && strings.Contains(lower, "tests failed") &&
+		!strings.Contains(lower, "executed") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "out of") || !strings.Contains(line, "tests failed") {
+				continue
+			}
+			// Parse "N out of M tests failed"
+			words := strings.Fields(line)
+			for j := 0; j+4 < len(words); j++ {
+				if isNumeric(words[j]) && words[j+1] == "out" && words[j+2] == "of" && isNumeric(words[j+3]) {
+					var f, total int
+					fmt.Sscanf(words[j], "%d", &f)
+					fmt.Sscanf(words[j+3], "%d", &total)
+					if total > 0 && f <= total {
+						failed = f
+						passed = total - f
+						ok = true
+						return
+					}
+				}
+			}
+		}
+	}
+
 	// Lua busted: "X successes / Y failures / Z errors / W pending : T seconds"
 	// Note: busted uses "failure" (singular) or "failures" (plural).
 	if strings.Contains(lower, "successes") && strings.Contains(lower, "failure") &&
@@ -5069,6 +5163,16 @@ func compilationErrorSummary(output string, exitCode int) string {
 		"undefined: ",           // Go: undefined identifier
 		"imported and not used", // Go: unused import
 		"declared and not used", // Go: unused variable
+		// GHC (Haskell): error details on continuation lines, match distinctive messages.
+		"Not in scope:",           // GHC: variable/function not found
+		"Could not deduce",        // GHC: type class constraint failure
+		"No instance for",         // GHC: missing type class instance
+		"Couldn't match type",     // GHC: type mismatch
+		"Couldn't match expected",                  // GHC: expected vs actual type
+		"Ambiguous type variable",                   // GHC: type inference failure
+		"Variable not in scope",                     // GHC: newer format
+		"Not a valid type signature",                // GHC: invalid type signature
+		"Parse error",             // GHC: syntax error
 	}
 	for _, p := range errorPatterns {
 		if strings.Contains(output, p) {
@@ -5154,6 +5258,14 @@ func compilationFingerprint(output string) string {
 		"undefined: ",           // Go: undefined identifier
 		"imported and not used", // Go: unused import
 		"declared and not used", // Go: unused variable
+		// GHC (Haskell): distinctive error messages on continuation lines.
+		"Not in scope:",           // GHC: variable/function not found
+		"Could not deduce",        // GHC: type class constraint failure
+		"No instance for",         // GHC: missing type class instance
+		"Couldn't match type",     // GHC: type mismatch
+		"Couldn't match expected", // GHC: expected vs actual type
+		"Variable not in scope",   // GHC: newer format
+		"Parse error",             // GHC: syntax error
 	}
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)

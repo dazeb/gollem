@@ -9288,6 +9288,82 @@ Fatal Error: Cannot open module file 'utils.mod' for reading at (1)`
 	}
 }
 
+func TestCompilationErrorHint_GHC_Modern(t *testing.T) {
+	output := `[1 of 1] Compiling Main
+Main.hs:42:5: error: [GHC-88464]
+    Variable not in scope: fooBar :: Int -> Bool
+    Suggested fix: Perhaps use 'foobar' (imported from Data.List)
+   |
+42 |     if fooBar x then y else z
+   |        ^^^^^^`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for GHC modern error, got empty")
+	}
+	if !strings.Contains(hint, "Main.hs") || !strings.Contains(hint, ":42") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "Variable not in scope") {
+		t.Errorf("expected actual error message from continuation line, got %q", hint)
+	}
+}
+
+func TestCompilationErrorHint_GHC_TypeMismatch(t *testing.T) {
+	output := `Solver.hs:15:10: error:
+    • Could not deduce (Num String) arising from a use of '+'
+    • In the expression: "hello" + 1
+      In an equation for 'foo': foo = "hello" + 1
+   |
+15 |     foo = "hello" + 1
+   |          ^^^^^^^^^^^`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for GHC type error, got empty")
+	}
+	if !strings.Contains(hint, "Solver.hs") || !strings.Contains(hint, ":15") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "Could not deduce") {
+		t.Errorf("expected type error message from continuation line, got %q", hint)
+	}
+}
+
+func TestCompilationErrorHint_GHC_OldFormat(t *testing.T) {
+	// Older GHC format without "error:" keyword — error on next line.
+	output := `[1 of 1] Compiling Main
+Main.hs:5:1:
+    Not in scope: 'solve'
+    Perhaps you meant 'show' (imported from Prelude)`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for GHC old-format error, got empty")
+	}
+	if !strings.Contains(hint, "Main.hs") || !strings.Contains(hint, ":5") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "Not in scope") {
+		t.Errorf("expected error message from continuation line, got %q", hint)
+	}
+}
+
+func TestCompilationErrorHint_GHC_ParseError(t *testing.T) {
+	output := `Solution.hs:10:1: error:
+    Parse error (possibly incorrect indentation or mismatched brackets)
+   |
+10 | where
+   | ^`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for GHC parse error, got empty")
+	}
+	if !strings.Contains(hint, "Solution.hs") || !strings.Contains(hint, ":10") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "Parse error") {
+		t.Errorf("expected parse error message from continuation line, got %q", hint)
+	}
+}
+
 func TestCompilationErrorHint_OCaml(t *testing.T) {
 	output := `File "src/main.ml", line 42, characters 5-10:
 42 |   let x = foo bar
@@ -9788,6 +9864,63 @@ func TestCompilationErrorSummary_Go(t *testing.T) {
 	}
 	if !strings.Contains(summary, "declared and not used") {
 		t.Error("summary should include the unused variable error")
+	}
+}
+
+func TestCompilationFingerprint_GHC(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name: "GHC Not in scope",
+			output: `[1 of 1] Compiling Main
+Main.hs:5:1:
+    Not in scope: 'solve'
+    Perhaps you meant 'show' (imported from Prelude)`,
+		},
+		{
+			name: "GHC Could not deduce",
+			output: `Solver.hs:15:10: error:
+    • Could not deduce (Num String) arising from a use of '+'`,
+		},
+		{
+			name: "GHC Variable not in scope",
+			output: `Main.hs:42:5: error: [GHC-88464]
+    Variable not in scope: fooBar :: Int -> Bool`,
+		},
+		{
+			name: "GHC Parse error",
+			output: `Solution.hs:10:1: error:
+    Parse error (possibly incorrect indentation)`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := compilationFingerprint(tc.output)
+			if fp == "" {
+				t.Fatalf("expected fingerprint for GHC %s, got empty", tc.name)
+			}
+		})
+	}
+}
+
+func TestCompilationErrorSummary_GHC(t *testing.T) {
+	output := `[1 of 1] Compiling Main
+Main.hs:5:1:
+    Not in scope: 'solve'
+Main.hs:10:3:
+    Couldn't match type 'String' with 'Int'
+[exit code: 1]`
+	summary := compilationErrorSummary(output, 1)
+	if summary == "" {
+		t.Fatal("expected compilation error summary for GHC errors, got empty")
+	}
+	if !strings.Contains(summary, "Not in scope") {
+		t.Error("summary should include the 'Not in scope' error")
+	}
+	if !strings.Contains(summary, "Couldn't match type") {
+		t.Error("summary should include the type mismatch error")
 	}
 }
 
@@ -10405,6 +10538,49 @@ Executed 2 out of 2 tests: 2 tests pass.`
 	}
 	if p != 2 {
 		t.Errorf("expected 2 passed, got %d", p)
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failed, got %d", f)
+	}
+}
+
+func TestExtractTestCounts_Tasty(t *testing.T) {
+	output := `  Test group
+    test addition: OK (0.01s)
+    test subtraction: OK (0.01s)
+    test multiplication: FAIL
+      expected: 42
+       but got: 43
+
+2 out of 3 tests failed (0.02s)`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected Tasty test counts")
+	}
+	if p != 1 {
+		t.Errorf("expected 1 passed, got %d", p)
+	}
+	if f != 2 {
+		t.Errorf("expected 2 failed, got %d", f)
+	}
+}
+
+func TestExtractTestCounts_TastyAllPassing(t *testing.T) {
+	// Tasty "All N tests passed" is handled by the generic/Zig section.
+	output := `  Test group
+    test addition: OK (0.01s)
+    test subtraction: OK (0.01s)
+    test multiplication: OK (0.01s)
+
+All 3 tests passed (0.03s)`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected Tasty all-passing test counts")
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed, got %d", p)
 	}
 	if f != 0 {
 		t.Errorf("expected 0 failed, got %d", f)
