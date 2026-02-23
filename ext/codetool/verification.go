@@ -307,8 +307,11 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 				var missingOutputHint string
 				var formatIssuesHint string
 				if workDir != "" {
-					missingOutputHint = checkExpectedOutputsExist(workDir)
-					formatIssuesHint = validateOutputFormats(workDir)
+					// Compute expected outputs once and pass to both checkers
+					// to avoid scanning test files twice.
+					expectedOutputs := detectExpectedOutputs(workDir)
+					missingOutputHint = checkExpectedOutputsExist(workDir, expectedOutputs)
+					formatIssuesHint = validateOutputFormats(workDir, expectedOutputs)
 				}
 				checklistMsg := "Before finalizing: run through this checklist.\n" +
 					"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
@@ -566,9 +569,8 @@ func isVerificationString(cmd string) bool {
 // or empty string if everything looks fine. Called during the pre-completion
 // checklist to programmatically verify deliverables exist.
 //
-// In addition to hardcoded checks, it also runs detectExpectedOutputs to find
-// files that tests specifically reference, catching cases where the agent
-// created the wrong files or forgot to create expected deliverables.
+// expectedOutputs is pre-computed by the caller (via detectExpectedOutputs)
+// to avoid scanning test files multiple times.
 // autoCleanupIntermediates removes known build artifacts that can interfere
 // with test verification (many tests use os.listdir/ls to check directory
 // contents). Returns the count of items removed. Only removes safe targets:
@@ -661,7 +663,7 @@ func autoCleanupIntermediates(workDir string) int {
 	return cleaned
 }
 
-func checkExpectedOutputsExist(workDir string) string {
+func checkExpectedOutputsExist(workDir string, expectedOutputs []string) string {
 	// Check for common output directories that should be populated.
 	outputDirs := []struct {
 		path string
@@ -707,10 +709,8 @@ func checkExpectedOutputsExist(workDir string) string {
 		}
 	}
 
-	// Deep check: scan test files for specific expected output paths and verify
-	// they exist and are non-empty. This catches cases where the agent created
-	// the wrong file names or missed specific deliverables.
-	expectedOutputs := detectExpectedOutputs(workDir)
+	// Check expected output paths exist and are non-empty.
+	// expectedOutputs is pre-computed by the caller to avoid scanning test files twice.
 	var missingOutputs []string
 	for _, o := range expectedOutputs {
 		// Resolve the path.
@@ -744,7 +744,7 @@ func checkExpectedOutputsExist(workDir string) string {
 // validateOutputFormats programmatically checks output files for common format
 // issues that cause test failures: BOM markers, Windows line endings, invalid
 // JSON, and missing executable bits. Returns a warning string or empty.
-func validateOutputFormats(workDir string) string {
+func validateOutputFormats(workDir string, expectedOutputs []string) string {
 	// Gather output files from multiple sources for comprehensive checking.
 	seen := make(map[string]bool)
 	var outputFiles []string
@@ -756,8 +756,8 @@ func validateOutputFormats(workDir string) string {
 		}
 	}
 
-	// Source 1: files detected from test scripts.
-	for _, o := range detectExpectedOutputs(workDir) {
+	// Source 1: files detected from test scripts (pre-computed by caller).
+	for _, o := range expectedOutputs {
 		addFile(o)
 	}
 

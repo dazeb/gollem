@@ -2361,7 +2361,7 @@ func TestValidateOutputFormats_BOM(t *testing.T) {
 	os.MkdirAll(testsDir, 0o755)
 	os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte(`diff output.txt expected.txt`), 0o644)
 
-	result := validateOutputFormats(dir)
+	result := validateOutputFormats(dir, detectExpectedOutputs(dir))
 	if !strings.Contains(result, "BOM") {
 		t.Errorf("expected BOM warning, got: %q", result)
 	}
@@ -2378,7 +2378,7 @@ func TestValidateOutputFormats_WindowsLineEndings(t *testing.T) {
 	os.MkdirAll(testsDir, 0o755)
 	os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte(`diff output.csv expected.csv`), 0o644)
 
-	result := validateOutputFormats(dir)
+	result := validateOutputFormats(dir, detectExpectedOutputs(dir))
 	if !strings.Contains(result, "Windows line endings") {
 		t.Errorf("expected Windows line endings warning, got: %q", result)
 	}
@@ -2393,7 +2393,7 @@ func TestValidateOutputFormats_CleanFile(t *testing.T) {
 	os.MkdirAll(testsDir, 0o755)
 	os.WriteFile(filepath.Join(testsDir, "test.sh"), []byte(`diff output.txt expected.txt`), 0o644)
 
-	result := validateOutputFormats(dir)
+	result := validateOutputFormats(dir, detectExpectedOutputs(dir))
 	if result != "" {
 		t.Errorf("expected no issues for clean file, got: %q", result)
 	}
@@ -4939,21 +4939,21 @@ func TestCheckExpectedOutputsExist(t *testing.T) {
 	dir := t.TempDir()
 
 	// No output dirs — should return empty.
-	result := checkExpectedOutputsExist(dir)
+	result := checkExpectedOutputsExist(dir, detectExpectedOutputs(dir))
 	if result != "" {
 		t.Errorf("expected empty result, got: %s", result)
 	}
 
 	// Create empty output_data directory.
 	os.MkdirAll(filepath.Join(dir, "output_data"), 0o755)
-	result = checkExpectedOutputsExist(dir)
+	result = checkExpectedOutputsExist(dir, detectExpectedOutputs(dir))
 	if !strings.Contains(result, "EMPTY") {
 		t.Error("expected warning about empty output_data directory")
 	}
 
 	// Add a file to output_data — warning should go away.
 	os.WriteFile(filepath.Join(dir, "output_data", "result.txt"), []byte("data"), 0o644)
-	result = checkExpectedOutputsExist(dir)
+	result = checkExpectedOutputsExist(dir, detectExpectedOutputs(dir))
 	if result != "" {
 		t.Errorf("expected no warning after adding file, got: %s", result)
 	}
@@ -4964,7 +4964,7 @@ func TestCheckExpectedOutputsExistEmptySolution(t *testing.T) {
 
 	// Create empty solution.py — should warn.
 	os.WriteFile(filepath.Join(dir, "solution.py"), []byte(""), 0o644)
-	result := checkExpectedOutputsExist(dir)
+	result := checkExpectedOutputsExist(dir, detectExpectedOutputs(dir))
 	if !strings.Contains(result, "EMPTY") || !strings.Contains(result, "solution.py") {
 		t.Errorf("expected warning about empty solution.py, got: %s", result)
 	}
@@ -6565,17 +6565,17 @@ func TestValidateOutputFormats_TrailingNewline(t *testing.T) {
 	// File without trailing newline should trigger warning.
 	os.WriteFile(filepath.Join(dir, "output.txt"), []byte("hello world"), 0o644)
 
-	// Use validateOutputFormats (which calls detectExpectedOutputs internally).
+	// Use validateOutputFormats with pre-computed expected outputs.
 	// For a direct test, we need the file to be in a pattern it checks.
 	// validateOutputFormats checks files matching "output.*" pattern.
-	issues := validateOutputFormats(dir)
+	issues := validateOutputFormats(dir, detectExpectedOutputs(dir))
 	if !strings.Contains(issues, "missing a trailing newline") {
 		t.Errorf("expected trailing newline warning, got: %q", issues)
 	}
 
 	// File WITH trailing newline should not trigger warning.
 	os.WriteFile(filepath.Join(dir, "output.txt"), []byte("hello world\n"), 0o644)
-	issues = validateOutputFormats(dir)
+	issues = validateOutputFormats(dir, detectExpectedOutputs(dir))
 	if strings.Contains(issues, "missing a trailing newline") {
 		t.Errorf("should not warn about trailing newline when present, got: %q", issues)
 	}
