@@ -719,6 +719,131 @@ func TestNormalizedChanges(t *testing.T) {
 	})
 }
 
+func TestApplyWorkspaceEdit(t *testing.T) {
+	// Create a temp file to apply edits to.
+	tmpFile, err := os.CreateTemp("", "lsp-edit-test-*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.WriteString("package main\n\nfunc hello() {\n\tprintln(\"hello\")\n}\n")
+	tmpFile.Close()
+
+	uri := fileURI(tmpFile.Name())
+
+	// Create pipes so ensureFileOpen doesn't panic on nil stdin.
+	clientRead, clientWrite, _ := os.Pipe()
+	defer clientRead.Close()
+	defer clientWrite.Close()
+
+	srv := &lspServer{
+		stdin:       clientWrite,
+		lang:        "go",
+		openFiles:   make(map[string]fileState),
+		diagnostics: make(map[string][]lspDiagnostic),
+	}
+
+	// Build a workspace edit that renames "hello" to "world" on line 3 (0-indexed line 2).
+	edit := &lspWorkspaceEdit{
+		Changes: map[string][]lspTextEdit{
+			uri: {
+				{
+					Range: lspRange{
+						Start: lspPosition{Line: 2, Character: 5},
+						End:   lspPosition{Line: 2, Character: 10},
+					},
+					NewText: "world",
+				},
+			},
+		},
+	}
+
+	totalEdits, summary, err := applyWorkspaceEdit(edit, srv, "/tmp")
+	if err != nil {
+		t.Fatalf("applyWorkspaceEdit: %v", err)
+	}
+	if totalEdits != 1 {
+		t.Errorf("expected 1 edit, got %d", totalEdits)
+	}
+	if len(summary) != 1 {
+		t.Errorf("expected 1 file in summary, got %d", len(summary))
+	}
+
+	// Verify the file was modified.
+	data, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "func world()") {
+		t.Errorf("expected 'func world()' in file, got:\n%s", string(data))
+	}
+	if strings.Contains(string(data), "func hello()") {
+		t.Errorf("expected 'func hello()' to be replaced, got:\n%s", string(data))
+	}
+}
+
+func TestCodeActionFormatting(t *testing.T) {
+	// Test the lspCodeActionItem type can be marshalled/unmarshalled.
+	actions := []lspCodeActionItem{
+		{
+			Title:       "Add missing import \"fmt\"",
+			Kind:        "quickfix",
+			IsPreferred: true,
+			Edit: &lspWorkspaceEdit{
+				Changes: map[string][]lspTextEdit{
+					"file:///main.go": {{NewText: "import \"fmt\"\n"}},
+				},
+			},
+		},
+		{
+			Title: "Extract to function",
+			Kind:  "refactor.extract",
+		},
+	}
+
+	data, err := json.Marshal(actions)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parsed []lspCodeActionItem
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(parsed))
+	}
+	if parsed[0].Title != "Add missing import \"fmt\"" {
+		t.Errorf("action[0].Title = %q", parsed[0].Title)
+	}
+	if !parsed[0].IsPreferred {
+		t.Error("action[0] should be preferred")
+	}
+	if parsed[0].Edit == nil {
+		t.Error("action[0] should have an edit")
+	}
+	if parsed[1].Edit != nil {
+		t.Error("action[1] should not have an edit")
+	}
+}
+
+func TestCodeActionParamsValidation(t *testing.T) {
+	lspTool := LSP(WithWorkDir("/tmp"))
+	ctx := context.Background()
+
+	// code_action requires line and character.
+	_, err := lspTool.Handler(ctx, &core.RunContext{}, `{"method":"code_action","file":"test.go"}`)
+	if err == nil {
+		t.Fatal("expected error for code_action without line/character")
+	}
+	var retryErr *core.ModelRetryError
+	if ok := isModelRetryError(err, &retryErr); !ok {
+		t.Errorf("expected ModelRetryError, got %T: %v", err, err)
+	} else if !strings.Contains(retryErr.Message, "line and character") {
+		t.Errorf("expected line/character error, got: %s", retryErr.Message)
+	}
+}
+
 func TestLspOutlineFormatsHierarchicalSymbols(t *testing.T) {
 	// Create pipes: server writes to serverWrite, readLoop reads from clientRead.
 	clientRead, serverWrite, err := os.Pipe()

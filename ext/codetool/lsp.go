@@ -23,7 +23,7 @@ import (
 // LSPParams are the parameters for the lsp tool.
 type LSPParams struct {
 	// Method is the LSP method to invoke.
-	Method string `json:"method" jsonschema:"description=LSP method: definition (go to definition)\\, references (find all usages)\\, hover (type info and docs)\\, diagnostics (errors/warnings in file)\\, symbols (workspace symbol search)\\, rename (rename symbol across workspace)\\, outline (list all symbols in a file)\\, type_definition (go to type of symbol)\\, implementation (find implementations of interface/abstract),enum=definition,enum=references,enum=hover,enum=diagnostics,enum=symbols,enum=rename,enum=outline,enum=type_definition,enum=implementation"`
+	Method string `json:"method" jsonschema:"description=LSP method: definition (go to definition)\\, references (find all usages)\\, hover (type info and docs)\\, diagnostics (errors/warnings in file)\\, symbols (workspace symbol search)\\, rename (rename symbol across workspace)\\, outline (list all symbols in a file)\\, type_definition (go to type of symbol)\\, implementation (find implementations of interface/abstract)\\, code_action (get/apply quickfixes and refactorings),enum=definition,enum=references,enum=hover,enum=diagnostics,enum=symbols,enum=rename,enum=outline,enum=type_definition,enum=implementation,enum=code_action"`
 
 	// File is the target file path (relative or absolute).
 	File string `json:"file" jsonschema:"description=File path (relative to working directory or absolute)"`
@@ -39,6 +39,9 @@ type LSPParams struct {
 
 	// NewName is the new name for the rename method.
 	NewName string `json:"new_name,omitempty" jsonschema:"description=New name for the symbol (required for rename method)."`
+
+	// ActionIndex is the 0-based index of a code action to apply.
+	ActionIndex *int `json:"action_index,omitempty" jsonschema:"description=Index of the code action to apply (0-based). Use with code_action method: omit to list available actions\\, provide to apply a specific one."`
 }
 
 // lspServer manages a running language server process.
@@ -513,6 +516,17 @@ func (s *lspServer) initialize(ctx context.Context, workDir string) error {
 				"rename": map[string]any{
 					"prepareSupport": true,
 				},
+				"codeAction": map[string]any{
+					"codeActionLiteralSupport": map[string]any{
+						"codeActionKind": map[string]any{
+							"valueSet": []string{
+								"quickfix", "refactor", "refactor.extract",
+								"refactor.inline", "refactor.rewrite",
+								"source", "source.organizeImports",
+							},
+						},
+					},
+				},
 				"publishDiagnostics": map[string]any{},
 				"synchronization": map[string]any{
 					"didOpen":  true,
@@ -926,15 +940,16 @@ func LSP(opts ...Option) core.Tool {
 			"hover (type info and docs), diagnostics (errors/warnings in file), "+
 			"symbols (workspace symbol search), rename (rename symbol across workspace), "+
 			"outline (list all symbols in a file), type_definition (go to type of a symbol), "+
-			"implementation (find implementations of an interface/abstract type). "+
+			"implementation (find implementations of an interface/abstract type), "+
+			"code_action (get/apply quickfixes and refactorings at a position). "+
 			"Requires a language server to be installed (e.g., gopls for Go, pyright for Python). "+
-			"Use file+line+character for definition/references/hover/rename/type_definition/implementation. Use file for diagnostics/outline. Use query for symbols.",
+			"Use file+line+character for definition/references/hover/rename/type_definition/implementation/code_action. Use file for diagnostics/outline. Use query for symbols.",
 		func(ctx context.Context, params LSPParams) (string, error) {
 			if params.File == "" && params.Method != "symbols" {
 				return "", &core.ModelRetryError{Message: "file parameter is required"}
 			}
 			if params.Method == "" {
-				return "", &core.ModelRetryError{Message: "method parameter is required (definition, references, hover, diagnostics, symbols, rename, outline, type_definition, implementation)"}
+				return "", &core.ModelRetryError{Message: "method parameter is required (definition, references, hover, diagnostics, symbols, rename, outline, type_definition, implementation, code_action)"}
 			}
 
 			// Resolve file path.
@@ -1036,9 +1051,15 @@ func LSP(opts ...Option) core.Tool {
 				}
 				return lspImplementation(ctx, srv, filePath, params.Line, params.Character, absWorkDir)
 
+			case "code_action":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for code_action (both 1-indexed)"}
+				}
+				return lspCodeAction(ctx, srv, filePath, params.Line, params.Character, params.ActionIndex, absWorkDir)
+
 			default:
 				return "", &core.ModelRetryError{
-					Message: fmt.Sprintf("unknown method %q — use: definition, references, hover, diagnostics, symbols, rename, outline, type_definition, implementation", params.Method),
+					Message: fmt.Sprintf("unknown method %q — use: definition, references, hover, diagnostics, symbols, rename, outline, type_definition, implementation, code_action", params.Method),
 				}
 			}
 		},
@@ -1153,6 +1174,197 @@ func lspImplementation(ctx context.Context, srv *lspServer, filePath string, lin
 	return header + formatLocations(locs, workDir, 30), nil
 }
 
+// lspCodeActionItem represents a code action from textDocument/codeAction.
+type lspCodeActionItem struct {
+	Title       string            `json:"title"`
+	Kind        string            `json:"kind,omitempty"`
+	Diagnostics []lspDiagnostic   `json:"diagnostics,omitempty"`
+	Edit        *lspWorkspaceEdit `json:"edit,omitempty"`
+	IsPreferred bool              `json:"isPreferred,omitempty"`
+}
+
+func lspCodeAction(ctx context.Context, srv *lspServer, filePath string, line, char int, actionIndex *int, workDir string) (string, error) {
+	uri := fileURI(filePath)
+
+	// Build the code action context with any known diagnostics for this file.
+	var contextDiags []lspDiagnostic
+	if diags := srv.getDiagnostics(uri); diags != nil {
+		// Filter to diagnostics that overlap the requested position.
+		pos := lspPosition{Line: line - 1, Character: char - 1}
+		for _, d := range diags {
+			if d.Range.Start.Line <= pos.Line && d.Range.End.Line >= pos.Line {
+				contextDiags = append(contextDiags, d)
+			}
+		}
+	}
+
+	result, err := srv.call(ctx, "textDocument/codeAction", map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"range": map[string]any{
+			"start": map[string]any{"line": line - 1, "character": char - 1},
+			"end":   map[string]any{"line": line - 1, "character": char - 1},
+		},
+		"context": map[string]any{
+			"diagnostics": contextDiags,
+		},
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "not support") || strings.Contains(err.Error(), "method not found") {
+			return "Code actions not supported by this language server.", nil
+		}
+		return "", err
+	}
+	if string(result) == "null" || len(result) == 0 {
+		return "No code actions available at this position.", nil
+	}
+
+	var actions []lspCodeActionItem
+	if err := json.Unmarshal(result, &actions); err != nil || len(actions) == 0 {
+		return "No code actions available at this position.", nil
+	}
+
+	// If action_index is provided, apply that specific action.
+	if actionIndex != nil {
+		idx := *actionIndex
+		if idx < 0 || idx >= len(actions) {
+			return "", &core.ModelRetryError{
+				Message: fmt.Sprintf("action_index %d out of range (0-%d)", idx, len(actions)-1),
+			}
+		}
+		action := actions[idx]
+		if action.Edit == nil {
+			return fmt.Sprintf("Action %q has no workspace edit (may require a command execution not supported by this tool).", action.Title), nil
+		}
+
+		totalEdits, filesSummary, err := applyWorkspaceEdit(action.Edit, srv, workDir)
+		if err != nil {
+			return "", err
+		}
+		if totalEdits == 0 {
+			return fmt.Sprintf("Action %q produced no edits.", action.Title), nil
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Applied %q — %d edit(s) across %d file(s):\n", action.Title, totalEdits, len(filesSummary))
+		for _, s := range filesSummary {
+			b.WriteString(s + "\n")
+		}
+		return strings.TrimRight(b.String(), "\n"), nil
+	}
+
+	// List available actions.
+	relPath := filePath
+	if rel, err := filepath.Rel(workDir, filePath); err == nil && !strings.HasPrefix(rel, "..") {
+		relPath = rel
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d code action(s) at %s:%d:%d:\n", len(actions), relPath, line, char)
+	for i, a := range actions {
+		kind := a.Kind
+		if kind == "" {
+			kind = "action"
+		}
+		preferred := ""
+		if a.IsPreferred {
+			preferred = " (preferred)"
+		}
+		hasEdit := ""
+		if a.Edit != nil {
+			changes := a.Edit.normalizedChanges()
+			editCount := 0
+			for _, edits := range changes {
+				editCount += len(edits)
+			}
+			if editCount > 0 {
+				hasEdit = fmt.Sprintf(" [%d edit(s)]", editCount)
+			}
+		}
+		fmt.Fprintf(&b, "  %d: [%s] %s%s%s\n", i, kind, a.Title, preferred, hasEdit)
+	}
+	b.WriteString("\nUse action_index=N to apply a specific action.")
+	return b.String(), nil
+}
+
+// applyWorkspaceEdit applies a WorkspaceEdit to disk and syncs changed files
+// back to the LSP server. Returns the total number of edits applied and a
+// per-file summary. This is shared by rename and code_action.
+func applyWorkspaceEdit(edit *lspWorkspaceEdit, srv *lspServer, absWorkDir string) (int, []string, error) {
+	changes := edit.normalizedChanges()
+	if len(changes) == 0 {
+		return 0, nil, nil
+	}
+
+	totalEdits := 0
+	var filesSummary []string
+	for uri, textEdits := range changes {
+		path := uriToPath(uri)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return 0, nil, fmt.Errorf("read file for edit: %w", err)
+		}
+		content := string(data)
+		lines := strings.Split(content, "\n")
+
+		// Apply edits in reverse order (bottom to top) so line/char offsets
+		// stay valid as we modify the content.
+		sortTextEditsReverse(textEdits)
+
+		for _, te := range textEdits {
+			startLine := te.Range.Start.Line
+			startChar := te.Range.Start.Character
+			endLine := te.Range.End.Line
+			endChar := te.Range.End.Character
+
+			if startLine >= len(lines) || endLine >= len(lines) {
+				continue
+			}
+
+			// Build the content before the edit range, the new text, and after.
+			before := ""
+			if startLine > 0 {
+				before = strings.Join(lines[:startLine], "\n") + "\n"
+			}
+			before += lines[startLine][:min(startChar, len(lines[startLine]))]
+
+			after := ""
+			if endChar <= len(lines[endLine]) {
+				after = lines[endLine][endChar:]
+			}
+			if endLine+1 < len(lines) {
+				after += "\n" + strings.Join(lines[endLine+1:], "\n")
+			}
+
+			content = before + te.NewText + after
+			lines = strings.Split(content, "\n")
+			totalEdits++
+		}
+
+		// Write the updated file.
+		fi, err := os.Stat(path)
+		perm := os.FileMode(0o644)
+		if err == nil {
+			perm = fi.Mode().Perm()
+		}
+		if err := os.WriteFile(path, []byte(content), perm); err != nil {
+			return 0, nil, fmt.Errorf("write file for edit: %w", err)
+		}
+
+		relPath := path
+		if rel, err := filepath.Rel(absWorkDir, path); err == nil && !strings.HasPrefix(rel, "..") {
+			relPath = rel
+		}
+		filesSummary = append(filesSummary, fmt.Sprintf("  %s (%d edit(s))", relPath, len(textEdits)))
+
+		// Sync the modified file back to the LSP server so subsequent
+		// operations see the updated content.
+		uri2 := fileURI(path)
+		srv.ensureFileOpen(path, uri2, srv.lang)
+	}
+
+	return totalEdits, filesSummary, nil
+}
+
 func lspDiagnostics(ctx context.Context, srv *lspServer, filePath, workDir string) (string, error) {
 	relPath := filePath
 	if rel, err := filepath.Rel(workDir, filePath); err == nil && !strings.HasPrefix(rel, "..") {
@@ -1239,86 +1451,16 @@ func lspRename(ctx context.Context, srv *lspServer, filePath string, line, char 
 		return "Rename returned an unexpected response.", nil
 	}
 
-	// Normalize changes: servers may return `changes` or `documentChanges`.
-	changes := edit.normalizedChanges()
-	if len(changes) == 0 {
-		return "No edits were produced by the rename.", nil
+	totalEdits, filesSummary, err := applyWorkspaceEdit(&edit, srv, absWorkDir)
+	if err != nil {
+		return "", err
 	}
-
-	// Apply edits to files.
-	totalEdits := 0
-	var filesSummary []string
-	for uri, textEdits := range changes {
-		path := uriToPath(uri)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read file for rename: %w", err)
-		}
-		content := string(data)
-		lines := strings.Split(content, "\n")
-
-		// Apply edits in reverse order (bottom to top) so line/char offsets
-		// stay valid as we modify the content.
-		sortTextEditsReverse(textEdits)
-
-		for _, te := range textEdits {
-			startLine := te.Range.Start.Line
-			startChar := te.Range.Start.Character
-			endLine := te.Range.End.Line
-			endChar := te.Range.End.Character
-
-			if startLine >= len(lines) || endLine >= len(lines) {
-				continue
-			}
-
-			// Build the content before the edit range, the new text, and after.
-			before := ""
-			if startLine > 0 {
-				before = strings.Join(lines[:startLine], "\n") + "\n"
-			}
-			before += lines[startLine][:min(startChar, len(lines[startLine]))]
-
-			after := ""
-			if endChar <= len(lines[endLine]) {
-				after = lines[endLine][endChar:]
-			}
-			if endLine+1 < len(lines) {
-				after += "\n" + strings.Join(lines[endLine+1:], "\n")
-			}
-
-			content = before + te.NewText + after
-			lines = strings.Split(content, "\n")
-			totalEdits++
-		}
-
-		// Write the updated file.
-		fi, err := os.Stat(path)
-		perm := os.FileMode(0o644)
-		if err == nil {
-			perm = fi.Mode().Perm()
-		}
-		if err := os.WriteFile(path, []byte(content), perm); err != nil {
-			return "", fmt.Errorf("write file for rename: %w", err)
-		}
-
-		relPath := path
-		if rel, err := filepath.Rel(absWorkDir, path); err == nil && !strings.HasPrefix(rel, "..") {
-			relPath = rel
-		}
-		filesSummary = append(filesSummary, fmt.Sprintf("  %s (%d edit(s))", relPath, len(textEdits)))
-
-		// Sync the modified file back to the LSP server so subsequent
-		// operations see the updated content.
-		uri2 := fileURI(path)
-		srv.ensureFileOpen(path, uri2, srv.lang)
-	}
-
 	if totalEdits == 0 {
 		return "No edits were produced by the rename.", nil
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Renamed to %q — %d edit(s) across %d file(s):\n", newName, totalEdits, len(changes))
+	fmt.Fprintf(&b, "Renamed to %q — %d edit(s) across %d file(s):\n", newName, totalEdits, len(filesSummary))
 	for _, s := range filesSummary {
 		b.WriteString(s + "\n")
 	}
