@@ -747,7 +747,7 @@ func discoverEnvironment(workDir string) string {
 				break
 			}
 			// Prefer the package manager matching the lockfile.
-			if fileExists(filepath.Join(dir, "bun.lockb")) && runQuiet(workDir, "which", "bun") != "" {
+			if (fileExists(filepath.Join(dir, "bun.lockb")) || fileExists(filepath.Join(dir, "bun.lock"))) && runQuiet(workDir, "which", "bun") != "" {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Bun dependencies in %s\n", dir)
 				runQuietTimeout(dir, 60*time.Second, "bun", "install")
 				parts = append(parts, "AUTO-INSTALLED: Bun dependencies (already done, no need to install again)")
@@ -6844,7 +6844,7 @@ func detectTestCommands(workDir string) []string {
 	if fileExists(filepath.Join(workDir, "package.json")) {
 		// Recommend the package manager matching the lockfile.
 		pm := "npm"
-		if fileExists(filepath.Join(workDir, "bun.lockb")) {
+		if fileExists(filepath.Join(workDir, "bun.lockb")) || fileExists(filepath.Join(workDir, "bun.lock")) {
 			pm = "bun"
 		} else if fileExists(filepath.Join(workDir, "pnpm-lock.yaml")) {
 			pm = "pnpm"
@@ -7601,7 +7601,16 @@ func isSourceFile(name string) bool {
 		".s", ".asm", ".wat",
 		".proto", ".thrift", ".graphql",
 		".cmake",
-		".rkt", ".scm", ".lisp", ".cl":
+		".rkt", ".scm", ".lisp", ".cl",
+		".tf", ".hcl",           // Terraform, HCL
+		".nix",                  // Nix
+		".sol", ".vy",           // Solidity, Vyper
+		".tex", ".sty", ".bib", // LaTeX
+		".astro", ".mdx",       // Astro, MDX
+		".prisma",              // Prisma ORM
+		".pas", ".pp",          // Pascal/Free Pascal
+		".ada", ".adb", ".ads", // Ada
+		".glsl", ".hlsl", ".wgsl": // Shader languages
 		return true
 	}
 	// Extensionless files that are commonly source/config.

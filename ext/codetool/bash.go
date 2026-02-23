@@ -842,6 +842,10 @@ func moduleNotFoundHint(output string, workDir ...string) string {
 		"z3":          "z3-solver",
 		"typer":       "typer",
 		"astropy":     "astropy",
+		"pwn":         "pwntools",
+		"pwnlib":      "pwntools",
+		"capstone":    "capstone",
+		"angr":        "angr",
 	}
 
 	// Try to extract the module name from common error patterns.
@@ -3123,7 +3127,7 @@ func nodeErrorHint(output string, exitCode int, workDir ...string) string {
 		installCmd := "install"
 		if len(workDir) > 0 && workDir[0] != "" {
 			wd := workDir[0]
-			if fileExists(filepath.Join(wd, "bun.lockb")) {
+			if fileExists(filepath.Join(wd, "bun.lockb")) || fileExists(filepath.Join(wd, "bun.lock")) {
 				pm = "bun"
 				installCmd = "add"
 			} else if fileExists(filepath.Join(wd, "pnpm-lock.yaml")) {
