@@ -273,6 +273,7 @@ func (s *streamedResponse) finalizeAll() {
 	}
 	sort.Ints(keys)
 
+	syntheticIdx := 0
 	for _, idx := range keys {
 		part := s.currentParts[idx]
 		if tc, ok := part.(core.ToolCallPart); ok {
@@ -289,6 +290,13 @@ func (s *streamedResponse) finalizeAll() {
 					break
 				}
 			}
+			// OpenAI-compatible APIs (Ollama, LiteLLM) may return empty tool
+			// call IDs. Generate synthetic IDs so tool results can be matched.
+			if tc, ok := part.(core.ToolCallPart); ok && tc.ToolCallID == "" {
+				tc.ToolCallID = fmt.Sprintf("call_%d", syntheticIdx)
+				part = tc
+			}
+			syntheticIdx++
 		}
 		s.parts = append(s.parts, part)
 	}

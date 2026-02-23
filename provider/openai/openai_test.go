@@ -972,3 +972,123 @@ func TestBuildRequestNoReasoningEffortByDefault(t *testing.T) {
 		t.Errorf("expected ReasoningEffort to be nil by default, got %q", *req.ReasoningEffort)
 	}
 }
+
+// TestParseResponseEmptyToolCallIDs verifies that tool calls with empty IDs
+// (common with Ollama, LiteLLM) get synthetic IDs so they can be matched
+// in conversation history.
+func TestParseResponseEmptyToolCallIDs(t *testing.T) {
+	resp := &apiResponse{
+		Choices: []apiChoice{
+			{
+				Message: apiChatMsg{
+					Role: "assistant",
+					ToolCalls: []apiToolCall{
+						{
+							ID:   "", // Ollama returns empty IDs
+							Type: "function",
+							Function: apiToolFunction{
+								Name:      "bash",
+								Arguments: `{"command":"ls"}`,
+							},
+						},
+						{
+							ID:   "", // Second call also empty
+							Type: "function",
+							Function: apiToolFunction{
+								Name:      "view",
+								Arguments: `{"file":"main.go"}`,
+							},
+						},
+					},
+				},
+				FinishReason: "tool_calls",
+			},
+		},
+	}
+	result := parseResponse(resp, "ollama/llama3")
+
+	if len(result.Parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(result.Parts))
+	}
+
+	// Both tool calls should have non-empty synthetic IDs.
+	tc0, ok := result.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("part[0]: expected ToolCallPart, got %T", result.Parts[0])
+	}
+	if tc0.ToolCallID == "" {
+		t.Error("tc0: expected non-empty synthetic ToolCallID")
+	}
+	if tc0.ToolCallID != "call_0" {
+		t.Errorf("tc0: expected 'call_0', got %q", tc0.ToolCallID)
+	}
+
+	tc1, ok := result.Parts[1].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("part[1]: expected ToolCallPart, got %T", result.Parts[1])
+	}
+	if tc1.ToolCallID == "" {
+		t.Error("tc1: expected non-empty synthetic ToolCallID")
+	}
+	if tc1.ToolCallID != "call_1" {
+		t.Errorf("tc1: expected 'call_1', got %q", tc1.ToolCallID)
+	}
+
+	// IDs should be unique.
+	if tc0.ToolCallID == tc1.ToolCallID {
+		t.Errorf("tool call IDs should be unique, both are %q", tc0.ToolCallID)
+	}
+}
+
+// TestParseSSEStreamEmptyToolCallIDs verifies that streaming tool calls
+// with empty IDs (from Ollama/LiteLLM) get synthetic IDs in the final response.
+func TestParseSSEStreamEmptyToolCallIDs(t *testing.T) {
+	// Simulate Ollama streaming: tool calls with empty IDs.
+	sseData := `data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"","type":"function","function":{"name":"view","arguments":"{\"file\":\"main.go\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "ollama/llama3")
+
+	for {
+		_, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+	resp := stream.Response()
+	if len(resp.Parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(resp.Parts))
+	}
+
+	tc0, ok := resp.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("part[0]: expected ToolCallPart, got %T", resp.Parts[0])
+	}
+	if tc0.ToolCallID == "" {
+		t.Error("tc0: expected non-empty synthetic ToolCallID for streaming")
+	}
+
+	tc1, ok := resp.Parts[1].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("part[1]: expected ToolCallPart, got %T", resp.Parts[1])
+	}
+	if tc1.ToolCallID == "" {
+		t.Error("tc1: expected non-empty synthetic ToolCallID for streaming")
+	}
+
+	if tc0.ToolCallID == tc1.ToolCallID {
+		t.Errorf("streaming tool call IDs should be unique, both are %q", tc0.ToolCallID)
+	}
+}

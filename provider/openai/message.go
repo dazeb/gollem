@@ -284,15 +284,22 @@ func parseResponse(resp *apiResponse, modelName string) *core.ModelResponse {
 			parts = append(parts, core.TextPart{Content: choice.Message.Content})
 		}
 
-		for _, tc := range choice.Message.ToolCalls {
+		for i, tc := range choice.Message.ToolCalls {
 			argsJSON := tc.Function.Arguments
 			if argsJSON == "" {
 				argsJSON = "{}"
 			}
+			callID := tc.ID
+			// OpenAI-compatible APIs (Ollama, LiteLLM) may return empty tool
+			// call IDs. Generate synthetic IDs so tool results can be matched
+			// back to their calls in the conversation history.
+			if callID == "" {
+				callID = fmt.Sprintf("call_%d", i)
+			}
 			parts = append(parts, core.ToolCallPart{
 				ToolName:   tc.Function.Name,
 				ArgsJSON:   argsJSON,
-				ToolCallID: tc.ID,
+				ToolCallID: callID,
 			})
 		}
 	}
