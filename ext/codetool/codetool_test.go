@@ -8958,6 +8958,91 @@ Failures:
 	}
 }
 
+func TestFirstFailureDetail_Catch2(t *testing.T) {
+	output := `/path/test.cpp:42: FAILED:
+  CHECK( result == 42 )
+with expansion:
+  43 == 42`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected failure detail for Catch2, got empty")
+	}
+	if !strings.Contains(detail, "CHECK( result == 42 )") {
+		t.Errorf("expected assertion expression, got %q", detail)
+	}
+	if !strings.Contains(detail, "43 == 42") {
+		t.Errorf("expected expansion, got %q", detail)
+	}
+}
+
+func TestFirstFailureDetail_Catch2_Require(t *testing.T) {
+	output := `~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+test.cpp is a Catch2 v3 test
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/src/test.cpp:15: FAILED:
+  REQUIRE( str == "hello" )
+with expansion:
+  "world" == "hello"`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected failure detail for Catch2 REQUIRE, got empty")
+	}
+	if !strings.Contains(detail, "REQUIRE") {
+		t.Errorf("expected REQUIRE assertion, got %q", detail)
+	}
+	if !strings.Contains(detail, "world") {
+		t.Errorf("expected expansion values, got %q", detail)
+	}
+}
+
+func TestFirstFailureDetail_BoostTest(t *testing.T) {
+	output := `test.cpp(42): error: in "test_addition": check x == y has failed [3 != 4]`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected failure detail for Boost.Test, got empty")
+	}
+	if !strings.Contains(detail, "check x == y has failed") {
+		t.Errorf("expected check expression, got %q", detail)
+	}
+	if !strings.Contains(detail, "[3 != 4]") {
+		t.Errorf("expected expansion in brackets, got %q", detail)
+	}
+}
+
+func TestFirstFailureDetail_PerlTestMore(t *testing.T) {
+	output := `not ok 1 - addition works
+#   Failed test 'addition works'
+#   at t/math.t line 12.
+#          got: '3'
+#     expected: '4'`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected failure detail for Perl Test::More, got empty")
+	}
+	if !strings.Contains(detail, "got:") {
+		t.Errorf("expected got value, got %q", detail)
+	}
+	if !strings.Contains(detail, "expected:") {
+		t.Errorf("expected expected value, got %q", detail)
+	}
+}
+
+func TestFirstFailureDetail_DartTest(t *testing.T) {
+	output := `00:01 +0 -1: test addition [E]
+  Expected: <42>
+  Actual: <43>`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected failure detail for Dart test, got empty")
+	}
+	if !strings.Contains(detail, "Expected: <42>") {
+		t.Errorf("expected expected value, got %q", detail)
+	}
+	if !strings.Contains(detail, "Actual: <43>") {
+		t.Errorf("expected actual value, got %q", detail)
+	}
+}
+
 // Test compilationFingerprint catches Nim/D error formats.
 func TestShortOutputTracking(t *testing.T) {
 	// Verify that testFailureFingerprint and extractTestCounts work on

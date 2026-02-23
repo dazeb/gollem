@@ -3768,10 +3768,10 @@ func firstFailureDetail(output string) string {
 		}
 
 		// NUnit (.NET): "Expected: X" / "But was:  Y" on consecutive lines.
-		// NUnit uses "But was:" instead of "Got:" or "Actual:".
+		// Also handles Dart test and xUnit.net which use "Actual:" instead.
 		if strings.HasPrefix(trimmed, "Expected:") && i+1 < len(lines) {
 			nextTrimmed := strings.TrimSpace(lines[i+1])
-			if strings.HasPrefix(nextTrimmed, "But was:") {
+			if strings.HasPrefix(nextTrimmed, "But was:") || strings.HasPrefix(nextTrimmed, "Actual:") {
 				detail := trimmed + " / " + nextTrimmed
 				if len(detail) > 200 {
 					detail = detail[:200] + "..."
@@ -3815,6 +3815,62 @@ func firstFailureDetail(output string) string {
 				detail = detail[:200] + "..."
 			}
 			return "[first failure: " + detail + "]"
+		}
+
+		// Catch2 (C++): "file.cpp:42: FAILED:" followed by assertion and expansion.
+		// Format:
+		//   /path/test.cpp:42: FAILED:
+		//     CHECK( result == 42 )
+		//   with expansion:
+		//     43 == 42
+		if strings.HasSuffix(trimmed, "FAILED:") && strings.Contains(trimmed, ":") {
+			// Verify it looks like a file:line: prefix (not just a random "FAILED:").
+			parts := strings.SplitN(trimmed, ":", 3)
+			if len(parts) >= 3 && isNumeric(strings.TrimSpace(parts[len(parts)-2])) {
+				detail := ""
+				for j := i + 1; j < min(i+6, len(lines)); j++ {
+					ahead := strings.TrimSpace(lines[j])
+					aheadLower := strings.ToLower(ahead)
+					if strings.HasPrefix(aheadLower, "check(") || strings.HasPrefix(aheadLower, "require(") ||
+						strings.HasPrefix(aheadLower, "check_") || strings.HasPrefix(aheadLower, "require_") ||
+						strings.HasPrefix(ahead, "CHECK(") || strings.HasPrefix(ahead, "REQUIRE(") ||
+						strings.HasPrefix(ahead, "CHECK_") || strings.HasPrefix(ahead, "REQUIRE_") {
+						detail = ahead
+					}
+					if aheadLower == "with expansion:" {
+						// Next line has the expanded values.
+						if j+1 < len(lines) {
+							expansion := strings.TrimSpace(lines[j+1])
+							if detail != "" {
+								detail += " => " + expansion
+							} else {
+								detail = expansion
+							}
+						}
+						break
+					}
+				}
+				if detail == "" {
+					detail = trimmed
+				}
+				if len(detail) > 200 {
+					detail = detail[:200] + "..."
+				}
+				return "[first failure: " + detail + "]"
+			}
+		}
+
+		// Boost.Test (C++): "file.cpp(42): error: in \"test_name\": check X == Y has failed [A != B]"
+		if strings.Contains(trimmed, ": error:") && strings.Contains(strings.ToLower(trimmed), "has failed") {
+			// Extract the check expression and optional expansion in brackets.
+			idx := strings.Index(strings.ToLower(trimmed), "check ")
+			if idx >= 0 {
+				detail := trimmed[idx:]
+				if len(detail) > 200 {
+					detail = detail[:200] + "..."
+				}
+				return "[first failure: " + detail + "]"
+			}
 		}
 
 		// Rust: thread 'test_name' panicked at 'assertion `left == right` failed'
@@ -3927,6 +3983,32 @@ func firstFailureDetail(output string) string {
 				trimmed = trimmed[:200] + "..."
 			}
 			return "[first failure: " + trimmed + "]"
+		}
+
+		// Perl Test::More/Test2: "# Failed test 'name'" followed by
+		// "#          got: 'X'" and "#     expected: 'Y'" (with # prefix).
+		if strings.HasPrefix(trimmed, "#") && strings.Contains(trimmed, "Failed test") {
+			var got, expected string
+			for j := i + 1; j < min(i+6, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				if !strings.HasPrefix(ahead, "#") {
+					break
+				}
+				inner := strings.TrimSpace(strings.TrimPrefix(ahead, "#"))
+				innerLower := strings.ToLower(inner)
+				if strings.HasPrefix(innerLower, "got:") {
+					got = inner
+				} else if strings.HasPrefix(innerLower, "expected:") {
+					expected = inner
+				}
+			}
+			if got != "" && expected != "" {
+				detail := got + " / " + expected
+				if len(detail) > 200 {
+					detail = detail[:200] + "..."
+				}
+				return "[first failure: " + detail + "]"
+			}
 		}
 
 		// R testthat: "Failure (test-file.R:line:col): description" followed by
