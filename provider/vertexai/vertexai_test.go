@@ -463,6 +463,57 @@ func TestParseSSEStreamFinalPartOrderDeterministic(t *testing.T) {
 	}
 }
 
+func TestParseSSEStreamError(t *testing.T) {
+	// Vertex AI Gemini can send error objects mid-stream.
+	sseData := `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hel"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1}}
+
+data: {"error":{"code":429,"message":"Quota exceeded for aiplatform.googleapis.com","status":"RESOURCE_EXHAUSTED"}}
+
+`
+
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-2.5-flash")
+
+	// First event should be the partial text.
+	event1, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := event1.(core.PartStartEvent); !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event1)
+	}
+
+	// Next call should return the stream error.
+	_, err = stream.Next()
+	if err == nil {
+		t.Fatal("expected error from stream")
+	}
+	if !strings.Contains(err.Error(), "Quota exceeded") {
+		t.Errorf("expected error to contain 'Quota exceeded', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "RESOURCE_EXHAUSTED") {
+		t.Errorf("expected error to contain 'RESOURCE_EXHAUSTED', got: %v", err)
+	}
+}
+
+func TestParseSSEStreamErrorOnly(t *testing.T) {
+	// Error sent before any content.
+	sseData := `data: {"error":{"code":500,"message":"Internal error","status":"INTERNAL"}}
+
+`
+
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-2.5-flash")
+
+	_, err := stream.Next()
+	if err == nil {
+		t.Fatal("expected error from stream")
+	}
+	if !strings.Contains(err.Error(), "Internal error") {
+		t.Errorf("expected error to contain 'Internal error', got: %v", err)
+	}
+}
+
 func TestNewProviderDefaults(t *testing.T) {
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "test-project")
 	p := New()

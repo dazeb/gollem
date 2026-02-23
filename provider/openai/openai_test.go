@@ -910,6 +910,59 @@ func TestBuildRequestWithReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestParseSSEStreamError(t *testing.T) {
+	// OpenAI-compatible APIs may send error objects mid-stream.
+	sseData := `data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hel"},"finish_reason":null}]}
+
+data: {"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}
+
+data: [DONE]
+
+`
+
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	// First event should be the partial text.
+	event1, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := event1.(core.PartStartEvent); !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event1)
+	}
+
+	// Next call should return the stream error.
+	_, err = stream.Next()
+	if err == nil {
+		t.Fatal("expected error from stream")
+	}
+	if !strings.Contains(err.Error(), "Rate limit exceeded") {
+		t.Errorf("expected error to contain 'Rate limit exceeded', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "rate_limit_error") {
+		t.Errorf("expected error to contain 'rate_limit_error', got: %v", err)
+	}
+}
+
+func TestParseSSEStreamErrorOnly(t *testing.T) {
+	// Error sent before any content.
+	sseData := `data: {"error":{"message":"Server overloaded","type":"server_error"}}
+
+`
+
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	_, err := stream.Next()
+	if err == nil {
+		t.Fatal("expected error from stream")
+	}
+	if !strings.Contains(err.Error(), "Server overloaded") {
+		t.Errorf("expected error to contain 'Server overloaded', got: %v", err)
+	}
+}
+
 func TestBuildRequestNoReasoningEffortByDefault(t *testing.T) {
 	req, err := buildRequest(nil, nil, nil, "gpt-4o-mini", 4096, false)
 	if err != nil {

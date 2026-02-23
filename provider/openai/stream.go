@@ -3,6 +3,7 @@ package openai
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -20,6 +21,7 @@ type streamedResponse struct {
 	parts      []core.ModelResponsePart
 	stopReason core.FinishReason
 	done       bool
+	streamErr  error // non-nil if server sent an error mid-stream
 
 	// State for tracking tool calls being built across deltas.
 	currentParts map[int]core.ModelResponsePart
@@ -44,10 +46,19 @@ func newStreamedResponse(body io.ReadCloser, model string) *streamedResponse {
 
 // apiChunk represents an OpenAI streaming chunk.
 type apiChunk struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
+	ID      string           `json:"id"`
+	Object  string           `json:"object"`
 	Choices []apiChunkChoice `json:"choices"`
-	Usage   *apiUsage      `json:"usage,omitempty"`
+	Usage   *apiUsage        `json:"usage,omitempty"`
+	Error   *apiStreamError  `json:"error,omitempty"`
+}
+
+// apiStreamError represents an error returned in a streaming chunk.
+// OpenAI-compatible APIs (xAI, Together, etc.) may send error objects
+// mid-stream when rate limits or server errors occur.
+type apiStreamError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
 }
 
 type apiChunkChoice struct {
@@ -84,6 +95,9 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		}
 
 		if s.done {
+			if s.streamErr != nil {
+				return nil, s.streamErr
+			}
 			return nil, io.EOF
 		}
 
@@ -120,6 +134,14 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		var chunk apiChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
+		}
+
+		// Check for error in stream data (sent by some OpenAI-compatible APIs).
+		if chunk.Error != nil {
+			s.done = true
+			s.finalizeAll()
+			s.streamErr = fmt.Errorf("openai stream error (%s): %s", chunk.Error.Type, chunk.Error.Message)
+			return nil, s.streamErr
 		}
 
 		// Update usage if present.

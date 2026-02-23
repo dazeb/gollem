@@ -83,6 +83,15 @@ type geminiResponse struct {
 	Candidates    []geminiCandidate `json:"candidates"`
 	UsageMetadata geminiUsage       `json:"usageMetadata"`
 	ModelVersion  string            `json:"modelVersion"`
+	Error         *geminiError      `json:"error,omitempty"`
+}
+
+// geminiError represents an error returned by the Gemini API,
+// including mid-stream errors during streaming responses.
+type geminiError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Status  string `json:"status"`
 }
 
 type geminiCandidate struct {

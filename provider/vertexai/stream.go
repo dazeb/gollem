@@ -21,6 +21,7 @@ type streamedResponse struct {
 	parts      []core.ModelResponsePart
 	stopReason core.FinishReason
 	done       bool
+	streamErr  error // non-nil if server sent an error mid-stream
 
 	// State for tracking current parts being built.
 	currentParts  map[int]core.ModelResponsePart
@@ -49,6 +50,9 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		}
 
 		if s.done {
+			if s.streamErr != nil {
+				return nil, s.streamErr
+			}
 			return nil, io.EOF
 		}
 
@@ -78,6 +82,14 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		var resp geminiResponse
 		if err := json.Unmarshal([]byte(data), &resp); err != nil {
 			continue
+		}
+
+		// Check for error in stream data.
+		if resp.Error != nil {
+			s.done = true
+			s.finalizeAll()
+			s.streamErr = fmt.Errorf("vertexai stream error (%s): %s", resp.Error.Status, resp.Error.Message)
+			return nil, s.streamErr
 		}
 
 		// Update usage.
