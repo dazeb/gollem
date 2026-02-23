@@ -42,14 +42,25 @@ type LSPParams struct {
 type lspServer struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
-	stdout  *bufio.Reader
 	lang    string
 	workDir string
 
-	mu        sync.Mutex
+	writeMu   sync.Mutex           // protects writes to stdin
+	callMu    sync.Mutex           // serializes call() invocations
 	nextID    atomic.Int64
-	openFiles map[string]int // URI → version
-	dead      atomic.Bool    // set when the process has exited
+	fileMu    sync.Mutex           // protects openFiles
+	openFiles map[string]fileState // URI → state
+	dead      atomic.Bool          // set when the process has exited
+
+	// Background reader routes responses here.
+	responses chan jsonrpcResponse
+	readDone  chan struct{} // closed when readLoop exits
+}
+
+// fileState tracks the sync state of an opened file.
+type fileState struct {
+	version int
+	mtime   int64 // os.FileInfo.ModTime().UnixNano()
 }
 
 // lspServerConfig describes how to start a language server.
@@ -233,6 +244,13 @@ type jsonrpcError struct {
 	Message string `json:"message"`
 }
 
+// jsonrpcReply is used to respond to server-initiated requests.
+type jsonrpcReply struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result"`
+}
+
 // writeMessage writes an LSP JSON-RPC message with Content-Length framing.
 func writeMessage(w io.Writer, data []byte) error {
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
@@ -306,11 +324,17 @@ func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) 
 	srv := &lspServer{
 		cmd:       cmd,
 		stdin:     stdin,
-		stdout:    bufio.NewReaderSize(stdout, 256*1024),
 		lang:      lang,
 		workDir:   workDir,
-		openFiles: make(map[string]int),
+		openFiles: make(map[string]fileState),
+		responses: make(chan jsonrpcResponse, 16),
+		readDone:  make(chan struct{}),
 	}
+
+	// Start background reader BEFORE the initialize handshake so that
+	// server-initiated requests (e.g., client/registerCapability) are
+	// handled automatically during initialization.
+	go srv.readLoop(bufio.NewReaderSize(stdout, 256*1024))
 
 	// Initialize handshake.
 	if err := srv.initialize(ctx, workDir); err != nil {
@@ -332,6 +356,64 @@ func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) 
 	}()
 
 	return srv, nil
+}
+
+// readLoop runs in a background goroutine, reading LSP messages from stdout.
+// It routes responses to the responses channel and auto-responds to
+// server-initiated requests (e.g., client/registerCapability,
+// window/workDoneProgress/create) that would otherwise cause deadlocks.
+func (s *lspServer) readLoop(reader *bufio.Reader) {
+	defer close(s.readDone)
+	for {
+		body, err := readMessage(reader)
+		if err != nil {
+			return // pipe closed or server died
+		}
+
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(body, &raw); err != nil {
+			continue
+		}
+
+		rawID, hasID := raw["id"]
+		_, hasMethod := raw["method"]
+		_, hasResult := raw["result"]
+		_, hasError := raw["error"]
+
+		switch {
+		case hasID && hasMethod && !hasResult && !hasError:
+			// Server-initiated request — must respond or server blocks.
+			s.respondToServerRequest(rawID)
+
+		case hasID && (hasResult || hasError || !hasMethod):
+			// Response to one of our calls.
+			var resp jsonrpcResponse
+			if err := json.Unmarshal(body, &resp); err == nil {
+				s.responses <- resp
+			}
+
+		default:
+			// Notification — discard.
+		}
+	}
+}
+
+// respondToServerRequest sends a null-result response to a server-initiated
+// request. This handles common requests like client/registerCapability and
+// window/workDoneProgress/create that servers send during initialization.
+func (s *lspServer) respondToServerRequest(rawID json.RawMessage) {
+	reply := jsonrpcReply{
+		JSONRPC: "2.0",
+		ID:      rawID,
+		Result:  nil,
+	}
+	data, err := json.Marshal(reply)
+	if err != nil {
+		return
+	}
+	s.writeMu.Lock()
+	writeMessage(s.stdin, data) //nolint:errcheck
+	s.writeMu.Unlock()
 }
 
 // initialize sends the LSP initialize request and initialized notification.
@@ -369,9 +451,11 @@ func (s *lspServer) initialize(ctx context.Context, workDir string) error {
 }
 
 // call sends a JSON-RPC request and waits for the response.
+// Responses are delivered via the background readLoop goroutine,
+// which also handles server-initiated requests automatically.
 func (s *lspServer) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.callMu.Lock()
+	defer s.callMu.Unlock()
 
 	id := s.nextID.Add(1)
 	req := jsonrpcRequest{
@@ -384,57 +468,43 @@ func (s *lspServer) call(ctx context.Context, method string, params any) (json.R
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
-	if err := writeMessage(s.stdin, data); err != nil {
+
+	s.writeMu.Lock()
+	err = writeMessage(s.stdin, data)
+	s.writeMu.Unlock()
+	if err != nil {
 		return nil, fmt.Errorf("writing request: %w", err)
 	}
 
-	// Read responses, skipping notifications, until we get our response.
-	// Use a longer timeout for initialize since workspace indexing can be slow.
+	// Wait for response via channel with proper timeout enforcement.
+	// The background readLoop handles notifications and server requests.
 	timeout := 30 * time.Second
 	if method == "initialize" {
 		timeout = 60 * time.Second
 	}
-	deadline := time.Now().Add(timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	for {
-		if time.Now().After(deadline) {
+		select {
+		case resp := <-s.responses:
+			if resp.ID == id {
+				if resp.Error != nil {
+					return nil, fmt.Errorf("LSP error %d: %s", resp.Error.Code, resp.Error.Message)
+				}
+				return resp.Result, nil
+			}
+			// Stale response for a different ID — skip.
+
+		case <-timer.C:
 			return nil, fmt.Errorf("timeout waiting for response to %s (id=%d)", method, id)
-		}
-		if ctx.Err() != nil {
+
+		case <-ctx.Done():
 			return nil, ctx.Err()
-		}
 
-		body, err := readMessage(s.stdout)
-		if err != nil {
-			return nil, fmt.Errorf("reading response: %w", err)
+		case <-s.readDone:
+			return nil, fmt.Errorf("language server process exited")
 		}
-
-		// Check if this is a response (has "id" field).
-		var resp jsonrpcResponse
-		if err := json.Unmarshal(body, &resp); err != nil {
-			continue // skip malformed
-		}
-
-		// Notifications have id=0 in our struct (zero value).
-		// Our IDs start at 1, so id=0 means notification.
-		if resp.ID == 0 && !json.Valid(body) {
-			continue
-		}
-
-		// Check if this is actually a notification (no "id" in raw JSON).
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(body, &raw); err == nil {
-			if _, hasID := raw["id"]; !hasID {
-				continue // notification, skip
-			}
-		}
-
-		if resp.ID == id {
-			if resp.Error != nil {
-				return nil, fmt.Errorf("LSP error %d: %s", resp.Error.Code, resp.Error.Message)
-			}
-			return resp.Result, nil
-		}
-		// Different ID — skip (stale response or notification).
 	}
 }
 
@@ -449,20 +519,39 @@ func (s *lspServer) notify(method string, params any) error {
 	if err != nil {
 		return fmt.Errorf("marshaling notification: %w", err)
 	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	return writeMessage(s.stdin, data)
 }
 
 // ensureFileOpen reads the file from disk and sends didOpen or didChange.
-func (s *lspServer) ensureFileOpen(filePath, uri, langID string) error {
+// Returns true if the file was actually synced (new or modified), false if unchanged.
+func (s *lspServer) ensureFileOpen(filePath, uri, langID string) (bool, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return false, fmt.Errorf("stat file: %w", err)
+	}
+	mtime := info.ModTime().UnixNano()
+
+	s.fileMu.Lock()
+	state, opened := s.openFiles[uri]
+	if opened && state.mtime == mtime {
+		s.fileMu.Unlock()
+		return false, nil // unchanged since last sync
+	}
+	s.fileMu.Unlock()
+
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("reading file: %w", err)
+		return false, fmt.Errorf("reading file: %w", err)
 	}
 
-	version, opened := s.openFiles[uri]
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
+
 	if !opened {
-		s.openFiles[uri] = 1
-		return s.notify("textDocument/didOpen", map[string]any{
+		s.openFiles[uri] = fileState{version: 1, mtime: mtime}
+		return true, s.notify("textDocument/didOpen", map[string]any{
 			"textDocument": map[string]any{
 				"uri":        uri,
 				"languageId": langID,
@@ -473,9 +562,9 @@ func (s *lspServer) ensureFileOpen(filePath, uri, langID string) error {
 	}
 
 	// File already open — send change with full content.
-	version++
-	s.openFiles[uri] = version
-	return s.notify("textDocument/didChange", map[string]any{
+	version := state.version + 1
+	s.openFiles[uri] = fileState{version: version, mtime: mtime}
+	return true, s.notify("textDocument/didChange", map[string]any{
 		"textDocument": map[string]any{
 			"uri":     uri,
 			"version": version,
@@ -488,7 +577,8 @@ func (s *lspServer) ensureFileOpen(filePath, uri, langID string) error {
 
 // shutdown gracefully shuts down the server.
 func (s *lspServer) shutdown() {
-	// Best-effort shutdown request.
+	// Best-effort shutdown request. Use a short timeout since
+	// the server may already be dead (readDone closed).
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	s.call(ctx, "shutdown", nil) //nolint:errcheck
@@ -795,11 +885,15 @@ func LSP(opts ...Option) core.Tool {
 			// Ensure file is synced with server.
 			if filePath != "" {
 				uri := fileURI(filePath)
-				if err := srv.ensureFileOpen(filePath, uri, lang); err != nil {
+				changed, err := srv.ensureFileOpen(filePath, uri, lang)
+				if err != nil {
 					return "", fmt.Errorf("syncing file: %w", err)
 				}
-				// Brief pause to let the server index.
-				time.Sleep(200 * time.Millisecond)
+				// Brief pause to let the server index, but only when
+				// the file was actually new or modified.
+				if changed {
+					time.Sleep(200 * time.Millisecond)
+				}
 			}
 
 			switch params.Method {

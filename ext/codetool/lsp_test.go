@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -371,6 +373,134 @@ func TestLSPParamsValidation(t *testing.T) {
 			t.Fatal("expected error for unsupported extension")
 		}
 	})
+}
+
+func TestReadLoopHandlesServerRequests(t *testing.T) {
+	// Simulate a server that sends a request (e.g., client/registerCapability)
+	// before delivering the response. The readLoop should auto-respond to the
+	// server request and route the actual response to the channel.
+
+	// Create pipes to simulate server stdin/stdout.
+	clientRead, serverWrite, _ := os.Pipe()  // server writes, readLoop reads
+	serverRead, clientWrite, _ := os.Pipe()  // readLoop writes (via respondToServerRequest), server reads
+	defer clientRead.Close()
+	defer serverWrite.Close()
+	defer serverRead.Close()
+	defer clientWrite.Close()
+
+	srv := &lspServer{
+		stdin:     clientWrite,
+		openFiles: make(map[string]fileState),
+		responses: make(chan jsonrpcResponse, 16),
+		readDone:  make(chan struct{}),
+	}
+
+	// Start readLoop.
+	go srv.readLoop(bufio.NewReaderSize(clientRead, 64*1024))
+
+	// Simulate server sending a request (client/registerCapability).
+	serverReq := `{"jsonrpc":"2.0","id":100,"method":"client/registerCapability","params":{}}`
+	writeMessage(serverWrite, []byte(serverReq))
+
+	// Simulate server sending our response.
+	serverResp := `{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}`
+	writeMessage(serverWrite, []byte(serverResp))
+
+	// We should receive the response on the channel.
+	select {
+	case resp := <-srv.responses:
+		if resp.ID != 1 {
+			t.Errorf("expected response ID 1, got %d", resp.ID)
+		}
+		if resp.Error != nil {
+			t.Errorf("unexpected error: %v", resp.Error)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for response")
+	}
+
+	// Verify that readLoop sent a response to the server request.
+	// Read from serverRead to see the reply.
+	serverReader := bufio.NewReader(serverRead)
+	body, err := readMessage(serverReader)
+	if err != nil {
+		t.Fatalf("reading server reply: %v", err)
+	}
+	var reply map[string]any
+	if err := json.Unmarshal(body, &reply); err != nil {
+		t.Fatalf("parsing reply: %v", err)
+	}
+	// The reply should have id=100 and result=null.
+	if id, ok := reply["id"].(float64); !ok || id != 100 {
+		t.Errorf("expected reply id=100, got %v", reply["id"])
+	}
+	if reply["result"] != nil {
+		t.Errorf("expected null result, got %v", reply["result"])
+	}
+}
+
+func TestReadLoopSkipsNotifications(t *testing.T) {
+	clientRead, serverWrite, _ := os.Pipe()
+	_, clientWrite, _ := os.Pipe()
+	defer clientRead.Close()
+	defer serverWrite.Close()
+	defer clientWrite.Close()
+
+	srv := &lspServer{
+		stdin:     clientWrite,
+		openFiles: make(map[string]fileState),
+		responses: make(chan jsonrpcResponse, 16),
+		readDone:  make(chan struct{}),
+	}
+
+	go srv.readLoop(bufio.NewReaderSize(clientRead, 64*1024))
+
+	// Send a notification (no id) followed by a response.
+	notification := `{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{}}`
+	writeMessage(serverWrite, []byte(notification))
+
+	response := `{"jsonrpc":"2.0","id":5,"result":null}`
+	writeMessage(serverWrite, []byte(response))
+
+	// We should only get the response, not the notification.
+	select {
+	case resp := <-srv.responses:
+		if resp.ID != 5 {
+			t.Errorf("expected response ID 5, got %d", resp.ID)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for response")
+	}
+}
+
+func TestCallTimeout(t *testing.T) {
+	// Test that call() properly times out when the server doesn't respond.
+	clientRead, _, _ := os.Pipe() // server never writes anything
+	_, clientWrite, _ := os.Pipe()
+	defer clientRead.Close()
+	defer clientWrite.Close()
+
+	srv := &lspServer{
+		stdin:     clientWrite,
+		openFiles: make(map[string]fileState),
+		responses: make(chan jsonrpcResponse, 16),
+		readDone:  make(chan struct{}),
+	}
+
+	// Start readLoop that will block waiting for input.
+	go srv.readLoop(bufio.NewReaderSize(clientRead, 64*1024))
+
+	// Override timeout for test by using a context with deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := srv.call(ctx, "test/method", nil)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("expected context deadline error, got: %v", err)
+	}
 }
 
 // isModelRetryError checks if the error chain contains a ModelRetryError.
