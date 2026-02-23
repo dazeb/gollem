@@ -6262,15 +6262,20 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	var filesRead []string
 	var filesModified []string
 	var verifyRuns []string
+	var packagesInstalled []string
+	var subagentTasks []string
 	var lastAssistantText string // last assistant text block — captures current approach/thinking
 
 	seenRead := make(map[string]bool)
 	seenModified := make(map[string]bool)
+	seenPackages := make(map[string]bool)
 
 	// Scan dropped messages for tool calls and their results.
 	// Track the last pending verification call ID to match with its result.
 	var pendingVerifyCallID string
 	var pendingVerifyCmd string
+	var pendingSubagentCallID string
+	var pendingSubagentTask string
 
 	for _, msg := range dropped {
 		if resp, ok := msg.(core.ModelResponse); ok {
@@ -6303,16 +6308,63 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 						filesModified = append(filesModified, path)
 					}
 				case "bash":
-					if isVerificationCommand(tc.ArgsJSON) {
-						var args struct {
-							Command string `json:"command"`
-						}
-						if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil {
+					var args struct {
+						Command string `json:"command"`
+					}
+					if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil {
+						if isVerificationCommand(tc.ArgsJSON) {
 							pendingVerifyCallID = tc.ToolCallID
 							pendingVerifyCmd = args.Command
 							if len(pendingVerifyCmd) > 80 {
 								pendingVerifyCmd = pendingVerifyCmd[:80] + "..."
 							}
+						}
+						// Track package installations to prevent re-installs after recovery.
+						cmd := args.Command
+						if (strings.Contains(cmd, "pip install") || strings.Contains(cmd, "pip3 install")) && !strings.Contains(cmd, "--help") {
+							// Extract package names from pip install command.
+							for _, part := range strings.Fields(cmd) {
+								if part == "install" || strings.HasPrefix(part, "-") || strings.HasPrefix(part, "pip") {
+									continue
+								}
+								if !seenPackages[part] {
+									seenPackages[part] = true
+									packagesInstalled = append(packagesInstalled, part)
+								}
+							}
+						}
+						if strings.Contains(cmd, "apt-get install") || strings.Contains(cmd, "apt install") {
+							for _, part := range strings.Fields(cmd) {
+								if part == "install" || strings.HasPrefix(part, "-") || part == "apt-get" || part == "apt" {
+									continue
+								}
+								if !seenPackages[part] {
+									seenPackages[part] = true
+									packagesInstalled = append(packagesInstalled, part)
+								}
+							}
+						}
+						if strings.Contains(cmd, "npm install") {
+							for _, part := range strings.Fields(cmd) {
+								if part == "install" || strings.HasPrefix(part, "-") || part == "npm" {
+									continue
+								}
+								if !seenPackages[part] {
+									seenPackages[part] = true
+									packagesInstalled = append(packagesInstalled, part)
+								}
+							}
+						}
+					}
+				case "delegate":
+					var args struct {
+						Task string `json:"task"`
+					}
+					if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil {
+						pendingSubagentCallID = tc.ToolCallID
+						pendingSubagentTask = args.Task
+						if len(pendingSubagentTask) > 100 {
+							pendingSubagentTask = pendingSubagentTask[:100] + "..."
 						}
 					}
 				}
@@ -6340,6 +6392,18 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 					verifyRuns = append(verifyRuns, fmt.Sprintf("`%s` → %s", pendingVerifyCmd, status))
 					pendingVerifyCallID = ""
 					pendingVerifyCmd = ""
+				}
+				if pendingSubagentCallID != "" && tr.ToolCallID == pendingSubagentCallID {
+					content := ""
+					if s, ok := tr.Content.(string); ok {
+						content = s
+						if len(content) > 150 {
+							content = content[:150] + "..."
+						}
+					}
+					subagentTasks = append(subagentTasks, fmt.Sprintf("Task: %s → Result: %s", pendingSubagentTask, content))
+					pendingSubagentCallID = ""
+					pendingSubagentTask = ""
 				}
 			}
 		}
@@ -6382,6 +6446,33 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 		for _, r := range verifyRuns {
 			b.WriteString("  - ")
 			b.WriteString(r)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	if len(packagesInstalled) > 0 {
+		limit := len(packagesInstalled)
+		if limit > 15 {
+			limit = 15
+		}
+		b.WriteString("PACKAGES ALREADY INSTALLED (do NOT reinstall):\n")
+		b.WriteString("  " + strings.Join(packagesInstalled[:limit], ", "))
+		if len(packagesInstalled) > 15 {
+			fmt.Fprintf(&b, " ... and %d more", len(packagesInstalled)-15)
+		}
+		b.WriteString("\n\n")
+	}
+
+	if len(subagentTasks) > 0 {
+		limit := len(subagentTasks)
+		if limit > 5 {
+			limit = 5
+		}
+		b.WriteString("COMPLETED SUBAGENT TASKS (do NOT redo):\n")
+		for _, t := range subagentTasks[:limit] {
+			b.WriteString("  - ")
+			b.WriteString(t)
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")

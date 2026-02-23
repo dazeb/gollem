@@ -5073,6 +5073,71 @@ func TestBuildContextRecoverySummary(t *testing.T) {
 	}
 }
 
+func TestBuildContextRecoverySummary_Packages(t *testing.T) {
+	// Test that pip/apt installs are tracked in recovery summary.
+	dropped := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "bash",
+					ArgsJSON: `{"command":"pip install --break-system-packages numpy pandas"}`,
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "bash",
+					ArgsJSON: `{"command":"apt-get install -y jq bc"}`,
+				},
+			},
+		},
+	}
+
+	summary := buildContextRecoverySummary(dropped)
+	if !strings.Contains(summary, "PACKAGES ALREADY INSTALLED") {
+		t.Error("summary should have PACKAGES ALREADY INSTALLED section")
+	}
+	if !strings.Contains(summary, "numpy") {
+		t.Error("summary should mention numpy")
+	}
+	if !strings.Contains(summary, "jq") {
+		t.Error("summary should mention jq")
+	}
+}
+
+func TestBuildContextRecoverySummary_Subagent(t *testing.T) {
+	// Test that subagent tasks are tracked in recovery summary.
+	dropped := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "delegate",
+					ArgsJSON:   `{"task":"Implement the sorting algorithm in sort.py"}`,
+					ToolCallID: "sub1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "delegate",
+					Content:    "Implemented quicksort in sort.py with O(n log n) average case.",
+					ToolCallID: "sub1",
+				},
+			},
+		},
+	}
+
+	summary := buildContextRecoverySummary(dropped)
+	if !strings.Contains(summary, "COMPLETED SUBAGENT TASKS") {
+		t.Error("summary should have COMPLETED SUBAGENT TASKS section")
+	}
+	if !strings.Contains(summary, "sorting algorithm") {
+		t.Error("summary should mention the subagent task")
+	}
+}
+
 func TestEmergencyCompressWithSummary(t *testing.T) {
 	// Build a conversation with enough messages to trigger compression.
 	messages := make([]core.ModelMessage, 0, 20)
@@ -6407,25 +6472,43 @@ MemoryError`
 		}
 	})
 
-	t.Run("oom killed", func(t *testing.T) {
-		output := `Killed`
-		hint := memoryHint(output, 137)
+	t.Run("oom text in output", func(t *testing.T) {
+		// OOM text with non-137 exit code (137 is handled by signalHint).
+		output := `process killed: out of memory`
+		hint := memoryHint(output, 1)
 		if hint == "" {
-			t.Fatal("expected hint for OOM kill (exit 137)")
+			t.Fatal("expected hint for OOM text in output")
 		}
 		if !strings.Contains(hint, "memory") {
 			t.Errorf("expected memory hint, got: %s", hint)
 		}
 	})
 
-	t.Run("segfault", func(t *testing.T) {
+	t.Run("exit 137 no text defers to signalHint", func(t *testing.T) {
+		// Exit 137 without OOM text — signalHint handles this, memoryHint should not.
+		hint := memoryHint("Killed", 137)
+		if hint != "" {
+			t.Errorf("exit 137 without MemoryError text should defer to signalHint, got: %s", hint)
+		}
+	})
+
+	t.Run("segfault text with non-139 exit", func(t *testing.T) {
+		// Segfault text with non-139 exit code.
 		output := `Segmentation fault (core dumped)`
-		hint := memoryHint(output, 139)
+		hint := memoryHint(output, 1)
 		if hint == "" {
-			t.Fatal("expected hint for segfault")
+			t.Fatal("expected hint for segfault text")
 		}
 		if !strings.Contains(hint, "bounds") {
 			t.Errorf("expected bounds check suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("exit 139 defers to signalHint", func(t *testing.T) {
+		// Exit 139 without segfault text — signalHint handles this.
+		hint := memoryHint("", 139)
+		if hint != "" {
+			t.Errorf("exit 139 without segfault text should defer to signalHint, got: %s", hint)
 		}
 	})
 

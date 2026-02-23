@@ -1769,7 +1769,9 @@ func databaseHint(output string, exitCode int) string {
 func memoryHint(output string, exitCode int) string {
 	lower := strings.ToLower(output)
 
-	// Python MemoryError.
+	// Python MemoryError — distinct from signal-based OOM (exit 137).
+	// signalHint already covers exit code 137; this catches the Python-specific
+	// error message which can appear with any exit code.
 	if strings.Contains(output, "MemoryError") {
 		return "[hint: Python MemoryError — your program ran out of RAM. Strategies: " +
 			"(1) Process data in chunks/streaming instead of loading all at once, " +
@@ -1779,21 +1781,26 @@ func memoryHint(output string, exitCode int) string {
 			"(5) For pandas: use read_csv(chunksize=N) or dtype optimizations]"
 	}
 
-	// OOM killer (Linux).
-	if exitCode == 137 || (strings.Contains(lower, "killed") && strings.Contains(lower, "memory")) ||
-		strings.Contains(lower, "out of memory") || strings.Contains(lower, "oom") && strings.Contains(lower, "kill") {
-		return "[hint: Process was killed (likely OOM). Your program uses too much memory. " +
-			"Reduce memory usage: (1) process data in streaming/chunked fashion, " +
-			"(2) use memory-efficient data structures, (3) avoid loading entire files into memory, " +
-			"(4) for C/C++: check for memory leaks with valgrind]"
+	// OOM killer text in output (but NOT exit code 137 alone — signalHint handles that).
+	if exitCode != 137 {
+		if (strings.Contains(lower, "killed") && strings.Contains(lower, "memory")) ||
+			strings.Contains(lower, "out of memory") ||
+			(strings.Contains(lower, "oom") && strings.Contains(lower, "kill")) {
+			return "[hint: Process was killed (likely OOM). Your program uses too much memory. " +
+				"Reduce memory usage: (1) process data in streaming/chunked fashion, " +
+				"(2) use memory-efficient data structures, (3) avoid loading entire files into memory, " +
+				"(4) for C/C++: check for memory leaks with valgrind]"
+		}
 	}
 
-	// Segmentation fault.
-	if exitCode == 139 || strings.Contains(lower, "segmentation fault") || strings.Contains(lower, "segfault") {
-		return "[hint: Segmentation fault — your program accessed invalid memory. Common causes: " +
-			"(1) Array/buffer out of bounds, (2) NULL pointer dereference, (3) Use-after-free, " +
-			"(4) Stack overflow from deep recursion. Debug with: compile with -g and run under gdb, " +
-			"or add bounds checking. For C: use -fsanitize=address]"
+	// Segmentation fault text in output (but NOT exit code 139 alone — signalHint handles that).
+	if exitCode != 139 {
+		if strings.Contains(lower, "segmentation fault") || strings.Contains(lower, "segfault") {
+			return "[hint: Segmentation fault — your program accessed invalid memory. Common causes: " +
+				"(1) Array/buffer out of bounds, (2) NULL pointer dereference, (3) Use-after-free, " +
+				"(4) Stack overflow from deep recursion. Debug with: compile with -g and run under gdb, " +
+				"or add bounds checking. For C: use -fsanitize=address]"
+		}
 	}
 
 	return ""
