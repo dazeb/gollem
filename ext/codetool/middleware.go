@@ -7097,6 +7097,40 @@ func extractFileStructure(path string) string {
 				strings.HasPrefix(trimmed, "string ") || strings.HasPrefix(trimmed, "bool ") {
 				matched = true
 			}
+		case ".r", ".R":
+			// R: function assignments (name <- function(...)) and S4/R5 class definitions.
+			if strings.Contains(trimmed, "<- function") || strings.Contains(trimmed, "= function(") ||
+				strings.HasPrefix(trimmed, "setClass(") || strings.HasPrefix(trimmed, "setGeneric(") ||
+				strings.HasPrefix(trimmed, "setMethod(") {
+				matched = true
+			}
+		case ".f90", ".f95", ".f03", ".f08", ".f", ".for":
+			// Fortran: case-insensitive keywords.
+			tLower := strings.ToLower(trimmed)
+			if strings.HasPrefix(tLower, "program ") || strings.HasPrefix(tLower, "module ") ||
+				strings.HasPrefix(tLower, "subroutine ") || strings.HasPrefix(tLower, "function ") ||
+				strings.HasPrefix(tLower, "type ") || strings.HasPrefix(tLower, "interface ") ||
+				strings.HasPrefix(tLower, "contains") {
+				matched = true
+			}
+		case ".lean":
+			// Lean 4: definitions, theorems, structures.
+			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "theorem ") ||
+				strings.HasPrefix(trimmed, "lemma ") || strings.HasPrefix(trimmed, "structure ") ||
+				strings.HasPrefix(trimmed, "class ") || strings.HasPrefix(trimmed, "instance ") ||
+				strings.HasPrefix(trimmed, "inductive ") || strings.HasPrefix(trimmed, "namespace ") ||
+				strings.HasPrefix(trimmed, "noncomputable def ") {
+				matched = true
+			}
+		case ".v":
+			// Coq: definitions, theorems, lemmas, inductive types.
+			if strings.HasPrefix(trimmed, "Definition ") || strings.HasPrefix(trimmed, "Theorem ") ||
+				strings.HasPrefix(trimmed, "Lemma ") || strings.HasPrefix(trimmed, "Fixpoint ") ||
+				strings.HasPrefix(trimmed, "Inductive ") || strings.HasPrefix(trimmed, "Module ") ||
+				strings.HasPrefix(trimmed, "Record ") || strings.HasPrefix(trimmed, "Program ") ||
+				strings.HasPrefix(trimmed, "Fact ") || strings.HasPrefix(trimmed, "Corollary ") {
+				matched = true
+			}
 		}
 
 		if matched {

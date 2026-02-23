@@ -3904,6 +3904,132 @@ sub helper {
 		}
 	}
 
+	// R file with functions and S4 classes.
+	writeTestFile(t, dir, "analysis.R", `library(stats)
+
+process_data <- function(data, threshold) {
+  data[data > threshold]
+}
+
+compute_mean = function(x) {
+  mean(x, na.rm = TRUE)
+}
+
+setClass("DataSet", representation(values = "numeric", name = "character"))
+
+setGeneric("summarize", function(obj) standardGeneric("summarize"))
+`)
+	result = extractFileStructure(filepath.Join(dir, "analysis.R"))
+	if result == "" {
+		t.Fatal("expected structure output for R file")
+	}
+	for _, want := range []string{"process_data <- function", "compute_mean = function(", "setClass(", "setGeneric("} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Fortran file with subroutines and functions.
+	writeTestFile(t, dir, "solver.f90", `program main
+  implicit none
+  call solve()
+end program main
+
+module math_utils
+  implicit none
+contains
+
+subroutine solve()
+  print *, "solving"
+end subroutine solve
+
+function add(a, b) result(c)
+  integer, intent(in) :: a, b
+  integer :: c
+  c = a + b
+end function add
+
+end module math_utils
+`)
+	result = extractFileStructure(filepath.Join(dir, "solver.f90"))
+	if result == "" {
+		t.Fatal("expected structure output for Fortran file")
+	}
+	for _, want := range []string{"program main", "module math_utils", "subroutine solve", "function add"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Lean 4 file with definitions and theorems.
+	writeTestFile(t, dir, "math.lean", `namespace MyMath
+
+def add (a b : Nat) : Nat := a + b
+
+theorem add_comm (a b : Nat) : add a b = add b a := by
+  simp [add, Nat.add_comm]
+
+structure Point where
+  x : Float
+  y : Float
+
+class Printable (α : Type) where
+  toString : α → String
+
+inductive Tree (α : Type)
+  | leaf : Tree α
+  | node : Tree α → α → Tree α → Tree α
+
+end MyMath
+`)
+	result = extractFileStructure(filepath.Join(dir, "math.lean"))
+	if result == "" {
+		t.Fatal("expected structure output for Lean file")
+	}
+	for _, want := range []string{"namespace MyMath", "def add", "theorem add_comm", "structure Point", "class Printable", "inductive Tree"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Coq file with definitions and theorems.
+	writeTestFile(t, dir, "proofs.v", `Module NatHelpers.
+
+Definition double (n : nat) : nat := n + n.
+
+Fixpoint factorial (n : nat) : nat :=
+  match n with
+  | O => 1
+  | S k => n * factorial k
+  end.
+
+Theorem double_injective : forall n m,
+  double n = double m -> n = m.
+Proof.
+  intros. omega.
+Qed.
+
+Lemma add_comm : forall n m : nat, n + m = m + n.
+Proof. intros. omega. Qed.
+
+Inductive tree (A : Type) : Type :=
+  | leaf : tree A
+  | node : tree A -> A -> tree A -> tree A.
+
+Record point := { px : nat; py : nat }.
+
+End NatHelpers.
+`)
+	result = extractFileStructure(filepath.Join(dir, "proofs.v"))
+	if result == "" {
+		t.Fatal("expected structure output for Coq file")
+	}
+	for _, want := range []string{"Module NatHelpers", "Definition double", "Fixpoint factorial", "Theorem double_injective", "Lemma add_comm", "Inductive tree", "Record point"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
 	// Empty file should return nothing.
 	writeTestFile(t, dir, "empty.py", "")
 	result = extractFileStructure(filepath.Join(dir, "empty.py"))
