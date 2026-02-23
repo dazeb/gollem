@@ -87,7 +87,7 @@ func languageForFile(name string) string {
 	switch ext {
 	case ".go":
 		return "go"
-	case ".py", ".pyi":
+	case ".py", ".pyi", ".pyx":
 		return "python"
 	case ".ts", ".tsx", ".mts", ".cts":
 		return "typescript"
@@ -97,7 +97,7 @@ func languageForFile(name string) string {
 		return "rust"
 	case ".c", ".h":
 		return "c"
-	case ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh":
+	case ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".cu", ".cuh":
 		return "cpp"
 	case ".hs", ".lhs":
 		return "haskell"
@@ -137,6 +137,26 @@ func languageForFile(name string) string {
 		return "gleam"
 	case ".r", ".R", ".rmd":
 		return "r"
+	case ".sh", ".bash":
+		return "bash"
+	case ".jl":
+		return "julia"
+	case ".d":
+		return "d"
+	case ".fs", ".fsx":
+		return "fsharp"
+	case ".tf", ".hcl":
+		return "terraform"
+	case ".elm":
+		return "elm"
+	case ".nix":
+		return "nix"
+	case ".sol":
+		return "solidity"
+	case ".vue":
+		return "vue"
+	case ".svelte":
+		return "svelte"
 	default:
 		return ""
 	}
@@ -226,6 +246,37 @@ var serverConfigs = map[string][]lspServerConfig{
 	},
 	"r": {
 		{command: "R", args: []string{"--slave", "-e", "languageserver::run()"}, installHint: "R -e 'install.packages(\"languageserver\")'"},
+	},
+	"bash": {
+		{command: "bash-language-server", args: []string{"start"}, installHint: "npm i -g bash-language-server"},
+	},
+	"julia": {
+		{command: "julia", args: []string{"--startup-file=no", "-e", "using LanguageServer; runserver()"}, installHint: "julia -e 'using Pkg; Pkg.add(\"LanguageServer\")'"},
+	},
+	"d": {
+		{command: "serve-d", args: nil, installHint: "install serve-d from https://github.com/Pure-D/serve-d"},
+	},
+	"fsharp": {
+		{command: "fsautocomplete", args: []string{"--adaptive-lsp-server-enabled"}, installHint: "dotnet tool install -g fsautocomplete"},
+	},
+	"terraform": {
+		{command: "terraform-ls", args: []string{"serve"}, installHint: "brew install hashicorp/tap/terraform-ls"},
+	},
+	"elm": {
+		{command: "elm-language-server", args: nil, installHint: "npm i -g @elm-tooling/elm-language-server"},
+	},
+	"nix": {
+		{command: "nil", args: nil, installHint: "nix profile install nixpkgs#nil"},
+		{command: "rnix-lsp", args: nil, installHint: "nix profile install nixpkgs#rnix-lsp"},
+	},
+	"solidity": {
+		{command: "nomicfoundation-solidity-language-server", args: []string{"--stdio"}, installHint: "npm i -g @nomicfoundation/solidity-language-server"},
+	},
+	"vue": {
+		{command: "vue-language-server", args: []string{"--stdio"}, installHint: "npm i -g @vue/language-server"},
+	},
+	"svelte": {
+		{command: "svelteserver", args: []string{"--stdio"}, installHint: "npm i -g svelte-language-server"},
 	},
 }
 

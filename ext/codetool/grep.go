@@ -394,7 +394,23 @@ func isSkippableDir(name string) bool {
 		".nx",           // Nx monorepo cache
 		".swc",          // SWC compiler cache
 		".temp",         // Generic temp directory
-		".tmp":          // Generic temp directory
+		".tmp",          // Generic temp directory
+		// Apple/iOS/macOS build artifacts.
+		"Pods",          // CocoaPods dependencies
+		"DerivedData",   // Xcode build cache
+		"Carthage",      // Carthage dependencies
+		".swiftpm",      // Swift Package Manager cache
+		// Ruby/bundler.
+		".bundle",       // Bundler gem install location
+		// Additional language/framework caches.
+		".zig-cache",    // Alternative Zig cache path
+		".mypy_output",  // mypy daemon output
+		".pixi",         // Pixi (conda alternative) environment
+		".uv",           // uv Python package cache
+		".rspec",        // RSpec cache
+		".phpunit.cache", // PHPUnit cache
+		".pytest",       // Alternative pytest cache location
+		"__fixtures__":  // Test fixture directories (often large data)
 		return true
 	}
 	return false
