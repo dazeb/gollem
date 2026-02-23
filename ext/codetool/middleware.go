@@ -4070,6 +4070,53 @@ func extractTestReferencedFiles(parts []string) map[string]bool {
 					refs[strings.ToLower(base)] = true
 				}
 			}
+
+			// C/C++: #include "solution.h" → solution.h, solution.c, solution.cpp
+			if strings.HasPrefix(trimmed, "#include \"") {
+				end := strings.Index(trimmed[10:], "\"")
+				if end > 0 {
+					header := trimmed[10 : 10+end]
+					base := filepath.Base(header)
+					refs[strings.ToLower(base)] = true
+					// Also reference the .c/.cpp source for the header.
+					if strings.HasSuffix(base, ".h") || strings.HasSuffix(base, ".hpp") {
+						stem := strings.TrimSuffix(strings.TrimSuffix(base, ".h"), ".hpp")
+						refs[strings.ToLower(stem)+".c"] = true
+						refs[strings.ToLower(stem)+".cpp"] = true
+					}
+				}
+			}
+
+			// Ruby: require_relative './solution', require './solution'
+			if strings.Contains(trimmed, "require_relative ") || strings.Contains(trimmed, "require './") || strings.Contains(trimmed, "require \"./") {
+				for _, delim := range []string{"'", "\""} {
+					for _, pat := range []string{"require_relative " + delim, "require " + delim + "./"} {
+						idx := strings.Index(trimmed, pat)
+						if idx < 0 {
+							continue
+						}
+						rest := trimmed[idx+len(pat):]
+						endIdx := strings.Index(rest, delim)
+						if endIdx > 0 {
+							modPath := rest[:endIdx]
+							base := filepath.Base(modPath)
+							if !strings.HasSuffix(base, ".rb") {
+								base += ".rb"
+							}
+							refs[strings.ToLower(base)] = true
+						}
+					}
+				}
+			}
+
+			// Rust: mod solution; → solution.rs
+			if strings.HasPrefix(trimmed, "mod ") && strings.HasSuffix(trimmed, ";") {
+				mod := strings.TrimSuffix(strings.TrimPrefix(trimmed, "mod "), ";")
+				mod = strings.TrimSpace(mod)
+				if mod != "" && !strings.Contains(mod, " ") {
+					refs[strings.ToLower(mod)+".rs"] = true
+				}
+			}
 		}
 	}
 

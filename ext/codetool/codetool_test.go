@@ -511,6 +511,33 @@ func TestView_TotalLineCount(t *testing.T) {
 	assertContains(t, result, "20 total lines")
 }
 
+func TestView_MinifiedWarning(t *testing.T) {
+	dir := setupTestDir(t)
+	// Create a "minified" file: 6000 bytes in a single line.
+	content := strings.Repeat("x", 6000)
+	os.WriteFile(filepath.Join(dir, "bundle.min.js"), []byte(content), 0o644)
+
+	tool := View(WithWorkDir(dir))
+	result := call(t, tool, `{"path":"bundle.min.js"}`)
+	assertContains(t, result, "minified")
+}
+
+func TestView_NormalFileNoMinifiedWarning(t *testing.T) {
+	dir := setupTestDir(t)
+	// Create a normal file with many short lines.
+	var lines []string
+	for i := 0; i < 100; i++ {
+		lines = append(lines, fmt.Sprintf("line %d: some content here", i))
+	}
+	os.WriteFile(filepath.Join(dir, "normal.js"), []byte(strings.Join(lines, "\n")), 0o644)
+
+	tool := View(WithWorkDir(dir))
+	result := call(t, tool, `{"path":"normal.js"}`)
+	if strings.Contains(result, "minified") {
+		t.Error("normal file should not trigger minified warning")
+	}
+}
+
 // --- Write Tests ---
 
 func TestWrite_NewFile(t *testing.T) {
@@ -3309,6 +3336,53 @@ from my_module import MyClass
 
 	// Should NOT include stdlib modules (os, json, numpy)
 	for _, unexpected := range []string{"os.py", "json.py", "numpy.py", "np.py"} {
+		if refs[unexpected] {
+			t.Errorf("unexpected stdlib ref %q in test refs", unexpected)
+		}
+	}
+}
+
+func TestExtractTestReferencedFiles_MultiLanguage(t *testing.T) {
+	parts := []string{
+		"\n## Test file auto-read (DO NOT MODIFY): /tests/test_solution.c",
+		`#include "solution.h"
+#include <stdio.h>
+#include "utils.h"
+`,
+		"\n## Test file auto-read (DO NOT MODIFY): /tests/test_solution.rb",
+		`require_relative './solution'
+require_relative 'helper'
+require 'minitest/autorun'
+`,
+		"\n## Test file auto-read (DO NOT MODIFY): /tests/test_main.rs",
+		`mod solution;
+use std::io;
+`,
+	}
+
+	refs := extractTestReferencedFiles(parts)
+
+	// C: #include "solution.h" → solution.h, solution.c, solution.cpp
+	for _, expected := range []string{"solution.h", "solution.c", "solution.cpp", "utils.h", "utils.c", "utils.cpp"} {
+		if !refs[expected] {
+			t.Errorf("expected C ref %q, got refs: %v", expected, refs)
+		}
+	}
+
+	// Ruby: require_relative './solution' → solution.rb, helper.rb
+	for _, expected := range []string{"solution.rb", "helper.rb"} {
+		if !refs[expected] {
+			t.Errorf("expected Ruby ref %q, got refs: %v", expected, refs)
+		}
+	}
+
+	// Rust: mod solution; → solution.rs
+	if !refs["solution.rs"] {
+		t.Errorf("expected Rust ref 'solution.rs', got refs: %v", refs)
+	}
+
+	// Should NOT include stdlib: <stdio.h>, std::io, minitest
+	for _, unexpected := range []string{"stdio.h"} {
 		if refs[unexpected] {
 			t.Errorf("unexpected stdlib ref %q in test refs", unexpected)
 		}

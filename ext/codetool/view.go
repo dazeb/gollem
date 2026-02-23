@@ -130,6 +130,19 @@ func View(opts ...Option) core.Tool {
 			if lineNum >= offset+limit-1 {
 				result += fmt.Sprintf("\n... (%d total lines, showing %d-%d)", lineNum, offset, offset+len(lines)-1)
 			}
+
+			// Warn about minified files: very few lines relative to file size
+			// suggests the file is minified/bundled. Editing minified files is
+			// usually futile — the agent should look for the source instead.
+			if info.Size() > 5000 && lineNum > 0 && lineNum <= 5 {
+				avgLineLen := int(info.Size()) / max(lineNum, 1)
+				if avgLineLen > 500 {
+					result += "\n[hint: this file appears to be minified/bundled (very long lines). " +
+						"Editing minified code is error-prone. Look for the unminified source " +
+						"file instead, or use a different approach.]"
+				}
+			}
+
 			return result, nil
 		},
 	)

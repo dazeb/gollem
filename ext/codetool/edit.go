@@ -445,6 +445,11 @@ func MultiEdit(opts ...Option) core.Tool {
 								errMsg += "\n\nMost similar lines:\n" + hint
 							}
 						}
+						// Include file snippet so the agent can retry without
+						// a separate view call — saves a full turn.
+						if snippet := fileSnippetForEdit(content, edit.OldString); snippet != "" {
+							errMsg += "\n\nFile content around best match:\n" + snippet
+						}
 						return "", &core.ModelRetryError{Message: errMsg}
 					}
 				} else {
