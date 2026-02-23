@@ -369,6 +369,12 @@ func Bash(opts ...Option) core.Tool {
 			if hint := elixirHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := yamlErrorHint(combinedOutput, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := dockerHint(combinedOutput, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Test and compilation tracking: detect stagnation, regression, and
 			// stale failures. Tracking always runs (even for short output) to
@@ -1849,6 +1855,111 @@ func jsonErrorHint(output string, exitCode int) string {
 				return "[hint: " + trimmed + "]"
 			}
 		}
+	}
+
+	return ""
+}
+
+// yamlErrorHint detects YAML and TOML parsing errors. These are common when
+// editing config files (Docker Compose, Kubernetes, pyproject.toml, etc.)
+// and the error messages are often confusing without pointing at the exact issue.
+func yamlErrorHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Python PyYAML: yaml.scanner.ScannerError, yaml.parser.ParserError
+	if strings.Contains(output, "yaml.scanner.ScannerError") || strings.Contains(output, "yaml.parser.ParserError") {
+		return "[hint: YAML syntax error — common causes: (1) wrong indentation (YAML uses spaces, not tabs), " +
+			"(2) missing colon after key, (3) unquoted special characters (use quotes around strings with :, #, {, }, [, ])]"
+	}
+
+	// Ruby/YAML: Psych::SyntaxError
+	if strings.Contains(output, "Psych::SyntaxError") || strings.Contains(output, "Psych::BadAlias") {
+		return "[hint: YAML syntax error — check indentation (must be spaces, not tabs) and quoting of special characters]"
+	}
+
+	// Go yaml.v3: "yaml: line N: ..."
+	if strings.Contains(output, "yaml: line") {
+		for _, line := range strings.Split(output, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "yaml: line") {
+				return "[hint: " + trimmed + " — check indentation and YAML syntax at that line]"
+			}
+		}
+	}
+
+	// Node.js: YAMLException
+	if strings.Contains(output, "YAMLException") || strings.Contains(output, "YAMLSemanticError") || strings.Contains(output, "YAMLSyntaxError") {
+		return "[hint: YAML parsing error — check: (1) indentation uses spaces not tabs, " +
+			"(2) colons followed by space, (3) strings with special chars are quoted]"
+	}
+
+	// docker-compose/docker compose YAML errors
+	if (strings.Contains(output, "docker") || strings.Contains(output, "compose")) &&
+		(strings.Contains(output, "yaml:") || strings.Contains(output, "YAML")) {
+		return "[hint: Docker Compose YAML error — check indentation and structure. " +
+			"Common issues: wrong indent level for services/volumes/networks, missing colons, tab characters]"
+	}
+
+	// TOML errors: common with pyproject.toml, Cargo.toml, etc.
+	if strings.Contains(output, "toml") || strings.Contains(output, "TOML") {
+		lower := strings.ToLower(output)
+		if strings.Contains(lower, "toml") && (strings.Contains(lower, "error") || strings.Contains(lower, "invalid") || strings.Contains(lower, "expected")) {
+			return "[hint: TOML syntax error — common causes: (1) missing quotes around string values, " +
+				"(2) wrong bracket nesting for tables/arrays, (3) trailing commas (not allowed in TOML)]"
+		}
+	}
+
+	return ""
+}
+
+// dockerHint detects common Docker and container runtime errors. These waste
+// 2-3 turns as agents debug daemon connectivity, image pulls, or port conflicts.
+func dockerHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	lower := strings.ToLower(output)
+
+	// Docker daemon not running.
+	if strings.Contains(lower, "cannot connect to the docker daemon") ||
+		strings.Contains(lower, "is the docker daemon running") {
+		return "[hint: Docker daemon is not running. Try: sudo service docker start, " +
+			"or: sudo systemctl start docker. In some containers, Docker-in-Docker is not available]"
+	}
+
+	// Permission denied on docker socket.
+	if strings.Contains(output, "permission denied") && strings.Contains(lower, "docker.sock") {
+		return "[hint: Docker socket permission denied — try: sudo docker <command>, " +
+			"or add user to docker group: sudo usermod -aG docker $USER]"
+	}
+
+	// Image not found / pull failed.
+	if strings.Contains(output, "manifest unknown") || strings.Contains(output, "not found: manifest unknown") ||
+		(strings.Contains(lower, "pull") && strings.Contains(lower, "not found")) {
+		return "[hint: Docker image not found — check the image name and tag. " +
+			"Use: docker search <name> to find available images, or check the registry URL]"
+	}
+
+	// Port already in use during container start.
+	if strings.Contains(lower, "docker") && strings.Contains(lower, "port is already allocated") {
+		return "[hint: Docker port conflict — the host port is already in use. " +
+			"Either stop the conflicting container: docker ps && docker stop <id>, " +
+			"or use a different host port: -p <other_port>:<container_port>]"
+	}
+
+	// Dockerfile build errors.
+	if strings.Contains(output, "COPY failed:") || strings.Contains(output, "ADD failed:") {
+		return "[hint: Docker COPY/ADD failed — the source file/directory doesn't exist in the build context. " +
+			"Check that the file path is relative to the Dockerfile's directory, and isn't excluded by .dockerignore]"
+	}
+
+	// No space left on device during docker build/run.
+	if strings.Contains(lower, "docker") && strings.Contains(lower, "no space left on device") {
+		return "[hint: Docker out of disk space — try: docker system prune -f to remove unused images/containers, " +
+			"or: docker builder prune to clear build cache]"
 	}
 
 	return ""
