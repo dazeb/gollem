@@ -9775,3 +9775,220 @@ Executed 2 out of 2 tests: 2 tests pass.`
 	}
 }
 
+func TestExtractCppFunctionSignatures(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name: "C test with assert calls",
+			content: `
+#include <assert.h>
+#include "solution.h"
+
+int main() {
+    assert(solve(5, 3) == 8);
+    int result = process(data, 10);
+    assert(result == 42);
+    return 0;
+}
+`,
+			want: []string{"solve", "process"},
+		},
+		{
+			name: "C++ test with namespace calls",
+			content: `
+#include <cassert>
+#include "solution.hpp"
+
+int main() {
+    Solution sol;
+    int result = sol.compute(3, std::vector<int>{1, 2, 3});
+    assert(result == 6);
+    auto val = Matrix::determinant(m);
+    return 0;
+}
+`,
+			want: []string{"compute", "determinant"},
+		},
+		{
+			name: "Google Test style",
+			content: `
+#include <gtest/gtest.h>
+#include "calculator.h"
+
+TEST(CalculatorTest, BasicAdd) {
+    Calculator calc;
+    EXPECT_EQ(calc.add(3, 4), 7);
+    EXPECT_EQ(multiply(5, 6), 30);
+}
+`,
+			want: []string{"add", "multiply"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sigs := extractCppFunctionSignatures(tt.content)
+			for _, wantFunc := range tt.want {
+				found := false
+				for _, sig := range sigs {
+					if strings.Contains(sig, wantFunc+"(") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected to find signature for %q in %v", wantFunc, sigs)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractCppFunctionSignatures_SkipsStdlib(t *testing.T) {
+	content := `
+#include <cstdio>
+int main() {
+    printf("hello %d\n", 42);
+    int x = abs(-5);
+    std::sort(v.begin(), v.end());
+    return 0;
+}
+`
+	sigs := extractCppFunctionSignatures(content)
+	for _, sig := range sigs {
+		if strings.Contains(sig, "printf(") || strings.Contains(sig, "abs(") || strings.Contains(sig, "sort(") {
+			t.Errorf("should not extract stdlib function, got %q", sig)
+		}
+	}
+}
+
+func TestExtractElixirFunctionSignatures(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name: "ExUnit test calling solution module",
+			content: `
+defmodule SolutionTest do
+  use ExUnit.Case
+
+  test "basic case" do
+    assert Solution.solve(5, 3) == 8
+    result = MyModule.process([1, 2, 3])
+    assert result == 6
+  end
+
+  test "edge case" do
+    assert Solution.solve(0, 0) == 0
+  end
+end
+`,
+			want: []string{"solve", "process"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sigs := extractElixirFunctionSignatures(tt.content)
+			for _, wantFunc := range tt.want {
+				found := false
+				for _, sig := range sigs {
+					if strings.Contains(sig, wantFunc+"(") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected to find signature for %q in %v", wantFunc, sigs)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractElixirFunctionSignatures_SkipsStdlib(t *testing.T) {
+	content := `
+defmodule SolutionTest do
+  use ExUnit.Case
+
+  test "stdlib calls" do
+    list = Enum.map([1, 2, 3], &(&1 * 2))
+    IO.inspect(list)
+    assert length(list) == 3
+  end
+end
+`
+	sigs := extractElixirFunctionSignatures(content)
+	for _, sig := range sigs {
+		if strings.Contains(sig, "map(") || strings.Contains(sig, "inspect(") || strings.Contains(sig, "length(") {
+			t.Errorf("should not extract stdlib function, got %q", sig)
+		}
+	}
+}
+
+func TestIsContextOverflowError_GeminiPattern(t *testing.T) {
+	err := &core.ModelHTTPError{
+		StatusCode: 400,
+		Body:       "Please reduce the length of the prompt to fit within the model's context window.",
+	}
+	if !isContextOverflowError(err) {
+		t.Error("expected Gemini 'reduce the length' pattern to be detected as context overflow")
+	}
+}
+
+func TestIsContextOverflowError_TokensExceed(t *testing.T) {
+	err := &core.ModelHTTPError{
+		StatusCode: 400,
+		Message:    "This model's maximum context length is 128000 tokens. Your messages resulted in 150000 tokens.",
+		Body:       `{"error": {"message": "This model's maximum context length is 128000 tokens. Your messages resulted in 150000 tokens."}}`,
+	}
+	if !isContextOverflowError(err) {
+		t.Error("expected tokens exceed pattern to be detected as context overflow")
+	}
+}
+
+func TestIsContextOverflowError_PayloadTooLarge(t *testing.T) {
+	err := &core.ModelHTTPError{
+		StatusCode: 400,
+		Body:       `{"error": "request too large"}`,
+	}
+	if !isContextOverflowError(err) {
+		t.Error("expected 'request too large' to be detected as context overflow")
+	}
+}
+
+func TestIsContextOverflowError_PromptTooLong(t *testing.T) {
+	err := &core.ModelHTTPError{
+		StatusCode: 400,
+		Body:       `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}`,
+	}
+	if !isContextOverflowError(err) {
+		t.Error("expected 'prompt is too long' to be detected as context overflow")
+	}
+}
+
+func TestIsContextOverflowError_TooManyTokens(t *testing.T) {
+	err := &core.ModelHTTPError{
+		StatusCode: 422,
+		Body:       `{"detail": "Too many tokens in the request. Maximum is 128000."}`,
+	}
+	if !isContextOverflowError(err) {
+		t.Error("expected 422 'too many tokens' to be detected as context overflow")
+	}
+}
+
+func TestIsContextOverflowError_NonOverflowError(t *testing.T) {
+	err := &core.ModelHTTPError{
+		StatusCode: 400,
+		Body:       `{"error": "invalid api key"}`,
+	}
+	if isContextOverflowError(err) {
+		t.Error("expected non-overflow 400 error to NOT be detected as context overflow")
+	}
+}
+

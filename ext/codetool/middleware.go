@@ -2956,6 +2956,10 @@ func extractFunctionSignaturesRecursive(dir string, signatures *[]string, seen m
 			extractor = extractJavaFunctionSignatures
 		case ".cs":
 			extractor = extractCSharpFunctionSignatures
+		case ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp":
+			extractor = extractCppFunctionSignatures
+		case ".ex", ".exs":
+			extractor = extractElixirFunctionSignatures
 		}
 		if extractor != nil {
 			for _, sig := range extractor(content) {
@@ -3751,6 +3755,275 @@ func extractCSharpFunctionSignatures(content string) []string {
 				if module == "Console" || module == "Math" || module == "Convert" ||
 					module == "String" || module == "Int32" || module == "Double" ||
 					module == "Assert" || module == "Enumerable" || module == "Array" {
+					continue
+				}
+			}
+
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break
+		}
+	}
+
+	byFunc := make(map[string]string)
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
+}
+
+// extractCppFunctionSignatures finds function call patterns in C/C++ test code.
+// Looks for calls like solve(n, k), Solution::process(data), matrix.det(), etc.
+func extractCppFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	skipFuncs := map[string]bool{
+		// C stdlib.
+		"printf": true, "fprintf": true, "sprintf": true, "snprintf": true,
+		"scanf": true, "fscanf": true, "sscanf": true,
+		"malloc": true, "calloc": true, "realloc": true, "free": true,
+		"memcpy": true, "memset": true, "memmove": true, "memcmp": true,
+		"strcmp": true, "strncmp": true, "strlen": true, "strcpy": true,
+		"strncpy": true, "strcat": true, "strncat": true, "strstr": true,
+		"atoi": true, "atof": true, "atol": true, "strtol": true, "strtod": true,
+		"abs": true, "fabs": true, "sqrt": true, "pow": true,
+		"ceil": true, "floor": true, "round": true,
+		"log": true, "log2": true, "log10": true, "exp": true,
+		"sin": true, "cos": true, "tan": true,
+		"fopen": true, "fclose": true, "fread": true, "fwrite": true,
+		"fgets": true, "fputs": true, "puts": true,
+		"exit": true, "abort": true, "assert": true,
+		"qsort": true, "bsearch": true,
+		"rand": true, "srand": true, "time": true, "clock": true,
+		"getchar": true, "putchar": true,
+		// C++ stdlib.
+		"cout": true, "cin": true, "cerr": true, "endl": true,
+		"push_back": true, "pop_back": true, "emplace_back": true,
+		"begin": true, "end": true, "rbegin": true, "rend": true,
+		"size": true, "empty": true, "clear": true, "resize": true,
+		"insert": true, "erase": true, "find": true, "count": true,
+		"front": true, "back": true, "at": true,
+		"sort": true, "reverse": true, "swap": true, "fill": true,
+		"min": true, "max": true, "accumulate": true,
+		"make_pair": true, "make_tuple": true, "get": true,
+		"to_string": true, "stoi": true, "stol": true, "stod": true,
+		"substr": true, "length": true, "c_str": true,
+		"move": true, "forward": true,
+		// Test framework functions.
+		"EXPECT_EQ": true, "EXPECT_NE": true, "EXPECT_TRUE": true, "EXPECT_FALSE": true,
+		"ASSERT_EQ": true, "ASSERT_NE": true, "ASSERT_TRUE": true, "ASSERT_FALSE": true,
+		"EXPECT_NEAR": true, "ASSERT_NEAR": true,
+		"EXPECT_THROW": true, "ASSERT_THROW": true,
+		"EXPECT_THAT": true, "ASSERT_THAT": true,
+		"REQUIRE": true, "CHECK": true, "CHECK_EQ": true, "CHECK_NE": true,
+		"TEST": true, "TEST_F": true, "TEST_CASE": true, "SECTION": true,
+		"main": true, "sizeof": true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") ||
+			strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == ':' || trimmed[nameStart] == '.' || trimmed[nameStart] == '>') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			// Get the base name (after last :: or .).
+			baseName := fullName
+			if idx := strings.LastIndex(fullName, "::"); idx >= 0 {
+				baseName = fullName[idx+2:]
+			} else if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] {
+				continue
+			}
+			// Skip known stdlib namespaces.
+			if idx := strings.Index(fullName, "::"); idx >= 0 {
+				module := fullName[:idx]
+				if module == "std" || module == "std::chrono" || module == "std::filesystem" {
+					continue
+				}
+			}
+
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break
+		}
+	}
+
+	byFunc := make(map[string]string)
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if idx := strings.LastIndex(name, "::"); idx >= 0 {
+			baseName = name[idx+2:]
+		} else if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
+}
+
+// extractElixirFunctionSignatures finds function call patterns in Elixir test code.
+// Looks for calls like Solution.solve(n, k), MyModule.process(data), etc.
+func extractElixirFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	skipFuncs := map[string]bool{
+		// ExUnit assertions/helpers.
+		"assert":          true, "refute": true,
+		"assert_receive":  true, "refute_receive": true,
+		"assert_raise":    true, "assert_in_delta": true,
+		"catch_error":     true, "catch_exit": true,
+		"describe":        true, "test": true,
+		"setup":           true, "setup_all": true, "on_exit": true,
+		"start_supervised": true,
+		// Kernel/stdlib.
+		"puts":     true, "inspect": true, "raise": true,
+		"is_nil":   true, "is_list": true, "is_map": true,
+		"is_atom":  true, "is_binary": true, "is_integer": true,
+		"to_string": true, "to_integer": true, "to_float": true,
+		"length":   true, "hd": true, "tl": true, "elem": true,
+		"get_in":   true, "put_in": true, "update_in": true,
+		"send":     true, "spawn": true, "self": true,
+		// Elixir stdlib modules (commonly used as prefixes).
+		"IO":      true, "Enum": true, "Map": true, "List": true,
+		"String":  true, "Keyword": true, "Tuple": true, "File": true,
+		"Path":    true, "Agent": true, "Task": true, "GenServer": true,
+		"Logger":  true, "Regex": true, "Stream": true,
+		"Integer": true, "Float": true,
+		// Common stdlib function names.
+		"map": true, "filter": true, "reduce": true, "each": true,
+		"sort": true, "reverse": true, "join": true, "split": true,
+		"get": true, "put": true, "delete": true, "fetch": true,
+		"new": true, "start_link": true, "init": true, "call": true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "defmodule ") || strings.HasPrefix(trimmed, "def ") ||
+			strings.HasPrefix(trimmed, "defp ") || strings.HasPrefix(trimmed, "use ") ||
+			strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "alias ") ||
+			strings.HasPrefix(trimmed, "require ") || strings.HasPrefix(trimmed, "@") {
+			continue
+		}
+
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == '.') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			baseName := fullName
+			if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] {
+				continue
+			}
+			// Skip known stdlib module prefixes.
+			if dotIdx := strings.Index(fullName, "."); dotIdx >= 0 {
+				module := fullName[:dotIdx]
+				if skipFuncs[module] {
 					continue
 				}
 			}
@@ -7220,12 +7493,28 @@ func isContextOverflowError(err error) bool {
 	if httpErr.StatusCode == http.StatusRequestEntityTooLarge {
 		return true
 	}
-	if httpErr.StatusCode == http.StatusBadRequest {
+	if httpErr.StatusCode == http.StatusBadRequest || httpErr.StatusCode == 422 {
 		lower := strings.ToLower(httpErr.Body + httpErr.Message)
+		// OpenAI/xAI: "maximum context length", "context too long"
 		if strings.Contains(lower, "context") && (strings.Contains(lower, "too long") || strings.Contains(lower, "too large") || strings.Contains(lower, "exceed") || strings.Contains(lower, "maximum")) {
 			return true
 		}
 		if strings.Contains(lower, "maximum context length") || strings.Contains(lower, "token limit") {
+			return true
+		}
+		// Gemini/Google: "Please reduce the length of the prompt" or "tokens exceed"
+		if strings.Contains(lower, "reduce the length") || strings.Contains(lower, "reduce your prompt") {
+			return true
+		}
+		if strings.Contains(lower, "tokens") && (strings.Contains(lower, "exceed") || strings.Contains(lower, "too many") || strings.Contains(lower, "limit")) {
+			return true
+		}
+		// Generic: "request too large", "payload too large", "input too long"
+		if strings.Contains(lower, "request too large") || strings.Contains(lower, "payload too large") || strings.Contains(lower, "input too long") {
+			return true
+		}
+		// Anthropic: "prompt is too long"
+		if strings.Contains(lower, "prompt is too long") || strings.Contains(lower, "prompt too long") {
 			return true
 		}
 	}
