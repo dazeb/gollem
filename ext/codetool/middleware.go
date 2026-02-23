@@ -6660,7 +6660,8 @@ func extractFileStructure(path string) string {
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") ||
+			strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "(*") {
 			continue
 		}
 
@@ -6710,9 +6711,10 @@ func extractFileStructure(path string) string {
 				strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "object ") {
 				matched = true
 			}
-		case ".rb":
+		case ".rb", ".cr":
 			if strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "class ") ||
-				strings.HasPrefix(trimmed, "module ") {
+				strings.HasPrefix(trimmed, "module ") || strings.HasPrefix(trimmed, "struct ") ||
+				strings.HasPrefix(trimmed, "enum ") {
 				matched = true
 			}
 		case ".hs":
@@ -6781,6 +6783,23 @@ func extractFileStructure(path string) string {
 		case ".pl", ".pm":
 			if strings.HasPrefix(trimmed, "sub ") || strings.HasPrefix(trimmed, "package ") ||
 				strings.HasPrefix(trimmed, "has ") {
+				matched = true
+			}
+		case ".ml", ".mli", ".fs", ".fsx":
+			// OCaml and F#: let/type/module/val/exception definitions.
+			if strings.HasPrefix(trimmed, "let ") || strings.HasPrefix(trimmed, "type ") ||
+				strings.HasPrefix(trimmed, "module ") || strings.HasPrefix(trimmed, "val ") ||
+				strings.HasPrefix(trimmed, "exception ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "open ") {
+				matched = true
+			}
+		case ".d":
+			// D language: class/struct/interface/enum/unittest and function definitions.
+			if strings.HasPrefix(trimmed, "class ") || strings.HasPrefix(trimmed, "struct ") ||
+				strings.HasPrefix(trimmed, "interface ") || strings.HasPrefix(trimmed, "enum ") ||
+				strings.HasPrefix(trimmed, "unittest") || strings.HasPrefix(trimmed, "void ") ||
+				strings.HasPrefix(trimmed, "auto ") || strings.HasPrefix(trimmed, "int ") ||
+				strings.HasPrefix(trimmed, "string ") || strings.HasPrefix(trimmed, "bool ") {
 				matched = true
 			}
 		}
