@@ -457,6 +457,14 @@ func isVerificationString(cmd string) bool {
 		"stack exec", "cabal exec",
 		// Free Pascal.
 		"fpc ",
+		// Crystal.
+		"crystal spec", "crystal build",
+		// Kotlin.
+		"kotlinc ",
+		// D language.
+		"dmd ", "dub test", "dub build",
+		// V language.
+		"v test", "v build", "v run",
 		// Inline output validation patterns.
 		"python3 -c \"open(", "python -c \"open(",
 		"python3 -c 'open(", "python -c 'open(",
@@ -488,6 +496,14 @@ func isVerificationString(cmd string) bool {
 		"ocamlopt ", "ocamlfind ",
 		// Haskell direct compilation.
 		"ghc ",
+		// Kotlin.
+		"kotlinc ",
+		// D language.
+		"dmd ",
+		// Crystal.
+		"crystal build",
+		// V language.
+		"v build",
 	}
 
 	// Lint/check commands.

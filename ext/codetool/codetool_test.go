@@ -8165,3 +8165,193 @@ func TestElixirHint_HexNotFound(t *testing.T) {
 	}
 }
 
+// Test Nim compilation error format: "file.nim(line, col) Error: message"
+func TestCompilationErrorHint_Nim(t *testing.T) {
+	output := `main.nim(42, 5) Error: undeclared identifier: 'foobar'`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Nim error, got empty")
+	}
+	if !strings.Contains(hint, "main.nim") || !strings.Contains(hint, ":42") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "undeclared identifier") {
+		t.Errorf("expected error message in hint, got %q", hint)
+	}
+}
+
+// Test D language (DMD) compilation error format: "file.d(line): Error: message"
+func TestCompilationErrorHint_D(t *testing.T) {
+	output := "source/app.d(42): Error: undefined identifier `foo`"
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for D error, got empty")
+	}
+	if !strings.Contains(hint, "source/app.d") || !strings.Contains(hint, ":42") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "undefined identifier") {
+		t.Errorf("expected error message in hint, got %q", hint)
+	}
+}
+
+// Test Scala 3 compilation error format: "-- [EXXXX] Error: file.scala:line:col ---"
+func TestCompilationErrorHint_Scala3(t *testing.T) {
+	output := `-- [E007] Type Mismatch Error: src/Main.scala:42:5 -------
+42 |  val x: Int = "hello"
+   |               ^^^^^^^
+   |               Found:    ("hello" : String)
+   |               Required: Int`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Scala 3 error, got empty")
+	}
+	if !strings.Contains(hint, "src/Main.scala") || !strings.Contains(hint, ":42") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "Type Mismatch") {
+		t.Errorf("expected error type in hint, got %q", hint)
+	}
+}
+
+// Test Scala 3 simple error format: "-- Error: file.scala:line:col ---"
+func TestCompilationErrorHint_Scala3_Simple(t *testing.T) {
+	output := `-- Error: src/Main.scala:10:1 -------
+10 |object Foo {
+   |^
+   |missing argument for parameter x`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Scala 3 simple error, got empty")
+	}
+	if !strings.Contains(hint, "src/Main.scala") || !strings.Contains(hint, ":10") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+}
+
+// Test Fortran (gfortran) multi-line error format.
+func TestCompilationErrorHint_Fortran(t *testing.T) {
+	output := `main.f90:42:5:
+
+   42 |   call foo(x, y)
+      |     1
+Error: Symbol 'foo' at (1) has no IMPLICIT type`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Fortran error, got empty")
+	}
+	if !strings.Contains(hint, "main.f90") || !strings.Contains(hint, ":42") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "Error:") || !strings.Contains(hint, "IMPLICIT type") {
+		t.Errorf("expected error message in hint, got %q", hint)
+	}
+}
+
+// Test Fortran Fatal Error format.
+func TestCompilationErrorHint_FortranFatal(t *testing.T) {
+	output := `program.f90:1:6:
+
+    1 | program hello
+      |      1
+Fatal Error: Cannot open module file 'utils.mod' for reading at (1)`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Fortran fatal error, got empty")
+	}
+	if !strings.Contains(hint, "program.f90") || !strings.Contains(hint, ":1") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+}
+
+// Test Nim unittest firstFailureDetail extraction.
+func TestFirstFailureDetail_Nim(t *testing.T) {
+	output := `[Suite] Math tests
+  [OK] test basic addition
+  [FAILED] test subtraction
+    /home/user/test_math.nim(15)
+    Check failed: sub(5, 3) == 1
+    actual: 2
+    expected: 1`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected failure detail for Nim unittest, got empty")
+	}
+	if !strings.Contains(detail, "[FAILED] test subtraction") {
+		t.Errorf("expected test name in detail, got %q", detail)
+	}
+	if !strings.Contains(detail, "Check failed") {
+		t.Errorf("expected assertion detail, got %q", detail)
+	}
+}
+
+// Test Zig test firstFailureDetail extraction.
+func TestFirstFailureDetail_Zig(t *testing.T) {
+	output := `Test [1/3] test.basic addition... OK
+Test [2/3] test.subtraction... FAIL
+error: expected 4, found 3
+Test [3/3] test.multiplication... OK`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected failure detail for Zig test, got empty")
+	}
+	if !strings.Contains(detail, "FAIL") {
+		t.Errorf("expected FAIL in detail, got %q", detail)
+	}
+	if !strings.Contains(detail, "expected 4, found 3") {
+		t.Errorf("expected error detail, got %q", detail)
+	}
+}
+
+// Test HSpec (Haskell) firstFailureDetail extraction.
+func TestFirstFailureDetail_HSpec(t *testing.T) {
+	output := `Math
+  addition
+    adds two numbers FAILED [1]
+
+Failures:
+
+  1) Math.addition adds two numbers
+       expected: 4
+        but got: 3`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected failure detail for HSpec, got empty")
+	}
+	if !strings.Contains(detail, "expected: 4") {
+		t.Errorf("expected assertion detail, got %q", detail)
+	}
+	if !strings.Contains(detail, "but got: 3") {
+		t.Errorf("expected actual value, got %q", detail)
+	}
+}
+
+// Test compilationFingerprint catches Nim/D error formats.
+func TestCompilationFingerprint_NimD(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "Nim",
+			output: "main.nim(42, 5) Error: undeclared identifier: 'x'",
+		},
+		{
+			name:   "D",
+			output: "app.d(42): Error: undefined identifier `foo`",
+		},
+		{
+			name:   "Fortran",
+			output: "Fatal Error: Cannot open module file 'utils.mod' for reading at (1)",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := compilationFingerprint(tc.output)
+			if fp == "" {
+				t.Fatalf("expected fingerprint for %s error, got empty", tc.name)
+			}
+		})
+	}
+}
+

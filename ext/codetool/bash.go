@@ -1091,6 +1091,164 @@ func compilationErrorHint(output string, exitCode int) string {
 		}
 	}
 
+	// Nim: "file.nim(42, 5) Error: undeclared identifier: 'foo'"
+	// Format: file(line, col) Error: message
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		parenIdx := strings.Index(trimmed, "(")
+		if parenIdx <= 0 {
+			continue
+		}
+		closeIdx := strings.Index(trimmed[parenIdx:], ")")
+		if closeIdx <= 0 {
+			continue
+		}
+		closeIdx += parenIdx
+		after := trimmed[closeIdx+1:]
+		// Nim uses " Error:" (space + capital E) after the closing paren.
+		if !strings.HasPrefix(after, " Error:") {
+			continue
+		}
+		file := trimmed[:parenIdx]
+		if len(file) > 200 || !strings.HasSuffix(file, ".nim") {
+			continue
+		}
+		coords := trimmed[parenIdx+1 : closeIdx]
+		parts := strings.SplitN(coords, ",", 2)
+		if len(parts) < 1 || !isNumeric(strings.TrimSpace(parts[0])) {
+			continue
+		}
+		lineNum := strings.TrimSpace(parts[0])
+		errMsg := strings.TrimSpace(strings.TrimPrefix(after, " Error:"))
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Nim error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
+	// D language (DMD): "file.d(42): Error: undefined identifier `foo`"
+	// Format: file(line): Error: message (no column number)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		parenIdx := strings.Index(trimmed, "(")
+		if parenIdx <= 0 {
+			continue
+		}
+		closeIdx := strings.Index(trimmed[parenIdx:], ")")
+		if closeIdx <= 0 {
+			continue
+		}
+		closeIdx += parenIdx
+		after := trimmed[closeIdx+1:]
+		if !strings.HasPrefix(after, ": Error:") {
+			continue
+		}
+		file := trimmed[:parenIdx]
+		if len(file) > 200 || !strings.HasSuffix(file, ".d") {
+			continue
+		}
+		lineStr := trimmed[parenIdx+1 : closeIdx]
+		if !isNumeric(strings.TrimSpace(lineStr)) {
+			continue
+		}
+		lineNum := strings.TrimSpace(lineStr)
+		errMsg := strings.TrimSpace(strings.TrimPrefix(after, ": Error:"))
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: D error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
+	// Scala 3: "-- [E007] Type Mismatch Error: file.scala:42:5 ---"
+	// or "-- Error: file.scala:42:5 ---"
+	// Format: starts with "-- " and contains a file:line:col reference.
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "-- ") {
+			continue
+		}
+		if !strings.Contains(trimmed, "Error") {
+			continue
+		}
+		// Extract file:line:col from the error line.
+		// Pattern: "Error: file.scala:42:5" followed by " ---" dashes
+		errIdx := strings.Index(trimmed, "Error:")
+		if errIdx < 0 {
+			continue
+		}
+		// For "[EXXXX] Some Error:" format, the file ref follows the last "Error:".
+		lastErrIdx := strings.LastIndex(trimmed, "Error:")
+		if lastErrIdx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(trimmed[lastErrIdx+len("Error:"):])
+		// Strip trailing dashes.
+		if dashIdx := strings.Index(rest, " ---"); dashIdx > 0 {
+			rest = strings.TrimSpace(rest[:dashIdx])
+		} else if dashIdx := strings.Index(rest, " -"); dashIdx > 0 {
+			rest = strings.TrimSpace(rest[:dashIdx])
+		}
+		// Parse file:line:col.
+		colonParts := strings.SplitN(rest, ":", 3)
+		if len(colonParts) >= 2 && isNumeric(colonParts[1]) {
+			file := colonParts[0]
+			lineNum := colonParts[1]
+			if len(file) > 200 {
+				continue
+			}
+			// Extract the error type from the prefix.
+			prefix := strings.TrimSpace(trimmed[3:lastErrIdx])
+			prefix = strings.TrimRight(prefix, " ")
+			errLabel := "Scala error"
+			if prefix != "" {
+				// e.g., "[E007] Type Mismatch " → "Type Mismatch"
+				if bracketEnd := strings.Index(prefix, "] "); bracketEnd > 0 {
+					prefix = strings.TrimSpace(prefix[bracketEnd+2:])
+				}
+				if prefix != "" {
+					errLabel = strings.TrimSpace(prefix)
+				}
+			}
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errLabel, 120), file, lineNum, lineNum)
+		}
+	}
+
+	// Fortran (gfortran): error message is on a separate line from file:line:col.
+	// Format:
+	//   file.f90:42:5:
+	//       42 |   call foo(x, y)
+	//          |     1
+	//   Error: Symbol 'foo' at (1) has no IMPLICIT type
+	// The file:line:col line ends with ":" but doesn't contain "error".
+	// We match standalone "Error:" lines and search backwards for the file reference.
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "Error:") && !strings.HasPrefix(trimmed, "Fatal Error:") {
+			continue
+		}
+		errMsg := trimmed
+		// Search backwards for "file:line:col:" reference (within 5 lines).
+		for k := i - 1; k >= max(0, i-5); k-- {
+			prev := strings.TrimSpace(lines[k])
+			colonParts := strings.SplitN(prev, ":", 4)
+			if len(colonParts) >= 3 && isNumeric(colonParts[1]) {
+				file := colonParts[0]
+				lineNum := colonParts[1]
+				if len(file) > 200 {
+					continue
+				}
+				// Verify it looks like a Fortran file or at least a valid path.
+				return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+					truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+			}
+		}
+	}
+
 	// TypeScript (tsc): "src/index.ts(42,5): error TS2322: message"
 	// C#/MSBuild:       "Program.cs(5,17): error CS0029: message"
 	// VB.NET:           "Module1.vb(3,5): error BC30451: message"
@@ -3370,14 +3528,15 @@ func firstFailureDetail(output string) string {
 			}
 		}
 
-		// RSpec/Ruby: "expected: X" / "got: Y" on separate lines (lowercase, indented)
+		// RSpec/Ruby/HSpec: "expected: X" / "got: Y" or "but got: Y" on separate lines
 		if strings.HasPrefix(strings.TrimSpace(strings.ToLower(trimmed)), "expected:") &&
 			!strings.HasPrefix(trimmed, "Expected:") { // skip Jest (already handled above)
 			detail := trimmed
 			if i+1 < len(lines) {
 				nextTrimmed := strings.TrimSpace(lines[i+1])
 				nextLower := strings.ToLower(nextTrimmed)
-				if strings.HasPrefix(nextLower, "got:") || strings.HasPrefix(nextLower, "actual:") {
+				if strings.HasPrefix(nextLower, "got:") || strings.HasPrefix(nextLower, "actual:") ||
+					strings.HasPrefix(nextLower, "but got:") { // HSpec uses "but got:"
 					detail += " / " + nextTrimmed
 				}
 			}
@@ -3502,6 +3661,77 @@ func firstFailureDetail(output string) string {
 						ahead = ahead[:150] + "..."
 					}
 					return "[first failure: " + ahead + "]"
+				}
+			}
+		}
+
+		// Nim unittest: "[FAILED] test_name" followed by check details.
+		// Format:
+		//   [FAILED] test addition
+		//     /path/test.nim(42)
+		//     Check failed: actual == expected
+		//     actual: 3
+		//     expected: 4
+		if strings.HasPrefix(trimmed, "[FAILED]") {
+			detail := trimmed
+			for j := i + 1; j < min(i+6, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.HasPrefix(aheadLower, "check failed") ||
+					strings.HasPrefix(aheadLower, "actual:") ||
+					strings.HasPrefix(aheadLower, "expected:") {
+					detail += " / " + ahead
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// Zig test: "Test [N/M] test.name... FAIL" followed by error detail.
+		// Or: "error: expected X, found Y"
+		if strings.Contains(trimmed, "... FAIL") && strings.Contains(trimmed, "Test [") {
+			detail := trimmed
+			// Look ahead for the error detail line.
+			for j := i + 1; j < min(i+5, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.HasPrefix(aheadLower, "error:") ||
+					strings.Contains(aheadLower, "expected") {
+					detail += " — " + ahead
+					break
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// HSpec (Haskell): "FAILED [N]" on its own line, details on subsequent lines.
+		// Format:
+		//   1) Module.function
+		//        expected: X
+		//         but got: Y
+		if strings.HasPrefix(trimmed, "FAILED [") && strings.HasSuffix(trimmed, "]") {
+			// Look ahead for assertion detail.
+			for j := i + 1; j < min(i+6, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.HasPrefix(aheadLower, "expected:") {
+					detail := ahead
+					if j+1 < len(lines) {
+						nextAhead := strings.TrimSpace(lines[j+1])
+						nextLower := strings.ToLower(nextAhead)
+						if strings.HasPrefix(nextLower, "but got:") {
+							detail += " / " + nextAhead
+						}
+					}
+					if len(detail) > 200 {
+						detail = detail[:200] + "..."
+					}
+					return "[first failure: " + detail + "]"
 				}
 			}
 		}
@@ -4394,6 +4624,9 @@ func compilationFingerprint(output string) string {
 		": error:", ": error[", ": fatal error:",
 		"undefined reference", "cannot find symbol",
 		"not found in scope",
+		") Error:",   // Nim: "file.nim(42, 5) Error:"
+		"): Error:",  // D: "file.d(42): Error:"
+		"Fatal Error:", // Fortran gfortran fatal errors
 	}
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -4454,6 +4687,12 @@ func isLongRunningCommand(cmd string) bool {
 		"cabal test", "cabal run",       // Haskell
 		"busted",                        // Lua tests
 		"fpc ",                          // Free Pascal compilation
+		"crystal spec",                  // Crystal tests
+		"kotlinc ",                      // Kotlin compilation
+		"crystal build",                 // Crystal compilation
+		"zig test",                      // Zig tests
+		"nim c ", "nim compile",         // Nim compilation
+		"v test",                        // V language tests
 	}
 	for _, p := range longPatterns {
 		if strings.Contains(lower, p) {
@@ -4573,6 +4812,10 @@ func isBuildCommand(cmd string) bool {
 		"swiftc ",      // Swift
 		"ldc2 ", "gdc ", // D language
 		"julia -e \"using Pkg", // Julia package operations
+		"kotlinc ",    // Kotlin
+		"crystal build", // Crystal
+		"dmd ",        // D language (reference compiler)
+		"v build", "v run", // V language
 	}
 	for _, p := range buildPatterns {
 		if strings.HasPrefix(lower, p) || strings.Contains(lower, " && "+p) || strings.Contains(lower, "; "+p) {
