@@ -193,3 +193,69 @@ func TestToolResultValidator_Combined(t *testing.T) {
 		t.Error("global validator not called")
 	}
 }
+
+// TestToolResultValidator_IncrementsRetryCounter verifies that result validator
+// failures increment the retry counter and eventually produce an "exceeded
+// maximum retries" message, matching ModelRetryError behavior.
+func TestToolResultValidator_IncrementsRetryCounter(t *testing.T) {
+	type Params struct {
+		Query string `json:"query"`
+	}
+	var retryValues []int
+	tool := FuncTool[Params]("search", "search", func(ctx context.Context, p Params) (string, error) {
+		return "always bad", nil
+	}, WithToolResultValidator(func(ctx context.Context, rc *RunContext, toolName string, result string) error {
+		retryValues = append(retryValues, rc.Retry)
+		return errors.New("result is invalid")
+	}))
+
+	model := NewTestModel(
+		ToolCallResponse("search", `{"query":"a"}`),
+		ToolCallResponse("search", `{"query":"b"}`),
+		ToolCallResponse("search", `{"query":"c"}`),
+		ToolCallResponse("search", `{"query":"d"}`),
+		TextResponse("gave up"),
+	)
+	agent := NewAgent[string](model,
+		WithTools[string](tool),
+		WithMaxRetries[string](2),
+	)
+
+	_, err := agent.Run(context.Background(), "search for something")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the retry counter was incremented across validator failures.
+	// Without the fix, rc.Retry would always be 0.
+	if len(retryValues) < 3 {
+		t.Fatalf("expected at least 3 validator calls, got %d", len(retryValues))
+	}
+	// First call: retry=0, second: retry=1, third: retry=2.
+	for i, v := range retryValues {
+		if v != i {
+			t.Errorf("validator call %d: rc.Retry = %d, want %d", i, v, i)
+		}
+	}
+
+	// Verify the "exceeded maximum retries" message was sent to the model.
+	// Without the fix, this message was never produced for validator failures.
+	calls := model.Calls()
+	found := false
+	for _, call := range calls {
+		for _, msg := range call.Messages {
+			if req, ok := msg.(ModelRequest); ok {
+				for _, part := range req.Parts {
+					if rp, ok := part.(RetryPromptPart); ok {
+						if strings.Contains(rp.Content, "exceeded maximum retries") {
+							found = true
+						}
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected 'exceeded maximum retries' message after persistent validator failures")
+	}
+}

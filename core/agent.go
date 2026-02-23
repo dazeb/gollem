@@ -1485,8 +1485,16 @@ func (a *Agent[T]) executeSingleTool(
 	// Run per-tool result validator.
 	if tool.ResultValidator != nil {
 		if valErr := tool.ResultValidator(ctx, rc, call.ToolName, content); valErr != nil {
+			state.mu.Lock()
+			retryCount := state.toolRetries[call.ToolName]
+			state.toolRetries[call.ToolName] = retryCount + 1
+			state.mu.Unlock()
+			msg := "tool result validation failed: " + valErr.Error()
+			if retryCount >= maxRetries {
+				msg = fmt.Sprintf("tool %q exceeded maximum retries (%d): %s", call.ToolName, maxRetries, msg)
+			}
 			return RetryPromptPart{
-				Content:    "tool result validation failed: " + valErr.Error(),
+				Content:    msg,
 				ToolName:   call.ToolName,
 				ToolCallID: call.ToolCallID,
 				Timestamp:  time.Now(),
@@ -1497,8 +1505,16 @@ func (a *Agent[T]) executeSingleTool(
 	// Run global result validators.
 	for _, validator := range a.globalToolResultValidators {
 		if valErr := validator(ctx, rc, call.ToolName, content); valErr != nil {
+			state.mu.Lock()
+			retryCount := state.toolRetries[call.ToolName]
+			state.toolRetries[call.ToolName] = retryCount + 1
+			state.mu.Unlock()
+			msg := "tool result validation failed: " + valErr.Error()
+			if retryCount >= maxRetries {
+				msg = fmt.Sprintf("tool %q exceeded maximum retries (%d): %s", call.ToolName, maxRetries, msg)
+			}
 			return RetryPromptPart{
-				Content:    "tool result validation failed: " + valErr.Error(),
+				Content:    msg,
 				ToolName:   call.ToolName,
 				ToolCallID: call.ToolCallID,
 				Timestamp:  time.Now(),
