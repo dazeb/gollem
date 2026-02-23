@@ -403,6 +403,7 @@ func isVerificationString(cmd string) bool {
 		"dotnet test",
 		"ruby -e", "rake test", "rspec", "bundle exec", "ruby -itest",
 		"phpunit", "./vendor/bin/phpunit", "composer test",
+		"sbt test", "sbt compile",
 		"ctest",
 		"julia -e", "julia --project",
 		// Terminal-Bench patterns: tasks often have test scripts.

@@ -7550,3 +7550,106 @@ All 3 tests passed.`
 	}
 }
 
+// Test TypeScript compilation error hint parsing.
+func TestCompilationErrorHint_TypeScript(t *testing.T) {
+	output := `src/index.ts(42,5): error TS2322: Type 'string' is not assignable to type 'number'.
+src/utils.ts(10,3): error TS7006: Parameter 'x' implicitly has an 'any' type.`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected non-empty hint for TypeScript error")
+	}
+	if !strings.Contains(hint, "src/index.ts:42") {
+		t.Errorf("expected hint to contain file:line 'src/index.ts:42', got: %s", hint)
+	}
+	if !strings.Contains(hint, "TS2322") {
+		t.Errorf("expected hint to contain error code 'TS2322', got: %s", hint)
+	}
+}
+
+// Test nodeErrorHint with lockfile-aware package manager.
+func TestNodeErrorHint_LockfileAware(t *testing.T) {
+	output := `Error: Cannot find module 'express'
+Require stack:
+- /app/index.js
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1134:15)
+    code: 'MODULE_NOT_FOUND'`
+
+	// No workDir — should default to npm.
+	hint := nodeErrorHint(output, 1)
+	if !strings.Contains(hint, "npm install express") {
+		t.Errorf("expected npm install, got: %s", hint)
+	}
+
+	// With bun.lockb — should suggest bun.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "bun.lockb"), []byte("bun"), 0o644)
+	hint = nodeErrorHint(output, 1, dir)
+	if !strings.Contains(hint, "bun add express") {
+		t.Errorf("expected bun add, got: %s", hint)
+	}
+
+	// With yarn.lock — should suggest yarn.
+	dir2 := t.TempDir()
+	os.WriteFile(filepath.Join(dir2, "yarn.lock"), []byte("yarn"), 0o644)
+	hint = nodeErrorHint(output, 1, dir2)
+	if !strings.Contains(hint, "yarn add express") {
+		t.Errorf("expected yarn add, got: %s", hint)
+	}
+
+	// With pnpm-lock.yaml — should suggest pnpm.
+	dir3 := t.TempDir()
+	os.WriteFile(filepath.Join(dir3, "pnpm-lock.yaml"), []byte("pnpm"), 0o644)
+	hint = nodeErrorHint(output, 1, dir3)
+	if !strings.Contains(hint, "pnpm add express") {
+		t.Errorf("expected pnpm add, got: %s", hint)
+	}
+}
+
+// Test SBT test output parsing.
+func TestExtractTestCounts_SBT(t *testing.T) {
+	output := `[info] Compiling 5 Scala sources to /app/target/classes
+[info] Tests: succeeded 8, failed 2, canceled 0, ignored 1, pending 0
+[info] *** 2 TESTS FAILED ***`
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for SBT output")
+	}
+	if passed != 8 {
+		t.Errorf("expected passed=8, got %d", passed)
+	}
+	if failed != 2 {
+		t.Errorf("expected failed=2, got %d", failed)
+	}
+}
+
+func TestExtractTestCounts_SBT_AllPassing(t *testing.T) {
+	output := `[info] Compiling 3 Scala sources
+[info] Tests: succeeded 12, failed 0, canceled 0, ignored 0, pending 0
+[info] All tests passed.`
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for SBT all-passing output")
+	}
+	if passed != 12 {
+		t.Errorf("expected passed=12, got %d", passed)
+	}
+	if failed != 0 {
+		t.Errorf("expected failed=0, got %d", failed)
+	}
+}
+
+func TestTestResultSummary_SBT(t *testing.T) {
+	output := `[info] Tests: succeeded 5, failed 3, canceled 0, ignored 0, pending 0
+[info] *** 3 TESTS FAILED ***`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for SBT output")
+	}
+	if !strings.Contains(summary, "succeeded 5") {
+		t.Errorf("expected summary to contain 'succeeded 5', got: %s", summary)
+	}
+	if !strings.Contains(summary, "failed 3") {
+		t.Errorf("expected summary to contain 'failed 3', got: %s", summary)
+	}
+}
+

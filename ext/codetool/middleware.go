@@ -561,7 +561,7 @@ func discoverEnvironment(workDir string) string {
 		buildFiles := []string{
 			"Makefile", "CMakeLists.txt", "Cargo.toml",
 			"go.mod", "pyproject.toml", "setup.py", "setup.cfg",
-			"package.json", "composer.json", "pom.xml", "build.gradle",
+			"package.json", "composer.json", "pom.xml", "build.gradle", "build.sbt",
 			"Package.swift", "configure.ac", "meson.build", "BUILD",
 			"docker-compose.yml", "docker-compose.yaml",
 			"Dockerfile",
@@ -1320,6 +1320,7 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"Package.swift", "Swift", "swift"},
 		{"build.zig", "Zig", "zig"},
 		{"Project.toml", "Julia", "julia"},
+		{"build.sbt", "Scala", "sbt"},
 		{"composer.json", "PHP", "composer"},
 		{"Makefile.PL", "Perl", "perl"},
 		{"Build.PL", "Perl", "perl"},
@@ -1921,6 +1922,16 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- For 'cannot find symbol' errors: check import statements and classpath")
 		hints = append(hints, "- JVM startup is slow — combine compile+test into single mvn/gradle invocation")
 		hints = append(hints, "- Check Java version: `java -version`. Version mismatches cause compilation errors.")
+	}
+
+	// Detect Scala/SBT tasks.
+	if fileExists(filepath.Join(workDir, "build.sbt")) {
+		hints = append(hints, "\n## Task Type: Scala/SBT")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Build: `sbt compile`, Test: `sbt test`, Run: `sbt run`")
+		hints = append(hints, "- SBT first run downloads dependencies — can take a few minutes. Be patient.")
+		hints = append(hints, "- For missing libraries: add to `libraryDependencies` in build.sbt")
+		hints = append(hints, "- Check Scala version: `sbt 'show scalaVersion'`")
 	}
 
 	// Detect .NET tasks.

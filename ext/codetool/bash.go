@@ -301,7 +301,7 @@ func Bash(opts ...Option) core.Tool {
 			if hint := systemctlNotFoundHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := nodeErrorHint(errStr + outStr, exitCode); hint != "" {
+			if hint := nodeErrorHint(errStr+outStr, exitCode, cfg.WorkDir); hint != "" {
 				result += "\n" + hint
 			}
 			if hint := outputMismatchHint(errStr+outStr, exitCode, cfg.WorkDir); hint != "" {
@@ -1009,6 +1009,40 @@ func compilationErrorHint(output string, exitCode int) string {
 	}
 
 	lines := strings.Split(output, "\n")
+
+	// TypeScript (tsc): "src/index.ts(42,5): error TS2322: message"
+	// Format: file(line,col): error TSxxxx: message
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		parenIdx := strings.Index(trimmed, "(")
+		if parenIdx <= 0 {
+			continue
+		}
+		// Check for TypeScript error pattern after the closing paren.
+		closeIdx := strings.Index(trimmed[parenIdx:], ")")
+		if closeIdx <= 0 {
+			continue
+		}
+		closeIdx += parenIdx
+		after := trimmed[closeIdx+1:]
+		if !strings.HasPrefix(after, ": error TS") {
+			continue
+		}
+		// Extract file, line, error message.
+		file := trimmed[:parenIdx]
+		if len(file) > 200 {
+			continue
+		}
+		coords := trimmed[parenIdx+1 : closeIdx]
+		parts := strings.SplitN(coords, ",", 2)
+		if len(parts) < 1 || !isNumeric(parts[0]) {
+			continue
+		}
+		lineNum := parts[0]
+		errMsg := strings.TrimPrefix(after, ": ")
+		return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+	}
 
 	// C/C++/clang: "file.c:42:5: error: ..."
 	// Go: "./main.go:42:5: ..." or "main.go:42:5: ..."
@@ -2093,13 +2127,29 @@ func javaExceptionHint(output string, exitCode int) string {
 
 // nodeErrorHint extracts actionable information from Node.js errors.
 // Maps MODULE_NOT_FOUND to npm install hints and extracts file:line from stacks.
-func nodeErrorHint(output string, exitCode int) string {
+func nodeErrorHint(output string, exitCode int, workDir ...string) string {
 	if exitCode == 0 {
 		return ""
 	}
 
-	// MODULE_NOT_FOUND — suggest npm install.
+	// MODULE_NOT_FOUND — suggest install with the right package manager.
 	if strings.Contains(output, "MODULE_NOT_FOUND") || strings.Contains(output, "Cannot find module") {
+		// Determine package manager from lockfile (same logic as auto-install).
+		pm := "npm"
+		installCmd := "install"
+		if len(workDir) > 0 && workDir[0] != "" {
+			wd := workDir[0]
+			if fileExists(filepath.Join(wd, "bun.lockb")) {
+				pm = "bun"
+				installCmd = "add"
+			} else if fileExists(filepath.Join(wd, "pnpm-lock.yaml")) {
+				pm = "pnpm"
+				installCmd = "add"
+			} else if fileExists(filepath.Join(wd, "yarn.lock")) {
+				pm = "yarn"
+				installCmd = "add"
+			}
+		}
 		// Extract the module name.
 		for _, pattern := range []string{"Cannot find module '", "Cannot find module \""} {
 			idx := strings.Index(output, pattern)
@@ -2113,11 +2163,11 @@ func nodeErrorHint(output string, exitCode int) string {
 				module := rest[:end]
 				// Skip relative paths — those are user code errors, not missing packages.
 				if !strings.HasPrefix(module, ".") && !strings.HasPrefix(module, "/") {
-					return fmt.Sprintf("[hint: missing Node module — try: npm install %s]", module)
+					return fmt.Sprintf("[hint: missing Node module — try: %s %s %s]", pm, installCmd, module)
 				}
 			}
 		}
-		return "[hint: missing Node module — try: npm install]"
+		return fmt.Sprintf("[hint: missing Node module — try: %s %s]", pm, installCmd)
 	}
 
 	// ESM/CJS module system errors — extremely confusing for agents.
@@ -2657,6 +2707,30 @@ func testResultSummary(output string) string {
 			if strings.Contains(lineLower, "tests completed") ||
 				(strings.HasPrefix(lineLower, "build ") && (strings.Contains(lineLower, "successful") || strings.Contains(lineLower, "failed"))) {
 				return "[test summary: " + line + "]"
+			}
+		}
+	}
+
+	// SBT (Scala): "[info] Tests: succeeded X, failed Y, canceled Z, ignored W, pending P"
+	if strings.Contains(lower, "succeeded") && strings.Contains(lower, "failed") &&
+		(strings.Contains(output, "[info]") || strings.Contains(lower, "sbt")) {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "succeeded") && strings.Contains(lineLower, "failed") {
+				// Strip [info] prefix for cleaner summary.
+				display := line
+				if strings.HasPrefix(display, "[info] ") {
+					display = strings.TrimPrefix(display, "[info] ")
+				}
+				summary := "[test summary: " + display + "]"
+				if strings.Contains(lineLower, "failed") && !strings.HasSuffix(strings.TrimSpace(lineLower), "failed 0") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
 			}
 		}
 	}
@@ -3556,6 +3630,42 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			if total > 0 {
 				failed = failures
 				passed = total - failed
+				ok = true
+				return
+			}
+		}
+	}
+
+	// SBT (Scala): "[info] Tests: succeeded X, failed Y, canceled Z, ignored W, pending P"
+	// Note: SBT uses "keyword N" format (e.g., "succeeded 8,"), not "N keyword".
+	if strings.Contains(lower, "succeeded") && strings.Contains(lower, "failed") &&
+		(strings.Contains(output, "[info]") || strings.Contains(lower, "sbt")) {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "succeeded") || !strings.Contains(line, "failed") {
+				continue
+			}
+			words := strings.Fields(line)
+			var s, f int
+			foundSBT := false
+			for j := 0; j+1 < len(words); j++ {
+				keyword := strings.TrimRight(words[j], ",.;:")
+				numStr := strings.TrimRight(words[j+1], ",.;:")
+				if isNumeric(numStr) {
+					var n int
+					fmt.Sscanf(numStr, "%d", &n)
+					if keyword == "succeeded" {
+						s = n
+						foundSBT = true
+					} else if keyword == "failed" {
+						f = n
+						foundSBT = true
+					}
+				}
+			}
+			if foundSBT {
+				passed = s
+				failed = f
 				ok = true
 				return
 			}
