@@ -3,6 +3,7 @@ package vertexai
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -24,6 +25,7 @@ type streamedResponse struct {
 	// State for tracking current parts being built.
 	currentParts  map[int]core.ModelResponsePart
 	nextPartIndex int
+	nextCallIndex int // synthetic tool call ID counter
 	pendingEvents []core.ModelResponseStreamEvent
 }
 
@@ -158,10 +160,15 @@ func (s *streamedResponse) handleFunctionCall(fc *geminiFunctionCall, thoughtSig
 		argsJSON = string(b)
 	}
 
+	// Gemini doesn't use tool call IDs. Generate unique synthetic IDs
+	// so the framework can distinguish multiple calls to the same function.
+	callID := fmt.Sprintf("call_%d", s.nextCallIndex)
+	s.nextCallIndex++
+
 	part := core.ToolCallPart{
 		ToolName:   fc.Name,
 		ArgsJSON:   argsJSON,
-		ToolCallID: fc.Name,
+		ToolCallID: callID,
 	}
 	// Preserve thought signature for Gemini 3.x round-tripping.
 	if thoughtSig != "" {

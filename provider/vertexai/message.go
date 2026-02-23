@@ -281,6 +281,7 @@ func parseResponse(resp *geminiResponse, modelName string) *core.ModelResponse {
 
 	if len(resp.Candidates) > 0 {
 		candidate := resp.Candidates[0]
+		callIndex := 0
 		for _, p := range candidate.Content.Parts {
 			if p.Text != "" {
 				parts = append(parts, core.TextPart{Content: p.Text})
@@ -291,11 +292,15 @@ func parseResponse(resp *geminiResponse, modelName string) *core.ModelResponse {
 					b, _ := json.Marshal(p.FunctionCall.Args)
 					argsJSON = string(b)
 				}
+				// Gemini doesn't use tool call IDs. Generate unique synthetic
+				// IDs so the framework can distinguish multiple calls to the
+				// same function within a single response.
 				tc := core.ToolCallPart{
 					ToolName:   p.FunctionCall.Name,
 					ArgsJSON:   argsJSON,
-					ToolCallID: p.FunctionCall.Name, // Gemini doesn't use tool call IDs
+					ToolCallID: fmt.Sprintf("call_%d", callIndex),
 				}
+				callIndex++
 				// Preserve thought signature for Gemini 3.x round-tripping.
 				if p.ThoughtSignature != "" {
 					tc.Metadata = map[string]string{
