@@ -2330,48 +2330,7 @@ func detectExpectedOutputs(workDir string) []string {
 	// Search test files for references to output file paths.
 	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
 	for _, td := range testDirs {
-		entries, err := os.ReadDir(td)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !isSourceFile(entry.Name()) {
-				continue
-			}
-			info, _ := entry.Info()
-			if info == nil || info.Size() > 30000 {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
-			if err != nil {
-				continue
-			}
-			content := string(data)
-			// Look for file path references in test code.
-			outputPatterns := []string{
-				"output_data/", "output/", "/app/output",
-				"result.", "results.", "solution.", "answer.",
-			}
-			for _, line := range strings.Split(content, "\n") {
-				trimmed := strings.TrimSpace(line)
-				// Skip comments.
-				if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
-					continue
-				}
-				for _, pat := range outputPatterns {
-					idx := strings.Index(trimmed, pat)
-					if idx < 0 {
-						continue
-					}
-					// Extract the file path from surrounding quotes or path syntax.
-					path := extractPathFromLine(trimmed, idx)
-					if path != "" && !seen[path] {
-						seen[path] = true
-						outputs = append(outputs, path)
-					}
-				}
-			}
-		}
+		detectExpectedOutputsRecursive(td, &outputs, seen, 0, 2)
 		if len(outputs) > 0 {
 			break // found expected outputs in one test dir
 		}
@@ -2416,6 +2375,59 @@ func detectExpectedOutputs(workDir string) []string {
 		outputs = outputs[:15]
 	}
 	return outputs
+}
+
+// detectExpectedOutputsRecursive walks test directories to find output file
+// path references. Recurses into subdirectories (e.g., tests/unit/) to match
+// the recursion behavior of other test-scanning functions.
+func detectExpectedOutputsRecursive(dir string, outputs *[]string, seen map[string]bool, depth, maxDepth int) {
+	if depth > maxDepth || len(*outputs) >= 15 {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	outputPatterns := []string{
+		"output_data/", "output/", "/app/output",
+		"result.", "results.", "solution.", "answer.",
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			if depth < maxDepth {
+				detectExpectedOutputsRecursive(filepath.Join(dir, entry.Name()), outputs, seen, depth+1, maxDepth)
+			}
+			continue
+		}
+		if !isSourceFile(entry.Name()) {
+			continue
+		}
+		info, _ := entry.Info()
+		if info == nil || info.Size() > 30000 {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, pat := range outputPatterns {
+				idx := strings.Index(trimmed, pat)
+				if idx < 0 {
+					continue
+				}
+				path := extractPathFromLine(trimmed, idx)
+				if path != "" && !seen[path] {
+					seen[path] = true
+					*outputs = append(*outputs, path)
+				}
+			}
+		}
+	}
 }
 
 // detectOutputFormat scans test files to determine the expected output format
@@ -2865,68 +2877,7 @@ func extractFunctionSignatures(workDir string) []string {
 	seen := make(map[string]bool)
 
 	for _, td := range testDirs {
-		entries, err := os.ReadDir(td)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !isSourceFile(entry.Name()) {
-				continue
-			}
-			info, _ := entry.Info()
-			if info == nil || info.Size() > 30000 {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
-			if err != nil {
-				continue
-			}
-			content := string(data)
-			ext := strings.ToLower(filepath.Ext(entry.Name()))
-
-			switch ext {
-			case ".py":
-				sigs := extractPythonFunctionSignatures(content)
-				for _, sig := range sigs {
-					if !seen[sig] {
-						seen[sig] = true
-						signatures = append(signatures, sig)
-					}
-				}
-			case ".js", ".ts":
-				sigs := extractJSFunctionSignatures(content)
-				for _, sig := range sigs {
-					if !seen[sig] {
-						seen[sig] = true
-						signatures = append(signatures, sig)
-					}
-				}
-			case ".go":
-				sigs := extractGoFunctionSignatures(content)
-				for _, sig := range sigs {
-					if !seen[sig] {
-						seen[sig] = true
-						signatures = append(signatures, sig)
-					}
-				}
-			case ".rb":
-				sigs := extractRubyFunctionSignatures(content)
-				for _, sig := range sigs {
-					if !seen[sig] {
-						seen[sig] = true
-						signatures = append(signatures, sig)
-					}
-				}
-			case ".rs":
-				sigs := extractRustFunctionSignatures(content)
-				for _, sig := range sigs {
-					if !seen[sig] {
-						seen[sig] = true
-						signatures = append(signatures, sig)
-					}
-				}
-			}
-		}
+		extractFunctionSignaturesRecursive(td, &signatures, seen, 0, 2)
 		if len(signatures) > 0 {
 			break
 		}
@@ -2936,6 +2887,62 @@ func extractFunctionSignatures(workDir string) []string {
 		signatures = signatures[:10]
 	}
 	return signatures
+}
+
+// extractFunctionSignaturesRecursive walks test directories to find function
+// call patterns. Recurses into subdirectories (e.g., tests/unit/) up to
+// maxDepth to match the recursion behavior of extractTestConstraints.
+func extractFunctionSignaturesRecursive(dir string, signatures *[]string, seen map[string]bool, depth, maxDepth int) {
+	if depth > maxDepth || len(*signatures) >= 10 {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			if depth < maxDepth {
+				extractFunctionSignaturesRecursive(filepath.Join(dir, entry.Name()), signatures, seen, depth+1, maxDepth)
+			}
+			continue
+		}
+		if !isSourceFile(entry.Name()) {
+			continue
+		}
+		info, _ := entry.Info()
+		if info == nil || info.Size() > 30000 {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+
+		var extractor func(string) []string
+		switch ext {
+		case ".py":
+			extractor = extractPythonFunctionSignatures
+		case ".js", ".ts":
+			extractor = extractJSFunctionSignatures
+		case ".go":
+			extractor = extractGoFunctionSignatures
+		case ".rb":
+			extractor = extractRubyFunctionSignatures
+		case ".rs":
+			extractor = extractRustFunctionSignatures
+		}
+		if extractor != nil {
+			for _, sig := range extractor(content) {
+				if !seen[sig] {
+					seen[sig] = true
+					*signatures = append(*signatures, sig)
+				}
+			}
+		}
+	}
 }
 
 // extractPythonFunctionSignatures finds function call patterns in Python test code.
