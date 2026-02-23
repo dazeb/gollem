@@ -1391,6 +1391,15 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"Makefile.PL", "Perl", "perl"},
 		{"Build.PL", "Perl", "perl"},
 		{"cpanfile", "Perl", "cpanm"},
+		{"dub.json", "D", "dub"},
+		{"dub.sdl", "D", "dub"},
+		{"shard.yml", "Crystal", "shards"},
+		{"v.mod", "V", "v"},
+		{"DESCRIPTION", "R", "r"},
+		{"_CoqProject", "Coq", "coq"},
+		{"build.gradle.kts", "Kotlin", "gradle"},
+		{"Pipfile", "Python", "pipenv"},
+		{"configure.ac", "C/C++", "autotools"},
 		{"Makefile", "unknown", "make"},
 	}
 
@@ -1410,6 +1419,22 @@ func detectProject(workDir string) (language, buildSystem string) {
 	// Check for Haskell cabal files (glob pattern).
 	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.cabal")); len(matches) > 0 {
 		return "Haskell", "cabal"
+	}
+	// Check for .nimble files (Nim package manager).
+	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.nimble")); len(matches) > 0 {
+		return "Nim", "nimble"
+	}
+	// Check for .csproj files (C#/.NET).
+	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.csproj")); len(matches) > 0 {
+		return "C#", "dotnet"
+	}
+	// Check for .fsproj files (F#/.NET).
+	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.fsproj")); len(matches) > 0 {
+		return "F#", "dotnet"
+	}
+	// Check for .sln files (.NET solution).
+	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.sln")); len(matches) > 0 {
+		return "C#", "dotnet"
 	}
 	return language, buildSystem
 }
@@ -5661,6 +5686,51 @@ func detectTestCommands(workDir string) []string {
 	}
 	if hasPyTests {
 		cmds = append(cmds, "Test: pytest -xvs")
+	}
+
+	// Scala/SBT
+	if fileExists(filepath.Join(workDir, "build.sbt")) {
+		cmds = append(cmds, "Build: sbt compile")
+		cmds = append(cmds, "Test: sbt test")
+	}
+	// Dart
+	if fileExists(filepath.Join(workDir, "pubspec.yaml")) {
+		if runQuiet(workDir, "which", "flutter") != "" {
+			cmds = append(cmds, "Test: flutter test")
+		} else {
+			cmds = append(cmds, "Test: dart test")
+		}
+	}
+	// Lua (busted)
+	if fileExists(filepath.Join(workDir, ".busted")) {
+		cmds = append(cmds, "Test: busted")
+	}
+	// Nim
+	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.nimble")); len(matches) > 0 {
+		cmds = append(cmds, "Test: nimble test")
+	}
+	// D language
+	if fileExists(filepath.Join(workDir, "dub.json")) || fileExists(filepath.Join(workDir, "dub.sdl")) {
+		cmds = append(cmds, "Build: dub build")
+		cmds = append(cmds, "Test: dub test")
+	}
+	// Crystal
+	if fileExists(filepath.Join(workDir, "shard.yml")) {
+		cmds = append(cmds, "Build: crystal build")
+		cmds = append(cmds, "Test: crystal spec")
+	}
+	// V language
+	if fileExists(filepath.Join(workDir, "v.mod")) {
+		cmds = append(cmds, "Build: v build")
+		cmds = append(cmds, "Test: v test")
+	}
+	// R
+	if fileExists(filepath.Join(workDir, "DESCRIPTION")) {
+		cmds = append(cmds, "Test: Rscript -e \"testthat::test_dir('tests')\"")
+	}
+	// Coq
+	if fileExists(filepath.Join(workDir, "_CoqProject")) {
+		cmds = append(cmds, "Build: coq_makefile -f _CoqProject -o Makefile.coq && make -f Makefile.coq")
 	}
 
 	// PHP (Composer)

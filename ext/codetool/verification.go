@@ -588,6 +588,11 @@ func autoCleanupIntermediates(workDir string) int {
 		".ruff_cache":   true,
 		".tox":          true,
 		".eggs":         true,
+		"nimcache":      true, // Nim compilation cache
+		".nimcache":     true, // Nim compilation cache (dot variant)
+		".zig-cache":    true, // Zig build cache
+		"zig-out":       true, // Zig build output
+		".dub":          true, // D language package cache
 	}
 	// Also clean *.egg-info directories — Python packaging artifacts
 	// that cause "extra files" failures in directory content tests.
@@ -624,7 +629,7 @@ func autoCleanupIntermediates(workDir string) int {
 
 	// Remove intermediate files: *.pyc (Python), *.class (Java), *.hi (Haskell).
 	// These can all cause "extra files" test failures.
-	intermediateExts := []string{".pyc", ".class", ".hi"}
+	intermediateExts := []string{".pyc", ".class", ".hi", ".beam"}
 	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
