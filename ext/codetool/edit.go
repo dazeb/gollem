@@ -506,6 +506,14 @@ func MultiEdit(opts ...Option) core.Tool {
 						return "", &core.ModelRetryError{Message: errMsg}
 					}
 				} else {
+					// Check for ambiguous matches (same safety as single edit).
+					count := strings.Count(content, edit.OldString)
+					if count > 1 {
+						locations := findOccurrenceLines(content, edit.OldString)
+						errMsg := fmt.Sprintf("edit[%d]: old_string found %d times in %s (at lines %s). Provide more surrounding context to make it unique.",
+							i, count, edit.Path, locations)
+						return "", &core.ModelRetryError{Message: errMsg}
+					}
 					newContent = strings.Replace(content, edit.OldString, edit.NewString, 1)
 				}
 				fileContents[path] = newContent

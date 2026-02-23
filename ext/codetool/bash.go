@@ -336,6 +336,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := goModuleHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := gitHint(combinedOutput, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 			if hint := archiveHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
@@ -2335,6 +2338,96 @@ func goModuleHint(output string, exitCode int) string {
 		return "[hint: build tags or OS/arch constraints exclude all files. " +
 			"Check //go:build or // +build tags in source files. " +
 			"For CGo: set CGO_ENABLED=1 if the code requires C bindings]"
+	}
+
+	return ""
+}
+
+// gitHint detects common git errors: merge conflicts, detached HEAD, push
+// rejections, rebase failures, and dirty working tree issues. Coding agents
+// frequently use git and waste 1-2 turns on these recoverable errors.
+func gitHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Merge conflicts: "CONFLICT (content): Merge conflict in ..."
+	if strings.Contains(output, "CONFLICT") && strings.Contains(output, "Merge conflict") {
+		return "[hint: git merge conflict — resolve conflicts in the affected files " +
+			"(look for <<<<<<< / ======= / >>>>>>> markers), then: git add <files> && git commit]"
+	}
+
+	// Rebase conflicts.
+	if strings.Contains(output, "could not apply") && strings.Contains(output, "rebase") ||
+		strings.Contains(output, "CONFLICT") && strings.Contains(output, "rebase") {
+		return "[hint: git rebase conflict — resolve conflicts, then: git add <files> && git rebase --continue. " +
+			"To abort: git rebase --abort]"
+	}
+
+	// Cherry-pick conflicts.
+	if strings.Contains(output, "could not apply") && strings.Contains(output, "cherry-pick") ||
+		strings.Contains(output, "CONFLICT") && strings.Contains(output, "cherry-pick") {
+		return "[hint: git cherry-pick conflict — resolve conflicts, then: git add <files> && git cherry-pick --continue. " +
+			"To abort: git cherry-pick --abort]"
+	}
+
+	// Detached HEAD warning.
+	if strings.Contains(output, "detached HEAD") || strings.Contains(output, "HEAD detached") {
+		return "[hint: you are in detached HEAD state. To keep changes: " +
+			"git checkout -b <new-branch-name>. To return to a branch: git checkout <branch>]"
+	}
+
+	// Push rejected: non-fast-forward.
+	if strings.Contains(output, "rejected") && strings.Contains(output, "non-fast-forward") ||
+		strings.Contains(output, "failed to push some refs") {
+		return "[hint: git push rejected — remote has changes you don't have. " +
+			"Pull first: git pull --rebase, then push again]"
+	}
+
+	// Authentication failure.
+	if strings.Contains(output, "Authentication failed") || strings.Contains(output, "could not read Username") ||
+		strings.Contains(output, "Permission denied (publickey)") {
+		return "[hint: git authentication failed — check credentials, SSH keys, or access token. " +
+			"For HTTPS: use a personal access token. For SSH: ensure ssh-agent has the key (ssh-add)]"
+	}
+
+	// Dirty working tree: "Please commit your changes or stash them"
+	if strings.Contains(output, "Please commit your changes or stash them") ||
+		strings.Contains(output, "Your local changes to the following files would be overwritten") {
+		return "[hint: uncommitted changes blocking git operation — either: " +
+			"(1) git stash, run the operation, git stash pop, or " +
+			"(2) git commit the changes first]"
+	}
+
+	// Unmerged paths: "you need to resolve your current index first"
+	if strings.Contains(output, "you need to resolve your current index first") ||
+		strings.Contains(output, "Unmerged") && strings.Contains(output, "fix conflicts") {
+		return "[hint: unmerged paths remain — resolve all conflicts, git add the files, then continue]"
+	}
+
+	// Branch already exists.
+	if strings.Contains(output, "already exists") && strings.Contains(output, "branch") {
+		return "[hint: branch already exists — use a different name, or: " +
+			"git checkout <branch> to switch to it, " +
+			"git branch -D <branch> to delete and recreate]"
+	}
+
+	// Not a git repository.
+	if strings.Contains(output, "not a git repository") {
+		return "[hint: not inside a git repository — either cd to the right directory, " +
+			"or initialize with: git init]"
+	}
+
+	// Pathspec / file not found.
+	if strings.Contains(output, "pathspec") && strings.Contains(output, "did not match any file") {
+		return "[hint: git pathspec error — the file or branch name doesn't exist. " +
+			"Check spelling, or use: git ls-files to see tracked files, git branch -a for branches]"
+	}
+
+	// Lock file: "Unable to create '.../.git/index.lock'"
+	if strings.Contains(output, ".git/index.lock") || strings.Contains(output, ".git/HEAD.lock") {
+		return "[hint: git lock file exists — another git process may be running. " +
+			"If not, remove the stale lock: rm -f .git/index.lock]"
 	}
 
 	return ""
