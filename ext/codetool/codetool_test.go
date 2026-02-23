@@ -7084,3 +7084,223 @@ ok 4 - test D`
 	}
 }
 
+// --- ExUnit (Elixir) test parsing ---
+
+func TestExtractTestCounts_ExUnit(t *testing.T) {
+	output := `
+..F..
+
+  1) test greets the world (GreeterTest)
+     test/greeter_test.exs:5
+     Assertion with == failed
+     code:  assert Greeter.hello() == "Hello, World!"
+     left:  "Hello, world!"
+     right: "Hello, World!"
+     stacktrace:
+       test/greeter_test.exs:6: (test)
+
+Finished in 0.03 seconds (0.00s async, 0.03s sync)
+5 tests, 1 failure
+`
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ExUnit test counts")
+	}
+	if p != 4 {
+		t.Errorf("expected 4 passed, got %d", p)
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failed, got %d", f)
+	}
+}
+
+func TestExtractTestCounts_ExUnit_AllPassing(t *testing.T) {
+	output := `
+.....
+
+Finished in 0.02 seconds (0.00s async, 0.02s sync)
+5 tests, 0 failures
+`
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ExUnit test counts")
+	}
+	if p != 5 {
+		t.Errorf("expected 5 passed, got %d", p)
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failed, got %d", f)
+	}
+}
+
+func TestExtractTestCounts_ExUnit_WithDoctests(t *testing.T) {
+	output := `
+.....
+
+Finished in 0.04 seconds (0.00s async, 0.04s sync)
+2 doctests, 3 tests, 0 failures
+`
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ExUnit test counts")
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed, got %d", p)
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failed, got %d", f)
+	}
+}
+
+func TestTestResultSummary_ExUnit(t *testing.T) {
+	output := `
+..F..
+
+  1) test greets the world (GreeterTest)
+     test/greeter_test.exs:5
+     Assertion with == failed
+     code:  assert Greeter.hello() == "Hello, World!"
+     left:  "Hello, world!"
+     right: "Hello, World!"
+     stacktrace:
+       test/greeter_test.exs:6: (test)
+
+Finished in 0.03 seconds (0.00s async, 0.03s sync)
+5 tests, 1 failure
+`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected ExUnit test summary")
+	}
+	if !strings.Contains(summary, "5 tests, 1 failure") {
+		t.Errorf("expected summary to contain ExUnit counts, got: %s", summary)
+	}
+	// Should extract the failing test name.
+	if !strings.Contains(summary, "test greets the world") {
+		t.Errorf("expected summary to contain failing test name, got: %s", summary)
+	}
+	// Should extract ExUnit's left:/right: failure detail.
+	if !strings.Contains(summary, "first failure") {
+		t.Errorf("expected first failure detail, got: %s", summary)
+	}
+}
+
+func TestTestResultSummary_ExUnit_AllPassing(t *testing.T) {
+	output := `
+.....
+
+Finished in 0.02 seconds (0.00s async, 0.02s sync)
+5 tests, 0 failures
+`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected ExUnit test summary")
+	}
+	if !strings.Contains(summary, "5 tests, 0 failures") {
+		t.Errorf("expected summary to contain ExUnit all-passing, got: %s", summary)
+	}
+}
+
+func TestFirstFailureDetail_ExUnit(t *testing.T) {
+	output := `
+  1) test greets the world (GreeterTest)
+     test/greeter_test.exs:5
+     Assertion with == failed
+     code:  assert Greeter.hello() == "Hello, World!"
+     left:  "Hello, world!"
+     right: "Hello, World!"
+     stacktrace:
+       test/greeter_test.exs:6: (test)
+`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected ExUnit first failure detail")
+	}
+	if !strings.Contains(detail, "Assertion with == failed") {
+		t.Errorf("expected assertion detail, got: %s", detail)
+	}
+	if !strings.Contains(detail, "left:") {
+		t.Errorf("expected left: value in detail, got: %s", detail)
+	}
+	if !strings.Contains(detail, "right:") {
+		t.Errorf("expected right: value in detail, got: %s", detail)
+	}
+}
+
+// --- XCTest (Swift) test parsing ---
+
+func TestExtractTestCounts_XCTest(t *testing.T) {
+	output := `
+Test Suite 'All tests' started at 2024-01-15 10:30:00.000
+Test Suite 'MyTests' started at 2024-01-15 10:30:00.001
+Test Case '-[MyTests testAdd]' started.
+Test Case '-[MyTests testAdd]' passed (0.001 seconds).
+Test Case '-[MyTests testSubtract]' started.
+/path/to/test.swift:42: error: -[MyTests testSubtract] : XCTAssertEqual failed: ("3") is not equal to ("5") -
+Test Case '-[MyTests testSubtract]' failed (0.002 seconds).
+Test Case '-[MyTests testMultiply]' started.
+Test Case '-[MyTests testMultiply]' passed (0.001 seconds).
+Test Suite 'MyTests' failed at 2024-01-15 10:30:00.010
+	 Executed 3 tests, with 1 failure (0 unexpected) in 0.004 (0.005) seconds
+Test Suite 'All tests' failed at 2024-01-15 10:30:00.010
+	 Executed 3 tests, with 1 failure (0 unexpected) in 0.004 (0.005) seconds
+`
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected XCTest test counts")
+	}
+	if p != 2 {
+		t.Errorf("expected 2 passed, got %d", p)
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failed, got %d", f)
+	}
+}
+
+func TestExtractTestCounts_XCTest_AllPassing(t *testing.T) {
+	output := `
+Test Suite 'All tests' started at 2024-01-15 10:30:00.000
+Executed 5 tests, with 0 failures (0 unexpected) in 0.010 (0.012) seconds
+`
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected XCTest test counts")
+	}
+	if p != 5 {
+		t.Errorf("expected 5 passed, got %d", p)
+	}
+	if f != 0 {
+		t.Errorf("expected 0 failed, got %d", f)
+	}
+}
+
+func TestTestResultSummary_XCTest(t *testing.T) {
+	output := `
+Test Case '-[MyTests testSubtract]' started.
+/path/to/test.swift:42: error: -[MyTests testSubtract] : XCTAssertEqual failed: ("3") is not equal to ("5") -
+Test Case '-[MyTests testSubtract]' failed (0.002 seconds).
+	 Executed 3 tests, with 1 failure (0 unexpected) in 0.004 (0.005) seconds
+`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected XCTest test summary")
+	}
+	if !strings.Contains(summary, "Executed 3 tests") {
+		t.Errorf("expected XCTest summary line, got: %s", summary)
+	}
+	if !strings.Contains(summary, "1 failure") {
+		t.Errorf("expected failure count in summary, got: %s", summary)
+	}
+}
+
+func TestFirstFailureDetail_XCTest(t *testing.T) {
+	output := `/path/to/test.swift:42: error: -[MyTests testSubtract] : XCTAssertEqual failed: ("3") is not equal to ("5") -`
+	detail := firstFailureDetail(output)
+	if detail == "" {
+		t.Fatal("expected XCTest first failure detail")
+	}
+	if !strings.Contains(detail, "XCTAssertEqual failed") {
+		t.Errorf("expected XCTAssert in detail, got: %s", detail)
+	}
+}
+

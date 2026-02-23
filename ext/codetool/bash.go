@@ -2339,7 +2339,8 @@ func testResultSummary(output string) string {
 			lineLower := strings.ToLower(line)
 			if (strings.Contains(lineLower, "passed") || strings.Contains(lineLower, "failed")) &&
 				(strings.Contains(line, "/") || strings.Contains(lineLower, " out of ") || strings.Contains(lineLower, " of ")) &&
-				!strings.Contains(line, "===") { // skip pytest output
+				!strings.Contains(line, "===") && // skip pytest output
+				!strings.Contains(lineLower, ": error:") { // skip compiler/XCTest error lines
 				return "[test summary: " + line + "]"
 			}
 		}
@@ -2529,6 +2530,83 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// ExUnit (Elixir): "5 tests, 1 failure" or "3 doctests, 5 tests, 0 failures"
+	// ExUnit uses "failure"/"failures", NOT "failed"/"passed" like most frameworks.
+	if strings.Contains(lower, "failure") && !strings.Contains(lower, "examples") &&
+		!strings.Contains(lower, "assertions") && !strings.Contains(lower, "tests run:") &&
+		!strings.Contains(lower, "test result:") {
+		lines := strings.Split(output, "\n")
+		var summary string
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if !strings.Contains(lineLower, "test") || !strings.Contains(lineLower, "failure") {
+				continue
+			}
+			// Verify ExUnit format: has "N test(s)" word pair.
+			words := strings.Fields(lineLower)
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					if nextWord == "test" || nextWord == "tests" {
+						summary = "[test summary: " + line + "]"
+						break
+					}
+				}
+			}
+			if summary != "" {
+				break
+			}
+		}
+		if summary != "" {
+			// Extract failing test names: ExUnit outputs "N) test name (Module)"
+			var failedTests []string
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if len(trimmed) > 3 && trimmed[0] >= '1' && trimmed[0] <= '9' &&
+					(strings.Contains(trimmed, ") test ") || strings.Contains(trimmed, ") doctest ")) {
+					if parenIdx := strings.Index(trimmed, ") "); parenIdx > 0 {
+						name := trimmed[parenIdx+2:]
+						failedTests = append(failedTests, name)
+					}
+				}
+			}
+			if len(failedTests) > 0 {
+				shown := failedTests
+				if len(shown) > 10 {
+					shown = shown[:10]
+				}
+				summary += "\n[failed tests: " + strings.Join(shown, ", ")
+				if len(failedTests) > 10 {
+					summary += fmt.Sprintf("... and %d more", len(failedTests)-10)
+				}
+				summary += "]"
+			}
+			if detail := firstFailureDetail(output); detail != "" {
+				summary += "\n" + detail
+			}
+			return summary
+		}
+	}
+
+	// XCTest (Swift): "Executed 5 tests, with 2 failures (0 unexpected) in 0.003 seconds"
+	if strings.Contains(lower, "executed") && strings.Contains(lower, "test") &&
+		strings.Contains(lower, "failure") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if strings.Contains(lineLower, "executed") && strings.Contains(lineLower, "test") &&
+				strings.Contains(lineLower, "failure") {
+				summary := "[test summary: " + line + "]"
+				if detail := firstFailureDetail(output); detail != "" {
+					summary += "\n" + detail
+				}
+				return summary
+			}
+		}
+	}
+
 	// TAP (Test Anything Protocol): used by Perl prove, Node tap/tape, pg_prove, etc.
 	// Format: "ok 1 - test name" / "not ok 2 - test name", plan "1..N"
 	if strings.Contains(output, "ok ") && (strings.Contains(output, "1..") || strings.Contains(output, "not ok")) {
@@ -2699,6 +2777,30 @@ func firstFailureDetail(output string) string {
 					break
 				}
 			}
+		}
+
+		// ExUnit (Elixir): "Assertion with == failed" followed by "left:"/"right:"
+		if strings.HasPrefix(strings.ToLower(trimmed), "assertion with") && strings.Contains(strings.ToLower(trimmed), "failed") {
+			detail := trimmed
+			for j := i + 1; j < min(i+6, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				aheadLower := strings.ToLower(ahead)
+				if strings.HasPrefix(aheadLower, "left:") || strings.HasPrefix(aheadLower, "right:") {
+					detail += " / " + ahead
+				}
+			}
+			if len(detail) > 200 {
+				detail = detail[:200] + "..."
+			}
+			return "[first failure: " + detail + "]"
+		}
+
+		// XCTest (Swift): "XCTAssertEqual failed: (\"X\") is not equal to (\"Y\")"
+		if strings.Contains(trimmed, "XCTAssert") && strings.Contains(strings.ToLower(trimmed), "failed") {
+			if len(trimmed) > 200 {
+				trimmed = trimmed[:200] + "..."
+			}
+			return "[first failure: " + trimmed + "]"
 		}
 
 		// Rust: thread 'test_name' panicked at 'assertion `left == right` failed'
@@ -3256,6 +3358,73 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			if total > 0 {
 				failed = failures
 				passed = total - failed
+				ok = true
+				return
+			}
+		}
+	}
+
+	// ExUnit (Elixir): "5 tests, 1 failure" or "3 doctests, 5 tests, 0 failures"
+	if strings.Contains(lower, "failure") && !strings.Contains(lower, "examples") &&
+		!strings.Contains(lower, "assertions") && !strings.Contains(lower, "tests run:") &&
+		!strings.Contains(lower, "test result:") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "test") || !strings.Contains(line, "failure") {
+				continue
+			}
+			words := strings.Fields(line)
+			var tests, failures int
+			foundTests := false
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					if nextWord == "test" || nextWord == "tests" {
+						tests = n
+						foundTests = true
+					} else if strings.HasPrefix(nextWord, "failure") {
+						failures = n
+					}
+				}
+			}
+			if foundTests {
+				passed = tests - failures
+				failed = failures
+				ok = true
+				return
+			}
+		}
+	}
+
+	// XCTest (Swift): "Executed 5 tests, with 2 failures (0 unexpected) in 0.003 seconds"
+	if strings.Contains(lower, "executed") && strings.Contains(lower, "test") &&
+		strings.Contains(lower, "failure") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.ToLower(strings.TrimSpace(lines[i]))
+			if !strings.Contains(line, "executed") || !strings.Contains(line, "test") {
+				continue
+			}
+			words := strings.Fields(line)
+			var tests, failures int
+			foundTests := false
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					if nextWord == "test" || nextWord == "tests" {
+						tests = n
+						foundTests = true
+					} else if strings.HasPrefix(nextWord, "failure") {
+						failures = n
+					}
+				}
+			}
+			if foundTests {
+				passed = tests - failures
+				failed = failures
 				ok = true
 				return
 			}
