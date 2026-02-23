@@ -5332,6 +5332,35 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
+	// Generic: "N tests, M failures" (Gleam, EUnit, common format).
+	if strings.Contains(lower, " tests") && strings.Contains(lower, " failure") {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			lineLower := strings.ToLower(strings.TrimSpace(lines[i]))
+			words := strings.Fields(lineLower)
+			var total, failures int
+			foundTests := false
+			for j := 0; j+1 < len(words); j++ {
+				if isNumeric(words[j]) {
+					var n int
+					fmt.Sscanf(words[j], "%d", &n)
+					nextWord := strings.TrimRight(words[j+1], ",.;:")
+					if nextWord == "tests" || nextWord == "test" {
+						total = n
+						foundTests = true
+					} else if strings.HasPrefix(nextWord, "failure") {
+						failures = n
+					}
+				}
+			}
+			if foundTests && total > 0 {
+				passed = total - failures
+				failed = failures
+				ok = true
+				return
+			}
+		}
+	}
+
 	// Generic: "X/Y tests passed" or "N out of M"
 	for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
 		line := strings.TrimSpace(lines[i])

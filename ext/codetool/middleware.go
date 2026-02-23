@@ -407,6 +407,8 @@ func discoverEnvironment(workDir string) string {
 		{"metals (Scala)", "metals"},
 		{"intelephense (PHP)", "intelephense"},
 		{"ocamllsp (OCaml)", "ocamllsp"},
+		{"elixir-ls (Elixir)", "elixir-ls"},
+		{"nextls (Elixir)", "nextls"},
 	}
 	for _, ls := range lspServers {
 		if runQuiet(workDir, "which", ls.cmd) != "" {
@@ -1507,6 +1509,7 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"build.sbt", "Scala", "sbt"},
 		{"pubspec.yaml", "Dart", "dart"},
 		{"composer.json", "PHP", "composer"},
+		{"gleam.toml", "Gleam", "gleam"},
 		{".busted", "Lua", "busted"},
 		{".luarocks", "Lua", "luarocks"},
 		{"Makefile.PL", "Perl", "perl"},
@@ -7342,6 +7345,23 @@ func extractFileStructure(path string) string {
 				strings.HasPrefix(trimmed, "Fact ") || strings.HasPrefix(trimmed, "Corollary ") {
 				matched = true
 			}
+		case ".gleam":
+			// Gleam: pub/fn/type/const definitions.
+			if strings.HasPrefix(trimmed, "pub fn ") || strings.HasPrefix(trimmed, "fn ") ||
+				strings.HasPrefix(trimmed, "pub type ") || strings.HasPrefix(trimmed, "type ") ||
+				strings.HasPrefix(trimmed, "pub const ") || strings.HasPrefix(trimmed, "const ") ||
+				strings.HasPrefix(trimmed, "import ") {
+				matched = true
+			}
+		case ".erl", ".hrl":
+			// Erlang: function definitions, module/export attributes.
+			if strings.HasPrefix(trimmed, "-module(") || strings.HasPrefix(trimmed, "-export(") ||
+				strings.HasPrefix(trimmed, "-spec ") || strings.HasPrefix(trimmed, "-type ") ||
+				strings.HasPrefix(trimmed, "-record(") ||
+				(!strings.HasPrefix(trimmed, "%") && !strings.HasPrefix(trimmed, "-") &&
+					strings.Contains(trimmed, "(") && strings.Contains(trimmed, "->")) {
+				matched = true
+			}
 		}
 
 		if matched {
@@ -7475,8 +7495,8 @@ func isSourceFile(name string) bool {
 		".json", ".yaml", ".yml", ".toml",
 		".xml", ".md", ".txt", ".cfg", ".ini", ".conf",
 		".csv", ".tsv", ".jsonl", ".env", ".dockerfile",
-		".vue", ".svelte", ".zig", ".nim",
-		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hs",
+		".vue", ".svelte", ".zig", ".nim", ".gleam",
+		".kt", ".kts", ".scala", ".ex", ".exs", ".erl", ".hrl", ".hs",
 		".jl", ".m", ".swift", ".f90", ".f95", ".f03", ".f08", ".f", ".for", ".pm",
 		".ml", ".mli",
 		".lean", ".v", ".agda",
