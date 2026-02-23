@@ -934,10 +934,26 @@ func autoCorrectBlankLines(content, oldStr, newStr string) (trimmedOld, trimmedN
 	}
 	trimmedOld = strings.Join(oldLines[leadingBlanks:oldEnd], "\n")
 
-	// Strip corresponding lines from new_string. If new has fewer lines
-	// than we need to strip, just return what we can.
-	newStart := min(leadingBlanks, len(newLines))
-	newEnd := len(newLines) - min(trailingBlanks, len(newLines)-newStart)
+	// Strip corresponding blank lines from new_string. Only strip lines
+	// that are actually blank — never remove content lines from new.
+	newLeadingBlanks := 0
+	for _, line := range newLines {
+		if strings.TrimSpace(line) == "" {
+			newLeadingBlanks++
+		} else {
+			break
+		}
+	}
+	newTrailingBlanks := 0
+	for i := len(newLines) - 1; i >= newLeadingBlanks; i-- {
+		if strings.TrimSpace(newLines[i]) == "" {
+			newTrailingBlanks++
+		} else {
+			break
+		}
+	}
+	newStart := min(leadingBlanks, newLeadingBlanks)
+	newEnd := len(newLines) - min(trailingBlanks, newTrailingBlanks)
 	if newEnd <= newStart {
 		trimmedNew = ""
 	} else {

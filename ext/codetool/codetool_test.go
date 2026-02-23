@@ -12361,6 +12361,84 @@ func TestFileSnippetForEdit_ShortFirstLine(t *testing.T) {
 	assertContains(t, result, "helper")
 }
 
+func TestAutoCorrectBlankLines(t *testing.T) {
+	t.Run("strips_blanks_from_both", func(t *testing.T) {
+		// Normal case: old has leading/trailing blanks, new also has them.
+		content := "foo\nbar"
+		oldStr := "\nfoo\nbar\n"
+		newStr := "\nbaz\nqux\n"
+		trimmedOld, trimmedNew, ok := autoCorrectBlankLines(content, oldStr, newStr)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if trimmedOld != "foo\nbar" {
+			t.Errorf("trimmedOld = %q, want %q", trimmedOld, "foo\nbar")
+		}
+		if trimmedNew != "baz\nqux" {
+			t.Errorf("trimmedNew = %q, want %q", trimmedNew, "baz\nqux")
+		}
+	})
+
+	t.Run("new_has_no_blanks_to_strip", func(t *testing.T) {
+		// Bug case: old has leading+trailing blanks, new has no blanks.
+		// The function should NOT strip content lines from new.
+		content := "foo\nbar"
+		oldStr := "\nfoo\nbar\n"
+		newStr := "baz\nqux"
+		trimmedOld, trimmedNew, ok := autoCorrectBlankLines(content, oldStr, newStr)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if trimmedOld != "foo\nbar" {
+			t.Errorf("trimmedOld = %q, want %q", trimmedOld, "foo\nbar")
+		}
+		// The new_string has no blank lines to strip — it should be unchanged.
+		if trimmedNew != "baz\nqux" {
+			t.Errorf("trimmedNew = %q, want %q (should not strip content lines)", trimmedNew, "baz\nqux")
+		}
+	})
+
+	t.Run("new_has_fewer_blanks_than_old", func(t *testing.T) {
+		// Old has 2 leading blanks, new has 1 leading blank.
+		content := "foo\nbar"
+		oldStr := "\n\nfoo\nbar"
+		newStr := "\nbaz\nqux"
+		trimmedOld, trimmedNew, ok := autoCorrectBlankLines(content, oldStr, newStr)
+		if !ok {
+			t.Fatal("expected ok")
+		}
+		if trimmedOld != "foo\nbar" {
+			t.Errorf("trimmedOld = %q, want %q", trimmedOld, "foo\nbar")
+		}
+		// Should strip 1 leading blank from new (not 2, since new only has 1).
+		if trimmedNew != "baz\nqux" {
+			t.Errorf("trimmedNew = %q, want %q", trimmedNew, "baz\nqux")
+		}
+	})
+}
+
+func TestEdit_BlankLineStrippingPreservesNewContent(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("foo\nbar\n"), 0o644)
+
+	tool := Edit(WithWorkDir(dir))
+
+	// Model writes old_string with leading blank that file doesn't have,
+	// but new_string has no blank lines. The edit should replace foo\nbar
+	// with baz\nqux, not delete it.
+	result := call(t, tool, `{"path": "test.txt", "old_string": "\nfoo\nbar", "new_string": "baz\nqux"}`)
+	assertContains(t, result, "Replaced 1")
+
+	data, _ := os.ReadFile(filepath.Join(dir, "test.txt"))
+	content := string(data)
+	if !strings.Contains(content, "baz") || !strings.Contains(content, "qux") {
+		t.Errorf("expected new content to be preserved, got: %q", content)
+	}
+	if content == "\n" || content == "" {
+		t.Error("content was deleted instead of replaced — blank line stripping removed content lines from new_string")
+	}
+}
+
 func TestGrep_SummaryFooter(t *testing.T) {
 	dir := setupTestDir(t)
 	tool := Grep(WithWorkDir(dir))
