@@ -305,7 +305,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -640,11 +640,19 @@ func discoverEnvironment(workDir string) string {
 			if dirExists(lockPath) {
 				break
 			}
-			// Prefer bun install if bun.lockb exists and bun is available.
+			// Prefer the package manager matching the lockfile.
 			if fileExists(filepath.Join(dir, "bun.lockb")) && runQuiet(workDir, "which", "bun") != "" {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Bun dependencies in %s\n", dir)
 				runQuietTimeout(dir, 60*time.Second, "bun", "install")
 				parts = append(parts, "AUTO-INSTALLED: Bun dependencies (already done, no need to install again)")
+			} else if fileExists(filepath.Join(dir, "pnpm-lock.yaml")) && runQuiet(workDir, "which", "pnpm") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing pnpm dependencies in %s\n", dir)
+				runQuietTimeout(dir, 60*time.Second, "pnpm", "install")
+				parts = append(parts, "AUTO-INSTALLED: pnpm dependencies (already done, no need to install again)")
+			} else if fileExists(filepath.Join(dir, "yarn.lock")) && runQuiet(workDir, "which", "yarn") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Yarn dependencies in %s\n", dir)
+				runQuietTimeout(dir, 60*time.Second, "yarn", "install")
+				parts = append(parts, "AUTO-INSTALLED: Yarn dependencies (already done, no need to install again)")
 			} else if runQuiet(workDir, "which", "npm") != "" {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-installing npm dependencies in %s\n", dir)
 				runQuietTimeout(dir, 60*time.Second, "npm", "install", "--no-audit", "--no-fund")
@@ -5404,8 +5412,17 @@ func detectTestCommands(workDir string) []string {
 		cmds = append(cmds, "Test: cargo test")
 	}
 	if fileExists(filepath.Join(workDir, "package.json")) {
-		cmds = append(cmds, "Install: npm install")
-		cmds = append(cmds, "Test: npm test")
+		// Recommend the package manager matching the lockfile.
+		pm := "npm"
+		if fileExists(filepath.Join(workDir, "bun.lockb")) {
+			pm = "bun"
+		} else if fileExists(filepath.Join(workDir, "pnpm-lock.yaml")) {
+			pm = "pnpm"
+		} else if fileExists(filepath.Join(workDir, "yarn.lock")) {
+			pm = "yarn"
+		}
+		cmds = append(cmds, "Install: "+pm+" install")
+		cmds = append(cmds, "Test: "+pm+" test")
 	}
 	if fileExists(filepath.Join(workDir, "Makefile")) || fileExists("/app/Makefile") {
 		cmds = append(cmds, "Build: make")

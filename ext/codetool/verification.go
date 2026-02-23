@@ -462,7 +462,7 @@ func isVerificationString(cmd string) bool {
 	// Build/compile commands.
 	buildPatterns := []string{
 		"go build", "go vet",
-		"npm run build", "yarn build", "pnpm build", "bun run build",
+		"npm run build", "yarn build", "yarn run build", "pnpm build", "pnpm run build", "bun run build",
 		"cargo build", "cargo check", "cargo clippy",
 		"make", "cmake",
 		"gcc ", "g++ ", "clang ", "cc ",
