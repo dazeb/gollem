@@ -5246,6 +5246,65 @@ func extractTestReferencedFiles(parts []string) map[string]bool {
 					refs[strings.ToLower(mod)+".rs"] = true
 				}
 			}
+
+			// Java: import com.example.Solution; → Solution.java
+			if strings.HasPrefix(trimmed, "import ") && strings.HasSuffix(trimmed, ";") &&
+				!strings.HasPrefix(trimmed, "import static ") {
+				// Extract the last component of the package path.
+				importPath := strings.TrimSuffix(strings.TrimPrefix(trimmed, "import "), ";")
+				importPath = strings.TrimSpace(importPath)
+				parts := strings.Split(importPath, ".")
+				if len(parts) > 0 {
+					className := parts[len(parts)-1]
+					if className != "*" && className != "" && strings.ToUpper(className[:1]) == className[:1] {
+						refs[className+".java"] = true
+					}
+				}
+			}
+
+			// Haskell: import Solution → Solution.hs, import qualified Data.Map → skip stdlib
+			if strings.HasPrefix(trimmed, "import ") && !strings.Contains(trimmed, "\"") {
+				importLine := strings.TrimPrefix(trimmed, "import ")
+				importLine = strings.TrimPrefix(importLine, "qualified ")
+				if fields := strings.Fields(importLine); len(fields) > 0 {
+					mod := strings.Split(fields[0], ".")[0] // "Data.Map" → "Data"
+					// Skip common Haskell stdlib/base modules.
+					haskellStdlib := map[string]bool{
+						"Data": true, "Control": true, "System": true, "Text": true,
+						"Foreign": true, "GHC": true, "Debug": true, "Numeric": true,
+						"Prelude": true, "Test": true,
+					}
+					if mod != "" && !haskellStdlib[mod] {
+						refs[mod+".hs"] = true
+					}
+				}
+			}
+
+			// Elixir: alias Solution, use Solution, import Solution
+			for _, elixirKw := range []string{"alias ", "use ", "import "} {
+				if strings.HasPrefix(trimmed, elixirKw) && !strings.Contains(trimmed, "\"") {
+					rest := strings.TrimPrefix(trimmed, elixirKw)
+					if fields := strings.Fields(rest); len(fields) > 0 {
+						mod := strings.TrimRight(fields[0], ",")
+						mod = strings.Split(mod, ".")[0] // "Solution.Helper" → "Solution"
+						// Skip common Elixir/Erlang stdlib modules.
+						elixirStdlib := map[string]bool{
+							"Enum": true, "Map": true, "List": true, "String": true,
+							"IO": true, "File": true, "Path": true, "Agent": true,
+							"Task": true, "GenServer": true, "Supervisor": true,
+							"Logger": true, "Keyword": true, "Regex": true,
+							"ExUnit": true, "Mix": true, "Application": true,
+							"Jason": true, "Plug": true, "Phoenix": true, "Ecto": true,
+						}
+						if mod != "" && !elixirStdlib[mod] {
+							// Elixir convention: Module → module.ex (snake_case).
+							snaked := strings.ToLower(mod)
+							refs[snaked+".ex"] = true
+							refs[snaked+".exs"] = true
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -5272,6 +5331,21 @@ func isStdlibModule(mod string) bool {
 		"html": true, "base64": true, "binascii": true, "hmac": true,
 		"secrets": true, "zipfile": true, "tarfile": true, "gzip": true,
 		"configparser": true, "platform": true, "ctypes": true,
+		"decimal": true, "fractions": true, "statistics": true,
+		"asyncio": true, "concurrent": true, "queue": true,
+		"uuid": true, "zlib": true, "lzma": true, "bz2": true,
+		"cmath": true, "numbers": true, "types": true,
+		"weakref": true, "gc": true, "atexit": true,
+		"token": true, "tokenize": true, "ast": true,
+		"dis": true, "code": true, "codeop": true,
+		"pdb": true, "profile": true, "cProfile": true, "timeit": true,
+		"gettext": true, "locale": true, "codecs": true, "unicodedata": true,
+		"getpass": true, "grp": true, "pwd": true, "resource": true,
+		"select": true, "selectors": true, "mmap": true,
+		"ssl": true, "ftplib": true, "poplib": true, "imaplib": true,
+		"smtplib": true, "xmlrpc": true, "ipaddress": true,
+		"curses": true, "readline": true, "rlcompleter": true,
+		"syslog": true, "optparse": true, "cmd": true, "shlex": true,
 		// Common third-party but not user code
 		"numpy": true, "np": true, "pandas": true, "pd": true,
 		"scipy": true, "matplotlib": true, "plt": true,
@@ -6539,7 +6613,7 @@ func extractTestConstraintsRecursive(dir string, constraints *[]string, seen map
 			continue
 		}
 		info, err := entry.Info()
-		if err != nil || info.Size() > 10000 {
+		if err != nil || info.Size() > 30000 {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
@@ -7506,40 +7580,7 @@ func detectTodoStubs(workDir string) []string {
 	}
 
 	for _, dir := range []string{workDir, "/app"} {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !isSourceFile(entry.Name()) {
-				continue
-			}
-			info, _ := entry.Info()
-			if info == nil || info.Size() > 50000 {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-			if err != nil {
-				continue
-			}
-			for lineNum, line := range strings.Split(string(data), "\n") {
-				trimmed := strings.TrimSpace(line)
-				for _, pat := range todoPatterns {
-					if strings.Contains(trimmed, pat) {
-						key := entry.Name() + ":" + trimmed
-						if !seen[key] {
-							seen[key] = true
-							stub := fmt.Sprintf("  %s:%d: %s", entry.Name(), lineNum+1, trimmed)
-							if len(stub) > 150 {
-								stub = stub[:150] + "..."
-							}
-							stubs = append(stubs, stub)
-						}
-						break
-					}
-				}
-			}
-		}
+		detectTodoStubsRecursive(dir, &stubs, seen, todoPatterns, 0, 3)
 		if len(stubs) > 0 {
 			break
 		}
@@ -7550,6 +7591,60 @@ func detectTodoStubs(workDir string) []string {
 		stubs = append(stubs[:15], fmt.Sprintf("  ... and %d more TODOs", len(stubs)-15))
 	}
 	return stubs
+}
+
+// detectTodoStubsRecursive walks directories recursively to find TODO/stub
+// patterns in source files. Previously non-recursive, missing stubs in
+// subdirectories like src/, lib/, pkg/.
+func detectTodoStubsRecursive(dir string, stubs *[]string, seen map[string]bool, patterns []string, depth, maxDepth int) {
+	if depth > maxDepth || len(*stubs) >= 15 {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			if depth < maxDepth && !strings.HasPrefix(entry.Name(), ".") && !isSkippableDir(entry.Name()) {
+				detectTodoStubsRecursive(filepath.Join(dir, entry.Name()), stubs, seen, patterns, depth+1, maxDepth)
+			}
+			continue
+		}
+		if !isSourceFile(entry.Name()) {
+			continue
+		}
+		info, _ := entry.Info()
+		if info == nil || info.Size() > 50000 {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		// Use relative path from the search root for cleaner output.
+		relPath := entry.Name()
+		if depth > 0 {
+			relPath = filepath.Join(filepath.Base(dir), entry.Name())
+		}
+		for lineNum, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			for _, pat := range patterns {
+				if strings.Contains(trimmed, pat) {
+					key := relPath + ":" + trimmed
+					if !seen[key] {
+						seen[key] = true
+						stub := fmt.Sprintf("  %s:%d: %s", relPath, lineNum+1, trimmed)
+						if len(stub) > 150 {
+							stub = stub[:150] + "..."
+						}
+						*stubs = append(*stubs, stub)
+					}
+					break
+				}
+			}
+		}
+	}
 }
 
 func dirExists(path string) bool {
