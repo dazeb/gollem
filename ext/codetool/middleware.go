@@ -712,12 +712,12 @@ func discoverEnvironment(workDir string) string {
 		buildFiles := []string{
 			"Makefile", "CMakeLists.txt", "Cargo.toml",
 			"go.mod", "pyproject.toml", "setup.py", "setup.cfg",
-			"package.json", "composer.json", "pom.xml", "build.gradle", "build.sbt", "pubspec.yaml",
+			"package.json", "composer.json", "pom.xml", "build.gradle", "build.gradle.kts", "build.sbt", "pubspec.yaml",
 			"Package.swift", "configure.ac", "meson.build", "BUILD",
 			"docker-compose.yml", "docker-compose.yaml",
 			"Dockerfile",
 			"deno.json", "deno.jsonc",
-			"Taskfile.yml", "Justfile",
+			"Taskfile.yml", "Justfile", "justfile",
 			"tsconfig.json",                // TypeScript config (compilation/path mapping)
 			"project.clj", "deps.edn",     // Clojure
 			"rebar.config",                 // Erlang
@@ -725,6 +725,11 @@ func discoverEnvironment(workDir string) string {
 			"mix.exs",                      // Elixir
 			"shard.yml",                    // Crystal
 			"gleam.toml",                   // Gleam
+			"build.zig",                    // Zig
+			"stack.yaml",                   // Haskell Stack
+			"dub.json", "dub.sdl",         // D language
+			"v.mod",                        // V language
+			"lakefile.lean", "lakefile.toml", // Lean 4
 		}
 		for _, bf := range buildFiles {
 			if autoReadBudget <= 0 {
@@ -7386,6 +7391,13 @@ func isEntryPointFile(lowerName string) bool {
 		"rebar.config",              // Erlang
 		"justfile",                  // Just task runner
 		"taskfile.yml",              // Task task runner
+		"stack.yaml",                // Haskell Stack
+		"dub.json", "dub.sdl",      // D language
+		"shard.yml",                 // Crystal
+		"v.mod",                     // V language
+		"lakefile.lean",             // Lean 4
+		"meson.build",               // Meson build system
+		"composer.json",             // PHP Composer
 	}
 	for _, ep := range entryPoints {
 		if strings.HasPrefix(lowerName, ep) || lowerName == ep {
