@@ -3237,7 +3237,13 @@ func testResultSummary(output string) string {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "runs") && strings.Contains(lineLower, "assertions") {
-				return "[test summary: " + line + "]"
+				summary := "[test summary: " + line + "]"
+				if strings.Contains(lineLower, "failure") && !strings.Contains(lineLower, "0 failures") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
 			}
 		}
 	}
@@ -3341,7 +3347,13 @@ func testResultSummary(output string) string {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "test case") && strings.Contains(lineLower, "assertion") {
-				return "[test summary: " + line + "]"
+				summary := "[test summary: " + line + "]"
+				if strings.Contains(lineLower, "failed") || strings.Contains(lineLower, "failure") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
 			}
 		}
 	}
@@ -3353,7 +3365,13 @@ func testResultSummary(output string) string {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "tests run:") && strings.Contains(lineLower, "failures:") {
-				return "[test summary: " + line + "]"
+				summary := "[test summary: " + line + "]"
+				if !strings.Contains(lineLower, "failures: 0") || strings.Contains(lineLower, "errors:") && !strings.Contains(lineLower, "errors: 0") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
 			}
 		}
 	}
@@ -3366,7 +3384,13 @@ func testResultSummary(output string) string {
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "tests completed") ||
 				(strings.HasPrefix(lineLower, "build ") && (strings.Contains(lineLower, "successful") || strings.Contains(lineLower, "failed"))) {
-				return "[test summary: " + line + "]"
+				summary := "[test summary: " + line + "]"
+				if strings.Contains(lineLower, "failed") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
 			}
 		}
 	}
@@ -3423,7 +3447,13 @@ func testResultSummary(output string) string {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "total tests:") && strings.Contains(lineLower, "passed:") {
-				return "[test summary: " + line + "]"
+				summary := "[test summary: " + line + "]"
+				if strings.Contains(lineLower, "failed:") && !strings.Contains(lineLower, "failed: 0") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
 			}
 		}
 	}
@@ -3435,7 +3465,11 @@ func testResultSummary(output string) string {
 			line := strings.TrimSpace(lines[i])
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "tests passed") && strings.Contains(lineLower, "tests failed") {
-				return "[test summary: " + line + "]"
+				summary := "[test summary: " + line + "]"
+				if detail := firstFailureDetail(output); detail != "" {
+					summary += "\n" + detail
+				}
+				return summary
 			}
 		}
 	}
