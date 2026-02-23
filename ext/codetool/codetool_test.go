@@ -6888,6 +6888,122 @@ func TestSubprocessTimeoutHint(t *testing.T) {
 			t.Errorf("expected no hint for unrelated error, got: %s", hint)
 		}
 	})
+
+	t.Run("java TimeoutException", func(t *testing.T) {
+		output := `java.util.concurrent.TimeoutException: Process timed out`
+		hint := subprocessTimeoutHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for Java timeout")
+		}
+		if !strings.Contains(hint, "too SLOW") {
+			t.Errorf("expected 'too SLOW' in hint, got: %s", hint)
+		}
+	})
+
+	t.Run("ruby Timeout::Error", func(t *testing.T) {
+		output := `Timeout::Error: execution expired`
+		hint := subprocessTimeoutHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for Ruby timeout")
+		}
+	})
+
+	t.Run("go context deadline exceeded", func(t *testing.T) {
+		output := `--- FAIL: TestSolve (30.00s)
+    solve_test.go:15: context deadline exceeded`
+		hint := subprocessTimeoutHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for Go context deadline")
+		}
+	})
+
+	t.Run("time limit exceeded", func(t *testing.T) {
+		output := `FAILED: Time Limit Exceeded on test case 3`
+		hint := subprocessTimeoutHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for TLE")
+		}
+	})
+
+	t.Run("node TimeoutError", func(t *testing.T) {
+		output := `TimeoutError: test exceeded 5000ms timeout`
+		hint := subprocessTimeoutHint(output, 1)
+		if hint == "" {
+			t.Fatal("expected hint for Node.js timeout")
+		}
+	})
+}
+
+func TestTestTimeoutOptimizationHint(t *testing.T) {
+	t.Run("python", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("pytest -xvs tests/")
+		if !strings.Contains(hint, "numpy") {
+			t.Errorf("expected Python-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("java maven", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("mvn test -q")
+		if !strings.Contains(hint, "HashMap") {
+			t.Errorf("expected Java-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("dotnet", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("dotnet test")
+		if !strings.Contains(hint, "Dictionary") {
+			t.Errorf("expected .NET-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("ruby rspec", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("bundle exec rspec")
+		if !strings.Contains(hint, "Hash") {
+			t.Errorf("expected Ruby-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("elixir", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("mix test")
+		if !strings.Contains(hint, "MapSet") {
+			t.Errorf("expected Elixir-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("scala sbt", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("sbt test")
+		if !strings.Contains(hint, "HashMap") {
+			t.Errorf("expected Scala-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("haskell stack", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("stack test")
+		if !strings.Contains(hint, "Data.Map") {
+			t.Errorf("expected Haskell-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("dart", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("dart test")
+		if !strings.Contains(hint, "Map/Set") {
+			t.Errorf("expected Dart-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("php", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("./vendor/bin/phpunit")
+		if !strings.Contains(hint, "isset") {
+			t.Errorf("expected PHP-specific hint, got: %s", hint)
+		}
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		hint := testTimeoutOptimizationHint("ls -la")
+		if hint != "" {
+			t.Errorf("expected no hint for non-test command, got: %s", hint)
+		}
+	})
 }
 
 func TestCompilationTimeoutMessage(t *testing.T) {

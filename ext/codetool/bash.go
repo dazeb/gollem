@@ -1941,9 +1941,25 @@ func subprocessTimeoutHint(output string, exitCode int) string {
 	}
 	lower := strings.ToLower(output)
 
-	// Python subprocess.TimeoutExpired: "Command '...' timed out after N seconds"
-	if strings.Contains(lower, "timeoutexpired") ||
-		(strings.Contains(lower, "timed out after") && strings.Contains(lower, "seconds")) {
+	// Detect subprocess/test timeouts across languages.
+	// Python: "TimeoutExpired" or "timed out after N seconds"
+	// Java: "TimeoutException" or "java.util.concurrent.TimeoutException"
+	// Ruby: "Timeout::Error" or "execution expired"
+	// Go: "context deadline exceeded" or "test timed out after"
+	// Node.js: "TimeoutError" or "test timeout"
+	// Competitive programming: "Time Limit Exceeded" or "TLE"
+	// Generic: "exceeded the time limit"
+	isTimeout := strings.Contains(lower, "timeoutexpired") ||
+		(strings.Contains(lower, "timed out after") && strings.Contains(lower, "seconds")) ||
+		strings.Contains(lower, "timeoutexception") ||
+		(strings.Contains(output, "Timeout::Error") || strings.Contains(lower, "execution expired")) ||
+		strings.Contains(lower, "context deadline exceeded") ||
+		(strings.Contains(lower, "test timed out") && strings.Contains(lower, "after")) ||
+		strings.Contains(lower, "timeouterror") ||
+		strings.Contains(lower, "time limit exceeded") ||
+		(strings.Contains(lower, "exceeded") && strings.Contains(lower, "time limit"))
+
+	if isTimeout {
 		return "[hint: A subprocess timed out during testing. Your solution is too SLOW — it works correctly but " +
 			"exceeds the test's time limit. Performance optimizations: " +
 			"(1) Reduce algorithmic complexity (use hash maps, avoid nested loops), " +
@@ -5245,6 +5261,36 @@ func testTimeoutOptimizationHint(cmd string) string {
 	case strings.Contains(lower, "npm test") || strings.Contains(lower, "jest") || strings.Contains(lower, "mocha") || strings.Contains(lower, "node "):
 		return "[optimization hints: (1) use Map/Set for lookups instead of array.find/includes, " +
 			"(2) avoid unnecessary object spread/creation in loops, (3) use streams for large data]"
+	case strings.Contains(lower, "mvn test") || strings.Contains(lower, "gradle test") ||
+		strings.Contains(lower, "gradlew test") || strings.Contains(lower, "java ") || strings.Contains(lower, "javac "):
+		return "[optimization hints: (1) use HashMap/HashSet for O(1) lookups, (2) use StringBuilder instead of string concatenation in loops, " +
+			"(3) prefer primitive arrays over ArrayList for numeric data, (4) use parallelStream() for independent computations]"
+	case strings.Contains(lower, "dotnet test") || strings.Contains(lower, "dotnet run"):
+		return "[optimization hints: (1) use Dictionary/HashSet for O(1) lookups, (2) use StringBuilder for string concatenation in loops, " +
+			"(3) use Span<T> to avoid allocations, (4) prefer LINQ with early termination (.Any(), .First()) over full iteration]"
+	case strings.Contains(lower, "rspec") || strings.Contains(lower, "rake test") ||
+		strings.Contains(lower, "ruby ") || strings.Contains(lower, "bundle exec"):
+		return "[optimization hints: (1) use Hash/Set for O(1) lookups instead of Array#include?, " +
+			"(2) use each_with_object instead of map+flatten, (3) avoid excessive object allocation in loops, " +
+			"(4) use lazy enumerators for large collections]"
+	case strings.Contains(lower, "mix test"):
+		return "[optimization hints: (1) use MapSet/Map for lookups instead of Enum.member?, " +
+			"(2) use Stream for lazy evaluation of large collections, (3) avoid repeated list traversals, " +
+			"(4) use ETS tables for shared in-memory lookups]"
+	case strings.Contains(lower, "sbt test") || strings.Contains(lower, "sbt run"):
+		return "[optimization hints: (1) use HashMap for O(1) lookups, (2) use view for lazy collection operations, " +
+			"(3) avoid implicit conversions in hot paths, (4) use mutable collections in performance-critical sections]"
+	case strings.Contains(lower, "stack test") || strings.Contains(lower, "cabal test"):
+		return "[optimization hints: (1) use Data.Map or Data.HashMap for lookups, (2) use strict fields and BangPatterns to avoid thunk buildup, " +
+			"(3) use Data.ByteString instead of String for large text, (4) use Data.Vector instead of lists for random access]"
+	case strings.Contains(lower, "dart test") || strings.Contains(lower, "flutter test"):
+		return "[optimization hints: (1) use Map/Set for O(1) lookups instead of List.contains, " +
+			"(2) use StringBuffer for string concatenation in loops, (3) avoid unnecessary widget rebuilds (use const constructors), " +
+			"(4) pre-compute expensive values outside loops]"
+	case strings.Contains(lower, "phpunit") || strings.Contains(lower, "php "):
+		return "[optimization hints: (1) use array keys for O(1) lookups (isset > in_array), " +
+			"(2) avoid array_merge in loops (use array_push or []), (3) use generators for large datasets, " +
+			"(4) pre-compute values instead of recalculating in loops]"
 	}
 
 	return ""
