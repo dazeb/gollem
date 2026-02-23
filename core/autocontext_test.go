@@ -247,6 +247,41 @@ func TestAutoContext_MessageAlternationOddKeepN(t *testing.T) {
 	}
 }
 
+func TestAutoContext_EmptySummaryFallback(t *testing.T) {
+	// When the summary model returns an empty response, autoCompressMessages
+	// should fall back to returning original messages instead of creating a
+	// near-empty summary that discards conversation history.
+	var messages []ModelMessage
+	for i := range 10 {
+		messages = append(messages, ModelRequest{
+			Parts: []ModelRequestPart{
+				UserPromptPart{Content: fmt.Sprintf("user message %d with enough words to inflate token count", i)},
+			},
+		})
+		messages = append(messages, ModelResponse{
+			Parts: []ModelResponsePart{TextPart{Content: fmt.Sprintf("assistant response %d with enough words", i)}},
+		})
+	}
+
+	// Model returns empty text — simulates a failed/empty summarization.
+	summaryModel := NewTestModel(TextResponse(""))
+	config := &AutoContextConfig{
+		MaxTokens:    10,
+		KeepLastN:    4,
+		SummaryModel: summaryModel,
+	}
+
+	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should return original messages unchanged since summary was empty.
+	if len(result) != len(messages) {
+		t.Errorf("expected %d messages (fallback to original), got %d", len(messages), len(result))
+	}
+}
+
 func TestAutoContext_AgentIntegration(t *testing.T) {
 	// Create a model that returns text responses.
 	model := NewTestModel(TextResponse("result"))

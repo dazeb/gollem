@@ -176,6 +176,12 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 		return messages, err
 	}
 
+	// If the summary model returned empty text, fall back to the original
+	// messages rather than creating a near-empty summary that discards history.
+	if summaryResp.TextContent() == "" {
+		return messages, nil
+	}
+
 	// Build new message list: first message + summary + recent messages.
 	// The summary is emitted as a ModelResponse (assistant role) to maintain
 	// proper user/assistant message alternation. Using a ModelRequest with
