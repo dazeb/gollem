@@ -6317,7 +6317,7 @@ func detectTestCommands(workDir string) []string {
 	// Zig
 	if fileExists(filepath.Join(workDir, "build.zig")) {
 		cmds = append(cmds, "Build: zig build")
-		cmds = append(cmds, "Test: zig test")
+		cmds = append(cmds, "Test: zig build test")
 	}
 	// Julia
 	if fileExists(filepath.Join(workDir, "Project.toml")) {
@@ -6423,13 +6423,14 @@ func detectTestCommands(workDir string) []string {
 	}
 	// Crystal
 	if fileExists(filepath.Join(workDir, "shard.yml")) {
-		cmds = append(cmds, "Build: crystal build")
+		cmds = append(cmds, "Install: shards install")
+		cmds = append(cmds, "Build: shards build")
 		cmds = append(cmds, "Test: crystal spec")
 	}
 	// V language
 	if fileExists(filepath.Join(workDir, "v.mod")) {
-		cmds = append(cmds, "Build: v build")
-		cmds = append(cmds, "Test: v test")
+		cmds = append(cmds, "Build: v .")
+		cmds = append(cmds, "Test: v test .")
 	}
 	// R
 	if fileExists(filepath.Join(workDir, "DESCRIPTION")) {
