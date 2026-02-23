@@ -518,6 +518,74 @@ func TestE2E_PersonalityMultipleTeammates(t *testing.T) {
 	tm.Shutdown(shutdownCtx2)
 }
 
+// TestE2E_SpuriousWakeNoRerun verifies that a spurious Wake() (with no
+// pending messages) does NOT cause the teammate to re-run its previous task.
+// Bug: when a message is sent to a RUNNING teammate, the middleware consumes
+// it during the current run, but the Wake() signal remains in wakeCh. After
+// the run, the teammate receives the stale wake, finds an empty mailbox,
+// and `continue`s — re-executing the previous task with the old prompt.
+func TestE2E_SpuriousWakeNoRerun(t *testing.T) {
+	var requestCount atomic.Int32
+	inner := core.NewTestModel(
+		core.TextResponse("first result"),
+		core.TextResponse("spurious rerun"),
+	)
+	model := &requestCountingModel{inner: inner, count: &requestCount}
+
+	tm := NewTeam(TeamConfig{
+		Name:   "spurious-wake-team",
+		Leader: "leader",
+		Model:  model,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	w, err := tm.SpawnTeammate(ctx, "worker", "initial task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, w, TeammateIdle, 3*time.Second)
+
+	firstCount := requestCount.Load()
+	if firstCount == 0 {
+		t.Fatal("expected at least 1 model call after initial run")
+	}
+
+	// Send a spurious wake with NO message in the mailbox.
+	w.Wake()
+
+	// Give time for the teammate to process the wake.
+	time.Sleep(300 * time.Millisecond)
+
+	// The teammate should still be idle and the model should NOT have been called again.
+	if w.State() != TeammateIdle {
+		t.Errorf("expected idle after spurious wake, got %v", w.State())
+	}
+	if got := requestCount.Load(); got != firstCount {
+		t.Errorf("spurious wake caused re-run: model called %d times after initial %d (expected no additional calls)", got, firstCount)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	tm.Shutdown(shutdownCtx)
+}
+
+// requestCountingModel wraps a model and counts Request calls.
+type requestCountingModel struct {
+	inner core.Model
+	count *atomic.Int32
+}
+
+func (m *requestCountingModel) ModelName() string { return m.inner.ModelName() }
+func (m *requestCountingModel) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	m.count.Add(1)
+	return m.inner.Request(ctx, messages, settings, params)
+}
+func (m *requestCountingModel) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	return m.inner.RequestStream(ctx, messages, settings, params)
+}
+
 // TestE2E_NoPersonalityGenerator tests that teams work normally without
 // a personality generator (backwards compatibility).
 func TestE2E_NoPersonalityGenerator(t *testing.T) {

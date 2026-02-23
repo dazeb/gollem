@@ -166,29 +166,36 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 		}
 		fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s idle, waiting for messages\n", tm.team.name, tm.name)
 
-		select {
-		case <-ctx.Done():
-			return
-		case <-tm.team.done:
-			return
-		case <-tm.wakeCh:
-			// Drain mailbox and build new prompt.
-			msgs := tm.mailbox.DrainAll()
-			if len(msgs) == 0 {
-				continue
-			}
-
-			// Check for shutdown request.
-			for _, msg := range msgs {
-				if msg.Type == MessageShutdownRequest {
-					fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s received shutdown request\n",
-						tm.team.name, tm.name)
-					return
+		// Inner loop: wait for messages with actual content. Spurious
+		// wakes (empty mailbox, e.g. when the middleware already consumed
+		// the message during the previous run) go back to waiting instead
+		// of re-running the previous task with the stale prompt.
+		gotWork := false
+		for !gotWork {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tm.team.done:
+				return
+			case <-tm.wakeCh:
+				msgs := tm.mailbox.DrainAll()
+				if len(msgs) == 0 {
+					continue // spurious wake — go back to select
 				}
-			}
 
-			// Build prompt from messages.
-			prompt = formatMessagesAsPrompt(msgs)
+				// Check for shutdown request.
+				for _, msg := range msgs {
+					if msg.Type == MessageShutdownRequest {
+						fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s received shutdown request\n",
+							tm.team.name, tm.name)
+						return
+					}
+				}
+
+				// Build prompt from messages.
+				prompt = formatMessagesAsPrompt(msgs)
+				gotWork = true
+			}
 		}
 	}
 }
