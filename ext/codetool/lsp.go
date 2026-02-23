@@ -674,6 +674,47 @@ func (s *lspServer) ensureFileOpen(filePath, uri, langID string) (bool, error) {
 	})
 }
 
+// syncModifiedFiles re-syncs all opened files that have been modified on disk
+// since the last sync. This is critical for cross-file operations (references,
+// diagnostics, rename): if the agent edits file A then queries references in
+// file B, the server needs to know about the changes to A. Without this, LSP
+// results would be stale and miss edits made by the edit/write tools.
+func (s *lspServer) syncModifiedFiles() {
+	s.fileMu.Lock()
+	if len(s.openFiles) <= 1 {
+		s.fileMu.Unlock()
+		return // single file — already synced by ensureFileOpen
+	}
+	// Snapshot to avoid holding the lock during I/O.
+	type entry struct {
+		uri   string
+		mtime int64
+	}
+	var toCheck []entry
+	for uri, state := range s.openFiles {
+		toCheck = append(toCheck, entry{uri, state.mtime})
+	}
+	s.fileMu.Unlock()
+
+	synced := 0
+	for _, e := range toCheck {
+		path := uriToPath(e.uri)
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if info.ModTime().UnixNano() != e.mtime {
+			if _, err := s.ensureFileOpen(path, e.uri, s.lang); err == nil {
+				synced++
+			}
+		}
+	}
+	// Brief pause to let the server re-index if files changed.
+	if synced > 0 {
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // shutdown gracefully shuts down the server.
 func (s *lspServer) shutdown() {
 	// Best-effort shutdown request. Use a short timeout since
@@ -984,7 +1025,13 @@ func LSP(opts ...Option) core.Tool {
 			}
 			absWorkDir, _ := filepath.Abs(workDir)
 
-			// Ensure file is synced with server.
+			// Sync ALL modified files with the server, not just the target.
+			// This is critical for cross-file operations: if the agent edited
+			// file A then queries references in file B, the server needs to
+			// see the changes to A to return accurate results.
+			srv.syncModifiedFiles()
+
+			// Ensure the target file is synced with the server.
 			if filePath != "" {
 				uri := fileURI(filePath)
 				changed, err := srv.ensureFileOpen(filePath, uri, lang)
