@@ -6465,6 +6465,45 @@ func extractFileStructure(path string) string {
 			if !strings.HasPrefix(trimmed, "--") && strings.Contains(trimmed, "::") {
 				matched = true
 			}
+		case ".ex", ".exs":
+			// Elixir: module, function, macro definitions
+			if strings.HasPrefix(trimmed, "defmodule ") || strings.HasPrefix(trimmed, "def ") ||
+				strings.HasPrefix(trimmed, "defp ") || strings.HasPrefix(trimmed, "defmacro ") {
+				matched = true
+			}
+		case ".swift":
+			if strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "enum ") ||
+				strings.HasPrefix(trimmed, "protocol ") || strings.HasPrefix(trimmed, "extension ") {
+				matched = true
+			}
+		case ".php":
+			if strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "interface ") || strings.HasPrefix(trimmed, "trait ") ||
+				strings.HasPrefix(trimmed, "public function ") || strings.HasPrefix(trimmed, "private function ") ||
+				strings.HasPrefix(trimmed, "protected function ") {
+				matched = true
+			}
+		case ".lua":
+			if strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "local function ") {
+				matched = true
+			}
+		case ".cs":
+			// C#: class, interface, struct, method definitions
+			if strings.HasPrefix(trimmed, "public ") || strings.HasPrefix(trimmed, "private ") ||
+				strings.HasPrefix(trimmed, "protected ") || strings.HasPrefix(trimmed, "internal ") ||
+				strings.HasPrefix(trimmed, "class ") || strings.HasPrefix(trimmed, "interface ") ||
+				strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "namespace ") {
+				matched = true
+			}
+		case ".dart":
+			if strings.HasPrefix(trimmed, "class ") || strings.HasPrefix(trimmed, "mixin ") ||
+				strings.HasPrefix(trimmed, "extension ") || strings.HasPrefix(trimmed, "enum ") ||
+				// Dart top-level/class method patterns
+				strings.HasPrefix(trimmed, "void ") || strings.HasPrefix(trimmed, "Future") ||
+				strings.HasPrefix(trimmed, "Stream") || strings.HasPrefix(trimmed, "static ") {
+				matched = true
+			}
 		}
 
 		if matched {
@@ -6589,7 +6628,13 @@ func isSourceFile(name string) bool {
 		".js", ".ts", ".jsx", ".tsx", ".go", ".rs",
 		".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh",
 		".java", ".rb", ".sh", ".bash", ".pl", ".lua", ".r",
-		".sql", ".html", ".css", ".json", ".yaml", ".yml", ".toml",
+		".cs", ".fs", ".fsx",        // C#, F#
+		".dart", ".php", ".d", ".cr", // Dart, PHP, D, Crystal
+		".groovy", ".gradle",        // Groovy/Gradle
+		".clj", ".cljs", ".cljc",    // Clojure
+		".elm",                      // Elm
+		".sql", ".html", ".css", ".scss", ".sass", ".less",
+		".json", ".yaml", ".yml", ".toml",
 		".xml", ".md", ".txt", ".cfg", ".ini", ".conf",
 		".csv", ".tsv", ".jsonl", ".env", ".dockerfile",
 		".vue", ".svelte", ".zig", ".nim",

@@ -3615,6 +3615,167 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// Elixir file with modules and functions.
+	writeTestFile(t, dir, "app.ex", `defmodule MyApp.Server do
+  def start(port) do
+    :ok
+  end
+
+  defp internal_helper(x) do
+    x * 2
+  end
+
+  defmacro my_macro(expr) do
+    quote do: unquote(expr)
+  end
+end
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.ex"))
+	if result == "" {
+		t.Fatal("expected structure output for Elixir file")
+	}
+	for _, want := range []string{"defmodule MyApp.Server", "def start", "defp internal_helper", "defmacro my_macro"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Swift file with classes, structs, protocols.
+	writeTestFile(t, dir, "app.swift", `class ViewController {
+    func viewDidLoad() {
+    }
+}
+
+struct Point {
+    var x: Double
+    var y: Double
+}
+
+protocol Drawable {
+    func draw()
+}
+
+enum Color {
+    case red, green, blue
+}
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.swift"))
+	if result == "" {
+		t.Fatal("expected structure output for Swift file")
+	}
+	for _, want := range []string{"class ViewController", "func viewDidLoad", "struct Point", "protocol Drawable", "enum Color"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// PHP file with classes and functions.
+	writeTestFile(t, dir, "app.php", `<?php
+class UserController {
+    public function index() {
+        return view('users.index');
+    }
+
+    private function validate($data) {
+        return true;
+    }
+}
+
+interface Cacheable {
+    public function getCacheKey();
+}
+
+function helper_function() {
+    return null;
+}
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.php"))
+	if result == "" {
+		t.Fatal("expected structure output for PHP file")
+	}
+	for _, want := range []string{"class UserController", "public function index", "private function validate", "interface Cacheable", "function helper_function"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Lua file with functions.
+	writeTestFile(t, dir, "app.lua", `function greet(name)
+    print("Hello, " .. name)
+end
+
+local function helper(x)
+    return x + 1
+end
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.lua"))
+	if result == "" {
+		t.Fatal("expected structure output for Lua file")
+	}
+	for _, want := range []string{"function greet", "local function helper"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// C# file with classes and methods.
+	writeTestFile(t, dir, "app.cs", `namespace MyApp {
+    public class UserService {
+        private readonly ILogger _logger;
+
+        public UserService(ILogger logger) {
+            _logger = logger;
+        }
+
+        public async Task<User> GetUser(int id) {
+            return await _db.FindAsync(id);
+        }
+    }
+
+    interface IUserRepository {
+        Task<User> FindById(int id);
+    }
+}
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.cs"))
+	if result == "" {
+		t.Fatal("expected structure output for C# file")
+	}
+	for _, want := range []string{"namespace MyApp", "public class UserService", "public UserService", "public async Task", "interface IUserRepository"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Dart file with classes and methods.
+	writeTestFile(t, dir, "app.dart", `class Counter {
+  int _count = 0;
+
+  void increment() {
+    _count++;
+  }
+
+  Future<int> fetchCount() async {
+    return _count;
+  }
+
+  static Counter create() {
+    return Counter();
+  }
+}
+
+enum Status { active, inactive }
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.dart"))
+	if result == "" {
+		t.Fatal("expected structure output for Dart file")
+	}
+	for _, want := range []string{"class Counter", "void increment", "Future<int> fetchCount", "static Counter create", "enum Status"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
 	// Empty file should return nothing.
 	writeTestFile(t, dir, "empty.py", "")
 	result = extractFileStructure(filepath.Join(dir, "empty.py"))
