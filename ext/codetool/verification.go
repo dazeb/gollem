@@ -843,12 +843,8 @@ func validateOutputFormats(workDir string, expectedOutputs []string) string {
 	formatHints := detectOutputFormat(workDir)
 
 	// Determine expected formats.
-	expectJSON := false
 	expectBinary := false
 	for _, h := range formatHints {
-		if strings.HasPrefix(h, "FORMAT=JSON") {
-			expectJSON = true
-		}
 		if strings.HasPrefix(h, "EXECUTABLE:") {
 			expectBinary = true
 		}
@@ -903,19 +899,53 @@ func validateOutputFormats(workDir string, expectedOutputs []string) string {
 			}
 		}
 
-		// Validate JSON if expected.
-		if expectJSON && (strings.HasSuffix(o, ".json") || strings.HasSuffix(o, ".jsonl")) {
-			if strings.HasSuffix(o, ".jsonl") {
-				// Check first line of JSONL.
-				if newline := bytes.IndexByte(data, '\n'); newline > 0 {
-					if !json.Valid(data[:newline]) {
-						issues = append(issues, fmt.Sprintf("%s: first line is not valid JSON", o))
-					}
+		// Validate JSON/JSONL files unconditionally — invalid JSON is one of the
+		// most common output format failures. Don't gate on expectJSON since
+		// any .json file should be valid JSON regardless of how tests check it.
+		if strings.HasSuffix(o, ".json") {
+			if !json.Valid(bytes.TrimSpace(data)) {
+				issues = append(issues, fmt.Sprintf("%s is not valid JSON — check syntax (mismatched braces, trailing commas, unquoted keys)", o))
+			}
+		} else if strings.HasSuffix(o, ".jsonl") {
+			// Check first few lines of JSONL to catch structural errors early.
+			lines := bytes.SplitN(data, []byte("\n"), 6) // check up to 5 lines
+			for idx, line := range lines {
+				line = bytes.TrimSpace(line)
+				if len(line) == 0 {
+					continue
 				}
-			} else {
-				if !json.Valid(bytes.TrimSpace(data)) {
-					issues = append(issues, fmt.Sprintf("%s is not valid JSON — check syntax", o))
+				if !json.Valid(line) {
+					issues = append(issues, fmt.Sprintf("%s: line %d is not valid JSON", o, idx+1))
+					break
 				}
+			}
+		}
+
+		// Validate CSV structure: consistent column count across rows.
+		// Mismatched column counts (e.g., header has N columns but data has
+		// N-1 or N+1) are a frequent cause of test failures.
+		if strings.HasSuffix(o, ".csv") || strings.HasSuffix(o, ".tsv") {
+			delim := byte(',')
+			if strings.HasSuffix(o, ".tsv") {
+				delim = byte('\t')
+			}
+			csvLines := bytes.SplitN(data, []byte("\n"), 12) // check first 10 data lines
+			headerCols := -1
+			mismatchLine := -1
+			for idx, line := range csvLines {
+				line = bytes.TrimRight(line, "\r")
+				if len(line) == 0 {
+					continue
+				}
+				cols := bytes.Count(line, []byte{delim}) + 1
+				if headerCols < 0 {
+					headerCols = cols
+				} else if cols != headerCols && mismatchLine < 0 {
+					mismatchLine = idx + 1
+				}
+			}
+			if mismatchLine > 0 {
+				issues = append(issues, fmt.Sprintf("%s: inconsistent column count — header has %d columns but line %d differs. Check delimiters and quoting.", o, headerCols, mismatchLine))
 			}
 		}
 
@@ -1009,6 +1039,25 @@ func failureGuidance(summary string) string {
 		return "FLOATING POINT EXCEPTION — your code has division by zero or integer overflow. " +
 			"Add guards before every division: check that divisors are non-zero. " +
 			"For integer overflow: use larger types (int64/long) or check before multiply.\n"
+	case strings.Contains(lower, "deadlock") || strings.Contains(lower, "all goroutines are asleep") ||
+		strings.Contains(lower, "fatal error: concurrent") || strings.Contains(lower, "data race"):
+		return "CONCURRENCY BUG — your code has a deadlock or race condition. " +
+			"Check: lock ordering (always acquire locks in the same order), channel operations " +
+			"(ensure sends have matching receives), and shared state access (use mutexes/atomics). " +
+			"In Go: run with `go test -race` to detect races. In Python: check threading.Lock usage.\n"
+	case strings.Contains(lower, "unicodedecodeerror") || strings.Contains(lower, "codec") ||
+		strings.Contains(lower, "charmap") || strings.Contains(lower, "invalid utf") ||
+		strings.Contains(lower, "can't decode") || strings.Contains(lower, "encoding error"):
+		return "ENCODING ERROR — your code can't decode/encode text properly. " +
+			"Use explicit encoding: open(file, encoding='utf-8'), or handle bytes mode. " +
+			"In Python: try `errors='replace'` or `errors='ignore'` as a fallback. " +
+			"Check if input files use a non-UTF-8 encoding (latin-1, cp1252).\n"
+	case strings.Contains(lower, "wrong answer") || strings.Contains(lower, "incorrect") ||
+		strings.Contains(lower, "mismatch") || strings.Contains(lower, "does not match"):
+		return "WRONG OUTPUT — your solution produces incorrect results. " +
+			"Compare your output vs expected output character-by-character. " +
+			"Common issues: off-by-one errors, integer vs float, sorting order, rounding precision. " +
+			"Re-read the problem statement for edge cases you may have missed.\n"
 	case strings.Contains(lower, "assert"):
 		return "ASSERTION FAILURE — read the test code to understand exactly what's expected. " +
 			"Fix one failure at a time, starting with the first.\n"
