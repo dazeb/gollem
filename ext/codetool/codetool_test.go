@@ -8839,6 +8839,63 @@ Fatal Error: Cannot open module file 'utils.mod' for reading at (1)`
 	}
 }
 
+func TestCompilationErrorHint_OCaml(t *testing.T) {
+	output := `File "src/main.ml", line 42, characters 5-10:
+42 |   let x = foo bar
+              ^^^^^
+Error: Unbound value foo`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for OCaml error, got empty")
+	}
+	if !strings.Contains(hint, "src/main.ml") || !strings.Contains(hint, ":42") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "Unbound value foo") {
+		t.Errorf("expected error message, got %q", hint)
+	}
+}
+
+func TestCompilationErrorHint_OCaml_NoError(t *testing.T) {
+	output := `File "lib/parser.mli", line 7, characters 0-25:
+7 | val parse : string -> ast
+    ^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: Type ast is not defined`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for OCaml interface error, got empty")
+	}
+	if !strings.Contains(hint, "lib/parser.mli") || !strings.Contains(hint, ":7") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+}
+
+func TestCompilationErrorHint_Perl(t *testing.T) {
+	output := `syntax error at script.pl line 42, near "}"
+Execution of script.pl aborted due to compilation errors.`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Perl syntax error, got empty")
+	}
+	if !strings.Contains(hint, "script.pl") || !strings.Contains(hint, ":42") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+	if !strings.Contains(hint, "syntax error") {
+		t.Errorf("expected error message, got %q", hint)
+	}
+}
+
+func TestCompilationErrorHint_PerlDied(t *testing.T) {
+	output := `Died at module.pm line 15.`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Perl died error, got empty")
+	}
+	if !strings.Contains(hint, "module.pm") || !strings.Contains(hint, ":15") {
+		t.Errorf("expected file:line reference, got %q", hint)
+	}
+}
+
 // Test Nim unittest firstFailureDetail extraction.
 func TestFirstFailureDetail_Nim(t *testing.T) {
 	output := `[Suite] Math tests

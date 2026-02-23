@@ -1182,6 +1182,96 @@ func compilationErrorHint(output string, exitCode int) string {
 			file, lineNum, lineNum)
 	}
 
+	// OCaml: 'File "src/main.ml", line 42, characters 5-10:' followed by 'Error: message'
+	// The file reference and error message are on separate lines.
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "File \"") || !strings.Contains(trimmed, "\", line ") {
+			continue
+		}
+		// Extract file path: between 'File "' and '"'
+		fileStart := len("File \"")
+		fileEnd := strings.Index(trimmed[fileStart:], "\"")
+		if fileEnd < 0 {
+			continue
+		}
+		file := trimmed[fileStart : fileStart+fileEnd]
+		// Only match OCaml-like files (skip Python tracebacks which use similar format).
+		if !strings.HasSuffix(file, ".ml") && !strings.HasSuffix(file, ".mli") {
+			continue
+		}
+		// Extract line number: after '", line '
+		lineIdx := strings.Index(trimmed, "\", line ")
+		if lineIdx < 0 {
+			continue
+		}
+		rest := trimmed[lineIdx+len("\", line "):]
+		commaIdx := strings.IndexAny(rest, ",: ")
+		lineNum := rest
+		if commaIdx > 0 {
+			lineNum = rest[:commaIdx]
+		}
+		lineNum = strings.TrimSpace(lineNum)
+		if !isNumeric(lineNum) {
+			continue
+		}
+		// Look ahead for the "Error:" line.
+		errMsg := ""
+		for j := i + 1; j < min(i+6, len(lines)); j++ {
+			ahead := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(ahead, "Error:") {
+				errMsg = ahead
+				break
+			}
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: OCaml error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
+	// Perl: "syntax error at script.pl line 42, near ..." or "Died at script.pl line 42."
+	// Format: "... at FILE line N" where FILE is a .pl or .pm file.
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		atIdx := strings.Index(trimmed, " at ")
+		if atIdx < 0 {
+			continue
+		}
+		after := trimmed[atIdx+4:]
+		lineIdx := strings.Index(after, " line ")
+		if lineIdx < 0 {
+			continue
+		}
+		file := after[:lineIdx]
+		// Only match Perl files.
+		if !strings.HasSuffix(file, ".pl") && !strings.HasSuffix(file, ".pm") && !strings.HasSuffix(file, ".t") {
+			continue
+		}
+		numStr := after[lineIdx+6:]
+		endIdx := strings.IndexAny(numStr, ".,; \n")
+		if endIdx > 0 {
+			numStr = numStr[:endIdx]
+		}
+		numStr = strings.TrimSpace(numStr)
+		if !isNumeric(numStr) {
+			continue
+		}
+		// The error description is the part before "at FILE".
+		errMsg := strings.TrimSpace(trimmed[:atIdx+4+0])
+		if atIdx > 0 {
+			errMsg = strings.TrimSpace(trimmed[:atIdx])
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, numStr, numStr)
+		}
+		return fmt.Sprintf("[hint: Perl error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, numStr, numStr)
+	}
+
 	// D language (DMD): "file.d(42): Error: undefined identifier `foo`"
 	// Format: file(line): Error: message (no column number)
 	for _, line := range lines {
