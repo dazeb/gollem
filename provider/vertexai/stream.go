@@ -3,7 +3,6 @@ package vertexai
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -228,6 +227,3 @@ func mapFinishReasonStr(reason string) core.FinishReason {
 
 // Verify streamedResponse implements core.StreamedResponse.
 var _ core.StreamedResponse = (*streamedResponse)(nil)
-
-// Ensure fmt is used.
-var _ = fmt.Sprintf

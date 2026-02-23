@@ -3,6 +3,7 @@ package anthropic
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -18,7 +19,8 @@ type streamedResponse struct {
 	usage     core.Usage
 	parts     []core.ModelResponsePart
 	stopReason core.FinishReason
-	done      bool
+	done       bool
+	streamErr  error // non-nil if server sent an error event mid-stream
 
 	// State for tracking current blocks being built.
 	currentParts map[int]core.ModelResponsePart
@@ -46,6 +48,9 @@ type sseEvent struct {
 func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 	for {
 		if s.done {
+			if s.streamErr != nil {
+				return nil, s.streamErr
+			}
 			return nil, io.EOF
 		}
 
@@ -162,6 +167,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 				Text        string `json:"text,omitempty"`
 				PartialJSON string `json:"partial_json,omitempty"`
 				Thinking    string `json:"thinking,omitempty"`
+				Signature   string `json:"signature,omitempty"`
 			} `json:"delta"`
 		}
 		if err := json.Unmarshal([]byte(event.Data), &delta); err != nil {
@@ -198,6 +204,14 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 				Index: delta.Index,
 				Delta: core.ThinkingPartDelta{ContentDelta: delta.Delta.Thinking},
 			}, true
+
+		case "signature_delta":
+			// Accumulate the thinking block's signature from streaming deltas.
+			if tp, ok := s.currentParts[delta.Index].(core.ThinkingPart); ok {
+				tp.Signature += delta.Delta.Signature
+				s.currentParts[delta.Index] = tp
+			}
+			return nil, false // no stream event for signature deltas
 		}
 		return nil, false
 
@@ -249,6 +263,18 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 
 	case "error":
 		s.done = true
+		// Parse error event data to propagate a meaningful error.
+		var errData struct {
+			Error struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(event.Data), &errData); err == nil && errData.Error.Message != "" {
+			s.streamErr = fmt.Errorf("anthropic stream error (%s): %s", errData.Error.Type, errData.Error.Message)
+		} else {
+			s.streamErr = fmt.Errorf("anthropic stream error: %s", event.Data)
+		}
 		return nil, false
 
 	default:
