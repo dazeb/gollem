@@ -1077,17 +1077,20 @@ func (a *Agent[T]) processResponse(
 		}
 	}
 
-	// Handle unknown tools.
-	for _, tc := range unknownCalls {
+	// Handle unknown tools. Increment retries once for the batch, not per-call,
+	// so a single response with multiple unknown tools doesn't exhaust retries.
+	if len(unknownCalls) > 0 {
 		if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
 			return nil, nil, nil, retryErr
 		}
-		part := buildRetryParts(
-			fmt.Sprintf("unknown tool %q, available tools: %s", tc.ToolName, a.availableToolNames()),
-			tc.ToolName,
-			tc.ToolCallID,
-		)
-		resultParts = append(resultParts, part)
+		for _, tc := range unknownCalls {
+			part := buildRetryParts(
+				fmt.Sprintf("unknown tool %q, available tools: %s", tc.ToolName, a.availableToolNames()),
+				tc.ToolName,
+				tc.ToolCallID,
+			)
+			resultParts = append(resultParts, part)
+		}
 	}
 
 	// Handle output tool calls.

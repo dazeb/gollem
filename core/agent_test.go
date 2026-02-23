@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // --- Test: Simple text output ---
@@ -913,5 +914,75 @@ func TestConcurrentToolSemaphore_RespectsContextCancellation(t *testing.T) {
 	_, err := agent.Run(ctx, "test")
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
+	}
+}
+
+// TestMultipleUnknownToolCallsSingleRetry verifies that multiple unknown tool
+// calls in a single model response only increment the retry counter once.
+// Before the fix, each unknown tool call incremented retries independently,
+// exhausting retries immediately when compatible APIs returned mangled names.
+func TestMultipleUnknownToolCallsSingleRetry(t *testing.T) {
+	greetTool := FuncTool[struct{ Name string }]("greet", "Say hello",
+		func(ctx context.Context, params struct{ Name string }) (string, error) {
+			return "Hello, " + params.Name + "!", nil
+		},
+	)
+
+	// First response: model calls 3 unknown tools (misspelled names).
+	// Second response: model corrects itself and returns text.
+	model := NewTestModel(
+		// Response 1: Multiple unknown tool calls in a single response.
+		&ModelResponse{
+			Parts: []ModelResponsePart{
+				ToolCallPart{ToolName: "greet_user", ArgsJSON: `{"name":"Alice"}`, ToolCallID: "call_1"},
+				ToolCallPart{ToolName: "say_hello", ArgsJSON: `{"name":"Bob"}`, ToolCallID: "call_2"},
+				ToolCallPart{ToolName: "hello", ArgsJSON: `{"name":"Eve"}`, ToolCallID: "call_3"},
+			},
+			FinishReason: FinishReasonToolCall,
+			ModelName:    "test-model",
+			Timestamp:    time.Now(),
+		},
+		// Response 2: Model corrects itself with text output.
+		TextResponse("Hello everyone!"),
+	)
+
+	agent := NewAgent[string](model,
+		WithTools[string](greetTool),
+		WithMaxRetries[string](1),
+	)
+
+	result, err := agent.Run(context.Background(), "Say hello to everyone")
+	if err != nil {
+		t.Fatalf("expected success after retry, got error: %v", err)
+	}
+	if result.Output != "Hello everyone!" {
+		t.Errorf("output = %q, want 'Hello everyone!'", result.Output)
+	}
+
+	// Verify the model was called twice (initial + retry).
+	calls := model.Calls()
+	if len(calls) != 2 {
+		t.Errorf("expected 2 model calls (initial + retry), got %d", len(calls))
+	}
+
+	// Verify the retry message includes all 3 unknown tools.
+	if len(calls) >= 2 {
+		lastMsgs := calls[1].Messages
+		var retryParts int
+		for _, msg := range lastMsgs {
+			if req, ok := msg.(ModelRequest); ok {
+				for _, part := range req.Parts {
+					if rp, ok := part.(RetryPromptPart); ok {
+						retryParts++
+						if !strings.Contains(rp.Content, "unknown tool") {
+							t.Errorf("expected 'unknown tool' in retry, got: %s", rp.Content)
+						}
+					}
+				}
+			}
+		}
+		if retryParts != 3 {
+			t.Errorf("expected 3 retry parts (one per unknown tool), got %d", retryParts)
+		}
 	}
 }
