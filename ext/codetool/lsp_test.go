@@ -928,6 +928,51 @@ func TestLspOutlineFormatsHierarchicalSymbols(t *testing.T) {
 	}
 }
 
+func TestSyncModifiedFiles_SingleOpenFile(t *testing.T) {
+	// Bug: syncModifiedFiles returned early when len(openFiles) == 1,
+	// assuming the single file was the target of the current query.
+	// But it could be a different file that was modified since opening.
+	// Scenario: open file A, edit A on disk, query file B — the server
+	// would have stale content for A because syncModifiedFiles skipped it.
+
+	tmpFile, err := os.CreateTemp("", "lsp-sync-test-*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.WriteString("package main\n")
+	tmpFile.Close()
+
+	uri := fileURI(tmpFile.Name())
+
+	// Create pipes for stdin (write side stays open so notify doesn't error).
+	clientRead, clientWrite, _ := os.Pipe()
+	defer clientRead.Close()
+	defer clientWrite.Close()
+
+	srv := &lspServer{
+		stdin:       clientWrite,
+		lang:        "go",
+		openFiles:   map[string]fileState{uri: {version: 1, mtime: 0}}, // mtime 0 = always stale vs disk
+		diagnostics: make(map[string][]lspDiagnostic),
+	}
+
+	srv.syncModifiedFiles()
+
+	srv.fileMu.Lock()
+	state := srv.openFiles[uri]
+	srv.fileMu.Unlock()
+
+	// After syncModifiedFiles, the file should have been re-synced
+	// because its disk mtime differs from the stored mtime (0).
+	if state.version == 1 {
+		t.Error("syncModifiedFiles did not re-sync the single open file; version stayed at 1")
+	}
+	if state.mtime == 0 {
+		t.Error("syncModifiedFiles did not update mtime from 0")
+	}
+}
+
 // isModelRetryError checks if the error chain contains a ModelRetryError.
 func isModelRetryError(err error, target **core.ModelRetryError) bool {
 	for err != nil {

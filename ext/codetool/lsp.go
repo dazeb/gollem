@@ -732,9 +732,9 @@ func (s *lspServer) ensureFileOpen(filePath, uri, langID string) (bool, error) {
 // results would be stale and miss edits made by the edit/write tools.
 func (s *lspServer) syncModifiedFiles() {
 	s.fileMu.Lock()
-	if len(s.openFiles) <= 1 {
+	if len(s.openFiles) == 0 {
 		s.fileMu.Unlock()
-		return // single file — already synced by ensureFileOpen
+		return
 	}
 	// Snapshot to avoid holding the lock during I/O.
 	type entry struct {
