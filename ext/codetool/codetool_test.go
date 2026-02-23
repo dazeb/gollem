@@ -11293,6 +11293,132 @@ func TestCompilationErrorHint_Swift(t *testing.T) {
 	}
 }
 
+func TestCompilationErrorHint_Elm(t *testing.T) {
+	output := `-- TYPE MISMATCH --------- src/Main.elm
+
+The 1st argument to ` + "`div`" + ` is not what I expect:
+
+42| div "hello" []
+        ^^^^^^^
+This argument is a String, but ` + "`div`" + ` needs:
+
+    List (Attribute msg)`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Elm error hint")
+	}
+	if !strings.Contains(hint, "Main.elm") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference Main.elm:42, got: %s", hint)
+	}
+	if !strings.Contains(hint, "TYPE MISMATCH") {
+		t.Errorf("expected hint to contain error type, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Elm_NamingError(t *testing.T) {
+	output := `-- NAMING ERROR --------- src/Page/Home.elm
+
+I cannot find a ` + "`viewHeader`" + ` variable:
+
+15| viewHeader model
+    ^^^^^^^^^^
+These names seem close though:
+
+    viewFooter`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Elm naming error hint")
+	}
+	if !strings.Contains(hint, "Page/Home.elm") || !strings.Contains(hint, "15") {
+		t.Errorf("expected hint to reference Page/Home.elm:15, got: %s", hint)
+	}
+	if !strings.Contains(hint, "NAMING ERROR") {
+		t.Errorf("expected hint to contain error type, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Terraform(t *testing.T) {
+	output := `
+Error: Reference to undeclared resource
+
+  on main.tf line 42, in resource "aws_instance" "web":
+  42:   ami = aws_ami.ubuntu.id
+
+A managed resource "aws_ami" "ubuntu" has not been declared in the root module.`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Terraform error hint")
+	}
+	if !strings.Contains(hint, "main.tf") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference main.tf:42, got: %s", hint)
+	}
+	if !strings.Contains(hint, "Reference to undeclared resource") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Terraform_Warning(t *testing.T) {
+	output := `
+Warning: Argument is deprecated
+
+  on modules/vpc/main.tf line 10, in resource "aws_vpc" "main":
+  10:   enable_classiclink = true
+
+The enable_classiclink argument has been deprecated.`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Terraform warning hint")
+	}
+	if !strings.Contains(hint, "modules/vpc/main.tf") || !strings.Contains(hint, "10") {
+		t.Errorf("expected hint to reference vpc/main.tf:10, got: %s", hint)
+	}
+	if !strings.Contains(hint, "Argument is deprecated") {
+		t.Errorf("expected hint to contain warning message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Nix(t *testing.T) {
+	output := `error: undefined variable 'pkgss'
+
+       at /home/user/flake.nix:42:5:
+
+           41|   buildInputs = [
+           42|     pkgss.hello
+              |     ^
+           43|   ];`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Nix error hint")
+	}
+	if !strings.Contains(hint, "flake.nix") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference flake.nix:42, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Solidity(t *testing.T) {
+	output := `Error (7576): Undeclared identifier.
+ --> contracts/Token.sol:42:9:
+  |
+42 |         balances[msg.sendr] += amount;
+   |                  ^^^^^^^^^`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Solidity error hint")
+	}
+	if !strings.Contains(hint, "Token.sol") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference Token.sol:42, got: %s", hint)
+	}
+	if !strings.Contains(hint, "Undeclared identifier") {
+		t.Errorf("expected hint to contain error message, got: %s", hint)
+	}
+}
+
 func TestPythonErrorHint_CustomException(t *testing.T) {
 	output := `Traceback (most recent call last):
   File "app/views.py", line 42, in process_form

@@ -1958,26 +1958,141 @@ func compilationErrorHint(output string, exitCode int) string {
 			file, lineNum, lineNum)
 	}
 
+	// Elm: "-- TYPE MISMATCH --------- src/Main.elm" or
+	// "-- NAMING ERROR --------- src/Main.elm"
+	// The file reference is at the end of a line starting with "-- "
+	// followed by an error type and dashes. Line numbers appear inline
+	// in the body (e.g., "42|  div [] [text model]").
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "-- ") || !strings.Contains(trimmed, ".elm") {
+			continue
+		}
+		// Extract file from end: "-- TYPE MISMATCH --- src/Main.elm"
+		parts := strings.Fields(trimmed)
+		if len(parts) < 3 {
+			continue
+		}
+		file := parts[len(parts)-1]
+		if !strings.HasSuffix(file, ".elm") || len(file) > 200 {
+			continue
+		}
+		// Extract error type: everything between "-- " and the dashes/file.
+		errType := ""
+		for _, p := range parts[1:] {
+			if strings.HasPrefix(p, "-") || strings.HasSuffix(p, ".elm") {
+				break
+			}
+			if errType != "" {
+				errType += " "
+			}
+			errType += p
+		}
+		// Look ahead for a line number reference: "42| code..."
+		lineNum := ""
+		for j := i + 1; j < min(i+15, len(lines)); j++ {
+			ahead := strings.TrimSpace(lines[j])
+			barIdx := strings.Index(ahead, "|")
+			if barIdx > 0 && barIdx <= 6 {
+				candidate := strings.TrimSpace(ahead[:barIdx])
+				if isNumeric(candidate) {
+					lineNum = candidate
+					break
+				}
+			}
+		}
+		if lineNum != "" && errType != "" {
+			return fmt.Sprintf("[hint: Elm %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				errType, file, lineNum, lineNum)
+		}
+		if errType != "" {
+			return fmt.Sprintf("[hint: Elm %s in %s — open the file with view and check the error]", errType, file)
+		}
+	}
+
+	// Terraform/OpenTofu: "on main.tf line 42, in resource ..." preceded by "Error: message"
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "on ") || !strings.Contains(trimmed, " line ") {
+			continue
+		}
+		// Parse "on main.tf line 42, in ..."
+		rest := trimmed[3:]
+		lineIdx := strings.Index(rest, " line ")
+		if lineIdx <= 0 {
+			continue
+		}
+		file := rest[:lineIdx]
+		if len(file) > 200 || (!strings.HasSuffix(file, ".tf") && !strings.HasSuffix(file, ".hcl") && !strings.HasSuffix(file, ".tofu")) {
+			continue
+		}
+		afterLine := rest[lineIdx+6:]
+		lineNum := strings.TrimRight(strings.SplitN(afterLine, ",", 2)[0], " ")
+		if !isNumeric(lineNum) {
+			continue
+		}
+		// Look back for "Error: message" line.
+		errMsg := ""
+		for k := i - 1; k >= max(0, i-3); k-- {
+			prev := strings.TrimSpace(lines[k])
+			if strings.HasPrefix(prev, "Error:") || strings.HasPrefix(prev, "Warning:") {
+				errMsg = strings.TrimSpace(prev)
+				break
+			}
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Terraform error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
+	// Nix: "error: ... at /path/file.nix:42:5:" or
+	// "error: ... at «string»:42:5:" for inline nix expressions.
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "at ") || !strings.Contains(trimmed, ".nix:") {
+			continue
+		}
+		ref := trimmed[3:]
+		// Strip trailing colon if present.
+		ref = strings.TrimRight(ref, ":")
+		colonParts := strings.SplitN(ref, ":", 3)
+		if len(colonParts) < 2 || !isNumeric(colonParts[1]) {
+			continue
+		}
+		file := colonParts[0]
+		if len(file) > 200 {
+			continue
+		}
+		lineNum := colonParts[1]
+		return fmt.Sprintf("[hint: Nix error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
 	// C/C++/clang: "file.c:42:5: error: ..."
 	// Go: "./main.go:42:5: ..." or "main.go:42:5: ..."
 	// Rust (cargo): " --> src/main.rs:42:5"
+	// Solidity (solc/forge): " --> contracts/Token.sol:42:5"
 	// Dart: "lib/main.dart:42:5: Error: ..."
 	// Java (javac): "Main.java:42: error: ..."
 	// Swift: "main.swift:10:5: error: ..."
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// Rust: " --> file:line:col"
-		// Error message is on the preceding "error[EXXXX]: message" line.
+		// Rust/Solidity: " --> file:line:col"
+		// Error message is on the preceding line: "error[EXXXX]: msg" (Rust)
+		// or "Error (XXXX): msg" (Solidity).
 		if strings.HasPrefix(trimmed, "--> ") {
 			rest := strings.TrimPrefix(trimmed, "--> ")
 			parts := strings.SplitN(rest, ":", 3)
 			if len(parts) >= 2 && isNumeric(parts[1]) {
-				// Look back for the "error:" line that precedes " -->"
+				// Look back for the error line that precedes " -->"
 				errMsg := ""
 				for k := i - 1; k >= max(0, i-3); k-- {
 					prev := strings.TrimSpace(lines[k])
-					if strings.HasPrefix(prev, "error") && strings.Contains(prev, ":") {
+					if (strings.HasPrefix(prev, "error") || strings.HasPrefix(prev, "Error")) && strings.Contains(prev, ":") {
 						errMsg = prev
 						break
 					}
