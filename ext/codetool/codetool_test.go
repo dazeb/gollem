@@ -6244,30 +6244,31 @@ func TestEmergencyCompressWithSummary(t *testing.T) {
 
 	compressed := emergencyCompressMessagesWithConfig(messages, 20000, 4)
 
-	// Should have: first message + recovery summary + last 4 messages = 6.
-	if len(compressed) != 6 {
-		t.Errorf("expected 6 compressed messages, got %d", len(compressed))
-	}
-
-	// Second message should be the recovery summary.
-	if req, ok := compressed[1].(core.ModelRequest); ok {
-		foundSummary := false
-		for _, part := range req.Parts {
-			if sp, ok := part.(core.SystemPromptPart); ok {
-				if strings.Contains(sp.Content, "EMERGENCY CONTEXT RECOVERY") {
-					foundSummary = true
-					// Should mention the files that were read.
-					if !strings.Contains(sp.Content, "FILES PREVIOUSLY READ") {
-						t.Error("recovery summary should list files that were read")
-					}
-				}
-			}
+	// Second message should be the recovery summary (ModelResponse for proper alternation).
+	if resp, ok := compressed[1].(core.ModelResponse); ok {
+		text := resp.TextContent()
+		if !strings.Contains(text, "EMERGENCY CONTEXT RECOVERY") {
+			t.Errorf("second message should be the recovery summary, got: %s", text)
 		}
-		if !foundSummary {
-			t.Error("second message should be the recovery summary")
+		if !strings.Contains(text, "FILES PREVIOUSLY READ") {
+			t.Error("recovery summary should list files that were read")
 		}
 	} else {
-		t.Error("second compressed message should be a ModelRequest")
+		t.Errorf("second compressed message should be a ModelResponse, got %T", compressed[1])
+	}
+
+	// Verify proper message alternation (critical for Anthropic API).
+	for i := 1; i < len(compressed); i++ {
+		_, prevIsReq := compressed[i-1].(core.ModelRequest)
+		_, currIsReq := compressed[i].(core.ModelRequest)
+		if prevIsReq && currIsReq {
+			t.Errorf("adjacent ModelRequest messages at indices %d and %d", i-1, i)
+		}
+		_, prevIsResp := compressed[i-1].(core.ModelResponse)
+		_, currIsResp := compressed[i].(core.ModelResponse)
+		if prevIsResp && currIsResp {
+			t.Errorf("adjacent ModelResponse messages at indices %d and %d", i-1, i)
+		}
 	}
 }
 

@@ -8516,20 +8516,32 @@ func emergencyCompressMessagesWithConfig(messages []core.ModelMessage, maxConten
 	result := make([]core.ModelMessage, 0, keepLast+3)
 	result = append(result, messages[0]) // first message (task + system prompt)
 
+	// Determine where the tail starts. Adjust so it begins with a
+	// ModelRequest (user role) for proper alternation after the summary
+	// (which is emitted as a ModelResponse / assistant role).
+	tailStart := len(messages) - keepLast
+	if tailStart > 1 {
+		if _, isResp := messages[tailStart].(core.ModelResponse); isResp && tailStart+1 < len(messages) {
+			tailStart--
+		}
+	}
+
 	// Build a context recovery summary from dropped messages.
-	dropped := messages[1 : len(messages)-keepLast]
+	dropped := messages[1:tailStart]
 	summary := buildContextRecoverySummary(dropped)
 
-	result = append(result, core.ModelRequest{
-		Parts: []core.ModelRequestPart{
-			core.SystemPromptPart{
-				Content: summary,
-			},
+	// Emit the summary as a ModelResponse (assistant role) to maintain proper
+	// user/assistant alternation. Using a ModelRequest with SystemPromptPart
+	// caused Anthropic's provider (which extracts system prompts to a top-level
+	// field) to produce no API message, resulting in adjacent user messages.
+	result = append(result, core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.TextPart{Content: summary},
 		},
 	})
 
 	// Keep last N messages with content truncation.
-	tail := messages[len(messages)-keepLast:]
+	tail := messages[tailStart:]
 	for _, msg := range tail {
 		result = append(result, truncateMessageContent(msg, maxContentBytes))
 	}
