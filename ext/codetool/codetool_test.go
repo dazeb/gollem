@@ -3776,6 +3776,120 @@ enum Status { active, inactive }
 		}
 	}
 
+	// Nim file with procs and types.
+	writeTestFile(t, dir, "app.nim", `type
+  Point = object
+    x, y: float
+
+proc distance(a, b: Point): float =
+  sqrt((a.x - b.x)^2 + (a.y - b.y)^2)
+
+func add(a, b: int): int =
+  a + b
+
+iterator items(s: seq[int]): int =
+  for x in s:
+    yield x
+
+template withLock(lock, body: untyped) =
+  acquire(lock)
+  body
+  release(lock)
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.nim"))
+	if result == "" {
+		t.Fatal("expected structure output for Nim file")
+	}
+	for _, want := range []string{"type", "proc distance", "func add", "iterator items", "template withLock"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Zig file with functions and constants.
+	writeTestFile(t, dir, "main.zig", `const std = @import("std");
+
+pub fn main() !void {
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Hello\n", .{});
+}
+
+fn helper(x: i32, y: i32) i32 {
+    return x + y;
+}
+
+pub const Config = struct {
+    width: u32,
+    height: u32,
+};
+
+test "basic add" {
+    try std.testing.expectEqual(helper(2, 3), 5);
+}
+`)
+	result = extractFileStructure(filepath.Join(dir, "main.zig"))
+	if result == "" {
+		t.Fatal("expected structure output for Zig file")
+	}
+	for _, want := range []string{"pub fn main", "fn helper", "pub const Config", "test \"basic add\""} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Julia file with functions and types.
+	writeTestFile(t, dir, "app.jl", `module MyModule
+
+struct Point
+    x::Float64
+    y::Float64
+end
+
+function distance(a::Point, b::Point)
+    sqrt((a.x - b.x)^2 + (a.y - b.y)^2)
+end
+
+macro debug(expr)
+    :(println($(string(expr)), " = ", $(esc(expr))))
+end
+
+end # module
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.jl"))
+	if result == "" {
+		t.Fatal("expected structure output for Julia file")
+	}
+	for _, want := range []string{"module MyModule", "struct Point", "function distance", "macro debug"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
+	// Perl file with subs and packages.
+	writeTestFile(t, dir, "app.pl", `package MyApp::Utils;
+
+sub process_data {
+    my ($self, $data) = @_;
+    return transform($data);
+}
+
+sub helper {
+    my $x = shift;
+    return $x * 2;
+}
+
+1;
+`)
+	result = extractFileStructure(filepath.Join(dir, "app.pl"))
+	if result == "" {
+		t.Fatal("expected structure output for Perl file")
+	}
+	for _, want := range []string{"package MyApp::Utils", "sub process_data", "sub helper"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected %q in result:\n%s", want, result)
+		}
+	}
+
 	// Empty file should return nothing.
 	writeTestFile(t, dir, "empty.py", "")
 	result = extractFileStructure(filepath.Join(dir, "empty.py"))

@@ -6744,6 +6744,30 @@ func extractFileStructure(path string) string {
 				strings.HasPrefix(trimmed, "Stream") || strings.HasPrefix(trimmed, "static ") {
 				matched = true
 			}
+		case ".nim":
+			if strings.HasPrefix(trimmed, "proc ") || strings.HasPrefix(trimmed, "func ") ||
+				strings.HasPrefix(trimmed, "method ") || strings.HasPrefix(trimmed, "type ") ||
+				strings.HasPrefix(trimmed, "template ") || strings.HasPrefix(trimmed, "macro ") ||
+				strings.HasPrefix(trimmed, "iterator ") {
+				matched = true
+			}
+		case ".zig":
+			if strings.HasPrefix(trimmed, "pub fn ") || strings.HasPrefix(trimmed, "fn ") ||
+				strings.HasPrefix(trimmed, "pub const ") || strings.HasPrefix(trimmed, "const ") ||
+				strings.HasPrefix(trimmed, "pub var ") || strings.HasPrefix(trimmed, "test ") {
+				matched = true
+			}
+		case ".jl":
+			if strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "macro ") ||
+				strings.HasPrefix(trimmed, "struct ") || strings.HasPrefix(trimmed, "mutable struct ") ||
+				strings.HasPrefix(trimmed, "module ") || strings.HasPrefix(trimmed, "abstract type ") {
+				matched = true
+			}
+		case ".pl", ".pm":
+			if strings.HasPrefix(trimmed, "sub ") || strings.HasPrefix(trimmed, "package ") ||
+				strings.HasPrefix(trimmed, "has ") {
+				matched = true
+			}
 		}
 
 		if matched {
