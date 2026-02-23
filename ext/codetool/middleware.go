@@ -1121,7 +1121,7 @@ func discoverEnvironment(workDir string) string {
 			if matches, _ := filepath.Glob(filepath.Join(dir, "*.nimble")); len(matches) > 0 {
 				if runQuiet(dir, "which", "nimble") != "" {
 					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Nimble dependencies in %s\n", dir)
-					runQuietTimeout(dir, 120*time.Second, "nimble", "install", "-y", "--depsOnly")
+					runQuietTimeout(dir, 120*time.Second, "nimble", "install", "-y", "-d")
 					parts = append(parts, "AUTO-INSTALLED: Nimble dependencies (already done, no need to install again)")
 				}
 				break
@@ -1129,13 +1129,14 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
-	// Auto-install D/dub dependencies.
+	// Auto-install D/dub dependencies. DUB auto-fetches during build, so
+	// running `dub describe` triggers dependency resolution without building.
 	if networkAvailable && !depsAlreadyInstalled {
 		for _, dir := range []string{workDir, "/app"} {
 			if fileExists(filepath.Join(dir, "dub.json")) || fileExists(filepath.Join(dir, "dub.sdl")) {
 				if runQuiet(dir, "which", "dub") != "" {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-fetching DUB dependencies in %s\n", dir)
-					runQuietTimeout(dir, 120*time.Second, "dub", "fetch")
+					fmt.Fprintf(os.Stderr, "[gollem] auto-resolving DUB dependencies in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "dub", "describe")
 					parts = append(parts, "AUTO-INSTALLED: DUB dependencies (already done, no need to install again)")
 				}
 				break

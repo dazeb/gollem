@@ -1115,10 +1115,16 @@ func lspRename(ctx context.Context, srv *lspServer, filePath string, line, char 
 		return "Rename returned an unexpected response.", nil
 	}
 
+	// Normalize changes: servers may return `changes` or `documentChanges`.
+	changes := edit.normalizedChanges()
+	if len(changes) == 0 {
+		return "No edits were produced by the rename.", nil
+	}
+
 	// Apply edits to files.
 	totalEdits := 0
 	var filesSummary []string
-	for uri, textEdits := range edit.Changes {
+	for uri, textEdits := range changes {
 		path := uriToPath(uri)
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -1188,7 +1194,7 @@ func lspRename(ctx context.Context, srv *lspServer, filePath string, line, char 
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Renamed to %q — %d edit(s) across %d file(s):\n", newName, totalEdits, len(edit.Changes))
+	fmt.Fprintf(&b, "Renamed to %q — %d edit(s) across %d file(s):\n", newName, totalEdits, len(changes))
 	for _, s := range filesSummary {
 		b.WriteString(s + "\n")
 	}
@@ -1206,8 +1212,43 @@ type lspDocumentSymbol struct {
 }
 
 // lspWorkspaceEdit is a workspace edit returned by textDocument/rename.
+// Servers may return either `changes` (simple) or `documentChanges` (rich).
+// gopls and many other servers use `documentChanges` by default.
 type lspWorkspaceEdit struct {
-	Changes map[string][]lspTextEdit `json:"changes"`
+	Changes         map[string][]lspTextEdit `json:"changes,omitempty"`
+	DocumentChanges json.RawMessage          `json:"documentChanges,omitempty"`
+}
+
+// lspTextDocumentEdit is one entry in documentChanges (TextDocumentEdit).
+type lspTextDocumentEdit struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+	Edits []lspTextEdit `json:"edits"`
+}
+
+// normalizedChanges returns changes as a URI→[]TextEdit map, converting
+// documentChanges to the same format if needed. This handles both gopls
+// (which uses documentChanges) and servers that use plain changes.
+func (we *lspWorkspaceEdit) normalizedChanges() map[string][]lspTextEdit {
+	if len(we.Changes) > 0 {
+		return we.Changes
+	}
+	if len(we.DocumentChanges) == 0 {
+		return nil
+	}
+	// Try parsing as TextDocumentEdit[].
+	var docEdits []lspTextDocumentEdit
+	if err := json.Unmarshal(we.DocumentChanges, &docEdits); err != nil {
+		return nil
+	}
+	result := make(map[string][]lspTextEdit)
+	for _, de := range docEdits {
+		if de.TextDocument.URI != "" {
+			result[de.TextDocument.URI] = append(result[de.TextDocument.URI], de.Edits...)
+		}
+	}
+	return result
 }
 
 // lspTextEdit is a single text edit within a file.
