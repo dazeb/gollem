@@ -4976,11 +4976,11 @@ func TestIsNumericOrFloat(t *testing.T) {
 func TestBuildContextRecoverySummary(t *testing.T) {
 	// Build a set of dropped messages that include reads, edits, and verification.
 	dropped := []core.ModelMessage{
-		// Agent reads a file.
+		// Agent reads a file (tool name is "view", not "read").
 		core.ModelResponse{
 			Parts: []core.ModelResponsePart{
 				core.ToolCallPart{
-					ToolName: "read",
+					ToolName: "view",
 					ArgsJSON: `{"path":"/app/main.py"}`,
 				},
 			},
@@ -4988,7 +4988,7 @@ func TestBuildContextRecoverySummary(t *testing.T) {
 		core.ModelRequest{
 			Parts: []core.ModelRequestPart{
 				core.ToolReturnPart{
-					ToolName: "read",
+					ToolName: "view",
 					Content:  "def main():\n    print('hello')\n",
 				},
 			},
@@ -5117,6 +5117,54 @@ func TestBuildContextRecoverySummary_Packages(t *testing.T) {
 	}
 }
 
+func TestBuildContextRecoverySummary_ExpandedPackages(t *testing.T) {
+	// Test that cargo/go/gem/yarn/composer installs are tracked.
+	dropped := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "bash",
+					ArgsJSON: `{"command":"cargo add serde tokio"}`,
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "bash",
+					ArgsJSON: `{"command":"go get github.com/gin-gonic/gin"}`,
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "bash",
+					ArgsJSON: `{"command":"yarn add express lodash"}`,
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName: "bash",
+					ArgsJSON: `{"command":"gem install rspec bundler"}`,
+				},
+			},
+		},
+	}
+
+	summary := buildContextRecoverySummary(dropped)
+	if !strings.Contains(summary, "PACKAGES ALREADY INSTALLED") {
+		t.Error("summary should have PACKAGES ALREADY INSTALLED section")
+	}
+	for _, pkg := range []string{"serde", "tokio", "github.com/gin-gonic/gin", "express", "lodash", "rspec", "bundler"} {
+		if !strings.Contains(summary, pkg) {
+			t.Errorf("summary should mention %q", pkg)
+		}
+	}
+}
+
 func TestBuildContextRecoverySummary_Subagent(t *testing.T) {
 	// Test that subagent tasks are tracked in recovery summary.
 	dropped := []core.ModelMessage{
@@ -5160,14 +5208,14 @@ func TestEmergencyCompressWithSummary(t *testing.T) {
 		},
 	})
 
-	// Middle: agent reads files and edits.
+	// Middle: agent reads files and edits (tool name is "view").
 	for i := 0; i < 10; i++ {
-		callID := fmt.Sprintf("read%d", i)
+		callID := fmt.Sprintf("view%d", i)
 		messages = append(messages,
 			core.ModelResponse{
 				Parts: []core.ModelResponsePart{
 					core.ToolCallPart{
-						ToolName:   "read",
+						ToolName:   "view",
 						ArgsJSON:   fmt.Sprintf(`{"path":"/app/file%d.py"}`, i),
 						ToolCallID: callID,
 					},
@@ -5176,7 +5224,7 @@ func TestEmergencyCompressWithSummary(t *testing.T) {
 			core.ModelRequest{
 				Parts: []core.ModelRequestPart{
 					core.ToolReturnPart{
-						ToolName:   "read",
+						ToolName:   "view",
 						Content:    strings.Repeat("x", 1000),
 						ToolCallID: callID,
 					},

@@ -6557,7 +6557,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 					continue
 				}
 				switch tc.ToolName {
-				case "read":
+				case "view":
 					path := extractPathFromArgs(tc.ArgsJSON)
 					if path != "" && !seenRead[path] {
 						seenRead[path] = true
@@ -6612,9 +6612,29 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 								}
 							}
 						}
-						if strings.Contains(cmd, "npm install") {
+						// npm/yarn/pnpm install.
+						if strings.Contains(cmd, "npm install") || strings.Contains(cmd, "yarn add") || strings.Contains(cmd, "pnpm add") || strings.Contains(cmd, "pnpm install") {
+							skipWords := map[string]bool{"install": true, "add": true, "npm": true, "yarn": true, "pnpm": true}
 							for _, part := range strings.Fields(cmd) {
-								if part == "install" || strings.HasPrefix(part, "-") || part == "npm" {
+								if skipWords[part] || strings.HasPrefix(part, "-") {
+									continue
+								}
+								if !seenPackages[part] {
+									seenPackages[part] = true
+									packagesInstalled = append(packagesInstalled, part)
+								}
+							}
+						}
+						// cargo add, go get, gem install, composer require.
+						if strings.Contains(cmd, "cargo add") || strings.Contains(cmd, "go get") ||
+							strings.Contains(cmd, "gem install") || strings.Contains(cmd, "composer require") ||
+							strings.Contains(cmd, "luarocks install") || strings.Contains(cmd, "cpanm ") ||
+							strings.Contains(cmd, "mix deps.get") || strings.Contains(cmd, "cabal install") {
+							skipWords := map[string]bool{"add": true, "get": true, "install": true, "require": true,
+								"cargo": true, "go": true, "gem": true, "composer": true,
+								"luarocks": true, "cpanm": true, "mix": true, "deps.get": true, "cabal": true}
+							for _, part := range strings.Fields(cmd) {
+								if skipWords[part] || strings.HasPrefix(part, "-") {
 									continue
 								}
 								if !seenPackages[part] {
