@@ -226,7 +226,7 @@ func (s *streamedResponse) handleToolCallDeltas(toolCalls []apiChunkToolCall) []
 	for _, tc := range toolCalls {
 		partIdx, isNew := s.getToolCallPartIndex(tc.Index)
 
-		if isNew || tc.ID != "" {
+		if isNew {
 			// Start a new tool call part.
 			part := core.ToolCallPart{
 				ToolName:   tc.Function.Name,

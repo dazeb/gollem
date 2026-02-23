@@ -202,6 +202,57 @@ data: [DONE]
 	}
 }
 
+// TestParseSSEStreamToolCallIDRepeatedOnEveryChunk tests that non-standard
+// APIs (Ollama, LiteLLM) which send the tool call ID on every delta chunk
+// don't corrupt the accumulated arguments.
+func TestParseSSEStreamToolCallIDRepeatedOnEveryChunk(t *testing.T) {
+	// Ollama/LiteLLM send the ID on every chunk, not just the first.
+	sseData := `data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"bash","arguments":"{\"co"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","function":{"arguments":"mmand"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","function":{"arguments":"\":\"ls\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "llama3")
+
+	for {
+		_, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+	resp := stream.Response()
+	if len(resp.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(resp.Parts))
+	}
+
+	tc, ok := resp.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("expected ToolCallPart, got %T", resp.Parts[0])
+	}
+	if tc.ToolName != "bash" {
+		t.Errorf("ToolName = %q, want %q", tc.ToolName, "bash")
+	}
+	if tc.ToolCallID != "call_abc" {
+		t.Errorf("ToolCallID = %q, want %q", tc.ToolCallID, "call_abc")
+	}
+	// Critical: arguments must be fully accumulated, not just the last chunk.
+	if tc.ArgsJSON != `{"command":"ls"}` {
+		t.Errorf("ArgsJSON = %q, want %q (arguments were lost due to re-initialization)", tc.ArgsJSON, `{"command":"ls"}`)
+	}
+}
+
 // TestParseSSEStreamCachedTokensAndReasoning tests that cached tokens
 // and reasoning tokens from the usage chunk are properly parsed.
 func TestParseSSEStreamCachedTokensAndReasoning(t *testing.T) {
