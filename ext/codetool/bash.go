@@ -5055,7 +5055,10 @@ func compilationErrorSummary(output string, exitCode int) string {
 		": error:", ": error[", "error:", "Error:",
 		": fatal error:", "undefined reference",
 		"SyntaxError:", "IndentationError:", "TypeError:",
+		"NameError:", "ModuleNotFoundError:",
 		"cannot find symbol", "not found in scope",
+		"error[E", // Rust: error[E0425]: ... (no leading colon)
+		"-- [E",   // Scala 3: -- [E007] Type Mismatch Error:
 	}
 	for _, p := range errorPatterns {
 		if strings.Contains(output, p) {
@@ -5124,9 +5127,18 @@ func compilationFingerprint(output string) string {
 		": error:", ": error[", ": fatal error:",
 		"undefined reference", "cannot find symbol",
 		"not found in scope",
-		") Error:",   // Nim: "file.nim(42, 5) Error:"
-		"): Error:",  // D: "file.d(42): Error:"
+		") Error:",    // Nim: "file.nim(42, 5) Error:"
+		"): Error:",   // D: "file.d(42): Error:"
 		"Fatal Error:", // Fortran gfortran fatal errors
+		// Python runtime/compile errors (not caught by `: error:` patterns).
+		"SyntaxError:",      // Python: SyntaxError: invalid syntax
+		"IndentationError:", // Python: IndentationError: unexpected indent
+		"NameError:",        // Python: NameError: name 'foo' is not defined
+		"ModuleNotFoundError:", // Python: ModuleNotFoundError: No module named 'x'
+		// Rust: error[E0425]: cannot find value (no leading colon).
+		"error[E",
+		// Scala 3: "-- [E007] Type Mismatch Error:" (starts with --)
+		"-- [E",
 	}
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)

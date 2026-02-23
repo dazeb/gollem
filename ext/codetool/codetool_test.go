@@ -9507,6 +9507,59 @@ func TestCompilationFingerprint_NimD(t *testing.T) {
 	}
 }
 
+func TestCompilationFingerprint_PythonRust(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name: "Python SyntaxError",
+			output: `  File "solution.py", line 42
+    def foo(
+           ^
+SyntaxError: invalid syntax`,
+		},
+		{
+			name:   "Python IndentationError",
+			output: `IndentationError: unexpected indent`,
+		},
+		{
+			name:   "Python NameError",
+			output: `NameError: name 'solve' is not defined`,
+		},
+		{
+			name:   "Python ModuleNotFoundError",
+			output: `ModuleNotFoundError: No module named 'numpy'`,
+		},
+		{
+			name: "Rust compilation error",
+			output: `error[E0425]: cannot find value 'x' in this scope
+ --> src/main.rs:5:10
+  |
+5 |     let y = x + 1;
+  |             ^ not found in this scope`,
+		},
+		{
+			name:   "Scala 3 error",
+			output: `-- [E007] Type Mismatch Error: src/Main.scala:42:5 ---`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := compilationFingerprint(tc.output)
+			if fp == "" {
+				t.Fatalf("expected fingerprint for %s error, got empty", tc.name)
+			}
+		})
+	}
+
+	// Verify no false positives on clean output.
+	fp := compilationFingerprint("Build succeeded\nAll tests passed")
+	if fp != "" {
+		t.Errorf("expected no fingerprint for clean output, got: %s", fp)
+	}
+}
+
 func TestEdit_CRLFNormalization(t *testing.T) {
 	dir := t.TempDir()
 	// Write a file with CRLF line endings.
