@@ -305,7 +305,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "sqlite3", "psql", "mysql"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "bun", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -562,7 +562,7 @@ func discoverEnvironment(workDir string) string {
 			"Makefile", "CMakeLists.txt", "Cargo.toml",
 			"go.mod", "pyproject.toml", "setup.py", "setup.cfg",
 			"package.json", "pom.xml", "build.gradle",
-			"configure.ac", "meson.build", "BUILD",
+			"Package.swift", "configure.ac", "meson.build", "BUILD",
 			"docker-compose.yml", "docker-compose.yaml",
 			"Dockerfile",
 		}
@@ -771,6 +771,20 @@ func discoverEnvironment(workDir string) string {
 					runQuietTimeout(dir, 90*time.Second, "mix", "deps.get")
 					runQuietTimeout(dir, 90*time.Second, "mix", "deps.compile")
 					parts = append(parts, "AUTO-INSTALLED: Elixir Mix dependencies (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
+	// Auto-resolve Swift Package Manager dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "Package.swift")) && runQuiet(dir, "which", "swift") != "" {
+				if !dirExists(filepath.Join(dir, ".build")) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Swift packages in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "swift", "package", "resolve")
+					parts = append(parts, "AUTO-INSTALLED: Swift packages via swift package resolve (already done, no need to resolve again)")
 				}
 				break
 			}
@@ -1271,6 +1285,7 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"stack.yaml", "Haskell", "stack"},
 		{"dune-project", "OCaml", "dune"},
 		{"mix.exs", "Elixir", "mix"},
+		{"Package.swift", "Swift", "swift"},
 		{"build.zig", "Zig", "zig"},
 		{"Project.toml", "Julia", "julia"},
 		{"Makefile.PL", "Perl", "perl"},
@@ -5420,6 +5435,11 @@ func detectTestCommands(workDir string) []string {
 	if fileExists(filepath.Join(workDir, "mix.exs")) {
 		cmds = append(cmds, "Build: mix compile")
 		cmds = append(cmds, "Test: mix test")
+	}
+	// Swift
+	if fileExists(filepath.Join(workDir, "Package.swift")) {
+		cmds = append(cmds, "Build: swift build")
+		cmds = append(cmds, "Test: swift test")
 	}
 	// Zig
 	if fileExists(filepath.Join(workDir, "build.zig")) {

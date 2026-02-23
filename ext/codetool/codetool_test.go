@@ -7399,3 +7399,110 @@ func TestJavaExceptionHint_NoError(t *testing.T) {
 	}
 }
 
+// --- Bun test parsing tests ---
+
+func TestExtractTestCounts_Bun(t *testing.T) {
+	output := `bun test v1.1.0 (abc123)
+
+test.ts:
+✓ adds numbers correctly [0.50ms]
+✗ subtracts numbers correctly [0.30ms]
+✓ multiplies [0.10ms]
+
+ 2 pass
+ 1 fail
+ 3 expect() calls
+Ran 3 tests across 1 files. [1.23s]`
+
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for Bun output")
+	}
+	if passed != 2 {
+		t.Errorf("expected 2 passed, got %d", passed)
+	}
+	if failed != 1 {
+		t.Errorf("expected 1 failed, got %d", failed)
+	}
+}
+
+func TestExtractTestCounts_Bun_AllPassing(t *testing.T) {
+	output := ` 6 pass
+ 0 fail
+ 6 expect() calls
+Ran 6 tests across 3 files. [0.85s]`
+
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for Bun all-passing output")
+	}
+	if passed != 6 {
+		t.Errorf("expected 6 passed, got %d", passed)
+	}
+	if failed != 0 {
+		t.Errorf("expected 0 failed, got %d", failed)
+	}
+}
+
+func TestExtractTestCounts_Bun_WithSkip(t *testing.T) {
+	output := ` 3 pass
+ 1 skip
+ 1 fail
+ 4 expect() calls
+Ran 5 tests across 2 files. [2.10s]`
+
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for Bun output with skips")
+	}
+	if passed != 3 {
+		t.Errorf("expected 3 passed, got %d", passed)
+	}
+	if failed != 1 {
+		t.Errorf("expected 1 failed, got %d", failed)
+	}
+}
+
+func TestTestResultSummary_Bun(t *testing.T) {
+	output := `bun test v1.1.0 (abc123)
+
+test.ts:
+✓ adds numbers correctly
+✗ subtracts numbers correctly
+
+error: expect(received).toBe(expected)
+Expected: 5
+Received: 3
+
+ 1 pass
+ 1 fail
+ 2 expect() calls
+Ran 2 tests across 1 files. [0.42s]`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for Bun output")
+	}
+	if !strings.Contains(summary, "1 pass") {
+		t.Errorf("expected summary to contain '1 pass', got: %s", summary)
+	}
+	if !strings.Contains(summary, "1 fail") {
+		t.Errorf("expected summary to contain '1 fail', got: %s", summary)
+	}
+}
+
+func TestTestResultSummary_Bun_AllPassing(t *testing.T) {
+	output := ` 5 pass
+ 0 fail
+ 5 expect() calls
+Ran 5 tests across 2 files. [1.00s]`
+
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for Bun all-passing output")
+	}
+	if !strings.Contains(summary, "5 pass") {
+		t.Errorf("expected summary to contain '5 pass', got: %s", summary)
+	}
+}
+

@@ -2540,6 +2540,50 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Bun test: "N pass" / "N fail" on separate lines (not "passed"/"failed").
+	// Also has "Ran N tests across M files." summary line.
+	// Must check BEFORE PHPUnit — Bun uses bare "pass"/"fail" words.
+	if strings.Contains(lower, "expect() calls") ||
+		(strings.Contains(lower, "ran ") && strings.Contains(lower, " tests across ")) {
+		lines := strings.Split(output, "\n")
+		var passLine, failLine, ranLine string
+		for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
+			line := strings.TrimSpace(lines[i])
+			words := strings.Fields(strings.ToLower(line))
+			if len(words) >= 2 {
+				if words[1] == "pass" && isNumeric(words[0]) && passLine == "" {
+					passLine = line
+				} else if words[1] == "fail" && isNumeric(words[0]) && failLine == "" {
+					failLine = line
+				}
+			}
+			lineLower := strings.ToLower(line)
+			if strings.HasPrefix(lineLower, "ran ") && strings.Contains(lineLower, " tests across ") {
+				ranLine = line
+			}
+		}
+		if passLine != "" || failLine != "" {
+			summary := "[test summary: "
+			if passLine != "" {
+				summary += passLine
+			}
+			if failLine != "" {
+				if passLine != "" {
+					summary += ", "
+				}
+				summary += failLine
+			}
+			if ranLine != "" {
+				summary += " (" + ranLine + ")"
+			}
+			summary += "]"
+			if detail := firstFailureDetail(output); detail != "" {
+				summary += "\n" + detail
+			}
+			return summary
+		}
+	}
+
 	// PHPUnit: "Tests: N, Assertions: M, Failures: F" or "OK (N tests, M assertions)"
 	if strings.Contains(lower, "phpunit") ||
 		(strings.Contains(lower, "tests:") && strings.Contains(lower, "assertions:")) {
@@ -3282,6 +3326,34 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			}
 		}
 		if foundPassing {
+			passed = p
+			failed = f
+			ok = true
+			return
+		}
+	}
+
+	// Bun test: "N pass" / "N fail" on separate lines.
+	// Bun uses bare "pass"/"fail" (not "passed"/"failed" or "passing"/"failing").
+	if strings.Contains(lower, "expect() calls") ||
+		(strings.Contains(lower, "ran ") && strings.Contains(lower, " tests across ")) {
+		var p, f int
+		foundBun := false
+		for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
+			words := strings.Fields(strings.ToLower(strings.TrimSpace(lines[i])))
+			if len(words) >= 2 && isNumeric(words[0]) {
+				var n int
+				fmt.Sscanf(words[0], "%d", &n)
+				if words[1] == "pass" {
+					p = n
+					foundBun = true
+				} else if words[1] == "fail" {
+					f = n
+					foundBun = true
+				}
+			}
+		}
+		if foundBun {
 			passed = p
 			failed = f
 			ok = true
