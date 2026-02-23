@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -113,15 +115,135 @@ func TestAutoContext_CustomModel(t *testing.T) {
 	}
 
 	// Check that the summary uses the custom model (first msg + summary + 2 recent).
-	// Summary is at index 1 (after the preserved first message).
-	if req, ok := result[1].(ModelRequest); ok {
-		for _, part := range req.Parts {
-			if sp, ok := part.(SystemPromptPart); ok {
-				if sp.Content != "[Conversation Summary] Custom summary" {
-					t.Errorf("expected custom summary, got %q", sp.Content)
+	// Summary is at index 1 (after the preserved first message) and is a ModelResponse.
+	if resp, ok := result[1].(ModelResponse); ok {
+		text := resp.TextContent()
+		if text != "[Conversation Summary] Custom summary" {
+			t.Errorf("expected custom summary, got %q", text)
+		}
+	} else {
+		t.Errorf("expected summary at index 1 to be ModelResponse, got %T", result[1])
+	}
+}
+
+func TestAutoContext_MessageAlternation(t *testing.T) {
+	// Verify that compressed output maintains proper user/assistant alternation.
+	// This is critical for Anthropic's API which requires strict alternation.
+	// The bug: when the summary was emitted as a ModelRequest with SystemPromptPart,
+	// Anthropic extracted it to the top-level system field, producing no API message.
+	// This caused firstMsg (user) to be adjacent to recentMessages[0] (user).
+
+	// Build a typical agent conversation: alternating request/response pairs.
+	var messages []ModelMessage
+	for i := range 10 {
+		messages = append(messages, ModelRequest{
+			Parts: []ModelRequestPart{
+				UserPromptPart{Content: fmt.Sprintf("user message %d with enough words to inflate token count", i)},
+			},
+		})
+		messages = append(messages, ModelResponse{
+			Parts: []ModelResponsePart{TextPart{Content: fmt.Sprintf("assistant response %d with enough words", i)}},
+		})
+	}
+
+	summaryModel := NewTestModel(TextResponse("Summary of conversation"))
+	config := &AutoContextConfig{
+		MaxTokens:    10, // force compression
+		KeepLastN:    4,
+		SummaryModel: summaryModel,
+	}
+
+	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify alternation: ModelRequest, ModelResponse, ModelRequest, ModelResponse, ...
+	for i, msg := range result {
+		switch msg.(type) {
+		case ModelRequest:
+			if i > 0 {
+				if _, prevIsReq := result[i-1].(ModelRequest); prevIsReq {
+					t.Errorf("adjacent ModelRequest messages at indices %d and %d", i-1, i)
+				}
+			}
+		case ModelResponse:
+			if i > 0 {
+				if _, prevIsResp := result[i-1].(ModelResponse); prevIsResp {
+					t.Errorf("adjacent ModelResponse messages at indices %d and %d", i-1, i)
 				}
 			}
 		}
+	}
+
+	// Verify the summary is at index 1 and is a ModelResponse.
+	if _, ok := result[1].(ModelResponse); !ok {
+		t.Errorf("expected summary at index 1 to be ModelResponse, got %T", result[1])
+	}
+
+	// Verify first message is preserved.
+	if req, ok := result[0].(ModelRequest); ok {
+		if up, ok := req.Parts[0].(UserPromptPart); ok {
+			if !strings.Contains(up.Content, "user message 0") {
+				t.Errorf("first message not preserved: %q", up.Content)
+			}
+		}
+	}
+}
+
+func TestAutoContext_MessageAlternationOddKeepN(t *testing.T) {
+	// Test with odd keepN where recentMessages would start with ModelResponse.
+	// The boundary adjustment should include one extra message to maintain alternation.
+	var messages []ModelMessage
+	for i := range 10 {
+		messages = append(messages, ModelRequest{
+			Parts: []ModelRequestPart{
+				UserPromptPart{Content: fmt.Sprintf("user message %d with enough words to inflate token count", i)},
+			},
+		})
+		messages = append(messages, ModelResponse{
+			Parts: []ModelResponsePart{TextPart{Content: fmt.Sprintf("assistant response %d with enough words", i)}},
+		})
+	}
+	// 20 messages total. With keepN=3, startRecent = 17 (odd index = ModelResponse).
+	// The adjustment should move startRecent to 16 (ModelRequest).
+
+	summaryModel := NewTestModel(TextResponse("Summary"))
+	config := &AutoContextConfig{
+		MaxTokens:    10,
+		KeepLastN:    3,
+		SummaryModel: summaryModel,
+	}
+
+	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify alternation.
+	for i, msg := range result {
+		switch msg.(type) {
+		case ModelRequest:
+			if i > 0 {
+				if _, prevIsReq := result[i-1].(ModelRequest); prevIsReq {
+					t.Errorf("adjacent ModelRequest at indices %d and %d", i-1, i)
+				}
+			}
+		case ModelResponse:
+			if i > 0 {
+				if _, prevIsResp := result[i-1].(ModelResponse); prevIsResp {
+					t.Errorf("adjacent ModelResponse at indices %d and %d", i-1, i)
+				}
+			}
+		}
+	}
+
+	// First should be ModelRequest, second should be ModelResponse (summary).
+	if _, ok := result[0].(ModelRequest); !ok {
+		t.Errorf("expected index 0 to be ModelRequest, got %T", result[0])
+	}
+	if _, ok := result[1].(ModelResponse); !ok {
+		t.Errorf("expected index 1 to be ModelResponse (summary), got %T", result[1])
 	}
 }
 

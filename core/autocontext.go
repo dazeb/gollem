@@ -85,10 +85,22 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 	}
 
 	// Always preserve the first message (task + system prompt).
-	// Summarize messages[1:len-keepN], keep messages[0] and messages[len-keepN:].
+	// Summarize messages[1:startRecent], keep messages[0] and messages[startRecent:].
 	firstMsg := messages[0]
-	oldMessages := messages[1 : len(messages)-keepN]
-	recentMessages := messages[len(messages)-keepN:]
+
+	// Determine where recent messages start. The summary is emitted as a
+	// ModelResponse (assistant role), so recentMessages must start with a
+	// ModelRequest (user role) to maintain proper user/assistant alternation.
+	// This is required by Anthropic's API and is good practice in general.
+	startRecent := len(messages) - keepN
+	if startRecent > 1 {
+		if _, isResp := messages[startRecent].(ModelResponse); isResp {
+			startRecent--
+		}
+	}
+
+	oldMessages := messages[1:startRecent]
+	recentMessages := messages[startRecent:]
 
 	if len(oldMessages) == 0 {
 		return messages, nil // nothing to compress
@@ -165,12 +177,15 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 	}
 
 	// Build new message list: first message + summary + recent messages.
-	summaryMsg := ModelRequest{
-		Parts: []ModelRequestPart{
-			SystemPromptPart{
-				Content:   "[Conversation Summary] " + summaryResp.TextContent(),
-				Timestamp: time.Now(),
-			},
+	// The summary is emitted as a ModelResponse (assistant role) to maintain
+	// proper user/assistant message alternation. Using a ModelRequest with
+	// SystemPromptPart caused providers that extract system prompts to a
+	// separate field (e.g., Anthropic) to produce no API message for the
+	// summary, resulting in adjacent user messages that violate the
+	// alternation requirement.
+	summaryMsg := ModelResponse{
+		Parts: []ModelResponsePart{
+			TextPart{Content: "[Conversation Summary] " + summaryResp.TextContent()},
 		},
 		Timestamp: time.Now(),
 	}
