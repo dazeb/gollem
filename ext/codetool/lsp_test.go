@@ -698,25 +698,25 @@ func TestNormalizedChanges(t *testing.T) {
 		}
 	})
 
-	t.Run("both_prefers_changes", func(t *testing.T) {
+	t.Run("both_prefers_document_changes", func(t *testing.T) {
 		dc, _ := json.Marshal([]lspTextDocumentEdit{
 			{
 				TextDocument: struct {
 					URI string `json:"uri"`
-				}{URI: "file:///ignored.go"},
-				Edits: []lspTextEdit{{NewText: "ignored"}},
+				}{URI: "file:///dc.go"},
+				Edits: []lspTextEdit{{NewText: "from_dc"}},
 			},
 		})
 		we := lspWorkspaceEdit{
-			Changes:         map[string][]lspTextEdit{"file:///a.go": {{NewText: "x"}}},
+			Changes:         map[string][]lspTextEdit{"file:///plain.go": {{NewText: "from_plain"}}},
 			DocumentChanges: dc,
 		}
 		got := we.normalizedChanges()
-		if _, ok := got["file:///a.go"]; !ok {
-			t.Error("expected plain changes to take priority")
+		if _, ok := got["file:///dc.go"]; !ok {
+			t.Error("expected documentChanges to take priority per LSP spec")
 		}
-		if _, ok := got["file:///ignored.go"]; ok {
-			t.Error("documentChanges should be ignored when changes is present")
+		if _, ok := got["file:///plain.go"]; ok {
+			t.Error("plain changes should be ignored when documentChanges is present")
 		}
 	})
 
@@ -731,6 +731,19 @@ func TestNormalizedChanges(t *testing.T) {
 		we := lspWorkspaceEdit{DocumentChanges: json.RawMessage(`not json`)}
 		if got := we.normalizedChanges(); got != nil {
 			t.Errorf("expected nil for invalid json, got %v", got)
+		}
+	})
+
+	t.Run("unparseable_dc_falls_back_to_changes", func(t *testing.T) {
+		// When documentChanges contains operations we can't parse
+		// (e.g., CreateFile), fall back to plain changes.
+		we := lspWorkspaceEdit{
+			Changes:         map[string][]lspTextEdit{"file:///fallback.go": {{NewText: "ok"}}},
+			DocumentChanges: json.RawMessage(`[{"kind": "create", "uri": "file:///new.go"}]`),
+		}
+		got := we.normalizedChanges()
+		if _, ok := got["file:///fallback.go"]; !ok {
+			t.Error("expected fallback to plain changes when documentChanges is unparseable")
 		}
 	})
 }

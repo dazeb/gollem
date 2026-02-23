@@ -1595,24 +1595,30 @@ type lspTextDocumentEdit struct {
 // documentChanges to the same format if needed. This handles both gopls
 // (which uses documentChanges) and servers that use plain changes.
 func (we *lspWorkspaceEdit) normalizedChanges() map[string][]lspTextEdit {
+	// Per LSP spec, documentChanges takes precedence over changes when
+	// both are present. Fall back to changes if documentChanges can't be
+	// parsed (e.g., contains CreateFile/DeleteFile operations we don't
+	// support).
+	if len(we.DocumentChanges) > 0 {
+		var docEdits []lspTextDocumentEdit
+		if err := json.Unmarshal(we.DocumentChanges, &docEdits); err == nil {
+			result := make(map[string][]lspTextEdit)
+			for _, de := range docEdits {
+				if de.TextDocument.URI != "" {
+					result[de.TextDocument.URI] = append(result[de.TextDocument.URI], de.Edits...)
+				}
+			}
+			if len(result) > 0 {
+				return result
+			}
+		}
+		// Fall through: documentChanges couldn't be parsed or produced
+		// no edits (might be CreateFile/DeleteFile only). Try changes.
+	}
 	if len(we.Changes) > 0 {
 		return we.Changes
 	}
-	if len(we.DocumentChanges) == 0 {
-		return nil
-	}
-	// Try parsing as TextDocumentEdit[].
-	var docEdits []lspTextDocumentEdit
-	if err := json.Unmarshal(we.DocumentChanges, &docEdits); err != nil {
-		return nil
-	}
-	result := make(map[string][]lspTextEdit)
-	for _, de := range docEdits {
-		if de.TextDocument.URI != "" {
-			result[de.TextDocument.URI] = append(result[de.TextDocument.URI], de.Edits...)
-		}
-	}
-	return result
+	return nil
 }
 
 // lspTextEdit is a single text edit within a file.
