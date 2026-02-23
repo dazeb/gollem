@@ -442,6 +442,7 @@ func isVerificationString(cmd string) bool {
 		"coqc ", "coq_makefile",
 		// Elixir/Erlang.
 		"mix test", "mix compile",
+		"rebar3 eunit", "rebar3 ct", "rebar3 do compile",
 		// Zig build.
 		"zig build", "zig test",
 		// Perl / TAP.
@@ -542,6 +543,8 @@ func isVerificationString(cmd string) bool {
 		"cmake --build",
 		// Clojure build.
 		"lein compile", "lein jar", "lein uberjar",
+		// Erlang build.
+		"rebar3 compile", "erlc ",
 		// D language.
 		"dmd ",
 		// MSBuild (.NET Framework).
