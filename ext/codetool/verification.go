@@ -396,7 +396,7 @@ func isVerificationString(cmd string) bool {
 		"go test",
 		"pytest", "python -m pytest", "python -m unittest", "python3 -m unittest",
 		"npm test", "npm run test", "yarn test", "pnpm test",
-		"npx jest", "npx mocha", "npx vitest",
+		"npx jest", "npx mocha", "npx vitest", "bun test", "bunx vitest",
 		"cargo test",
 		"make test", "make check",
 		"mvn test", "gradle test", "gradlew test", "./gradlew",
@@ -462,7 +462,7 @@ func isVerificationString(cmd string) bool {
 	// Build/compile commands.
 	buildPatterns := []string{
 		"go build", "go vet",
-		"npm run build", "yarn build", "pnpm build",
+		"npm run build", "yarn build", "pnpm build", "bun run build",
 		"cargo build", "cargo check", "cargo clippy",
 		"make", "cmake",
 		"gcc ", "g++ ", "clang ", "cc ",

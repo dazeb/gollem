@@ -627,20 +627,30 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
-	// Auto-install npm dependencies for Node.js projects.
+	// Auto-install npm/bun dependencies for Node.js projects.
 	// Note: don't gate on !foundPyDeps — projects can need both Python and npm deps.
+	// Prefer bun if bun.lockb exists and bun is available.
 	if networkAvailable {
 		for _, dir := range []string{workDir, "/app"} {
 			pkgPath := filepath.Join(dir, "package.json")
-			if fileExists(pkgPath) && runQuiet(workDir, "which", "npm") != "" {
-				lockPath := filepath.Join(dir, "node_modules")
-				if !dirExists(lockPath) {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-installing npm dependencies in %s\n", dir)
-					runQuietTimeout(dir, 60*time.Second, "npm", "install", "--no-audit", "--no-fund")
-					parts = append(parts, "AUTO-INSTALLED: npm dependencies (already done, no need to install again)")
-				}
+			if !fileExists(pkgPath) {
+				continue
+			}
+			lockPath := filepath.Join(dir, "node_modules")
+			if dirExists(lockPath) {
 				break
 			}
+			// Prefer bun install if bun.lockb exists and bun is available.
+			if fileExists(filepath.Join(dir, "bun.lockb")) && runQuiet(workDir, "which", "bun") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Bun dependencies in %s\n", dir)
+				runQuietTimeout(dir, 60*time.Second, "bun", "install")
+				parts = append(parts, "AUTO-INSTALLED: Bun dependencies (already done, no need to install again)")
+			} else if runQuiet(workDir, "which", "npm") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing npm dependencies in %s\n", dir)
+				runQuietTimeout(dir, 60*time.Second, "npm", "install", "--no-audit", "--no-fund")
+				parts = append(parts, "AUTO-INSTALLED: npm dependencies (already done, no need to install again)")
+			}
+			break
 		}
 	}
 
