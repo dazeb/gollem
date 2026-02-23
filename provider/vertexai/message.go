@@ -279,12 +279,18 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 					modelParts = append(modelParts, gp)
 				}
 			}
-			if len(modelParts) > 0 {
-				req.Contents = append(req.Contents, geminiContent{
-					Role:  "model",
-					Parts: modelParts,
-				})
+			// Always emit a model content entry for a ModelResponse to maintain
+			// proper user/model alternation. If the response had no content
+			// (e.g., an empty response that triggered a retry), use a minimal
+			// text part. Without this, adjacent user messages would cause an
+			// error from the Gemini API.
+			if len(modelParts) == 0 {
+				modelParts = []geminiPart{{Text: ""}}
 			}
+			req.Contents = append(req.Contents, geminiContent{
+				Role:  "model",
+				Parts: modelParts,
+			})
 		}
 	}
 

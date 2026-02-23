@@ -843,3 +843,37 @@ data:{"candidates":[{"content":{"role":"model","parts":[{"text":" world"}]},"fin
 		t.Errorf("expected 'Hello world', got '%s'", finalTp.Content)
 	}
 }
+
+// TestBuildRequestEmptyResponseAlternation verifies that an empty ModelResponse
+// doesn't create adjacent user messages in the Gemini API request.
+func TestBuildRequestEmptyResponseAlternation(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+		// Empty response from model (no parts).
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{},
+		},
+		// Retry request from agent.
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.RetryPromptPart{Content: "empty response, please provide a result"},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify no adjacent same-role messages.
+	for i := 1; i < len(req.Contents); i++ {
+		if req.Contents[i-1].Role == req.Contents[i].Role {
+			t.Errorf("adjacent %q messages at indices %d and %d", req.Contents[i].Role, i-1, i)
+		}
+	}
+}

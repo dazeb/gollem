@@ -835,6 +835,43 @@ func TestBuildRequestNoThinkingByDefault(t *testing.T) {
 
 // Regression: unsupported request part types (ImagePart, AudioPart, DocumentPart)
 // were silently dropped. Now they return an error.
+// TestBuildRequestEmptyResponseAlternation verifies that an empty ModelResponse
+// (no parts) doesn't create adjacent user messages in the API request.
+// In production, the agent appends empty responses to history and adds a retry
+// request as the next ModelRequest. If the empty response generates no API
+// message, adjacent user messages violate Anthropic's alternation requirement.
+func TestBuildRequestEmptyResponseAlternation(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+		// Empty response from model (no parts).
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{},
+		},
+		// Retry request from agent.
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.RetryPromptPart{Content: "empty response, please provide a result"},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify no adjacent user messages.
+	for i := 1; i < len(req.Messages); i++ {
+		if req.Messages[i-1].Role == req.Messages[i].Role {
+			t.Errorf("adjacent %q messages at indices %d and %d", req.Messages[i].Role, i-1, i)
+		}
+	}
+}
+
 func TestBuildRequestRejectsUnsupportedParts(t *testing.T) {
 	tests := []struct {
 		name string

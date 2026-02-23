@@ -227,12 +227,18 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 					})
 				}
 			}
-			if len(assistantBlocks) > 0 {
-				apiMsgs = append(apiMsgs, apiMessage{
-					Role:    "assistant",
-					Content: assistantBlocks,
-				})
+			// Always emit an assistant message for a ModelResponse to maintain
+			// proper user/assistant alternation. If the response had no content
+			// (e.g., an empty response that triggered a retry), use a minimal
+			// text block. Without this, adjacent user messages would cause a
+			// 400 error from the Anthropic API.
+			if len(assistantBlocks) == 0 {
+				assistantBlocks = []apiContentBlock{{Type: "text", Text: ""}}
 			}
+			apiMsgs = append(apiMsgs, apiMessage{
+				Role:    "assistant",
+				Content: assistantBlocks,
+			})
 		}
 	}
 
