@@ -32,6 +32,7 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 	bashCounts := make(map[string]int)   // command prefix -> run count
 	readCounts := make(map[string]int)   // file path -> read-without-edit count
 	searchCounts := make(map[string]int) // grep pattern -> search count
+	lspCounts := make(map[string]int)    // lsp method+file+line -> call count
 
 	return func(
 		ctx context.Context,
@@ -69,6 +70,20 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 							if pattern != "" {
 								searchCounts[pattern]++
 							}
+						case "lsp":
+							// Track repeated LSP lookups on the same location.
+							var args struct {
+								Method string `json:"method"`
+								File   string `json:"file"`
+								Line   int    `json:"line"`
+							}
+							if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil && args.Method != "" {
+								key := args.Method + ":" + args.File
+								if args.Line > 0 {
+									key += fmt.Sprintf(":%d", args.Line)
+								}
+								lspCounts[key]++
+							}
 						}
 					}
 				}
@@ -105,6 +120,14 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 		for pattern, count := range searchCounts {
 			if count >= searchLoopThreshold {
 				loopedFiles = append(loopedFiles, "search: "+pattern)
+			}
+		}
+		// LSP loop: same LSP method+file+line called repeatedly.
+		// Same threshold as search — LSP lookups are typically one-shot,
+		// so repeated identical calls indicate the agent is stuck.
+		for key, count := range lspCounts {
+			if count >= searchLoopThreshold {
+				loopedFiles = append(loopedFiles, "search: lsp "+key)
 			}
 		}
 		mu.Unlock()
@@ -8394,12 +8417,14 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	var packagesInstalled []string
 	var subagentTasks []string
 	var searchesPerformed []string // grep/glob searches that the agent already did
+	var lspNavigations []string    // LSP lookups (definition, references, hover) already performed
 	var lastAssistantText string   // last assistant text block — captures current approach/thinking
 
 	seenRead := make(map[string]bool)
 	seenModified := make(map[string]bool)
 	seenPackages := make(map[string]bool)
 	seenSearches := make(map[string]bool)
+	seenLSP := make(map[string]bool)
 
 	// Scan dropped messages for tool calls and their results.
 	// Track the last pending verification call ID to match with its result.
@@ -8544,6 +8569,26 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 							}
 						}
 					}
+				case "lsp":
+					var args struct {
+						Method string `json:"method"`
+						File   string `json:"file"`
+						Line   int    `json:"line"`
+						Query  string `json:"query"`
+					}
+					if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil && args.Method != "" {
+						key := fmt.Sprintf("lsp %s: %s", args.Method, args.File)
+						if args.Line > 0 {
+							key += fmt.Sprintf(":%d", args.Line)
+						}
+						if args.Query != "" {
+							key = fmt.Sprintf("lsp %s: %s", args.Method, args.Query)
+						}
+						if !seenLSP[key] && len(lspNavigations) < 15 {
+							seenLSP[key] = true
+							lspNavigations = append(lspNavigations, key)
+						}
+					}
 				case "delegate":
 					var args struct {
 						Task string `json:"task"`
@@ -8686,6 +8731,16 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 		for _, s := range searchesPerformed {
 			b.WriteString("  - ")
 			b.WriteString(s)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	if len(lspNavigations) > 0 {
+		b.WriteString("LSP LOOKUPS ALREADY PERFORMED (avoid repeating):\n")
+		for _, l := range lspNavigations {
+			b.WriteString("  - ")
+			b.WriteString(l)
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
