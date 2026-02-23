@@ -19,12 +19,22 @@ func SlidingWindowMemory(windowSize int) core.HistoryProcessor {
 		}
 
 		// Keep first message (system prompt/initial request), then last windowSize*2 messages.
-		result := make([]core.ModelMessage, 0, windowSize*2+1)
-		result = append(result, messages[0])
 		start := len(messages) - windowSize*2
 		if start < 1 {
 			start = 1
 		}
+
+		// The first message is a ModelRequest (user role). The kept tail must
+		// start with a ModelResponse (assistant role) to maintain proper
+		// user/assistant alternation required by Anthropic's API.
+		if start > 1 {
+			if _, isReq := messages[start].(core.ModelRequest); isReq {
+				start--
+			}
+		}
+
+		result := make([]core.ModelMessage, 0, 1+len(messages)-start)
+		result = append(result, messages[0])
 		result = append(result, messages[start:]...)
 		return result, nil
 	}
@@ -45,12 +55,15 @@ func TokenBudgetMemory(maxTokens int) core.HistoryProcessor {
 			return messages, nil
 		}
 
-		// Drop messages from position 1 until under budget.
+		// Drop messages in pairs from position 1 until under budget.
+		// Dropping pairs (request + response together) maintains proper
+		// user/assistant alternation required by Anthropic's API.
 		result := make([]core.ModelMessage, len(messages))
 		copy(result, messages)
 
-		for len(result) > 2 && estimateMessageTokens(result) > maxTokens {
-			result = append(result[:1], result[2:]...)
+		for len(result) > 3 && estimateMessageTokens(result) > maxTokens {
+			// Drop two messages (a pair) to maintain alternation.
+			result = append(result[:1], result[3:]...)
 		}
 
 		return result, nil
@@ -168,19 +181,30 @@ func SummaryMemory(summarizer core.Model, maxMessages int) core.HistoryProcessor
 			summary = "(conversation summary unavailable)"
 		}
 
-		// Reconstruct: first message + summary as system prompt + recent messages.
-		result := make([]core.ModelMessage, 0, keepLast+2)
+		// Reconstruct: first message + summary (assistant role) + recent messages.
+		// The summary is emitted as a ModelResponse (assistant role) so that
+		// providers that extract SystemPromptPart to a top-level field (e.g.,
+		// Anthropic) still produce an API message, maintaining proper
+		// user/assistant alternation.
+		recentStart := len(messages) - keepLast
+
+		// Ensure recent messages start with a ModelRequest (user role) since
+		// the summary is a ModelResponse (assistant role).
+		if recentStart > 1 {
+			if _, isResp := messages[recentStart].(core.ModelResponse); isResp {
+				recentStart--
+			}
+		}
+
+		result := make([]core.ModelMessage, 0, 2+len(messages)-recentStart)
 		result = append(result, messages[0])
-		result = append(result, core.ModelRequest{
-			Parts: []core.ModelRequestPart{
-				core.SystemPromptPart{
-					Content:   "[Conversation Summary] " + summary,
-					Timestamp: time.Now(),
-				},
+		result = append(result, core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "[Conversation Summary] " + summary},
 			},
 			Timestamp: time.Now(),
 		})
-		result = append(result, messages[len(messages)-keepLast:]...)
+		result = append(result, messages[recentStart:]...)
 
 		return result, nil
 	}

@@ -48,15 +48,18 @@ func msgText(msg core.ModelMessage) string {
 func TestSlidingWindowMemory(t *testing.T) {
 	proc := memory.SlidingWindowMemory(2)
 
-	// 10 messages: first + last 4 = 5
+	// 10 messages (indices 0-9): first + tail.
+	// windowSize*2 = 4, start = 10-4 = 6. messages[6] is a ModelRequest (even),
+	// so boundary adjustment decrements to 5 (ModelResponse). Tail = messages[5:].
+	// Result = messages[0] + messages[5:] = 6 messages.
 	messages := makeMessages(10)
 	result, err := proc(context.Background(), messages)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(result) != 5 {
-		t.Fatalf("expected 5 messages, got %d", len(result))
+	if len(result) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(result))
 	}
 
 	// First message should be preserved.
@@ -64,12 +67,9 @@ func TestSlidingWindowMemory(t *testing.T) {
 		t.Error("first message not preserved")
 	}
 
-	// Last 4 should be the tail.
-	for i := 1; i < len(result); i++ {
-		expected := messages[len(messages)-4+i-1]
-		if msgText(result[i]) != msgText(expected) {
-			t.Errorf("message %d mismatch", i)
-		}
+	// Second message should be a ModelResponse (for proper alternation).
+	if _, ok := result[1].(core.ModelResponse); !ok {
+		t.Errorf("expected ModelResponse at index 1, got %T", result[1])
 	}
 }
 
@@ -184,21 +184,14 @@ func TestSummaryMemory(t *testing.T) {
 		t.Error("first message not preserved")
 	}
 
-	// Should contain a summary system prompt.
-	found := false
-	for _, msg := range result {
-		if req, ok := msg.(core.ModelRequest); ok {
-			for _, part := range req.Parts {
-				if sp, ok := part.(core.SystemPromptPart); ok {
-					if len(sp.Content) > 0 {
-						found = true
-					}
-				}
-			}
+	// Summary should be a ModelResponse (assistant role) at index 1.
+	if resp, ok := result[1].(core.ModelResponse); ok {
+		text := resp.TextContent()
+		if text == "" {
+			t.Error("expected summary text in ModelResponse at index 1")
 		}
-	}
-	if !found {
-		t.Error("expected summary system prompt in result")
+	} else {
+		t.Errorf("expected ModelResponse (summary) at index 1, got %T", result[1])
 	}
 
 	// Summarizer model should have been called.
@@ -224,5 +217,116 @@ func TestSummaryMemory_ShortConversation(t *testing.T) {
 	// Summarizer should NOT have been called.
 	if len(summarizer.Calls()) != 0 {
 		t.Error("summarizer should not be called for short conversations")
+	}
+}
+
+// verifyAlternation checks that no two adjacent messages have the same role.
+func verifyAlternation(t *testing.T, messages []core.ModelMessage) {
+	t.Helper()
+	for i := 1; i < len(messages); i++ {
+		_, prevIsReq := messages[i-1].(core.ModelRequest)
+		_, currIsReq := messages[i].(core.ModelRequest)
+		_, prevIsResp := messages[i-1].(core.ModelResponse)
+		_, currIsResp := messages[i].(core.ModelResponse)
+
+		if prevIsReq && currIsReq {
+			t.Errorf("adjacent ModelRequest at indices %d and %d", i-1, i)
+		}
+		if prevIsResp && currIsResp {
+			t.Errorf("adjacent ModelResponse at indices %d and %d", i-1, i)
+		}
+	}
+}
+
+func TestSlidingWindowMemory_Alternation(t *testing.T) {
+	// Test with various message counts and window sizes to ensure
+	// alternation is maintained in all cases.
+	for _, tc := range []struct {
+		name       string
+		msgCount   int
+		windowSize int
+	}{
+		{"10msgs_w2", 10, 2},
+		{"10msgs_w3", 10, 3},
+		{"12msgs_w2", 12, 2},
+		{"20msgs_w4", 20, 4},
+		{"8msgs_w1", 8, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proc := memory.SlidingWindowMemory(tc.windowSize)
+			messages := makeMessages(tc.msgCount)
+			result, err := proc(context.Background(), messages)
+			if err != nil {
+				t.Fatal(err)
+			}
+			verifyAlternation(t, result)
+
+			// First message should be preserved.
+			if msgText(result[0]) != msgText(messages[0]) {
+				t.Error("first message not preserved")
+			}
+		})
+	}
+}
+
+func TestTokenBudgetMemory_Alternation(t *testing.T) {
+	proc := memory.TokenBudgetMemory(20) // Very tight to force drops
+
+	// Build messages with enough content to exceed the budget.
+	var messages []core.ModelMessage
+	for i := range 10 {
+		if i%2 == 0 {
+			messages = append(messages, core.ModelRequest{
+				Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "This is a user message with enough words to inflate the token count above our threshold number " + string(rune('A'+i))}},
+				Timestamp: time.Now(),
+			})
+		} else {
+			messages = append(messages, core.ModelResponse{
+				Parts:     []core.ModelResponsePart{core.TextPart{Content: "This is an assistant response with plenty of content to drive up the estimated token count significantly " + string(rune('A'+i))}},
+				Timestamp: time.Now(),
+			})
+		}
+	}
+
+	result, err := proc(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have dropped some messages.
+	if len(result) >= len(messages) {
+		t.Fatalf("expected fewer messages, got %d", len(result))
+	}
+
+	verifyAlternation(t, result)
+
+	// First and last should be preserved.
+	if msgText(result[0]) != msgText(messages[0]) {
+		t.Error("first message not preserved")
+	}
+	if msgText(result[len(result)-1]) != msgText(messages[len(messages)-1]) {
+		t.Error("last message not preserved")
+	}
+}
+
+func TestSummaryMemory_Alternation(t *testing.T) {
+	summarizer := core.NewTestModel(core.TextResponse("Summary of the conversation"))
+	proc := memory.SummaryMemory(summarizer, 4)
+
+	// 10 alternating messages (req, resp, req, resp, ...).
+	messages := makeMessages(10)
+	result, err := proc(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyAlternation(t, result)
+
+	// First should be ModelRequest, second should be ModelResponse (summary).
+	if _, ok := result[0].(core.ModelRequest); !ok {
+		t.Errorf("expected ModelRequest at index 0, got %T", result[0])
+	}
+	if _, ok := result[1].(core.ModelResponse); !ok {
+		t.Errorf("expected ModelResponse (summary) at index 1, got %T", result[1])
 	}
 }
