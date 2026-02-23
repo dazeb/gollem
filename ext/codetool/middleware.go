@@ -8419,6 +8419,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	var searchesPerformed []string // grep/glob searches that the agent already did
 	var lspNavigations []string    // LSP lookups (definition, references, hover) already performed
 	var lastAssistantText string   // last assistant text block — captures current approach/thinking
+	hasPlan := false               // whether the agent created a plan via the planning tool
 
 	seenRead := make(map[string]bool)
 	seenModified := make(map[string]bool)
@@ -8589,6 +8590,15 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 							lspNavigations = append(lspNavigations, key)
 						}
 					}
+				case "planning":
+					// Track whether the agent created a plan so we can remind it
+					// to retrieve the plan after context recovery.
+					var args struct {
+						Command string `json:"command"`
+					}
+					if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil && args.Command == "create" {
+						hasPlan = true
+					}
 				case "delegate":
 					var args struct {
 						Task string `json:"task"`
@@ -8744,6 +8754,14 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+	}
+
+	// Remind the agent to retrieve its plan if one was created.
+	// The planning tool's state survives context overflow (closure state),
+	// but the agent won't remember it was using the planning tool.
+	if hasPlan {
+		b.WriteString("ACTIVE PLAN: You created a plan before context overflow. " +
+			"Call `planning get` to retrieve your task list and continue from where you left off.\n\n")
 	}
 
 	// Include the agent's last approach/thinking to maintain continuity.
