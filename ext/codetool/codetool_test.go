@@ -878,6 +878,22 @@ func TestGrep_MaxResultsCountsMatches(t *testing.T) {
 	assertContains(t, result, "truncated at 5 matches")
 }
 
+func TestGrep_ContextSeparatorBetweenFiles(t *testing.T) {
+	// Context blocks from different files should be separated by "---".
+	dir := t.TempDir()
+	writeTestFile(t, dir, "a.txt", "line1\nTARGET\nline3\n")
+	writeTestFile(t, dir, "b.txt", "line1\nTARGET\nline3\n")
+	tool := Grep(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "TARGET", "context_lines": 1}`)
+	// Both files should appear.
+	assertContains(t, result, "a.txt")
+	assertContains(t, result, "b.txt")
+	// There should be "---" separators between the two file blocks.
+	if !strings.Contains(result, "---") {
+		t.Errorf("expected separator between file context blocks in:\n%s", result)
+	}
+}
+
 func TestGrep_EmptyPattern(t *testing.T) {
 	tool := Grep()
 	err := callErr(t, tool, `{"pattern": ""}`)

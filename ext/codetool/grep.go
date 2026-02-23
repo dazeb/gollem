@@ -211,6 +211,12 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 			}
 		}
 	}
+	// Add trailing separator after context blocks so matches from different
+	// files are visually separated. Without this, context from two files
+	// would run together with no delimiter.
+	if lastContextEnd >= 0 {
+		*matches = append(*matches, "---")
+	}
 	return nil
 }
 
