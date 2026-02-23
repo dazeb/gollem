@@ -438,6 +438,12 @@ func isSkippableDir(name string) bool {
 		".rspec",        // RSpec cache
 		".phpunit.cache", // PHPUnit cache
 		".pytest",       // Alternative pytest cache location
+		".bloop",        // Scala Bloop build server cache
+		".nox",          // Python Nox test automation sessions
+		".cpcache",      // Clojure classpath cache
+		".ccls-cache",   // C/C++ ccls language server cache
+		".clangd",       // clangd language server cache
+		".cache-loader", // webpack cache-loader
 		"__fixtures__":  // Test fixture directories (often large data)
 		return true
 	}

@@ -11,7 +11,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -199,13 +201,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &core.ModelHTTPError{
-			Message:    "vertexai API error: " + string(respBody),
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
-			ModelName:  p.model,
-		}
+		return nil, p.parseHTTPError(resp)
 	}
 
 	var apiResp geminiResponse
@@ -243,14 +239,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, &core.ModelHTTPError{
-			Message:    "vertexai API error: " + string(respBody),
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
-			ModelName:  p.model,
-		}
+		return nil, p.parseHTTPError(resp)
 	}
 
 	return newStreamedResponse(resp.Body, p.model), nil
@@ -264,6 +253,27 @@ func (p *Provider) setHeaders(ctx context.Context, req *http.Request) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	return nil
+}
+
+// parseHTTPError constructs a ModelHTTPError from a non-200 response,
+// including Retry-After header parsing for rate-limited responses.
+func (p *Provider) parseHTTPError(resp *http.Response) error {
+	respBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	httpErr := &core.ModelHTTPError{
+		Message:    "vertexai API error: " + string(respBody),
+		StatusCode: resp.StatusCode,
+		Body:       string(respBody),
+		ModelName:  p.model,
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil {
+				httpErr.RetryAfter = time.Duration(secs) * time.Second
+			}
+		}
+	}
+	return httpErr
 }
 
 // Verify Provider implements core.Model.
