@@ -6520,3 +6520,222 @@ MemoryError`
 	})
 }
 
+func TestVerificationCheckpoint_StaleTestWarning(t *testing.T) {
+	// When the agent runs a verification command and then makes 6+ edits
+	// without running tests again, the middleware should inject a "stale test"
+	// reminder.
+	mw, _ := VerificationCheckpoint("/app")
+
+	// Build messages: one verification command + result, then 7 edit calls.
+	var messages []core.ModelMessage
+
+	// Verification run.
+	messages = append(messages, core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.ToolCallPart{
+				ToolName:   "bash",
+				ToolCallID: "verify1",
+				ArgsJSON:   `{"command":"pytest"}`,
+			},
+		},
+	})
+	messages = append(messages, core.ModelRequest{
+		Parts: []core.ModelRequestPart{
+			core.ToolReturnPart{
+				ToolCallID: "verify1",
+				Content:    "3 passed, 2 failed\n[exit code: 1]",
+			},
+		},
+	})
+
+	// 7 edit calls without any verification.
+	for i := 0; i < 7; i++ {
+		messages = append(messages, core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "edit",
+					ToolCallID: fmt.Sprintf("edit%d", i),
+					ArgsJSON:   fmt.Sprintf(`{"path":"solution.py","old_string":"old%d","new_string":"new%d"}`, i, i),
+				},
+			},
+		})
+		messages = append(messages, core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolCallID: fmt.Sprintf("edit%d", i),
+					Content:    "ok",
+				},
+			},
+		})
+	}
+
+	// Call the middleware.
+	var capturedMessages []core.ModelMessage
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		capturedMessages = msgs
+		return &core.ModelResponse{}, nil
+	}
+	mw(context.Background(), messages, &core.ModelSettings{}, &core.ModelRequestParameters{}, next)
+
+	// The last message should be the stale test warning.
+	if len(capturedMessages) == 0 {
+		t.Fatal("expected messages to be passed to next")
+	}
+	lastMsg := capturedMessages[len(capturedMessages)-1]
+	req, ok := lastMsg.(core.ModelRequest)
+	if !ok {
+		t.Fatal("expected last message to be a ModelRequest")
+	}
+	found := false
+	for _, part := range req.Parts {
+		if up, ok := part.(core.UserPromptPart); ok {
+			if strings.Contains(up.Content, "TESTING REMINDER") {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Error("expected stale test warning with 7 edits after verification, but none found")
+	}
+}
+
+func TestVerificationCheckpoint_NoStaleTestWithFewEdits(t *testing.T) {
+	// When the agent makes fewer than 6 edits after verification,
+	// no stale test warning should appear.
+	mw, _ := VerificationCheckpoint("/app")
+
+	var messages []core.ModelMessage
+	// Verification run.
+	messages = append(messages, core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.ToolCallPart{
+				ToolName:   "bash",
+				ToolCallID: "v1",
+				ArgsJSON:   `{"command":"pytest"}`,
+			},
+		},
+	})
+	messages = append(messages, core.ModelRequest{
+		Parts: []core.ModelRequestPart{
+			core.ToolReturnPart{
+				ToolCallID: "v1",
+				Content:    "3 passed\n[exit code: 0]",
+			},
+		},
+	})
+	// Only 3 edits — below threshold.
+	for i := 0; i < 3; i++ {
+		messages = append(messages, core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "edit",
+					ToolCallID: fmt.Sprintf("e%d", i),
+					ArgsJSON:   `{"path":"sol.py","old_string":"a","new_string":"b"}`,
+				},
+			},
+		})
+		messages = append(messages, core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolCallID: fmt.Sprintf("e%d", i),
+					Content:    "ok",
+				},
+			},
+		})
+	}
+
+	var capturedMessages []core.ModelMessage
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		capturedMessages = msgs
+		return &core.ModelResponse{}, nil
+	}
+	mw(context.Background(), messages, &core.ModelSettings{}, &core.ModelRequestParameters{}, next)
+
+	// Check that no stale test warning was injected.
+	for _, msg := range capturedMessages {
+		if req, ok := msg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					if strings.Contains(up.Content, "TESTING REMINDER") {
+						t.Error("should not inject stale test warning with only 3 edits after verification")
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestBuildContextRecoverySummary_TestTrajectory(t *testing.T) {
+	// When the recovery summary contains verification results with test counts,
+	// it should include a compact TEST PROGRESS trajectory.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ToolCallID: "v1",
+					ArgsJSON:   `{"command":"pytest"}`,
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolCallID: "v1",
+					Content:    "2 passed, 8 failed\n[exit code: 1]",
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ToolCallID: "v2",
+					ArgsJSON:   `{"command":"pytest"}`,
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolCallID: "v2",
+					Content:    "5 passed, 5 failed\n[exit code: 1]",
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ToolCallID: "v3",
+					ArgsJSON:   `{"command":"pytest"}`,
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolCallID: "v3",
+					Content:    "5 passed, 5 failed\n[exit code: 1]",
+				},
+			},
+		},
+	}
+
+	summary := buildContextRecoverySummary(messages)
+	if !strings.Contains(summary, "TEST PROGRESS:") {
+		t.Errorf("expected TEST PROGRESS section, got:\n%s", summary)
+	}
+	if !strings.Contains(summary, "2/10") {
+		t.Errorf("expected '2/10' in trajectory, got:\n%s", summary)
+	}
+	if !strings.Contains(summary, "5/10") {
+		t.Errorf("expected '5/10' in trajectory, got:\n%s", summary)
+	}
+	// Last two runs are identical (5/10 → 5/10), so should show stalled indicator.
+	if !strings.Contains(summary, "stalled") {
+		t.Errorf("expected 'stalled' indicator for repeated 5/10, got:\n%s", summary)
+	}
+}
+

@@ -46,6 +46,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 	lastVerifySummary := ""
 	failedCompletionAttempts := 0
 	stagnationWarned := 0 // consecutive fail level at which we last injected guidance
+	staleTestWarned := false // whether we've warned about not running tests after edits
 	startTime := time.Now()
 
 	// Determine effective timeout for skip-checklist logic.
@@ -77,6 +78,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		var runFailed []bool  // whether each verification run failed
 		var runPassed []int   // pass count per run (-1 if unavailable)
 		var runSummary []string
+		editsAfterLastVerify := 0 // file changes since last verification run
 
 		for _, msg := range messages {
 			if resp, ok := msg.(core.ModelResponse); ok {
@@ -89,6 +91,9 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 							// Reset completion counters for each new verification run.
 							failedCompletionAttempts = 0
 							completionAttempts = 0
+							editsAfterLastVerify = 0
+						} else if tc.ToolName == "edit" || tc.ToolName == "multi_edit" || tc.ToolName == "write" {
+							editsAfterLastVerify++
 						}
 					}
 				}
@@ -152,6 +157,8 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		}
 
 		sw := stagnationWarned
+		stw := staleTestWarned
+		ealv := editsAfterLastVerify
 		mu.Unlock()
 
 		// Inject regression warning when the agent's last change broke tests.
@@ -190,6 +197,33 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 				},
 			}
 			messages = append(messages, stagnationMsg)
+		}
+
+		// Detect "stale test" — agent making many file edits without re-running
+		// tests. This catches the failure mode where the agent runs tests once,
+		// then enters a prolonged "edit only" phase without verifying changes.
+		const staleTestThreshold = 6
+		if verified && !stw && ealv >= staleTestThreshold {
+			mu.Lock()
+			staleTestWarned = true
+			mu.Unlock()
+			guidance := fmt.Sprintf("TESTING REMINDER: You've made %d file changes since your last test run. "+
+				"Run tests now to verify your changes work. Iterative test→fix→test cycles "+
+				"catch issues early and are more effective than making many changes before testing.",
+				ealv)
+			fmt.Fprintf(os.Stderr, "[gollem] verification: stale test — %d edits since last verify\n", ealv)
+			staleMsg := core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{Content: guidance},
+				},
+			}
+			messages = append(messages, staleMsg)
+		}
+		// Reset stale test warning when a new verification resets the counter.
+		if stw && ealv < staleTestThreshold {
+			mu.Lock()
+			staleTestWarned = false
+			mu.Unlock()
 		}
 
 		return next(ctx, messages, settings, params)

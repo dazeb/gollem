@@ -6262,6 +6262,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	var filesRead []string
 	var filesModified []string
 	var verifyRuns []string
+	var testTrajectory []string // compact "passed/total" per verification run
 	var packagesInstalled []string
 	var subagentTasks []string
 	var lastAssistantText string // last assistant text block — captures current approach/thinking
@@ -6390,6 +6391,10 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 						}
 					}
 					verifyRuns = append(verifyRuns, fmt.Sprintf("`%s` → %s", pendingVerifyCmd, status))
+					// Extract test counts for compact trajectory.
+					if p, f, countOK := extractTestCounts(content); countOK {
+						testTrajectory = append(testTrajectory, fmt.Sprintf("%d/%d", p, p+f))
+					}
 					pendingVerifyCallID = ""
 					pendingVerifyCmd = ""
 				}
@@ -6449,6 +6454,17 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+	}
+
+	// Compact test trajectory shows progress at a glance after context recovery.
+	if len(testTrajectory) > 0 {
+		b.WriteString("TEST PROGRESS: ")
+		b.WriteString(strings.Join(testTrajectory, " → "))
+		if len(testTrajectory) >= 2 &&
+			testTrajectory[len(testTrajectory)-1] == testTrajectory[len(testTrajectory)-2] {
+			b.WriteString(" (stalled — no improvement between last runs)")
+		}
+		b.WriteString("\nContinue from where you left off. Run tests to see current state.\n\n")
 	}
 
 	if len(packagesInstalled) > 0 {
