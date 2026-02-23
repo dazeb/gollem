@@ -1320,6 +1320,17 @@ func TestIsTransientBashFailure(t *testing.T) {
 		// Connection refused IS transient for package install commands.
 		{"conn refused apt", 1, "Connection refused", "apt-get install nginx", true},
 		{"conn refused pip", 1, "Connection refused", "pip install flask", true},
+		// HTTP rate limiting.
+		{"rate limit 429", 1, "HTTP 429 Too Many Requests", "pip install foo", true},
+		{"rate limit generic", 1, "Rate limit exceeded, please retry", "npm install", true},
+		// HTTP 503 / 502.
+		{"service unavailable", 1, "503 Service Unavailable", "cargo fetch", true},
+		{"bad gateway", 1, "502 Bad Gateway", "go mod download", true},
+		// Python/Node connection errors.
+		{"python connectionerror", 1, "ConnectionError: HTTPSConnectionPool(host='pypi.org')", "pip install flask", true},
+		{"node econnreset", 1, "Error: ECONNRESET", "npm install express", true},
+		{"node etimedout", 1, "Error: ETIMEDOUT", "npm install express", true},
+		{"socket hang up", 1, "Error: socket hang up", "npm install", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

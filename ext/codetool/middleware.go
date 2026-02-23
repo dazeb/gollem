@@ -871,6 +871,49 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-install Haskell Cabal dependencies (*.cabal without stack.yaml).
+	// Stack is handled above; this covers Cabal-only projects.
+	if networkAvailable && !depsAlreadyInstalled {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "stack.yaml")) {
+				break // already handled by Stack section above
+			}
+			if matches, _ := filepath.Glob(filepath.Join(dir, "*.cabal")); len(matches) > 0 {
+				if runQuiet(dir, "which", "cabal") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Cabal dependencies in %s\n", dir)
+					runQuietTimeout(dir, 30*time.Second, "cabal", "update")
+					runQuietTimeout(dir, 120*time.Second, "cabal", "build", "--only-dependencies")
+					parts = append(parts, "AUTO-INSTALLED: Cabal dependencies (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
+	// Auto-resolve SBT (Scala) dependencies.
+	if networkAvailable && !depsAlreadyInstalled {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "build.sbt")) && runQuiet(dir, "which", "sbt") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-resolving SBT dependencies in %s\n", dir)
+				runQuietTimeout(dir, 120*time.Second, "sbt", "update")
+				parts = append(parts, "AUTO-INSTALLED: SBT dependencies (already done, no need to install again)")
+				break
+			}
+		}
+	}
+
+	// Auto-install Perl dependencies from cpanfile.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "cpanfile")) && runQuiet(dir, "which", "cpanm") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Perl dependencies from cpanfile in %s\n", dir)
+				runQuietTimeout(dir, 120*time.Second, "cpanm", "--installdeps", "--notest", "-q", ".")
+				parts = append(parts, "AUTO-INSTALLED: Perl dependencies via cpanm (already done, no need to install again)")
+				break
+			}
+		}
+	}
+
 	// Auto-detect and install Python packages from source imports.
 	// When no requirements.txt exists, scan .py files for third-party imports
 	// and install them. This saves 2-3 turns of ModuleNotFoundError debugging.

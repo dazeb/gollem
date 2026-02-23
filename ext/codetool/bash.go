@@ -4518,6 +4518,14 @@ func isTransientBashFailure(exitCode int, output string, command string) bool {
 		"connection reset by peer",
 		"ssl_error_syscall",
 		"read: connection reset",
+		"429 too many requests",    // HTTP rate limiting
+		"rate limit exceeded",      // generic rate limiting
+		"service unavailable",      // HTTP 503
+		"502 bad gateway",          // reverse proxy transient
+		"connectionerror",          // Python requests ConnectionError
+		"econnreset",               // Node.js connection reset
+		"etimedout",                // Node.js timeout
+		"socket hang up",           // Node.js socket drop
 	}
 	for _, p := range transientPatterns {
 		if strings.Contains(lower, p) {
