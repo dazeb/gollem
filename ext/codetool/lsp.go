@@ -55,6 +55,11 @@ type lspServer struct {
 	// Background reader routes responses here.
 	responses chan jsonrpcResponse
 	readDone  chan struct{} // closed when readLoop exits
+
+	// Push diagnostics: stored from textDocument/publishDiagnostics
+	// notifications. Used as fallback when pull diagnostics aren't supported.
+	diagMu      sync.Mutex
+	diagnostics map[string][]lspDiagnostic // URI → diagnostics
 }
 
 // fileState tracks the sync state of an opened file.
@@ -322,13 +327,14 @@ func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) 
 	}
 
 	srv := &lspServer{
-		cmd:       cmd,
-		stdin:     stdin,
-		lang:      lang,
-		workDir:   workDir,
-		openFiles: make(map[string]fileState),
-		responses: make(chan jsonrpcResponse, 16),
-		readDone:  make(chan struct{}),
+		cmd:         cmd,
+		stdin:       stdin,
+		lang:        lang,
+		workDir:     workDir,
+		openFiles:   make(map[string]fileState),
+		responses:   make(chan jsonrpcResponse, 16),
+		readDone:    make(chan struct{}),
+		diagnostics: make(map[string][]lspDiagnostic),
 	}
 
 	// Start background reader BEFORE the initialize handshake so that
@@ -393,9 +399,41 @@ func (s *lspServer) readLoop(reader *bufio.Reader) {
 			}
 
 		default:
-			// Notification — discard.
+			// Notification — check for diagnostics, discard others.
+			if hasMethod {
+				var method string
+				json.Unmarshal(raw["method"], &method) //nolint:errcheck
+				if method == "textDocument/publishDiagnostics" {
+					s.storeDiagnostics(raw["params"])
+				}
+			}
 		}
 	}
+}
+
+// storeDiagnostics captures push diagnostics from textDocument/publishDiagnostics.
+// These are used as a fallback when the server doesn't support pull diagnostics.
+func (s *lspServer) storeDiagnostics(params json.RawMessage) {
+	if params == nil {
+		return
+	}
+	var diag struct {
+		URI         string           `json:"uri"`
+		Diagnostics []lspDiagnostic  `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(params, &diag); err != nil || diag.URI == "" {
+		return
+	}
+	s.diagMu.Lock()
+	s.diagnostics[diag.URI] = diag.Diagnostics
+	s.diagMu.Unlock()
+}
+
+// getDiagnostics returns stored push diagnostics for a file URI.
+func (s *lspServer) getDiagnostics(uri string) []lspDiagnostic {
+	s.diagMu.Lock()
+	defer s.diagMu.Unlock()
+	return s.diagnostics[uri]
 }
 
 // respondToServerRequest sends a null-result response to a server-initiated
@@ -995,32 +1033,36 @@ func lspHover(ctx context.Context, srv *lspServer, filePath string, line, char i
 }
 
 func lspDiagnostics(ctx context.Context, srv *lspServer, filePath, workDir string) (string, error) {
-	// Diagnostics are pushed asynchronously via textDocument/publishDiagnostics.
-	// We use a pull-based approach: call textDocument/diagnostic (LSP 3.17+).
-	// If that fails, tell the user to build/compile instead.
-	result, err := srv.call(ctx, "textDocument/diagnostic", map[string]any{
-		"textDocument": map[string]any{"uri": fileURI(filePath)},
-	})
-	if err != nil {
-		// Pull diagnostics not supported — fallback message.
-		return "This language server doesn't support pull diagnostics. " +
-			"Use bash to run the compiler/linter for diagnostics (e.g., 'go vet', 'pyright', 'tsc --noEmit').", nil
-	}
-
-	// Result is a DocumentDiagnosticReport with items or relatedDocuments.
-	var report struct {
-		Kind  string          `json:"kind"`
-		Items []lspDiagnostic `json:"items"`
-	}
-	if err := json.Unmarshal(result, &report); err != nil {
-		return "Failed to parse diagnostics.", nil
-	}
-
 	relPath := filePath
 	if rel, err := filepath.Rel(workDir, filePath); err == nil && !strings.HasPrefix(rel, "..") {
 		relPath = rel
 	}
-	return formatDiagnostics(report.Items, relPath), nil
+
+	// Try pull-based diagnostics first (LSP 3.17+).
+	result, err := srv.call(ctx, "textDocument/diagnostic", map[string]any{
+		"textDocument": map[string]any{"uri": fileURI(filePath)},
+	})
+	if err == nil {
+		var report struct {
+			Kind  string          `json:"kind"`
+			Items []lspDiagnostic `json:"items"`
+		}
+		if err := json.Unmarshal(result, &report); err == nil {
+			return formatDiagnostics(report.Items, relPath), nil
+		}
+	}
+
+	// Fall back to stored push diagnostics from textDocument/publishDiagnostics.
+	// Most LSP servers (gopls, pyright, typescript-language-server, etc.) push
+	// diagnostics after didOpen/didChange — these are captured by readLoop.
+	uri := fileURI(filePath)
+	if diags := srv.getDiagnostics(uri); diags != nil {
+		return formatDiagnostics(diags, relPath), nil
+	}
+
+	// No diagnostics available from either source.
+	return "No diagnostics available yet. The language server may need more time to analyze, " +
+		"or use bash to run the compiler/linter directly (e.g., 'go vet', 'pyright', 'tsc --noEmit').", nil
 }
 
 func lspSymbols(ctx context.Context, srv *lspServer, query, workDir string) (string, error) {

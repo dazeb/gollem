@@ -503,6 +503,53 @@ func TestCallTimeout(t *testing.T) {
 	}
 }
 
+func TestStoreDiagnostics(t *testing.T) {
+	// Verify that readLoop captures textDocument/publishDiagnostics notifications.
+	clientRead, serverWrite, _ := os.Pipe()
+	_, clientWrite, _ := os.Pipe()
+	defer clientRead.Close()
+	defer serverWrite.Close()
+	defer clientWrite.Close()
+
+	srv := &lspServer{
+		stdin:       clientWrite,
+		openFiles:   make(map[string]fileState),
+		responses:   make(chan jsonrpcResponse, 16),
+		readDone:    make(chan struct{}),
+		diagnostics: make(map[string][]lspDiagnostic),
+	}
+
+	go srv.readLoop(bufio.NewReaderSize(clientRead, 64*1024))
+
+	// Simulate server pushing diagnostics.
+	diagNotif := `{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file:///project/main.go","diagnostics":[{"range":{"start":{"line":9,"character":4},"end":{"line":9,"character":10}},"severity":1,"message":"undefined: foo"}]}}`
+	writeMessage(serverWrite, []byte(diagNotif))
+
+	// Also send a response so we can synchronize (know the notification was processed).
+	resp := `{"jsonrpc":"2.0","id":1,"result":null}`
+	writeMessage(serverWrite, []byte(resp))
+
+	// Wait for the response to arrive (meaning the notification was also processed).
+	select {
+	case <-srv.responses:
+		// Good, notification should have been processed first.
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for response")
+	}
+
+	// Check stored diagnostics.
+	diags := srv.getDiagnostics("file:///project/main.go")
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d", len(diags))
+	}
+	if diags[0].Message != "undefined: foo" {
+		t.Errorf("expected 'undefined: foo', got %q", diags[0].Message)
+	}
+	if diags[0].Severity != 1 {
+		t.Errorf("expected severity 1, got %d", diags[0].Severity)
+	}
+}
+
 // isModelRetryError checks if the error chain contains a ModelRetryError.
 func isModelRetryError(err error, target **core.ModelRetryError) bool {
 	for err != nil {
