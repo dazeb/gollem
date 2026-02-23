@@ -401,6 +401,10 @@ func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.A
 
 		if envContext != "" && len(messages) > 0 {
 			// Inject environment context into the first request's system parts.
+			// Create a new slice to avoid mutating the caller's messages (which
+			// may share the same backing array as state.messages). Without this,
+			// the envPart accumulates on every model call in the persistent
+			// message history.
 			if req, ok := messages[0].(core.ModelRequest); ok {
 				envPart := core.SystemPromptPart{
 					Content: envContext,
@@ -409,7 +413,10 @@ func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.A
 				newParts = append(newParts, envPart)
 				newParts = append(newParts, req.Parts...)
 				req.Parts = newParts
-				messages[0] = req
+				newMessages := make([]core.ModelMessage, len(messages))
+				copy(newMessages, messages)
+				newMessages[0] = req
+				messages = newMessages
 			}
 		}
 

@@ -12549,3 +12549,67 @@ BUILD FAILED in 2s
 	}
 }
 
+func TestContextInjectionMiddleware_DoesNotMutateInput(t *testing.T) {
+	// ContextInjectionMiddleware prepends environment context to the first
+	// message's system parts. Before the fix, it mutated the caller's
+	// messages slice directly (messages[0] = req), which caused envPart to
+	// accumulate on every model call when the middleware shared a backing
+	// array with the agent's persistent message history.
+
+	dir := t.TempDir()
+	mw := ContextInjectionMiddleware(dir)
+	ctx := context.Background()
+
+	originalPart := core.UserPromptPart{Content: "Hello"}
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{originalPart},
+		},
+	}
+
+	// Capture the original first message for comparison.
+	origReq := messages[0].(core.ModelRequest)
+	origPartsLen := len(origReq.Parts)
+
+	var receivedMsgs []core.ModelMessage
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		receivedMsgs = msgs
+		return &core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "ok"}},
+		}, nil
+	}
+
+	_, err := mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The middleware should have injected env context into what next() received.
+	if len(receivedMsgs) == 0 {
+		t.Fatal("next received no messages")
+	}
+	nextReq, ok := receivedMsgs[0].(core.ModelRequest)
+	if !ok {
+		t.Fatal("next's first message is not a ModelRequest")
+	}
+	if len(nextReq.Parts) <= origPartsLen {
+		t.Error("expected middleware to prepend env context, but parts count did not increase")
+	}
+
+	// The original messages slice must NOT have been mutated.
+	afterReq := messages[0].(core.ModelRequest)
+	if len(afterReq.Parts) != origPartsLen {
+		t.Errorf("original messages[0] was mutated: had %d parts, now has %d", origPartsLen, len(afterReq.Parts))
+	}
+
+	// Call a second time to verify env context doesn't accumulate.
+	_, err = mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("unexpected error on second call: %v", err)
+	}
+	afterReq2 := messages[0].(core.ModelRequest)
+	if len(afterReq2.Parts) != origPartsLen {
+		t.Errorf("original messages[0] mutated on second call: had %d parts, now has %d", origPartsLen, len(afterReq2.Parts))
+	}
+}
+
