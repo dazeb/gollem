@@ -350,7 +350,8 @@ func isSkippableDir(name string) bool {
 		".vs",          // Visual Studio
 		".eclipse",     // Eclipse metadata
 		".settings",    // Eclipse settings
-		"__snapshots__", // Jest test snapshots
+		"__snapshots__",       // Jest test snapshots
+		".ipynb_checkpoints",  // Jupyter notebook checkpoints
 		// Language-specific build/cache directories.
 		".stack-work", // Haskell Stack build artifacts
 		"_opam",       // OCaml opam local switch
@@ -426,7 +427,7 @@ func isBinaryFilename(name string) bool {
 		".arrow", ".avro", ".orc",                       // columnar data formats
 		".cab", ".deb", ".rpm", ".snap", ".flatpak",     // packages
 		".lz4", ".lzo", ".br",                           // additional compression
-		".DS_Store", ".lock":                            // system/lock files
+		".DS_Store":                                     // macOS metadata
 		return true
 	}
 	return false

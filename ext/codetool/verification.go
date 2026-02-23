@@ -644,7 +644,8 @@ func autoCleanupIntermediates(workDir string) int {
 		".nimcache":     true, // Nim compilation cache (dot variant)
 		".zig-cache":    true, // Zig build cache
 		"zig-out":       true, // Zig build output
-		".dub":          true, // D language package cache
+		".dub":                true, // D language package cache
+		".ipynb_checkpoints":  true, // Jupyter notebook checkpoints
 	}
 
 	// Intermediate file extensions to remove: .pyc (Python), .class (Java),
