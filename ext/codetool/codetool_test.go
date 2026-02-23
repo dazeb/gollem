@@ -1277,6 +1277,11 @@ func TestIsDestructiveTestCommand(t *testing.T) {
 		{"chmod tests", "chmod +x /tests/test.sh", true},
 		{"tee to tests", "echo data | tee /tests/out.txt", true},
 		{"truncate tests", "truncate -s 0 /tests/test.sh", true},
+		{"perl -i on tests", "perl -i -pe 's/old/new/' /tests/test.py", true},
+		{"perl -pi on tests", "perl -pi -e 's/old/new/' /tests/test.sh", true},
+		{"dd to tests", "dd if=/dev/zero of=/tests/test.sh bs=1 count=0", true},
+		{"patch tests", "patch /tests/test.py < fix.patch", true},
+		{"install to tests", "install -m 755 solution.py /tests/test.py", true},
 
 		// Non-destructive operations — should be allowed.
 		{"run test script", "bash /tests/test.sh", false},
@@ -1287,6 +1292,9 @@ func TestIsDestructiveTestCommand(t *testing.T) {
 		{"diff with tests", "diff output.txt /tests/expected.txt", false},
 		{"grep in tests", "grep -r 'pattern' /tests/", false},
 		{"no tests ref", "echo hello > /app/output.txt", false},
+		// pip/npm/apt install with /tests/ reference should NOT be blocked.
+		{"pip install tests dep", "pip install /tests/requirements.txt", false},
+		{"npm install in tests", "npm install --prefix /tests/", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -265,101 +265,105 @@ func Bash(opts ...Option) core.Tool {
 			}
 
 			// Add hints for common errors — saves turns of troubleshooting.
+			// Compute combined output once to avoid repeated string concatenation
+			// (25+ hint functions would each allocate a new temp string).
+			combinedOutput := errStr + outStr
+
 			if exitCode == 127 || strings.Contains(errStr, "command not found") || strings.Contains(errStr, "No such file or directory") {
 				if hint := commandNotFoundHint(errStr); hint != "" {
 					result += "\n" + hint
 				}
 			}
 			if strings.Contains(errStr, "ModuleNotFoundError") || strings.Contains(errStr, "ImportError") || strings.Contains(outStr, "ModuleNotFoundError") {
-				if hint := moduleNotFoundHint(errStr+outStr, cfg.WorkDir); hint != "" {
+				if hint := moduleNotFoundHint(combinedOutput, cfg.WorkDir); hint != "" {
 					result += "\n" + hint
 				}
 			}
-			if hint := transientErrorHint(errStr + outStr, exitCode); hint != "" {
+			if hint := transientErrorHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
 			if hint := signalHint(exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := pythonErrorHint(errStr + outStr, exitCode); hint != "" {
+			if hint := pythonErrorHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := compilationErrorHint(errStr + outStr, exitCode); hint != "" {
+			if hint := compilationErrorHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := jsonErrorHint(errStr + outStr, exitCode); hint != "" {
+			if hint := jsonErrorHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := encodingErrorHint(errStr + outStr, exitCode); hint != "" {
+			if hint := encodingErrorHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := permissionHint(errStr + outStr, exitCode); hint != "" {
+			if hint := permissionHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := addressInUseHint(errStr + outStr, exitCode); hint != "" {
+			if hint := addressInUseHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := connectionRefusedHint(errStr + outStr, exitCode); hint != "" {
+			if hint := connectionRefusedHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := systemctlNotFoundHint(errStr + outStr, exitCode); hint != "" {
+			if hint := systemctlNotFoundHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := nodeErrorHint(errStr+outStr, exitCode, cfg.WorkDir); hint != "" {
+			if hint := nodeErrorHint(combinedOutput, exitCode, cfg.WorkDir); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := outputMismatchHint(errStr+outStr, exitCode, cfg.WorkDir); hint != "" {
+			if hint := outputMismatchHint(combinedOutput, exitCode, cfg.WorkDir); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := subprocessTimeoutHint(errStr + outStr, exitCode); hint != "" {
+			if hint := subprocessTimeoutHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := sharedLibraryHint(errStr + outStr, exitCode); hint != "" {
+			if hint := sharedLibraryHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := diskSpaceHint(errStr + outStr, exitCode); hint != "" {
+			if hint := diskSpaceHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := makefileHint(errStr + outStr, exitCode); hint != "" {
+			if hint := makefileHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := cmakeHint(errStr + outStr, exitCode); hint != "" {
+			if hint := cmakeHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := cargoHint(errStr + outStr, exitCode); hint != "" {
+			if hint := cargoHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := goModuleHint(errStr + outStr, exitCode); hint != "" {
+			if hint := goModuleHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := archiveHint(errStr + outStr, exitCode); hint != "" {
+			if hint := archiveHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := databaseHint(errStr + outStr, exitCode); hint != "" {
+			if hint := databaseHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := memoryHint(errStr + outStr, exitCode); hint != "" {
+			if hint := memoryHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := browserHint(errStr + outStr, exitCode); hint != "" {
+			if hint := browserHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := sslHint(errStr + outStr, exitCode); hint != "" {
+			if hint := sslHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := shellLimitHint(errStr + outStr, exitCode); hint != "" {
+			if hint := shellLimitHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := perlModuleHint(errStr + outStr, exitCode); hint != "" {
+			if hint := perlModuleHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := rubyGemHint(errStr + outStr, exitCode); hint != "" {
+			if hint := rubyGemHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := javaExceptionHint(errStr + outStr, exitCode); hint != "" {
+			if hint := javaExceptionHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
-			if hint := elixirHint(errStr + outStr, exitCode); hint != "" {
+			if hint := elixirHint(combinedOutput, exitCode); hint != "" {
 				result += "\n" + hint
 			}
 
@@ -465,9 +469,11 @@ func Bash(opts ...Option) core.Tool {
 					}
 					lastCompileErrorFingerprint = fp
 				}
-				// Fallback: compute compilation summary from truncated output for long builds.
-				if len(outStr+errStr) > 2000 {
-					if summary := compilationErrorSummary(outStr+errStr, exitCode); summary != "" {
+				// Fallback: compute compilation summary from full output for long builds.
+				// Use fullCombined (pre-truncation) to avoid losing error lines
+				// that may have been cut during output truncation.
+				if len(fullCombined) > 2000 {
+					if summary := compilationErrorSummary(fullCombined, exitCode); summary != "" {
 						result += "\n" + summary
 					}
 				}
@@ -4920,6 +4926,30 @@ func isDestructiveTestCommand(cmd string) bool {
 
 	// truncate on /tests/ files.
 	if strings.Contains(lower, "truncate ") && strings.Contains(cmd, "/tests/") {
+		return true
+	}
+
+	// perl -i / perl -pi (in-place edit) on /tests/ files.
+	if (strings.Contains(lower, "perl ") || strings.Contains(lower, "perl\t")) &&
+		(strings.Contains(lower, " -i") || strings.Contains(lower, " -pi")) &&
+		strings.Contains(cmd, "/tests/") {
+		return true
+	}
+
+	// dd writing to /tests/ files (dd of=/tests/...).
+	if strings.Contains(lower, "dd ") && strings.Contains(cmd, "of=/tests/") {
+		return true
+	}
+
+	// patch applying to /tests/ files.
+	if strings.Contains(lower, "patch ") && strings.Contains(cmd, "/tests/") {
+		return true
+	}
+
+	// install (coreutils) targeting /tests/ files.
+	if strings.Contains(lower, "install ") && strings.Contains(cmd, "/tests/") &&
+		!strings.Contains(lower, "pip install") && !strings.Contains(lower, "npm install") &&
+		!strings.Contains(lower, "apt install") && !strings.Contains(lower, "apt-get install") {
 		return true
 	}
 
