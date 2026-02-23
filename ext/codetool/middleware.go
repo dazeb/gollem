@@ -392,11 +392,21 @@ func discoverEnvironment(workDir string) string {
 	lspServers := []struct{ name, cmd string }{
 		{"gopls (Go)", "gopls"},
 		{"pyright (Python)", "pyright-langserver"},
+		{"pylsp (Python)", "pylsp"},
 		{"typescript-language-server (TS/JS)", "typescript-language-server"},
 		{"rust-analyzer (Rust)", "rust-analyzer"},
 		{"clangd (C/C++)", "clangd"},
 		{"haskell-language-server (Haskell)", "haskell-language-server-wrapper"},
 		{"zls (Zig)", "zls"},
+		{"solargraph (Ruby)", "solargraph"},
+		{"lua-language-server (Lua)", "lua-language-server"},
+		{"jdtls (Java)", "jdtls"},
+		{"OmniSharp (C#)", "OmniSharp"},
+		{"kotlin-language-server (Kotlin)", "kotlin-language-server"},
+		{"sourcekit-lsp (Swift)", "sourcekit-lsp"},
+		{"metals (Scala)", "metals"},
+		{"intelephense (PHP)", "intelephense"},
+		{"ocamllsp (OCaml)", "ocamllsp"},
 	}
 	for _, ls := range lspServers {
 		if runQuiet(workDir, "which", ls.cmd) != "" {

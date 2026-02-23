@@ -89,6 +89,20 @@ func languageForFile(name string) string {
 		return "zig"
 	case ".cs":
 		return "csharp"
+	case ".kt", ".kts":
+		return "kotlin"
+	case ".swift":
+		return "swift"
+	case ".ex", ".exs":
+		return "elixir"
+	case ".scala", ".sc":
+		return "scala"
+	case ".php":
+		return "php"
+	case ".dart":
+		return "dart"
+	case ".ml", ".mli":
+		return "ocaml"
 	default:
 		return ""
 	}
@@ -136,6 +150,29 @@ var serverConfigs = map[string][]lspServerConfig{
 	},
 	"csharp": {
 		{command: "OmniSharp", args: []string{"--languageserver"}, installHint: "install OmniSharp"},
+	},
+	"kotlin": {
+		{command: "kotlin-language-server", args: nil, installHint: "install kotlin-language-server from https://github.com/fwcd/kotlin-language-server"},
+	},
+	"swift": {
+		{command: "sourcekit-lsp", args: nil, installHint: "install via Xcode or swift toolchain"},
+	},
+	"elixir": {
+		{command: "elixir-ls", args: nil, installHint: "install elixir-ls from https://github.com/elixir-lsp/elixir-ls"},
+		{command: "nextls", args: []string{"--stdio"}, installHint: "mix escript.install hex next_ls"},
+	},
+	"scala": {
+		{command: "metals", args: nil, installHint: "install metals from https://scalameta.org/metals/"},
+	},
+	"php": {
+		{command: "intelephense", args: []string{"--stdio"}, installHint: "npm i -g intelephense"},
+		{command: "phpactor", args: []string{"language-server"}, installHint: "install phpactor from https://phpactor.readthedocs.io/"},
+	},
+	"dart": {
+		{command: "dart", args: []string{"language-server", "--protocol=lsp"}, installHint: "install Dart SDK from https://dart.dev/get-dart"},
+	},
+	"ocaml": {
+		{command: "ocamllsp", args: nil, installHint: "opam install ocaml-lsp-server"},
 	},
 }
 
@@ -736,7 +773,7 @@ func LSP(opts ...Option) core.Tool {
 			}
 			if lang == "" && params.Method != "symbols" {
 				return "", &core.ModelRetryError{
-					Message: fmt.Sprintf("unsupported file type %q — LSP supports: .go, .py, .ts, .js, .rs, .c, .cpp, .hs", filepath.Ext(params.File)),
+					Message: fmt.Sprintf("unsupported file type %q — LSP supports: .go, .py, .ts, .js, .rs, .c, .cpp, .hs, .java, .rb, .lua, .zig, .cs, .kt, .swift, .ex, .scala, .php, .dart, .ml", filepath.Ext(params.File)),
 				}
 			}
 			if lang == "" {

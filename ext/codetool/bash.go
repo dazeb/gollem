@@ -5628,6 +5628,21 @@ func isLongRunningCommand(cmd string) bool {
 		"zig test",                      // Zig tests
 		"nim c ", "nim compile",         // Nim compilation
 		"v test",                        // V language tests
+		"gleam test",                    // Gleam tests
+		"bun test",                      // Bun tests
+		"bun run ",                      // Bun scripts
+		"poetry run ",                   // Poetry scripts
+		"pdm run ",                      // PDM scripts
+		"uv run ",                       // uv scripts
+		"nox ", "nox -s",                // Nox test sessions
+		"tox ", "tox -e",                // Tox test environments
+		"hatch run ",                    // Hatch scripts
+		"deno test",                     // Deno tests
+		"swift test",                    // Swift package tests
+		"gleam run",                     // Gleam execution
+		"mix phx.",                      // Phoenix (Elixir) tasks
+		"ghci ",                         // GHCi interactive
+		"scala ",                        // Scala execution
 	}
 	for _, p := range longPatterns {
 		if strings.Contains(lower, p) {
@@ -5653,6 +5668,13 @@ func timeoutContextHint(cmd string) string {
 		"redis-server", "mongod", "postgres",
 		"java -jar", "spring-boot:run",
 		"cargo run", "go run",
+		"deno run --allow-net", "deno serve",
+		"bun run dev", "bun run serve",
+		"mix phx.server",          // Phoenix (Elixir)
+		"iex -s mix phx.server",   // Phoenix interactive
+		"caddy run", "caddy start", // Caddy web server
+		"hypercorn", "daphne",     // ASGI servers
+		"php -s ", "php artisan serve", // PHP built-in server
 	}
 	for _, p := range serverPatterns {
 		if strings.Contains(lower, p) {
@@ -5726,6 +5748,22 @@ func testTimeoutOptimizationHint(cmd string) string {
 		return "[optimization hints: (1) use array keys for O(1) lookups (isset > in_array), " +
 			"(2) avoid array_merge in loops (use array_push or []), (3) use generators for large datasets, " +
 			"(4) pre-compute values instead of recalculating in loops]"
+	case strings.Contains(lower, "zig test") || strings.Contains(lower, "zig build"):
+		return "[optimization hints: (1) use std.HashMap for O(1) lookups, (2) use SIMD builtins for numeric operations, " +
+			"(3) avoid unnecessary allocations — prefer stack and comptime, (4) use @prefetch for memory-bound loops]"
+	case strings.Contains(lower, "nim c") || strings.Contains(lower, "nimble test"):
+		return "[optimization hints: (1) compile with -d:release for optimizations, (2) use Table for O(1) lookups, " +
+			"(3) avoid seq copies in loops — use openArray, (4) use --gc:arc for deterministic memory management]"
+	case strings.Contains(lower, "swift test") || strings.Contains(lower, "swift build"):
+		return "[optimization hints: (1) use Dictionary/Set for O(1) lookups, (2) use value types (struct) over reference types (class) for small data, " +
+			"(3) use ContiguousArray instead of Array for non-bridged types, (4) avoid ARC overhead — use unowned/weak refs carefully]"
+	case strings.Contains(lower, "gleam test") || strings.Contains(lower, "gleam run"):
+		return "[optimization hints: (1) use dict for O(1) lookups instead of list.contains, " +
+			"(2) use iterators/streams for lazy evaluation, (3) avoid repeated list traversals, " +
+			"(4) if targeting Erlang, leverage OTP concurrency for parallelism]"
+	case strings.Contains(lower, "deno test") || strings.Contains(lower, "deno run"):
+		return "[optimization hints: (1) use Map/Set for O(1) lookups, (2) use TypedArrays for numeric data, " +
+			"(3) avoid unnecessary object spread/creation in loops, (4) use Web Streams for large data processing]"
 	}
 
 	return ""
@@ -5781,6 +5819,15 @@ func isBuildCommand(cmd string) bool {
 		"crystal build", // Crystal
 		"dmd ",        // D language (reference compiler)
 		"v build", "v run", // V language
+		"bun install",       // Bun package manager
+		"bun build",         // Bun bundler
+		"gleam build",       // Gleam
+		"mix deps.get",      // Elixir dependencies
+		"stack install",     // Haskell
+		"cargo check",       // Rust quick check
+		"elixirc ",          // Elixir compilation
+		"scalac ",           // Scala compilation
+		"ghc ",              // GHC direct compilation
 	}
 	for _, p := range buildPatterns {
 		if strings.HasPrefix(lower, p) || strings.Contains(lower, " && "+p) || strings.Contains(lower, "; "+p) {
