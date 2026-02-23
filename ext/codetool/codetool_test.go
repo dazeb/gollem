@@ -750,6 +750,33 @@ func TestAutoCorrectWhitespace(t *testing.T) {
 			t.Errorf("expected tab indentation in adjusted new, got: %q", adjustedNew)
 		}
 	})
+
+	t.Run("indent_change_correct_tab_count", func(t *testing.T) {
+		// Verify that when the model adds 1 indent level (4 spaces → 8 spaces)
+		// and the file uses tabs, the result has exactly 2 tabs (not 8 tabs).
+		// oldStr is at 4 spaces = 1 tab level. newStr wraps in if, so the
+		// inner line goes from 4 spaces → 12 spaces (3 levels).
+		// Actual is 1 tab → result should be 3 tabs (not 12 tabs).
+		oldStr := "    fmt.Println(\"hello\")"
+		newStr := "    if true {\n            fmt.Println(\"hello\")\n    }"
+		_, adjustedNew, ok := autoCorrectWhitespace(content, oldStr, newStr)
+		if !ok {
+			t.Fatal("expected auto-correct to succeed")
+		}
+		// The "if true {" line has same indent as old (4 spaces) → should be 1 tab.
+		adjustedLines := strings.Split(adjustedNew, "\n")
+		if len(adjustedLines) < 3 {
+			t.Fatalf("expected 3 lines, got %d: %q", len(adjustedLines), adjustedNew)
+		}
+		// First line: "if true {" at same indent → 1 tab.
+		if adjustedLines[0] != "\tif true {" {
+			t.Errorf("expected first line to be \"\\tif true {\", got %q", adjustedLines[0])
+		}
+		// Inner line: 12 spaces → delta = 12-4 = 8, actual=4, target=12 → 3 tabs.
+		if adjustedLines[1] != "\t\t\tfmt.Println(\"hello\")" {
+			t.Errorf("expected inner line to be \"\\t\\t\\tfmt.Println(\\\"hello\\\")\", got %q", adjustedLines[1])
+		}
+	})
 }
 
 func TestAutoCorrectLineTrim(t *testing.T) {
@@ -12288,6 +12315,74 @@ func TestGrep_BraceInclude(t *testing.T) {
 	assertContains(t, result, "util.py")
 	if strings.Contains(result, "readme.md") {
 		t.Fatal("should not match .md files with include *.{go,py}")
+	}
+}
+
+// TestExtractTestCounts_PASSFALLFallbackFalsePositive verifies that the
+// PASS/FAIL fallback line counter does NOT false-positive on partial word
+// matches like PASSWORD, PASSENGER, FAILED, FAILURE, etc.
+func TestExtractTestCounts_PASSFALLFallbackFalsePositive(t *testing.T) {
+	// This output contains "PASS" as a substring in env vars and "FAIL" in
+	// error messages — none are actual test PASS/FAIL lines.
+	output := `Setting up environment...
+PASSWORD=secret123
+PASS_AUTH=true
+PASSENGER_PORT=3000
+PASS_MAX_DAYS=90
+Starting server...
+FAILURE: connection refused
+FAILED to bind port 8080
+FAILOVER mode enabled
+Build complete.`
+
+	p, f, ok := extractTestCounts(output)
+	if ok {
+		t.Errorf("expected ok=false for non-test output with PASS/FAIL substrings, got passed=%d failed=%d", p, f)
+	}
+}
+
+// TestExtractTestCounts_PASSFALLFallbackLegitimate verifies that the
+// PASS/FAIL fallback correctly handles real bare PASS/FAIL lines.
+func TestExtractTestCounts_PASSFALLFallbackLegitimate(t *testing.T) {
+	output := `Running test suite...
+PASS test_addition
+PASS test_subtraction
+FAIL test_division
+PASS test_multiplication`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for output with bare PASS/FAIL lines")
+	}
+	if p != 3 {
+		t.Errorf("expected 3 passed, got %d", p)
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failed, got %d", f)
+	}
+}
+
+// TestExtractTestCounts_GradleCompleted verifies Gradle "N tests completed"
+// parsing with the actual Gradle output format.
+func TestExtractTestCounts_GradleCompleted(t *testing.T) {
+	output := `> Task :test
+
+3 tests completed, 1 failed
+
+> Task :test FAILED
+
+BUILD FAILED in 2s
+3 actionable tasks: 3 executed`
+
+	p, f, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for Gradle test output")
+	}
+	if p != 2 {
+		t.Errorf("expected 2 passed, got %d", p)
+	}
+	if f != 1 {
+		t.Errorf("expected 1 failed, got %d", f)
 	}
 }
 

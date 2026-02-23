@@ -796,8 +796,11 @@ func applyRelativeIndent(oldIndent, actualIndent, newIndent string, newLine stri
 	}
 
 	// Determine indent character from actual (preserve file convention).
+	// indentUnit is the visual column width of one indentChar so that
+	// Repeat(indentChar, targetWidth/indentUnit) produces the correct
+	// visual width. Tabs are 4 columns (matching indentWidth), spaces are 1.
 	indentChar := "\t"
-	indentUnit := 1
+	indentUnit := 4
 	if strings.Contains(actualIndent, " ") && !strings.Contains(actualIndent, "\t") {
 		indentChar = " "
 		indentUnit = 1

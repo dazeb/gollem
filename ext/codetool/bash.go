@@ -6158,9 +6158,21 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
-	// Count PASS/FAIL lines.
-	passCount := strings.Count(strings.ToUpper(output), "\nPASS")
-	failCount := strings.Count(strings.ToUpper(output), "\nFAIL")
+	// Count bare PASS/FAIL lines (some test harnesses output "PASS test_name"
+	// or "FAIL test_name" one per line). Only match lines where PASS/FAIL is
+	// a standalone word at the start — not partial matches like PASSWORD,
+	// PASSENGER, FAILURE, FAILOVER, etc.
+	var passCount, failCount int
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		upper := strings.ToUpper(trimmed)
+		// Match "PASS", "PASS test_name", "PASS: ...", etc.
+		if upper == "PASS" || strings.HasPrefix(upper, "PASS ") || strings.HasPrefix(upper, "PASS\t") || strings.HasPrefix(upper, "PASS:") {
+			passCount++
+		} else if upper == "FAIL" || strings.HasPrefix(upper, "FAIL ") || strings.HasPrefix(upper, "FAIL\t") || strings.HasPrefix(upper, "FAIL:") {
+			failCount++
+		}
+	}
 	if passCount+failCount >= 3 {
 		passed = passCount
 		failed = failCount
