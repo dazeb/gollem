@@ -8653,3 +8653,284 @@ func TestCompilationFingerprint_NimD(t *testing.T) {
 	}
 }
 
+func TestEdit_CRLFNormalization(t *testing.T) {
+	dir := t.TempDir()
+	// Write a file with CRLF line endings.
+	crlfContent := "package main\r\n\r\nfunc main() {\r\n\tfmt.Println(\"Hello\")\r\n}\r\n"
+	os.WriteFile(filepath.Join(dir, "crlf.go"), []byte(crlfContent), 0o644)
+
+	tool := Edit(WithWorkDir(dir))
+
+	// Edit with LF-only old_string (what the model generates).
+	result := call(t, tool, `{"path": "crlf.go", "old_string": "\tfmt.Println(\"Hello\")", "new_string": "\tfmt.Println(\"World\")"}`)
+	assertContains(t, result, "Replaced 1")
+
+	// Verify CRLF line endings are preserved in the output.
+	data, _ := os.ReadFile(filepath.Join(dir, "crlf.go"))
+	content := string(data)
+	if !strings.Contains(content, "\r\n") {
+		t.Error("expected CRLF line endings to be preserved")
+	}
+	if !strings.Contains(content, "World") {
+		t.Error("expected edit to be applied")
+	}
+	if strings.Contains(content, "Hello") {
+		t.Error("expected old string to be replaced")
+	}
+}
+
+func TestMultiEdit_CRLFNormalization(t *testing.T) {
+	dir := t.TempDir()
+	crlfContent := "line1\r\nline2\r\nline3\r\n"
+	os.WriteFile(filepath.Join(dir, "crlf.txt"), []byte(crlfContent), 0o644)
+
+	tool := MultiEdit(WithWorkDir(dir))
+	result := call(t, tool, `{"edits": [{"path": "crlf.txt", "old_string": "line2", "new_string": "LINE_TWO"}]}`)
+	assertContains(t, result, "Replaced 1")
+
+	data, _ := os.ReadFile(filepath.Join(dir, "crlf.txt"))
+	content := string(data)
+	if !strings.Contains(content, "\r\n") {
+		t.Error("expected CRLF line endings to be preserved in multi_edit")
+	}
+	if !strings.Contains(content, "LINE_TWO") {
+		t.Error("expected edit to be applied")
+	}
+}
+
+func TestExtractGoFunctionSignatures(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name: "simple function call",
+			content: `
+package solution_test
+
+import "testing"
+
+func TestSolve(t *testing.T) {
+	result := Solve(3, []int{1, 2, 3})
+	if result != 6 {
+		t.Errorf("got %d, want 6", result)
+	}
+}
+`,
+			want: []string{"Solve"},
+		},
+		{
+			name: "module method call",
+			content: `
+package solution_test
+
+import (
+	"testing"
+	"solution"
+)
+
+func TestProcess(t *testing.T) {
+	result := solution.Process(data, 0.5)
+	assert.Equal(t, expected, result)
+}
+`,
+			want: []string{"Process"},
+		},
+		{
+			name: "skip stdlib calls",
+			content: `
+package solution_test
+
+func TestBasic(t *testing.T) {
+	result := Transform("hello")
+	fmt.Println(result)
+	if len(result) != 5 {
+		t.Fatal("wrong length")
+	}
+}
+`,
+			want: []string{"Transform"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sigs := extractGoFunctionSignatures(tt.content)
+			for _, wantFunc := range tt.want {
+				found := false
+				for _, sig := range sigs {
+					if strings.Contains(sig, wantFunc+"(") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected to find signature for %q in %v", wantFunc, sigs)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractRubyFunctionSignatures(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name: "simple function call",
+			content: `
+require_relative './solution'
+
+RSpec.describe 'Solution' do
+  it 'returns correct result' do
+    expect(solve(3, [1, 2, 3])).to eq(6)
+  end
+end
+`,
+			want: []string{"solve"},
+		},
+		{
+			name: "class method call",
+			content: `
+require_relative './solution'
+
+RSpec.describe Solution do
+  it 'processes data' do
+    result = Solution.process(data, threshold: 0.5)
+    expect(result).not_to be_nil
+  end
+end
+`,
+			want: []string{"process"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sigs := extractRubyFunctionSignatures(tt.content)
+			for _, wantFunc := range tt.want {
+				found := false
+				for _, sig := range sigs {
+					if strings.Contains(sig, wantFunc+"(") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected to find signature for %q in %v", wantFunc, sigs)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractRustFunctionSignatures(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name: "simple function call",
+			content: `
+use solution;
+
+#[test]
+fn test_solve() {
+    assert_eq!(solve(3, &[1, 2, 3]), 6);
+}
+`,
+			want: []string{"solve"},
+		},
+		{
+			name: "module path call",
+			content: `
+mod solution;
+
+#[test]
+fn test_process() {
+    let result = solution::process(&data, 0.5);
+    assert!(result.is_some());
+}
+`,
+			want: []string{"process"},
+		},
+		{
+			name: "skip stdlib calls",
+			content: `
+#[test]
+fn test_basic() {
+    let result = transform("hello".to_string());
+    assert_eq!(result.len(), 5);
+}
+`,
+			want: []string{"transform"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sigs := extractRustFunctionSignatures(tt.content)
+			for _, wantFunc := range tt.want {
+				found := false
+				for _, sig := range sigs {
+					if strings.Contains(sig, wantFunc+"(") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected to find signature for %q in %v", wantFunc, sigs)
+				}
+			}
+		})
+	}
+}
+
+func TestIsEntryPointFile(t *testing.T) {
+	tests := []struct {
+		name   string
+		expect bool
+	}{
+		// Original entry points.
+		{"main.go", true},
+		{"main.py", true},
+		{"app.js", true},
+		{"index.ts", true},
+		{"solution.py", true},
+		{"__init__.py", true},
+		{"conftest.py", true},
+		// New entry points.
+		{"lib.rs", true},
+		{"mod.rs", true},
+		{"build.rs", true},
+		{"setup.py", true},
+		{"setup.cfg", true},
+		{"program.c", true},
+		{"run.sh", true},
+		// Exact match config files.
+		{"makefile", true},
+		{"dockerfile", true},
+		{"cargo.toml", true},
+		{"go.mod", true},
+		{"package.json", true},
+		// Non-entry-point files.
+		{"utils.go", false},
+		{"helper.py", false},
+		{"data.json", false},
+		{"readme.md", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isEntryPointFile(tc.name)
+			if got != tc.expect {
+				t.Errorf("isEntryPointFile(%q) = %v, want %v", tc.name, got, tc.expect)
+			}
+		})
+	}
+}
+

@@ -85,6 +85,16 @@ func Edit(opts ...Option) core.Tool {
 			}
 
 			content := string(data)
+
+			// Normalize CRLF → LF for matching. Models generate LF-only
+			// strings; Windows-style files with \r\n cause silent match
+			// failures without this. The original line endings are restored
+			// when writing back.
+			hasCRLF := strings.Contains(content, "\r\n")
+			if hasCRLF {
+				content = strings.ReplaceAll(content, "\r\n", "\n")
+			}
+
 			count := strings.Count(content, params.OldString)
 
 			if count == 0 {
@@ -94,6 +104,9 @@ func Edit(opts ...Option) core.Tool {
 				// round-trip — whitespace mismatches are the #1 edit failure.
 				if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, params.OldString, params.NewString); ok {
 					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+					if hasCRLF {
+						newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+					}
 					if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
 						return "", fmt.Errorf("write file: %w", err)
 					}
@@ -143,6 +156,9 @@ func Edit(opts ...Option) core.Tool {
 				newContent = strings.Replace(content, params.OldString, params.NewString, 1)
 			}
 
+			if hasCRLF {
+				newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+			}
 			if err := os.WriteFile(path, []byte(newContent), 0o644); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
@@ -399,6 +415,8 @@ func MultiEdit(opts ...Option) core.Tool {
 			// Track already-modified file contents for sequential edits to the
 			// same file within a single multi_edit batch.
 			fileContents := make(map[string]string)
+			// Track which files had CRLF line endings for restoration on write.
+			fileCRLF := make(map[string]bool)
 
 			for i, edit := range params.Edits {
 				if edit.Path == "" {
@@ -426,6 +444,11 @@ func MultiEdit(opts ...Option) core.Tool {
 						return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: %v", i, err)}
 					}
 					content = string(data)
+					// Normalize CRLF → LF for matching (same as single edit).
+					if strings.Contains(content, "\r\n") {
+						fileCRLF[path] = true
+						content = strings.ReplaceAll(content, "\r\n", "\n")
+					}
 				}
 
 				var newContent string
@@ -468,7 +491,11 @@ func MultiEdit(opts ...Option) core.Tool {
 			// Phase 2: Write all files atomically.
 			var results []string
 			for i, pw := range pending {
-				if err := os.WriteFile(pw.path, []byte(pw.newContent), 0o644); err != nil {
+				writeContent := pw.newContent
+				if fileCRLF[pw.path] {
+					writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
+				}
+				if err := os.WriteFile(pw.path, []byte(writeContent), 0o644); err != nil {
 					return "", fmt.Errorf("edit[%d]: write file: %w", i, err)
 				}
 				if pw.message != "" {

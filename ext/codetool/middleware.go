@@ -2885,6 +2885,30 @@ func extractFunctionSignatures(workDir string) []string {
 						signatures = append(signatures, sig)
 					}
 				}
+			case ".go":
+				sigs := extractGoFunctionSignatures(content)
+				for _, sig := range sigs {
+					if !seen[sig] {
+						seen[sig] = true
+						signatures = append(signatures, sig)
+					}
+				}
+			case ".rb":
+				sigs := extractRubyFunctionSignatures(content)
+				for _, sig := range sigs {
+					if !seen[sig] {
+						seen[sig] = true
+						signatures = append(signatures, sig)
+					}
+				}
+			case ".rs":
+				sigs := extractRustFunctionSignatures(content)
+				for _, sig := range sigs {
+					if !seen[sig] {
+						seen[sig] = true
+						signatures = append(signatures, sig)
+					}
+				}
 			}
 		}
 		if len(signatures) > 0 {
@@ -3117,6 +3141,357 @@ func extractJSFunctionSignatures(content string) []string {
 
 func isAlphaNumUnderscore(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
+// extractGoFunctionSignatures finds function call patterns in Go test code.
+// Looks for calls to the solution's functions — e.g., Solve(n, k), Process(data).
+func extractGoFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	// Skip Go testing/stdlib functions.
+	skipFuncs := map[string]bool{
+		"t":       true, // t.Error, t.Fatal, etc.
+		"fmt":     true,
+		"testing": true,
+		"reflect": true,
+		"strings": true,
+		"strconv": true,
+		"sort":    true,
+		"math":    true,
+		"os":      true,
+		"io":      true,
+		"bytes":   true,
+		"errors":  true,
+		"log":     true,
+		"Fatal":   true, "Fatalf": true,
+		"Error":   true, "Errorf": true,
+		"Run":     true, "Parallel": true,
+		"Equal":       true, "NotEqual": true,
+		"True":        true, "False": true,
+		"Nil":         true, "NotNil": true,
+		"Contains":    true, "ElementsMatch": true,
+		"NoError":     true, "EqualError": true,
+		"InDelta":     true, "InEpsilon": true,
+		"Len":         true, "Empty": true,
+		"Require":     true,
+		"assert":      true, "require": true,
+		"append":      true, "make": true, "len": true, "cap": true,
+		"new":         true, "delete": true, "close": true,
+		"panic":       true, "recover": true, "copy": true,
+		"Sprintf":     true, "Printf": true, "Println": true,
+		"Fprintf":     true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") ||
+			strings.HasPrefix(trimmed, "import") || strings.HasPrefix(trimmed, "package ") {
+			continue
+		}
+
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == '.') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			baseName := fullName
+			if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] {
+				continue
+			}
+			// Skip if module part is a known stdlib/test package.
+			if dotIdx := strings.Index(fullName, "."); dotIdx >= 0 {
+				module := fullName[:dotIdx]
+				if skipFuncs[module] {
+					continue
+				}
+			}
+
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break
+		}
+	}
+
+	// Deduplicate by base function name.
+	byFunc := make(map[string]string)
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
+}
+
+// extractRubyFunctionSignatures finds function call patterns in Ruby test code.
+// Looks for calls like solve(n, k), Solution.new.process(data), etc.
+func extractRubyFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	skipFuncs := map[string]bool{
+		"describe":   true, "it": true, "context": true,
+		"before":     true, "after": true, "let": true,
+		"expect":     true, "eq": true, "be": true,
+		"include":    true, "raise_error": true, "match": true,
+		"assert":     true, "assert_equal": true, "assert_nil": true,
+		"assert_raises": true, "assert_includes": true,
+		"assert_in_delta": true, "assert_match": true,
+		"refute":     true, "refute_equal": true, "refute_nil": true,
+		"require":    true, "require_relative": true,
+		"puts":       true, "print": true, "p": true, "pp": true,
+		"new":        true, "to": true, "not_to": true, "be_within": true,
+		"of":         true,
+		"subject":    true, "is_expected": true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") ||
+			strings.HasPrefix(trimmed, "require") || strings.HasPrefix(trimmed, "class ") ||
+			strings.HasPrefix(trimmed, "module ") || strings.HasPrefix(trimmed, "def ") {
+			continue
+		}
+
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == '.' || trimmed[nameStart] == ':') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			baseName := fullName
+			if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] {
+				continue
+			}
+
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break
+		}
+	}
+
+	byFunc := make(map[string]string)
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
+}
+
+// extractRustFunctionSignatures finds function call patterns in Rust test code.
+// Looks for calls like solve(n, k), Solution::process(&data), etc.
+func extractRustFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	skipFuncs := map[string]bool{
+		"assert":        true, "assert_eq": true, "assert_ne": true,
+		"debug_assert":  true, "debug_assert_eq": true, "debug_assert_ne": true,
+		"panic":         true, "unreachable": true, "todo": true,
+		"unimplemented": true,
+		"println":       true, "print": true, "eprintln": true, "eprint": true,
+		"format":        true, "write": true, "writeln": true,
+		"vec":           true, "Vec": true, "String": true, "Box": true,
+		"Some":          true, "None": true, "Ok": true, "Err": true,
+		"unwrap":        true, "expect": true, "unwrap_or": true,
+		"clone":         true, "into": true, "from": true, "as_ref": true,
+		"iter":          true, "collect": true, "map": true, "filter": true,
+		"fold":          true, "for_each": true,
+		"len":           true, "is_empty": true, "push": true, "pop": true,
+		"contains":      true, "get": true, "insert": true, "remove": true,
+		"abs_diff":      true, "abs": true, "min": true, "max": true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "use ") ||
+			strings.HasPrefix(trimmed, "mod ") || strings.HasPrefix(trimmed, "fn ") ||
+			strings.HasPrefix(trimmed, "pub ") || strings.HasPrefix(trimmed, "#[") {
+			continue
+		}
+
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == ':' || trimmed[nameStart] == '.') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			// Get the base name (after last :: or .).
+			baseName := fullName
+			if idx := strings.LastIndex(fullName, "::"); idx >= 0 {
+				baseName = fullName[idx+2:]
+			} else if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] {
+				continue
+			}
+			// Skip known stdlib module prefixes.
+			if dotIdx := strings.Index(fullName, "::"); dotIdx >= 0 {
+				module := fullName[:dotIdx]
+				if module == "std" || module == "core" || module == "alloc" {
+					continue
+				}
+			}
+
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break
+		}
+	}
+
+	byFunc := make(map[string]string)
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if idx := strings.LastIndex(name, "::"); idx >= 0 {
+			baseName = name[idx+2:]
+		} else if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
 }
 
 // detectComparisonTolerances scans test files for numerical comparison patterns
@@ -5846,9 +6221,24 @@ func isEntryPointFile(lowerName string) bool {
 		"manage.py",   // Django
 		"wsgi.py", "asgi.py",
 		"solution.", "solve.", "answer.", // common TB2 deliverable names
+		"lib.", "mod.",          // Rust lib.rs, mod.rs
+		"build.rs",             // Rust build script
+		"setup.py", "setup.cfg", // Python packaging
+		"program.", "run.",     // common names
+	}
+	// Also check exact matches for config/build files the agent should see.
+	exactMatches := []string{
+		"makefile", "dockerfile", "rakefile", "gemfile",
+		"cargo.toml", "go.mod", "package.json",
+		"cmakelists.txt", "build.gradle", "pom.xml",
 	}
 	for _, ep := range entryPoints {
 		if strings.HasPrefix(lowerName, ep) || lowerName == ep {
+			return true
+		}
+	}
+	for _, em := range exactMatches {
+		if lowerName == em {
 			return true
 		}
 	}
