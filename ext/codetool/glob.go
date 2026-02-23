@@ -147,6 +147,8 @@ func Glob(opts ...Option) core.Tool {
 			result := strings.Join(lines, "\n")
 			if truncated {
 				result += fmt.Sprintf("\n... (truncated at %d results)", maxResults)
+			} else {
+				result += fmt.Sprintf("\n(%d files)", len(results))
 			}
 			return result, nil
 		},

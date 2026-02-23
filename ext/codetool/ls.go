@@ -62,7 +62,12 @@ func Ls(opts ...Option) core.Tool {
 				return "(empty directory)", nil
 			}
 
-			return strings.Join(lines, "\n"), nil
+			result := strings.Join(lines, "\n")
+			// Don't add count if truncated (listDir already appends a truncation notice).
+			if len(lines) <= 500 {
+				result += fmt.Sprintf("\n(%d entries)", len(lines))
+			}
+			return result, nil
 		},
 	)
 }

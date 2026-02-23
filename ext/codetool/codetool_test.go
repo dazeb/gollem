@@ -11191,3 +11191,45 @@ func TestGrep_FilesOnlySummary(t *testing.T) {
 	assertContains(t, result, "files matched)")
 }
 
+func TestGlob_ResultCount(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := Glob(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "**/*.go"}`)
+	assertContains(t, result, "files)")
+}
+
+func TestLs_EntryCount(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := Ls(WithWorkDir(dir))
+	result := call(t, tool, `{}`)
+	assertContains(t, result, "entries)")
+}
+
+func TestWrite_MissingTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	tool := Write(WithWorkDir(dir))
+	// Write a Go file without trailing newline.
+	result := call(t, tool, `{"path": "test.go", "content": "package main"}`)
+	assertContains(t, result, "trailing newline")
+}
+
+func TestWrite_TrailingNewlinePresent(t *testing.T) {
+	dir := t.TempDir()
+	tool := Write(WithWorkDir(dir))
+	// Write a Go file with trailing newline — should NOT warn.
+	result := call(t, tool, `{"path": "test.go", "content": "package main\n"}`)
+	if strings.Contains(result, "trailing newline") {
+		t.Fatal("should not warn when trailing newline is present")
+	}
+}
+
+func TestWrite_NoNewlineWarningForBinary(t *testing.T) {
+	dir := t.TempDir()
+	tool := Write(WithWorkDir(dir))
+	// Write a .png file without trailing newline — should NOT warn.
+	result := call(t, tool, `{"path": "image.png", "content": "fake binary data"}`)
+	if strings.Contains(result, "trailing newline") {
+		t.Fatal("should not warn about trailing newline for binary files")
+	}
+}
+

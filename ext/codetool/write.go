@@ -93,6 +93,13 @@ func Write(opts ...Option) core.Tool {
 			}
 			result := fmt.Sprintf("Wrote %d bytes (%d lines) to %s", len(params.Content), lineCount, params.Path)
 
+			// Warn about missing trailing newline for source code files.
+			// POSIX requires text files to end with a newline, and many
+			// tools (git, linters, diff) flag or mishandle files without one.
+			if len(params.Content) > 0 && !strings.HasSuffix(params.Content, "\n") && isSourceFile(filepath.Base(params.Path)) {
+				result += "\n[hint: file does not end with a newline — most tools expect a trailing newline in source files]"
+			}
+
 			// Warn when overwriting reduced file size by more than 50%.
 			// This catches accidental truncation — the #1 write-related bug
 			// where the agent rewrites a file but forgets to include all content.
