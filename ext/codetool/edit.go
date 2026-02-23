@@ -1094,6 +1094,20 @@ func autoCorrectLineTrim(content, oldStr, newStr string) (actualOld, adjustedNew
 		}
 	}
 
+	// Try dropping both first AND last line simultaneously.
+	// The model sometimes includes extra context at both ends that
+	// doesn't match the file (e.g., surrounding lines changed by a
+	// previous edit). Requires 5+ lines to leave enough content.
+	if len(oldLines) >= 5 && len(newLines) >= 5 &&
+		oldLines[0] == newLines[0] &&
+		oldLines[len(oldLines)-1] == newLines[len(newLines)-1] {
+		trimmedOld := strings.Join(oldLines[1:len(oldLines)-1], "\n")
+		if strings.Count(content, trimmedOld) == 1 {
+			trimmedNew := strings.Join(newLines[1:len(newLines)-1], "\n")
+			return trimmedOld, trimmedNew, true
+		}
+	}
+
 	return "", "", false
 }
 
