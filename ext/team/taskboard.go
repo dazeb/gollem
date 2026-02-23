@@ -67,6 +67,11 @@ func (tb *TaskBoard) Get(id string) (*Task, error) {
 	if !ok {
 		return nil, fmt.Errorf("task %q not found", id)
 	}
+	return tb.copyTask(t), nil
+}
+
+// copyTask returns a deep copy of a task. Must be called with at least a read lock held.
+func (tb *TaskBoard) copyTask(t *Task) *Task {
 	cp := *t
 	cp.Blocks = append([]string(nil), t.Blocks...)
 	cp.BlockedBy = append([]string(nil), t.BlockedBy...)
@@ -76,7 +81,7 @@ func (tb *TaskBoard) Get(id string) (*Task, error) {
 			cp.Metadata[k] = v
 		}
 	}
-	return &cp, nil
+	return &cp
 }
 
 // List returns copies of all tasks.
@@ -86,10 +91,7 @@ func (tb *TaskBoard) List() []*Task {
 
 	result := make([]*Task, 0, len(tb.tasks))
 	for _, t := range tb.tasks {
-		cp := *t
-		cp.Blocks = append([]string(nil), t.Blocks...)
-		cp.BlockedBy = append([]string(nil), t.BlockedBy...)
-		result = append(result, &cp)
+		result = append(result, tb.copyTask(t))
 	}
 	return result
 }
@@ -219,8 +221,7 @@ func (tb *TaskBoard) Available() []*Task {
 	var result []*Task
 	for _, t := range tb.tasks {
 		if t.Status == TaskPending && t.Owner == "" && !tb.isBlocked(t) {
-			cp := *t
-			result = append(result, &cp)
+			result = append(result, tb.copyTask(t))
 		}
 	}
 	return result

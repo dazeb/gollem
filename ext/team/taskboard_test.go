@@ -183,6 +183,69 @@ func TestTaskBoard_GetReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestTaskBoard_ListReturnsCopy(t *testing.T) {
+	tb := NewTaskBoard()
+	id := tb.Create("Task", "Desc")
+	tb.Update(id, WithMetadata(map[string]any{"key": "original"}))
+
+	tasks := tb.List()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+
+	// Mutate the returned task's metadata — should not affect internal state.
+	tasks[0].Metadata["key"] = "corrupted"
+	tasks[0].Metadata["extra"] = "injected"
+
+	original, _ := tb.Get(id)
+	if original.Metadata["key"] != "original" {
+		t.Errorf("List returned shared Metadata; internal state corrupted: key=%v", original.Metadata["key"])
+	}
+	if _, ok := original.Metadata["extra"]; ok {
+		t.Error("List returned shared Metadata; caller injected key into internal state")
+	}
+}
+
+func TestTaskBoard_AvailableReturnsCopy(t *testing.T) {
+	tb := NewTaskBoard()
+	id1 := tb.Create("Blocker", "")
+	id2 := tb.Create("Available", "")
+
+	tb.Update(id2, WithAddBlockedBy(id1), WithMetadata(map[string]any{"key": "original"}))
+	tb.Update(id1, WithStatus(TaskCompleted))
+
+	// Task 2 should not appear in Available because it has an owner after this setup.
+	// Actually id2 is pending, unowned, and blocker is completed, so it should be available.
+	avail := tb.Available()
+	if len(avail) == 0 {
+		t.Fatal("expected available tasks")
+	}
+
+	// Find the task with metadata.
+	var target *Task
+	for _, a := range avail {
+		if a.ID == id2 {
+			target = a
+			break
+		}
+	}
+	if target == nil {
+		t.Fatal("expected task 2 in available list")
+	}
+
+	// Mutate the returned copy's slices and metadata.
+	target.BlockedBy = append(target.BlockedBy, "fake")
+	target.Metadata["key"] = "corrupted"
+
+	original, _ := tb.Get(id2)
+	if len(original.BlockedBy) != 1 || original.BlockedBy[0] != id1 {
+		t.Errorf("Available returned shared BlockedBy; internal state corrupted: %v", original.BlockedBy)
+	}
+	if original.Metadata["key"] != "original" {
+		t.Errorf("Available returned shared Metadata; internal state corrupted: key=%v", original.Metadata["key"])
+	}
+}
+
 // TestTaskBoard_AddBlocksReciprocal verifies that WithAddBlocks on task A
 // automatically adds A to the blocked task's BlockedBy list.
 func TestTaskBoard_AddBlocksReciprocal(t *testing.T) {
