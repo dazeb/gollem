@@ -6132,3 +6132,48 @@ func TestGoModuleHint(t *testing.T) {
 	})
 }
 
+func TestArchiveHint(t *testing.T) {
+	t.Run("tar not gzip", func(t *testing.T) {
+		output := `gzip: stdin: not in gzip format
+tar: Child returned status 1
+tar: Error is not recoverable`
+		hint := archiveHint(output, 2)
+		if hint == "" {
+			t.Fatal("expected hint for not gzip format")
+		}
+		if !strings.Contains(hint, "file <archive>") {
+			t.Errorf("expected file command suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("tar no such file", func(t *testing.T) {
+		output := `tar: data.tar.gz: Cannot open: No such file or directory`
+		hint := archiveHint(output, 2)
+		if hint == "" {
+			t.Fatal("expected hint for missing archive")
+		}
+		if !strings.Contains(hint, "ls -la") {
+			t.Errorf("expected ls suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("unzip not zip", func(t *testing.T) {
+		output := `End-of-central-directory signature not found.  Either this file is not
+  a zipfile, or it constitutes one disk of a multi-part archive.`
+		hint := archiveHint(output, 9)
+		if hint == "" {
+			t.Fatal("expected hint for not a zip")
+		}
+		if !strings.Contains(hint, "file <filename>") {
+			t.Errorf("expected file command suggestion, got: %s", hint)
+		}
+	})
+
+	t.Run("exit code 0", func(t *testing.T) {
+		hint := archiveHint("tar: Cannot open", 0)
+		if hint != "" {
+			t.Errorf("expected no hint for exit code 0, got: %s", hint)
+		}
+	})
+}
+

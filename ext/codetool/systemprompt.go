@@ -171,6 +171,11 @@ When a task requires setting up servers, daemons, or background services:
 2. **Wait for startup before testing**: After starting a service, it needs time to initialize. Use ` + "`sleep 2`" + ` or a readiness loop (` + "`for i in $(seq 1 10); do curl -s localhost:PORT && break; sleep 1; done`" + `) before running tests. "Connection refused" usually means the service isn't ready yet — don't immediately debug, wait first.
 3. **Verify from a clean state**: Test your service by connecting to it the way the verifier will (e.g., ` + "`curl localhost:8080`" + `, ` + "`ssh user@host`" + `). Don't just check if the process is running.
 4. **Deploy files permanently**: If a web server needs to serve files, make sure the files are in the correct document root and will persist. Don't serve from /tmp.
+5. **Container-specific service troubleshooting**: If a service fails to start:
+   - Check logs: ` + "`journalctl -u <service> --no-pager 2>/dev/null || cat /var/log/<service>/*.log`" + `
+   - Check config syntax: ` + "`nginx -t`" + `, ` + "`sshd -t`" + `, ` + "`apachectl configtest`" + `
+   - Check if the required directory/socket exists: ` + "`ls -la /run/<service>/`" + ` — create it with ` + "`mkdir -p`" + ` if missing
+   - Check ports: ` + "`ss -tlnp`" + ` — verify the service is listening on the expected port
 
 ## Strategy Pivoting
 

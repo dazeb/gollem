@@ -328,6 +328,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := goModuleHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := archiveHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -1626,6 +1629,58 @@ func goModuleHint(output string, exitCode int) string {
 		return "[hint: build tags or OS/arch constraints exclude all files. " +
 			"Check //go:build or // +build tags in source files. " +
 			"For CGo: set CGO_ENABLED=1 if the code requires C bindings]"
+	}
+
+	return ""
+}
+
+// archiveHint detects common tar, unzip, and gzip errors. Archive extraction
+// is failure mode #9 — the directory structure after extraction often doesn't
+// match what tests expect, and the agent wastes turns diagnosing.
+func archiveHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// tar errors.
+	if strings.Contains(output, "tar:") {
+		if strings.Contains(output, "Cannot open: No such file or directory") ||
+			strings.Contains(output, "Error opening archive") {
+			return "[hint: tar cannot find the archive file. Check: (1) ls -la to find the actual filename, " +
+				"(2) check if you need to download it first, (3) check if it's in a different directory]"
+		}
+		if strings.Contains(output, "not in gzip format") || strings.Contains(output, "gzip: stdin: not in gzip format") {
+			return "[hint: file is not gzip compressed despite the name. Try: " +
+				"(1) `file <archive>` to check the real format, " +
+				"(2) `tar xf <archive>` (without -z) for plain tar, " +
+				"(3) `tar xjf <archive>` for bzip2, " +
+				"(4) `tar xJf <archive>` for xz]"
+		}
+		if strings.Contains(output, "Cannot change ownership") {
+			return "[hint: tar ownership warning — safe to ignore in containers. Add --no-same-owner flag: tar --no-same-owner -xf <archive>]"
+		}
+	}
+
+	// unzip errors.
+	if strings.Contains(output, "unzip:") || strings.Contains(output, "End-of-central-directory") {
+		if strings.Contains(output, "cannot find") || strings.Contains(output, "No such file") {
+			return "[hint: unzip cannot find the archive. Check with: ls -la *.zip]"
+		}
+		if strings.Contains(output, "End-of-central-directory") || strings.Contains(output, "not a zip") {
+			return "[hint: file is not a valid ZIP archive. Check with: `file <filename>`. " +
+				"It might be a tar.gz, tar.bz2, or other format — use the appropriate tool]"
+		}
+	}
+
+	// gzip/gunzip errors.
+	if strings.Contains(output, "gzip:") {
+		if strings.Contains(output, "unexpected end of file") || strings.Contains(output, "invalid compressed data") {
+			return "[hint: gzip file is corrupted or incomplete. Try: (1) re-download, (2) check file size with ls -la, " +
+				"(3) `file <filename>` to verify format]"
+		}
+		if strings.Contains(output, "already has .gz suffix") {
+			return "[hint: gunzip: file already decompressed. Use the file without .gz extension]"
+		}
 	}
 
 	return ""
