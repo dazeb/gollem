@@ -8073,3 +8073,95 @@ func TestCompilationErrorHint_Kotlin_ColonFormat(t *testing.T) {
 	}
 }
 
+// Test expanded CMake package mappings.
+func TestCmakeHint_ExpandedPackages(t *testing.T) {
+	tests := []struct {
+		name string
+		pkg  string
+		apt  string
+	}{
+		{"BZip2", "BZip2", "libbz2-dev"},
+		{"HDF5", "HDF5", "libhdf5-dev"},
+		{"LAPACK", "LAPACK", "liblapack-dev"},
+		{"Cairo", "Cairo", "libcairo2-dev"},
+		{"ALSA", "ALSA", "libasound2-dev"},
+		{"GMP", "GMP", "libgmp-dev"},
+		{"SDL2", "SDL2", "libsdl2-dev"},
+		{"Readline", "Readline", "libreadline-dev"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := fmt.Sprintf("CMake Error: Could NOT find %s (missing: %s_LIBRARY)", tt.pkg, tt.pkg)
+			hint := cmakeHint(output, 1)
+			if hint == "" {
+				t.Fatalf("expected hint for CMake %s, got empty", tt.pkg)
+			}
+			if !strings.Contains(hint, tt.apt) {
+				t.Errorf("expected hint to contain %q, got %q", tt.apt, hint)
+			}
+		})
+	}
+}
+
+// Test expanded Python exception types in pythonErrorHint.
+func TestPythonErrorHint_ExpandedExceptions(t *testing.T) {
+	tests := []struct {
+		name string
+		exc  string
+	}{
+		{"ModuleNotFoundError", "ModuleNotFoundError: No module named 'nonexistent'"},
+		{"NotImplementedError", "NotImplementedError: subclass must implement this"},
+		{"ConnectionError", "ConnectionError: [Errno 111] Connection refused"},
+		{"TimeoutError", "TimeoutError: operation timed out"},
+		{"BrokenPipeError", "BrokenPipeError: [Errno 32] Broken pipe"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := fmt.Sprintf("Traceback (most recent call last):\n  File \"main.py\", line 42, in <module>\n    do_thing()\n%s", tt.exc)
+			hint := pythonErrorHint(output, 1)
+			if hint == "" {
+				t.Fatalf("expected hint for %s, got empty", tt.name)
+			}
+			if !strings.Contains(hint, "main.py") || !strings.Contains(hint, "42") {
+				t.Errorf("expected hint to contain file and line, got %q", hint)
+			}
+		})
+	}
+}
+
+// Test Elixir compilation error hint.
+func TestElixirHint_CompileError(t *testing.T) {
+	output := `** (CompileError) lib/app.ex:15: undefined function hello/0 (expected App to define hello/0)`
+	hint := elixirHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Elixir CompileError, got empty")
+	}
+	if !strings.Contains(hint, "lib/app.ex") || !strings.Contains(hint, "15") {
+		t.Errorf("expected hint to contain file and line, got %q", hint)
+	}
+}
+
+// Test Elixir UndefinedFunctionError.
+func TestElixirHint_UndefinedFunction(t *testing.T) {
+	output := `** (UndefinedFunctionError) function MyModule.foo/1 is undefined or private`
+	hint := elixirHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for Elixir UndefinedFunctionError, got empty")
+	}
+	if !strings.Contains(hint, "UndefinedFunctionError") {
+		t.Errorf("expected hint to mention UndefinedFunctionError, got %q", hint)
+	}
+}
+
+// Test Elixir Mix Hex not found.
+func TestElixirHint_HexNotFound(t *testing.T) {
+	output := `** (Mix) Could not find Hex, which is needed to build dependency :decimal`
+	hint := elixirHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected hint for missing Hex, got empty")
+	}
+	if !strings.Contains(hint, "hex") || !strings.Contains(hint, "mix local.hex") {
+		t.Errorf("expected hint about installing Hex, got %q", hint)
+	}
+}
+

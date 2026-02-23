@@ -355,6 +355,9 @@ func Bash(opts ...Option) core.Tool {
 			if hint := javaExceptionHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := elixirHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -946,9 +949,13 @@ func pythonErrorHint(output string, exitCode int) string {
 			"TypeError:", "ValueError:", "KeyError:", "IndexError:",
 			"FileNotFoundError:", "PermissionError:", "OSError:",
 			"AttributeError:", "NameError:", "ImportError:",
+			"ModuleNotFoundError:",
 			"ZeroDivisionError:", "RuntimeError:", "StopIteration:",
 			"RecursionError:", "OverflowError:", "AssertionError:",
 			"UnicodeDecodeError:", "UnicodeEncodeError:",
+			"NotImplementedError:", "ConnectionError:", "TimeoutError:",
+			"BrokenPipeError:", "ProcessLookupError:",
+			"json.decoder.JSONDecodeError:",
 		} {
 			if strings.Contains(trimmed, errPrefix) {
 				errorType = trimmed
@@ -1693,6 +1700,24 @@ func cmakeHint(output string, exitCode int) string {
 			"X11":        "libx11-dev",
 			"FFmpeg":     "libavcodec-dev libavformat-dev libswscale-dev",
 			"OpenCV":     "libopencv-dev",
+			"BZip2":      "libbz2-dev",
+			"LibLZMA":    "liblzma-dev",
+			"Curses":     "libncurses-dev",
+			"FFTW3":      "libfftw3-dev",
+			"HDF5":       "libhdf5-dev",
+			"LAPACK":     "liblapack-dev",
+			"BLAS":       "libblas-dev",
+			"Cairo":      "libcairo2-dev",
+			"ALSA":       "libasound2-dev",
+			"PulseAudio": "libpulse-dev",
+			"LibArchive": "libarchive-dev",
+			"PCAP":       "libpcap-dev",
+			"GMP":        "libgmp-dev",
+			"MPFR":       "libmpfr-dev",
+			"SDL2":       "libsdl2-dev",
+			"GLEW":       "libglew-dev",
+			"GLUT":       "freeglut3-dev",
+			"Readline":   "libreadline-dev",
 		}
 		for pkg, apt := range cmakePkgs {
 			if strings.Contains(output, pkg) {
@@ -2227,6 +2252,68 @@ func javaExceptionHint(output string, exitCode int) string {
 	if strings.Contains(output, "StackOverflowError") {
 		return "[hint: Java StackOverflowError — likely infinite recursion. Check recursive methods for missing " +
 			"base cases. If recursion depth is legitimate, increase stack: java -Xss4m]"
+	}
+
+	return ""
+}
+
+// elixirHint detects Elixir/Mix compilation and runtime errors.
+// Elixir errors have distinctive patterns that differ from other languages.
+func elixirHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Mix dependency errors: "** (Mix) Could not find Hex"
+	if strings.Contains(output, "(Mix)") {
+		if strings.Contains(output, "Could not find Hex") || strings.Contains(output, "Hex is not available") {
+			return "[hint: Hex package manager not installed. Run: mix local.hex --force]"
+		}
+		if strings.Contains(output, "Dependencies have diverged") || strings.Contains(output, "the dependency") {
+			return "[hint: Elixir dependency conflict — try: mix deps.clean --all && mix deps.get]"
+		}
+	}
+
+	// Missing dependency: "** (UndefinedFunctionError) function :module.func/arity is undefined"
+	if strings.Contains(output, "UndefinedFunctionError") {
+		return "[hint: Elixir UndefinedFunctionError — check: (1) module is in deps (mix.exs), " +
+			"(2) run `mix deps.get && mix compile`, (3) verify function name and arity are correct]"
+	}
+
+	// CompileError with file:line
+	if strings.Contains(output, "(CompileError)") {
+		// Extract file:line from "** (CompileError) lib/file.ex:42: ..."
+		idx := strings.Index(output, "(CompileError)")
+		if idx >= 0 {
+			rest := output[idx+len("(CompileError)"):]
+			rest = strings.TrimSpace(rest)
+			// Find file:line pattern
+			parts := strings.SplitN(rest, ":", 3)
+			if len(parts) >= 2 && isNumeric(strings.TrimSpace(parts[1])) {
+				file := strings.TrimSpace(parts[0])
+				lineNum := strings.TrimSpace(parts[1])
+				errMsg := ""
+				if len(parts) >= 3 {
+					errMsg = strings.TrimSpace(parts[2])
+					if nl := strings.IndexAny(errMsg, "\n\r"); nl > 0 {
+						errMsg = errMsg[:nl]
+					}
+				}
+				if errMsg != "" {
+					return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+						truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+				}
+				return fmt.Sprintf("[hint: Elixir CompileError at %s:%s — use view tool with offset=%s to see the code]",
+					file, lineNum, lineNum)
+			}
+		}
+		return "[hint: Elixir CompileError — check the error message for file and line, then view and fix the code]"
+	}
+
+	// Missing module: "** (Code.LoadError) could not load module/file"
+	if strings.Contains(output, "Code.LoadError") || (strings.Contains(output, "module") && strings.Contains(output, "is not available")) {
+		return "[hint: Elixir module not found — check: (1) module name is correct, " +
+			"(2) deps are installed: `mix deps.get`, (3) project compiles: `mix compile`]"
 	}
 
 	return ""
