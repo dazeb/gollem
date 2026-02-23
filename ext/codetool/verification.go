@@ -47,6 +47,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 	failedCompletionAttempts := 0
 	stagnationWarned := 0 // consecutive fail level at which we last injected guidance
 	staleTestWarned := false // whether we've warned about not running tests after edits
+	lastResetVerifyID := "" // tool call ID of the last verification that reset completion counters
 	startTime := time.Now()
 
 	// Determine effective timeout for skip-checklist logic.
@@ -75,6 +76,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		// We rebuild the full run history each time (messages are immutable
 		// so this is idempotent). This also tracks stagnation metrics.
 		var pendingCallID string
+		var lastVerifyCallID string // last verification tool call ID seen in this scan
 		var runFailed []bool  // whether each verification run failed
 		var runPassed []int   // pass count per run (-1 if unavailable)
 		var runSummary []string
@@ -88,9 +90,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 							(tc.ToolName == "execute_code" && isVerificationCode(tc.ArgsJSON)) {
 							verified = true
 							pendingCallID = tc.ToolCallID
-							// Reset completion counters for each new verification run.
-							failedCompletionAttempts = 0
-							completionAttempts = 0
+							lastVerifyCallID = tc.ToolCallID
 							editsAfterLastVerify = 0
 						} else if tc.ToolName == "edit" || tc.ToolName == "multi_edit" || tc.ToolName == "write" {
 							editsAfterLastVerify++
@@ -113,6 +113,16 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 					}
 				}
 			}
+		}
+
+		// Only reset completion counters when we see a NEW verification
+		// command (one we haven't reset for yet). Without this, rescanning
+		// historical messages resets counters the validator already
+		// incremented, creating an infinite pre-completion checklist loop.
+		if lastVerifyCallID != "" && lastVerifyCallID != lastResetVerifyID {
+			failedCompletionAttempts = 0
+			completionAttempts = 0
+			lastResetVerifyID = lastVerifyCallID
 		}
 
 		// Update latest result for the validator.

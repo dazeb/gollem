@@ -1382,6 +1382,161 @@ func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
 	}
 }
 
+// TestVerificationCheckpoint_MiddlewareRescanDoesNotResetCounters verifies
+// that calling the middleware multiple times with the same verification command
+// in history does not reset completionAttempts. This is the production flow:
+// middleware→model→validator→retry→middleware→model→validator.
+// Without the fix, the second middleware call resets completionAttempts to 0,
+// causing an infinite pre-completion checklist loop.
+func TestVerificationCheckpoint_MiddlewareRescanDoesNotResetCounters(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Fix the bug"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"go test ./..."}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "ok\nPASS",
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// First middleware call → scans messages, sets verified.
+	_, err := mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("middleware 1 error: %v", err)
+	}
+
+	// First validator call → completionAttempts=0 → pre-completion checklist.
+	rc := &core.RunContext{}
+	_, err = validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("first validator call should trigger pre-completion checklist")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+
+	// Production flow: middleware runs AGAIN before the retry model call,
+	// rescanning the same messages. This must NOT reset completionAttempts.
+	_, err = mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("middleware 2 error: %v", err)
+	}
+
+	// Second validator call → completionAttempts should be 1, not 0.
+	// If the bug exists, this returns a retry error instead of accepting.
+	output, err := validator(ctx, rc, "Done!")
+	if err != nil {
+		t.Fatalf("second validator call after middleware rescan should accept, got: %v", err)
+	}
+	if output != "Done!" {
+		t.Errorf("validator modified output: %q", output)
+	}
+}
+
+// TestVerificationCheckpoint_NewVerificationResetsCounters verifies that
+// a genuinely new verification command (different tool call ID) DOES reset
+// the completion counters, re-triggering the pre-completion checklist.
+func TestVerificationCheckpoint_NewVerificationResetsCounters(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"go test ./..."}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "ok\nPASS",
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// First pass: middleware → checklist → accept.
+	mw(ctx, messages, nil, nil, next)
+	rc := &core.RunContext{}
+	validator(ctx, rc, "Done!") // checklist (attempts=0)
+	mw(ctx, messages, nil, nil, next)
+	_, err := validator(ctx, rc, "Done!") // accept (attempts=1)
+	if err != nil {
+		t.Fatalf("expected acceptance on second attempt, got: %v", err)
+	}
+
+	// Agent runs a NEW verification command.
+	messages = append(messages,
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"go test ./..."}`,
+					ToolCallID: "call2", // different ID
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "ok\nPASS",
+					ToolCallID: "call2",
+				},
+			},
+		},
+	)
+
+	// Middleware sees the new verification command → should reset counters.
+	mw(ctx, messages, nil, nil, next)
+
+	// Validator should trigger checklist again (completionAttempts reset to 0).
+	_, err = validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected checklist after new verification command")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+}
+
 func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
 	mw, validator := VerificationCheckpoint("")
 
