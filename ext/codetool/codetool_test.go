@@ -11233,3 +11233,60 @@ func TestWrite_NoNewlineWarningForBinary(t *testing.T) {
 	}
 }
 
+func TestExpandBraces(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{"*.go", []string{"*.go"}},
+		{"*.{go,py}", []string{"*.go", "*.py"}},
+		{"src/{a,b}/*.ts", []string{"src/a/*.ts", "src/b/*.ts"}},
+		{"{foo,bar,baz}.txt", []string{"foo.txt", "bar.txt", "baz.txt"}},
+		{"no_braces", []string{"no_braces"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := expandBraces(tt.input)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("expandBraces(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Fatalf("expandBraces(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestGlob_BraceExpansion(t *testing.T) {
+	dir := t.TempDir()
+	// Create test files.
+	writeTestFile(t, dir, "main.go", "package main\n")
+	writeTestFile(t, dir, "util.py", "print('hi')\n")
+	writeTestFile(t, dir, "readme.md", "# Readme\n")
+
+	tool := Glob(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "*.{go,py}"}`)
+	assertContains(t, result, "main.go")
+	assertContains(t, result, "util.py")
+	if strings.Contains(result, "readme.md") {
+		t.Fatal("should not match .md files with *.{go,py}")
+	}
+}
+
+func TestGrep_BraceInclude(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "main.go", "func main() {}\n")
+	writeTestFile(t, dir, "util.py", "def main(): pass\n")
+	writeTestFile(t, dir, "readme.md", "# Main section\n")
+
+	tool := Grep(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "main", "include": "*.{go,py}"}`)
+	assertContains(t, result, "main.go")
+	assertContains(t, result, "util.py")
+	if strings.Contains(result, "readme.md") {
+		t.Fatal("should not match .md files with include *.{go,py}")
+	}
+}
+

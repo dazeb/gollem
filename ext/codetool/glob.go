@@ -80,10 +80,9 @@ func Glob(opts ...Option) core.Tool {
 						return nil
 					}
 
-					// Apply exclude filter.
+					// Apply exclude filter (with brace expansion).
 					if params.Exclude != "" {
-						excluded, _ := filepath.Match(params.Exclude, info.Name())
-						if excluded {
+						if matchWithBraces(params.Exclude, info.Name()) {
 							return nil
 						}
 					}
@@ -98,11 +97,23 @@ func Glob(opts ...Option) core.Tool {
 					return "", fmt.Errorf("walking directory: %w", err)
 				}
 			} else {
-				// Simple glob without **.
-				pattern := filepath.Join(searchPath, params.Pattern)
-				globMatches, err := filepath.Glob(pattern)
-				if err != nil {
-					return "", &core.ModelRetryError{Message: fmt.Sprintf("invalid glob pattern: %v", err)}
+				// Simple glob without **. Expand braces first since
+				// filepath.Glob doesn't support {a,b} patterns.
+				expandedPatterns := expandBraces(params.Pattern)
+				seen := make(map[string]bool)
+				var globMatches []string
+				for _, ep := range expandedPatterns {
+					p := filepath.Join(searchPath, ep)
+					matches, err := filepath.Glob(p)
+					if err != nil {
+						return "", &core.ModelRetryError{Message: fmt.Sprintf("invalid glob pattern: %v", err)}
+					}
+					for _, m := range matches {
+						if !seen[m] {
+							seen[m] = true
+							globMatches = append(globMatches, m)
+						}
+					}
 				}
 				for _, m := range globMatches {
 					info, err := os.Stat(m)
@@ -112,10 +123,9 @@ func Glob(opts ...Option) core.Tool {
 					if info.IsDir() {
 						continue
 					}
-					// Apply exclude filter.
+					// Apply exclude filter (with brace expansion).
 					if params.Exclude != "" {
-						excluded, _ := filepath.Match(params.Exclude, info.Name())
-						if excluded {
+						if matchWithBraces(params.Exclude, info.Name()) {
 							continue
 						}
 					}
@@ -155,13 +165,58 @@ func Glob(opts ...Option) core.Tool {
 	)
 }
 
-// matchDoublestar implements simple ** glob matching.
+// matchDoublestar implements simple ** glob matching with brace expansion.
 func matchDoublestar(pattern, path string) bool {
 	// Normalize separators.
 	pattern = filepath.ToSlash(pattern)
 	path = filepath.ToSlash(path)
 
-	return matchSegments(strings.Split(pattern, "/"), strings.Split(path, "/"))
+	// Expand brace patterns like *.{go,py} into [*.go, *.py].
+	// filepath.Match doesn't support brace expansion, but models use
+	// it frequently (e.g., **/*.{ts,tsx}).
+	patterns := expandBraces(pattern)
+	for _, p := range patterns {
+		if matchSegments(strings.Split(p, "/"), strings.Split(path, "/")) {
+			return true
+		}
+	}
+	return false
+}
+
+// expandBraces expands a single brace group in a pattern.
+// "*.{go,py}" → ["*.go", "*.py"]
+// "src/{a,b}/*.ts" → ["src/a/*.ts", "src/b/*.ts"]
+// Patterns without braces return a single-element slice.
+// Only the first brace group is expanded (nested braces are not supported).
+func expandBraces(pattern string) []string {
+	open := strings.IndexByte(pattern, '{')
+	if open < 0 {
+		return []string{pattern}
+	}
+	close := strings.IndexByte(pattern[open:], '}')
+	if close < 0 {
+		return []string{pattern}
+	}
+	close += open
+	prefix := pattern[:open]
+	suffix := pattern[close+1:]
+	alternatives := strings.Split(pattern[open+1:close], ",")
+	var result []string
+	for _, alt := range alternatives {
+		result = append(result, prefix+strings.TrimSpace(alt)+suffix)
+	}
+	return result
+}
+
+// matchWithBraces matches a filename against a pattern that may contain
+// {a,b} brace expansion. Used by grep include/exclude filters.
+func matchWithBraces(pattern, name string) bool {
+	for _, p := range expandBraces(pattern) {
+		if matched, _ := filepath.Match(p, name); matched {
+			return true
+		}
+	}
+	return false
 }
 
 func matchSegments(patternParts, pathParts []string) bool {

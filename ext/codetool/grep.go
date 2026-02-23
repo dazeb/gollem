@@ -121,18 +121,16 @@ func Grep(opts ...Option) core.Tool {
 					return nil
 				}
 
-				// Apply include filter.
+				// Apply include filter (with brace expansion).
 				if params.Include != "" {
-					matched, _ := filepath.Match(params.Include, info.Name())
-					if !matched {
+					if !matchWithBraces(params.Include, info.Name()) {
 						return nil
 					}
 				}
 
-				// Apply exclude filter.
+				// Apply exclude filter (with brace expansion).
 				if params.Exclude != "" {
-					excluded, _ := filepath.Match(params.Exclude, info.Name())
-					if excluded {
+					if matchWithBraces(params.Exclude, info.Name()) {
 						return nil
 					}
 				}
