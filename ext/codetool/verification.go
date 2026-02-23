@@ -679,13 +679,14 @@ func autoCleanupIntermediates(workDir string) int {
 		".beam":  true,
 	}
 
-	// Single walk handles both cache directories and intermediate files.
-	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
+	// WalkDir is faster than Walk: avoids Stat on every entry.
+	// We only need file info for extension-based cleanup on matching files.
+	filepath.WalkDir(workDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		name := info.Name()
-		if info.IsDir() {
+		name := d.Name()
+		if d.IsDir() {
 			if cacheDirs[name] {
 				if os.RemoveAll(path) == nil {
 					cleaned++

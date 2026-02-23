@@ -194,9 +194,44 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 		return nil
 	}
 
-	var allLines []string
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	// Fast path: when no context lines are needed, scan line-by-line
+	// without buffering the entire file. This avoids allocating a
+	// []string for every searched file, which matters when traversing
+	// large codebases (thousands of files up to 1MB each).
+	if contextLines <= 0 {
+		lineNum := 0
+		fileCounted := false
+		for scanner.Scan() {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if *matchCount >= maxResults {
+				*truncated = true
+				return filepath.SkipAll
+			}
+			lineNum++
+			line := scanner.Text()
+			if re.MatchString(line) {
+				*matchCount++
+				if !fileCounted {
+					*fileCount++
+					fileCounted = true
+				}
+				lineText := line
+				if len(lineText) > 2000 {
+					lineText = lineText[:2000] + "..."
+				}
+				*matches = append(*matches, fmt.Sprintf("%s:%d: %s", relPath, lineNum, lineText))
+			}
+		}
+		return nil
+	}
+
+	// Context mode: need all lines in memory for before/after context.
+	var allLines []string
 	for scanner.Scan() {
 		allLines = append(allLines, scanner.Text())
 	}
@@ -221,43 +256,35 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 				*fileCount++
 				fileCounted = true
 			}
-			if contextLines > 0 {
-				start := i - contextLines
-				if start < 0 {
-					start = 0
+			start := i - contextLines
+			if start < 0 {
+				start = 0
+			}
+			end := i + contextLines + 1
+			if end > len(allLines) {
+				end = len(allLines)
+			}
+			// Skip lines already shown by previous match's context.
+			if start <= lastContextEnd {
+				// Add separator only if there's a gap.
+				start = lastContextEnd + 1
+			} else if lastContextEnd >= 0 {
+				// Non-contiguous: add separator between blocks.
+				*matches = append(*matches, "---")
+			}
+			for j := start; j < end; j++ {
+				prefix := " "
+				if j == i {
+					prefix = ">"
 				}
-				end := i + contextLines + 1
-				if end > len(allLines) {
-					end = len(allLines)
-				}
-				// Skip lines already shown by previous match's context.
-				if start <= lastContextEnd {
-					// Add separator only if there's a gap.
-					start = lastContextEnd + 1
-				} else if lastContextEnd >= 0 {
-					// Non-contiguous: add separator between blocks.
-					*matches = append(*matches, "---")
-				}
-				for j := start; j < end; j++ {
-					prefix := " "
-					if j == i {
-						prefix = ">"
-					}
-					lineText := allLines[j]
-					if len(lineText) > 2000 {
-						lineText = lineText[:2000] + "..."
-					}
-					*matches = append(*matches, fmt.Sprintf("%s%s:%d: %s", prefix, relPath, j+1, lineText))
-				}
-				if end-1 > lastContextEnd {
-					lastContextEnd = end - 1
-				}
-			} else {
-				lineText := line
+				lineText := allLines[j]
 				if len(lineText) > 2000 {
 					lineText = lineText[:2000] + "..."
 				}
-				*matches = append(*matches, fmt.Sprintf("%s:%d: %s", relPath, i+1, lineText))
+				*matches = append(*matches, fmt.Sprintf("%s%s:%d: %s", prefix, relPath, j+1, lineText))
+			}
+			if end-1 > lastContextEnd {
+				lastContextEnd = end - 1
 			}
 		}
 	}
