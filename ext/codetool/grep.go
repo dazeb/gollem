@@ -227,7 +227,11 @@ func isSkippableDir(name string) bool {
 	switch name {
 	case ".git", "node_modules", "__pycache__", ".tox", "vendor",
 		// Build output directories.
+		"build",     // Gradle, generic
 		"_build",    // OCaml (dune), Elixir (mix)
+		"dist",      // JS bundlers, Python sdist/wheel
+		"target",    // Rust (cargo), Maven/Gradle (Java)
+		"out",       // Android, TypeScript outDir, generic
 		"zig-cache", // Zig
 		"deps",      // Elixir dependencies
 		"_deps",     // CMake FetchContent

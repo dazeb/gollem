@@ -9052,6 +9052,10 @@ func TestIsSkippableDir(t *testing.T) {
 		{".next", true},
 		{"coverage", true},
 		{".coverage", true},
+		{"build", true},
+		{"dist", true},
+		{"target", true},
+		{"out", true},
 		// Should NOT skip.
 		{"src", false},
 		{"lib", false},
@@ -9059,9 +9063,6 @@ func TestIsSkippableDir(t *testing.T) {
 		{"cmd", false},
 		{"pkg", false},
 		{"app", false},
-		{"build", false}, // could be a source dir
-		{"target", false}, // could be a source dir
-		{"dist", false}, // could be a source dir
 	}
 
 	for _, tc := range tests {

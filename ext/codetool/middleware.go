@@ -1873,8 +1873,7 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 			continue
 		}
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") || isSkippableDir(name) ||
-			name == "build" || name == "dist" || name == "target" {
+		if strings.HasPrefix(name, ".") || isSkippableDir(name) {
 			continue
 		}
 		autoReadSourceRecursive(filepath.Join(dir, name), parts, maxBytes, remaining, budget, depth+1, maxDepth, testRefs)

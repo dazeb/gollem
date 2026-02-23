@@ -4843,7 +4843,7 @@ func isBuildCommand(cmd string) bool {
 		"zig build",    // Zig
 		"mix compile",  // Elixir
 		"./configure",
-		"rustup", "cargo install",
+		"rustup",
 		"gem install", "bundle install",
 		"composer install", // PHP
 		"sbt compile", "sbt assembly",   // Scala
