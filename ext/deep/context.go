@@ -287,12 +287,30 @@ func (cm *ContextManager) tier3Summarize(ctx context.Context, messages []core.Mo
 		return messages, nil
 	}
 
-	// Build new message list: summary + recent messages.
+	// Ensure the second half starts with a ModelResponse so that the
+	// summary (user role) followed by the remaining messages maintains
+	// proper user/assistant alternation (required by Anthropic's API).
+	if splitIdx < len(messages) {
+		if _, isReq := messages[splitIdx].(core.ModelRequest); isReq && splitIdx+1 < len(messages) {
+			splitIdx++
+		}
+	}
+
+	// Build new message list: summary + remaining messages.
+	// The summary includes both a SystemPromptPart (for the system context)
+	// and a UserPromptPart (to produce a proper "user" API message).
+	// Without the UserPromptPart, providers that extract system prompts to a
+	// top-level field (e.g., Anthropic) would produce no API message for the
+	// summary, breaking message alternation.
 	newMessages := make([]core.ModelMessage, 0, 1+len(messages)-splitIdx)
 	newMessages = append(newMessages, core.ModelRequest{
 		Parts: []core.ModelRequestPart{
 			core.SystemPromptPart{
 				Content:   "[Conversation Summary]\n" + summaryText,
+				Timestamp: time.Now(),
+			},
+			core.UserPromptPart{
+				Content:   "Continue based on the conversation summary above.",
 				Timestamp: time.Now(),
 			},
 		},

@@ -261,6 +261,90 @@ func TestContextManager_Tier3_Summarization(t *testing.T) {
 	}
 }
 
+func TestContextManager_Tier3_MessageAlternation(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("Summary of the conversation."))
+
+	// Very low thresholds to force tier 3 summarization.
+	cm := NewContextManager(model,
+		WithMaxContextTokens(20),
+		WithOffloadThreshold(100000), // High so tier 1/2 don't trigger.
+		WithCompressionThreshold(0.1),
+	)
+
+	// Build a typical agent conversation with alternating messages.
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "Start task"}},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "I'll help with that."}},
+		},
+		core.ModelRequest{
+			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "More details"}},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "Here are more details."}},
+		},
+		core.ModelRequest{
+			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "Continue"}},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{core.TextPart{Content: "Continuing now."}},
+		},
+	}
+
+	result, err := cm.ProcessMessages(context.Background(), messages)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify proper alternation: no adjacent messages with the same role.
+	for i := 1; i < len(result); i++ {
+		_, prevIsReq := result[i-1].(core.ModelRequest)
+		_, currIsReq := result[i].(core.ModelRequest)
+		if prevIsReq && currIsReq {
+			t.Errorf("adjacent ModelRequest messages at indices %d and %d", i-1, i)
+		}
+		_, prevIsResp := result[i-1].(core.ModelResponse)
+		_, currIsResp := result[i].(core.ModelResponse)
+		if prevIsResp && currIsResp {
+			t.Errorf("adjacent ModelResponse messages at indices %d and %d", i-1, i)
+		}
+	}
+
+	// First message should be a ModelRequest (summary with user prompt).
+	firstReq, ok := result[0].(core.ModelRequest)
+	if !ok {
+		t.Fatalf("expected ModelRequest at index 0, got %T", result[0])
+	}
+
+	// Should have both SystemPromptPart and UserPromptPart.
+	hasSystem := false
+	hasUser := false
+	for _, part := range firstReq.Parts {
+		if _, ok := part.(core.SystemPromptPart); ok {
+			hasSystem = true
+		}
+		if _, ok := part.(core.UserPromptPart); ok {
+			hasUser = true
+		}
+	}
+	if !hasSystem {
+		t.Error("summary message should contain SystemPromptPart")
+	}
+	if !hasUser {
+		t.Error("summary message should contain UserPromptPart for proper API message generation")
+	}
+
+	// Second message should be ModelResponse (assistant).
+	if _, ok := result[1].(core.ModelResponse); !ok {
+		t.Errorf("expected ModelResponse at index 1, got %T", result[1])
+	}
+}
+
 func TestContextManager_AsHistoryProcessor(t *testing.T) {
 	model := core.NewTestModel(
 		// First call is from the agent; second call would be summarization (if triggered).
