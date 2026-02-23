@@ -5059,6 +5059,10 @@ func compilationErrorSummary(output string, exitCode int) string {
 		"cannot find symbol", "not found in scope",
 		"error[E", // Rust: error[E0425]: ... (no leading colon)
 		"-- [E",   // Scala 3: -- [E007] Type Mismatch Error:
+		// Go compilation errors (file.go:line:col: message — no ": error:" prefix).
+		"undefined: ",           // Go: undefined identifier
+		"imported and not used", // Go: unused import
+		"declared and not used", // Go: unused variable
 	}
 	for _, p := range errorPatterns {
 		if strings.Contains(output, p) {
@@ -5139,6 +5143,11 @@ func compilationFingerprint(output string) string {
 		"error[E",
 		// Scala 3: "-- [E007] Type Mismatch Error:" (starts with --)
 		"-- [E",
+		// Go: "file.go:42:5: undefined: foo" — Go uses file:line:col: directly
+		// without a ": error:" prefix, so these patterns catch Go-specific errors.
+		"undefined: ",           // Go: undefined identifier
+		"imported and not used", // Go: unused import
+		"declared and not used", // Go: unused variable
 	}
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)

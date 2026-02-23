@@ -935,6 +935,26 @@ func failureGuidance(summary string) string {
 		return "IMPORT ERROR — a required module is missing. " +
 			"Install with: pip install --break-system-packages <module>. " +
 			"If it's a local module, check PYTHONPATH or run from the correct directory.\n"
+	case strings.Contains(lower, "segfault") || strings.Contains(lower, "segmentation fault") ||
+		strings.Contains(lower, "signal: segmentation") || strings.Contains(lower, "sigsegv") ||
+		strings.Contains(lower, "signal 11") || strings.Contains(lower, "exit code: 139"):
+		return "SEGMENTATION FAULT — your code is accessing invalid memory. " +
+			"Common causes: array/buffer out of bounds, null/dangling pointer dereference, use after free. " +
+			"Debug with: valgrind ./program (if available), or add bounds checks to array accesses. " +
+			"In C/C++: check all pointer dereferences and array indices.\n"
+	case strings.Contains(lower, "killed") || strings.Contains(lower, "out of memory") ||
+		strings.Contains(lower, "oom") || strings.Contains(lower, "signal 9") ||
+		strings.Contains(lower, "exit code: 137") || strings.Contains(lower, "cannot allocate memory"):
+		return "OUT OF MEMORY — your solution uses too much RAM and was killed by the OS. " +
+			"Reduce memory usage: process data in streaming/chunked fashion instead of loading all into memory, " +
+			"use generators/iterators, free large data structures when no longer needed. " +
+			"If using Python: avoid building large lists — use generators. If using C/C++: free() after use.\n"
+	case strings.Contains(lower, "stack overflow") || strings.Contains(lower, "maximum recursion depth") ||
+		strings.Contains(lower, "recursionerror") || strings.Contains(lower, "stack level too deep"):
+		return "STACK OVERFLOW — your code has infinite or very deep recursion. " +
+			"Convert recursive algorithms to iterative (use an explicit stack/queue). " +
+			"If the recursion depth is legitimate, increase the limit: " +
+			"Python: sys.setrecursionlimit(N), C/C++: ulimit -s unlimited.\n"
 	case strings.Contains(lower, "assert"):
 		return "ASSERTION FAILURE — read the test code to understand exactly what's expected. " +
 			"Fix one failure at a time, starting with the first.\n"

@@ -2152,6 +2152,16 @@ func TestFailureGuidance(t *testing.T) {
 		{"expected 42, got 43", "MISMATCH"},
 		{"file not found: output.txt", "MISSING FILE"},
 		{"AssertionError: values differ", "ASSERTION"},
+		{"segmentation fault at 0x0", "SEGMENTATION FAULT"},
+		{"signal: segmentation fault", "invalid memory"},
+		{"exit code: 139 (SIGSEGV)", "SEGMENTATION FAULT"},
+		{"process killed (out of memory)", "OUT OF MEMORY"},
+		{"exit code: 137 (signal 9)", "OUT OF MEMORY"},
+		{"cannot allocate memory", "OUT OF MEMORY"},
+		{"maximum recursion depth exceeded", "STACK OVERFLOW"},
+		{"stack overflow in recursive call", "STACK OVERFLOW"},
+		{"RecursionError: too deep", "STACK OVERFLOW"},
+		{"stack level too deep (SystemStackError)", "STACK OVERFLOW"},
 		{"generic failure", "Fix the failures"},
 	}
 	for _, tt := range tests {
@@ -9677,6 +9687,55 @@ SyntaxError: invalid syntax`,
 	fp := compilationFingerprint("Build succeeded\nAll tests passed")
 	if fp != "" {
 		t.Errorf("expected no fingerprint for clean output, got: %s", fp)
+	}
+}
+
+func TestCompilationFingerprint_Go(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "Go undefined identifier",
+			output: `./main.go:42:5: undefined: myFunc`,
+		},
+		{
+			name:   "Go unused import",
+			output: `./main.go:3:2: "fmt" imported and not used`,
+		},
+		{
+			name:   "Go unused variable",
+			output: `./main.go:10:2: x declared and not used`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := compilationFingerprint(tc.output)
+			if fp == "" {
+				t.Fatalf("expected fingerprint for Go %s, got empty", tc.name)
+			}
+		})
+	}
+}
+
+func TestCompilationErrorSummary_Go(t *testing.T) {
+	output := `# command-line-arguments
+./main.go:5:2: undefined: solve
+./main.go:8:2: "fmt" imported and not used
+./main.go:12:6: result declared and not used
+[exit code: 2]`
+	summary := compilationErrorSummary(output, 2)
+	if summary == "" {
+		t.Fatal("expected compilation error summary for Go errors, got empty")
+	}
+	if !strings.Contains(summary, "undefined: solve") {
+		t.Error("summary should include the undefined identifier error")
+	}
+	if !strings.Contains(summary, "imported and not used") {
+		t.Error("summary should include the unused import error")
+	}
+	if !strings.Contains(summary, "declared and not used") {
+		t.Error("summary should include the unused variable error")
 	}
 }
 
