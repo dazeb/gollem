@@ -349,6 +349,12 @@ func Bash(opts ...Option) core.Tool {
 			if hint := perlModuleHint(errStr + outStr, exitCode); hint != "" {
 				result += "\n" + hint
 			}
+			if hint := rubyGemHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
+			if hint := javaExceptionHint(errStr + outStr, exitCode); hint != "" {
+				result += "\n" + hint
+			}
 
 			// Append summaries for long output to help the model focus.
 			// Use pre-computed values from FULL output (before truncation)
@@ -1994,6 +2000,92 @@ func perlModuleHint(output string, exitCode int) string {
 				"cpanm %s || apt-get install -y lib%s-perl (lowercase, dashes for ::)]",
 				modName, modName, strings.ToLower(strings.ReplaceAll(modName, "::", "-")))
 		}
+	}
+
+	return ""
+}
+
+// rubyGemHint detects Ruby LoadError (missing gems) and Bundler errors.
+// Suggests gem install or bundle install to save a turn of troubleshooting.
+func rubyGemHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// Ruby LoadError: "LoadError: cannot load such file -- foo_bar"
+	if strings.Contains(output, "cannot load such file") {
+		idx := strings.Index(output, "cannot load such file -- ")
+		if idx >= 0 {
+			rest := output[idx+len("cannot load such file -- "):]
+			if nl := strings.IndexAny(rest, "\n\r"); nl > 0 {
+				rest = rest[:nl]
+			}
+			gemName := strings.TrimSpace(rest)
+			// Remove trailing "(LoadError)" or similar.
+			if pidx := strings.Index(gemName, " ("); pidx > 0 {
+				gemName = gemName[:pidx]
+			}
+			if gemName != "" {
+				return fmt.Sprintf("[hint: Ruby cannot load '%s' — try: gem install %s (or bundle install if Gemfile exists)]",
+					gemName, gemName)
+			}
+		}
+		return "[hint: Ruby LoadError — install the missing gem: gem install <name> (or bundle install)]"
+	}
+
+	// Bundler::GemNotFound or "Could not find gem"
+	if strings.Contains(output, "Bundler::GemNotFound") || strings.Contains(output, "Could not find gem") {
+		return "[hint: missing Ruby gems — run: bundle install]"
+	}
+
+	return ""
+}
+
+// javaExceptionHint detects common Java/JVM runtime errors and provides
+// actionable fix suggestions. These save 1-2 turns of the agent debugging
+// classpath issues, memory settings, or infinite recursion.
+func javaExceptionHint(output string, exitCode int) string {
+	if exitCode == 0 {
+		return ""
+	}
+
+	// ClassNotFoundException — wrong classpath.
+	if strings.Contains(output, "ClassNotFoundException") {
+		// Extract class name.
+		idx := strings.Index(output, "ClassNotFoundException:")
+		if idx >= 0 {
+			rest := output[idx+len("ClassNotFoundException:"):]
+			if nl := strings.IndexAny(rest, "\n\r"); nl > 0 {
+				rest = rest[:nl]
+			}
+			className := strings.TrimSpace(rest)
+			if className != "" {
+				return fmt.Sprintf("[hint: Java ClassNotFoundException: %s — check classpath (-cp flag). "+
+					"Maven: mvn compile. Gradle: ./gradlew build. javac: compile all .java files]", className)
+			}
+		}
+		return "[hint: Java ClassNotFoundException — check classpath (-cp) and ensure all classes are compiled]"
+	}
+
+	// NoClassDefFoundError — class found at compile time but not runtime.
+	if strings.Contains(output, "NoClassDefFoundError") {
+		return "[hint: Java NoClassDefFoundError — class was found at compile time but not runtime. " +
+			"Check that -cp includes all required JARs and class directories]"
+	}
+
+	// OutOfMemoryError
+	if strings.Contains(output, "OutOfMemoryError") {
+		if strings.Contains(output, "Java heap space") {
+			return "[hint: Java OutOfMemoryError: heap space — increase with: java -Xmx512m (or -Xmx1g). " +
+				"Also check for memory leaks (unbounded collections, unclosed streams)]"
+		}
+		return "[hint: Java OutOfMemoryError — increase memory: java -Xmx512m -Xms256m]"
+	}
+
+	// StackOverflowError
+	if strings.Contains(output, "StackOverflowError") {
+		return "[hint: Java StackOverflowError — likely infinite recursion. Check recursive methods for missing " +
+			"base cases. If recursion depth is legitimate, increase stack: java -Xss4m]"
 	}
 
 	return ""

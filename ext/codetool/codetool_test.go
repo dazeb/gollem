@@ -7304,3 +7304,98 @@ func TestFirstFailureDetail_XCTest(t *testing.T) {
 	}
 }
 
+// --- Ruby gem hint tests ---
+
+func TestRubyGemHint_LoadError(t *testing.T) {
+	output := `/usr/lib/ruby/3.0.0/rubygems/core_ext/kernel_require.rb:85:in 'require': cannot load such file -- nokogiri (LoadError)
+	from /usr/lib/ruby/3.0.0/rubygems/core_ext/kernel_require.rb:85:in 'require'
+	from app.rb:1:in '<main>'`
+	hint := rubyGemHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Ruby LoadError hint")
+	}
+	if !strings.Contains(hint, "nokogiri") {
+		t.Errorf("expected gem name 'nokogiri' in hint, got: %s", hint)
+	}
+	if !strings.Contains(hint, "gem install") {
+		t.Errorf("expected 'gem install' in hint, got: %s", hint)
+	}
+}
+
+func TestRubyGemHint_BundlerGemNotFound(t *testing.T) {
+	output := `Could not find gem 'rspec' in any of the gem sources listed in your Gemfile.`
+	hint := rubyGemHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Bundler hint")
+	}
+	if !strings.Contains(hint, "bundle install") {
+		t.Errorf("expected 'bundle install' in hint, got: %s", hint)
+	}
+}
+
+func TestRubyGemHint_NoError(t *testing.T) {
+	hint := rubyGemHint("Hello world", 0)
+	if hint != "" {
+		t.Errorf("expected no hint on exit 0, got: %s", hint)
+	}
+}
+
+// --- Java exception hint tests ---
+
+func TestJavaExceptionHint_ClassNotFound(t *testing.T) {
+	output := `Exception in thread "main" java.lang.ClassNotFoundException: com.example.MyApp
+	at java.net.URLClassLoader.findClass(URLClassLoader.java:382)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:418)`
+	hint := javaExceptionHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Java ClassNotFoundException hint")
+	}
+	if !strings.Contains(hint, "com.example.MyApp") {
+		t.Errorf("expected class name in hint, got: %s", hint)
+	}
+	if !strings.Contains(hint, "classpath") {
+		t.Errorf("expected classpath suggestion, got: %s", hint)
+	}
+}
+
+func TestJavaExceptionHint_NoClassDefFound(t *testing.T) {
+	output := `Exception in thread "main" java.lang.NoClassDefFoundError: org/json/JSONObject`
+	hint := javaExceptionHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Java NoClassDefFoundError hint")
+	}
+	if !strings.Contains(hint, "NoClassDefFoundError") {
+		t.Errorf("expected NoClassDefFoundError in hint, got: %s", hint)
+	}
+}
+
+func TestJavaExceptionHint_OutOfMemory(t *testing.T) {
+	output := `Exception in thread "main" java.lang.OutOfMemoryError: Java heap space`
+	hint := javaExceptionHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Java OOM hint")
+	}
+	if !strings.Contains(hint, "-Xmx") {
+		t.Errorf("expected -Xmx suggestion, got: %s", hint)
+	}
+}
+
+func TestJavaExceptionHint_StackOverflow(t *testing.T) {
+	output := `Exception in thread "main" java.lang.StackOverflowError
+	at com.example.Recursive.call(Recursive.java:10)`
+	hint := javaExceptionHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Java StackOverflowError hint")
+	}
+	if !strings.Contains(hint, "recursion") {
+		t.Errorf("expected recursion suggestion, got: %s", hint)
+	}
+}
+
+func TestJavaExceptionHint_NoError(t *testing.T) {
+	hint := javaExceptionHint("BUILD SUCCESSFUL", 0)
+	if hint != "" {
+		t.Errorf("expected no hint on exit 0, got: %s", hint)
+	}
+}
+
