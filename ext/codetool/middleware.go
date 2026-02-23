@@ -3102,8 +3102,12 @@ func extractJSModuleName(line string) string {
 			// Strip extension if present.
 			base = strings.TrimSuffix(base, ".js")
 			base = strings.TrimSuffix(base, ".ts")
+			base = strings.TrimSuffix(base, ".jsx")
+			base = strings.TrimSuffix(base, ".tsx")
 			base = strings.TrimSuffix(base, ".mjs")
 			base = strings.TrimSuffix(base, ".cjs")
+			base = strings.TrimSuffix(base, ".mts")
+			base = strings.TrimSuffix(base, ".cts")
 			return strings.ToLower(base)
 		}
 	}
@@ -3195,7 +3199,7 @@ func extractFunctionSignaturesRecursive(dir string, signatures *[]string, seen m
 		switch ext {
 		case ".py":
 			extractor = extractPythonFunctionSignatures
-		case ".js", ".ts":
+		case ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts":
 			extractor = extractJSFunctionSignatures
 		case ".go":
 			extractor = extractGoFunctionSignatures
@@ -7389,7 +7393,7 @@ func extractFileStructure(path string) string {
 			if strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "type ") {
 				matched = true
 			}
-		case ".js", ".ts", ".jsx", ".tsx":
+		case ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts":
 			if strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "class ") ||
 				strings.HasPrefix(trimmed, "export ") || strings.HasPrefix(trimmed, "const ") ||
 				strings.HasPrefix(trimmed, "async function ") {
