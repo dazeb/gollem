@@ -970,9 +970,13 @@ func compilationErrorHint(output string, exitCode int) string {
 		return ""
 	}
 
-	// Linker errors: "undefined reference to 'foo'" — suggest common -l flags.
+	// Linker errors: "undefined reference to 'foo'", "multiple definition",
+	// "cannot find -l" — suggest common -l flags and fixes.
 	// These save 1-2 turns of the agent figuring out which library to link.
-	if strings.Contains(output, "undefined reference to") {
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "undefined reference to") ||
+		strings.Contains(lower, "multiple definition of") ||
+		strings.Contains(lower, "cannot find -l") {
 		if hint := linkerHint(output); hint != "" {
 			return hint
 		}
@@ -1059,7 +1063,31 @@ func compilationErrorHint(output string, exitCode int) string {
 // These are the most common linker errors in C/C++ tasks.
 func linkerHint(output string) string {
 	lower := strings.ToLower(output)
-	// Map function names to libraries.
+
+	// "multiple definition of `X'" — same symbol defined in multiple files.
+	// Check first since it's a distinct error type from undefined reference.
+	if strings.Contains(lower, "multiple definition of") {
+		return "[hint: LINKER ERROR — multiple definition means the same function/variable is defined in more than one file. " +
+			"Fix: (1) move the definition to one .c file and use 'extern' declarations in headers, " +
+			"(2) use 'static' for file-local functions, (3) use include guards (#ifndef) in headers]"
+	}
+
+	// "ld: cannot find -lX" — missing library. Check before library-specific
+	// hints since library names (e.g., "ncurses") can appear in both patterns.
+	if strings.Contains(lower, "cannot find -l") {
+		idx := strings.Index(lower, "cannot find -l")
+		if idx >= 0 {
+			rest := lower[idx+len("cannot find -l"):]
+			end := strings.IndexAny(rest, " \n\r\t")
+			lib := rest
+			if end > 0 {
+				lib = rest[:end]
+			}
+			return fmt.Sprintf("[hint: LINKER ERROR — library '%s' not found. Try: apt-get install -y lib%s-dev]", lib, lib)
+		}
+	}
+
+	// Map function names to libraries for undefined reference errors.
 	libHints := []struct {
 		patterns []string
 		flag     string

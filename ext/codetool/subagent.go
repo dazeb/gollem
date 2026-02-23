@@ -58,6 +58,12 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 			// Build a lightweight subagent with coding tools but no delegation
 			// (prevents infinite recursion).
 			acConfig := subagentAutoContextConfig(cfg)
+
+			// Verification tracking middleware (not validator) — gives subagents
+			// stagnation, regression, same-error, and stale-test detection without
+			// blocking their completion.
+			verifyMW, _ := VerificationCheckpoint("")
+
 			subOpts := []core.AgentOption[string]{
 				core.WithSystemPrompt[string](systemPrompt),
 				core.WithToolsets[string](Toolset(opts...)),
@@ -85,6 +91,10 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				// implementation vs verification). Helps subagent reason carefully
 				// when analyzing errors and verifying fixes.
 				core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(subagentReasoningConfig())),
+				// Verification tracking: detect stagnation, regression, same-error
+				// patterns, and stale tests. Subagents are not blocked from
+				// completing, but they get guidance when stuck in failing loops.
+				core.WithAgentMiddleware[string](verifyMW),
 				// Context overflow recovery: catches 413 and retries with compressed
 				// messages. Subagents can hit overflow on long-running subtasks.
 				core.WithAgentMiddleware[string](ContextOverflowMiddleware()),

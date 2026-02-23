@@ -384,6 +384,15 @@ class GollemAgent(BaseInstalledAgent):
             # Pass the REAL task timeout to gollem so TimeBudgetMiddleware
             # warns at the correct percentages of remaining time.
             "GOLLEM_TIMEOUT_SEC": str(gollem_timeout_sec),
+            # Prevent __pycache__ directories — they cause "extra files" failures
+            # when tests check directory contents with os.listdir/ls.
+            "PYTHONDONTWRITEBYTECODE": "1",
+            # Ensure Python output is immediately visible (not buffered). Critical
+            # for real-time monitoring and for capturing output from crashed scripts.
+            "PYTHONUNBUFFERED": "1",
+            # Consistent UTF-8 locale for text processing tasks.
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
         }
 
         for key in [

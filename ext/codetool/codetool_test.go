@@ -6817,3 +6817,46 @@ func TestSSLHint(t *testing.T) {
 	})
 }
 
+func TestLinkerHint_MultipleDefinition(t *testing.T) {
+	output := `/usr/bin/ld: /tmp/ccXYZ.o: in function 'init':
+utils.c:(.text+0x0): multiple definition of 'init'; /tmp/ccABC.o:main.c:(.text+0x0): first defined here
+collect2: error: ld returned 1 exit status`
+	hint := linkerHint(output)
+	if !strings.Contains(hint, "multiple definition") {
+		t.Errorf("expected multiple definition hint, got: %q", hint)
+	}
+	if !strings.Contains(hint, "extern") {
+		t.Errorf("expected 'extern' advice in hint, got: %q", hint)
+	}
+}
+
+func TestLinkerHint_CannotFindLibrary(t *testing.T) {
+	output := `/usr/bin/ld: cannot find -lncurses
+collect2: error: ld returned 1 exit status`
+	hint := linkerHint(output)
+	if !strings.Contains(hint, "ncurses") {
+		t.Errorf("expected ncurses library name in hint, got: %q", hint)
+	}
+	if !strings.Contains(hint, "apt-get install") {
+		t.Errorf("expected apt-get install advice, got: %q", hint)
+	}
+}
+
+func TestLinkerHint_MathFunctions(t *testing.T) {
+	output := `main.c:(.text+0x1a): undefined reference to 'sqrt'
+collect2: error: ld returned 1 exit status`
+	hint := linkerHint(output)
+	if !strings.Contains(hint, "-lm") {
+		t.Errorf("expected -lm hint for math function, got: %q", hint)
+	}
+}
+
+func TestLinkerHint_PthreadFunctions(t *testing.T) {
+	output := `main.c:(.text+0x1a): undefined reference to 'pthread_create'
+collect2: error: ld returned 1 exit status`
+	hint := linkerHint(output)
+	if !strings.Contains(hint, "-lpthread") {
+		t.Errorf("expected -lpthread hint, got: %q", hint)
+	}
+}
+
