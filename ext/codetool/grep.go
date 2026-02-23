@@ -98,6 +98,7 @@ func Grep(opts ...Option) core.Tool {
 
 			var matches []string
 			matchCount := 0
+			fileCount := 0
 			truncated := false
 
 			err = filepath.Walk(searchPath, func(path string, info os.FileInfo, walkErr error) error {
@@ -147,9 +148,9 @@ func Grep(opts ...Option) core.Tool {
 				}
 
 				if params.FilesOnly {
-					return searchFileExists(ctx, path, relPath, re, maxResults, &matches, &matchCount, &truncated)
+					return searchFileExists(ctx, path, relPath, re, maxResults, &matches, &matchCount, &fileCount, &truncated)
 				}
-				return searchFile(ctx, path, relPath, re, contextLines, maxResults, &matches, &matchCount, &truncated)
+				return searchFile(ctx, path, relPath, re, contextLines, maxResults, &matches, &matchCount, &fileCount, &truncated)
 			})
 
 			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -164,12 +165,17 @@ func Grep(opts ...Option) core.Tool {
 			if truncated {
 				result += fmt.Sprintf("\n... (results truncated at %d matches)", maxResults)
 			}
+			if params.FilesOnly {
+				result += fmt.Sprintf("\n(%d files matched)", matchCount)
+			} else {
+				result += fmt.Sprintf("\n(%d matches in %d files)", matchCount, fileCount)
+			}
 			return result, nil
 		},
 	)
 }
 
-func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp, contextLines, maxResults int, matches *[]string, matchCount *int, truncated *bool) error {
+func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp, contextLines, maxResults int, matches *[]string, matchCount *int, fileCount *int, truncated *bool) error {
 	f, err := os.Open(absPath)
 	if err != nil {
 		return nil
@@ -199,6 +205,7 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 	// Track the last context line shown to avoid duplicating lines when
 	// consecutive matches have overlapping context windows.
 	lastContextEnd := -1
+	fileCounted := false
 
 	for i, line := range allLines {
 		if ctx.Err() != nil {
@@ -211,6 +218,10 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 		}
 		if re.MatchString(line) {
 			*matchCount++
+			if !fileCounted {
+				*fileCount++
+				fileCounted = true
+			}
 			if contextLines > 0 {
 				start := i - contextLines
 				if start < 0 {
@@ -263,7 +274,7 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 // searchFileExists checks if a file contains any match and records just the
 // file path (for files_only mode). This is faster than searchFile since it
 // stops at the first match and doesn't track line numbers or context.
-func searchFileExists(ctx context.Context, absPath, relPath string, re *regexp.Regexp, maxResults int, matches *[]string, matchCount *int, truncated *bool) error {
+func searchFileExists(ctx context.Context, absPath, relPath string, re *regexp.Regexp, maxResults int, matches *[]string, matchCount *int, fileCount *int, truncated *bool) error {
 	if *matchCount >= maxResults {
 		*truncated = true
 		return filepath.SkipAll
@@ -295,6 +306,7 @@ func searchFileExists(ctx context.Context, absPath, relPath string, re *regexp.R
 		}
 		if re.MatchString(scanner.Text()) {
 			*matchCount++
+			*fileCount++
 			*matches = append(*matches, relPath)
 			return nil // found — no need to scan further
 		}

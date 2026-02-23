@@ -437,6 +437,9 @@ func MultiEdit(opts ...Option) core.Tool {
 				if edit.OldString == "" {
 					return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: old_string must not be empty", i)}
 				}
+				if edit.OldString == edit.NewString {
+					return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: old_string and new_string are identical — no change needed", i)}
+				}
 
 				path := edit.Path
 				if !filepath.IsAbs(path) && cfg.WorkDir != "" {

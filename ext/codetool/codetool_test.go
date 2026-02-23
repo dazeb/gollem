@@ -11103,3 +11103,68 @@ func TestView_NegativeOffsetEmptyFile(t *testing.T) {
 	assertContains(t, result, "empty file")
 }
 
+func TestView_ExactLimitNoTruncation(t *testing.T) {
+	// A file with exactly `limit` lines should NOT show truncation indicator.
+	dir := t.TempDir()
+	var lines []string
+	for i := 1; i <= 10; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	writeTestFile(t, dir, "exact.txt", strings.Join(lines, "\n"))
+
+	tool := View(WithWorkDir(dir))
+	result := call(t, tool, `{"path": "exact.txt", "limit": 10}`)
+	assertContains(t, result, "line 1")
+	assertContains(t, result, "line 10")
+	assertNotContains(t, result, "...")
+	assertContains(t, result, "10 lines")
+}
+
+func TestView_OffsetExactLimitNoTruncation(t *testing.T) {
+	// Reading from an offset where remaining lines exactly equal limit
+	// should NOT show truncation.
+	dir := t.TempDir()
+	var lines []string
+	for i := 1; i <= 15; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	writeTestFile(t, dir, "offset.txt", strings.Join(lines, "\n"))
+
+	tool := View(WithWorkDir(dir))
+	// Read lines 6-15 (10 lines) with limit=10.
+	result := call(t, tool, `{"path": "offset.txt", "offset": 6, "limit": 10}`)
+	assertContains(t, result, "line 6")
+	assertContains(t, result, "line 15")
+	assertNotContains(t, result, "...")
+	assertContains(t, result, "15 total lines")
+}
+
+func TestMultiEdit_IdenticalStrings(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := MultiEdit(WithWorkDir(dir))
+	args := `{"edits": [
+		{"path": "hello.go", "old_string": "Hello, World!", "new_string": "Hello, World!"}
+	]}`
+	err := callErr(t, tool, args)
+	if err == nil {
+		t.Fatal("expected error for identical old_string and new_string")
+	}
+	assertContains(t, err.Error(), "identical")
+}
+
+func TestGrep_SummaryFooter(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := Grep(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "func"}`)
+	// Should contain match/file count summary.
+	assertContains(t, result, "matches in")
+	assertContains(t, result, "files)")
+}
+
+func TestGrep_FilesOnlySummary(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := Grep(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "func", "files_only": true}`)
+	assertContains(t, result, "files matched)")
+}
+
