@@ -2443,24 +2443,7 @@ func detectOutputFormat(workDir string) []string {
 	// Also check README/instruction files and scripts in root.
 	var allContent []string
 	for _, td := range testDirs {
-		entries, err := os.ReadDir(td)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !isSourceFile(entry.Name()) {
-				continue
-			}
-			info, _ := entry.Info()
-			if info == nil || info.Size() > 30000 {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
-			if err != nil {
-				continue
-			}
-			allContent = append(allContent, string(data))
-		}
+		collectTestFileContents(td, &allContent, 0, 2)
 	}
 
 	// Also scan verification scripts in workDir and /app for format clues.
@@ -2600,6 +2583,38 @@ func detectOutputFormat(workDir string) []string {
 		}
 	}
 	return hints
+}
+
+// collectTestFileContents recursively collects source file contents from test
+// directories for format/stdin/binary detection in detectOutputFormat.
+func collectTestFileContents(dir string, contents *[]string, depth, maxDepth int) {
+	if depth > maxDepth {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			if depth < maxDepth {
+				collectTestFileContents(filepath.Join(dir, entry.Name()), contents, depth+1, maxDepth)
+			}
+			continue
+		}
+		if !isSourceFile(entry.Name()) {
+			continue
+		}
+		info, _ := entry.Info()
+		if info == nil || info.Size() > 30000 {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		*contents = append(*contents, string(data))
+	}
 }
 
 // detectExpectedBinaryName extracts the exact binary name tests expect
@@ -2933,6 +2948,10 @@ func extractFunctionSignaturesRecursive(dir string, signatures *[]string, seen m
 			extractor = extractRubyFunctionSignatures
 		case ".rs":
 			extractor = extractRustFunctionSignatures
+		case ".java":
+			extractor = extractJavaFunctionSignatures
+		case ".cs":
+			extractor = extractCSharpFunctionSignatures
 		}
 		if extractor != nil {
 			for _, sig := range extractor(content) {
@@ -3502,6 +3521,273 @@ func extractRustFunctionSignatures(content string) []string {
 		if idx := strings.LastIndex(name, "::"); idx >= 0 {
 			baseName = name[idx+2:]
 		} else if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
+}
+
+// extractJavaFunctionSignatures finds function call patterns in Java test code.
+// Looks for JUnit test method calls like solution.solve(n, k), Calculator.add(a, b), etc.
+func extractJavaFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	skipFuncs := map[string]bool{
+		// JUnit assertions.
+		"assertEquals":         true, "assertNotEquals": true,
+		"assertTrue":           true, "assertFalse": true,
+		"assertNull":           true, "assertNotNull": true,
+		"assertArrayEquals":    true, "assertThrows": true,
+		"assertDoesNotThrow":   true, "assertAll": true,
+		"assertTimeout":        true, "assertIterableEquals": true,
+		"assertLinesMatch":     true, "assertSame": true,
+		"assertNotSame":        true, "fail": true,
+		// Hamcrest matchers.
+		"assertThat": true, "is": true, "equalTo": true, "not": true,
+		"hasItem": true, "hasSize": true, "containsString": true,
+		"closeTo": true, "greaterThan": true, "lessThan": true,
+		// Java stdlib.
+		"println":     true, "print": true, "printf": true,
+		"format":      true, "valueOf": true, "toString": true,
+		"parseInt":    true, "parseDouble": true, "parseLong": true,
+		"asList":      true, "of": true, "copyOf": true,
+		"stream":      true, "collect": true, "map": true, "filter": true,
+		"forEach":     true, "reduce": true, "sorted": true,
+		"add":         true, "get": true, "put": true, "remove": true,
+		"contains":    true, "size": true, "isEmpty": true,
+		"toArray":     true, "subList": true, "sort": true,
+		"abs":         true, "min": true, "max": true, "sqrt": true,
+		"pow":         true, "round": true,
+		"equals":      true, "hashCode": true, "compareTo": true,
+		"length":      true, "charAt": true, "substring": true,
+		"split":       true, "trim": true, "replace": true, "matches": true,
+		// Test setup.
+		"setUp": true, "tearDown": true, "beforeEach": true, "afterEach": true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") ||
+			strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "package ") ||
+			strings.HasPrefix(trimmed, "@") || strings.HasPrefix(trimmed, "public class ") ||
+			strings.HasPrefix(trimmed, "class ") {
+			continue
+		}
+
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == '.') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			baseName := fullName
+			if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] {
+				continue
+			}
+			// Skip known Java packages/test modules.
+			if dotIdx := strings.Index(fullName, "."); dotIdx >= 0 {
+				module := fullName[:dotIdx]
+				if module == "System" || module == "Math" || module == "Arrays" ||
+					module == "Collections" || module == "Objects" || module == "String" ||
+					module == "Integer" || module == "Double" || module == "Long" ||
+					module == "Assertions" || module == "Assert" {
+					continue
+				}
+			}
+
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break
+		}
+	}
+
+	byFunc := make(map[string]string)
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			baseName = name[dotIdx+1:]
+		}
+		existing, ok := byFunc[baseName]
+		if !ok || len(sig) > len(existing) {
+			byFunc[baseName] = sig
+		}
+	}
+
+	var result []string
+	for _, sig := range byFunc {
+		result = append(result, sig)
+	}
+	return result
+}
+
+// extractCSharpFunctionSignatures finds function call patterns in C# test code.
+// Looks for NUnit/xUnit/MSTest method calls like solution.Solve(n, k), Calculator.Add(a, b), etc.
+func extractCSharpFunctionSignatures(content string) []string {
+	var sigs []string
+	seen := make(map[string]bool)
+
+	skipFuncs := map[string]bool{
+		// NUnit assertions.
+		"AreEqual":    true, "AreNotEqual": true,
+		"IsTrue":      true, "IsFalse": true,
+		"IsNull":      true, "IsNotNull": true,
+		"That":        true, "Throws": true,
+		"DoesNotThrow": true, "IsEmpty": true,
+		"IsInstanceOf": true, "Greater": true, "Less": true,
+		"Contains":    true, "Pass": true, "Fail": true,
+		// xUnit assertions.
+		"Equal":       true, "NotEqual": true,
+		"True":        true, "False": true,
+		"Null":        true, "NotNull": true,
+		"Empty":       true, "NotEmpty": true,
+		"Single":      true, "InRange": true,
+		"Collection":  true,
+		// MSTest assertions.
+		"AreEqual_": true, "AreSame": true,
+		"IsNotNull_": true,
+		// C# stdlib.
+		"WriteLine":   true, "Write": true, "ReadLine": true,
+		"ToString":    true, "Parse": true, "TryParse": true,
+		"Format":      true, "Join": true, "Split": true,
+		"Trim":        true, "Replace": true, "Substring": true,
+		"ToLower":     true, "ToUpper": true,
+		"Add":         true, "Remove": true, "Insert": true,
+		"Count":       true, "Clear": true, "Sort": true,
+		"ToList":      true, "ToArray": true, "ToDictionary": true,
+		"Select":      true, "Where": true, "OrderBy": true,
+		"FirstOrDefault": true, "Any": true, "All": true,
+		"Sum":         true, "Average": true, "Min": true, "Max": true,
+		"Abs":         true, "Sqrt": true, "Pow": true, "Round": true,
+		"GetType":     true, "Equals": true, "GetHashCode": true,
+		// Test setup.
+		"SetUp": true, "TearDown": true, "TestInitialize": true,
+	}
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") ||
+			strings.HasPrefix(trimmed, "using ") || strings.HasPrefix(trimmed, "namespace ") ||
+			strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "public class ") ||
+			strings.HasPrefix(trimmed, "class ") {
+			continue
+		}
+
+		for i := 0; i < len(trimmed)-2; i++ {
+			if trimmed[i] != '(' {
+				continue
+			}
+			nameEnd := i
+			nameStart := nameEnd - 1
+			for nameStart >= 0 && (isAlphaNumUnderscore(trimmed[nameStart]) || trimmed[nameStart] == '.') {
+				nameStart--
+			}
+			nameStart++
+			if nameStart >= nameEnd {
+				continue
+			}
+			fullName := trimmed[nameStart:nameEnd]
+			baseName := fullName
+			if dotIdx := strings.LastIndex(fullName, "."); dotIdx >= 0 {
+				baseName = fullName[dotIdx+1:]
+			}
+			if baseName == "" || skipFuncs[baseName] {
+				continue
+			}
+			// Skip known C# framework types.
+			if dotIdx := strings.Index(fullName, "."); dotIdx >= 0 {
+				module := fullName[:dotIdx]
+				if module == "Console" || module == "Math" || module == "Convert" ||
+					module == "String" || module == "Int32" || module == "Double" ||
+					module == "Assert" || module == "Enumerable" || module == "Array" {
+					continue
+				}
+			}
+
+			argStart := i + 1
+			depth := 1
+			argEnd := argStart
+			for argEnd < len(trimmed) && depth > 0 {
+				if trimmed[argEnd] == '(' {
+					depth++
+				} else if trimmed[argEnd] == ')' {
+					depth--
+				}
+				argEnd++
+			}
+			if depth != 0 {
+				continue
+			}
+			args := trimmed[argStart : argEnd-1]
+			if len(args) > 100 {
+				args = args[:100] + "..."
+			}
+
+			sig := fullName + "(" + args + ")"
+			if !seen[sig] && len(sig) < 150 {
+				seen[sig] = true
+				sigs = append(sigs, sig)
+			}
+			break
+		}
+	}
+
+	byFunc := make(map[string]string)
+	for _, sig := range sigs {
+		parenIdx := strings.Index(sig, "(")
+		if parenIdx < 0 {
+			continue
+		}
+		name := sig[:parenIdx]
+		baseName := name
+		if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
 			baseName = name[dotIdx+1:]
 		}
 		existing, ok := byFunc[baseName]

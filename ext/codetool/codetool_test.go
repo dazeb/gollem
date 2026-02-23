@@ -9145,6 +9145,109 @@ fn test_basic() {
 	}
 }
 
+func TestExtractJavaFunctionSignatures(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name: "JUnit test calling solution methods",
+			content: `
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class SolutionTest {
+    @Test
+    public void testSolve() {
+        Solution sol = new Solution();
+        int result = sol.solve(3, new int[]{1, 2, 3});
+        assertEquals(6, result);
+    }
+
+    @Test
+    public void testProcess() {
+        String output = Calculator.compute(10, 20);
+        assertNotNull(output);
+    }
+}
+`,
+			want: []string{"solve", "compute"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sigs := extractJavaFunctionSignatures(tt.content)
+			for _, wantFunc := range tt.want {
+				found := false
+				for _, sig := range sigs {
+					if strings.Contains(sig, wantFunc+"(") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected to find signature for %q in %v", wantFunc, sigs)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractCSharpFunctionSignatures(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name: "NUnit test calling solution methods",
+			content: `
+using NUnit.Framework;
+
+[TestFixture]
+public class SolutionTests
+{
+    [Test]
+    public void TestSolve()
+    {
+        var sol = new Solution();
+        int result = sol.Solve(3, new[] {1, 2, 3});
+        Assert.AreEqual(6, result);
+    }
+
+    [Test]
+    public void TestProcess()
+    {
+        string output = Processor.Transform("hello");
+        Assert.IsNotNull(output);
+    }
+}
+`,
+			want: []string{"Solve", "Transform"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sigs := extractCSharpFunctionSignatures(tt.content)
+			for _, wantFunc := range tt.want {
+				found := false
+				for _, sig := range sigs {
+					if strings.Contains(sig, wantFunc+"(") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected to find signature for %q in %v", wantFunc, sigs)
+				}
+			}
+		})
+	}
+}
+
 func TestIsEntryPointFile(t *testing.T) {
 	tests := []struct {
 		name   string
