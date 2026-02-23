@@ -54,11 +54,18 @@ func Write(opts ...Option) core.Tool {
 				return "", fmt.Errorf("create directories: %w", err)
 			}
 
-			// Auto-chmod scripts to executable: files with shebang lines or
-			// script extensions (.sh, .bash, .py, .rb, .pl) should be executable.
-			// This prevents "Permission denied" errors that waste 1-2 agent turns
-			// when test scripts invoke the solution with ./solution.sh or ./solve.py.
+			// Determine file permissions. When overwriting an existing file,
+			// preserve its permissions (don't strip executable bits). For new
+			// files, auto-chmod scripts to executable to prevent "Permission
+			// denied" errors that waste 1-2 agent turns.
 			perm := os.FileMode(0o644)
+			if prevSize >= 0 {
+				// File exists — preserve its permissions.
+				if fi, err := os.Stat(path); err == nil {
+					perm = fi.Mode().Perm()
+				}
+			}
+			// Auto-upgrade to executable for scripts (both new and existing).
 			lower := strings.ToLower(filepath.Base(path))
 			isScript := strings.HasPrefix(params.Content, "#!") ||
 				strings.HasSuffix(lower, ".sh") ||
@@ -66,7 +73,7 @@ func Write(opts ...Option) core.Tool {
 				strings.HasSuffix(lower, ".py") ||
 				strings.HasSuffix(lower, ".rb") ||
 				strings.HasSuffix(lower, ".pl")
-			if isScript {
+			if isScript && perm&0o111 == 0 {
 				perm = 0o755
 			}
 

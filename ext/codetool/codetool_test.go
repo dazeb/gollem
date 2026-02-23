@@ -592,6 +592,44 @@ func TestWrite_EmptyPath(t *testing.T) {
 	}
 }
 
+func TestWrite_PreservesExecutablePerms(t *testing.T) {
+	dir := t.TempDir()
+	// Create an executable file.
+	scriptPath := filepath.Join(dir, "solution")
+	os.WriteFile(scriptPath, []byte("#!/bin/bash\necho v1\n"), 0o755)
+
+	tool := Write(WithWorkDir(dir))
+	call(t, tool, `{"path": "solution", "content": "#!/bin/bash\necho v2\n"}`)
+
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perm := info.Mode().Perm()
+	if perm&0o111 == 0 {
+		t.Errorf("expected executable permissions to be preserved on overwrite, got %o", perm)
+	}
+}
+
+func TestWrite_PreservesPermsNonScript(t *testing.T) {
+	dir := t.TempDir()
+	// Create an executable non-script file (e.g., compiled binary placeholder).
+	binPath := filepath.Join(dir, "mybin")
+	os.WriteFile(binPath, []byte("old"), 0o755)
+
+	tool := Write(WithWorkDir(dir))
+	call(t, tool, `{"path": "mybin", "content": "new"}`)
+
+	info, err := os.Stat(binPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perm := info.Mode().Perm()
+	if perm&0o111 == 0 {
+		t.Errorf("expected executable permissions to be preserved even for non-script files, got %o", perm)
+	}
+}
+
 // --- Edit Tests ---
 
 func TestEdit_SimpleReplace(t *testing.T) {
