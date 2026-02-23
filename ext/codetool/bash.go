@@ -1272,6 +1272,99 @@ func compilationErrorHint(output string, exitCode int) string {
 			file, numStr, numStr)
 	}
 
+	// Julia: "ERROR: LoadError: ..." followed by "in expression starting at file.jl:42"
+	// The error message and file location are on separate lines.
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "in expression starting at ") {
+			continue
+		}
+		rest := strings.TrimPrefix(trimmed, "in expression starting at ")
+		colonParts := strings.SplitN(rest, ":", 2)
+		if len(colonParts) < 2 || !isNumeric(colonParts[1]) {
+			continue
+		}
+		file := colonParts[0]
+		lineNum := colonParts[1]
+		if !strings.HasSuffix(file, ".jl") || len(file) > 200 {
+			continue
+		}
+		// Look back for the "ERROR:" line to extract the error message.
+		errMsg := ""
+		for k := i - 1; k >= max(0, i-5); k-- {
+			prev := strings.TrimSpace(lines[k])
+			if strings.HasPrefix(prev, "ERROR:") {
+				errMsg = prev
+				break
+			}
+		}
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Julia error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
+	// Ruby syntax/parse errors: "file.rb:42: syntax error, unexpected ..."
+	// The C/C++ parser misses these because it looks for ": error" but Ruby uses ": syntax error".
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(trimmed, ": syntax error") {
+			continue
+		}
+		colonParts := strings.SplitN(trimmed, ":", 3)
+		if len(colonParts) < 3 || !isNumeric(colonParts[1]) {
+			continue
+		}
+		file := colonParts[0]
+		lineNum := colonParts[1]
+		if len(file) > 200 {
+			continue
+		}
+		errMsg := strings.TrimSpace(colonParts[2])
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Ruby syntax error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
+	// Lua runtime/compile errors: "lua: file.lua:42: message" or "luac: file.lua:42: message"
+	// Also handles LuaJIT: "luajit: file.lua:42: message"
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		prefix := ""
+		if strings.HasPrefix(trimmed, "lua: ") {
+			prefix = "lua: "
+		} else if strings.HasPrefix(trimmed, "luac: ") {
+			prefix = "luac: "
+		} else if strings.HasPrefix(trimmed, "luajit: ") {
+			prefix = "luajit: "
+		}
+		if prefix == "" {
+			continue
+		}
+		rest := trimmed[len(prefix):]
+		colonParts := strings.SplitN(rest, ":", 3)
+		if len(colonParts) < 3 || !isNumeric(colonParts[1]) {
+			continue
+		}
+		file := colonParts[0]
+		lineNum := colonParts[1]
+		if len(file) > 200 {
+			continue
+		}
+		errMsg := strings.TrimSpace(colonParts[2])
+		if errMsg != "" {
+			return fmt.Sprintf("[hint: %s at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+				truncateErrorLine(errMsg, 120), file, lineNum, lineNum)
+		}
+		return fmt.Sprintf("[hint: Lua error at %s:%s — use view tool with offset=%s to see the code, then fix with edit]",
+			file, lineNum, lineNum)
+	}
+
 	// D language (DMD): "file.d(42): Error: undefined identifier `foo`"
 	// Format: file(line): Error: message (no column number)
 	for _, line := range lines {

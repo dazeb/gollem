@@ -9992,3 +9992,85 @@ func TestIsContextOverflowError_NonOverflowError(t *testing.T) {
 	}
 }
 
+func TestCompilationErrorHint_Julia(t *testing.T) {
+	output := `ERROR: LoadError: syntax: unexpected "end"
+Stacktrace:
+ [1] include(fname::String)
+   @ Base ./loading.jl:2076
+in expression starting at script.jl:42
+[exit code: 1]`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Julia error hint")
+	}
+	if !strings.Contains(hint, "script.jl") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference script.jl:42, got: %s", hint)
+	}
+	if !strings.Contains(hint, "syntax") || !strings.Contains(hint, "unexpected") {
+		t.Errorf("expected hint to include error message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_JuliaUndefVar(t *testing.T) {
+	output := `ERROR: LoadError: UndefVarError: foo not defined
+in expression starting at solution.jl:15
+[exit code: 1]`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Julia UndefVarError hint")
+	}
+	if !strings.Contains(hint, "solution.jl") || !strings.Contains(hint, "15") {
+		t.Errorf("expected hint to reference solution.jl:15, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_RubySyntax(t *testing.T) {
+	output := `script.rb:42: syntax error, unexpected end-of-input, expecting ')'
+[exit code: 1]`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Ruby syntax error hint")
+	}
+	if !strings.Contains(hint, "script.rb") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference script.rb:42, got: %s", hint)
+	}
+	if !strings.Contains(hint, "syntax error") {
+		t.Errorf("expected hint to include 'syntax error', got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Lua(t *testing.T) {
+	output := `lua: script.lua:42: attempt to call a nil value (global 'solve')
+stack traceback:
+	script.lua:42: in main chunk
+	[C]: in ?
+[exit code: 1]`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected Lua error hint")
+	}
+	if !strings.Contains(hint, "script.lua") || !strings.Contains(hint, "42") {
+		t.Errorf("expected hint to reference script.lua:42, got: %s", hint)
+	}
+	if !strings.Contains(hint, "attempt to call a nil value") {
+		t.Errorf("expected hint to include error message, got: %s", hint)
+	}
+}
+
+func TestCompilationErrorHint_Luac(t *testing.T) {
+	output := `luac: solution.lua:10: '=' expected near '<eof>'
+[exit code: 1]`
+
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected luac error hint")
+	}
+	if !strings.Contains(hint, "solution.lua") || !strings.Contains(hint, "10") {
+		t.Errorf("expected hint to reference solution.lua:10, got: %s", hint)
+	}
+}
+
