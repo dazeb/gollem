@@ -81,8 +81,17 @@ func (a *Agent[T]) Iter(ctx context.Context, prompt string, opts ...RunOption) *
 	// Gather all tools.
 	allTools := a.allTools()
 
-	// Build the initial request.
-	req := a.buildInitialRequest(prompt)
+	// Build the initial request with dynamic system prompts and knowledge base.
+	req, reqErr := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
+	if reqErr != nil {
+		return &AgentRun[T]{
+			agent: a,
+			ctx:   ctx,
+			state: state,
+			done:  true,
+			err:   fmt.Errorf("failed to build initial request: %w", reqErr),
+		}
+	}
 	state.messages = append(state.messages, req)
 
 	toolMap := make(map[string]*Tool)

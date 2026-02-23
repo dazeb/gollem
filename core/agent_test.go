@@ -808,6 +808,41 @@ func TestRunStream_IncludesDynamicSystemPrompts(t *testing.T) {
 	}
 }
 
+// --- Regression: Iter missing dynamic system prompts ---
+
+func TestIter_IncludesDynamicSystemPrompts(t *testing.T) {
+	model := NewTestModel(TextResponse("ok"))
+	agent := NewAgent[string](model,
+		WithDynamicSystemPrompt[string](func(_ context.Context, _ *RunContext) (string, error) {
+			return "You are a dynamic assistant.", nil
+		}),
+	)
+
+	iter := agent.Iter(context.Background(), "test")
+	for !iter.Done() {
+		_, err := iter.Next()
+		if err != nil {
+			break
+		}
+	}
+
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected model call")
+	}
+	msg := calls[0].Messages[0].(ModelRequest)
+	foundDynamic := false
+	for _, part := range msg.Parts {
+		if sp, ok := part.(SystemPromptPart); ok && sp.Content == "You are a dynamic assistant." {
+			foundDynamic = true
+			break
+		}
+	}
+	if !foundDynamic {
+		t.Error("expected dynamic system prompt to be included in Iter request")
+	}
+}
+
 // --- Regression: RunStream ignoring toolChoice ---
 
 func TestRunStream_AppliesToolChoice(t *testing.T) {

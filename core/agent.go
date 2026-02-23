@@ -1519,30 +1519,6 @@ func serializeToolResult(result any) (string, error) {
 	return string(b), nil
 }
 
-// buildInitialRequest constructs the initial ModelRequest with static system prompts and user prompt.
-func (a *Agent[T]) buildInitialRequest(prompt string) ModelRequest {
-	var parts []ModelRequestPart
-
-	// Add system prompts.
-	for _, sp := range a.systemPrompts {
-		parts = append(parts, SystemPromptPart{
-			Content:   sp,
-			Timestamp: time.Now(),
-		})
-	}
-
-	// Add user prompt.
-	parts = append(parts, UserPromptPart{
-		Content:   prompt,
-		Timestamp: time.Now(),
-	})
-
-	return ModelRequest{
-		Parts:     parts,
-		Timestamp: time.Now(),
-	}
-}
-
 // buildInitialRequestWithDynamic constructs the initial request including dynamic system prompts.
 func (a *Agent[T]) buildInitialRequestWithDynamic(ctx context.Context, prompt string, state *agentRunState, deps any) (ModelRequest, error) {
 	var parts []ModelRequestPart
