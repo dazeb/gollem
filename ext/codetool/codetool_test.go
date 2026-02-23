@@ -2,6 +2,7 @@ package codetool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -6267,6 +6268,159 @@ func TestEmergencyCompressWithSummary(t *testing.T) {
 		}
 	} else {
 		t.Error("second compressed message should be a ModelRequest")
+	}
+}
+
+func TestEmergencyCompressTruncatesLargeToolCallArgs(t *testing.T) {
+	// When a model calls write/edit with large file content, the ToolCallPart.ArgsJSON
+	// can be very large. The emergency compression must truncate these args to allow
+	// context overflow recovery. Without this, the ContextOverflowMiddleware can't
+	// reduce context size when the overflow is caused by large tool call args.
+	largeArgs := `{"path":"/app/main.py","content":"` + strings.Repeat("x", 50000) + `"}`
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Write a program"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "write",
+					ArgsJSON:   largeArgs,
+					ToolCallID: "tc1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "write",
+					Content:    "ok",
+					ToolCallID: "tc1",
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "Done."},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Now test it."},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"python main.py"}`,
+					ToolCallID: "tc2",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "output ok",
+					ToolCallID: "tc2",
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "Tests pass."},
+			},
+		},
+	}
+
+	// Use a small maxContentBytes to force truncation of the large args.
+	compressed := emergencyCompressMessagesWithConfig(messages, 5000, 4)
+
+	// The large ToolCallPart.ArgsJSON should be truncated in the kept messages.
+	// Check all messages for untrunced large args.
+	for i, msg := range compressed {
+		if resp, ok := msg.(core.ModelResponse); ok {
+			for _, part := range resp.Parts {
+				if tc, ok := part.(core.ToolCallPart); ok {
+					if len(tc.ArgsJSON) > 5000 {
+						t.Errorf("message[%d]: ToolCallPart.ArgsJSON not truncated (%d bytes)", i, len(tc.ArgsJSON))
+					}
+				}
+			}
+		}
+	}
+
+	// Verify truncated args are valid JSON (so providers don't reject them).
+	for _, msg := range compressed {
+		if resp, ok := msg.(core.ModelResponse); ok {
+			for _, part := range resp.Parts {
+				if tc, ok := part.(core.ToolCallPart); ok {
+					if strings.Contains(tc.ArgsJSON, "_truncated") {
+						var parsed map[string]any
+						if err := json.Unmarshal([]byte(tc.ArgsJSON), &parsed); err != nil {
+							t.Errorf("truncated ArgsJSON is not valid JSON: %v", err)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTruncateMessageContentSmartTruncatesToolCallArgs(t *testing.T) {
+	// Verify the smart truncation also handles ToolCallPart.ArgsJSON.
+	largeArgs := `{"content":"` + strings.Repeat("a", 30000) + `"}`
+	msg := core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.TextPart{Content: "I'll write the file."},
+			core.ToolCallPart{
+				ToolName:   "write",
+				ArgsJSON:   largeArgs,
+				ToolCallID: "tc1",
+				Metadata:   map[string]string{"thoughtSignature": "sig123"},
+			},
+		},
+	}
+
+	truncated := truncateMessageContentSmart(msg, 5000)
+	resp, ok := truncated.(core.ModelResponse)
+	if !ok {
+		t.Fatal("expected ModelResponse")
+	}
+	if len(resp.Parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(resp.Parts))
+	}
+
+	// Text should be unchanged (it's small).
+	tp, ok := resp.Parts[0].(core.TextPart)
+	if !ok {
+		t.Fatal("expected TextPart at index 0")
+	}
+	if tp.Content != "I'll write the file." {
+		t.Errorf("text changed unexpectedly: %q", tp.Content)
+	}
+
+	// Tool call args should be truncated.
+	tc, ok := resp.Parts[1].(core.ToolCallPart)
+	if !ok {
+		t.Fatal("expected ToolCallPart at index 1")
+	}
+	if len(tc.ArgsJSON) > 5000 {
+		t.Errorf("ArgsJSON not truncated: %d bytes", len(tc.ArgsJSON))
+	}
+	if !strings.Contains(tc.ArgsJSON, "_truncated") {
+		t.Error("expected truncated placeholder in ArgsJSON")
+	}
+
+	// Metadata must be preserved through truncation.
+	if tc.Metadata == nil {
+		t.Fatal("Metadata lost during truncation")
+	}
+	if tc.Metadata["thoughtSignature"] != "sig123" {
+		t.Errorf("thoughtSignature = %q, want sig123", tc.Metadata["thoughtSignature"])
 	}
 }
 

@@ -8943,10 +8943,19 @@ func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessa
 	case core.ModelResponse:
 		parts := make([]core.ModelResponsePart, len(m.Parts))
 		for i, part := range m.Parts {
-			if tp, ok := part.(core.TextPart); ok && len(tp.Content) > maxBytes {
-				tp.Content = tp.Content[:maxBytes] + "\n... [truncated]"
-				parts[i] = tp
-				continue
+			switch p := part.(type) {
+			case core.TextPart:
+				if len(p.Content) > maxBytes {
+					p.Content = p.Content[:maxBytes] + "\n... [truncated]"
+					parts[i] = p
+					continue
+				}
+			case core.ToolCallPart:
+				if len(p.ArgsJSON) > maxBytes {
+					p.ArgsJSON = fmt.Sprintf(`{"_truncated": "original args too large (%d bytes), truncated for context management"}`, len(p.ArgsJSON))
+					parts[i] = p
+					continue
+				}
 			}
 			parts[i] = part
 		}
@@ -9011,10 +9020,19 @@ func truncateMessageContentSmart(msg core.ModelMessage, maxBytes int) core.Model
 	case core.ModelResponse:
 		parts := make([]core.ModelResponsePart, len(m.Parts))
 		for i, part := range m.Parts {
-			if tp, ok := part.(core.TextPart); ok && len(tp.Content) > maxBytes {
-				tp.Content = truncateOutput(tp.Content, maxBytes)
-				parts[i] = tp
-				continue
+			switch p := part.(type) {
+			case core.TextPart:
+				if len(p.Content) > maxBytes {
+					p.Content = truncateOutput(p.Content, maxBytes)
+					parts[i] = p
+					continue
+				}
+			case core.ToolCallPart:
+				if len(p.ArgsJSON) > maxBytes {
+					p.ArgsJSON = fmt.Sprintf(`{"_truncated": "original args too large (%d bytes), truncated for context management"}`, len(p.ArgsJSON))
+					parts[i] = p
+					continue
+				}
 			}
 			parts[i] = part
 		}
