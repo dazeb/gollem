@@ -183,6 +183,61 @@ func TestTaskBoard_GetReturnsCopy(t *testing.T) {
 	}
 }
 
+// TestTaskBoard_AddBlocksReciprocal verifies that WithAddBlocks on task A
+// automatically adds A to the blocked task's BlockedBy list.
+func TestTaskBoard_AddBlocksReciprocal(t *testing.T) {
+	tb := NewTaskBoard()
+	id1 := tb.Create("Blocker", "")
+	id2 := tb.Create("Blocked", "")
+
+	// Use WithAddBlocks on the blocker to indicate it blocks the other task.
+	tb.Update(id1, WithAddBlocks(id2))
+
+	// Task 2 should now have id1 in its BlockedBy.
+	task2, _ := tb.Get(id2)
+	if len(task2.BlockedBy) != 1 || task2.BlockedBy[0] != id1 {
+		t.Fatalf("expected task2.BlockedBy=[%s], got %v", id1, task2.BlockedBy)
+	}
+
+	// Task 2 should not be available (it's blocked).
+	avail := tb.Available()
+	for _, a := range avail {
+		if a.ID == id2 {
+			t.Error("blocked task should not appear in Available()")
+		}
+	}
+
+	// Claiming task 2 should fail.
+	if err := tb.Claim(id2, "bob"); err == nil {
+		t.Error("expected error claiming blocked task")
+	}
+
+	// Complete the blocker.
+	tb.Update(id1, WithStatus(TaskCompleted))
+
+	// Now task 2 should be available and claimable.
+	if err := tb.Claim(id2, "bob"); err != nil {
+		t.Fatalf("expected claim to succeed after blocker completed: %v", err)
+	}
+}
+
+// TestTaskBoard_AddBlockedByReciprocal verifies that WithAddBlockedBy on task B
+// automatically adds B to the blocking task's Blocks list.
+func TestTaskBoard_AddBlockedByReciprocal(t *testing.T) {
+	tb := NewTaskBoard()
+	id1 := tb.Create("Blocker", "")
+	id2 := tb.Create("Blocked", "")
+
+	// Use WithAddBlockedBy on the blocked task.
+	tb.Update(id2, WithAddBlockedBy(id1))
+
+	// Task 1 should now have id2 in its Blocks.
+	task1, _ := tb.Get(id1)
+	if len(task1.Blocks) != 1 || task1.Blocks[0] != id2 {
+		t.Fatalf("expected task1.Blocks=[%s], got %v", id2, task1.Blocks)
+	}
+}
+
 func TestTaskBoard_ConcurrentAccess(t *testing.T) {
 	tb := NewTaskBoard()
 

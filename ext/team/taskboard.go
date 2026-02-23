@@ -143,7 +143,8 @@ func WithMetadata(meta map[string]any) TaskUpdateOption {
 	}
 }
 
-// Update applies options to an existing task.
+// Update applies options to an existing task and maintains reciprocal
+// Blocks/BlockedBy relationships.
 func (tb *TaskBoard) Update(id string, opts ...TaskUpdateOption) error {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
@@ -152,9 +153,41 @@ func (tb *TaskBoard) Update(id string, opts ...TaskUpdateOption) error {
 	if !ok {
 		return fmt.Errorf("task %q not found", id)
 	}
+
+	// Snapshot current Blocks/BlockedBy to detect additions.
+	oldBlocks := make(map[string]bool, len(t.Blocks))
+	for _, b := range t.Blocks {
+		oldBlocks[b] = true
+	}
+	oldBlockedBy := make(map[string]bool, len(t.BlockedBy))
+	for _, b := range t.BlockedBy {
+		oldBlockedBy[b] = true
+	}
+
 	for _, o := range opts {
 		o(t)
 	}
+
+	// Maintain reciprocal relationships for newly added Blocks entries.
+	// If task A says it blocks task B, then B.BlockedBy should contain A.
+	for _, b := range t.Blocks {
+		if !oldBlocks[b] {
+			if blocked, exists := tb.tasks[b]; exists {
+				blocked.BlockedBy = appendUnique(blocked.BlockedBy, id)
+			}
+		}
+	}
+
+	// Maintain reciprocal relationships for newly added BlockedBy entries.
+	// If task B says it's blocked by task A, then A.Blocks should contain B.
+	for _, b := range t.BlockedBy {
+		if !oldBlockedBy[b] {
+			if blocker, exists := tb.tasks[b]; exists {
+				blocker.Blocks = appendUnique(blocker.Blocks, id)
+			}
+		}
+	}
+
 	return nil
 }
 

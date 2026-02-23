@@ -1,0 +1,269 @@
+package core
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"testing"
+)
+
+// TestIterBasicText verifies that Iter returns a text response and completes.
+func TestIterBasicText(t *testing.T) {
+	model := NewTestModel(TextResponse("Hello"))
+	agent := NewAgent[string](model)
+
+	iter := agent.Iter(context.Background(), "Say hello")
+	if iter.Done() {
+		t.Fatal("expected iter to not be done initially")
+	}
+
+	resp, err := iter.Next()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
+	}
+	if resp.TextContent() != "Hello" {
+		t.Errorf("expected 'Hello', got %q", resp.TextContent())
+	}
+	if !iter.Done() {
+		t.Error("expected iter to be done after text response")
+	}
+
+	// Next call should return EOF.
+	_, err = iter.Next()
+	if err != io.EOF {
+		t.Errorf("expected io.EOF, got %v", err)
+	}
+
+	result, err := iter.Result()
+	if err != nil {
+		t.Fatalf("unexpected result error: %v", err)
+	}
+	if result.Output != "Hello" {
+		t.Errorf("expected output 'Hello', got %q", result.Output)
+	}
+}
+
+// TestIterWithToolCall verifies that Iter handles tool calls step by step.
+func TestIterWithToolCall(t *testing.T) {
+	type Params struct {
+		X int `json:"x"`
+	}
+	addTool := FuncTool[Params]("double", "doubles x", func(ctx context.Context, p Params) (string, error) {
+		return fmt.Sprintf("%d", p.X*2), nil
+	})
+
+	model := NewTestModel(
+		ToolCallResponse("double", `{"x":5}`),
+		TextResponse("10"),
+	)
+	agent := NewAgent[string](model, WithTools[string](addTool))
+
+	iter := agent.Iter(context.Background(), "Double 5")
+
+	// Step 1: model returns tool call, agent executes it.
+	resp1, err := iter.Next()
+	if err != nil {
+		t.Fatalf("step 1 error: %v", err)
+	}
+	if len(resp1.ToolCalls()) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(resp1.ToolCalls()))
+	}
+	if resp1.ToolCalls()[0].ToolName != "double" {
+		t.Errorf("expected tool 'double', got %q", resp1.ToolCalls()[0].ToolName)
+	}
+	if iter.Done() {
+		t.Error("expected iter to not be done after tool call")
+	}
+
+	// Messages should include tool result after step 1.
+	msgs := iter.Messages()
+	if len(msgs) < 3 {
+		t.Fatalf("expected at least 3 messages (request, tool call response, tool result), got %d", len(msgs))
+	}
+
+	// Step 2: model returns text output.
+	resp2, err := iter.Next()
+	if err != nil {
+		t.Fatalf("step 2 error: %v", err)
+	}
+	if resp2.TextContent() != "10" {
+		t.Errorf("expected '10', got %q", resp2.TextContent())
+	}
+	if !iter.Done() {
+		t.Error("expected iter to be done after text response")
+	}
+
+	result, err := iter.Result()
+	if err != nil {
+		t.Fatalf("unexpected result error: %v", err)
+	}
+	if result.Output != "10" {
+		t.Errorf("expected '10', got %q", result.Output)
+	}
+}
+
+// TestIterContextCancellation verifies that Iter respects context cancellation.
+func TestIterContextCancellation(t *testing.T) {
+	// Model returns tool call first, then we cancel during second Next.
+	type Params struct{ N int `json:"n"` }
+	slowTool := FuncTool[Params]("slow", "slow", func(ctx context.Context, p Params) (string, error) {
+		return "done", nil
+	})
+
+	model := NewTestModel(
+		ToolCallResponse("slow", `{"n":1}`),
+		TextResponse("result"),
+	)
+	agent := NewAgent[string](model, WithTools[string](slowTool))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	iter := agent.Iter(ctx, "test")
+
+	// Step 1 completes normally.
+	_, err := iter.Next()
+	if err != nil {
+		t.Fatalf("step 1 error: %v", err)
+	}
+
+	// Cancel context before step 2.
+	cancel()
+
+	_, err = iter.Next()
+	if err == nil {
+		t.Error("expected error after context cancellation")
+	}
+	if !iter.Done() {
+		t.Error("expected iter to be done after cancellation")
+	}
+}
+
+// TestIterMessagesGrow verifies that message history grows with each step.
+func TestIterMessagesGrow(t *testing.T) {
+	type Params struct{ N int `json:"n"` }
+	echoTool := FuncTool[Params]("echo", "echo", func(ctx context.Context, p Params) (string, error) {
+		return fmt.Sprintf("echo_%d", p.N), nil
+	})
+
+	model := NewTestModel(
+		ToolCallResponse("echo", `{"n":1}`),
+		ToolCallResponse("echo", `{"n":2}`),
+		TextResponse("done"),
+	)
+	agent := NewAgent[string](model, WithTools[string](echoTool))
+
+	iter := agent.Iter(context.Background(), "echo twice")
+
+	initialCount := len(iter.Messages())
+	if initialCount == 0 {
+		t.Fatal("expected at least one initial message")
+	}
+
+	// Step 1.
+	iter.Next()
+	afterStep1 := len(iter.Messages())
+	if afterStep1 <= initialCount {
+		t.Errorf("messages should grow after step 1: initial=%d after=%d", initialCount, afterStep1)
+	}
+
+	// Step 2.
+	iter.Next()
+	afterStep2 := len(iter.Messages())
+	if afterStep2 <= afterStep1 {
+		t.Errorf("messages should grow after step 2: step1=%d step2=%d", afterStep1, afterStep2)
+	}
+
+	// Step 3 (final text).
+	iter.Next()
+	afterStep3 := len(iter.Messages())
+	if afterStep3 <= afterStep2 {
+		t.Errorf("messages should grow after step 3: step2=%d step3=%d", afterStep2, afterStep3)
+	}
+}
+
+// TestIterResultBeforeDone verifies that Result returns error before iteration completes.
+func TestIterResultBeforeDone(t *testing.T) {
+	model := NewTestModel(TextResponse("Hello"))
+	agent := NewAgent[string](model)
+
+	iter := agent.Iter(context.Background(), "test")
+	_, err := iter.Result()
+	if err == nil {
+		t.Error("expected error when calling Result before iteration completes")
+	}
+}
+
+// TestIterMultipleToolCalls verifies Iter with concurrent tool calls.
+func TestIterMultipleToolCalls(t *testing.T) {
+	type Params struct{ N int `json:"n"` }
+	addTool := FuncTool[Params]("add", "adds 10", func(ctx context.Context, p Params) (string, error) {
+		return fmt.Sprintf("%d", p.N+10), nil
+	})
+
+	model := NewTestModel(
+		MultiToolCallResponse(
+			ToolCallPart{ToolName: "add", ArgsJSON: `{"n":1}`, ToolCallID: "call_1"},
+			ToolCallPart{ToolName: "add", ArgsJSON: `{"n":2}`, ToolCallID: "call_2"},
+		),
+		TextResponse("done"),
+	)
+	agent := NewAgent[string](model, WithTools[string](addTool))
+
+	iter := agent.Iter(context.Background(), "add both")
+
+	// Step 1: concurrent tool calls execute.
+	resp, err := iter.Next()
+	if err != nil {
+		t.Fatalf("step 1 error: %v", err)
+	}
+	if len(resp.ToolCalls()) != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", len(resp.ToolCalls()))
+	}
+
+	// Step 2: final text.
+	resp2, err := iter.Next()
+	if err != nil {
+		t.Fatalf("step 2 error: %v", err)
+	}
+	if resp2.TextContent() != "done" {
+		t.Errorf("expected 'done', got %q", resp2.TextContent())
+	}
+
+	result, err := iter.Result()
+	if err != nil {
+		t.Fatalf("unexpected result error: %v", err)
+	}
+	if result.Output != "done" {
+		t.Errorf("expected 'done', got %q", result.Output)
+	}
+}
+
+// TestIterWithGuardrails verifies that input guardrails work with Iter.
+func TestIterWithGuardrails(t *testing.T) {
+	model := NewTestModel(TextResponse("should not reach"))
+	agent := NewAgent[string](model,
+		WithInputGuardrail[string]("block-test", func(ctx context.Context, prompt string) (string, error) {
+			if prompt == "blocked" {
+				return "", fmt.Errorf("input blocked")
+			}
+			return prompt, nil
+		}),
+	)
+
+	iter := agent.Iter(context.Background(), "blocked")
+	if !iter.Done() {
+		t.Error("expected iter to be done immediately when guardrail blocks")
+	}
+
+	_, err := iter.Next()
+	if err == nil {
+		t.Error("expected error from guardrail")
+	}
+
+	_, err = iter.Result()
+	if err == nil {
+		t.Error("expected error from Result when guardrail blocked")
+	}
+}
