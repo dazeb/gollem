@@ -1213,3 +1213,56 @@ func TestBuildRequestEmptyPartsResponse(t *testing.T) {
 		}
 	}
 }
+
+// TestParseSSEStreamNoSpaceAfterColon verifies the OpenAI stream parser
+// handles SSE data lines without the optional space after the colon,
+// per the SSE specification.
+func TestParseSSEStreamNoSpaceAfterColon(t *testing.T) {
+	// "data:" without trailing space is valid per SSE spec.
+	sseData := `data:{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}
+
+data:{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":"stop"}]}
+
+data:[DONE]
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	var text strings.Builder
+	for {
+		event, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		switch e := event.(type) {
+		case core.PartStartEvent:
+			if tp, ok := e.Part.(core.TextPart); ok {
+				text.WriteString(tp.Content)
+			}
+		case core.PartDeltaEvent:
+			if td, ok := e.Delta.(core.TextPartDelta); ok {
+				text.WriteString(td.ContentDelta)
+			}
+		}
+	}
+
+	if text.String() != "Hello world" {
+		t.Errorf("expected 'Hello world', got '%s'", text.String())
+	}
+
+	resp := stream.Response()
+	if len(resp.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(resp.Parts))
+	}
+	tp, ok := resp.Parts[0].(core.TextPart)
+	if !ok {
+		t.Fatal("expected TextPart")
+	}
+	if tp.Content != "Hello world" {
+		t.Errorf("expected 'Hello world', got '%s'", tp.Content)
+	}
+}

@@ -118,11 +118,13 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		line = strings.TrimSpace(line)
 
 		// Skip empty lines and non-data lines.
-		if line == "" || !strings.HasPrefix(line, "data: ") {
+		// Per SSE spec, the space after the colon is optional.
+		if line == "" || !strings.HasPrefix(line, "data:") {
 			continue
 		}
 
-		data := strings.TrimPrefix(line, "data: ")
+		data := strings.TrimPrefix(line, "data:")
+		data = strings.TrimPrefix(data, " ")
 
 		// Check for stream termination.
 		if data == "[DONE]" {
