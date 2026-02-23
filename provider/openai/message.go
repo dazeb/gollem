@@ -263,7 +263,11 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 					})
 				}
 			}
-			apiMsgs = append(apiMsgs, assistantMsg)
+			// Skip empty assistant messages (e.g., ThinkingPart-only responses
+			// from Anthropic that are unsupported by OpenAI).
+			if assistantMsg.Content != "" || len(assistantMsg.ToolCalls) > 0 {
+				apiMsgs = append(apiMsgs, assistantMsg)
+			}
 		}
 	}
 

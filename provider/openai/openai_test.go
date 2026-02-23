@@ -1092,3 +1092,124 @@ data: [DONE]
 		t.Errorf("streaming tool call IDs should be unique, both are %q", tc0.ToolCallID)
 	}
 }
+
+// TestBuildRequestSkipsEmptyAssistantMessage verifies that a ModelResponse
+// containing only unsupported parts (e.g., ThinkingPart) does not produce an
+// empty assistant message. This matters when conversations built with Anthropic
+// (which supports ThinkingPart) are replayed through the OpenAI provider via
+// FallbackModel or checkpoint resumption.
+func TestBuildRequestSkipsEmptyAssistantMessage(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Think about this"},
+			},
+		},
+		// A ModelResponse with only ThinkingPart — unsupported by OpenAI.
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ThinkingPart{Content: "Let me think...", Signature: "sig123"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "What did you think?"},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have 2 messages: user + user. The ThinkingPart-only response
+	// should be skipped, not produce an empty assistant message.
+	if len(req.Messages) != 2 {
+		t.Fatalf("expected 2 messages (skipping empty assistant), got %d", len(req.Messages))
+	}
+	for i, msg := range req.Messages {
+		if msg.Role != "user" {
+			t.Errorf("message[%d]: expected role 'user', got %q", i, msg.Role)
+		}
+	}
+}
+
+// TestBuildRequestKeepsNonEmptyAssistantMessage ensures that assistant messages
+// with real content (TextPart or ToolCallPart) are still included.
+func TestBuildRequestKeepsNonEmptyAssistantMessage(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+		// A ModelResponse with ThinkingPart + TextPart — TextPart should remain.
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ThinkingPart{Content: "thinking...", Signature: "sig"},
+				core.TextPart{Content: "Hello back!"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Thanks"},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have 3 messages: user + assistant + user.
+	if len(req.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(req.Messages))
+	}
+	if req.Messages[0].Role != "user" {
+		t.Errorf("msg[0]: expected 'user', got %q", req.Messages[0].Role)
+	}
+	if req.Messages[1].Role != "assistant" {
+		t.Errorf("msg[1]: expected 'assistant', got %q", req.Messages[1].Role)
+	}
+	if req.Messages[1].Content != "Hello back!" {
+		t.Errorf("msg[1]: expected 'Hello back!', got %q", req.Messages[1].Content)
+	}
+	if req.Messages[2].Role != "user" {
+		t.Errorf("msg[2]: expected 'user', got %q", req.Messages[2].Role)
+	}
+}
+
+// TestBuildRequestEmptyPartsResponse verifies that a ModelResponse with no
+// parts (Parts: nil or empty) doesn't produce an empty assistant message.
+func TestBuildRequestEmptyPartsResponse(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+		core.ModelResponse{Parts: nil}, // empty response
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello again"},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should skip the empty response.
+	if len(req.Messages) != 2 {
+		t.Fatalf("expected 2 messages (skipping empty response), got %d", len(req.Messages))
+	}
+	for _, msg := range req.Messages {
+		if msg.Role != "user" {
+			t.Errorf("expected 'user' role, got %q", msg.Role)
+		}
+	}
+}
