@@ -6351,6 +6351,19 @@ func isLongRunningCommand(cmd string) bool {
 		"nimble test",                   // Nim tests
 		"dub test", "dub build",         // D language
 		"meson test", "meson compile",   // Meson build system
+		// Terraform/OpenTofu (provider downloads + API calls).
+		"terraform plan", "terraform apply", "terraform init",
+		"tofu plan", "tofu apply", "tofu init",
+		// Nix (derivation builds can be very slow).
+		"nix build", "nix develop", "nix flake check", "nix-build",
+		// Elm (full project compilation).
+		"elm make", "elm-test",
+		// Solidity/Foundry (contract compilation + tests).
+		"forge build", "forge test",
+		"hardhat compile", "hardhat test",
+		"truffle compile", "truffle test",
+		// BATS (Bash testing).
+		"bats ",
 	}
 	for _, p := range longPatterns {
 		if strings.Contains(lower, p) {
@@ -6527,6 +6540,11 @@ func testTimeoutOptimizationHint(cmd string) string {
 		return "[optimization hints: (1) use maps for O(1) lookups instead of array linear search, " +
 			"(2) use -prod flag for optimized compilation, (3) avoid unnecessary allocations in tight loops, " +
 			"(4) use @[cap:n]T{} to pre-allocate arrays]"
+	case strings.Contains(lower, "forge test") || strings.Contains(lower, "forge build") ||
+		strings.Contains(lower, "hardhat test") || strings.Contains(lower, "hardhat compile"):
+		return "[optimization hints: (1) minimize storage reads/writes (SLOAD/SSTORE are expensive), " +
+			"(2) use calldata instead of memory for read-only function params, (3) pack storage variables (uint128+uint128 in one slot), " +
+			"(4) use --match-test to run specific tests, (5) use unchecked{} for math that can't overflow]"
 	// Catch-all for generic python/python3 invocations (scripts, not test runners).
 	case strings.Contains(lower, "python3 ") || strings.Contains(lower, "python "):
 		return "[optimization hints: (1) use numpy/vectorized ops instead of Python loops for numeric work, " +
