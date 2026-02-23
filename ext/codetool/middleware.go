@@ -3813,23 +3813,9 @@ func detectComparisonTolerances(workDir string) []string {
 	seen := make(map[string]bool)
 
 	for _, td := range testDirs {
-		entries, err := os.ReadDir(td)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !isSourceFile(entry.Name()) {
-				continue
-			}
-			info, _ := entry.Info()
-			if info == nil || info.Size() > 30000 {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
-			if err != nil {
-				continue
-			}
-			content := string(data)
+		var allContent []string
+		collectTestFileContents(td, &allContent, 0, 2)
+		for _, content := range allContent {
 			for _, line := range strings.Split(content, "\n") {
 				trimmed := strings.TrimSpace(line)
 				if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
@@ -3955,23 +3941,10 @@ func extractTestEnvironmentVars(workDir string) []string {
 	seen := make(map[string]bool)
 
 	for _, td := range testDirs {
-		entries, err := os.ReadDir(td)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || !isSourceFile(entry.Name()) {
-				continue
-			}
-			info, _ := entry.Info()
-			if info == nil || info.Size() > 30000 {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(td, entry.Name()))
-			if err != nil {
-				continue
-			}
-			for _, line := range strings.Split(string(data), "\n") {
+		var allContent []string
+		collectTestFileContents(td, &allContent, 0, 2)
+		for _, fileContent := range allContent {
+			for _, line := range strings.Split(fileContent, "\n") {
 				trimmed := strings.TrimSpace(line)
 				if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
 					continue
