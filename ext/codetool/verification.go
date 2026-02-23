@@ -515,6 +515,16 @@ func isVerificationString(cmd string) bool {
 		"gradle check",
 		// Just task runner (modern Make alternative).
 		"just test", "just check", "just verify",
+		// Terraform/OpenTofu.
+		"terraform validate", "terraform plan", "tofu validate", "tofu plan",
+		// Elm.
+		"elm-test", "npx elm-test",
+		// Nix.
+		"nix build", "nix flake check", "nix-build",
+		// Bash testing (BATS).
+		"bats ",
+		// Solidity (Truffle).
+		"truffle test",
 	}
 
 	// Build/compile commands.
@@ -553,6 +563,12 @@ func isVerificationString(cmd string) bool {
 		"dmd ",
 		// MSBuild (.NET Framework).
 		"msbuild",
+		// Terraform/OpenTofu.
+		"terraform init", "terraform apply", "tofu init",
+		// Elm.
+		"elm make",
+		// Nix.
+		"nix-build", "nix develop",
 	}
 
 	// Lint/check commands.
@@ -565,6 +581,12 @@ func isVerificationString(cmd string) bool {
 		"clippy", // rustfmt is format-only, clippy is lint
 		"pyright", "basedpyright",
 		"tsc --noEmit", // typecheck only
+		"terraform fmt", "tofu fmt", // Terraform formatting checks
+		"elm-format",                // Elm formatting
+		"statix check",              // Nix linter
+		"deadnix",                   // Nix dead code detection
+		"solhint",                   // Solidity linter
+		"slither",                   // Solidity security analysis
 	}
 
 	// Constraint verification commands (size checks, output validation).
