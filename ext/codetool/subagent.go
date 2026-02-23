@@ -28,7 +28,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 	return core.FuncTool[subagentParams](
 		"delegate",
 		"Delegate a subtask to a focused subagent. The subagent gets the same "+
-			"coding tools (bash, view, edit, write, grep, glob, ls) and runs "+
+			"coding tools (bash, view, edit, multi_edit, write, grep, glob, ls, lsp) and runs "+
 			"independently with its own context. Use this for: (1) parallel-safe "+
 			"subtasks like researching an API or reading large files, (2) focused "+
 			"debugging of a specific component, (3) writing a self-contained module "+
@@ -127,7 +127,7 @@ func truncateForLog(s string, n int) string {
 }
 
 const subAgentSystemPrompt = `You are a focused coding assistant executing a specific subtask.
-You have access to bash, view, edit, multi_edit, write, grep, glob, and ls tools.
+You have access to bash, view, edit, multi_edit, write, grep, glob, ls, and lsp tools.
 
 ## Be Concise
 Minimize text output. Every character costs tokens. Don't explain what you're about to do — just do it.

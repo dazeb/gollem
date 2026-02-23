@@ -49,6 +49,7 @@ type lspServer struct {
 	mu        sync.Mutex
 	nextID    atomic.Int64
 	openFiles map[string]int // URI → version
+	dead      atomic.Bool    // set when the process has exited
 }
 
 // lspServerConfig describes how to start a language server.
@@ -129,6 +130,9 @@ var serverConfigs = map[string][]lspServerConfig{
 	},
 	"lua": {
 		{command: "lua-language-server", args: nil, installHint: "install lua-language-server"},
+	},
+	"java": {
+		{command: "jdtls", args: nil, installHint: "install jdtls (Eclipse JDT Language Server)"},
 	},
 	"csharp": {
 		{command: "OmniSharp", args: []string{"--languageserver"}, installHint: "install OmniSharp"},
@@ -277,7 +281,14 @@ func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) 
 		return nil, fmt.Errorf("LSP initialize: %w", err)
 	}
 
-	// Start a goroutine to clean up when context is done.
+	// Background goroutine: detect server crashes by calling Wait().
+	// This sets srv.dead so getServer can detect and restart.
+	go func() {
+		srv.cmd.Wait() //nolint:errcheck
+		srv.dead.Store(true)
+	}()
+
+	// Clean up when context is done.
 	go func() {
 		<-ctx.Done()
 		srv.shutdown()
@@ -341,7 +352,12 @@ func (s *lspServer) call(ctx context.Context, method string, params any) (json.R
 	}
 
 	// Read responses, skipping notifications, until we get our response.
-	deadline := time.Now().Add(30 * time.Second)
+	// Use a longer timeout for initialize since workspace indexing can be slow.
+	timeout := 30 * time.Second
+	if method == "initialize" {
+		timeout = 60 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
 	for {
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("timeout waiting for response to %s (id=%d)", method, id)
@@ -670,11 +686,12 @@ func LSP(opts ...Option) core.Tool {
 
 		if srv, ok := servers[lang]; ok {
 			// Check if process is still alive.
-			if srv.cmd.ProcessState == nil {
+			if !srv.dead.Load() {
 				return srv, nil
 			}
 			// Dead — remove and restart.
 			delete(servers, lang)
+			fmt.Fprintf(os.Stderr, "[gollem] lsp: %s server crashed, restarting\n", lang)
 		}
 
 		workDir := cfg.WorkDir
