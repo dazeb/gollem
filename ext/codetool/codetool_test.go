@@ -10105,6 +10105,66 @@ func TestMultiEdit_CRLFNormalization(t *testing.T) {
 	}
 }
 
+func TestEdit_CRLFInParams(t *testing.T) {
+	dir := t.TempDir()
+	// File has LF-only line endings.
+	os.WriteFile(filepath.Join(dir, "lf.go"), []byte("line1\nline2\nline3\n"), 0o644)
+
+	tool := Edit(WithWorkDir(dir))
+
+	// Model sends CRLF in old_string/new_string (e.g., copied from a CRLF view).
+	result := call(t, tool, "{\"path\": \"lf.go\", \"old_string\": \"line1\\r\\nline2\", \"new_string\": \"LINE1\\r\\nLINE2\"}")
+	assertContains(t, result, "Replaced 1")
+
+	data, _ := os.ReadFile(filepath.Join(dir, "lf.go"))
+	content := string(data)
+	if strings.Contains(content, "\r\n") {
+		t.Error("LF-only file should not gain CRLF line endings")
+	}
+	if !strings.Contains(content, "LINE1\nLINE2") {
+		t.Error("expected CRLF-normalized edit to be applied")
+	}
+}
+
+func TestEdit_CRLFInParamsWithCRLFFile(t *testing.T) {
+	dir := t.TempDir()
+	// File has CRLF line endings AND params also have CRLF.
+	os.WriteFile(filepath.Join(dir, "crlf.go"), []byte("line1\r\nline2\r\nline3\r\n"), 0o644)
+
+	tool := Edit(WithWorkDir(dir))
+
+	result := call(t, tool, "{\"path\": \"crlf.go\", \"old_string\": \"line1\\r\\nline2\", \"new_string\": \"LINE1\\r\\nLINE2\"}")
+	assertContains(t, result, "Replaced 1")
+
+	data, _ := os.ReadFile(filepath.Join(dir, "crlf.go"))
+	content := string(data)
+	if !strings.Contains(content, "\r\n") {
+		t.Error("expected CRLF line endings to be preserved")
+	}
+	if !strings.Contains(content, "LINE1\r\nLINE2") {
+		t.Error("expected edit to be applied with CRLF preserved")
+	}
+}
+
+func TestMultiEdit_CRLFInParams(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "lf.txt"), []byte("aaa\nbbb\nccc\n"), 0o644)
+
+	tool := MultiEdit(WithWorkDir(dir))
+	// CRLF in both old_string and new_string within multi_edit params.
+	result := call(t, tool, "{\"edits\": [{\"path\": \"lf.txt\", \"old_string\": \"aaa\\r\\nbbb\", \"new_string\": \"AAA\\r\\nBBB\"}]}")
+	assertContains(t, result, "Replaced 1")
+
+	data, _ := os.ReadFile(filepath.Join(dir, "lf.txt"))
+	content := string(data)
+	if strings.Contains(content, "\r\n") {
+		t.Error("LF-only file should not gain CRLF line endings")
+	}
+	if !strings.Contains(content, "AAA\nBBB") {
+		t.Error("expected CRLF-normalized edit to be applied in multi_edit")
+	}
+}
+
 func TestExtractGoFunctionSignatures(t *testing.T) {
 	tests := []struct {
 		name    string

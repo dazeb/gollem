@@ -104,15 +104,21 @@ func Edit(opts ...Option) core.Tool {
 			if hasCRLF {
 				content = strings.ReplaceAll(content, "\r\n", "\n")
 			}
+			// Also normalize old_string and new_string in case the model
+			// copied content from a CRLF source (e.g., view output of a
+			// CRLF file before normalization was added). Without this, the
+			// old_string wouldn't match the LF-normalized file content.
+			oldStr := strings.ReplaceAll(params.OldString, "\r\n", "\n")
+			newStr := strings.ReplaceAll(params.NewString, "\r\n", "\n")
 
-			count := strings.Count(content, params.OldString)
+			count := strings.Count(content, oldStr)
 
 			if count == 0 {
 				// Auto-correct whitespace mismatches: if old_string matches
 				// exactly once when whitespace is normalized, automatically
 				// adjust indentation and apply the edit. This saves a full
 				// round-trip — whitespace mismatches are the #1 edit failure.
-				if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, params.OldString, params.NewString); ok {
+				if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, oldStr, newStr); ok {
 					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
 					if hasCRLF {
 						newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
@@ -129,7 +135,7 @@ func Edit(opts ...Option) core.Tool {
 				// extra blank lines at the start or end of old_string that don't
 				// exist in the file. Strip them and retry — this is the #2 edit
 				// failure after whitespace mismatches.
-				if trimmedOld, trimmedNew, ok := autoCorrectBlankLines(content, params.OldString, params.NewString); ok {
+				if trimmedOld, trimmedNew, ok := autoCorrectBlankLines(content, oldStr, newStr); ok {
 					// Try exact match with stripped version first.
 					if strings.Count(content, trimmedOld) == 1 {
 						newContent := strings.Replace(content, trimmedOld, trimmedNew, 1)
@@ -162,7 +168,7 @@ func Edit(opts ...Option) core.Tool {
 				// commonly generate 2 blank lines between functions when the file
 				// has 1 (or vice versa). Normalize runs of 2+ blank lines to 1
 				// and retry — this is the #3 edit failure.
-				if actualOld, adjustedNew, ok := autoCorrectInternalBlankLines(content, params.OldString, params.NewString); ok {
+				if actualOld, adjustedNew, ok := autoCorrectInternalBlankLines(content, oldStr, newStr); ok {
 					if strings.Count(content, actualOld) == 1 {
 						newContent := strings.Replace(content, actualOld, adjustedNew, 1)
 						if hasCRLF {
@@ -181,7 +187,7 @@ func Edit(opts ...Option) core.Tool {
 				// line of context at the beginning or end of old_string that either
 				// doesn't exist in the file or has slightly different content.
 				// Only trims lines that are identical in old and new (pure context).
-				if actualOld, adjustedNew, ok := autoCorrectLineTrim(content, params.OldString, params.NewString); ok {
+				if actualOld, adjustedNew, ok := autoCorrectLineTrim(content, oldStr, newStr); ok {
 					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
 					if hasCRLF {
 						newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
@@ -198,12 +204,12 @@ func Edit(opts ...Option) core.Tool {
 
 				// Check for whitespace-only mismatch that couldn't be auto-corrected
 				// (e.g., multiple normalized matches, line count mismatch).
-				if wsHint := detectWhitespaceMismatch(content, params.OldString); wsHint != "" {
+				if wsHint := detectWhitespaceMismatch(content, oldStr); wsHint != "" {
 					msg += " " + wsHint
 				} else {
 					msg += " Ensure exact match including whitespace and indentation."
 					// Show nearby lines to help the model fix the edit without re-reading.
-					if hint := findNearestLines(content, params.OldString, 3); hint != "" {
+					if hint := findNearestLines(content, oldStr, 3); hint != "" {
 						msg += "\n\nMost similar lines in the file:\n" + hint
 					}
 				}
@@ -211,7 +217,7 @@ func Edit(opts ...Option) core.Tool {
 				// Include a file snippet around the nearest match so the agent
 				// doesn't need a separate view call before retrying the edit.
 				// This saves a full turn on every edit-not-found failure.
-				if snippet := fileSnippetForEdit(content, params.OldString); snippet != "" {
+				if snippet := fileSnippetForEdit(content, oldStr); snippet != "" {
 					msg += "\n\nFile content around best match:\n" + snippet
 				}
 
@@ -222,7 +228,7 @@ func Edit(opts ...Option) core.Tool {
 				// Show the line numbers of each occurrence so the agent can
 				// include surrounding context to disambiguate. Without this,
 				// the agent wastes a turn re-reading the file.
-				locations := findOccurrenceLines(content, params.OldString)
+				locations := findOccurrenceLines(content, oldStr)
 				msg := fmt.Sprintf("old_string found %d times in %s (at lines %s). Provide more surrounding context to make it unique, or set replace_all=true.",
 					count, params.Path, locations)
 				return "", &core.ModelRetryError{Message: msg}
@@ -230,9 +236,9 @@ func Edit(opts ...Option) core.Tool {
 
 			var newContent string
 			if params.ReplaceAll {
-				newContent = strings.ReplaceAll(content, params.OldString, params.NewString)
+				newContent = strings.ReplaceAll(content, oldStr, newStr)
 			} else {
-				newContent = strings.Replace(content, params.OldString, params.NewString, 1)
+				newContent = strings.Replace(content, oldStr, newStr, 1)
 			}
 
 			if hasCRLF {
@@ -246,7 +252,7 @@ func Edit(opts ...Option) core.Tool {
 			if params.ReplaceAll {
 				replacements = count
 			}
-			return editResultWithContext(newContent, params.NewString, replacements, params.Path), nil
+			return editResultWithContext(newContent, newStr, replacements, params.Path), nil
 		},
 	)
 }
@@ -520,6 +526,9 @@ func MultiEdit(opts ...Option) core.Tool {
 					return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: old_string and new_string are identical — no change needed", i)}
 				}
 
+				// Normalize CRLF in params (same as single edit).
+				oldStr := strings.ReplaceAll(edit.OldString, "\r\n", "\n")
+				newStr := strings.ReplaceAll(edit.NewString, "\r\n", "\n")
 				path := edit.Path
 				if !filepath.IsAbs(path) && cfg.WorkDir != "" {
 					path = filepath.Join(cfg.WorkDir, path)
@@ -552,54 +561,54 @@ func MultiEdit(opts ...Option) core.Tool {
 
 				var newContent string
 				var msg string
-				if !strings.Contains(content, edit.OldString) {
+				if !strings.Contains(content, oldStr) {
 					// Try auto-correcting whitespace mismatch.
-					if actualOld, adjustedNew, okWs := autoCorrectWhitespace(content, edit.OldString, edit.NewString); okWs {
+					if actualOld, adjustedNew, okWs := autoCorrectWhitespace(content, oldStr, newStr); okWs {
 						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected whitespace mismatch", i)
-					} else if trimmedOld, trimmedNew, okBl := autoCorrectBlankLines(content, edit.OldString, edit.NewString); okBl && strings.Count(content, trimmedOld) == 1 {
+					} else if trimmedOld, trimmedNew, okBl := autoCorrectBlankLines(content, oldStr, newStr); okBl && strings.Count(content, trimmedOld) == 1 {
 						newContent = strings.Replace(content, trimmedOld, trimmedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected extra blank lines", i)
-					} else if actualOld, adjustedNew, okIbl := autoCorrectInternalBlankLines(content, edit.OldString, edit.NewString); okIbl && strings.Count(content, actualOld) == 1 {
+					} else if actualOld, adjustedNew, okIbl := autoCorrectInternalBlankLines(content, oldStr, newStr); okIbl && strings.Count(content, actualOld) == 1 {
 						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected internal blank line count", i)
-					} else if actualOld, adjustedNew, okLt := autoCorrectLineTrim(content, edit.OldString, edit.NewString); okLt {
+					} else if actualOld, adjustedNew, okLt := autoCorrectLineTrim(content, oldStr, newStr); okLt {
 						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected by trimming extra context line", i)
 					} else {
 						errMsg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
-						if wsHint := detectWhitespaceMismatch(content, edit.OldString); wsHint != "" {
+						if wsHint := detectWhitespaceMismatch(content, oldStr); wsHint != "" {
 							errMsg += " " + wsHint
 						} else {
 							errMsg += " Ensure exact match including whitespace."
-							if hint := findNearestLines(content, edit.OldString, 3); hint != "" {
+							if hint := findNearestLines(content, oldStr, 3); hint != "" {
 								errMsg += "\n\nMost similar lines:\n" + hint
 							}
 						}
 						// Include file snippet so the agent can retry without
 						// a separate view call — saves a full turn.
-						if snippet := fileSnippetForEdit(content, edit.OldString); snippet != "" {
+						if snippet := fileSnippetForEdit(content, oldStr); snippet != "" {
 							errMsg += "\n\nFile content around best match:\n" + snippet
 						}
 						return "", &core.ModelRetryError{Message: errMsg}
 					}
 				} else {
 					// Check for ambiguous matches (same safety as single edit).
-					count := strings.Count(content, edit.OldString)
+					count := strings.Count(content, oldStr)
 					if count > 1 {
-						locations := findOccurrenceLines(content, edit.OldString)
+						locations := findOccurrenceLines(content, oldStr)
 						errMsg := fmt.Sprintf("edit[%d]: old_string found %d times in %s (at lines %s). Provide more surrounding context to make it unique.",
 							i, count, edit.Path, locations)
 						return "", &core.ModelRetryError{Message: errMsg}
 					}
-					newContent = strings.Replace(content, edit.OldString, edit.NewString, 1)
+					newContent = strings.Replace(content, oldStr, newStr, 1)
 				}
 				fileContents[path] = newContent
 				pending = append(pending, pendingWrite{
 					path:       path,
 					relPath:    edit.Path,
 					newContent: newContent,
-					newString:  edit.NewString,
+					newString:  newStr,
 					message:    msg,
 				})
 			}
