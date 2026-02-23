@@ -827,6 +827,57 @@ func TestGrep_ContextLines(t *testing.T) {
 	assertContains(t, result, "return a + b")
 }
 
+func TestGrep_ContextOverlap(t *testing.T) {
+	// When consecutive matches have overlapping context windows,
+	// lines should not be duplicated.
+	dir := t.TempDir()
+	writeTestFile(t, dir, "overlap.go", `line1
+line2
+line3
+matchA
+line5
+line6
+matchB
+line8
+line9
+`)
+	tool := Grep(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "match[AB]", "context_lines": 2}`)
+	// "line5" and "line6" fall in both context windows — should appear only once.
+	if strings.Count(result, "line5") != 1 {
+		t.Errorf("expected line5 to appear once, got %d times in:\n%s", strings.Count(result, "line5"), result)
+	}
+	if strings.Count(result, "line6") != 1 {
+		t.Errorf("expected line6 to appear once, got %d times in:\n%s", strings.Count(result, "line6"), result)
+	}
+	// Both matches should be present.
+	assertContains(t, result, "matchA")
+	assertContains(t, result, "matchB")
+}
+
+func TestGrep_MaxResultsCountsMatches(t *testing.T) {
+	// max_results should count actual regex matches, not context/separator lines.
+	dir := t.TempDir()
+	// Create a file with 10 matches.
+	var lines []string
+	for i := 1; i <= 30; i++ {
+		if i%3 == 0 {
+			lines = append(lines, fmt.Sprintf("MATCH line %d", i))
+		} else {
+			lines = append(lines, fmt.Sprintf("normal line %d", i))
+		}
+	}
+	writeTestFile(t, dir, "many.txt", strings.Join(lines, "\n"))
+	tool := Grep(WithWorkDir(dir))
+	// With context_lines=1 and max_results=5, we should get 5 actual matches.
+	result := call(t, tool, `{"pattern": "MATCH", "context_lines": 1, "max_results": 5}`)
+	matchCount := strings.Count(result, ">")
+	if matchCount != 5 {
+		t.Errorf("expected 5 matches with > prefix, got %d in:\n%s", matchCount, result)
+	}
+	assertContains(t, result, "truncated at 5 matches")
+}
+
 func TestGrep_EmptyPattern(t *testing.T) {
 	tool := Grep()
 	err := callErr(t, tool, `{"pattern": ""}`)

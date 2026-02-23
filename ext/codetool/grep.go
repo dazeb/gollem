@@ -76,6 +76,7 @@ func Grep(opts ...Option) core.Tool {
 			}
 
 			var matches []string
+			matchCount := 0
 			truncated := false
 
 			err = filepath.Walk(searchPath, func(path string, info os.FileInfo, walkErr error) error {
@@ -116,7 +117,7 @@ func Grep(opts ...Option) core.Tool {
 					relPath = path
 				}
 
-				return searchFile(ctx, path, relPath, re, contextLines, maxResults, &matches, &truncated)
+				return searchFile(ctx, path, relPath, re, contextLines, maxResults, &matches, &matchCount, &truncated)
 			})
 
 			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -136,7 +137,7 @@ func Grep(opts ...Option) core.Tool {
 	)
 }
 
-func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp, contextLines, maxResults int, matches *[]string, truncated *bool) error {
+func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp, contextLines, maxResults int, matches *[]string, matchCount *int, truncated *bool) error {
 	f, err := os.Open(absPath)
 	if err != nil {
 		return nil
@@ -163,15 +164,21 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 		allLines = append(allLines, scanner.Text())
 	}
 
+	// Track the last context line shown to avoid duplicating lines when
+	// consecutive matches have overlapping context windows.
+	lastContextEnd := -1
+
 	for i, line := range allLines {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if len(*matches) >= maxResults {
+		// Count actual regex matches, not context/separator lines.
+		if *matchCount >= maxResults {
 			*truncated = true
 			return filepath.SkipAll
 		}
 		if re.MatchString(line) {
+			*matchCount++
 			if contextLines > 0 {
 				start := i - contextLines
 				if start < 0 {
@@ -181,6 +188,14 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 				if end > len(allLines) {
 					end = len(allLines)
 				}
+				// Skip lines already shown by previous match's context.
+				if start <= lastContextEnd {
+					// Add separator only if there's a gap.
+					start = lastContextEnd + 1
+				} else if lastContextEnd >= 0 {
+					// Non-contiguous: add separator between blocks.
+					*matches = append(*matches, "---")
+				}
 				for j := start; j < end; j++ {
 					prefix := " "
 					if j == i {
@@ -188,7 +203,9 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 					}
 					*matches = append(*matches, fmt.Sprintf("%s%s:%d: %s", prefix, relPath, j+1, allLines[j]))
 				}
-				*matches = append(*matches, "---")
+				if end-1 > lastContextEnd {
+					lastContextEnd = end - 1
+				}
 			} else {
 				*matches = append(*matches, fmt.Sprintf("%s:%d: %s", relPath, i+1, line))
 			}

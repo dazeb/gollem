@@ -578,11 +578,11 @@ func isVerificationString(cmd string) bool {
 func autoCleanupIntermediates(workDir string) int {
 	cleaned := 0
 
-	// Remove cache directories recursively.
+	// Cache directories to remove recursively.
 	// These are common intermediates that can cause "extra files" test failures
 	// when tests check directory contents with os.listdir/ls.
 	cacheDirs := map[string]bool{
-		"__pycache__":  true,
+		"__pycache__":   true,
 		".pytest_cache": true,
 		".mypy_cache":   true,
 		".ruff_cache":   true,
@@ -594,54 +594,49 @@ func autoCleanupIntermediates(workDir string) int {
 		"zig-out":       true, // Zig build output
 		".dub":          true, // D language package cache
 	}
-	// Also clean *.egg-info directories — Python packaging artifacts
-	// that cause "extra files" failures in directory content tests.
-	eggInfoSuffix := ".egg-info"
+
+	// Intermediate file extensions to remove: .pyc (Python), .class (Java),
+	// .hi (Haskell), .beam (Erlang/Elixir). These cause "extra files" failures.
+	intermediateExts := map[string]bool{
+		".pyc":   true,
+		".class": true,
+		".hi":    true,
+		".beam":  true,
+	}
+
+	// Single walk handles both cache directories and intermediate files.
 	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() && cacheDirs[info.Name()] {
-			if os.RemoveAll(path) == nil {
-				cleaned++
-			}
-			return filepath.SkipDir
-		}
-		// Clean *.egg-info directories (Python packaging artifacts).
-		if info.IsDir() && strings.HasSuffix(info.Name(), eggInfoSuffix) {
-			if os.RemoveAll(path) == nil {
-				cleaned++
-			}
-			return filepath.SkipDir
-		}
-		// Also clean node_modules/.cache if present (build tool caches).
-		if info.IsDir() && info.Name() == ".cache" {
-			parent := filepath.Base(filepath.Dir(path))
-			if parent == "node_modules" {
+		name := info.Name()
+		if info.IsDir() {
+			if cacheDirs[name] {
 				if os.RemoveAll(path) == nil {
 					cleaned++
 				}
 				return filepath.SkipDir
 			}
-		}
-		return nil
-	})
-
-	// Remove intermediate files: *.pyc (Python), *.class (Java), *.hi (Haskell).
-	// These can all cause "extra files" test failures.
-	intermediateExts := []string{".pyc", ".class", ".hi", ".beam"}
-	filepath.Walk(workDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+			// *.egg-info directories (Python packaging artifacts).
+			if strings.HasSuffix(name, ".egg-info") {
+				if os.RemoveAll(path) == nil {
+					cleaned++
+				}
+				return filepath.SkipDir
+			}
+			// node_modules/.cache (build tool caches).
+			if name == ".cache" && filepath.Base(filepath.Dir(path)) == "node_modules" {
+				if os.RemoveAll(path) == nil {
+					cleaned++
+				}
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		if !info.IsDir() {
-			for _, ext := range intermediateExts {
-				if strings.HasSuffix(info.Name(), ext) {
-					if os.Remove(path) == nil {
-						cleaned++
-					}
-					break
-				}
+		// Intermediate files by extension.
+		if intermediateExts[filepath.Ext(name)] {
+			if os.Remove(path) == nil {
+				cleaned++
 			}
 		}
 		return nil
