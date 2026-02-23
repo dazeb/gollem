@@ -225,21 +225,30 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 // caches, and VCS directories that waste context tokens and search time.
 func isSkippableDir(name string) bool {
 	switch name {
-	case ".git", "node_modules", "__pycache__", ".tox", "vendor",
+	case ".git", ".svn", ".hg", // version control
+		"node_modules", "__pycache__", ".tox", "vendor",
 		// Build output directories.
 		"build",     // Gradle, generic
 		"_build",    // OCaml (dune), Elixir (mix)
+		".build",    // Swift (swift build)
 		"dist",      // JS bundlers, Python sdist/wheel
 		"target",    // Rust (cargo), Maven/Gradle (Java)
 		"out",       // Android, TypeScript outDir, generic
 		"zig-cache", // Zig
+		"zig-out",   // Zig build output
+		"nimcache",  // Nim compilation cache
+		".gradle",   // Gradle wrapper cache
+		".dub",      // D language package cache
 		"deps",      // Elixir dependencies
 		"_deps",     // CMake FetchContent
+		".eggs",     // Python eggs
 		// Python virtual environments.
 		".venv", "venv",
 		// Caches.
 		".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache",
 		".next",     // Next.js build cache
+		".nuxt",     // Nuxt.js build cache
+		".turbo",    // Turborepo cache
 		"coverage",  // test coverage reports
 		".coverage", // Python coverage
 		".DS_Store": // macOS metadata (file, not dir, but harmless to check)
