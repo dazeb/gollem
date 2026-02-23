@@ -32,10 +32,11 @@ func Glob(opts ...Option) core.Tool {
 	cfg := applyOpts(opts)
 	return core.FuncTool[GlobParams](
 		"glob",
-		"Find files matching a glob pattern. Supports ** for recursive directory matching. "+
+		"Find files matching a glob pattern. Supports ** for recursive directory matching "+
+			"and {a,b} brace expansion (e.g. '**/*.{ts,tsx}'). "+
 			"Returns file paths sorted by modification time (most recent first). "+
 			"Use exclude to skip files (e.g. '*_test.go'). "+
-			"Use this to discover files by name or extension (e.g. '**/*.go', 'src/**/*.test.ts').",
+			"Use this to discover files by name or extension (e.g. '**/*.go', 'src/**/*.{ts,tsx}').",
 		func(ctx context.Context, params GlobParams) (string, error) {
 			if params.Pattern == "" {
 				return "", &core.ModelRetryError{Message: "pattern must not be empty"}

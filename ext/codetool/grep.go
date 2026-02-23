@@ -54,7 +54,7 @@ func Grep(opts ...Option) core.Tool {
 		"grep",
 		"Search file contents for lines matching a regular expression pattern. "+
 			"Returns matching lines with file paths and line numbers. "+
-			"Use include to filter by file extension (e.g. '*.go'), "+
+			"Use include to filter by file extension (e.g. '*.go' or '*.{ts,tsx}'), "+
 			"exclude to skip files (e.g. '*_test.go'), "+
 			"ignore_case for case-insensitive search, "+
 			"files_only to get just file paths without line content. "+
