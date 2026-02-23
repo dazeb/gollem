@@ -94,9 +94,21 @@ type apiChatMsg struct {
 }
 
 type apiUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	TotalTokens             int                      `json:"total_tokens"`
+	PromptTokensDetails     *apiPromptTokensDetails  `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *apiCompletionDetails    `json:"completion_tokens_details,omitempty"`
+}
+
+type apiPromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+	AudioTokens  int `json:"audio_tokens,omitempty"`
+}
+
+type apiCompletionDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+	AudioTokens     int `json:"audio_tokens,omitempty"`
 }
 
 // buildRequest converts gollem messages into an OpenAI Chat Completions API request.
@@ -315,8 +327,17 @@ func mapFinishReason(resp *apiResponse) core.FinishReason {
 
 // mapUsage converts OpenAI usage to gollem Usage.
 func mapUsage(u apiUsage) core.Usage {
-	return core.Usage{
+	usage := core.Usage{
 		InputTokens:  u.PromptTokens,
 		OutputTokens: u.CompletionTokens,
 	}
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		usage.CacheReadTokens = u.PromptTokensDetails.CachedTokens
+	}
+	if u.CompletionTokensDetails != nil && u.CompletionTokensDetails.ReasoningTokens > 0 {
+		usage.Details = map[string]int{
+			"reasoning_tokens": u.CompletionTokensDetails.ReasoningTokens,
+		}
+	}
+	return usage
 }
