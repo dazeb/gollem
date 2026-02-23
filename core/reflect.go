@@ -66,9 +66,15 @@ func RunWithReflection[T any](
 
 	var totalUsage RunUsage
 	currentPrompt := prompt
+	var prevMessages []ModelMessage
 
 	for i := 0; i <= cfg.maxReflections; i++ {
-		result, err := agent.Run(ctx, currentPrompt)
+		var runOpts []RunOption
+		if len(prevMessages) > 0 {
+			runOpts = append(runOpts, WithMessages(prevMessages...))
+		}
+
+		result, err := agent.Run(ctx, currentPrompt, runOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("reflection iteration %d: %w", i, err)
 		}
@@ -101,6 +107,10 @@ func RunWithReflection[T any](
 				Accepted:   false,
 			}, nil
 		}
+
+		// Pass conversation history to the next iteration so the agent
+		// retains context about the original task and prior attempts.
+		prevMessages = result.Messages
 
 		// Build correction prompt.
 		currentPrompt = fmt.Sprintf(cfg.reflectPrompt, feedback)
