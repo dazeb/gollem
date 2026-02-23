@@ -4169,9 +4169,19 @@ func firstFailureDetail(output string) string {
 			return "[first failure: " + detail + "]"
 		}
 
-		// pytest/unittest: "AssertionError: ..." on its own line
-		if strings.HasPrefix(trimmed, "AssertionError:") || strings.HasPrefix(trimmed, "AssertionError(") {
+		// pytest/unittest/Deno: "AssertionError: ..." on its own line.
+		// Deno prefixes with "error: " → "error: AssertionError: Values are not equal:"
+		if strings.HasPrefix(trimmed, "AssertionError:") || strings.HasPrefix(trimmed, "AssertionError(") ||
+			strings.HasPrefix(trimmed, "error: AssertionError:") {
 			detail := trimmed
+			// Look ahead for diff details (Deno format: "[Diff] Actual / Expected").
+			for j := i + 1; j < min(i+6, len(lines)); j++ {
+				ahead := strings.TrimSpace(lines[j])
+				if strings.HasPrefix(ahead, "-") || strings.HasPrefix(ahead, "+") {
+					detail += " / " + ahead
+					break
+				}
+			}
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}

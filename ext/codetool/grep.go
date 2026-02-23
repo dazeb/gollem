@@ -387,6 +387,8 @@ func isSkippableDir(name string) bool {
 		".astro",        // Astro build cache
 		".docusaurus",   // Docusaurus build cache
 		".sass-cache",   // Sass compilation cache
+		".nx",           // Nx monorepo cache
+		".swc",          // SWC compiler cache
 		".temp",         // Generic temp directory
 		".tmp":          // Generic temp directory
 		return true
@@ -410,6 +412,8 @@ func isBinaryFilename(name string) bool {
 		".sqlite", ".sqlite3", ".db", ".db3",
 		".qcow2", ".img", ".iso", ".vmdk", ".vdi",      // disk images
 		".bin", ".dat", ".raw", ".pak",                  // generic binary
+		".lockb",                                        // binary lock files (Bun)
+		".swp", ".swo",                                  // Vim swap files
 		".npy", ".npz", ".pkl", ".pickle", ".pt", ".pth", // ML data/models
 		".onnx", ".safetensors", ".tflite", ".gguf",    // ML model formats
 		".pb",                                           // protobuf binary

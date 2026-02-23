@@ -7720,9 +7720,10 @@ func isSourceFile(name string) bool {
 	ext := filepath.Ext(lower)
 	switch ext {
 	case ".py", ".pyx", ".pyi",
-		".js", ".ts", ".jsx", ".tsx", ".go", ".rs",
+		".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts",
+		".go", ".rs",
 		".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh",
-		".java", ".rb", ".sh", ".bash", ".pl", ".lua", ".r",
+		".java", ".rb", ".sh", ".bash", ".fish", ".ksh", ".pl", ".lua", ".tcl", ".r",
 		".cs", ".fs", ".fsx",        // C#, F#
 		".dart", ".php", ".d", ".cr", // Dart, PHP, D, Crystal
 		".groovy", ".gradle",        // Groovy/Gradle

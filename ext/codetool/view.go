@@ -215,6 +215,7 @@ func isLockFile(name string) bool {
 	switch strings.ToLower(name) {
 	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
 		"bun.lockb", "bun.lock",
+		"deno.lock",
 		"go.sum",
 		"cargo.lock",
 		"poetry.lock", "pipfile.lock", "pdm.lock", "uv.lock",

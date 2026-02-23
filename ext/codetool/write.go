@@ -71,6 +71,8 @@ func Write(opts ...Option) core.Tool {
 				strings.HasSuffix(lower, ".sh") ||
 				strings.HasSuffix(lower, ".bash") ||
 				strings.HasSuffix(lower, ".zsh") ||
+				strings.HasSuffix(lower, ".fish") ||
+				strings.HasSuffix(lower, ".ksh") ||
 				strings.HasSuffix(lower, ".py") ||
 				strings.HasSuffix(lower, ".rb") ||
 				strings.HasSuffix(lower, ".pl") ||
