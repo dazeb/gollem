@@ -100,6 +100,15 @@ func Write(opts ...Option) core.Tool {
 				result += "\n[hint: file does not end with a newline — most tools expect a trailing newline in source files]"
 			}
 
+			// Detect embedded line numbers from view tool output.
+			// Agents sometimes copy-paste view output (with "     1\t" prefixes)
+			// into the write content. This corrupts the file silently.
+			if lineCount >= 3 && looksLikeViewOutput(params.Content) {
+				result += "\n[warning: content appears to contain line number prefixes from the view tool " +
+					"(e.g., '     1\\t...'). This will corrupt the file. Remove the line numbers " +
+					"and write only the actual file content.]"
+			}
+
 			// Warn when overwriting reduced file size by more than 50%.
 			// This catches accidental truncation — the #1 write-related bug
 			// where the agent rewrites a file but forgets to include all content.
@@ -125,4 +134,42 @@ func Write(opts ...Option) core.Tool {
 			return result, nil
 		},
 	)
+}
+
+// looksLikeViewOutput checks if content looks like it was copy-pasted from
+// the view tool (line numbers followed by a tab at the start of lines).
+// The view tool formats lines as "     1\tcode..." — if 3+ of the first 5
+// lines match this pattern, it's likely pasted view output.
+func looksLikeViewOutput(content string) bool {
+	lines := strings.SplitN(content, "\n", 6)
+	matches := 0
+	checked := 0
+	for _, line := range lines {
+		if len(line) < 2 {
+			continue
+		}
+		checked++
+		if checked > 5 {
+			break
+		}
+		// View output format: spaces + digits + tab
+		trimmed := strings.TrimLeft(line, " ")
+		if len(trimmed) > 0 && trimmed[0] >= '0' && trimmed[0] <= '9' {
+			tabIdx := strings.IndexByte(trimmed, '\t')
+			if tabIdx > 0 && tabIdx <= 6 {
+				// Verify the part before tab is all digits.
+				allDigits := true
+				for _, c := range trimmed[:tabIdx] {
+					if c < '0' || c > '9' {
+						allDigits = false
+						break
+					}
+				}
+				if allDigits {
+					matches++
+				}
+			}
+		}
+	}
+	return checked >= 3 && matches >= 3
 }
