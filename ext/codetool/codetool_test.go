@@ -751,6 +751,34 @@ func TestAutoCorrectWhitespace(t *testing.T) {
 	})
 }
 
+func TestEdit_InternalBlankLineAndWhitespaceCascade(t *testing.T) {
+	dir := t.TempDir()
+	// File with 1 blank line between functions and tab indentation.
+	os.WriteFile(filepath.Join(dir, "funcs.go"), []byte(
+		"func A() {\n\treturn 1\n}\n\nfunc B() {\n\treturn 2\n}\n"), 0o644)
+
+	tool := Edit(WithWorkDir(dir))
+
+	// Model sends old_string with 2 blank lines between functions AND space indentation.
+	// Neither internal-blank-line correction nor whitespace correction alone works:
+	// - Internal blank line normalization fixes blank lines but leaves spaces
+	// - Whitespace normalization can't match because blank line count is wrong
+	// The cascade should handle both.
+	result := call(t, tool, `{"path": "funcs.go", "old_string": "func A() {\n    return 1\n}\n\n\nfunc B() {\n    return 2\n}", "new_string": "func A() {\n    return 42\n}\n\n\nfunc B() {\n    return 99\n}"}`)
+	assertContains(t, result, "Replaced 1")
+	assertContains(t, result, "auto-corrected internal blank lines and whitespace")
+
+	data, _ := os.ReadFile(filepath.Join(dir, "funcs.go"))
+	content := string(data)
+	if !strings.Contains(content, "return 42") || !strings.Contains(content, "return 99") {
+		t.Errorf("expected edits to be applied, got: %s", content)
+	}
+	// Verify tab indentation was preserved.
+	if !strings.Contains(content, "\treturn 42") {
+		t.Error("expected tab indentation to be preserved")
+	}
+}
+
 func TestEdit_AmbiguousMatch(t *testing.T) {
 	dir := setupTestDir(t)
 	tool := Edit(WithWorkDir(dir))

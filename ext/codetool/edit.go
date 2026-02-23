@@ -168,18 +168,42 @@ func Edit(opts ...Option) core.Tool {
 				// commonly generate 2 blank lines between functions when the file
 				// has 1 (or vice versa). Normalize runs of 2+ blank lines to 1
 				// and retry — this is the #3 edit failure.
-				if actualOld, adjustedNew, ok := autoCorrectInternalBlankLines(content, oldStr, newStr); ok {
-					if strings.Count(content, actualOld) == 1 {
-						newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+				if normalizedOld, normalizedNew, ok := autoCorrectInternalBlankLines(content, oldStr, newStr); ok {
+					if strings.Count(content, normalizedOld) == 1 {
+						newContent := strings.Replace(content, normalizedOld, normalizedNew, 1)
 						if hasCRLF {
 							newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
 						}
 						if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
-						result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+						result := editResultWithContext(newContent, normalizedNew, 1, params.Path)
 						result += "\n[auto-corrected internal blank line count]"
 						return result, nil
+					}
+				}
+
+				// Combined internal blank line + whitespace correction: the model
+				// gets both the blank line count AND indentation wrong. Neither
+				// autoCorrectInternalBlankLines nor autoCorrectWhitespace alone
+				// can match, but normalizing blank runs first then passing through
+				// whitespace correction handles both simultaneously.
+				{
+					blankNormOld := normalizeBlankRuns(oldStr)
+					blankNormNew := normalizeBlankRuns(newStr)
+					if blankNormOld != oldStr { // blank line normalization changed something
+						if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, blankNormOld, blankNormNew); ok {
+							newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+							if hasCRLF {
+								newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+							}
+							if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+								return "", fmt.Errorf("write file: %w", err)
+							}
+							result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+							result += "\n[auto-corrected internal blank lines and whitespace]"
+							return result, nil
+						}
 					}
 				}
 
@@ -569,28 +593,43 @@ func MultiEdit(opts ...Option) core.Tool {
 					} else if trimmedOld, trimmedNew, okBl := autoCorrectBlankLines(content, oldStr, newStr); okBl && strings.Count(content, trimmedOld) == 1 {
 						newContent = strings.Replace(content, trimmedOld, trimmedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected extra blank lines", i)
-					} else if actualOld, adjustedNew, okIbl := autoCorrectInternalBlankLines(content, oldStr, newStr); okIbl && strings.Count(content, actualOld) == 1 {
-						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
+					} else if normalizedOld, normalizedNew, okIbl := autoCorrectInternalBlankLines(content, oldStr, newStr); okIbl && strings.Count(content, normalizedOld) == 1 {
+						newContent = strings.Replace(content, normalizedOld, normalizedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected internal blank line count", i)
-					} else if actualOld, adjustedNew, okLt := autoCorrectLineTrim(content, oldStr, newStr); okLt {
-						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
-						msg = fmt.Sprintf("edit[%d]: auto-corrected by trimming extra context line", i)
-					} else {
-						errMsg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
-						if wsHint := detectWhitespaceMismatch(content, oldStr); wsHint != "" {
-							errMsg += " " + wsHint
-						} else {
-							errMsg += " Ensure exact match including whitespace."
-							if hint := findNearestLines(content, oldStr, 3); hint != "" {
-								errMsg += "\n\nMost similar lines:\n" + hint
+					}
+					// Combined internal blank line + whitespace correction.
+					if newContent == "" {
+						blankNormOld := normalizeBlankRuns(oldStr)
+						blankNormNew := normalizeBlankRuns(newStr)
+						if blankNormOld != oldStr {
+							if actualOld2, adjustedNew2, okWs2 := autoCorrectWhitespace(content, blankNormOld, blankNormNew); okWs2 {
+								newContent = strings.Replace(content, actualOld2, adjustedNew2, 1)
+								msg = fmt.Sprintf("edit[%d]: auto-corrected internal blank lines and whitespace", i)
 							}
 						}
-						// Include file snippet so the agent can retry without
-						// a separate view call — saves a full turn.
-						if snippet := fileSnippetForEdit(content, oldStr); snippet != "" {
-							errMsg += "\n\nFile content around best match:\n" + snippet
+					}
+					// If we still don't have a newContent, try line trim.
+					if newContent == "" {
+						if actualOld, adjustedNew, okLt := autoCorrectLineTrim(content, oldStr, newStr); okLt {
+							newContent = strings.Replace(content, actualOld, adjustedNew, 1)
+							msg = fmt.Sprintf("edit[%d]: auto-corrected by trimming extra context line", i)
+						} else {
+							errMsg := fmt.Sprintf("edit[%d]: old_string not found in %s.", i, edit.Path)
+							if wsHint := detectWhitespaceMismatch(content, oldStr); wsHint != "" {
+								errMsg += " " + wsHint
+							} else {
+								errMsg += " Ensure exact match including whitespace."
+								if hint := findNearestLines(content, oldStr, 3); hint != "" {
+									errMsg += "\n\nMost similar lines:\n" + hint
+								}
+							}
+							// Include file snippet so the agent can retry without
+							// a separate view call — saves a full turn.
+							if snippet := fileSnippetForEdit(content, oldStr); snippet != "" {
+								errMsg += "\n\nFile content around best match:\n" + snippet
+							}
+							return "", &core.ModelRetryError{Message: errMsg}
 						}
-						return "", &core.ModelRetryError{Message: errMsg}
 					}
 				} else {
 					// Check for ambiguous matches (same safety as single edit).
@@ -920,23 +959,23 @@ func autoCorrectBlankLines(content, oldStr, newStr string) (trimmedOld, trimmedN
 //   - actualOld: the actual content region in the file (with original blank lines)
 //   - adjustedNew: new_string (kept as-is — model's intended blank lines)
 //   - ok: true if normalization produced a unique match
-func autoCorrectInternalBlankLines(content, oldStr, newStr string) (actualOld, adjustedNew string, ok bool) {
-	// Normalize runs of 2+ blank lines to 1 blank line.
-	normalizeBlankRuns := func(s string) string {
-		lines := strings.Split(s, "\n")
-		var result []string
-		prevBlank := false
-		for _, line := range lines {
-			blank := strings.TrimSpace(line) == ""
-			if blank && prevBlank {
-				continue
-			}
-			result = append(result, line)
-			prevBlank = blank
+// normalizeBlankRuns collapses runs of 2+ consecutive blank lines to 1 blank line.
+func normalizeBlankRuns(s string) string {
+	lines := strings.Split(s, "\n")
+	var result []string
+	prevBlank := false
+	for _, line := range lines {
+		blank := strings.TrimSpace(line) == ""
+		if blank && prevBlank {
+			continue
 		}
-		return strings.Join(result, "\n")
+		result = append(result, line)
+		prevBlank = blank
 	}
+	return strings.Join(result, "\n")
+}
 
+func autoCorrectInternalBlankLines(content, oldStr, newStr string) (actualOld, adjustedNew string, ok bool) {
 	normalizedOld := normalizeBlankRuns(oldStr)
 	normalizedContent := normalizeBlankRuns(content)
 
