@@ -420,6 +420,90 @@ func TestMemoryTool_Errors(t *testing.T) {
 	}
 }
 
+func TestMemoryStore_SubNamespaceIsolation(t *testing.T) {
+	// Listing documents in namespace ["app"] must NOT return documents from
+	// sub-namespace ["app", "users"]. Both MemoryStore and SQLiteStore should
+	// behave identically — exact namespace matching, not prefix matching.
+	store := NewMemoryStore()
+	ctx := context.Background()
+
+	parent := []string{"app"}
+	child := []string{"app", "users"}
+
+	store.Put(ctx, parent, "config", map[string]any{"setting": "dark_mode"})
+	store.Put(ctx, child, "user1", map[string]any{"name": "Alice"})
+
+	// List in parent should only find the config document.
+	docs, err := store.List(ctx, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 document in parent namespace, got %d", len(docs))
+	}
+	if docs[0].Key != "config" {
+		t.Errorf("expected key 'config', got %q", docs[0].Key)
+	}
+
+	// List in child should only find the user document.
+	docs, err = store.List(ctx, child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 document in child namespace, got %d", len(docs))
+	}
+	if docs[0].Key != "user1" {
+		t.Errorf("expected key 'user1', got %q", docs[0].Key)
+	}
+
+	// Search in parent should only find parent documents.
+	results, err := store.Search(ctx, parent, "Alice", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 search results in parent for child data, got %d", len(results))
+	}
+}
+
+func TestSQLiteStore_SubNamespaceIsolation(t *testing.T) {
+	dbPath := t.TempDir() + "/subns.db"
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.(*SQLiteStore).Close()
+
+	ctx := context.Background()
+	parent := []string{"app"}
+	child := []string{"app", "users"}
+
+	store.Put(ctx, parent, "config", map[string]any{"setting": "dark_mode"})
+	store.Put(ctx, child, "user1", map[string]any{"name": "Alice"})
+
+	// List in parent should only find the config document.
+	docs, err := store.List(ctx, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 document in parent namespace, got %d", len(docs))
+	}
+	if docs[0].Key != "config" {
+		t.Errorf("expected key 'config', got %q", docs[0].Key)
+	}
+
+	// Search in parent should only find parent documents.
+	results, err := store.Search(ctx, parent, "Alice", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 search results in parent for child data, got %d", len(results))
+	}
+}
+
 func TestSQLiteStore_Persistence(t *testing.T) {
 	dbPath := t.TempDir() + "/test.db"
 

@@ -68,14 +68,14 @@ func (s *MemoryStore) Get(_ context.Context, namespace []string, key string) (*D
 
 // List returns all documents in the given namespace.
 func (s *MemoryStore) List(_ context.Context, namespace []string) ([]*Document, error) {
-	prefix := makeNamespacePrefix(namespace)
+	ns := strings.Join(namespace, ":")
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var results []*Document
-	for k, doc := range s.docs {
-		if strings.HasPrefix(k, prefix) {
+	for _, doc := range s.docs {
+		if strings.Join(doc.Namespace, ":") == ns {
 			results = append(results, copyDocument(doc))
 		}
 	}
@@ -87,15 +87,15 @@ func (s *MemoryStore) List(_ context.Context, namespace []string) ([]*Document, 
 // It JSON-serializes each document's value and checks for a case-insensitive
 // substring match against the query.
 func (s *MemoryStore) Search(_ context.Context, namespace []string, query string, limit int) ([]*Document, error) {
-	prefix := makeNamespacePrefix(namespace)
+	ns := strings.Join(namespace, ":")
 	lowerQuery := strings.ToLower(query)
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var results []*Document
-	for k, doc := range s.docs {
-		if !strings.HasPrefix(k, prefix) {
+	for _, doc := range s.docs {
+		if strings.Join(doc.Namespace, ":") != ns {
 			continue
 		}
 
