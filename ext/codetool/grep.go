@@ -24,11 +24,17 @@ type GrepParams struct {
 	// Include is a glob pattern to filter files (e.g. '*.go', '*.py').
 	Include string `json:"include,omitempty" jsonschema:"description=Glob pattern to filter files (e.g. '*.go'). Applied to filename only."`
 
+	// IgnoreCase makes the search case-insensitive.
+	IgnoreCase bool `json:"ignore_case,omitempty" jsonschema:"description=If true\\, search case-insensitively. Default: false"`
+
 	// MaxResults limits the number of matching lines returned.
 	MaxResults *int `json:"max_results,omitempty" jsonschema:"description=Maximum number of matching lines to return. Default: 100"`
 
 	// ContextLines is the number of lines to show before and after each match.
 	ContextLines *int `json:"context_lines,omitempty" jsonschema:"description=Number of context lines before and after each match. Default: 0"`
+
+	// FilesOnly returns only file paths instead of matching lines.
+	FilesOnly bool `json:"files_only,omitempty" jsonschema:"description=If true\\, return only file paths that contain matches (not the matching lines). Useful for surveying which files match."`
 }
 
 // GrepMatch is a single matching line.
@@ -45,14 +51,25 @@ func Grep(opts ...Option) core.Tool {
 		"grep",
 		"Search file contents for lines matching a regular expression pattern. "+
 			"Returns matching lines with file paths and line numbers. "+
-			"Use the include parameter to filter by file extension (e.g. '*.go'). "+
+			"Use include to filter by file extension (e.g. '*.go'), "+
+			"ignore_case for case-insensitive search, "+
+			"files_only to get just file paths without line content. "+
 			"Use this to find function definitions, usages, imports, error messages, etc.",
 		func(ctx context.Context, params GrepParams) (string, error) {
 			if params.Pattern == "" {
 				return "", &core.ModelRetryError{Message: "pattern must not be empty"}
 			}
 
-			re, err := regexp.Compile(params.Pattern)
+			pattern := params.Pattern
+			if params.IgnoreCase {
+				// Prepend (?i) for case-insensitive matching unless the pattern
+				// already contains case flags.
+				if !strings.HasPrefix(pattern, "(?") || !strings.ContainsRune(pattern[2:], 'i') {
+					pattern = "(?i)" + pattern
+				}
+			}
+
+			re, err := regexp.Compile(pattern)
 			if err != nil {
 				return "", &core.ModelRetryError{Message: fmt.Sprintf("invalid regex: %v", err)}
 			}
@@ -117,6 +134,9 @@ func Grep(opts ...Option) core.Tool {
 					relPath = path
 				}
 
+				if params.FilesOnly {
+					return searchFileExists(ctx, path, relPath, re, maxResults, &matches, &matchCount, &truncated)
+				}
 				return searchFile(ctx, path, relPath, re, contextLines, maxResults, &matches, &matchCount, &truncated)
 			})
 
@@ -216,6 +236,48 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 	// would run together with no delimiter.
 	if lastContextEnd >= 0 {
 		*matches = append(*matches, "---")
+	}
+	return nil
+}
+
+// searchFileExists checks if a file contains any match and records just the
+// file path (for files_only mode). This is faster than searchFile since it
+// stops at the first match and doesn't track line numbers or context.
+func searchFileExists(ctx context.Context, absPath, relPath string, re *regexp.Regexp, maxResults int, matches *[]string, matchCount *int, truncated *bool) error {
+	if *matchCount >= maxResults {
+		*truncated = true
+		return filepath.SkipAll
+	}
+
+	f, err := os.Open(absPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	// Quick binary check.
+	probe := make([]byte, 512)
+	n, _ := f.Read(probe)
+	for _, b := range probe[:n] {
+		if b == 0 {
+			return nil
+		}
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if re.MatchString(scanner.Text()) {
+			*matchCount++
+			*matches = append(*matches, relPath)
+			return nil // found — no need to scan further
+		}
 	}
 	return nil
 }

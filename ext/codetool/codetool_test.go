@@ -903,6 +903,24 @@ func TestGrep_EmptyPattern(t *testing.T) {
 	}
 }
 
+func TestGrep_IgnoreCase(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := Grep(WithWorkDir(dir))
+	// "func add" should match "func Add" with ignore_case.
+	result := call(t, tool, `{"pattern": "func add", "ignore_case": true}`)
+	assertContains(t, result, "func Add")
+}
+
+func TestGrep_FilesOnly(t *testing.T) {
+	dir := setupTestDir(t)
+	tool := Grep(WithWorkDir(dir))
+	result := call(t, tool, `{"pattern": "func", "files_only": true}`)
+	// Should return file paths without line content.
+	assertContains(t, result, "hello.go")
+	// Should NOT contain line content like "func main".
+	assertNotContains(t, result, "func main")
+}
+
 // --- Glob Tests ---
 
 func TestGlob_FindGoFiles(t *testing.T) {
