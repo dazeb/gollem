@@ -256,8 +256,18 @@ func findNearestLines(content, search string, maxResults int) string {
 	if len(searchLines) == 0 {
 		return ""
 	}
-	firstLine := strings.TrimSpace(searchLines[0])
-	if len(firstLine) < 3 {
+	// Use the first non-trivial line as the search anchor.
+	// When the first line is too short (e.g., "{", "}"), fall back
+	// to subsequent lines to find a meaningful match.
+	anchorLine := ""
+	for _, sl := range searchLines {
+		trimmed := strings.TrimSpace(sl)
+		if len(trimmed) >= 3 {
+			anchorLine = trimmed
+			break
+		}
+	}
+	if anchorLine == "" {
 		return ""
 	}
 
@@ -270,7 +280,7 @@ func findNearestLines(content, search string, maxResults int) string {
 	var candidates []scored
 
 	// Score each line by counting shared words with the search line.
-	searchWords := strings.Fields(strings.ToLower(firstLine))
+	searchWords := strings.Fields(strings.ToLower(anchorLine))
 	for i, line := range contentLines {
 		trimmed := strings.TrimSpace(line)
 		if len(trimmed) < 3 {
@@ -679,15 +689,24 @@ func fileSnippetForEdit(content, search string) string {
 		return ""
 	}
 
-	// Find the line most similar to the first line of search.
-	firstSearch := strings.TrimSpace(searchLines[0])
-	if len(firstSearch) < 3 {
+	// Use the first non-trivial line as the search anchor.
+	// When the first line is too short (e.g., "{", "}"), fall back
+	// to subsequent lines to find a meaningful match.
+	anchorLine := ""
+	for _, sl := range searchLines {
+		trimmed := strings.TrimSpace(sl)
+		if len(trimmed) >= 3 {
+			anchorLine = trimmed
+			break
+		}
+	}
+	if anchorLine == "" {
 		return ""
 	}
 
 	bestLine := -1
 	bestScore := 0
-	searchWords := strings.Fields(strings.ToLower(firstSearch))
+	searchWords := strings.Fields(strings.ToLower(anchorLine))
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -705,7 +724,7 @@ func fileSnippetForEdit(content, search string) string {
 			}
 		}
 		// Bonus for substring match.
-		if strings.Contains(strings.ToLower(trimmed), strings.ToLower(firstSearch)) {
+		if strings.Contains(strings.ToLower(trimmed), strings.ToLower(anchorLine)) {
 			score += len(searchWords)
 		}
 		if score > bestScore {

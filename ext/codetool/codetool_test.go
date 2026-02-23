@@ -11152,6 +11152,29 @@ func TestMultiEdit_IdenticalStrings(t *testing.T) {
 	assertContains(t, err.Error(), "identical")
 }
 
+func TestFindNearestLines_ShortFirstLine(t *testing.T) {
+	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n\nfunc helper() {\n\treturn 42\n}\n"
+	// Search starts with "{" — a short line that the old code would bail on.
+	search := "{\n\tfmt.Println(\"hello\")\n}"
+	result := findNearestLines(content, search, 3)
+	if result == "" {
+		t.Fatal("expected findNearestLines to find matches when first line is short")
+	}
+	// Should anchor on "fmt.Println" line and find it.
+	assertContains(t, result, "Println")
+}
+
+func TestFileSnippetForEdit_ShortFirstLine(t *testing.T) {
+	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n\nfunc helper() {\n\treturn 42\n}\n"
+	// Search starts with "}" — short line, but the second line is meaningful.
+	search := "}\n\nfunc helper() {"
+	result := fileSnippetForEdit(content, search)
+	if result == "" {
+		t.Fatal("expected fileSnippetForEdit to find snippet when first line is short")
+	}
+	assertContains(t, result, "helper")
+}
+
 func TestGrep_SummaryFooter(t *testing.T) {
 	dir := setupTestDir(t)
 	tool := Grep(WithWorkDir(dir))
