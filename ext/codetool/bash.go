@@ -620,6 +620,8 @@ func commandNotFoundHint(stderr string) string {
 		"gradle":     "gradle",
 		"ant":        "ant",
 		"sbt":        "sbt",
+		"dart":       "dart",
+		"flutter":    "flutter",
 		"docker":     "docker.io",
 		"podman":     "podman",
 		"xsltproc":   "xsltproc",
@@ -1011,21 +1013,28 @@ func compilationErrorHint(output string, exitCode int) string {
 	lines := strings.Split(output, "\n")
 
 	// TypeScript (tsc): "src/index.ts(42,5): error TS2322: message"
-	// Format: file(line,col): error TSxxxx: message
+	// C#/MSBuild:       "Program.cs(5,17): error CS0029: message"
+	// VB.NET:           "Module1.vb(3,5): error BC30451: message"
+	// Format: file(line,col): error XXxxxx: message
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		parenIdx := strings.Index(trimmed, "(")
 		if parenIdx <= 0 {
 			continue
 		}
-		// Check for TypeScript error pattern after the closing paren.
+		// Check for MSBuild-style error pattern after the closing paren.
 		closeIdx := strings.Index(trimmed[parenIdx:], ")")
 		if closeIdx <= 0 {
 			continue
 		}
 		closeIdx += parenIdx
 		after := trimmed[closeIdx+1:]
-		if !strings.HasPrefix(after, ": error TS") {
+		if !strings.HasPrefix(after, ": error ") {
+			continue
+		}
+		// Verify it looks like a structured error code (TS/CS/BC + digits).
+		errRest := after[len(": error "):]
+		if len(errRest) < 3 || errRest[0] < 'A' || errRest[0] > 'Z' {
 			continue
 		}
 		// Extract file, line, error message.
@@ -2735,6 +2744,27 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Dart test: summary line "+X -Y: Some tests failed." or "+X: All tests passed!"
+	// Individual lines: "00:00 +1 -1: test description"
+	if (strings.Contains(output, "+") && strings.Contains(lower, "tests")) ||
+		strings.Contains(output, "All tests passed") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			if (strings.Contains(line, "All tests passed") ||
+				strings.Contains(strings.ToLower(line), "some tests failed")) &&
+				strings.Contains(line, "+") {
+				summary := "[test summary: " + line + "]"
+				if strings.Contains(strings.ToLower(line), "failed") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
+			}
+		}
+	}
+
 	// .NET: "Total tests: X, Passed: Y, Failed: Z"
 	if strings.Contains(lower, "total tests:") && strings.Contains(lower, "passed:") {
 		lines := strings.Split(output, "\n")
@@ -3672,6 +3702,43 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
+	// Dart test: "+X -Y: Some tests failed." or "+X: All tests passed!"
+	// Format: "+N" = passed, "-M" = failed (M is optional on success)
+	if strings.Contains(output, "All tests passed") ||
+		(strings.Contains(output, "+") && strings.Contains(lower, "tests")) {
+		for i := len(lines) - 1; i >= max(0, len(lines)-10); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			if !strings.Contains(lineLower, "tests passed") && !strings.Contains(lineLower, "tests failed") {
+				continue
+			}
+			// Extract +N and optionally -M from the line.
+			var p, f int
+			foundDart := false
+			words := strings.Fields(line)
+			for _, w := range words {
+				if strings.HasPrefix(w, "+") && len(w) > 1 {
+					numStr := strings.TrimRight(w[1:], ":")
+					if isNumeric(numStr) {
+						fmt.Sscanf(numStr, "%d", &p)
+						foundDart = true
+					}
+				} else if strings.HasPrefix(w, "-") && len(w) > 1 {
+					numStr := strings.TrimRight(w[1:], ":")
+					if isNumeric(numStr) {
+						fmt.Sscanf(numStr, "%d", &f)
+					}
+				}
+			}
+			if foundDart {
+				passed = p
+				failed = f
+				ok = true
+				return
+			}
+		}
+	}
+
 	// ExUnit (Elixir): "5 tests, 1 failure" or "3 doctests, 5 tests, 0 failures"
 	if strings.Contains(lower, "failure") && !strings.Contains(lower, "examples") &&
 		!strings.Contains(lower, "assertions") && !strings.Contains(lower, "tests run:") &&
@@ -3998,6 +4065,9 @@ func isLongRunningCommand(cmd string) bool {
 		"stack setup", "stack exec",     // Haskell GHC download / execution
 		"rscript ", "r -e ",             // R scripts
 		"dotnet test", "dotnet run",     // .NET execution
+		"sbt test", "sbt run",           // Scala/SBT
+		"dart test", "dart run",         // Dart
+		"flutter test", "flutter run",   // Flutter
 		"mix test",                      // Elixir tests
 		"bundle exec",                   // Ruby with bundler
 		"cabal test", "cabal run",       // Haskell
@@ -4106,6 +4176,10 @@ func isBuildCommand(cmd string) bool {
 		"rustup", "cargo install",
 		"gem install", "bundle install",
 		"composer install", // PHP
+		"sbt compile", "sbt assembly",   // Scala
+		"dart compile",                  // Dart
+		"flutter build",                 // Flutter
+		"pub get",                       // Dart package manager
 		"dotnet restore", "dotnet build", // .NET
 		"gfortran ",   // Fortran
 		"nasm ", "yasm ", // Assembly

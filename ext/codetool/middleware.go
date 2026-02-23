@@ -561,7 +561,7 @@ func discoverEnvironment(workDir string) string {
 		buildFiles := []string{
 			"Makefile", "CMakeLists.txt", "Cargo.toml",
 			"go.mod", "pyproject.toml", "setup.py", "setup.cfg",
-			"package.json", "composer.json", "pom.xml", "build.gradle", "build.sbt",
+			"package.json", "composer.json", "pom.xml", "build.gradle", "build.sbt", "pubspec.yaml",
 			"Package.swift", "configure.ac", "meson.build", "BUILD",
 			"docker-compose.yml", "docker-compose.yaml",
 			"Dockerfile",
@@ -1321,6 +1321,7 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"build.zig", "Zig", "zig"},
 		{"Project.toml", "Julia", "julia"},
 		{"build.sbt", "Scala", "sbt"},
+		{"pubspec.yaml", "Dart", "dart"},
 		{"composer.json", "PHP", "composer"},
 		{"Makefile.PL", "Perl", "perl"},
 		{"Build.PL", "Perl", "perl"},
@@ -1932,6 +1933,16 @@ func detectTaskGuidance(workDir string) string {
 		hints = append(hints, "- SBT first run downloads dependencies — can take a few minutes. Be patient.")
 		hints = append(hints, "- For missing libraries: add to `libraryDependencies` in build.sbt")
 		hints = append(hints, "- Check Scala version: `sbt 'show scalaVersion'`")
+	}
+
+	// Detect Dart/Flutter tasks.
+	if fileExists(filepath.Join(workDir, "pubspec.yaml")) {
+		hints = append(hints, "\n## Task Type: Dart")
+		hints = append(hints, "Key strategies:")
+		hints = append(hints, "- Install deps: `dart pub get` (or `flutter pub get`)")
+		hints = append(hints, "- Run: `dart run`, Test: `dart test`, Compile: `dart compile exe`")
+		hints = append(hints, "- For Flutter: `flutter run`, `flutter test`, `flutter build`")
+		hints = append(hints, "- Missing packages: add to `dependencies:` in pubspec.yaml, then `dart pub get`")
 	}
 
 	// Detect .NET tasks.

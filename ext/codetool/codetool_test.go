@@ -7653,3 +7653,67 @@ func TestTestResultSummary_SBT(t *testing.T) {
 	}
 }
 
+// Test C#/MSBuild compilation error hint.
+func TestCompilationErrorHint_CSharp(t *testing.T) {
+	output := `Program.cs(5,17): error CS0029: Cannot implicitly convert type 'string' to 'int'
+Program.cs(12,9): error CS1002: ; expected`
+	hint := compilationErrorHint(output, 1)
+	if hint == "" {
+		t.Fatal("expected non-empty hint for C# error")
+	}
+	if !strings.Contains(hint, "Program.cs:5") {
+		t.Errorf("expected hint to contain 'Program.cs:5', got: %s", hint)
+	}
+	if !strings.Contains(hint, "CS0029") {
+		t.Errorf("expected hint to contain error code 'CS0029', got: %s", hint)
+	}
+}
+
+// Test Dart test result summary parsing.
+func TestTestResultSummary_Dart(t *testing.T) {
+	output := `00:00 +0: loading test/widget_test.dart
+00:00 +1: first test
+00:01 +2 -1: failing test
+00:01 +2 -1: Some tests failed.`
+	summary := testResultSummary(output)
+	if summary == "" {
+		t.Fatal("expected non-empty summary for Dart test output")
+	}
+	if !strings.Contains(summary, "+2") {
+		t.Errorf("expected summary to contain '+2', got: %s", summary)
+	}
+	if !strings.Contains(summary, "failed") {
+		t.Errorf("expected summary to contain 'failed', got: %s", summary)
+	}
+}
+
+// Test Dart test count extraction.
+func TestExtractTestCounts_Dart(t *testing.T) {
+	output := `00:01 +5 -2: Some tests failed.`
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for Dart test output")
+	}
+	if passed != 5 {
+		t.Errorf("expected passed=5, got %d", passed)
+	}
+	if failed != 2 {
+		t.Errorf("expected failed=2, got %d", failed)
+	}
+}
+
+// Test Dart test count extraction (all passing).
+func TestExtractTestCounts_Dart_AllPassing(t *testing.T) {
+	output := `00:03 +10: All tests passed!`
+	passed, failed, ok := extractTestCounts(output)
+	if !ok {
+		t.Fatal("expected ok=true for Dart all-passing output")
+	}
+	if passed != 10 {
+		t.Errorf("expected passed=10, got %d", passed)
+	}
+	if failed != 0 {
+		t.Errorf("expected failed=0, got %d", failed)
+	}
+}
+
