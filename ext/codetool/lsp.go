@@ -499,11 +499,20 @@ func (s *lspServer) initialize(ctx context.Context, workDir string) error {
 	initParams := map[string]any{
 		"processId": os.Getpid(),
 		"rootUri":   fileURI(absDir),
+		"rootPath":  absDir, // deprecated but required by some older servers
 		"capabilities": map[string]any{
 			"textDocument": map[string]any{
-				"definition":    map[string]any{},
-				"references":    map[string]any{},
-				"hover":         map[string]any{"contentFormat": []string{"plaintext", "markdown"}},
+				"definition":     map[string]any{},
+				"typeDefinition": map[string]any{},
+				"implementation": map[string]any{},
+				"references":     map[string]any{},
+				"hover":          map[string]any{"contentFormat": []string{"plaintext", "markdown"}},
+				"documentSymbol": map[string]any{
+					"hierarchicalDocumentSymbolSupport": true,
+				},
+				"rename": map[string]any{
+					"prepareSupport": true,
+				},
 				"publishDiagnostics": map[string]any{},
 				"synchronization": map[string]any{
 					"didOpen":  true,

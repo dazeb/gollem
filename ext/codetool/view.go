@@ -231,7 +231,10 @@ func isLockFile(name string) bool {
 		"package-resolved.json", // Swift Package Manager
 		"rebar.lock",            // Erlang Rebar3
 		"stack.yaml.lock",       // Haskell Stack
-		"shard.lock":            // Crystal
+		"shard.lock",            // Crystal
+		"nimble.lock",           // Nim
+		"manifest.toml",         // Gleam
+		"clojure.lock":          // Clojure tools.deps
 		return true
 	}
 	return false
