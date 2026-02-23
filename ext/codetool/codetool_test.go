@@ -1317,6 +1317,20 @@ func TestIsVerificationString(t *testing.T) {
 		{"curl http://localhost:3000", true},
 		{"xxd output.bin | head", true},
 		{"Rscript test.R", true},
+		// Nim package manager.
+		{"nimble test", true},
+		{"nimble build", true},
+		// Crystal package manager.
+		{"shards build", true},
+		{"shards install", true},
+		// Meson build system.
+		{"meson test -C builddir", true},
+		{"meson compile -C builddir", true},
+		{"meson setup builddir", true},
+		// Bazel build system.
+		{"bazel test //...", true},
+		{"bazel build //...", true},
+		{"bazel run //:target", true},
 		{"echo hello world", false},
 		{"cat main.py", false},
 		{"ls -la", false},
@@ -4275,6 +4289,68 @@ func TestDetectTestCommandsPytestInWorkdir(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected pytest command for test_*.py in workdir, got: %v", cmds)
+	}
+}
+
+func TestDetectTestCommandsMeson(t *testing.T) {
+	dir := t.TempDir()
+
+	// meson.build should trigger meson commands.
+	os.WriteFile(filepath.Join(dir, "meson.build"), []byte("project('test', 'c')"), 0o644)
+	cmds := detectTestCommands(dir)
+	foundBuild := false
+	foundTest := false
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, "meson compile") {
+			foundBuild = true
+		}
+		if strings.Contains(cmd, "meson test") {
+			foundTest = true
+		}
+	}
+	if !foundBuild {
+		t.Errorf("expected meson compile command, got: %v", cmds)
+	}
+	if !foundTest {
+		t.Errorf("expected meson test command, got: %v", cmds)
+	}
+}
+
+func TestDetectTestCommandsBazel(t *testing.T) {
+	dir := t.TempDir()
+
+	// WORKSPACE file should trigger bazel commands.
+	os.WriteFile(filepath.Join(dir, "WORKSPACE"), []byte(""), 0o644)
+	cmds := detectTestCommands(dir)
+	foundBuild := false
+	foundTest := false
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, "bazel build") {
+			foundBuild = true
+		}
+		if strings.Contains(cmd, "bazel test") {
+			foundTest = true
+		}
+	}
+	if !foundBuild {
+		t.Errorf("expected bazel build command, got: %v", cmds)
+	}
+	if !foundTest {
+		t.Errorf("expected bazel test command, got: %v", cmds)
+	}
+
+	// Also test MODULE.bazel variant.
+	dir2 := t.TempDir()
+	os.WriteFile(filepath.Join(dir2, "MODULE.bazel"), []byte("module(name = \"test\")"), 0o644)
+	cmds2 := detectTestCommands(dir2)
+	foundBuild2 := false
+	for _, cmd := range cmds2 {
+		if strings.Contains(cmd, "bazel build") {
+			foundBuild2 = true
+		}
+	}
+	if !foundBuild2 {
+		t.Errorf("expected bazel build for MODULE.bazel, got: %v", cmds2)
 	}
 }
 

@@ -1448,6 +1448,10 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"_CoqProject", "Coq", "coq"},
 		{"build.gradle.kts", "Kotlin", "gradle"},
 		{"Pipfile", "Python", "pipenv"},
+		{"meson.build", "C/C++", "meson"},
+		{"WORKSPACE", "unknown", "bazel"},
+		{"WORKSPACE.bazel", "unknown", "bazel"},
+		{"MODULE.bazel", "unknown", "bazel"},
 		{"configure.ac", "C/C++", "autotools"},
 		{"Makefile", "unknown", "make"},
 	}
@@ -6457,6 +6461,17 @@ func detectTestCommands(workDir string) []string {
 	}
 	if fileExists(filepath.Join(workDir, "Rakefile")) {
 		cmds = append(cmds, "Test: rake test")
+	}
+	// Meson build system.
+	if fileExists(filepath.Join(workDir, "meson.build")) {
+		cmds = append(cmds, "Build: meson setup builddir && meson compile -C builddir")
+		cmds = append(cmds, "Test: meson test -C builddir")
+	}
+	// Bazel build system.
+	if fileExists(filepath.Join(workDir, "WORKSPACE")) || fileExists(filepath.Join(workDir, "WORKSPACE.bazel")) ||
+		fileExists(filepath.Join(workDir, "MODULE.bazel")) {
+		cmds = append(cmds, "Build: bazel build //...")
+		cmds = append(cmds, "Test: bazel test //...")
 	}
 
 	// Cap to prevent context bloat.

@@ -451,6 +451,7 @@ func isVerificationString(cmd string) bool {
 		"swift test", "swift build",
 		// Nim.
 		"nim c ", "nim compile", "nim test",
+		"nimble test", "nimble build", "nimble run",
 		// Python doctests.
 		"python3 -m doctest", "python -m doctest",
 		// Haskell execution.
@@ -459,12 +460,17 @@ func isVerificationString(cmd string) bool {
 		"fpc ",
 		// Crystal.
 		"crystal spec", "crystal build",
+		"shards build", "shards install",
 		// Kotlin.
 		"kotlinc ",
 		// D language.
 		"dmd ", "dub test", "dub build",
 		// V language.
 		"v test", "v build", "v run",
+		// Meson build system.
+		"meson test", "meson compile", "meson setup",
+		// Bazel build system.
+		"bazel test", "bazel build", "bazel run",
 		// Inline output validation patterns.
 		"python3 -c \"open(", "python -c \"open(",
 		"python3 -c 'open(", "python -c 'open(",
@@ -494,6 +500,8 @@ func isVerificationString(cmd string) bool {
 		"ocamlopt ", "ocamlfind ",
 		// Haskell direct compilation.
 		"ghc ",
+		// Meson/Bazel build.
+		"meson compile", "bazel build",
 	}
 
 	// Lint/check commands.
