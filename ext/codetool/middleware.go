@@ -761,6 +761,9 @@ func discoverEnvironment(workDir string) string {
 			"dub.json", "dub.sdl",         // D language
 			"v.mod",                        // V language
 			"lakefile.lean", "lakefile.toml", // Lean 4
+			"elm.json",                     // Elm
+			"flake.nix",                    // Nix
+			"foundry.toml",                 // Solidity (Foundry)
 		}
 		for _, bf := range buildFiles {
 			if autoReadBudget <= 0 {
@@ -1714,6 +1717,12 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"_CoqProject", "Coq", "coq"},
 		{"build.gradle.kts", "Kotlin", "gradle"},
 		{"Pipfile", "Python", "pipenv"},
+		{"elm.json", "Elm", "elm"},
+		{"foundry.toml", "Solidity", "foundry"},
+		{"hardhat.config.js", "Solidity", "hardhat"},
+		{"hardhat.config.ts", "Solidity", "hardhat"},
+		{"truffle-config.js", "Solidity", "truffle"},
+		{"flake.nix", "Nix", "nix"},
 		{"meson.build", "C/C++", "meson"},
 		{"WORKSPACE", "unknown", "bazel"},
 		{"WORKSPACE.bazel", "unknown", "bazel"},
@@ -1754,6 +1763,10 @@ func detectProject(workDir string) (language, buildSystem string) {
 	// Check for .sln files (.NET solution).
 	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.sln")); len(matches) > 0 {
 		return "C#", "dotnet"
+	}
+	// Check for .tf files (Terraform/OpenTofu).
+	if matches, _ := filepath.Glob(filepath.Join(workDir, "*.tf")); len(matches) > 0 {
+		return "Terraform", "terraform"
 	}
 	return language, buildSystem
 }
