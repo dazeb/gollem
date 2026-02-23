@@ -105,7 +105,6 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 		for pattern, count := range searchCounts {
 			if count >= searchLoopThreshold {
 				loopedFiles = append(loopedFiles, "search: "+pattern)
-				searchCounts[pattern] = searchCounts[pattern] / 2
 			}
 		}
 		mu.Unlock()
@@ -177,6 +176,9 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 				} else if strings.HasPrefix(f, "read: ") {
 					path := strings.TrimPrefix(f, "read: ")
 					readCounts[path] = readCounts[path] / 2
+				} else if strings.HasPrefix(f, "search: ") {
+					pattern := strings.TrimPrefix(f, "search: ")
+					searchCounts[pattern] = searchCounts[pattern] / 2
 				} else {
 					editCounts[f] = editCounts[f] / 2
 				}
@@ -7975,7 +7977,13 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 										// Solver/generator scripts that typically create output files.
 										(strings.Contains(lower, "python") &&
 											(strings.Contains(lower, "solve") || strings.Contains(lower, "solution") ||
-												strings.Contains(lower, "generate") || strings.Contains(lower, "process"))) {
+												strings.Contains(lower, "generate") || strings.Contains(lower, "process"))) ||
+										// Compilation commands produce binaries — agent is actively building.
+										strings.HasPrefix(lower, "gcc ") || strings.HasPrefix(lower, "g++ ") ||
+										strings.HasPrefix(lower, "cc ") || strings.HasPrefix(lower, "make") ||
+										strings.Contains(lower, "go build") || strings.Contains(lower, "cargo build") ||
+										strings.Contains(lower, "javac ") || strings.Contains(lower, "rustc ") ||
+										strings.Contains(lower, "dotnet build") || strings.Contains(lower, "cmake --build") {
 										hasWritten = true
 										break
 									}
