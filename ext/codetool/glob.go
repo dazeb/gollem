@@ -20,6 +20,9 @@ type GlobParams struct {
 	// Path is the directory to search in.
 	Path string `json:"path,omitempty" jsonschema:"description=Directory to search in. Defaults to working directory."`
 
+	// Exclude is a glob pattern to skip files (e.g. '*_test.go', '*.min.js').
+	Exclude string `json:"exclude,omitempty" jsonschema:"description=Glob pattern to exclude files (e.g. '*_test.go'). Applied to filename only."`
+
 	// MaxResults limits the number of results.
 	MaxResults *int `json:"max_results,omitempty" jsonschema:"description=Maximum number of results to return. Default: 200"`
 }
@@ -76,6 +79,14 @@ func Glob(opts ...Option) core.Tool {
 						return nil
 					}
 
+					// Apply exclude filter.
+					if params.Exclude != "" {
+						excluded, _ := filepath.Match(params.Exclude, info.Name())
+						if excluded {
+							return nil
+						}
+					}
+
 					relPath, _ := filepath.Rel(searchPath, path)
 					if matchDoublestar(params.Pattern, relPath) {
 						results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})
@@ -99,6 +110,13 @@ func Glob(opts ...Option) core.Tool {
 					}
 					if info.IsDir() {
 						continue
+					}
+					// Apply exclude filter.
+					if params.Exclude != "" {
+						excluded, _ := filepath.Match(params.Exclude, info.Name())
+						if excluded {
+							continue
+						}
 					}
 					relPath, _ := filepath.Rel(searchPath, m)
 					results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})

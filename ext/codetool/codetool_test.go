@@ -4527,7 +4527,7 @@ func TestBuildActionSummaryCached(t *testing.T) {
 	dir := t.TempDir()
 
 	// With no data, should still return something (has FIRST and REMEMBER lines).
-	summary := buildActionSummaryCached(dir, nil, nil, nil, nil, nil)
+	summary := buildActionSummaryCached(dir, nil, nil, nil, nil, nil, nil)
 	if summary == "" {
 		t.Error("expected non-empty summary even with no expected outputs")
 	}
@@ -4541,7 +4541,7 @@ func TestBuildActionSummaryCached(t *testing.T) {
 	// With expected outputs and test commands.
 	outputs := []string{"output_data/result.csv", "output_data/summary.json"}
 	cmds := []string{"Test: bash /tests/test.sh", "Build: go build ./..."}
-	summary = buildActionSummaryCached(dir, outputs, cmds, nil, nil, nil)
+	summary = buildActionSummaryCached(dir, outputs, cmds, nil, nil, nil, nil)
 	if !strings.Contains(summary, "CREATE:") {
 		t.Error("expected CREATE line for expected outputs")
 	}
@@ -4901,7 +4901,7 @@ diff result.txt expected.txt
 func TestActionSummaryWithMissingFiles(t *testing.T) {
 	dir := t.TempDir()
 	missing := []string{"solution.py", "helper.py"}
-	summary := buildActionSummaryCached(dir, nil, nil, missing, nil, nil)
+	summary := buildActionSummaryCached(dir, nil, nil, missing, nil, nil, nil)
 	if !strings.Contains(summary, "MISSING:") {
 		t.Error("expected MISSING line for missing solution files")
 	}
@@ -4917,7 +4917,7 @@ func TestActionSummaryWithMissingFiles(t *testing.T) {
 func TestActionSummaryWithInvocation(t *testing.T) {
 	dir := t.TempDir()
 	invocation := []string{"./solution < input.txt > output.txt"}
-	summary := buildActionSummaryCached(dir, nil, nil, nil, nil, invocation)
+	summary := buildActionSummaryCached(dir, nil, nil, nil, nil, invocation, nil)
 	if !strings.Contains(summary, "INVOKE:") {
 		t.Error("expected INVOKE line for invocation pattern")
 	}
@@ -4929,7 +4929,7 @@ func TestActionSummaryWithInvocation(t *testing.T) {
 func TestActionSummaryWithFormat(t *testing.T) {
 	dir := t.TempDir()
 	hints := []string{"FORMAT=JSON: Tests parse output as JSON. Use json.dumps()."}
-	summary := buildActionSummaryCached(dir, nil, nil, nil, hints, nil)
+	summary := buildActionSummaryCached(dir, nil, nil, nil, hints, nil, nil)
 	if !strings.Contains(summary, "FORMAT: JSON") {
 		t.Error("expected FORMAT: JSON in summary")
 	}
@@ -11006,5 +11006,37 @@ func TestView_ShowsTotalLineCount(t *testing.T) {
 	result := call(t, tool, `{"path": "small.txt"}`)
 	// Should show total line count even for fully-read files.
 	assertContains(t, result, "lines)")
+}
+
+func TestGrep_ExcludeFilter(t *testing.T) {
+	dir := setupTestDir(t)
+
+	tool := Grep(WithWorkDir(dir))
+
+	// Without exclude, test files should be found.
+	result := call(t, tool, `{"pattern": "func", "include": "*.go", "files_only": true}`)
+	assertContains(t, result, "utils_test.go")
+	assertContains(t, result, "utils.go")
+
+	// With exclude, test files should be filtered out.
+	result = call(t, tool, `{"pattern": "func", "include": "*.go", "exclude": "*_test.go", "files_only": true}`)
+	assertNotContains(t, result, "utils_test.go")
+	assertContains(t, result, "utils.go")
+}
+
+func TestGlob_ExcludeFilter(t *testing.T) {
+	dir := setupTestDir(t)
+
+	tool := Glob(WithWorkDir(dir))
+
+	// Without exclude, test files should appear.
+	result := call(t, tool, `{"pattern": "**/*.go"}`)
+	assertContains(t, result, "utils_test.go")
+	assertContains(t, result, "utils.go")
+
+	// With exclude, test files should be filtered out.
+	result = call(t, tool, `{"pattern": "**/*.go", "exclude": "*_test.go"}`)
+	assertNotContains(t, result, "utils_test.go")
+	assertContains(t, result, "utils.go")
 }
 

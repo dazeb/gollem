@@ -33,6 +33,9 @@ type GrepParams struct {
 	// ContextLines is the number of lines to show before and after each match.
 	ContextLines *int `json:"context_lines,omitempty" jsonschema:"description=Number of context lines before and after each match. Default: 0"`
 
+	// Exclude is a glob pattern to skip files (e.g. '*_test.go', '*.min.js').
+	Exclude string `json:"exclude,omitempty" jsonschema:"description=Glob pattern to exclude files (e.g. '*_test.go'\\, '*.min.js'). Applied to filename only."`
+
 	// FilesOnly returns only file paths instead of matching lines.
 	FilesOnly bool `json:"files_only,omitempty" jsonschema:"description=If true\\, return only file paths that contain matches (not the matching lines). Useful for surveying which files match."`
 }
@@ -52,6 +55,7 @@ func Grep(opts ...Option) core.Tool {
 		"Search file contents for lines matching a regular expression pattern. "+
 			"Returns matching lines with file paths and line numbers. "+
 			"Use include to filter by file extension (e.g. '*.go'), "+
+			"exclude to skip files (e.g. '*_test.go'), "+
 			"ignore_case for case-insensitive search, "+
 			"files_only to get just file paths without line content. "+
 			"Use this to find function definitions, usages, imports, error messages, etc.",
@@ -120,6 +124,14 @@ func Grep(opts ...Option) core.Tool {
 				if params.Include != "" {
 					matched, _ := filepath.Match(params.Include, info.Name())
 					if !matched {
+						return nil
+					}
+				}
+
+				// Apply exclude filter.
+				if params.Exclude != "" {
+					excluded, _ := filepath.Match(params.Exclude, info.Name())
+					if excluded {
 						return nil
 					}
 				}

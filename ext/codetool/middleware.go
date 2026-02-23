@@ -1295,7 +1295,9 @@ func discoverEnvironment(workDir string) string {
 
 	// Extract per-test timeouts from test scripts (timeout N, signal.alarm, ulimit).
 	// Surfaces performance requirements so the agent knows how fast its solution must be.
-	if perTestTimeouts := extractPerTestTimeouts(workDir); len(perTestTimeouts) > 0 {
+	// Cache the result for reuse in buildActionSummaryCached below.
+	perTestTimeouts := extractPerTestTimeouts(workDir)
+	if len(perTestTimeouts) > 0 {
 		parts = append(parts, "\n## Per-Test Timeouts (from test scripts)")
 		parts = append(parts, "Individual test cases have these time limits:")
 		for _, t := range perTestTimeouts {
@@ -1355,7 +1357,7 @@ func discoverEnvironment(workDir string) string {
 	// Add a compact action summary at the very end. This exploits recency bias —
 	// the last thing the model reads before starting work is a focused summary
 	// of what to do. Reuses cached data to avoid re-scanning test files.
-	if summary := buildActionSummaryCached(workDir, expectedOutputs, testCmds, missingFiles, formatHints, invocationPatterns); summary != "" {
+	if summary := buildActionSummaryCached(workDir, expectedOutputs, testCmds, missingFiles, formatHints, invocationPatterns, perTestTimeouts); summary != "" {
 		parts = append(parts, summary)
 	}
 
@@ -1366,7 +1368,7 @@ func discoverEnvironment(workDir string) string {
 // the very end of context injection. It synthesizes the most critical info:
 // what to create, how to test, how the solution is invoked, and what to do first.
 // Takes pre-computed data from context injection to avoid re-scanning files.
-func buildActionSummaryCached(workDir string, expectedOutputs, testCmds, missingFiles, formatHints, invocationPatterns []string) string {
+func buildActionSummaryCached(workDir string, expectedOutputs, testCmds, missingFiles, formatHints, invocationPatterns, perTestTimeouts []string) string {
 	var lines []string
 	lines = append(lines, "\n## ACTION SUMMARY (start here)")
 
@@ -1440,7 +1442,8 @@ func buildActionSummaryCached(workDir string, expectedOutputs, testCmds, missing
 	}
 
 	// Surface per-test timeout if detected — critical for performance tasks.
-	if perTestTimeouts := extractPerTestTimeouts(workDir); len(perTestTimeouts) > 0 {
+	// Uses pre-computed data from discoverEnvironment to avoid re-scanning.
+	if len(perTestTimeouts) > 0 {
 		lines = append(lines, "TIMEOUT: "+perTestTimeouts[0]+" — optimize for speed!")
 	}
 
