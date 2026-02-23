@@ -475,9 +475,10 @@ func TestReadLoopSkipsNotifications(t *testing.T) {
 
 func TestCallTimeout(t *testing.T) {
 	// Test that call() properly times out when the server doesn't respond.
-	clientRead, _, _ := os.Pipe() // server never writes anything
+	clientRead, serverWrite, _ := os.Pipe() // server never writes — but keep write end open
 	_, clientWrite, _ := os.Pipe()
 	defer clientRead.Close()
+	defer serverWrite.Close() // must stay open so readLoop blocks on read, not EOF
 	defer clientWrite.Close()
 
 	srv := &lspServer{
@@ -487,7 +488,7 @@ func TestCallTimeout(t *testing.T) {
 		readDone:  make(chan struct{}),
 	}
 
-	// Start readLoop that will block waiting for input.
+	// Start readLoop that will block waiting for input (pipe stays open).
 	go srv.readLoop(bufio.NewReaderSize(clientRead, 64*1024))
 
 	// Override timeout for test by using a context with deadline.
@@ -547,6 +548,140 @@ func TestStoreDiagnostics(t *testing.T) {
 	}
 	if diags[0].Severity != 1 {
 		t.Errorf("expected severity 1, got %d", diags[0].Severity)
+	}
+}
+
+func TestSortTextEditsReverse(t *testing.T) {
+	edits := []lspTextEdit{
+		{Range: lspRange{Start: lspPosition{Line: 1, Character: 0}}, NewText: "a"},
+		{Range: lspRange{Start: lspPosition{Line: 5, Character: 0}}, NewText: "b"},
+		{Range: lspRange{Start: lspPosition{Line: 3, Character: 10}}, NewText: "c"},
+		{Range: lspRange{Start: lspPosition{Line: 3, Character: 2}}, NewText: "d"},
+	}
+	sortTextEditsReverse(edits)
+
+	// After sorting: line 5, line 3:10, line 3:2, line 1 (bottom to top).
+	expected := []string{"b", "c", "d", "a"}
+	for i, want := range expected {
+		if edits[i].NewText != want {
+			t.Errorf("edits[%d].NewText = %q, want %q", i, edits[i].NewText, want)
+		}
+	}
+}
+
+func TestFormatDocumentSymbols(t *testing.T) {
+	symbols := []lspDocumentSymbol{
+		{
+			Name:  "MyClass",
+			Kind:  5, // class
+			Range: lspRange{Start: lspPosition{Line: 9}},
+			Children: []lspDocumentSymbol{
+				{
+					Name:   "myMethod",
+					Kind:   6, // method
+					Detail: "func(int) string",
+					Range:  lspRange{Start: lspPosition{Line: 11}},
+				},
+				{
+					Name:  "myField",
+					Kind:  8, // field
+					Range: lspRange{Start: lspPosition{Line: 10}},
+				},
+			},
+		},
+		{
+			Name:  "helperFunc",
+			Kind:  12, // function
+			Range: lspRange{Start: lspPosition{Line: 20}},
+		},
+	}
+
+	var b strings.Builder
+	formatDocumentSymbols(&b, symbols, 0)
+	result := b.String()
+
+	// Check top-level symbols.
+	if !strings.Contains(result, "L10: MyClass [class]") {
+		t.Errorf("missing MyClass, got:\n%s", result)
+	}
+	if !strings.Contains(result, "L21: helperFunc [function]") {
+		t.Errorf("missing helperFunc, got:\n%s", result)
+	}
+	// Check nested symbols are indented.
+	if !strings.Contains(result, "    L12: myMethod [method]") {
+		t.Errorf("missing indented myMethod, got:\n%s", result)
+	}
+	// Check detail is included.
+	if !strings.Contains(result, "func(int) string") {
+		t.Errorf("missing method detail, got:\n%s", result)
+	}
+}
+
+func TestLspOutlineFormatsHierarchicalSymbols(t *testing.T) {
+	// Create pipes: server writes to serverWrite, readLoop reads from clientRead.
+	clientRead, serverWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverRead, clientWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientRead.Close()
+	defer serverWrite.Close()
+	defer serverRead.Close()
+	defer clientWrite.Close()
+
+	srv := &lspServer{
+		stdin:       clientWrite,
+		lang:        "go",
+		workDir:     "/project",
+		openFiles:   map[string]fileState{},
+		diagnostics: map[string][]lspDiagnostic{},
+		responses:   make(chan jsonrpcResponse, 16),
+		readDone:    make(chan struct{}),
+	}
+
+	go srv.readLoop(bufio.NewReaderSize(clientRead, 64*1024))
+
+	// Prepare a response with hierarchical DocumentSymbol[].
+	docSymbols := []lspDocumentSymbol{
+		{
+			Name:           "main",
+			Kind:           12, // function
+			Range:          lspRange{Start: lspPosition{Line: 0}, End: lspPosition{Line: 5}},
+			SelectionRange: lspRange{Start: lspPosition{Line: 0}, End: lspPosition{Line: 0}},
+		},
+	}
+
+	// Respond to the textDocument/documentSymbol request.
+	go func() {
+		// Read the request from serverRead (discard).
+		readMessage(bufio.NewReader(serverRead))
+
+		// Build the response.
+		respBody, _ := json.Marshal(docSymbols)
+		resp := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"result":  json.RawMessage(respBody),
+		}
+		respJSON, _ := json.Marshal(resp)
+		writeMessage(serverWrite, respJSON)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result, err := lspOutline(ctx, srv, "/project/main.go", "/project")
+	if err != nil {
+		t.Fatalf("lspOutline error: %v", err)
+	}
+	if !strings.Contains(result, "main.go") {
+		t.Errorf("expected file path in output, got:\n%s", result)
+	}
+	if !strings.Contains(result, "main [function]") {
+		t.Errorf("expected symbol name, got:\n%s", result)
 	}
 }
 

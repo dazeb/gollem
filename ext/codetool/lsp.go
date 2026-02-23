@@ -23,7 +23,7 @@ import (
 // LSPParams are the parameters for the lsp tool.
 type LSPParams struct {
 	// Method is the LSP method to invoke.
-	Method string `json:"method" jsonschema:"description=LSP method: definition (go to definition)\\, references (find all usages)\\, hover (type info and docs)\\, diagnostics (errors/warnings in file)\\, symbols (workspace symbol search),enum=definition,enum=references,enum=hover,enum=diagnostics,enum=symbols"`
+	Method string `json:"method" jsonschema:"description=LSP method: definition (go to definition)\\, references (find all usages)\\, hover (type info and docs)\\, diagnostics (errors/warnings in file)\\, symbols (workspace symbol search)\\, rename (rename symbol across workspace)\\, outline (list all symbols in a file),enum=definition,enum=references,enum=hover,enum=diagnostics,enum=symbols,enum=rename,enum=outline"`
 
 	// File is the target file path (relative or absolute).
 	File string `json:"file" jsonschema:"description=File path (relative to working directory or absolute)"`
@@ -36,6 +36,9 @@ type LSPParams struct {
 
 	// Query is a search string for workspace symbol search.
 	Query string `json:"query,omitempty" jsonschema:"description=Search query for the symbols method."`
+
+	// NewName is the new name for the rename method.
+	NewName string `json:"new_name,omitempty" jsonschema:"description=New name for the symbol (required for rename method)."`
 }
 
 // lspServer manages a running language server process.
@@ -877,9 +880,10 @@ func LSP(opts ...Option) core.Tool {
 		"Query a Language Server for semantic code intelligence. "+
 			"Methods: definition (go to definition), references (find all usages), "+
 			"hover (type info and docs), diagnostics (errors/warnings in file), "+
-			"symbols (workspace symbol search). "+
+			"symbols (workspace symbol search), rename (rename symbol across workspace), "+
+			"outline (list all symbols in a file). "+
 			"Requires a language server to be installed (e.g., gopls for Go, pyright for Python). "+
-			"Use file+line+character for definition/references/hover. Use file for diagnostics. Use query for symbols.",
+			"Use file+line+character for definition/references/hover/rename. Use file for diagnostics/outline. Use query for symbols.",
 		func(ctx context.Context, params LSPParams) (string, error) {
 			if params.File == "" && params.Method != "symbols" {
 				return "", &core.ModelRetryError{Message: "file parameter is required"}
@@ -963,9 +967,21 @@ func LSP(opts ...Option) core.Tool {
 				}
 				return lspSymbols(ctx, srv, query, absWorkDir)
 
+			case "rename":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for rename (both 1-indexed)"}
+				}
+				if params.NewName == "" {
+					return "", &core.ModelRetryError{Message: "new_name parameter is required for rename method"}
+				}
+				return lspRename(ctx, srv, filePath, params.Line, params.Character, params.NewName, absWorkDir, cfg.WorkDir)
+
+			case "outline":
+				return lspOutline(ctx, srv, filePath, absWorkDir)
+
 			default:
 				return "", &core.ModelRetryError{
-					Message: fmt.Sprintf("unknown method %q — use: definition, references, hover, diagnostics, symbols", params.Method),
+					Message: fmt.Sprintf("unknown method %q — use: definition, references, hover, diagnostics, symbols, rename, outline", params.Method),
 				}
 			}
 		},
@@ -1078,4 +1094,194 @@ func lspSymbols(ctx context.Context, srv *lspServer, query, workDir string) (str
 		return "No symbols found.", nil
 	}
 	return formatSymbols(symbols, workDir), nil
+}
+
+func lspRename(ctx context.Context, srv *lspServer, filePath string, line, char int, newName, absWorkDir, cfgWorkDir string) (string, error) {
+	result, err := srv.call(ctx, "textDocument/rename", map[string]any{
+		"textDocument": map[string]any{"uri": fileURI(filePath)},
+		"position":     map[string]any{"line": line - 1, "character": char - 1},
+		"newName":      newName,
+	})
+	if err != nil {
+		return "", err
+	}
+	if string(result) == "null" || len(result) == 0 {
+		return "Rename not supported at this location.", nil
+	}
+
+	// Parse WorkspaceEdit response.
+	var edit lspWorkspaceEdit
+	if err := json.Unmarshal(result, &edit); err != nil {
+		return "Rename returned an unexpected response.", nil
+	}
+
+	// Apply edits to files.
+	totalEdits := 0
+	var filesSummary []string
+	for uri, textEdits := range edit.Changes {
+		path := uriToPath(uri)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read file for rename: %w", err)
+		}
+		content := string(data)
+		lines := strings.Split(content, "\n")
+
+		// Apply edits in reverse order (bottom to top) so line/char offsets
+		// stay valid as we modify the content.
+		sortTextEditsReverse(textEdits)
+
+		for _, te := range textEdits {
+			startLine := te.Range.Start.Line
+			startChar := te.Range.Start.Character
+			endLine := te.Range.End.Line
+			endChar := te.Range.End.Character
+
+			if startLine >= len(lines) || endLine >= len(lines) {
+				continue
+			}
+
+			// Build the content before the edit range, the new text, and after.
+			before := ""
+			if startLine > 0 {
+				before = strings.Join(lines[:startLine], "\n") + "\n"
+			}
+			before += lines[startLine][:min(startChar, len(lines[startLine]))]
+
+			after := ""
+			if endChar <= len(lines[endLine]) {
+				after = lines[endLine][endChar:]
+			}
+			if endLine+1 < len(lines) {
+				after += "\n" + strings.Join(lines[endLine+1:], "\n")
+			}
+
+			content = before + te.NewText + after
+			lines = strings.Split(content, "\n")
+			totalEdits++
+		}
+
+		// Write the updated file.
+		fi, err := os.Stat(path)
+		perm := os.FileMode(0o644)
+		if err == nil {
+			perm = fi.Mode().Perm()
+		}
+		if err := os.WriteFile(path, []byte(content), perm); err != nil {
+			return "", fmt.Errorf("write file for rename: %w", err)
+		}
+
+		relPath := path
+		if rel, err := filepath.Rel(absWorkDir, path); err == nil && !strings.HasPrefix(rel, "..") {
+			relPath = rel
+		}
+		filesSummary = append(filesSummary, fmt.Sprintf("  %s (%d edit(s))", relPath, len(textEdits)))
+
+		// Sync the modified file back to the LSP server so subsequent
+		// operations see the updated content.
+		uri2 := fileURI(path)
+		srv.ensureFileOpen(path, uri2, srv.lang)
+	}
+
+	if totalEdits == 0 {
+		return "No edits were produced by the rename.", nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Renamed to %q — %d edit(s) across %d file(s):\n", newName, totalEdits, len(edit.Changes))
+	for _, s := range filesSummary {
+		b.WriteString(s + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// lspDocumentSymbol represents a symbol from textDocument/documentSymbol.
+type lspDocumentSymbol struct {
+	Name           string              `json:"name"`
+	Detail         string              `json:"detail,omitempty"`
+	Kind           int                 `json:"kind"`
+	Range          lspRange            `json:"range"`
+	SelectionRange lspRange            `json:"selectionRange"`
+	Children       []lspDocumentSymbol `json:"children,omitempty"`
+}
+
+// lspWorkspaceEdit is a workspace edit returned by textDocument/rename.
+type lspWorkspaceEdit struct {
+	Changes map[string][]lspTextEdit `json:"changes"`
+}
+
+// lspTextEdit is a single text edit within a file.
+type lspTextEdit struct {
+	Range   lspRange `json:"range"`
+	NewText string   `json:"newText"`
+}
+
+// sortTextEditsReverse sorts text edits from bottom to top so that
+// applying them in order preserves valid line/char offsets.
+func sortTextEditsReverse(edits []lspTextEdit) {
+	for i := 1; i < len(edits); i++ {
+		for j := i; j > 0; j-- {
+			a, b := edits[j], edits[j-1]
+			if a.Range.Start.Line > b.Range.Start.Line ||
+				(a.Range.Start.Line == b.Range.Start.Line && a.Range.Start.Character > b.Range.Start.Character) {
+				edits[j], edits[j-1] = edits[j-1], edits[j]
+			}
+		}
+	}
+}
+
+func lspOutline(ctx context.Context, srv *lspServer, filePath, workDir string) (string, error) {
+	result, err := srv.call(ctx, "textDocument/documentSymbol", map[string]any{
+		"textDocument": map[string]any{"uri": fileURI(filePath)},
+	})
+	if err != nil {
+		return "", err
+	}
+	if string(result) == "null" || len(result) == 0 {
+		return "No symbols found in file.", nil
+	}
+
+	relPath := filePath
+	if rel, err := filepath.Rel(workDir, filePath); err == nil && !strings.HasPrefix(rel, "..") {
+		relPath = rel
+	}
+
+	// Try DocumentSymbol[] (hierarchical) first.
+	var docSymbols []lspDocumentSymbol
+	if err := json.Unmarshal(result, &docSymbols); err == nil && len(docSymbols) > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Outline of %s:\n", relPath)
+		formatDocumentSymbols(&b, docSymbols, 0)
+		return strings.TrimRight(b.String(), "\n"), nil
+	}
+
+	// Fallback: try SymbolInformation[] (flat, older servers).
+	var symbols []lspSymbolInfo
+	if err := json.Unmarshal(result, &symbols); err == nil && len(symbols) > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Outline of %s:\n", relPath)
+		for _, s := range symbols {
+			fmt.Fprintf(&b, "  L%d: %s [%s]\n",
+				s.Location.Range.Start.Line+1, s.Name, symbolKindName(s.Kind))
+		}
+		return strings.TrimRight(b.String(), "\n"), nil
+	}
+
+	return "No symbols found in file.", nil
+}
+
+// formatDocumentSymbols formats hierarchical document symbols with indentation.
+func formatDocumentSymbols(b *strings.Builder, symbols []lspDocumentSymbol, depth int) {
+	indent := strings.Repeat("  ", depth+1)
+	for _, s := range symbols {
+		detail := ""
+		if s.Detail != "" {
+			detail = " — " + s.Detail
+		}
+		fmt.Fprintf(b, "%sL%d: %s [%s]%s\n",
+			indent, s.Range.Start.Line+1, s.Name, symbolKindName(s.Kind), detail)
+		if len(s.Children) > 0 {
+			formatDocumentSymbols(b, s.Children, depth+1)
+		}
+	}
 }

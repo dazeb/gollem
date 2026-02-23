@@ -1115,6 +1115,48 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
+	// Auto-install Nim/nimble dependencies.
+	if networkAvailable && !depsAlreadyInstalled {
+		for _, dir := range []string{workDir, "/app"} {
+			if matches, _ := filepath.Glob(filepath.Join(dir, "*.nimble")); len(matches) > 0 {
+				if runQuiet(dir, "which", "nimble") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Nimble dependencies in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "nimble", "install", "-y", "--depsOnly")
+					parts = append(parts, "AUTO-INSTALLED: Nimble dependencies (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
+	// Auto-install D/dub dependencies.
+	if networkAvailable && !depsAlreadyInstalled {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "dub.json")) || fileExists(filepath.Join(dir, "dub.sdl")) {
+				if runQuiet(dir, "which", "dub") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-fetching DUB dependencies in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "dub", "fetch")
+					parts = append(parts, "AUTO-INSTALLED: DUB dependencies (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
+	// Auto-install Crystal/shards dependencies.
+	if networkAvailable && !depsAlreadyInstalled {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "shard.yml")) && runQuiet(dir, "which", "shards") != "" {
+				if !dirExists(filepath.Join(dir, "lib")) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Crystal shards in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "shards", "install")
+					parts = append(parts, "AUTO-INSTALLED: Crystal shards (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
 	// Auto-detect and install Python packages from source imports.
 	// When no requirements.txt exists, scan .py files for third-party imports
 	// and install them. This saves 2-3 turns of ModuleNotFoundError debugging.
