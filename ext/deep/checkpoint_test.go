@@ -416,6 +416,71 @@ func TestCheckpoint_ToolState(t *testing.T) {
 	}
 }
 
+func TestCheckpoint_ToolCallMetadataRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileCheckpointStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileCheckpointStore: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Create a checkpoint with a ToolCallPart that has Metadata (e.g., Gemini 3.x thought signatures).
+	cp := &Checkpoint{
+		RunID:     "metadata-run",
+		StepIndex: 1,
+		Timestamp: time.Now(),
+		Messages: []core.ModelMessage{
+			core.ModelRequest{
+				Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "hello"}},
+				Timestamp: time.Now(),
+			},
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{
+						ToolName:   "bash",
+						ArgsJSON:   `{"command":"ls"}`,
+						ToolCallID: "call_0",
+						Metadata:   map[string]string{"thoughtSignature": "abc123sig"},
+					},
+				},
+				Timestamp: time.Now(),
+			},
+		},
+	}
+	if err := store.Save(ctx, cp); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := store.Load(ctx, "metadata-run")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(loaded.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(loaded.Messages))
+	}
+
+	resp, ok := loaded.Messages[1].(core.ModelResponse)
+	if !ok {
+		t.Fatal("expected second message to be ModelResponse")
+	}
+	if len(resp.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(resp.Parts))
+	}
+
+	tc, ok := resp.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatal("expected ToolCallPart")
+	}
+	if tc.Metadata == nil {
+		t.Fatal("expected Metadata to be preserved, got nil")
+	}
+	if sig := tc.Metadata["thoughtSignature"]; sig != "abc123sig" {
+		t.Errorf("thoughtSignature = %q, want %q", sig, "abc123sig")
+	}
+}
+
 // mockStatefulTool implements core.StatefulTool for testing.
 type mockStatefulTool struct {
 	state map[string]any
