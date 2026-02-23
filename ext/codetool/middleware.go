@@ -266,6 +266,7 @@ done:
 		"ruby": true, "perl": true, "lua": true,
 		"julia": true, "Rscript": true, "rscript": true, "php": true,
 		"bash": true, "sh": true, "zsh": true, "dash": true,
+		"elixir": true, "crystal": true, "kotlin": true,
 	}
 	if interpreters[base] && len(fields) >= 2 {
 		arg := fields[1]
@@ -289,6 +290,7 @@ done:
 		"swift": true, "zig": true, "dune": true, "lake": true,
 		"bazel": true, "cmake": true, "nimble": true, "dub": true,
 		"flutter": true, "dart": true, "crystal": true,
+		"deno": true, "gleam": true,
 	}
 	if subcommandTools[base] && len(fields) >= 2 {
 		sub := fields[1]
@@ -376,7 +378,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix", "gleam", "crystal", "gfortran"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -671,6 +673,8 @@ func discoverEnvironment(workDir string) string {
 			"Package.swift", "configure.ac", "meson.build", "BUILD",
 			"docker-compose.yml", "docker-compose.yaml",
 			"Dockerfile",
+			"deno.json", "deno.jsonc",
+			"Taskfile.yml",
 		}
 		for _, bf := range buildFiles {
 			if autoReadBudget <= 0 {
@@ -765,6 +769,21 @@ func discoverEnvironment(workDir string) string {
 				parts = append(parts, "AUTO-INSTALLED: npm dependencies (already done, no need to install again)")
 			}
 			break
+		}
+	}
+
+	// Auto-install Deno dependencies from deno.json/deno.jsonc.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if (fileExists(filepath.Join(dir, "deno.json")) || fileExists(filepath.Join(dir, "deno.jsonc"))) &&
+				runQuiet(workDir, "which", "deno") != "" {
+				if !dirExists(filepath.Join(dir, "node_modules")) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Deno dependencies in %s\n", dir)
+					runQuietTimeout(dir, 60*time.Second, "deno", "install")
+					parts = append(parts, "AUTO-INSTALLED: Deno dependencies (already done, no need to install again)")
+				}
+				break
+			}
 		}
 	}
 
@@ -1524,6 +1543,8 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"pubspec.yaml", "Dart", "dart"},
 		{"composer.json", "PHP", "composer"},
 		{"gleam.toml", "Gleam", "gleam"},
+		{"deno.json", "TypeScript", "deno"},
+		{"deno.jsonc", "TypeScript", "deno"},
 		{".busted", "Lua", "busted"},
 		{".luarocks", "Lua", "luarocks"},
 		{"Makefile.PL", "Perl", "perl"},
@@ -2747,15 +2768,36 @@ func suggestCompileCommand(workDir, binaryName string) string {
 	if fileExists(filepath.Join(workDir, "CMakeLists.txt")) {
 		return fmt.Sprintf("CMake: `mkdir -p build && cd build && cmake .. && make -j$(nproc)`. Ensure output binary is named `%s`.", binaryName)
 	}
+	// Check for Zig build files.
+	if fileExists(filepath.Join(workDir, "build.zig")) {
+		return fmt.Sprintf("Zig: `zig build` (check build.zig for target). Ensure output is named `%s`.", binaryName)
+	}
 	// Check for C/C++ source files.
 	for _, dir := range []string{workDir, "/app"} {
 		cFiles, _ := filepath.Glob(filepath.Join(dir, "*.c"))
 		cppFiles, _ := filepath.Glob(filepath.Join(dir, "*.cpp"))
+		fFiles, _ := filepath.Glob(filepath.Join(dir, "*.f90"))
+		f77Files, _ := filepath.Glob(filepath.Join(dir, "*.f"))
+		nimFiles, _ := filepath.Glob(filepath.Join(dir, "*.nim"))
+		zigFiles, _ := filepath.Glob(filepath.Join(dir, "*.zig"))
 		if len(cppFiles) > 0 {
 			return fmt.Sprintf("C++: `g++ -O2 -o %s *.cpp -lm` (add -lpthread if using threads).", binaryName)
 		}
 		if len(cFiles) > 0 {
 			return fmt.Sprintf("C: `gcc -O2 -o %s *.c -lm` (add -lpthread if using threads).", binaryName)
+		}
+		if len(fFiles) > 0 || len(f77Files) > 0 {
+			ext := "*.f90"
+			if len(f77Files) > 0 && len(fFiles) == 0 {
+				ext = "*.f"
+			}
+			return fmt.Sprintf("Fortran: `gfortran -O2 -o %s %s -lm`.", binaryName, ext)
+		}
+		if len(nimFiles) > 0 {
+			return fmt.Sprintf("Nim: `nim compile -d:release -o:%s %s`.", binaryName, filepath.Base(nimFiles[0]))
+		}
+		if len(zigFiles) > 0 {
+			return fmt.Sprintf("Zig: `zig build-exe %s -O ReleaseFast --name %s`.", filepath.Base(zigFiles[0]), binaryName)
 		}
 	}
 	return fmt.Sprintf("Compile your code and name the output binary `%s`. Ensure it's executable (chmod +x).", binaryName)
