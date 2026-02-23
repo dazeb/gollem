@@ -91,10 +91,13 @@ func (s *streamedResponse) readSSEEvent() (*sseEvent, error) {
 			continue
 		}
 
-		if strings.HasPrefix(line, "event: ") {
-			eventType = strings.TrimPrefix(line, "event: ")
-		} else if strings.HasPrefix(line, "data: ") {
-			data = strings.TrimPrefix(line, "data: ")
+		// Per SSE spec, the space after the colon is optional.
+		if strings.HasPrefix(line, "event:") {
+			eventType = strings.TrimPrefix(line, "event:")
+			eventType = strings.TrimPrefix(eventType, " ")
+		} else if strings.HasPrefix(line, "data:") {
+			data = strings.TrimPrefix(line, "data:")
+			data = strings.TrimPrefix(data, " ")
 		}
 	}
 

@@ -485,6 +485,44 @@ data: {"type":"message_stop"}
 	}
 }
 
+func TestParseSSEStreamNoSpaceAfterColon(t *testing.T) {
+	// Per the SSE spec, the space after the colon in "event:" and "data:" is
+	// optional. Verify the parser handles both forms.
+	sseData := "event:message_start\ndata:{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\nevent:content_block_start\ndata:{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent:content_block_delta\ndata:{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\nevent:content_block_stop\ndata:{\"type\":\"content_block_stop\",\"index\":0}\n\nevent:message_delta\ndata:{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\nevent:message_stop\ndata:{\"type\":\"message_stop\"}\n\n"
+
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, Claude4Sonnet)
+
+	var events []core.ModelResponseStreamEvent
+	for {
+		event, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		events = append(events, event)
+	}
+
+	// Should have: PartStart, PartDelta, PartEnd
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	resp := stream.Response()
+	if len(resp.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(resp.Parts))
+	}
+	tp, ok := resp.Parts[0].(core.TextPart)
+	if !ok {
+		t.Fatalf("expected TextPart, got %T", resp.Parts[0])
+	}
+	if tp.Content != "OK" {
+		t.Errorf("text = %q, want 'OK'", tp.Content)
+	}
+}
+
 func TestParseSSEStreamToolCall(t *testing.T) {
 	sseData := `event: message_start
 data: {"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet-4-5","usage":{"input_tokens":10,"output_tokens":0}}}

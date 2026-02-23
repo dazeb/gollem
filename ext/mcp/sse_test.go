@@ -359,6 +359,84 @@ func TestSSEClientWithCustomHTTPClient(t *testing.T) {
 	}
 }
 
+func TestSSEClientNoSpaceAfterColon(t *testing.T) {
+	// Per the SSE spec, "event:message" (no space after colon) is valid.
+	// Some MCP server implementations omit the optional space. This test
+	// verifies the client handles both forms correctly.
+	mock := newMockSSEServer()
+	mock.tools = []Tool{
+		{
+			Name:        "get_data",
+			Description: "Get data",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		},
+	}
+
+	// Override the SSE handler to send events without spaces after colons.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+
+		// Send endpoint event WITHOUT space after colon.
+		fmt.Fprintf(w, "event:endpoint\ndata:/messages\n\n")
+		flusher.Flush()
+
+		select {
+		case <-mock.ready:
+		default:
+			close(mock.ready)
+		}
+
+		for {
+			select {
+			case ev := <-mock.eventCh:
+				// Send response events WITHOUT space after colons.
+				fmt.Fprintf(w, "event:%s\ndata:%s\n\n", ev.eventType, ev.data)
+				flusher.Flush()
+			case <-r.Context().Done():
+				return
+			}
+		}
+	})
+	mux.HandleFunc("/messages", mock.handleMessages)
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := NewSSEClient(ctx, server.URL+"/sse")
+	if err != nil {
+		t.Fatalf("failed to create SSE client with no-space events: %v", err)
+	}
+	defer client.Close()
+
+	// Verify the endpoint was correctly parsed.
+	if client.messagesURL == "" {
+		t.Fatal("messagesURL was not set — event:endpoint without space was not parsed")
+	}
+
+	// Verify tools can be listed (requires message events to be parsed).
+	tools, err := client.ListTools(ctx)
+	if err != nil {
+		t.Fatalf("ListTools failed with no-space events: %v", err)
+	}
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	if tools[0].Name != "get_data" {
+		t.Errorf("expected get_data, got %s", tools[0].Name)
+	}
+}
+
 func TestSSEResolveURL(t *testing.T) {
 	c := &SSEClient{baseURL: "http://localhost:8080/sse"}
 

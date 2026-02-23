@@ -136,12 +136,14 @@ func (c *SSEClient) readSSE(body io.ReadCloser) {
 			continue
 		}
 
-		if strings.HasPrefix(line, "event: ") {
-			eventType = strings.TrimPrefix(line, "event: ")
-		} else if strings.HasPrefix(line, "data: ") {
-			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+		if strings.HasPrefix(line, "event:") {
+			// Per SSE spec, the space after the colon is optional.
+			eventType = strings.TrimPrefix(line, "event:")
+			eventType = strings.TrimPrefix(eventType, " ")
 		} else if strings.HasPrefix(line, "data:") {
-			dataLines = append(dataLines, strings.TrimPrefix(line, "data:"))
+			value := strings.TrimPrefix(line, "data:")
+			value = strings.TrimPrefix(value, " ")
+			dataLines = append(dataLines, value)
 		}
 	}
 
