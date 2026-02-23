@@ -1057,3 +1057,47 @@ func TestMultipleUnknownToolCallsSingleRetry(t *testing.T) {
 		}
 	}
 }
+
+// --- Test: Global result retry counter resets after successful tool execution ---
+// Regression: state.retries (global result retry counter) was never reset,
+// so scattered model misbehaviors across a long run (empty responses, unknown
+// tools, parse errors) would accumulate and eventually exhaust the maxRetries
+// limit, even when the model self-corrected between failures.
+func TestAgentRunGlobalRetryResetsOnToolSuccess(t *testing.T) {
+	type Params struct {
+		Q string `json:"q"`
+	}
+	searchTool := FuncTool[Params]("search", "search", func(_ context.Context, p Params) (string, error) {
+		return "results for: " + p.Q, nil
+	})
+
+	// Sequence:
+	// 1. Empty response     → retries = 1
+	// 2. Tool call "search" → executes successfully, retries should reset to 0
+	// 3. Empty response     → retries should go to 1 (not 2)
+	// 4. Tool call "search" → executes successfully, retries should reset to 0
+	// 5. Text response      → done
+	//
+	// With maxRetries=1 and NO reset: step 3 would set retries=2, exceeding limit → error.
+	// With reset: step 3 sets retries=1, which is within limit → continues normally.
+	model := NewTestModel(
+		&ModelResponse{Parts: []ModelResponsePart{}, FinishReason: FinishReasonStop}, // empty
+		ToolCallResponse("search", `{"q":"first"}`),
+		&ModelResponse{Parts: []ModelResponsePart{}, FinishReason: FinishReasonStop}, // empty
+		ToolCallResponse("search", `{"q":"second"}`),
+		TextResponse("All done."),
+	)
+
+	agent := NewAgent[string](model,
+		WithTools[string](searchTool),
+		WithMaxRetries[string](1),
+	)
+
+	result, err := agent.Run(context.Background(), "Search twice with hiccups")
+	if err != nil {
+		t.Fatalf("unexpected error (retries may not be resetting): %v", err)
+	}
+	if result.Output != "All done." {
+		t.Errorf("output = %q, want 'All done.'", result.Output)
+	}
+}

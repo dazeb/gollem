@@ -313,3 +313,47 @@ func TestIterWithGuardrails(t *testing.T) {
 		t.Error("expected error from Result when guardrail blocked")
 	}
 }
+
+// TestIterGlobalRetryResetsOnToolSuccess verifies that the global result-retry
+// counter resets after successful tool execution in Iter mode.
+func TestIterGlobalRetryResetsOnToolSuccess(t *testing.T) {
+	type Params struct {
+		Q string `json:"q"`
+	}
+	searchTool := FuncTool[Params]("search", "search", func(_ context.Context, p Params) (string, error) {
+		return "found: " + p.Q, nil
+	})
+
+	model := NewTestModel(
+		&ModelResponse{Parts: []ModelResponsePart{}, FinishReason: FinishReasonStop}, // empty → retry
+		ToolCallResponse("search", `{"q":"first"}`),                                   // success → reset
+		&ModelResponse{Parts: []ModelResponsePart{}, FinishReason: FinishReasonStop}, // empty → retry (should be 1, not 2)
+		ToolCallResponse("search", `{"q":"second"}`),                                  // success → reset
+		TextResponse("done"),
+	)
+
+	agent := NewAgent[string](model,
+		WithTools[string](searchTool),
+		WithMaxRetries[string](1),
+	)
+
+	iter := agent.Iter(context.Background(), "test retries via iter")
+
+	// Iterate until done.
+	steps := 0
+	for !iter.Done() {
+		_, err := iter.Next()
+		if err != nil {
+			t.Fatalf("step %d error (retries may not be resetting in iter): %v", steps, err)
+		}
+		steps++
+	}
+
+	result, err := iter.Result()
+	if err != nil {
+		t.Fatalf("result error: %v", err)
+	}
+	if result.Output != "done" {
+		t.Errorf("output = %q, want 'done'", result.Output)
+	}
+}

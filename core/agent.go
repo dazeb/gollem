@@ -1189,6 +1189,13 @@ func (a *Agent[T]) processResponse(
 				resultParts = append(resultParts, part)
 			}
 		}
+		// Reset global result-retry counter after successful tool execution.
+		// The model is making progress, so give it a fresh retry allowance
+		// for future result validation attempts. Without this, scattered
+		// model errors (empty responses, unknown tools) across a long run
+		// accumulate and eventually hit the maxRetries limit even though
+		// the model self-corrects between each failure.
+		state.retries = 0
 	}
 
 	// If there are deferred requests, return them.
