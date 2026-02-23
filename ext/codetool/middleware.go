@@ -378,7 +378,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix", "gleam", "crystal", "gfortran"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix", "gleam", "crystal", "gfortran", "lein", "clj", "rebar3", "erl"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -675,6 +675,8 @@ func discoverEnvironment(workDir string) string {
 			"Dockerfile",
 			"deno.json", "deno.jsonc",
 			"Taskfile.yml",
+			"project.clj", "deps.edn",     // Clojure
+			"rebar.config",                 // Erlang
 		}
 		for _, bf := range buildFiles {
 			if autoReadBudget <= 0 {
@@ -1048,6 +1050,30 @@ func discoverEnvironment(workDir string) string {
 				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Perl dependencies from cpanfile in %s\n", dir)
 				runQuietTimeout(dir, 120*time.Second, "cpanm", "--installdeps", "--notest", "-q", ".")
 				parts = append(parts, "AUTO-INSTALLED: Perl dependencies via cpanm (already done, no need to install again)")
+				break
+			}
+		}
+	}
+
+	// Auto-download Clojure/Leiningen dependencies.
+	if networkAvailable && !depsAlreadyInstalled {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "project.clj")) && runQuiet(dir, "which", "lein") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Leiningen dependencies in %s\n", dir)
+				runQuietTimeout(dir, 120*time.Second, "lein", "deps")
+				parts = append(parts, "AUTO-INSTALLED: Leiningen dependencies via lein deps (already done, no need to install again)")
+				break
+			}
+		}
+	}
+
+	// Auto-download Erlang/Rebar3 dependencies.
+	if networkAvailable && !depsAlreadyInstalled {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "rebar.config")) && runQuiet(dir, "which", "rebar3") != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Rebar3 dependencies in %s\n", dir)
+				runQuietTimeout(dir, 120*time.Second, "rebar3", "get-deps")
+				parts = append(parts, "AUTO-INSTALLED: Erlang dependencies via rebar3 get-deps (already done, no need to install again)")
 				break
 			}
 		}
@@ -1550,6 +1576,9 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"Makefile.PL", "Perl", "perl"},
 		{"Build.PL", "Perl", "perl"},
 		{"cpanfile", "Perl", "cpanm"},
+		{"project.clj", "Clojure", "leiningen"},
+		{"deps.edn", "Clojure", "clojure"},
+		{"rebar.config", "Erlang", "rebar3"},
 		{"dub.json", "D", "dub"},
 		{"dub.sdl", "D", "dub"},
 		{"shard.yml", "Crystal", "shards"},
