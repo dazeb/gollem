@@ -751,6 +751,14 @@ func commandNotFoundHint(stderr string) string {
 		// Clojure.
 		"lein":       "leiningen (install via: apt-get install -y leiningen)",
 		"clj":        "clojure (install via: apt-get install -y clojure)",
+		// Erlang.
+		"rebar3":     "rebar3 (install via: apt-get install -y erlang-dev && mix local.rebar --force)",
+		// Python tools.
+		"poetry":     "poetry (install via: pip install poetry)",
+		"pdm":        "pdm (install via: pip install pdm)",
+		"hatch":      "hatch (install via: pip install hatch)",
+		"pytest":     "pytest (install via: pip install pytest)",
+		"coverage":   "coverage (install via: pip install coverage)",
 	}
 
 	// Extract the missing command name from stderr.
@@ -3492,6 +3500,38 @@ func testResultSummary(output string) string {
 		}
 	}
 
+	// Clojure (lein test / clj -X:test): "Ran N tests containing M assertions."
+	// followed by "K failures, L errors." on the next line.
+	// Must run before Jest (which also matches "tests:" + "total").
+	if strings.Contains(output, "Ran ") && strings.Contains(lower, "assertions") &&
+		strings.Contains(lower, "failures") {
+		lines := strings.Split(output, "\n")
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			line := strings.TrimSpace(lines[i])
+			lineLower := strings.ToLower(line)
+			// Match "N failures, M errors" (Clojure format, no "FAILED" keyword).
+			if strings.Contains(lineLower, "failures") && strings.Contains(lineLower, "errors") &&
+				!strings.Contains(lineLower, "failed") {
+				var summary string
+				for j := i - 1; j >= max(0, i-3); j-- {
+					if strings.HasPrefix(strings.TrimSpace(lines[j]), "Ran ") {
+						summary = "[test summary: " + strings.TrimSpace(lines[j]) + " — " + line + "]"
+						break
+					}
+				}
+				if summary == "" {
+					summary = "[test summary: " + line + "]"
+				}
+				if !strings.HasPrefix(lineLower, "0 failures") {
+					if detail := firstFailureDetail(output); detail != "" {
+						summary += "\n" + detail
+					}
+				}
+				return summary
+			}
+		}
+	}
+
 	// npm/jest/vitest: "Tests: X failed, Y passed, Z total"
 	if strings.Contains(lower, "tests:") && strings.Contains(lower, "total") {
 		lines := strings.Split(output, "\n")
@@ -4816,6 +4856,44 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		}
 	}
 
+	// Clojure (lein test): "Ran N tests containing M assertions." + "K failures, L errors."
+	if strings.Contains(output, "Ran ") && strings.Contains(lower, "assertions") &&
+		strings.Contains(lower, "failures") {
+		var total int
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "Ran ") {
+				fmt.Sscanf(trimmed, "Ran %d", &total)
+			}
+		}
+		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
+			lineLower := strings.ToLower(strings.TrimSpace(lines[i]))
+			if strings.Contains(lineLower, "failures") && strings.Contains(lineLower, "errors") &&
+				!strings.Contains(lineLower, "failures=") {
+				var f, e int
+				words := strings.Fields(lineLower)
+				for j := 0; j+1 < len(words); j++ {
+					if isNumeric(words[j]) {
+						var n int
+						fmt.Sscanf(words[j], "%d", &n)
+						nextWord := strings.TrimRight(words[j+1], ",.;:")
+						if strings.HasPrefix(nextWord, "failure") {
+							f = n
+						} else if strings.HasPrefix(nextWord, "error") {
+							e = n
+						}
+					}
+				}
+				failed = f + e
+				if total > 0 {
+					passed = total - failed
+					ok = true
+					return
+				}
+			}
+		}
+	}
+
 	// Jest/Vitest: "Tests:  X passed, Y failed, Z total" or "Test Suites:  X passed, Y failed, Z total"
 	if strings.Contains(lower, "tests:") && (strings.Contains(lower, "total") || strings.Contains(lower, "passed")) {
 		for i := len(lines) - 1; i >= max(0, len(lines)-15); i-- {
@@ -5793,6 +5871,12 @@ func isLongRunningCommand(cmd string) bool {
 		"mix phx.",                      // Phoenix (Elixir) tasks
 		"ghci ",                         // GHCi interactive
 		"scala ",                        // Scala execution
+		"lein test", "lein run",         // Clojure Leiningen
+		"clj -M", "clj -X",             // Clojure deps.edn
+		"rebar3 ct", "rebar3 eunit",    // Erlang tests
+		"conda install", "mamba install", // Conda/Mamba (downloads + solves)
+		"uv pip install",                // uv pip install (network + compile)
+		"swift build",                   // Swift compilation
 	}
 	for _, p := range longPatterns {
 		if strings.Contains(lower, p) {
@@ -5914,6 +5998,13 @@ func testTimeoutOptimizationHint(cmd string) string {
 	case strings.Contains(lower, "deno test") || strings.Contains(lower, "deno run"):
 		return "[optimization hints: (1) use Map/Set for O(1) lookups, (2) use TypedArrays for numeric data, " +
 			"(3) avoid unnecessary object spread/creation in loops, (4) use Web Streams for large data processing]"
+	case strings.Contains(lower, "lein test") || strings.Contains(lower, "clj -M:test") || strings.Contains(lower, "clj -X:test"):
+		return "[optimization hints: (1) use hash-map/hash-set for O(1) lookups, (2) use transients for bulk mutations, " +
+			"(3) use reducers/transducers instead of chained seq operations, (4) use type hints to avoid reflection]"
+	case strings.Contains(lower, "rebar3 ct") || strings.Contains(lower, "rebar3 eunit"):
+		return "[optimization hints: (1) use maps for O(1) lookups instead of lists:keyfind, " +
+			"(2) use binary matching instead of string operations, (3) avoid list comprehensions over large datasets — use ets tables, " +
+			"(4) use binary:compile_pattern for repeated pattern matching]"
 	}
 
 	return ""
@@ -5938,6 +6029,9 @@ func isBuildCommand(cmd string) bool {
 		"javac ", "mvn ", "gradle ",
 		"npm install", "npm ci", "yarn install", "pnpm install",
 		"pip install", "pip3 install", "python3 -m pip install", "python -m pip install",
+		"uv pip install", "uv sync", "uv add",     // uv (modern Python)
+		"poetry install", "poetry add",             // Poetry
+		"conda install", "mamba install",           // Conda/Mamba
 		"apt-get install", "apt install", "apk add", "yum install", "dnf install",
 		"docker build",
 		"lake build",   // Lean 4
@@ -5971,6 +6065,7 @@ func isBuildCommand(cmd string) bool {
 		"v build", "v run", // V language
 		"bun install",       // Bun package manager
 		"bun build",         // Bun bundler
+		"bun add",           // Bun add dependency
 		"gleam build",       // Gleam
 		"deno install",      // Deno dependencies
 		"deno cache",        // Deno dependency caching
@@ -5980,6 +6075,9 @@ func isBuildCommand(cmd string) bool {
 		"elixirc ",          // Elixir compilation
 		"scalac ",           // Scala compilation
 		"ghc ",              // GHC direct compilation
+		"rebar3 compile", "rebar3 get-deps", // Erlang
+		"nimble install",                     // Nim packages
+		"pub add",                            // Dart add dependency
 	}
 	for _, p := range buildPatterns {
 		if strings.HasPrefix(lower, p) || strings.Contains(lower, " && "+p) || strings.Contains(lower, "; "+p) {

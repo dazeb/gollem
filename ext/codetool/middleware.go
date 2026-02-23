@@ -8210,10 +8210,13 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 						}
 						// Track package installations to prevent re-installs after recovery.
 						cmd := args.Command
-						if (strings.Contains(cmd, "pip install") || strings.Contains(cmd, "pip3 install")) && !strings.Contains(cmd, "--help") {
-							// Extract package names from pip install command.
+						if (strings.Contains(cmd, "pip install") || strings.Contains(cmd, "pip3 install") ||
+							strings.Contains(cmd, "uv pip install") || strings.Contains(cmd, "uv add")) && !strings.Contains(cmd, "--help") {
+							// Extract package names from pip/uv install command.
+							skipWords := map[string]bool{"install": true, "add": true, "pip": true, "pip3": true, "uv": true,
+								"python": true, "python3": true, "sync": true}
 							for _, part := range strings.Fields(cmd) {
-								if part == "install" || strings.HasPrefix(part, "-") || strings.HasPrefix(part, "pip") {
+								if skipWords[part] || strings.HasPrefix(part, "-") {
 									continue
 								}
 								if !seenPackages[part] {
@@ -8246,14 +8249,18 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 								}
 							}
 						}
-						// cargo add, go get, gem install, composer require.
+						// cargo add, go get, gem install, composer require, poetry add, conda install, etc.
 						if strings.Contains(cmd, "cargo add") || strings.Contains(cmd, "go get") ||
 							strings.Contains(cmd, "gem install") || strings.Contains(cmd, "composer require") ||
 							strings.Contains(cmd, "luarocks install") || strings.Contains(cmd, "cpanm ") ||
-							strings.Contains(cmd, "mix deps.get") || strings.Contains(cmd, "cabal install") {
+							strings.Contains(cmd, "mix deps.get") || strings.Contains(cmd, "cabal install") ||
+							strings.Contains(cmd, "poetry add") || strings.Contains(cmd, "poetry install") ||
+							strings.Contains(cmd, "conda install") || strings.Contains(cmd, "mamba install") ||
+							strings.Contains(cmd, "bun add") || strings.Contains(cmd, "nimble install") {
 							skipWords := map[string]bool{"add": true, "get": true, "install": true, "require": true,
 								"cargo": true, "go": true, "gem": true, "composer": true,
-								"luarocks": true, "cpanm": true, "mix": true, "deps.get": true, "cabal": true}
+								"luarocks": true, "cpanm": true, "mix": true, "deps.get": true, "cabal": true,
+								"poetry": true, "conda": true, "mamba": true, "bun": true, "nimble": true}
 							for _, part := range strings.Fields(cmd) {
 								if skipWords[part] || strings.HasPrefix(part, "-") {
 									continue
