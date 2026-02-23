@@ -2120,6 +2120,25 @@ func nodeErrorHint(output string, exitCode int) string {
 		return "[hint: missing Node module — try: npm install]"
 	}
 
+	// ESM/CJS module system errors — extremely confusing for agents.
+	if strings.Contains(output, "ERR_REQUIRE_ESM") ||
+		strings.Contains(output, "require() of ES Module") {
+		return "[hint: this package is ESM-only and cannot be require()'d. " +
+			"Either (1) add \"type\": \"module\" to package.json and use import, " +
+			"or (2) use dynamic import: const pkg = await import('package')]"
+	}
+	if strings.Contains(output, "Cannot use import statement outside a module") {
+		return "[hint: this file is treated as CommonJS but uses import syntax. " +
+			"Either (1) add \"type\": \"module\" to package.json, " +
+			"(2) rename the file to .mjs, " +
+			"or (3) use require() instead of import]"
+	}
+	if strings.Contains(output, "ERR_UNKNOWN_FILE_EXTENSION") && strings.Contains(output, ".ts") {
+		return "[hint: Node.js cannot run .ts files directly. " +
+			"Use tsx (npx tsx file.ts), ts-node (npx ts-node file.ts), " +
+			"or compile first with tsc]"
+	}
+
 	// ReferenceError, TypeError with stack trace — extract file:line.
 	for _, errType := range []string{"ReferenceError:", "TypeError:", "SyntaxError:"} {
 		if strings.Contains(output, errType) {

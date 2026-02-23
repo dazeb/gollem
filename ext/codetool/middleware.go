@@ -561,7 +561,7 @@ func discoverEnvironment(workDir string) string {
 		buildFiles := []string{
 			"Makefile", "CMakeLists.txt", "Cargo.toml",
 			"go.mod", "pyproject.toml", "setup.py", "setup.cfg",
-			"package.json", "pom.xml", "build.gradle",
+			"package.json", "composer.json", "pom.xml", "build.gradle",
 			"Package.swift", "configure.ac", "meson.build", "BUILD",
 			"docker-compose.yml", "docker-compose.yaml",
 			"Dockerfile",
@@ -696,6 +696,20 @@ func discoverEnvironment(workDir string) string {
 					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Ruby gems in %s\n", dir)
 					runQuietTimeout(dir, 90*time.Second, "bundle", "install", "--quiet")
 					parts = append(parts, "AUTO-INSTALLED: Ruby gems via bundle install (already done, no need to install again)")
+				}
+				break
+			}
+		}
+	}
+
+	// Auto-install PHP Composer dependencies.
+	if networkAvailable {
+		for _, dir := range []string{workDir, "/app"} {
+			if fileExists(filepath.Join(dir, "composer.json")) && runQuiet(dir, "which", "composer") != "" {
+				if !dirExists(filepath.Join(dir, "vendor")) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Composer dependencies in %s\n", dir)
+					runQuietTimeout(dir, 90*time.Second, "composer", "install", "--no-interaction", "--quiet")
+					parts = append(parts, "AUTO-INSTALLED: Composer dependencies (already done, no need to install again)")
 				}
 				break
 			}
@@ -1306,6 +1320,7 @@ func detectProject(workDir string) (language, buildSystem string) {
 		{"Package.swift", "Swift", "swift"},
 		{"build.zig", "Zig", "zig"},
 		{"Project.toml", "Julia", "julia"},
+		{"composer.json", "PHP", "composer"},
 		{"Makefile.PL", "Perl", "perl"},
 		{"Build.PL", "Perl", "perl"},
 		{"cpanfile", "Perl", "cpanm"},
@@ -5547,6 +5562,12 @@ func detectTestCommands(workDir string) []string {
 	}
 	if hasPyTests {
 		cmds = append(cmds, "Test: pytest -xvs")
+	}
+
+	// PHP (Composer)
+	if fileExists(filepath.Join(workDir, "composer.json")) {
+		cmds = append(cmds, "Install: composer install")
+		cmds = append(cmds, "Test: ./vendor/bin/phpunit")
 	}
 
 	// Ruby (Gemfile with rspec or Rakefile).
