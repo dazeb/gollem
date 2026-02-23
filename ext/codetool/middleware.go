@@ -437,7 +437,7 @@ func discoverEnvironment(workDir string) string {
 
 	// Detect available tools to prevent wasted turns on missing commands.
 	var availableTools []string
-	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "just", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix", "gleam", "crystal", "gfortran", "lein", "clj", "rebar3", "erl"} {
+	for _, tool := range []string{"python3", "python", "pip3", "pip", "node", "npm", "yarn", "pnpm", "bun", "deno", "go", "cargo", "make", "just", "gcc", "g++", "coqc", "ocaml", "opam", "lean", "rustc", "javac", "dotnet", "ruby", "Rscript", "julia", "perl", "swift", "sqlite3", "psql", "mysql", "dart", "flutter", "sbt", "zig", "php", "ghc", "stack", "cabal", "lua", "nim", "scala", "kotlinc", "elixir", "mix", "gleam", "crystal", "gfortran", "lein", "clj", "rebar3", "erl", "terraform", "tofu", "elm", "nix", "solc", "forge", "bats", "fpc", "dmd", "dub"} {
 		if path := runQuiet(workDir, "which", tool); path != "" {
 			availableTools = append(availableTools, tool)
 		}
@@ -477,6 +477,14 @@ func discoverEnvironment(workDir string) string {
 		{"crystalline (Crystal)", "crystalline"},
 		{"clojure-lsp (Clojure)", "clojure-lsp"},
 		{"gleam lsp (Gleam)", "gleam"},
+		{"bash-language-server (Bash)", "bash-language-server"},
+		{"serve-d (D)", "serve-d"},
+		{"fsautocomplete (F#)", "fsautocomplete"},
+		{"terraform-ls (Terraform)", "terraform-ls"},
+		{"elm-language-server (Elm)", "elm-language-server"},
+		{"nil (Nix)", "nil"},
+		{"vue-language-server (Vue)", "vue-language-server"},
+		{"svelteserver (Svelte)", "svelteserver"},
 	}
 	for _, ls := range lspServers {
 		if runQuiet(workDir, "which", ls.cmd) != "" {
