@@ -3560,6 +3560,126 @@ def verify_source():
 	}
 }
 
+func TestExtractTestConstraintsExpanded(t *testing.T) {
+	t.Run("C++ ASSERT_EQ detected", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, dir, "test_main.cpp", `#include <gtest/gtest.h>
+TEST(OutputTest, FileSizeLimit) {
+    ASSERT_LE(file_size, 1024);
+    EXPECT_EQ(output.size(), 42);
+}
+`)
+		constraints := extractTestConstraints(dir)
+		if len(constraints) == 0 {
+			t.Error("expected constraints from C++ ASSERT_LE/EXPECT_EQ patterns")
+		}
+	})
+
+	t.Run("JavaScript expect with length", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, dir, "test_output.js", `const fs = require('fs');
+test('output length constraint', () => {
+    expect(result).toHaveLength(100);
+    expect(fileSize).toBeLessThan(2048);
+});
+`)
+		constraints := extractTestConstraints(dir)
+		if len(constraints) == 0 {
+			t.Error("expected constraints from JavaScript expect().toHaveLength/toBeLessThan")
+		}
+	})
+
+	t.Run("Python os.path.getsize", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, dir, "test_size.py", `import os
+def test_file_size():
+    if os.path.getsize("output.bin") > 1048576:
+        raise ValueError("too large")
+`)
+		constraints := extractTestConstraints(dir)
+		found := false
+		for _, c := range constraints {
+			if strings.Contains(c, "getsize") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected getsize constraint, got: %v", constraints)
+		}
+	})
+
+	t.Run("Python timing constraint", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, dir, "test_perf.py", `import time
+def test_performance():
+    start = time.time()
+    run_solution()
+    elapsed = time.time() - start
+    assert elapsed < 5.0
+`)
+		constraints := extractTestConstraints(dir)
+		if len(constraints) == 0 {
+			t.Error("expected timing constraint from time.time() with assertion")
+		}
+	})
+
+	t.Run("resource.setrlimit", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, dir, "test_limits.py", `import resource
+resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))
+`)
+		constraints := extractTestConstraints(dir)
+		found := false
+		for _, c := range constraints {
+			if strings.Contains(c, "setrlimit") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected setrlimit constraint, got: %v", constraints)
+		}
+	})
+
+	t.Run("time_limit keyword", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, dir, "test_runner.py", `
+result = run_with_time_limit(solution, time_limit=30)
+`)
+		constraints := extractTestConstraints(dir)
+		found := false
+		for _, c := range constraints {
+			if strings.Contains(c, "time_limit") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected time_limit constraint, got: %v", constraints)
+		}
+	})
+
+	t.Run("shell timeout command", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, dir, "test_run.sh", `#!/bin/bash
+timeout 30 ./solution < input.txt > output.txt
+diff output.txt expected.txt
+`)
+		constraints := extractTestConstraints(dir)
+		foundTimeout := false
+		for _, c := range constraints {
+			if strings.Contains(c, "timeout 30") {
+				foundTimeout = true
+				break
+			}
+		}
+		if !foundTimeout {
+			t.Errorf("expected timeout command constraint, got: %v", constraints)
+		}
+	})
+}
+
 func TestExtractFileStructure(t *testing.T) {
 	dir := t.TempDir()
 

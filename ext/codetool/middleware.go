@@ -6314,9 +6314,12 @@ func extractTestConstraintsRecursive(dir string, constraints *[]string, seen map
 			isConstraintLine := false
 
 			// Python/general: assertion lines with numeric comparisons.
-			if strings.Contains(trimmed, "assert") {
-				for _, indicator := range []string{"<", ">", "<=", ">=", "==", "size", "bytes", "length", "len(", "count"} {
-					if strings.Contains(trimmed, indicator) {
+			// Case-insensitive to catch both Python (assert) and C++ (ASSERT_EQ, EXPECT_LT).
+			trimLower := strings.ToLower(trimmed)
+			if strings.Contains(trimLower, "assert") || strings.Contains(trimLower, "expect") || strings.Contains(trimLower, "require(") || strings.Contains(trimLower, "check(") {
+				for _, indicator := range []string{"<", ">", "<=", ">=", "==", "size", "bytes", "length", "len(", "count",
+					"havelength", "lessthan", "greaterthan", "belessthan", "begreaterthan"} {
+					if strings.Contains(trimLower, indicator) {
 						isConstraintLine = true
 						break
 					}
@@ -6353,6 +6356,44 @@ func extractTestConstraintsRecursive(dir string, constraints *[]string, seen map
 			if !isConstraintLine {
 				if (strings.Contains(trimmed, "md5") || strings.Contains(trimmed, "sha256") || strings.Contains(trimmed, "hashlib")) &&
 					strings.Contains(trimmed, "==") {
+					isConstraintLine = true
+				}
+			}
+
+			// Python file size checks: os.path.getsize(...) with comparison.
+			if !isConstraintLine && strings.Contains(trimmed, "getsize") {
+				for _, op := range []string{"<", ">", "<=", ">=", "=="} {
+					if strings.Contains(trimmed, op) {
+						isConstraintLine = true
+						break
+					}
+				}
+			}
+
+			// Python timing constraints: time.time() or perf_counter() used
+			// to measure execution speed. Indicates a performance constraint.
+			if !isConstraintLine {
+				if (strings.Contains(trimmed, "time.time()") || strings.Contains(trimmed, "perf_counter()") || strings.Contains(trimmed, "monotonic()")) &&
+					(strings.Contains(trimmed, "<") || strings.Contains(trimmed, ">") || strings.Contains(trimmed, "assert")) {
+					isConstraintLine = true
+				}
+			}
+
+			// Resource limits: resource.setrlimit sets memory/CPU caps.
+			if !isConstraintLine && strings.Contains(trimmed, "setrlimit") {
+				isConstraintLine = true
+			}
+
+			// Alternative timeout keywords: time_limit, timelimit.
+			if !isConstraintLine {
+				if strings.Contains(trimLower, "time_limit") || strings.Contains(trimLower, "timelimit") {
+					isConstraintLine = true
+				}
+			}
+
+			// Shell: timeout command (e.g., "timeout 30 ./program").
+			if isShellTest && !isConstraintLine {
+				if strings.HasPrefix(trimmed, "timeout ") || strings.Contains(trimmed, " timeout ") {
 					isConstraintLine = true
 				}
 			}
