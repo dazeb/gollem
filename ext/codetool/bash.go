@@ -948,6 +948,12 @@ func signalHint(exitCode int) string {
 			"(2) compile with debug symbols: `gcc -g -fsanitize=address`, " +
 			"(3) common causes: array out of bounds, null pointer dereference, use-after-free, stack overflow from deep recursion, " +
 			"(4) check `dmesg | tail` for kernel messages about the crash]"
+	case 136:
+		return "[hint: floating point exception (SIGFPE) — typically division by zero or integer overflow. " +
+			"Check: (1) division operations where divisor could be 0, (2) modulo by zero, " +
+			"(3) integer overflow in multiplication (use long/int64). " +
+			"Add guards: `if (divisor == 0)` before every division. " +
+			"In Python this would raise ZeroDivisionError instead, so this is a C/C++/Rust issue]"
 	case 134:
 		return "[hint: process aborted (SIGABRT) — likely an assertion failure or double-free. " +
 			"Check: assert() failures, memory corruption, C++ exception in destructor]"

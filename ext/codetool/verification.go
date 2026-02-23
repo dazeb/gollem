@@ -955,6 +955,12 @@ func failureGuidance(summary string) string {
 			"Convert recursive algorithms to iterative (use an explicit stack/queue). " +
 			"If the recursion depth is legitimate, increase the limit: " +
 			"Python: sys.setrecursionlimit(N), C/C++: ulimit -s unlimited.\n"
+	case strings.Contains(lower, "floating point exception") || strings.Contains(lower, "sigfpe") ||
+		strings.Contains(lower, "division by zero") || strings.Contains(lower, "divide by zero") ||
+		strings.Contains(lower, "exit code: 136"):
+		return "FLOATING POINT EXCEPTION — your code has division by zero or integer overflow. " +
+			"Add guards before every division: check that divisors are non-zero. " +
+			"For integer overflow: use larger types (int64/long) or check before multiply.\n"
 	case strings.Contains(lower, "assert"):
 		return "ASSERTION FAILURE — read the test code to understand exactly what's expected. " +
 			"Fix one failure at a time, starting with the first.\n"

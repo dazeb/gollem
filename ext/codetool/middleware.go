@@ -2888,6 +2888,11 @@ func extractImportedNames(parts []string, missingFiles []string) map[string][]st
 					}
 				}
 			}
+
+			// JavaScript/TypeScript: destructured imports.
+			// "const { solve, helper } = require('./solution')"
+			// "import { solve, helper } from './solution'"
+			extractJSImportNames(trimmed, moduleToFile, result)
 		}
 	}
 
@@ -2905,6 +2910,121 @@ func extractImportedNames(parts []string, missingFiles []string) map[string][]st
 	}
 
 	return result
+}
+
+// extractJSImportNames extracts named exports from JS/TS import/require patterns.
+// Handles:
+//   - const { solve, helper } = require('./solution')
+//   - import { solve, helper } from './solution'
+//   - import solve from './solution' (default import)
+func extractJSImportNames(line string, moduleToFile map[string]string, result map[string][]string) {
+	// Pattern 1: destructured require — const { a, b } = require('./mod')
+	if strings.Contains(line, "require(") && strings.Contains(line, "{") {
+		braceStart := strings.Index(line, "{")
+		braceEnd := strings.Index(line, "}")
+		if braceStart >= 0 && braceEnd > braceStart {
+			names := line[braceStart+1 : braceEnd]
+			// Extract module path from require('...')
+			mod := extractJSModuleName(line)
+			if mod == "" {
+				return
+			}
+			addJSNamesToResult(names, mod, moduleToFile, result)
+		}
+		return
+	}
+
+	// Pattern 2: import { a, b } from './mod'
+	if strings.HasPrefix(strings.TrimSpace(line), "import ") && strings.Contains(line, "from ") {
+		if strings.Contains(line, "{") {
+			braceStart := strings.Index(line, "{")
+			braceEnd := strings.Index(line, "}")
+			if braceStart >= 0 && braceEnd > braceStart {
+				names := line[braceStart+1 : braceEnd]
+				mod := extractJSModuleName(line)
+				if mod == "" {
+					return
+				}
+				addJSNamesToResult(names, mod, moduleToFile, result)
+			}
+		} else {
+			// Default import: import solve from './solution'
+			fields := strings.Fields(strings.TrimSpace(line))
+			if len(fields) >= 4 && fields[2] == "from" {
+				name := fields[1]
+				mod := extractJSModuleName(line)
+				if mod != "" && name != "*" {
+					// Check both .js and .ts variants of the module.
+					for _, ext := range []string{".js", ".ts"} {
+						filename := mod + ext
+						if _, ok := moduleToFile[mod]; ok {
+							result[filename] = append(result[filename], name+" (default)")
+						}
+					}
+				}
+			}
+		}
+		return
+	}
+}
+
+// extractJSModuleName extracts the bare module name from a JS import/require line.
+// For "./solution" or '../solution' returns "solution".
+// Returns empty string if not a local import.
+func extractJSModuleName(line string) string {
+	for _, delim := range []string{"'", "\""} {
+		// Find the module path in quotes after require( or from
+		for _, prefix := range []string{"require(" + delim, "from " + delim} {
+			idx := strings.Index(line, prefix)
+			if idx < 0 {
+				continue
+			}
+			rest := line[idx+len(prefix):]
+			endIdx := strings.Index(rest, delim)
+			if endIdx <= 0 {
+				continue
+			}
+			modPath := rest[:endIdx]
+			// Only local imports.
+			if !strings.HasPrefix(modPath, ".") && !strings.HasPrefix(modPath, "/") {
+				continue
+			}
+			base := filepath.Base(modPath)
+			// Strip extension if present.
+			base = strings.TrimSuffix(base, ".js")
+			base = strings.TrimSuffix(base, ".ts")
+			base = strings.TrimSuffix(base, ".mjs")
+			base = strings.TrimSuffix(base, ".cjs")
+			return strings.ToLower(base)
+		}
+	}
+	return ""
+}
+
+// addJSNamesToResult parses comma-separated names from destructured JS imports
+// and adds them to the result map for matching module files.
+func addJSNamesToResult(names, mod string, moduleToFile map[string]string, result map[string][]string) {
+	for _, name := range strings.Split(names, ",") {
+		name = strings.TrimSpace(name)
+		// Handle "name as alias" or "name: alias"
+		if asIdx := strings.Index(name, " as "); asIdx > 0 {
+			name = name[:asIdx]
+		}
+		if colonIdx := strings.Index(name, ":"); colonIdx > 0 {
+			name = strings.TrimSpace(name[:colonIdx])
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		// Check both .js and .ts variants.
+		for _, ext := range []string{".js", ".ts"} {
+			filename := mod + ext
+			if _, ok := moduleToFile[mod]; ok {
+				result[filename] = append(result[filename], name)
+			}
+		}
+	}
 }
 
 // extractFunctionSignatures scans test files for function call patterns to

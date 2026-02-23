@@ -319,6 +319,7 @@ func TestSignalHint(t *testing.T) {
 	}{
 		{137, "SIGKILL"},
 		{139, "SIGSEGV"},
+		{136, "SIGFPE"},
 		{134, "SIGABRT"},
 		{1, ""},
 		{0, ""},
@@ -2162,6 +2163,9 @@ func TestFailureGuidance(t *testing.T) {
 		{"stack overflow in recursive call", "STACK OVERFLOW"},
 		{"RecursionError: too deep", "STACK OVERFLOW"},
 		{"stack level too deep (SystemStackError)", "STACK OVERFLOW"},
+		{"floating point exception (core dumped)", "FLOATING POINT EXCEPTION"},
+		{"division by zero in calculation", "FLOATING POINT EXCEPTION"},
+		{"exit code: 136 (SIGFPE)", "FLOATING POINT EXCEPTION"},
 		{"generic failure", "Fix the failures"},
 	}
 	for _, tt := range tests {
@@ -4947,6 +4951,54 @@ func TestExtractImportedNamesEmpty(t *testing.T) {
 	result := extractImportedNames(parts, []string{"solution.py"})
 	if len(result) != 0 {
 		t.Errorf("expected empty, got %v", result)
+	}
+}
+
+func TestExtractImportedNamesJS(t *testing.T) {
+	// Test JavaScript destructured require pattern.
+	parts := []string{
+		"\n## Test file auto-read: /tests/test.js",
+		`const { solve, helper } = require('./solution')
+import { validate, transform } from './solution'
+const solution = require('./solution')`,
+		"\n## Other section",
+		"some other content",
+	}
+	missingFiles := []string{"solution.js", "solution.ts"}
+
+	result := extractImportedNames(parts, missingFiles)
+	// Should find names for solution.js (the module name maps to "solution").
+	// Check that at least solve and helper are extracted from the require pattern.
+	allNames := make(map[string]bool)
+	for _, names := range result {
+		for _, n := range names {
+			allNames[n] = true
+		}
+	}
+	for _, expected := range []string{"solve", "helper", "validate", "transform"} {
+		if !allNames[expected] {
+			t.Errorf("expected %q in JS imported names, got %v", expected, allNames)
+		}
+	}
+}
+
+func TestExtractJSImportNamesDefaultImport(t *testing.T) {
+	// Test ES module default import.
+	parts := []string{
+		"\n## Test file auto-read: /tests/test.ts",
+		`import solver from './solver'`,
+		"\n## Other section",
+	}
+	missingFiles := []string{"solver.js", "solver.ts"}
+	result := extractImportedNames(parts, missingFiles)
+	allNames := make(map[string]bool)
+	for _, names := range result {
+		for _, n := range names {
+			allNames[n] = true
+		}
+	}
+	if !allNames["solver (default)"] {
+		t.Errorf("expected 'solver (default)' in imported names, got %v", allNames)
 	}
 }
 
