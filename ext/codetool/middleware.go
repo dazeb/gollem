@@ -384,6 +384,29 @@ func discoverEnvironment(workDir string) string {
 	if len(availableTools) > 0 {
 		parts = append(parts, "Available tools: "+strings.Join(availableTools, ", "))
 	}
+
+	// Detect available language servers for LSP tool.
+	// Knowing which servers are available lets the agent use semantic code
+	// navigation (go-to-definition, find-references) instead of grep.
+	var availableLSP []string
+	lspServers := []struct{ name, cmd string }{
+		{"gopls (Go)", "gopls"},
+		{"pyright (Python)", "pyright-langserver"},
+		{"typescript-language-server (TS/JS)", "typescript-language-server"},
+		{"rust-analyzer (Rust)", "rust-analyzer"},
+		{"clangd (C/C++)", "clangd"},
+		{"haskell-language-server (Haskell)", "haskell-language-server-wrapper"},
+		{"zls (Zig)", "zls"},
+	}
+	for _, ls := range lspServers {
+		if runQuiet(workDir, "which", ls.cmd) != "" {
+			availableLSP = append(availableLSP, ls.name)
+		}
+	}
+	if len(availableLSP) > 0 {
+		parts = append(parts, "Language servers (for lsp tool): "+strings.Join(availableLSP, ", "))
+	}
+
 	// Python version is critical — many TB2 containers have python3 but not python.
 	if pyVer := runQuiet(workDir, "python3", "--version"); pyVer != "" {
 		parts = append(parts, "Python: "+pyVer)
