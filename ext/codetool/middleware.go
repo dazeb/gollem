@@ -452,6 +452,8 @@ func discoverEnvironment(workDir string) string {
 		{"erlang_ls (Erlang)", "erlang_ls"},
 		{"nimlangserver (Nim)", "nimlangserver"},
 		{"crystalline (Crystal)", "crystalline"},
+		{"clojure-lsp (Clojure)", "clojure-lsp"},
+		{"gleam lsp (Gleam)", "gleam"},
 	}
 	for _, ls := range lspServers {
 		if runQuiet(workDir, "which", ls.cmd) != "" {

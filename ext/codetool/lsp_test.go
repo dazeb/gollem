@@ -43,6 +43,14 @@ func TestLanguageForFile(t *testing.T) {
 		{"main.nim", "nim"},
 		{"config.nims", "nim"},
 		{"app.cr", "crystal"},
+		{"core.clj", "clojure"},
+		{"app.cljs", "clojure"},
+		{"shared.cljc", "clojure"},
+		{"deps.edn", "clojure"},
+		{"main.gleam", "gleam"},
+		{"analysis.r", "r"},
+		{"Analysis.R", "r"},
+		{"report.rmd", "r"},
 		{"README.md", ""},
 		{"data.json", ""},
 		{"Makefile", ""},
@@ -56,9 +64,19 @@ func TestLanguageForFile(t *testing.T) {
 }
 
 func TestFileURI(t *testing.T) {
-	got := fileURI("/home/user/project/main.go")
-	if got != "file:///home/user/project/main.go" {
-		t.Errorf("fileURI = %q, want file:///home/user/project/main.go", got)
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/home/user/project/main.go", "file:///home/user/project/main.go"},
+		{"/home/user/my project/main.go", "file:///home/user/my%20project/main.go"},
+		{"/home/user/café/lib.rs", "file:///home/user/caf%C3%A9/lib.rs"},
+	}
+	for _, tt := range tests {
+		got := fileURI(tt.path)
+		if got != tt.want {
+			t.Errorf("fileURI(%q) = %q, want %q", tt.path, got, tt.want)
+		}
 	}
 }
 
@@ -69,6 +87,7 @@ func TestURIToPath(t *testing.T) {
 	}{
 		{"file:///home/user/main.go", "/home/user/main.go"},
 		{"file:///Users/trevor/project/lib.rs", "/Users/trevor/project/lib.rs"},
+		{"file:///home/user/my%20project/main.go", "/home/user/my project/main.go"},
 		{"/plain/path", "/plain/path"},
 	}
 	for _, tt := range tests {

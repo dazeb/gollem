@@ -23,7 +23,7 @@ import (
 // LSPParams are the parameters for the lsp tool.
 type LSPParams struct {
 	// Method is the LSP method to invoke.
-	Method string `json:"method" jsonschema:"description=LSP method: definition (go to definition)\\, references (find all usages)\\, hover (type info and docs)\\, diagnostics (errors/warnings in file)\\, symbols (workspace symbol search)\\, rename (rename symbol across workspace)\\, outline (list all symbols in a file),enum=definition,enum=references,enum=hover,enum=diagnostics,enum=symbols,enum=rename,enum=outline"`
+	Method string `json:"method" jsonschema:"description=LSP method: definition (go to definition)\\, references (find all usages)\\, hover (type info and docs)\\, diagnostics (errors/warnings in file)\\, symbols (workspace symbol search)\\, rename (rename symbol across workspace)\\, outline (list all symbols in a file)\\, type_definition (go to type of symbol)\\, implementation (find implementations of interface/abstract),enum=definition,enum=references,enum=hover,enum=diagnostics,enum=symbols,enum=rename,enum=outline,enum=type_definition,enum=implementation"`
 
 	// File is the target file path (relative or absolute).
 	File string `json:"file" jsonschema:"description=File path (relative to working directory or absolute)"`
@@ -128,6 +128,12 @@ func languageForFile(name string) string {
 		return "nim"
 	case ".cr":
 		return "crystal"
+	case ".clj", ".cljs", ".cljc", ".edn":
+		return "clojure"
+	case ".gleam":
+		return "gleam"
+	case ".r", ".R", ".rmd":
+		return "r"
 	default:
 		return ""
 	}
@@ -209,6 +215,15 @@ var serverConfigs = map[string][]lspServerConfig{
 	"crystal": {
 		{command: "crystalline", args: nil, installHint: "install crystalline from https://github.com/elbywan/crystalline"},
 	},
+	"clojure": {
+		{command: "clojure-lsp", args: nil, installHint: "install clojure-lsp from https://clojure-lsp.io/"},
+	},
+	"gleam": {
+		{command: "gleam", args: []string{"lsp"}, installHint: "install Gleam from https://gleam.run/getting-started/"},
+	},
+	"r": {
+		{command: "R", args: []string{"--slave", "-e", "languageserver::run()"}, installHint: "R -e 'install.packages(\"languageserver\")'"},
+	},
 }
 
 // findServerConfig returns the first available server config for a language.
@@ -226,13 +241,17 @@ func findServerConfig(lang string) (*lspServerConfig, error) {
 	return nil, fmt.Errorf("no language server found for %s — install with: %s", lang, configs[0].installHint)
 }
 
-// fileURI converts a file path to a file:// URI.
+// fileURI converts a file path to a file:// URI, percent-encoding special
+// characters (spaces, non-ASCII) as required by RFC 8089.
 func fileURI(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	return "file://" + abs
+	// Use url.URL to properly encode the path. This handles spaces,
+	// non-ASCII characters, and other special characters correctly.
+	u := &url.URL{Scheme: "file", Path: abs}
+	return u.String()
 }
 
 // uriToPath converts a file:// URI back to a file path.
@@ -897,15 +916,16 @@ func LSP(opts ...Option) core.Tool {
 			"Methods: definition (go to definition), references (find all usages), "+
 			"hover (type info and docs), diagnostics (errors/warnings in file), "+
 			"symbols (workspace symbol search), rename (rename symbol across workspace), "+
-			"outline (list all symbols in a file). "+
+			"outline (list all symbols in a file), type_definition (go to type of a symbol), "+
+			"implementation (find implementations of an interface/abstract type). "+
 			"Requires a language server to be installed (e.g., gopls for Go, pyright for Python). "+
-			"Use file+line+character for definition/references/hover/rename. Use file for diagnostics/outline. Use query for symbols.",
+			"Use file+line+character for definition/references/hover/rename/type_definition/implementation. Use file for diagnostics/outline. Use query for symbols.",
 		func(ctx context.Context, params LSPParams) (string, error) {
 			if params.File == "" && params.Method != "symbols" {
 				return "", &core.ModelRetryError{Message: "file parameter is required"}
 			}
 			if params.Method == "" {
-				return "", &core.ModelRetryError{Message: "method parameter is required (definition, references, hover, diagnostics, symbols)"}
+				return "", &core.ModelRetryError{Message: "method parameter is required (definition, references, hover, diagnostics, symbols, rename, outline, type_definition, implementation)"}
 			}
 
 			// Resolve file path.
@@ -921,7 +941,7 @@ func LSP(opts ...Option) core.Tool {
 			}
 			if lang == "" && params.Method != "symbols" {
 				return "", &core.ModelRetryError{
-					Message: fmt.Sprintf("unsupported file type %q — LSP supports: .go, .py, .ts, .js, .rs, .c, .cpp, .hs, .java, .rb, .lua, .zig, .cs, .kt, .swift, .ex, .scala, .php, .dart, .ml", filepath.Ext(params.File)),
+					Message: fmt.Sprintf("unsupported file type %q — LSP supports: .go, .py, .ts, .js, .rs, .c, .cpp, .hs, .java, .rb, .lua, .zig, .cs, .kt, .swift, .ex, .scala, .php, .dart, .ml, .erl, .nim, .cr, .clj, .gleam, .r", filepath.Ext(params.File)),
 				}
 			}
 			if lang == "" {
@@ -995,9 +1015,21 @@ func LSP(opts ...Option) core.Tool {
 			case "outline":
 				return lspOutline(ctx, srv, filePath, absWorkDir)
 
+			case "type_definition":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for type_definition (both 1-indexed)"}
+				}
+				return lspTypeDefinition(ctx, srv, filePath, params.Line, params.Character, absWorkDir)
+
+			case "implementation":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for implementation (both 1-indexed)"}
+				}
+				return lspImplementation(ctx, srv, filePath, params.Line, params.Character, absWorkDir)
+
 			default:
 				return "", &core.ModelRetryError{
-					Message: fmt.Sprintf("unknown method %q — use: definition, references, hover, diagnostics, symbols, rename, outline", params.Method),
+					Message: fmt.Sprintf("unknown method %q — use: definition, references, hover, diagnostics, symbols, rename, outline, type_definition, implementation", params.Method),
 				}
 			}
 		},
@@ -1062,6 +1094,54 @@ func lspHover(ctx context.Context, srv *lspServer, filePath string, line, char i
 		return "No hover information available.", nil
 	}
 	return formatHover(result), nil
+}
+
+func lspTypeDefinition(ctx context.Context, srv *lspServer, filePath string, line, char int, workDir string) (string, error) {
+	result, err := srv.call(ctx, "textDocument/typeDefinition", map[string]any{
+		"textDocument": map[string]any{"uri": fileURI(filePath)},
+		"position":     map[string]any{"line": line - 1, "character": char - 1},
+	})
+	if err != nil {
+		// Some servers don't support typeDefinition — give a helpful message.
+		if strings.Contains(err.Error(), "not support") || strings.Contains(err.Error(), "method not found") {
+			return "Type definition not supported by this language server. Use 'definition' or 'hover' instead.", nil
+		}
+		return "", err
+	}
+
+	var locs []lspLocation
+	if err := json.Unmarshal(result, &locs); err != nil {
+		var loc lspLocation
+		if err2 := json.Unmarshal(result, &loc); err2 != nil {
+			return "No type definition found.", nil
+		}
+		locs = []lspLocation{loc}
+	}
+	if len(locs) == 0 {
+		return "No type definition found.", nil
+	}
+	return formatLocations(locs, workDir, 10), nil
+}
+
+func lspImplementation(ctx context.Context, srv *lspServer, filePath string, line, char int, workDir string) (string, error) {
+	result, err := srv.call(ctx, "textDocument/implementation", map[string]any{
+		"textDocument": map[string]any{"uri": fileURI(filePath)},
+		"position":     map[string]any{"line": line - 1, "character": char - 1},
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "not support") || strings.Contains(err.Error(), "method not found") {
+			return "Implementation lookup not supported by this language server.", nil
+		}
+		return "", err
+	}
+
+	var locs []lspLocation
+	if err := json.Unmarshal(result, &locs); err != nil || len(locs) == 0 {
+		return "No implementations found.", nil
+	}
+
+	header := fmt.Sprintf("%d implementation(s) found:\n", len(locs))
+	return header + formatLocations(locs, workDir, 30), nil
 }
 
 func lspDiagnostics(ctx context.Context, srv *lspServer, filePath, workDir string) (string, error) {
