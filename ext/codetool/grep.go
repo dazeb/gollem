@@ -375,7 +375,20 @@ func isSkippableDir(name string) bool {
 		".pnp",        // Yarn PnP runtime
 		".expo",       // React Native Expo cache
 		// Bazel build outputs.
-		"bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles":
+		"bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles",
+		// CMake build artifacts (generated files, object directories).
+		"CMakeFiles",
+		// Additional caches and generated directories.
+		".hypothesis",   // Python hypothesis testing cache
+		"htmlcov",       // Python coverage HTML reports
+		".output",       // Nuxt 3 output
+		".vercel",       // Vercel deployment cache
+		".netlify",      // Netlify deployment cache
+		".astro",        // Astro build cache
+		".docusaurus",   // Docusaurus build cache
+		".sass-cache",   // Sass compilation cache
+		".temp",         // Generic temp directory
+		".tmp":          // Generic temp directory
 		return true
 	}
 	return false

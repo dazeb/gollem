@@ -2541,6 +2541,30 @@ func gitHint(output string, exitCode int) string {
 			"If not, remove the stale lock: rm -f .git/index.lock]"
 	}
 
+	// Patch apply failures: "git apply" or "git am"
+	if strings.Contains(output, "patch does not apply") || strings.Contains(output, "error: patch failed") {
+		return "[hint: git patch failed to apply — the file has changed since the patch was created. " +
+			"Try: git apply --3way <patch> (allows merge), or apply manually by reading the .patch file]"
+	}
+	if strings.Contains(output, "git am") && strings.Contains(output, "patch does not apply") ||
+		strings.Contains(output, "Patch failed at") {
+		return "[hint: git am failed — resolve the conflict manually, then: git am --continue. " +
+			"To skip this patch: git am --skip. To abort: git am --abort]"
+	}
+
+	// Diverged branches: "have diverged"
+	if strings.Contains(output, "have diverged") {
+		return "[hint: branches have diverged — they each have commits the other doesn't. " +
+			"Options: (1) git pull --rebase to replay your commits on top, " +
+			"(2) git merge to create a merge commit]"
+	}
+
+	// Empty commit.
+	if strings.Contains(output, "nothing to commit") {
+		return "[hint: nothing to commit — working tree is clean. " +
+			"If you expected changes: check git status, ensure files are saved]"
+	}
+
 	return ""
 }
 
