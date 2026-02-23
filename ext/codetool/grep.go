@@ -101,42 +101,43 @@ func Grep(opts ...Option) core.Tool {
 			fileCount := 0
 			truncated := false
 
-			err = filepath.Walk(searchPath, func(path string, info os.FileInfo, walkErr error) error {
+			// WalkDir is faster than Walk: avoids Stat on every entry.
+			// We only need file info for the size check on matching files.
+			err = filepath.WalkDir(searchPath, func(path string, d os.DirEntry, walkErr error) error {
 				if walkErr != nil {
 					return walkErr
 				}
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if info.IsDir() {
-					base := info.Name()
-					if isSkippableDir(base) {
+				if d.IsDir() {
+					if isSkippableDir(d.Name()) {
 						return filepath.SkipDir
 					}
 					return nil
 				}
 
-				// Skip binary and large files.
-				if info.Size() > 1<<20 { // 1MB
-					return nil
-				}
-
 				// Apply include filter (with brace expansion).
 				if params.Include != "" {
-					if !matchWithBraces(params.Include, info.Name()) {
+					if !matchWithBraces(params.Include, d.Name()) {
 						return nil
 					}
 				}
 
 				// Apply exclude filter (with brace expansion).
 				if params.Exclude != "" {
-					if matchWithBraces(params.Exclude, info.Name()) {
+					if matchWithBraces(params.Exclude, d.Name()) {
 						return nil
 					}
 				}
 
 				// Skip likely binary files.
-				if isBinaryFilename(info.Name()) {
+				if isBinaryFilename(d.Name()) {
+					return nil
+				}
+
+				// Skip large files (only Stat files that pass filters).
+				if info, err := d.Info(); err == nil && info.Size() > 1<<20 {
 					return nil
 				}
 
