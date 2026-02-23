@@ -11567,6 +11567,81 @@ func TestIsContextOverflowError_NonOverflowError(t *testing.T) {
 	}
 }
 
+// TestContextOverflowMiddleware_ShortHistoryNoPanic verifies that the
+// ContextOverflowMiddleware doesn't panic when the message history is short
+// (≤ keepLast+1 messages). The emergency compress returns the same number of
+// messages with truncated content. The old code compared compressed[0] ==
+// current[0] using interface equality — but ModelRequest contains a slice
+// field (Parts), which is not comparable in Go and causes a runtime panic.
+func TestContextOverflowMiddleware_ShortHistoryNoPanic(t *testing.T) {
+	// Build a short message history (5 messages — within keepLast+1 = 7).
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Do a task"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "I'll help"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "More details"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "Working on it"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Continue"},
+			},
+		},
+	}
+
+	// Call emergencyCompressMessagesWithConfig directly with the short history.
+	// This returns the same number of messages (truncation only, no dropping).
+	compressed := emergencyCompressMessagesWithConfig(messages, 20000, 6)
+
+	// The old buggy code would compare compressed[0] == messages[0] which
+	// panics because ModelRequest contains a slice. This test just verifies
+	// no panic occurs and the compressed messages are usable.
+	if len(compressed) != len(messages) {
+		t.Errorf("expected %d messages, got %d", len(messages), len(compressed))
+	}
+
+	// Now test through the actual ContextOverflowMiddleware to confirm the
+	// comparison doesn't panic. Use a model that always returns 413.
+	callCount := 0
+	mw := ContextOverflowMiddleware()
+	_, err := mw(
+		context.Background(),
+		messages,
+		nil,
+		nil,
+		func(ctx context.Context, msgs []core.ModelMessage, s *core.ModelSettings, p *core.ModelRequestParameters) (*core.ModelResponse, error) {
+			callCount++
+			return nil, &core.ModelHTTPError{
+				StatusCode: 413,
+				Body:       "request entity too large",
+			}
+		},
+	)
+
+	// Should get the 413 error back (after compression attempts), NOT a panic.
+	if err == nil {
+		t.Fatal("expected error from 413, got nil")
+	}
+	var httpErr *core.ModelHTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != 413 {
+		t.Fatalf("expected 413 error, got: %v", err)
+	}
+}
+
 func TestCompilationErrorHint_Julia(t *testing.T) {
 	output := `ERROR: LoadError: syntax: unexpected "end"
 Stacktrace:

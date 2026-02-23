@@ -8431,8 +8431,13 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 
 		for _, cfg := range configs {
 			compressed := emergencyCompressMessagesWithConfig(current, cfg.maxContentBytes, cfg.keepLast)
-			if len(compressed) >= len(current) && compressed[0] == current[0] {
-				continue // Can't compress further with this config.
+			// Note: we cannot compare compressed[0] == current[0] because
+			// ModelRequest/ModelResponse contain slice fields (Parts) which
+			// are not comparable in Go and cause a runtime panic. Instead,
+			// just check the message count — if it didn't change, the
+			// compression only truncated content which may still help.
+			if len(compressed) == 0 {
+				continue
 			}
 
 			fmt.Fprintf(os.Stderr, "[gollem] 413 context overflow: compression %d → %d messages (max %dB/block), retrying\n",
