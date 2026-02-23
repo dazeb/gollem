@@ -2,6 +2,7 @@ package temporal
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
@@ -76,7 +77,10 @@ func (m *TemporalModel) ModelRequestStreamActivity(ctx context.Context, params r
 	for {
 		_, err := stream.Next()
 		if err != nil {
-			break
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("streaming model request: %w", err)
 		}
 	}
 	return stream.Response(), nil

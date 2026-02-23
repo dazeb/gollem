@@ -2,6 +2,9 @@ package temporal
 
 import (
 	"context"
+	"errors"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,3 +130,125 @@ func TestCompletedStream(t *testing.T) {
 		t.Errorf("unexpected close error: %v", err)
 	}
 }
+
+// TestModelRequestStreamActivity_MidStreamError verifies that a non-EOF error
+// during stream consumption is propagated rather than silently swallowed.
+func TestModelRequestStreamActivity_MidStreamError(t *testing.T) {
+	streamErr := errors.New("connection reset")
+	model := &errorStreamTestModel{
+		response: &core.ModelResponse{
+			Parts:     []core.ModelResponsePart{core.TextPart{Content: "partial"}},
+			ModelName: "test-model",
+			Usage:     core.Usage{InputTokens: 10, OutputTokens: 5},
+		},
+		streamErr: streamErr,
+	}
+
+	tm := NewTemporalModel(model, "test-agent", DefaultActivityConfig())
+	params := requestParams{
+		Messages: []core.ModelMessage{
+			core.ModelRequest{
+				Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+				Timestamp: time.Now(),
+			},
+		},
+		Parameters: &core.ModelRequestParameters{AllowTextOutput: true},
+	}
+
+	_, err := tm.ModelRequestStreamActivity(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error from mid-stream failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "connection reset") {
+		t.Errorf("expected error to contain 'connection reset', got %q", err.Error())
+	}
+}
+
+// errorStreamTestModel returns a stream that errors mid-consumption.
+type errorStreamTestModel struct {
+	response  *core.ModelResponse
+	streamErr error
+}
+
+func (m *errorStreamTestModel) ModelName() string { return "test-model" }
+func (m *errorStreamTestModel) Request(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	return m.response, nil
+}
+func (m *errorStreamTestModel) RequestStream(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	return &errorTestStream{response: m.response, err: m.streamErr}, nil
+}
+
+type errorTestStream struct {
+	response *core.ModelResponse
+	err      error
+	called   int
+}
+
+func (s *errorTestStream) Next() (core.ModelResponseStreamEvent, error) {
+	s.called++
+	if s.called == 1 {
+		return core.PartStartEvent{Index: 0, Part: s.response.Parts[0]}, nil
+	}
+	return nil, s.err
+}
+func (s *errorTestStream) Response() *core.ModelResponse { return s.response }
+func (s *errorTestStream) Usage() core.Usage              { return s.response.Usage }
+func (s *errorTestStream) Close() error                   { return nil }
+
+// TestModelRequestStreamActivity_Success verifies normal stream consumption.
+func TestModelRequestStreamActivity_Success(t *testing.T) {
+	model := &successStreamTestModel{
+		response: &core.ModelResponse{
+			Parts:     []core.ModelResponsePart{core.TextPart{Content: "streamed result"}},
+			ModelName: "test-model",
+			Usage:     core.Usage{InputTokens: 10, OutputTokens: 5},
+		},
+	}
+
+	tm := NewTemporalModel(model, "test-agent", DefaultActivityConfig())
+	params := requestParams{
+		Messages: []core.ModelMessage{
+			core.ModelRequest{
+				Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+				Timestamp: time.Now(),
+			},
+		},
+		Parameters: &core.ModelRequestParameters{AllowTextOutput: true},
+	}
+
+	resp, err := tm.ModelRequestStreamActivity(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.TextContent() != "streamed result" {
+		t.Errorf("expected 'streamed result', got %q", resp.TextContent())
+	}
+}
+
+type successStreamTestModel struct {
+	response *core.ModelResponse
+}
+
+func (m *successStreamTestModel) ModelName() string { return "test-model" }
+func (m *successStreamTestModel) Request(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	return m.response, nil
+}
+func (m *successStreamTestModel) RequestStream(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	return &successTestStream{response: m.response}, nil
+}
+
+type successTestStream struct {
+	response *core.ModelResponse
+	called   int
+}
+
+func (s *successTestStream) Next() (core.ModelResponseStreamEvent, error) {
+	s.called++
+	if s.called == 1 {
+		return core.PartStartEvent{Index: 0, Part: s.response.Parts[0]}, nil
+	}
+	return nil, io.EOF
+}
+func (s *successTestStream) Response() *core.ModelResponse { return s.response }
+func (s *successTestStream) Usage() core.Usage              { return s.response.Usage }
+func (s *successTestStream) Close() error                   { return nil }
