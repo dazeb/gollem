@@ -210,20 +210,24 @@ func Bash(opts ...Option) core.Tool {
 			}
 			rawLen := len(outStr) + len(errStr)
 
-			// Pre-compute test summary and compilation errors from FULL output
-			// before truncation. This ensures the agent always sees all failing
-			// test names, accurate pass/fail counts, and all compilation error
-			// lines, even when output is heavily truncated.
+			// Pre-compute test/compilation data from FULL output before truncation.
+			// Fingerprints and counts are ALWAYS computed (cheap operations) to
+			// ensure stagnation/regression/stale-failure detection works even for
+			// short output from single-test or small-project tasks. Summaries are
+			// only computed for long output where they condense information the
+			// model can't easily see after truncation.
 			fullCombined := outStr + errStr
 			var preTestSummary string
-			var preTestFingerprint string
-			var preTestPassed, preTestFailed int
-			var preTestCountsOK bool
 			var preCompileSummary string
+
+			// Always compute fingerprints and counts for tracking.
+			preTestFingerprint := testFailureFingerprint(fullCombined)
+			preTestPassed, preTestFailed, preTestCountsOK := extractTestCounts(fullCombined)
+
+			// Only compute summaries for long output — the model can already
+			// read short output directly without a condensed summary.
 			if len(fullCombined) > 2000 {
 				preTestSummary = testResultSummary(fullCombined)
-				preTestFingerprint = testFailureFingerprint(fullCombined)
-				preTestPassed, preTestFailed, preTestCountsOK = extractTestCounts(fullCombined)
 				// Also pre-compute compilation error summary if no test output.
 				// Long builds can lose error lines in the middle after truncation.
 				if preTestSummary == "" {
@@ -359,18 +363,41 @@ func Bash(opts ...Option) core.Tool {
 				result += "\n" + hint
 			}
 
-			// Append summaries for long output to help the model focus.
-			// Use pre-computed values from FULL output (before truncation)
-			// to ensure all failing test names and counts are accurate.
-			if preTestSummary != "" {
-				result += "\n" + preTestSummary
-				if exitCode != 0 && (strings.Contains(strings.ToLower(preTestSummary), "fail") || strings.Contains(strings.ToLower(preTestSummary), "error")) {
+			// Test and compilation tracking: detect stagnation, regression, and
+			// stale failures. Tracking always runs (even for short output) to
+			// catch loops in single-test and small-project tasks. Summaries are
+			// only displayed for long output where they condense truncated info.
+			//
+			// Determine if this output contains test results (failure detail or
+			// parseable counts). This is more reliable than checking command
+			// patterns since agents may run tests via custom scripts.
+			hasTestOutput := preTestSummary != "" || preTestFingerprint != "" || preTestCountsOK
+
+			if hasTestOutput {
+				// Display summary for long output.
+				if preTestSummary != "" {
+					result += "\n" + preTestSummary
+				}
+
+				// Check for failures in the output.
+				hasFailures := preTestFingerprint != ""
+				if preTestSummary != "" {
+					summaryLower := strings.ToLower(preTestSummary)
+					hasFailures = hasFailures || strings.Contains(summaryLower, "fail") || strings.Contains(summaryLower, "error")
+				}
+
+				if exitCode != 0 && hasFailures {
 					// Surface the first failure detail so the agent knows
 					// exactly what's wrong without scanning the full output.
 					fp := preTestFingerprint
-					if fp != "" && !strings.Contains(preTestSummary, fp) {
-						result += "\n" + fp
-					} else if fp == "" {
+					if fp != "" {
+						if preTestSummary != "" && !strings.Contains(preTestSummary, fp) {
+							result += "\n" + fp
+						} else if preTestSummary == "" {
+							// Short output: show failure detail for focus.
+							result += "\n" + fp
+						}
+					} else if preTestSummary != "" {
 						result += "\n[hint: read the FULL test failure output above — fix one failure at a time, starting with the first]"
 					}
 					if fp != "" && fp == lastTestFailFingerprint {
@@ -414,6 +441,7 @@ func Bash(opts ...Option) core.Tool {
 						}
 					}
 				} else {
+					// Test passed or no failure indicators — clear tracking.
 					lastTestFailFingerprint = ""
 					testRunHistory = nil
 				}
@@ -427,21 +455,36 @@ func Bash(opts ...Option) core.Tool {
 					result += "\n[hint: this compilation error is IDENTICAL to the previous build — your edit did not fix the issue. Re-read the error message carefully, verify your edit was applied to the correct file and line, and try a different fix]"
 				}
 				lastCompileErrorFingerprint = fp
-			} else if len(outStr+errStr) > 2000 {
-				// Fallback: compute from truncated output (short builds).
-				if summary := compilationErrorSummary(outStr+errStr, exitCode); summary != "" {
-					result += "\n" + summary
-					fp := compilationFingerprint(outStr + errStr)
-					if fp != "" && fp == lastCompileErrorFingerprint {
+			} else if exitCode != 0 {
+				// No test output and no pre-computed compilation summary.
+				// Still track compilation fingerprints for stale-error detection.
+				fp := compilationFingerprint(fullCombined)
+				if fp != "" {
+					if fp == lastCompileErrorFingerprint {
 						result += "\n[hint: this compilation error is IDENTICAL to the previous build — your edit did not fix the issue. Re-read the error message carefully, verify your edit was applied to the correct file and line, and try a different fix]"
 					}
 					lastCompileErrorFingerprint = fp
 				}
+				// Fallback: compute compilation summary from truncated output for long builds.
+				if len(outStr+errStr) > 2000 {
+					if summary := compilationErrorSummary(outStr+errStr, exitCode); summary != "" {
+						result += "\n" + summary
+					}
+				}
 			}
 
-			// Clear stale compilation fingerprint on successful build.
-			if exitCode == 0 && isBuildCommand(params.Command) {
-				lastCompileErrorFingerprint = ""
+			// Clear tracking state on successful verification or build,
+			// regardless of output length. Without this, short-output success
+			// doesn't clear stale fingerprints, causing false warnings.
+			if exitCode == 0 {
+				if isBuildCommand(params.Command) {
+					lastCompileErrorFingerprint = ""
+				}
+				if isVerificationString(strings.ToLower(params.Command)) {
+					lastTestFailFingerprint = ""
+					testRunHistory = nil
+					lastCompileErrorFingerprint = ""
+				}
 			}
 
 			return result, nil

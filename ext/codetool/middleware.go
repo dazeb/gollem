@@ -30,6 +30,7 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 	var mu sync.Mutex
 	editCounts := make(map[string]int) // file path -> edit count
 	bashCounts := make(map[string]int) // command prefix -> run count
+	readCounts := make(map[string]int) // file path -> read-without-edit count
 
 	return func(
 		ctx context.Context,
@@ -38,7 +39,7 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 		params *core.ModelRequestParameters,
 		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
 	) (*core.ModelResponse, error) {
-		// Track edits and repeated bash commands by parsing ArgsJSON directly.
+		// Track edits, reads, and repeated bash commands by parsing ArgsJSON.
 		mu.Lock()
 		for _, msg := range messages[max(0, len(messages)-2):] {
 			if resp, ok := msg.(core.ModelResponse); ok {
@@ -49,6 +50,13 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 							path := extractPathFromArgs(tc.ArgsJSON)
 							if path != "" {
 								editCounts[path]++
+								// Reset read counter — the agent is acting on this file.
+								delete(readCounts, path)
+							}
+						case "view":
+							path := extractPathFromArgs(tc.ArgsJSON)
+							if path != "" {
+								readCounts[path]++
 							}
 						case "bash":
 							prefix := extractCommandPrefix(tc.ArgsJSON)
@@ -61,8 +69,8 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 			}
 		}
 
-		// Check if any file has been edited too many times or
-		// the same command pattern has been run too many times.
+		// Check if any file has been edited too many times, the same command
+		// run too many times, or the same file read without editing.
 		var loopedFiles []string
 		for path, count := range editCounts {
 			if count >= threshold {
@@ -75,6 +83,15 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 				delete(bashCounts, cmd) // reset
 			}
 		}
+		// Read-only loop: same file read many times without editing.
+		// Higher threshold — reading multiple times is more normal than
+		// editing multiple times (e.g., checking requirements).
+		readLoopThreshold := threshold * 2
+		for path, count := range readCounts {
+			if count >= readLoopThreshold && editCounts[path] == 0 {
+				loopedFiles = append(loopedFiles, "read: "+path)
+			}
+		}
 		mu.Unlock()
 
 		if len(loopedFiles) > 0 {
@@ -82,16 +99,21 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 			var guidance string
 			hasEditLoop := false
 			hasBashLoop := false
+			hasReadLoop := false
 			for _, f := range loopedFiles {
 				if strings.HasPrefix(f, "bash: ") {
 					hasBashLoop = true
+				} else if strings.HasPrefix(f, "read: ") {
+					hasReadLoop = true
 				} else {
 					hasEditLoop = true
 				}
 			}
 
 			guidance = "WARNING: You appear to be stuck in a loop, repeatedly "
-			if hasEditLoop && hasBashLoop {
+			if hasReadLoop && !hasEditLoop && !hasBashLoop {
+				guidance += "reading " + strings.Join(loopedFiles, ", ") + " without making changes. "
+			} else if hasEditLoop && hasBashLoop {
 				guidance += "editing " + strings.Join(loopedFiles, ", ") + ". "
 			} else if hasEditLoop {
 				guidance += "editing " + strings.Join(loopedFiles, ", ") + ". "
@@ -108,6 +130,11 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 			if hasBashLoop {
 				guidance += "- If the same command keeps failing: check if you're missing a dependency, wrong directory, or misconfigured environment\n"
 				guidance += "- If a test keeps failing with the same error: the issue is in your code, not in how you're running the test\n"
+			}
+			if hasReadLoop {
+				guidance += "- You've been reading the same file(s) repeatedly without making changes — this is analysis paralysis\n"
+				guidance += "- STOP analyzing and START implementing. Write code based on what you already know\n"
+				guidance += "- If you're stuck on how to proceed, try the simplest possible solution first\n"
 			}
 			guidance += "- Consider if your fundamental approach is wrong — small tweaks won't fix a broken algorithm"
 
@@ -126,6 +153,9 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 				if strings.HasPrefix(f, "bash: ") {
 					cmd := strings.TrimPrefix(f, "bash: ")
 					bashCounts[cmd] = bashCounts[cmd] / 2
+				} else if strings.HasPrefix(f, "read: ") {
+					path := strings.TrimPrefix(f, "read: ")
+					readCounts[path] = readCounts[path] / 2
 				} else {
 					editCounts[f] = editCounts[f] / 2
 				}

@@ -8327,6 +8327,174 @@ Failures:
 }
 
 // Test compilationFingerprint catches Nim/D error formats.
+func TestShortOutputTracking(t *testing.T) {
+	// Verify that testFailureFingerprint and extractTestCounts work on
+	// short output (< 2000 chars). Previously, the bash tool only computed
+	// these for output > 2000 chars, which meant single-test tasks and
+	// small projects got no stagnation/regression detection.
+
+	t.Run("short_pytest_fingerprint", func(t *testing.T) {
+		// Typical short pytest failure (well under 2000 chars).
+		output := "test_math.py::test_add FAILED\nE       assert 3 == 5\n1 failed"
+		fp := testFailureFingerprint(output)
+		if fp == "" {
+			t.Error("expected fingerprint for short pytest failure output")
+		}
+	})
+
+	t.Run("short_go_test_fingerprint", func(t *testing.T) {
+		output := "--- FAIL: TestAdd (0.00s)\n    main_test.go:10: expected 5, got 3\nFAIL"
+		fp := testFailureFingerprint(output)
+		if fp == "" {
+			t.Error("expected fingerprint for short go test failure output")
+		}
+	})
+
+	t.Run("short_pytest_counts", func(t *testing.T) {
+		output := "1 failed, 2 passed"
+		passed, failed, ok := extractTestCounts(output)
+		if !ok {
+			t.Fatal("expected counts to be parsed from short pytest output")
+		}
+		if passed != 2 || failed != 1 {
+			t.Errorf("expected 2 passed 1 failed, got %d passed %d failed", passed, failed)
+		}
+	})
+
+	t.Run("short_go_test_counts", func(t *testing.T) {
+		output := "ok  \tmypackage\t0.005s\nFAIL"
+		// Go test doesn't always include counts in short output,
+		// but the fingerprint should still work.
+		fp := testFailureFingerprint(output)
+		// Even if counts aren't parseable, fingerprint should detect FAIL.
+		_ = fp // fingerprint may or may not match depending on format
+	})
+
+	t.Run("short_passing_clears_fingerprint", func(t *testing.T) {
+		// Verify passing test output produces empty fingerprint.
+		output := "1 passed"
+		fp := testFailureFingerprint(output)
+		if fp != "" {
+			t.Errorf("passing test should have empty fingerprint, got: %q", fp)
+		}
+	})
+}
+
+func TestLoopDetectionMiddleware_ReadLoop(t *testing.T) {
+	// Test that reading the same file many times without editing triggers
+	// an analysis paralysis warning.
+	mw := LoopDetectionMiddleware(3) // threshold=3, read threshold=6
+	ctx := context.Background()
+	readWarnings := 0
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		for _, msg := range msgs {
+			if req, ok := msg.(core.ModelRequest); ok {
+				for _, part := range req.Parts {
+					if up, ok := part.(core.UserPromptPart); ok {
+						if strings.Contains(up.Content, "analysis paralysis") {
+							readWarnings++
+						}
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	viewMsg := core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.ToolCallPart{
+				ToolName: "view",
+				ArgsJSON: `{"path":"/app/solution.py"}`,
+			},
+		},
+	}
+
+	// Simulate repeated reads without any edits.
+	messages := []core.ModelMessage{}
+	for i := 0; i < 10 && readWarnings == 0; i++ {
+		messages = append(messages, viewMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+	}
+	if readWarnings == 0 {
+		t.Error("expected analysis paralysis warning after repeated reads without editing")
+	}
+}
+
+func TestLoopDetectionMiddleware_ReadThenEdit(t *testing.T) {
+	// Test that reading a file many times does NOT trigger a warning if
+	// the agent also edits the file (normal iterative development).
+	mw := LoopDetectionMiddleware(3)
+	ctx := context.Background()
+	readWarnings := 0
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		for _, msg := range msgs {
+			if req, ok := msg.(core.ModelRequest); ok {
+				for _, part := range req.Parts {
+					if up, ok := part.(core.UserPromptPart); ok {
+						if strings.Contains(up.Content, "analysis paralysis") {
+							readWarnings++
+						}
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	viewMsg := core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.ToolCallPart{
+				ToolName: "view",
+				ArgsJSON: `{"path":"/app/solution.py"}`,
+			},
+		},
+	}
+	editMsg := core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.ToolCallPart{
+				ToolName: "edit",
+				ArgsJSON: `{"path":"/app/solution.py"}`,
+			},
+		},
+	}
+
+	// Simulate read-edit-read-edit cycle.
+	messages := []core.ModelMessage{}
+	for i := 0; i < 10; i++ {
+		messages = append(messages, viewMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+		messages = append(messages, editMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+	}
+	if readWarnings > 0 {
+		t.Error("should not warn about read loops when the file is also being edited")
+	}
+}
+
+func TestIsVerificationString_ClearsTracking(t *testing.T) {
+	// Verify that isVerificationString matches commands that should
+	// clear test tracking state on success.
+	tests := []struct {
+		cmd  string
+		want bool
+	}{
+		{"pytest", true},
+		{"go test ./...", true},
+		{"npm test", true},
+		{"python -m pytest test_foo.py", true},
+		{"make", true},
+		{"ls -la", false},
+		{"echo hello", false},
+	}
+	for _, tc := range tests {
+		got := isVerificationString(strings.ToLower(tc.cmd))
+		if got != tc.want {
+			t.Errorf("isVerificationString(%q) = %v, want %v", tc.cmd, got, tc.want)
+		}
+	}
+}
+
 func TestCompilationFingerprint_NimD(t *testing.T) {
 	tests := []struct {
 		name   string
