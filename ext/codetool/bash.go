@@ -6252,6 +6252,10 @@ func isLongRunningCommand(cmd string) bool {
 		"conda install", "mamba install", // Conda/Mamba (downloads + solves)
 		"uv pip install",                // uv pip install (network + compile)
 		"swift build",                   // Swift compilation
+		"phpunit", "vendor/bin/phpunit", // PHP tests
+		"nimble test",                   // Nim tests
+		"dub test", "dub build",         // D language
+		"meson test", "meson compile",   // Meson build system
 	}
 	for _, p := range longPatterns {
 		if strings.Contains(lower, p) {
@@ -6451,7 +6455,9 @@ func isBuildCommand(cmd string) bool {
 		"scalac ",           // Scala compilation
 		"ghc ",              // GHC direct compilation
 		"rebar3 compile", "rebar3 get-deps", // Erlang
-		"nimble install",                     // Nim packages
+		"nimble install", "nimble build",     // Nim packages
+		"dub build",                          // D language
+		"meson setup", "meson compile",       // Meson build system
 		"pub add",                            // Dart add dependency
 		"just build", "just compile", "just install", // Just task runner
 	}
