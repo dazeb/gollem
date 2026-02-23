@@ -101,7 +101,6 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 		for cmd, count := range bashCounts {
 			if count >= threshold+2 { // bash loops need higher threshold
 				loopedFiles = append(loopedFiles, "bash: "+cmd)
-				delete(bashCounts, cmd) // reset
 			}
 		}
 		// Read-only loop: same file read many times without editing.
@@ -271,12 +270,15 @@ func extractCommandPrefix(argsJSON string) string {
 	if len(parts) > 1 {
 		cmd = strings.TrimSpace(parts[len(parts)-1])
 	}
-	// Also handle semicolons (less common but valid).
+	// Also handle semicolons: take the FIRST significant part. Unlike &&
+	// (where preamble like "cd /app" comes before the real command), ;
+	// separates independent commands where the main action is typically first
+	// and postscripts like "echo $?" come after.
 	parts = strings.Split(cmd, ";")
 	if len(parts) > 1 {
-		last := strings.TrimSpace(parts[len(parts)-1])
-		if last != "" {
-			cmd = last
+		first := strings.TrimSpace(parts[0])
+		if first != "" {
+			cmd = first
 		}
 	}
 

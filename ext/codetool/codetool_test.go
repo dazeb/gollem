@@ -7458,6 +7458,16 @@ func TestExtractCommandPrefix(t *testing.T) {
 			argsJSON: `{"command": "env FOO=bar python3 test.py"}`,
 			expected: "python3 test.py",
 		},
+		{
+			name:     "semicolon takes first command",
+			argsJSON: `{"command": "python3 test.py; echo $?"}`,
+			expected: "python3 test.py",
+		},
+		{
+			name:     "compound with cd and semicolon postscript",
+			argsJSON: `{"command": "cd /app && python3 -m pytest; echo done"}`,
+			expected: "python3 -m pytest",
+		},
 	}
 
 	for _, tt := range tests {
@@ -10351,6 +10361,67 @@ func TestLoopDetectionMiddleware_ReadThenEdit(t *testing.T) {
 	}
 	if readWarnings > 0 {
 		t.Error("should not warn about read loops when the file is also being edited")
+	}
+}
+
+func TestLoopDetectionMiddleware_BashLoopPersistent(t *testing.T) {
+	// Test that a bash loop triggers faster on recurrence (halving behavior),
+	// matching the edit loop behavior. Before the fix, delete(bashCounts, cmd)
+	// at detection time zeroed the counter before the halving code could operate,
+	// making every recurrence require the full threshold+2 count.
+	mw := LoopDetectionMiddleware(3) // threshold=3, bash threshold=5
+	ctx := context.Background()
+	bashWarnings := 0
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		for _, msg := range msgs {
+			if req, ok := msg.(core.ModelRequest); ok {
+				for _, part := range req.Parts {
+					if up, ok := part.(core.UserPromptPart); ok {
+						if strings.Contains(up.Content, "stuck in a loop") {
+							bashWarnings++
+						}
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	bashMsg := core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.ToolCallPart{
+				ToolName: "bash",
+				ArgsJSON: `{"command":"python3 test.py"}`,
+			},
+		},
+	}
+
+	// Phase 1: Accumulate bash runs until first warning.
+	messages := []core.ModelMessage{}
+	for i := 0; i < 15 && bashWarnings == 0; i++ {
+		messages = append(messages, bashMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+	}
+	if bashWarnings == 0 {
+		t.Fatal("expected bash loop warning")
+	}
+	firstWarningAt := len(messages)
+
+	// Phase 2: Continue running same command — second warning should come
+	// faster than the first due to halving.
+	for i := 0; i < 15 && bashWarnings == 1; i++ {
+		messages = append(messages, bashMsg)
+		_, _ = mw(ctx, messages, nil, nil, next)
+	}
+	if bashWarnings < 2 {
+		t.Fatal("expected second bash loop warning")
+	}
+	secondWarningAt := len(messages) - firstWarningAt
+
+	// With halving, the second warning should come faster than the first.
+	if secondWarningAt >= firstWarningAt {
+		t.Errorf("persistent bash loop should be detected faster: first=%d runs, second=%d runs (expected second < first)",
+			firstWarningAt, secondWarningAt)
 	}
 }
 
