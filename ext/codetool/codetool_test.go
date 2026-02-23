@@ -8934,3 +8934,49 @@ func TestIsEntryPointFile(t *testing.T) {
 	}
 }
 
+func TestIsSkippableDir(t *testing.T) {
+	tests := []struct {
+		name   string
+		expect bool
+	}{
+		// Should skip.
+		{".git", true},
+		{"node_modules", true},
+		{"__pycache__", true},
+		{".tox", true},
+		{"vendor", true},
+		{"_build", true},
+		{"zig-cache", true},
+		{"deps", true},
+		{"_deps", true},
+		{".venv", true},
+		{"venv", true},
+		{".cache", true},
+		{".pytest_cache", true},
+		{".mypy_cache", true},
+		{".ruff_cache", true},
+		{".next", true},
+		{"coverage", true},
+		{".coverage", true},
+		// Should NOT skip.
+		{"src", false},
+		{"lib", false},
+		{"tests", false},
+		{"cmd", false},
+		{"pkg", false},
+		{"app", false},
+		{"build", false}, // could be a source dir
+		{"target", false}, // could be a source dir
+		{"dist", false}, // could be a source dir
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isSkippableDir(tc.name)
+			if got != tc.expect {
+				t.Errorf("isSkippableDir(%q) = %v, want %v", tc.name, got, tc.expect)
+			}
+		})
+	}
+}
+

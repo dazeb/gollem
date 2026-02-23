@@ -100,11 +100,8 @@ func listDir(ctx context.Context, basePath, currentPath, prefix string, remainin
 		name := entry.Name()
 
 		// Skip hidden and common non-essential dirs.
-		if entry.IsDir() {
-			if name == ".git" || name == "node_modules" || name == "__pycache__" ||
-				name == ".tox" || name == "vendor" || name == ".venv" || name == "venv" {
-				continue
-			}
+		if entry.IsDir() && isSkippableDir(name) {
+			continue
 		}
 
 		display := prefix + name

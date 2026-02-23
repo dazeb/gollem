@@ -87,7 +87,7 @@ func Grep(opts ...Option) core.Tool {
 				}
 				if info.IsDir() {
 					base := info.Name()
-					if base == ".git" || base == "node_modules" || base == "__pycache__" || base == ".tox" || base == "vendor" {
+					if isSkippableDir(base) {
 						return filepath.SkipDir
 					}
 					return nil
@@ -195,6 +195,30 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 		}
 	}
 	return nil
+}
+
+// isSkippableDir returns true for directories that should be skipped during
+// recursive file search (grep, glob). These are build artifacts, dependency
+// caches, and VCS directories that waste context tokens and search time.
+func isSkippableDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", "__pycache__", ".tox", "vendor",
+		// Build output directories.
+		"_build",    // OCaml (dune), Elixir (mix)
+		"zig-cache", // Zig
+		"deps",      // Elixir dependencies
+		"_deps",     // CMake FetchContent
+		// Python virtual environments.
+		".venv", "venv",
+		// Caches.
+		".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+		".next",     // Next.js build cache
+		"coverage",  // test coverage reports
+		".coverage", // Python coverage
+		".DS_Store": // macOS metadata (file, not dir, but harmless to check)
+		return true
+	}
+	return false
 }
 
 func isBinaryFilename(name string) bool {

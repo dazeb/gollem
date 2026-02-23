@@ -70,7 +70,7 @@ func Glob(opts ...Option) core.Tool {
 					}
 					if info.IsDir() {
 						base := info.Name()
-						if base == ".git" || base == "node_modules" || base == "__pycache__" || base == ".tox" || base == "vendor" {
+						if isSkippableDir(base) {
 							return filepath.SkipDir
 						}
 						return nil
