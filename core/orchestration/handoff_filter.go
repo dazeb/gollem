@@ -26,6 +26,14 @@ func StripSystemPrompts() HandoffFilter {
 				}
 				if len(filtered) > 0 {
 					result = append(result, core.ModelRequest{Parts: filtered, Timestamp: req.Timestamp})
+				} else {
+					// Keep a placeholder to prevent consecutive ModelResponse
+					// messages which violate the user/assistant alternation
+					// requirement (causes Anthropic 400 errors).
+					result = append(result, core.ModelRequest{
+						Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "[system context removed during handoff]"}},
+						Timestamp: req.Timestamp,
+					})
 				}
 			} else {
 				result = append(result, msg)

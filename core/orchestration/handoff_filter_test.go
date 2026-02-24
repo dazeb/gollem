@@ -137,6 +137,64 @@ func TestChainRunWithFilter(t *testing.T) {
 	}
 }
 
+func TestStripSystemPrompts_SystemOnlyPreservesAlternation(t *testing.T) {
+	// When a ModelRequest contains ONLY system prompts, stripping them should
+	// leave a placeholder to prevent consecutive ModelResponse messages which
+	// violate Anthropic's user/assistant alternation requirement.
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "hello", Timestamp: time.Now()},
+			},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{Parts: []core.ModelResponsePart{core.TextPart{Content: "hi"}}},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "system only", Timestamp: time.Now()},
+			},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{Parts: []core.ModelResponsePart{core.TextPart{Content: "response2"}}},
+	}
+
+	filter := orchestration.StripSystemPrompts()
+	result, err := filter(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// All 4 messages should be preserved (system-only request replaced with placeholder).
+	if len(result) != 4 {
+		t.Fatalf("expected 4 messages, got %d — system-only request was dropped, breaking alternation", len(result))
+	}
+
+	// Verify alternation: request, response, request, response.
+	for i, msg := range result {
+		if i%2 == 0 {
+			if _, ok := msg.(core.ModelRequest); !ok {
+				t.Errorf("message %d: expected ModelRequest, got %T", i, msg)
+			}
+		} else {
+			if _, ok := msg.(core.ModelResponse); !ok {
+				t.Errorf("message %d: expected ModelResponse, got %T", i, msg)
+			}
+		}
+	}
+
+	// The third message (index 2) should be the placeholder.
+	req, ok := result[2].(core.ModelRequest)
+	if !ok {
+		t.Fatal("expected ModelRequest at index 2")
+	}
+	if len(req.Parts) != 1 {
+		t.Fatalf("expected 1 part in placeholder, got %d", len(req.Parts))
+	}
+	if _, ok := req.Parts[0].(core.UserPromptPart); !ok {
+		t.Error("expected UserPromptPart placeholder in system-only request")
+	}
+}
+
 func TestHandoffWithFilter(t *testing.T) {
 	model1 := core.NewTestModel(core.TextResponse("first"))
 	model2 := core.NewTestModel(core.TextResponse("second"))

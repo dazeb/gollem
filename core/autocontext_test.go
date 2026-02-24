@@ -735,3 +735,99 @@ func TestStripOrphanedToolResults_NoConsecutiveMessages(t *testing.T) {
 		t.Errorf("expected 5 messages (placeholder for orphaned), got %d", len(result))
 	}
 }
+
+// TestAutoContext_IterPersistence verifies that auto-context compression in the
+// Iter API persists to state.messages, preventing unbounded growth. This catches
+// the bug fixed in 387a2b9 where compression was transient — applied to a local
+// copy rather than persisted back to ar.state.messages.
+func TestAutoContext_IterPersistence(t *testing.T) {
+	// Create a model that returns:
+	// 1-5: tool calls (to build up many messages via tool call/result pairs)
+	// 6+: final text response (repeats last response)
+	var responses []*ModelResponse
+	for i := range 5 {
+		responses = append(responses, ToolCallResponseWithID(
+			"echo",
+			fmt.Sprintf(`{"text":"message %d with enough content to inflate token estimates above our threshold budget"}`, i),
+			fmt.Sprintf("call_%d", i),
+		))
+	}
+	responses = append(responses, TextResponse("done"))
+	mainModel := NewTestModel(responses...)
+
+	summaryModel := NewTestModel(TextResponse("Summary: several echo tool calls were made."))
+
+	// A simple echo tool that returns its input.
+	echoTool := FuncTool[struct {
+		Text string `json:"text"`
+	}]("echo", "Echo text", func(_ context.Context, _ *RunContext, p struct {
+		Text string `json:"text"`
+	}) (string, error) {
+		return "Echo: " + p.Text, nil
+	})
+
+	agent := NewAgent[string](mainModel,
+		WithTools[string](echoTool),
+		WithAutoContext[string](AutoContextConfig{
+			MaxTokens:    50, // Very low to force compression early.
+			KeepLastN:    4,
+			SummaryModel: summaryModel,
+		}),
+	)
+
+	ctx := context.Background()
+	iter := agent.Iter(ctx, "Run echo tool 5 times")
+
+	var maxMsgCount int
+	var steps int
+	for !iter.Done() {
+		_, err := iter.Next()
+		if err != nil {
+			break
+		}
+		steps++
+		msgCount := len(iter.Messages())
+		if msgCount > maxMsgCount {
+			maxMsgCount = msgCount
+		}
+	}
+
+	if steps == 0 {
+		t.Fatal("expected at least one iteration step")
+	}
+
+	finalMsgCount := len(iter.Messages())
+
+	// With 5 tool calls, without compression we'd have ~12 messages:
+	// initial request + (5 * (response + request)) + final response = 12
+	// With persistent compression, the count should be bounded.
+	// KeepLastN=4 + first message + summary = ~6.
+	//
+	// If compression is NOT persisted (the old bug), message count would
+	// stay at ~12 because each call would re-compress a local copy but
+	// never update state.messages. The summary model would also be called
+	// on every subsequent turn (wasting tokens) instead of once.
+	t.Logf("steps=%d maxMsgCount=%d finalMsgCount=%d", steps, maxMsgCount, finalMsgCount)
+
+	// The key assertion: final message count should be less than max.
+	// With persistent compression, messages are compressed mid-run and
+	// stay compressed. Without it, they'd only ever grow.
+	if finalMsgCount >= 10 {
+		t.Errorf("expected compression to reduce message count below 10 (got %d) — auto-context compression may not be persisted in Iter API", finalMsgCount)
+	}
+
+	// Verify the summary model was called (compression happened).
+	summaryCalls := summaryModel.Calls()
+	if len(summaryCalls) == 0 {
+		t.Error("expected summary model to be called for auto-context compression")
+	}
+
+	// Verify result is obtainable.
+	result, err := iter.Result()
+	if err != nil {
+		t.Fatalf("iter.Result() failed: %v", err)
+	}
+	if result.Output != "done" {
+		t.Errorf("expected output 'done', got %q", result.Output)
+	}
+}
