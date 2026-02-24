@@ -21,7 +21,8 @@ type Client struct {
 	stdout *bufio.Reader
 	stderr io.ReadCloser
 
-	mu        sync.Mutex
+	writeMu   sync.Mutex // serializes writes to stdin (separate from mu to avoid deadlock)
+	mu        sync.Mutex // protects pending map and closed flag
 	nextID    atomic.Int64
 	pending   map[int64]chan *jsonRPCResponse
 	closed    bool
@@ -146,9 +147,9 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		return nil, err
 	}
 
-	c.mu.Lock()
+	c.writeMu.Lock()
 	_, err = fmt.Fprintf(c.stdin, "%s\n", data)
-	c.mu.Unlock()
+	c.writeMu.Unlock()
 	if err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
@@ -190,8 +191,8 @@ func (c *Client) notify(method string, params any) error {
 		return err
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	_, err = fmt.Fprintf(c.stdin, "%s\n", data)
 	return err
 }
