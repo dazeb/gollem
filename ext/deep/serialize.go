@@ -10,12 +10,12 @@ import (
 
 // requestPartEnvelope wraps a ModelRequestPart for JSON serialization.
 type requestPartEnvelope struct {
-	Kind         string `json:"kind"`
-	Content      string `json:"content,omitempty"`
-	ToolName     string `json:"tool_name,omitempty"`
-	ToolCallID   string `json:"tool_call_id,omitempty"`
-	ToolContent  any    `json:"tool_content,omitempty"`
-	Timestamp    *time.Time `json:"timestamp,omitempty"`
+	Kind         string          `json:"kind"`
+	Content      string          `json:"content,omitempty"`
+	ToolName     string          `json:"tool_name,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	ToolContent  json.RawMessage `json:"tool_content,omitempty"`
+	Timestamp    *time.Time      `json:"timestamp,omitempty"`
 }
 
 // responsePartEnvelope wraps a ModelResponsePart for JSON serialization.
@@ -56,7 +56,8 @@ func encodeRequestParts(parts []core.ModelRequestPart) []requestPartEnvelope {
 			envs = append(envs, requestPartEnvelope{Kind: "user-prompt", Content: p.Content, Timestamp: &ts})
 		case core.ToolReturnPart:
 			ts := p.Timestamp
-			envs = append(envs, requestPartEnvelope{Kind: "tool-return", ToolName: p.ToolName, ToolContent: p.Content, ToolCallID: p.ToolCallID, Timestamp: &ts})
+			contentJSON, _ := json.Marshal(p.Content)
+			envs = append(envs, requestPartEnvelope{Kind: "tool-return", ToolName: p.ToolName, ToolContent: contentJSON, ToolCallID: p.ToolCallID, Timestamp: &ts})
 		case core.RetryPromptPart:
 			ts := p.Timestamp
 			envs = append(envs, requestPartEnvelope{Kind: "retry-prompt", Content: p.Content, ToolName: p.ToolName, ToolCallID: p.ToolCallID, Timestamp: &ts})
@@ -78,7 +79,11 @@ func decodeRequestParts(envs []requestPartEnvelope) []core.ModelRequestPart {
 		case "user-prompt":
 			parts = append(parts, core.UserPromptPart{Content: env.Content, Timestamp: ts})
 		case "tool-return":
-			parts = append(parts, core.ToolReturnPart{ToolName: env.ToolName, Content: env.ToolContent, ToolCallID: env.ToolCallID, Timestamp: ts})
+			var content any
+			if len(env.ToolContent) > 0 {
+				_ = json.Unmarshal(env.ToolContent, &content)
+			}
+			parts = append(parts, core.ToolReturnPart{ToolName: env.ToolName, Content: content, ToolCallID: env.ToolCallID, Timestamp: ts})
 		case "retry-prompt":
 			parts = append(parts, core.RetryPromptPart{Content: env.Content, ToolName: env.ToolName, ToolCallID: env.ToolCallID, Timestamp: ts})
 		}

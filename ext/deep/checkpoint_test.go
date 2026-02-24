@@ -481,6 +481,131 @@ func TestCheckpoint_ToolCallMetadataRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCheckpoint_ToolReturnContentRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileCheckpointStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileCheckpointStore: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Test various tool return content types including empty string, which was
+	// previously lost due to omitempty on the any-typed ToolContent field.
+	tests := []struct {
+		name    string
+		content any
+	}{
+		{"empty_string", ""},
+		{"non_empty_string", "hello world"},
+		{"structured_map", map[string]any{"key": "value", "count": float64(42)}},
+		{"number_zero", float64(0)},
+		{"boolean_false", false},
+		{"null", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runID := "tool-content-" + tt.name
+			cp := &Checkpoint{
+				RunID:     runID,
+				StepIndex: 1,
+				Timestamp: time.Now(),
+				Messages: []core.ModelMessage{
+					core.ModelRequest{
+						Parts: []core.ModelRequestPart{
+							core.UserPromptPart{Content: "hello"},
+						},
+						Timestamp: time.Now(),
+					},
+					core.ModelResponse{
+						Parts: []core.ModelResponsePart{
+							core.ToolCallPart{
+								ToolName:   "test_tool",
+								ArgsJSON:   `{}`,
+								ToolCallID: "call_0",
+							},
+						},
+						Timestamp: time.Now(),
+					},
+					core.ModelRequest{
+						Parts: []core.ModelRequestPart{
+							core.ToolReturnPart{
+								ToolName:   "test_tool",
+								Content:    tt.content,
+								ToolCallID: "call_0",
+								Timestamp:  time.Now(),
+							},
+						},
+						Timestamp: time.Now(),
+					},
+				},
+			}
+			if err := store.Save(ctx, cp); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+
+			loaded, err := store.Load(ctx, runID)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if len(loaded.Messages) != 3 {
+				t.Fatalf("expected 3 messages, got %d", len(loaded.Messages))
+			}
+
+			req, ok := loaded.Messages[2].(core.ModelRequest)
+			if !ok {
+				t.Fatal("expected third message to be ModelRequest")
+			}
+			if len(req.Parts) != 1 {
+				t.Fatalf("expected 1 part, got %d", len(req.Parts))
+			}
+
+			tr, ok := req.Parts[0].(core.ToolReturnPart)
+			if !ok {
+				t.Fatal("expected ToolReturnPart")
+			}
+
+			// Verify content round-trips correctly.
+			switch expected := tt.content.(type) {
+			case nil:
+				if tr.Content != nil {
+					t.Errorf("expected nil content, got %v (%T)", tr.Content, tr.Content)
+				}
+			case string:
+				got, ok := tr.Content.(string)
+				if !ok {
+					t.Errorf("expected string content, got %T: %v", tr.Content, tr.Content)
+				} else if got != expected {
+					t.Errorf("content = %q, want %q", got, expected)
+				}
+			case float64:
+				got, ok := tr.Content.(float64)
+				if !ok {
+					t.Errorf("expected float64 content, got %T: %v", tr.Content, tr.Content)
+				} else if got != expected {
+					t.Errorf("content = %v, want %v", got, expected)
+				}
+			case bool:
+				got, ok := tr.Content.(bool)
+				if !ok {
+					t.Errorf("expected bool content, got %T: %v", tr.Content, tr.Content)
+				} else if got != expected {
+					t.Errorf("content = %v, want %v", got, expected)
+				}
+			case map[string]any:
+				got, ok := tr.Content.(map[string]any)
+				if !ok {
+					t.Errorf("expected map content, got %T: %v", tr.Content, tr.Content)
+				} else if len(got) != len(expected) {
+					t.Errorf("content map length = %d, want %d", len(got), len(expected))
+				}
+			}
+		})
+	}
+}
+
 // mockStatefulTool implements core.StatefulTool for testing.
 type mockStatefulTool struct {
 	state map[string]any
