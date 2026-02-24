@@ -661,10 +661,27 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 				})
 			}
 		}
-		state.messages = append(state.messages, ModelRequest{
-			Parts:     deferredParts,
-			Timestamp: time.Now(),
-		})
+		// If the last message is already a ModelRequest (containing
+		// non-deferred tool results appended before ErrDeferred was
+		// returned), merge the deferred results into it rather than
+		// creating a separate message. This keeps all tool results for
+		// a single model response in one ModelRequest, which is required
+		// by the Anthropic API (all tool_result blocks must be in the
+		// same user message following the assistant's tool_use).
+		merged := false
+		if lastIdx := len(state.messages) - 1; lastIdx >= 0 {
+			if lastReq, ok := state.messages[lastIdx].(ModelRequest); ok {
+				lastReq.Parts = append(lastReq.Parts, deferredParts...)
+				state.messages[lastIdx] = lastReq
+				merged = true
+			}
+		}
+		if !merged {
+			state.messages = append(state.messages, ModelRequest{
+				Parts:     deferredParts,
+				Timestamp: time.Now(),
+			})
+		}
 	} else {
 		// Normal case (no deferred results, or deferred without prior history):
 		// build the initial request with system prompts and user prompt.
@@ -923,6 +940,18 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 		}
 		// If there are deferred tool calls, return ErrDeferred.
 		if len(deferredReqs) > 0 {
+			// Append non-deferred tool results to the message history before
+			// returning. Without this, when the caller resumes with the
+			// deferred results, the model would see tool_use blocks without
+			// matching tool_result blocks for the non-deferred calls, causing
+			// API 400 errors (Anthropic requires all tool_use to have results;
+			// OpenAI requires each tool_call to have a tool response).
+			if len(nextParts) > 0 {
+				state.messages = append(state.messages, ModelRequest{
+					Parts:     nextParts,
+					Timestamp: time.Now(),
+				})
+			}
 			return nil, &ErrDeferred[T]{
 				Result: RunResultDeferred[T]{
 					DeferredRequests: deferredReqs,

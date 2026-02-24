@@ -333,6 +333,98 @@ func TestDeferredTool_ToolNamePreserved(t *testing.T) {
 // WithDeferredResults does not produce consecutive user-role messages.
 // The Anthropic API rejects conversations where two user messages appear
 // in a row without an assistant message between them.
+// TestDeferredTool_MixedDeferredAndNormal_Resume verifies that when a model
+// makes both deferred and non-deferred tool calls, resuming with deferred
+// results includes the non-deferred tool results in the message history. Without
+// this, the model would see tool_use blocks without matching tool_result blocks,
+// causing Anthropic 400 errors and OpenAI errors.
+func TestDeferredTool_MixedDeferredAndNormal_Resume(t *testing.T) {
+	deferTool := Tool{
+		Definition: ToolDefinition{
+			Name:        "async_task",
+			Description: "An async tool",
+			Kind:        ToolKindFunction,
+		},
+		Handler: func(_ context.Context, _ *RunContext, _ string) (any, error) {
+			return nil, &CallDeferred{Message: "waiting"}
+		},
+	}
+	normalTool := Tool{
+		Definition: ToolDefinition{
+			Name:        "sync_task",
+			Description: "A sync tool",
+			Kind:        ToolKindFunction,
+		},
+		Handler: func(_ context.Context, _ *RunContext, _ string) (any, error) {
+			return "sync result", nil
+		},
+	}
+
+	// First run: model calls both tools, one defers.
+	model := NewTestModel(
+		MultiToolCallResponse(
+			ToolCallPart{ToolName: "sync_task", ArgsJSON: `{}`, ToolCallID: "call_sync"},
+			ToolCallPart{ToolName: "async_task", ArgsJSON: `{}`, ToolCallID: "call_async"},
+		),
+	)
+
+	agent := NewAgent[string](model, WithTools[string](deferTool, normalTool))
+	_, err := agent.Run(context.Background(), "do both")
+
+	var deferredErr *ErrDeferred[string]
+	if !errors.As(err, &deferredErr) {
+		t.Fatalf("expected ErrDeferred, got %v", err)
+	}
+
+	// Resume with the deferred result.
+	model2 := NewTestModel(TextResponse("all done"))
+	agent2 := NewAgent[string](model2, WithTools[string](deferTool, normalTool))
+
+	result, err := agent2.Run(context.Background(), "do both",
+		WithMessages(deferredErr.Result.Messages...),
+		WithDeferredResults(DeferredToolResult{
+			ToolName:   "async_task",
+			ToolCallID: "call_async",
+			Content:    "async result",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("resume Run: %v", err)
+	}
+	if result.Output != "all done" {
+		t.Errorf("Output = %q, want %q", result.Output, "all done")
+	}
+
+	// Verify that both tool results are present in the messages sent to the model.
+	calls := model2.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+
+	foundSync := false
+	foundAsync := false
+	for _, msg := range calls[0].Messages {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if trp, ok := part.(ToolReturnPart); ok {
+					if trp.ToolCallID == "call_sync" {
+						foundSync = true
+					}
+					if trp.ToolCallID == "call_async" {
+						foundAsync = true
+					}
+				}
+			}
+		}
+	}
+	if !foundSync {
+		t.Error("missing tool result for sync_task (call_sync) — non-deferred tool results were lost")
+	}
+	if !foundAsync {
+		t.Error("missing tool result for async_task (call_async) — deferred tool result was not injected")
+	}
+}
+
 func TestDeferredTool_ResumeMessageAlternation(t *testing.T) {
 	model := NewTestModel(TextResponse("resumed"))
 
