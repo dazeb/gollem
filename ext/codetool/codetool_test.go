@@ -13455,3 +13455,59 @@ func readFileContent(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+
+func TestInjectUserPromptIntoLastRequest(t *testing.T) {
+	// Messages ending with a ModelRequest — common case.
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.SystemPromptPart{Content: "system"},
+			core.UserPromptPart{Content: "hello"},
+		}},
+		core.ModelResponse{Parts: []core.ModelResponsePart{
+			core.TextPart{Content: "response"},
+			core.ToolCallPart{ToolName: "bash", ArgsJSON: `{}`, ToolCallID: "call_1"},
+		}},
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.ToolReturnPart{ToolName: "bash", ToolCallID: "call_1", Content: "ok"},
+		}},
+	}
+
+	result := injectUserPromptIntoLastRequest(messages, "TIME WARNING: 50% elapsed")
+
+	// Must not create a new message — should inject into the last one.
+	if len(result) != len(messages) {
+		t.Fatalf("expected %d messages, got %d (new message was appended instead of injecting)", len(messages), len(result))
+	}
+
+	// Last message should now have the injected UserPromptPart.
+	lastReq, ok := result[len(result)-1].(core.ModelRequest)
+	if !ok {
+		t.Fatal("last message is not a ModelRequest")
+	}
+	if len(lastReq.Parts) != 2 {
+		t.Fatalf("expected 2 parts in last request, got %d", len(lastReq.Parts))
+	}
+	up, ok := lastReq.Parts[1].(core.UserPromptPart)
+	if !ok {
+		t.Fatal("second part is not UserPromptPart")
+	}
+	if !strings.Contains(up.Content, "TIME WARNING") {
+		t.Errorf("injected content missing, got %q", up.Content)
+	}
+
+	// Original messages must NOT be mutated.
+	origLast := messages[len(messages)-1].(core.ModelRequest)
+	if len(origLast.Parts) != 1 {
+		t.Errorf("original message was mutated: expected 1 part, got %d", len(origLast.Parts))
+	}
+
+	// Verify no consecutive ModelRequests in result.
+	for i := 1; i < len(result); i++ {
+		_, prevIsReq := result[i-1].(core.ModelRequest)
+		_, currIsReq := result[i].(core.ModelRequest)
+		if prevIsReq && currIsReq {
+			t.Errorf("consecutive ModelRequests at positions %d and %d", i-1, i)
+		}
+	}
+}

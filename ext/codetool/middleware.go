@@ -181,12 +181,9 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 			}
 			guidance += "- Consider if your fundamental approach is wrong — small tweaks won't fix a broken algorithm"
 
-			loopMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{Content: guidance},
-				},
-			}
-			messages = append(messages, loopMsg)
+			// Inject loop warning into the last ModelRequest rather than
+			// appending a new one, to avoid consecutive user-role messages.
+			messages = injectUserPromptIntoLastRequest(messages, guidance)
 
 			// Reduce counts instead of resetting to zero. This makes
 			// persistent loops trigger warnings faster on recurrence.
@@ -8347,57 +8344,33 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 		mu.Unlock()
 
 		// Time-based warnings take priority over turn-based ones.
+		// All warnings use injectUserPromptIntoLastRequest to avoid creating
+		// consecutive user-role messages that Anthropic rejects.
 		if needsWarning && timePct >= 0.50 && !wt50 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: CRITICAL — %.0f%% time used with no output files\n", timePct*100)
-			urgentMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{
-						Content: fmt.Sprintf("CRITICAL: %.0f%% of your time is gone and you have NOT created any output files. "+
-							"You MUST produce output NOW. Stop ALL research, analysis, and debugging. "+
-							"Write your best attempt at a solution IMMEDIATELY using write or bash redirects. "+
-							"An imperfect solution that exists scores infinitely higher than a perfect solution that doesn't.", timePct*100),
-					},
-				},
-			}
-			messages = append(messages, urgentMsg)
+			messages = injectUserPromptIntoLastRequest(messages, fmt.Sprintf("CRITICAL: %.0f%% of your time is gone and you have NOT created any output files. "+
+				"You MUST produce output NOW. Stop ALL research, analysis, and debugging. "+
+				"Write your best attempt at a solution IMMEDIATELY using write or bash redirects. "+
+				"An imperfect solution that exists scores infinitely higher than a perfect solution that doesn't.", timePct*100))
 		} else if needsWarning && timePct >= 0.30 && !wt30 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: warning — %.0f%% time used with no output files\n", timePct*100)
-			warningMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{
-						Content: fmt.Sprintf("PROGRESS WARNING: %.0f%% of your time is used and no output files exist yet. "+
-							"Rule #1: Output First, Perfect Later. Write your best attempt NOW, then iterate.", timePct*100),
-					},
-				},
-			}
-			messages = append(messages, warningMsg)
+			messages = injectUserPromptIntoLastRequest(messages, fmt.Sprintf("PROGRESS WARNING: %.0f%% of your time is used and no output files exist yet. "+
+				"Rule #1: Output First, Perfect Later. Write your best attempt NOW, then iterate.", timePct*100))
 		} else if needsWarning && currentTurn >= turnCritical && !w2 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: CRITICAL — turn %d with no output files created\n", currentTurn)
-			urgentMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{
-						Content: "CRITICAL: You are " + fmt.Sprintf("%d", currentTurn) + " turns in and have NOT created any output files yet. " +
-							"You MUST produce output NOW. Stop researching, stop analyzing, stop debugging infrastructure. " +
-							"Write your best attempt at a solution immediately using the write tool or bash redirects. " +
-							"You can refine it after — but you MUST have something written. " +
-							"An imperfect solution that exists scores higher than a perfect solution that doesn't.",
-					},
-				},
-			}
-			messages = append(messages, urgentMsg)
+			messages = injectUserPromptIntoLastRequest(messages,
+				"CRITICAL: You are "+fmt.Sprintf("%d", currentTurn)+" turns in and have NOT created any output files yet. "+
+					"You MUST produce output NOW. Stop researching, stop analyzing, stop debugging infrastructure. "+
+					"Write your best attempt at a solution immediately using the write tool or bash redirects. "+
+					"You can refine it after — but you MUST have something written. "+
+					"An imperfect solution that exists scores higher than a perfect solution that doesn't.")
 		} else if needsWarning && currentTurn >= turnWarning && !w1 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: warning — turn %d with no output files created\n", currentTurn)
-			warningMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{
-						Content: "PROGRESS WARNING: You are " + fmt.Sprintf("%d", currentTurn) + " turns in and have not created any output files yet. " +
-							"Remember Rule #1: Output First, Perfect Later. " +
-							"Write your best attempt at a solution NOW, then iterate to improve it. " +
-							"Don't spend more time researching — start producing output.",
-					},
-				},
-			}
-			messages = append(messages, warningMsg)
+			messages = injectUserPromptIntoLastRequest(messages,
+				"PROGRESS WARNING: You are "+fmt.Sprintf("%d", currentTurn)+" turns in and have not created any output files yet. "+
+					"Remember Rule #1: Output First, Perfect Later. "+
+					"Write your best attempt at a solution NOW, then iterate to improve it. "+
+					"Don't spend more time researching — start producing output.")
 		}
 
 		return next(ctx, messages, settings, params)

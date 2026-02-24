@@ -247,14 +247,37 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 
 		if warning != "" {
 			fmt.Fprintf(os.Stderr, "[gollem] time: %s\n", warning)
-			timeMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{Content: warning},
-				},
-			}
-			messages = append(messages, timeMsg)
+			// Inject the time warning into the last ModelRequest rather than
+			// appending a new one. Messages always end with a ModelRequest
+			// (initial request or tool results), so appending another would
+			// create consecutive user-role messages that Anthropic rejects
+			// with a 400 error.
+			messages = injectUserPromptIntoLastRequest(messages, warning)
 		}
 
 		return next(ctx, messages, settings, params)
 	}
+}
+
+// injectUserPromptIntoLastRequest adds a UserPromptPart to the last
+// ModelRequest in the message list. This avoids creating a separate
+// ModelRequest which would produce consecutive user-role messages.
+// The returned slice is a shallow copy so the original is not mutated.
+func injectUserPromptIntoLastRequest(messages []core.ModelMessage, content string) []core.ModelMessage {
+	result := make([]core.ModelMessage, len(messages))
+	copy(result, messages)
+	for i := len(result) - 1; i >= 0; i-- {
+		if req, ok := result[i].(core.ModelRequest); ok {
+			newParts := make([]core.ModelRequestPart, len(req.Parts)+1)
+			copy(newParts, req.Parts)
+			newParts[len(req.Parts)] = core.UserPromptPart{Content: content}
+			req.Parts = newParts
+			result[i] = req
+			return result
+		}
+	}
+	// Fallback: no ModelRequest found, append a new one.
+	return append(result, core.ModelRequest{
+		Parts: []core.ModelRequestPart{core.UserPromptPart{Content: content}},
+	})
 }
