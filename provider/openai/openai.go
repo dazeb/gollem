@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
@@ -101,6 +102,13 @@ func New(opts ...Option) *Provider {
 		if envURL := os.Getenv("OPENAI_BASE_URL"); envURL != "" {
 			p.baseURL = envURL
 		}
+	}
+	// Strip trailing /v1 or /v1/ from the base URL. Our endpoint path
+	// already includes /v1, so a base URL with /v1 (which is the convention
+	// in the OpenAI Python client) would produce /v1/v1/chat/completions.
+	p.baseURL = strings.TrimRight(p.baseURL, "/")
+	if strings.HasSuffix(p.baseURL, "/v1") {
+		p.baseURL = strings.TrimSuffix(p.baseURL, "/v1")
 	}
 	return p
 }

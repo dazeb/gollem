@@ -1214,6 +1214,45 @@ func TestBuildRequestEmptyPartsResponse(t *testing.T) {
 	}
 }
 
+// TestNewProviderBaseURLNormalization verifies that trailing /v1 is stripped
+// from the base URL to prevent double /v1/v1/... in API paths. The OpenAI
+// Python client convention uses OPENAI_BASE_URL with /v1, but our endpoint
+// path already includes /v1.
+func TestNewProviderBaseURLNormalization(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"plain URL", "https://api.openai.com", "https://api.openai.com"},
+		{"trailing slash", "https://api.openai.com/", "https://api.openai.com"},
+		{"trailing /v1", "https://api.x.ai/v1", "https://api.x.ai"},
+		{"trailing /v1/", "https://api.x.ai/v1/", "https://api.x.ai"},
+		{"localhost with /v1", "http://localhost:4000/v1", "http://localhost:4000"},
+		{"no /v1", "http://localhost:4000", "http://localhost:4000"},
+		{"v1 in path segment", "https://api.v1.example.com", "https://api.v1.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := New(WithBaseURL(tt.input), WithAPIKey("test"))
+			if p.baseURL != tt.expected {
+				t.Errorf("baseURL = %q, want %q", p.baseURL, tt.expected)
+			}
+		})
+	}
+}
+
+// TestNewProviderBaseURLEnvNormalization verifies that OPENAI_BASE_URL with
+// /v1 is normalized when no explicit base URL is set.
+func TestNewProviderBaseURLEnvNormalization(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://api.x.ai/v1")
+	p := New()
+	if p.baseURL != "https://api.x.ai" {
+		t.Errorf("baseURL = %q, want %q", p.baseURL, "https://api.x.ai")
+	}
+}
+
 // TestParseSSEStreamNoSpaceAfterColon verifies the OpenAI stream parser
 // handles SSE data lines without the optional space after the colon,
 // per the SSE specification.
