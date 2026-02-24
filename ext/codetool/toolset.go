@@ -3,10 +3,10 @@ package codetool
 import (
 	"context"
 	"fmt"
-	"unicode/utf8"
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/deep"
@@ -77,6 +77,9 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		toolOptions = append(toolOptions, core.WithTools[string](cm.Tool()))
 		systemPrompt += "\n\n" + cm.SystemPrompt()
 	}
+	toolOptions = append(toolOptions,
+		core.WithToolsPrepare[string](disableExecuteCodeOnImportFailuresPrepare()),
+	)
 
 	// Planning tool: persistent task list for tracking progress on multi-step work.
 	toolOptions = append(toolOptions, core.WithTools[string](deep.PlanningTool()))
@@ -152,12 +155,12 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 
 		// Tool timeout: individual tools get 3 minutes max.
 		// Some compute-heavy tasks (compilation, data processing) need extra time.
-		core.WithDefaultToolTimeout[string](3 * time.Minute),
+		core.WithDefaultToolTimeout[string](3*time.Minute),
 
 		// History processor: truncate oversized content blocks before
 		// auto-context sees them. Ensures token estimates are accurate
 		// and prevents a single large tool result from dominating context.
-		core.WithHistoryProcessor[string](ContentTruncationProcessor(50000)),
+		core.WithHistoryProcessor[string](ContentTruncationProcessor(20000)),
 
 		// Auto context: compress old messages when context grows too large.
 		// Default: 80K to leave headroom before provider limits (xAI/grok
@@ -192,10 +195,10 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 				summary := argsJSON
 				if len(summary) > 200 {
 					n := 200
-						for n > 0 && !utf8.RuneStart(summary[n]) {
-							n--
-						}
-						summary = summary[:n] + "..."
+					for n > 0 && !utf8.RuneStart(summary[n]) {
+						n--
+					}
+					summary = summary[:n] + "..."
 				}
 				fmt.Fprintf(os.Stderr, "[gollem] tool:start %s %s\n", name, summary)
 			},
@@ -206,10 +209,10 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 					summary := result
 					if len(summary) > 150 {
 						n := 150
-							for n > 0 && !utf8.RuneStart(summary[n]) {
-								n--
-							}
-							summary = summary[:n] + "..."
+						for n > 0 && !utf8.RuneStart(summary[n]) {
+							n--
+						}
+						summary = summary[:n] + "..."
 					}
 					fmt.Fprintf(os.Stderr, "[gollem] tool:end   %s %s\n", name, strings.ReplaceAll(summary, "\n", "\\n"))
 				}

@@ -17,11 +17,12 @@ import (
 
 // RetryConfig configures retry behavior.
 type RetryConfig struct {
-	MaxRetries     int           // maximum number of retries (default: 3)
-	InitialBackoff time.Duration // initial wait time (default: 1s)
-	MaxBackoff     time.Duration // maximum wait time (default: 30s)
-	BackoffFactor  float64       // multiplier per retry (default: 2.0)
-	Jitter         bool          // add random jitter (default: true)
+	MaxRetries     int              // maximum number of retries (default: 3)
+	InitialBackoff time.Duration    // initial wait time (default: 1s)
+	MaxBackoff     time.Duration    // maximum wait time (default: 30s)
+	BackoffFactor  float64          // multiplier per retry (default: 2.0)
+	Jitter         bool             // add random jitter (default: true)
+	MinRemaining   time.Duration    // skip retries when context deadline is too close (default: 20s)
 	IsRetryable    func(error) bool // determines if an error should be retried
 }
 
@@ -33,6 +34,7 @@ func DefaultRetryConfig() RetryConfig {
 		MaxBackoff:     30 * time.Second,
 		BackoffFactor:  2.0,
 		Jitter:         true,
+		MinRemaining:   20 * time.Second,
 		IsRetryable:    defaultIsRetryable,
 	}
 }
@@ -67,11 +69,11 @@ func defaultIsRetryable(err error) bool {
 				return false
 			}
 			return true
-		case http.StatusRequestTimeout,                                    // 408
-			http.StatusInternalServerError,                                // 500
-			http.StatusBadGateway,                                         // 502
-			http.StatusServiceUnavailable,                                 // 503
-			http.StatusGatewayTimeout:                                     // 504
+		case http.StatusRequestTimeout, // 408
+			http.StatusInternalServerError, // 500
+			http.StatusBadGateway,          // 502
+			http.StatusServiceUnavailable,  // 503
+			http.StatusGatewayTimeout:      // 504
 			return true
 		case 529: // Anthropic "Overloaded" — too many concurrent requests
 			return true
@@ -118,6 +120,9 @@ func NewRetryModel(model core.Model, config RetryConfig) *RetryModel {
 	if config.MaxBackoff == 0 {
 		config.MaxBackoff = 30 * time.Second
 	}
+	if config.MinRemaining == 0 {
+		config.MinRemaining = 20 * time.Second
+	}
 	return &RetryModel{model: model, config: config}
 }
 
@@ -155,6 +160,15 @@ func retryLoop[T any](ctx context.Context, cfg RetryConfig, fn func() (T, error)
 			return zero, err
 		}
 
+		// If the run is near its deadline, don't start another retry cycle.
+		if deadline, ok := ctx.Deadline(); ok && cfg.MinRemaining > 0 {
+			remaining := time.Until(deadline)
+			if remaining <= cfg.MinRemaining {
+				fmt.Fprintf(os.Stderr, "[gollem] retry: skipping further retries (only %s remaining)\n", remaining.Round(time.Second))
+				return zero, err
+			}
+		}
+
 		if attempt < cfg.MaxRetries {
 			fmt.Fprintf(os.Stderr, "[gollem] retry: attempt %d/%d after error: %v\n", attempt+1, cfg.MaxRetries, err)
 		}
@@ -174,6 +188,17 @@ func retryLoop[T any](ctx context.Context, cfg RetryConfig, fn func() (T, error)
 				// Add 0-25% jitter.
 				jitter := time.Duration(float64(wait) * 0.25 * rand.Float64())
 				wait += jitter
+			}
+
+			// Avoid spending the remaining run budget on backoff sleeps that
+			// leave no time for the next request to complete.
+			if deadline, ok := ctx.Deadline(); ok && cfg.MinRemaining > 0 {
+				remaining := time.Until(deadline)
+				if remaining <= wait+cfg.MinRemaining {
+					fmt.Fprintf(os.Stderr, "[gollem] retry: not enough time for another retry (remaining: %s, wait: %s)\n",
+						remaining.Round(time.Second), wait.Round(time.Second))
+					return zero, err
+				}
 			}
 
 			select {

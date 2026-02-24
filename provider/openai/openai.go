@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,15 +33,17 @@ const (
 	defaultModel            = GPT4o
 	defaultMaxTokens        = 4096
 	chatCompletionsEndpoint = "/v1/chat/completions"
+	responsesEndpoint       = "/v1/responses"
 )
 
 // Provider implements core.Model for OpenAI's Chat Completions API.
 type Provider struct {
-	apiKey     string
-	model      string
-	baseURL    string
-	httpClient *http.Client
-	maxTokens  int
+	apiKey       string
+	model        string
+	baseURL      string
+	httpClient   *http.Client
+	maxTokens    int
+	useResponses bool
 }
 
 // Option configures the OpenAI provider.
@@ -140,6 +143,10 @@ func (p *Provider) ModelName() string {
 
 // Request sends messages to OpenAI and returns a complete response.
 func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	if p.shouldUseResponsesAPI() {
+		return p.requestViaResponses(ctx, messages, settings, params)
+	}
+
 	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, false)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build request: %w", err)
@@ -150,8 +157,13 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	resp, err := p.doRequest(ctx, body)
+	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body)
 	if err != nil {
+		if isChatCompletionsMismatch(err) {
+			// Some models (e.g. Codex variants) are only available via /v1/responses.
+			p.useResponses = true
+			return p.requestViaResponses(ctx, messages, settings, params)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -166,6 +178,10 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 
 // RequestStream sends messages and returns a streaming response.
 func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	if p.shouldUseResponsesAPI() {
+		return nil, fmt.Errorf("openai: streaming is not supported for model %q via the responses API", p.model)
+	}
+
 	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, true)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build request: %w", err)
@@ -176,8 +192,12 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	resp, err := p.doRequest(ctx, body)
+	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body)
 	if err != nil {
+		if isChatCompletionsMismatch(err) {
+			p.useResponses = true
+			return nil, fmt.Errorf("openai: model %q requires the responses API; streaming is currently unavailable", p.model)
+		}
 		return nil, err
 	}
 
@@ -187,8 +207,8 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 // doRequest sends a single HTTP request and returns the response or a typed
 // error. Retry logic is handled at the model level by modelutil.RetryModel,
 // which uses this error's RetryAfter field for backoff.
-func (p *Provider) doRequest(ctx context.Context, body []byte) (*http.Response, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+chatCompletionsEndpoint, bytes.NewReader(body))
+func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
 	}
@@ -229,6 +249,28 @@ func (p *Provider) doRequest(ctx context.Context, body []byte) (*http.Response, 
 func (p *Provider) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+}
+
+func (p *Provider) shouldUseResponsesAPI() bool {
+	return p.useResponses || modelNeedsResponsesAPI(p.model)
+}
+
+func modelNeedsResponsesAPI(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return strings.Contains(m, "codex")
+}
+
+func isChatCompletionsMismatch(err error) bool {
+	var httpErr *core.ModelHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	if httpErr.StatusCode != http.StatusNotFound {
+		return false
+	}
+	body := strings.ToLower(httpErr.Body)
+	msg := strings.ToLower(httpErr.Message)
+	return strings.Contains(body, "not a chat model") || strings.Contains(msg, "not a chat model")
 }
 
 // Verify Provider implements core.Model.

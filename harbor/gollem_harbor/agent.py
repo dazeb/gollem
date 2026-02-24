@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -35,44 +36,87 @@ _TASK_CACHE_DIR = Path.home() / ".cache" / "harbor" / "tasks"
 logger = logging.getLogger(__name__)
 
 
+def _build_linux_binary(build_target: Path) -> Path:
+    """Build gollem Linux binary at the target path."""
+    subprocess.run(
+        ["go", "build", "-o", str(build_target), "./cmd/gollem/"],
+        cwd=str(_REPO_ROOT),
+        env={**os.environ, "GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "0"},
+        check=True,
+        capture_output=True,
+    )
+    if not build_target.exists():
+        raise FileNotFoundError(f"go build succeeded but binary not found at {build_target}")
+    return build_target
+
+
+def _binary_is_stale(binary: Path) -> bool:
+    """Return True when repo source appears newer than the binary."""
+    if not binary.exists():
+        return True
+    try:
+        binary_mtime = binary.stat().st_mtime
+        newest_source_mtime = 0.0
+        for rel in ("go.mod", "go.sum"):
+            p = _REPO_ROOT / rel
+            if p.exists():
+                newest_source_mtime = max(newest_source_mtime, p.stat().st_mtime)
+        for rel in ("cmd", "core", "ext", "modelutil", "provider"):
+            root = _REPO_ROOT / rel
+            if not root.exists():
+                continue
+            for go_file in root.rglob("*.go"):
+                newest_source_mtime = max(newest_source_mtime, go_file.stat().st_mtime)
+        return newest_source_mtime > binary_mtime
+    except Exception:
+        # If freshness check fails, rebuild to be safe.
+        return True
+
+
 def _find_binary() -> Path:
     """Locate the pre-built gollem Linux binary.
 
-    Searches in order:
-    1. harbor/gollem-linux-amd64 (canonical build target)
-    2. harbor/gollem_harbor/gollem (alternative location)
-    3. GOLLEM_BINARY env var
-    4. Attempts to build it on the fly
+    Resolution order:
+    1. GOLLEM_BINARY env var (explicit override)
+    2. Auto-rebuild canonical harbor/gollem-linux-amd64 when stale
+    3. Existing harbor/gollem-linux-amd64
+    4. harbor/gollem_harbor/gollem (fallback artifact)
+    5. Last-chance build from source tree
     """
-    # Check canonical location next to pyproject.toml.
-    candidate = _PKG_DIR.parent / "gollem-linux-amd64"
-    if candidate.exists():
-        return candidate
-
-    # Check inside the package directory.
-    candidate2 = _PKG_DIR / "gollem"
-    if candidate2.exists():
-        return candidate2
-
     # Check env var.
     if env_path := os.environ.get("GOLLEM_BINARY"):
         p = Path(env_path)
         if p.exists():
             return p
 
-    # Try to build it.
     build_target = _PKG_DIR.parent / "gollem-linux-amd64"
     cmd_dir = _REPO_ROOT / "cmd" / "gollem"
-    if cmd_dir.exists():
-        subprocess.run(
-            ["go", "build", "-o", str(build_target), "./cmd/gollem/"],
-            cwd=str(_REPO_ROOT),
-            env={**os.environ, "GOOS": "linux", "GOARCH": "amd64", "CGO_ENABLED": "0"},
-            check=True,
-            capture_output=True,
-        )
-        if build_target.exists():
-            return build_target
+    candidate2 = _PKG_DIR / "gollem"
+
+    # Auto-rebuild when repo sources are available and newer than the binary.
+    # This prevents stale binaries from silently running old agent logic.
+    skip_rebuild = os.environ.get("GOLLEM_SKIP_REBUILD", "").strip().lower() in {"1", "true", "yes"}
+    force_rebuild = os.environ.get("GOLLEM_FORCE_REBUILD", "").strip().lower() in {"1", "true", "yes"}
+    if cmd_dir.exists() and shutil.which("go") and not skip_rebuild:
+        try:
+            if force_rebuild or _binary_is_stale(build_target):
+                return _build_linux_binary(build_target)
+            if build_target.exists():
+                return build_target
+        except Exception as e:
+            logger.warning(f"Failed to rebuild gollem binary, falling back to existing artifacts: {e}")
+
+    # Check canonical location next to pyproject.toml.
+    if build_target.exists():
+        return build_target
+
+    # Check inside the package directory.
+    if candidate2.exists():
+        return candidate2
+
+    # Last chance build (source tree present but stale check was skipped).
+    if cmd_dir.exists() and shutil.which("go"):
+        return _build_linux_binary(build_target)
 
     raise FileNotFoundError(
         "gollem Linux binary not found. Build it with:\n"
@@ -134,6 +178,10 @@ class GollemAgent(BaseInstalledAgent):
         else:
             self._task_timeout_sec = None
 
+        # Fail fast on missing provider credentials/config to avoid wasting
+        # benchmark attempts on immediate model initialization errors.
+        self._validate_provider_auth()
+
         await super().run(instruction, environment, context)
 
     def _detect_task_timeout(self) -> int | None:
@@ -178,6 +226,53 @@ class GollemAgent(BaseInstalledAgent):
         except Exception:
             pass
         return None
+
+    @staticmethod
+    def _resolve_host_gcp_credentials() -> Path | None:
+        """Return host ADC path if available."""
+        creds_file = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        if creds_file:
+            p = Path(creds_file)
+            if p.exists():
+                return p
+        default_adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+        if default_adc.exists():
+            return default_adc
+        return None
+
+    def _validate_provider_auth(self) -> None:
+        """Validate provider auth/env before launching the agent command."""
+        provider, _ = self._parse_model_name()
+
+        if provider == "anthropic":
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                raise RuntimeError(
+                    "Missing ANTHROPIC_API_KEY for anthropic model. "
+                    "Set ANTHROPIC_API_KEY before running Harbor."
+                )
+            return
+
+        if provider == "openai":
+            if not os.environ.get("OPENAI_API_KEY"):
+                raise RuntimeError(
+                    "Missing OPENAI_API_KEY for openai model. "
+                    "Set OPENAI_API_KEY before running Harbor."
+                )
+            return
+
+        if provider in ("vertexai", "vertexai-anthropic"):
+            project = self._project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+            if not project:
+                raise RuntimeError(
+                    "Missing GOOGLE_CLOUD_PROJECT for Vertex AI model. "
+                    "Set GOOGLE_CLOUD_PROJECT or pass --ak project=<id>."
+                )
+            if self._resolve_host_gcp_credentials() is None:
+                raise RuntimeError(
+                    "Missing GCP Application Default Credentials. "
+                    "Set GOOGLE_APPLICATION_CREDENTIALS or run "
+                    "`gcloud auth application-default login`."
+                )
 
     async def setup(self, environment: BaseEnvironment) -> None:
         """Upload the pre-built binary instead of compiling from source."""
@@ -237,20 +332,15 @@ class GollemAgent(BaseInstalledAgent):
         # SECURITY: Only upload credentials to local Docker containers, never
         # to remote environments (Modal, E2B, GKE, etc.) where the file would
         # leave this machine.
-        creds_file = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-        if not creds_file:
-            # Fall back to default ADC location.
-            default_adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
-            if default_adc.exists():
-                creds_file = str(default_adc)
-        if creds_file and Path(creds_file).exists():
+        host_creds = self._resolve_host_gcp_credentials()
+        if host_creds is not None:
             from harbor.environments.docker.docker import DockerEnvironment
             if isinstance(environment, DockerEnvironment):
                 await environment.exec(
                     command="mkdir -p /root/.config/gcloud"
                 )
                 await environment.upload_file(
-                    source_path=Path(creds_file),
+                    source_path=host_creds,
                     target_path="/root/.config/gcloud/application_default_credentials.json",
                 )
                 logger.info("Uploaded GCP credentials to local Docker container")
@@ -399,17 +489,27 @@ class GollemAgent(BaseInstalledAgent):
             command=(
                 "timeout 90 sh -c '"
                 # pylsp: covers 27/89 TB2 tasks (Python). Pure Python, no Node needed.
-                "pip install --break-system-packages -q python-lsp-server 2>/dev/null || "
-                "pip3 install --break-system-packages -q python-lsp-server 2>/dev/null || true; "
+                "pip install --break-system-packages -q python-lsp-server pyright 2>/dev/null || "
+                "pip3 install --break-system-packages -q python-lsp-server pyright 2>/dev/null || true; "
                 # gopls: Go LSP (if Go is available)
                 "if command -v go >/dev/null 2>&1; then "
                 "  GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@latest 2>/dev/null || true; "
                 "fi; "
                 # typescript-language-server: TS/JS LSP (if npm is available)
                 "if command -v npm >/dev/null 2>&1; then "
-                "  npm i -g typescript-language-server typescript 2>/dev/null || true; "
+                "  npm i -g typescript-language-server typescript bash-language-server 2>/dev/null || true; "
                 "fi"
                 "' || true"
+            )
+        )
+
+        # Log which common language servers are ready in the container.
+        await environment.exec(
+            command=(
+                "for ls in gopls pyright-langserver pylsp typescript-language-server "
+                "bash-language-server clangd; do "
+                "  if command -v \"$ls\" >/dev/null 2>&1; then echo \"[gollem] lsp-ready: $ls\"; fi; "
+                "done"
             )
         )
 
@@ -491,12 +591,7 @@ class GollemAgent(BaseInstalledAgent):
         # Set this whenever we have GCP credentials (explicit or default ADC).
         provider, _ = self._parse_model_name()
         if provider in ("vertexai", "vertexai-anthropic"):
-            creds_file = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-            if not creds_file:
-                default_adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
-                if default_adc.exists():
-                    creds_file = str(default_adc)
-            if creds_file and Path(creds_file).exists():
+            if self._resolve_host_gcp_credentials() is not None:
                 env["GOOGLE_APPLICATION_CREDENTIALS"] = (
                     "/root/.config/gcloud/application_default_credentials.json"
                 )

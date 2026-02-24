@@ -184,11 +184,13 @@ func runAgent() {
 		}
 	}
 
-	baseModel, err := createModel(f.provider, f.modelName, f.location, f.project)
+	requestTimeout := deriveRequestTimeout(f.timeout)
+	baseModel, err := createModel(f.provider, f.modelName, f.location, f.project, requestTimeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating model: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Fprintf(os.Stderr, "gollem: model request timeout: %v\n", requestTimeout)
 
 	// Apply middleware layers to the model.
 	var mws []middleware.Middleware
@@ -214,7 +216,25 @@ func runAgent() {
 	}
 
 	// Wrap with retry for API resilience (exponential backoff on 429/5xx).
-	model = modelutil.NewRetryModel(model, modelutil.DefaultRetryConfig())
+	retryCfg := modelutil.DefaultRetryConfig()
+	switch {
+	case f.timeout <= 5*time.Minute:
+		retryCfg.MaxRetries = 1
+		retryCfg.InitialBackoff = 500 * time.Millisecond
+		retryCfg.MaxBackoff = 2 * time.Second
+	case f.timeout <= 12*time.Minute:
+		retryCfg.MaxRetries = 2
+		retryCfg.InitialBackoff = 500 * time.Millisecond
+		retryCfg.MaxBackoff = 5 * time.Second
+	default:
+		retryCfg.MaxRetries = 3
+		retryCfg.InitialBackoff = 1 * time.Second
+		retryCfg.MaxBackoff = 8 * time.Second
+	}
+	retryCfg.MinRemaining = 20 * time.Second
+	model = modelutil.NewRetryModel(model, retryCfg)
+	fmt.Fprintf(os.Stderr, "gollem: retry config: max_retries=%d backoff=%v..%v min_remaining=%v\n",
+		retryCfg.MaxRetries, retryCfg.InitialBackoff, retryCfg.MaxBackoff, retryCfg.MinRemaining)
 
 	// Build tool options, including code mode if enabled.
 	var toolOpts []codetool.Option
@@ -319,8 +339,15 @@ func runAgent() {
 			}
 			if f.thinkingBudget > 0 {
 				agentOpts = append(agentOpts, core.WithThinkingBudget[string](f.thinkingBudget))
-				fmt.Fprintf(os.Stderr, "gollem: gemini thinking enabled (budget: %d)\n",
-					f.thinkingBudget)
+				// Set an explicit output budget so long reasoning turns don't
+				// end with token-limit errors before producing a final answer.
+				maxTokens := f.thinkingBudget + 24000
+				if maxTokens < 40000 {
+					maxTokens = 40000
+				}
+				agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
+				fmt.Fprintf(os.Stderr, "gollem: gemini thinking enabled (budget: %d, max_output: %d)\n",
+					f.thinkingBudget, maxTokens)
 			}
 		default:
 			if f.thinkingBudget > 0 {
@@ -486,7 +513,7 @@ func runDebug() {
 		provider = "test"
 	}
 
-	model, err := createModel(provider, modelName, f.location, f.project)
+	model, err := createModel(provider, modelName, f.location, f.project, deriveRequestTimeout(f.timeout))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating model: %v\n", err)
 		os.Exit(1)
@@ -559,13 +586,23 @@ func detectProvider() string {
 	return ""
 }
 
-func createModel(provider, modelName, location, project string) (core.Model, error) {
-	// Use an HTTP client with a per-request timeout to prevent individual API
-	// calls from hanging forever. Without this, a single hanging connection
-	// (Docker networking, API overload) blocks the entire agent timeout,
-	// producing zero output. 10 minutes is generous enough for extended
-	// thinking responses while still recovering from network hangs.
-	httpClient := &http.Client{Timeout: 10 * time.Minute}
+func deriveRequestTimeout(runTimeout time.Duration) time.Duration {
+	// Keep per-request timeouts much shorter than the full run timeout so
+	// a single hung provider call doesn't consume the whole benchmark budget.
+	timeout := runTimeout / 5
+	if timeout < 45*time.Second {
+		timeout = 45 * time.Second
+	}
+	if timeout > 4*time.Minute {
+		timeout = 4 * time.Minute
+	}
+	return timeout
+}
+
+func createModel(provider, modelName, location, project string, requestTimeout time.Duration) (core.Model, error) {
+	// Use an HTTP client with a bounded per-request timeout so transient
+	// provider hangs fail fast and can be retried within the run budget.
+	httpClient := &http.Client{Timeout: requestTimeout}
 
 	switch provider {
 	case "test":

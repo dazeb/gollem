@@ -56,9 +56,9 @@ func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
 		// 32000 is the highest value that works across all providers:
 		// Gemini caps at 32768, Anthropic supports much higher.
-		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
-		Implementation: ReasoningLevel{ThinkingBudget: 16000, ReasoningEffort: "high"},
-		Verification:   ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
+		Planning:              ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
+		Implementation:        ReasoningLevel{ThinkingBudget: 16000, ReasoningEffort: "high"},
+		Verification:          ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
 		PlanningTurns:         5,
 		VerificationThreshold: 0, // Use heuristic: detect verification commands
 	}
@@ -70,9 +70,9 @@ func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 // gets high reasoning since careful error analysis is critical.
 func subagentReasoningConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
-		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
-		Implementation: ReasoningLevel{ThinkingBudget: 12000, ReasoningEffort: "medium"},
-		Verification:   ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
+		Planning:              ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
+		Implementation:        ReasoningLevel{ThinkingBudget: 12000, ReasoningEffort: "medium"},
+		Verification:          ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
 		PlanningTurns:         3,
 		VerificationThreshold: 0, // Use heuristic
 	}
@@ -211,39 +211,28 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 		switch {
 		case pct >= 0.95 && !warned95:
 			warned95 = true
-			warning = fmt.Sprintf("EMERGENCY: Only %s remaining (%.0f%% elapsed). "+
-				"This is your LAST CHANCE. You will be killed soon. "+
-				"DO ONLY: (1) if output files don't exist, write them NOW with whatever you have, "+
-				"(2) remove only known intermediates: find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; rm -f *.o a.out 2>/dev/null "+
-				"(3) STOP. Do nothing else. Any further exploration or debugging is wasted.",
+			warning = fmt.Sprintf("EMERGENCY: %s left (%.0f%% elapsed). "+
+				"Final move only: ensure required output files exist, run one last verification command, then stop.",
 				remaining.Round(time.Second), pct*100)
 		case pct >= 0.90 && !warned90:
 			warned90 = true
-			warning = fmt.Sprintf("TIME CRITICAL: Only %s remaining (%.0f%% elapsed). "+
-				"STOP all new work. Final actions only: "+
-				"(1) ensure output files exist, (2) run final test, (3) remove only __pycache__/*.pyc/*.o intermediates (keep solution files). "+
-				"Do NOT start new approaches or fix more issues.", remaining.Round(time.Second), pct*100)
+			warning = fmt.Sprintf("TIME CRITICAL: %s left (%.0f%% elapsed). "+
+				"No new approaches. Final verify + minimal cleanup (__pycache__, *.pyc, *.o) only.",
+				remaining.Round(time.Second), pct*100)
 		case pct >= 0.75 && !warned75:
 			warned75 = true
-			warning = fmt.Sprintf("TIME WARNING: %s remaining (%.0f%% elapsed). "+
-				"Start wrapping up. Focus on verifying your current approach works. "+
-				"Run tests, fix only critical failures, clean up artifacts.", remaining.Round(time.Second), pct*100)
+			warning = fmt.Sprintf("TIME WARNING: %s left (%.0f%% elapsed). "+
+				"Wrap up current approach and prioritize verifier pass over new exploration.",
+				remaining.Round(time.Second), pct*100)
 		case pct >= 0.50 && !warned50:
 			warned50 = true
-			warning = fmt.Sprintf("HALFWAY CHECK: %s remaining (%.0f%% elapsed). "+
-				"Do these NOW: "+
-				"(1) Verify your output files exist — if not, create them IMMEDIATELY. "+
-				"(2) Run the test suite and note which tests pass/fail. "+
-				"(3) Read test FAILURE output carefully — it tells you EXACTLY what's wrong. "+
-				"(4) If your approach has fundamental problems (< 30%% passing), switch to a simpler approach. "+
-				"(5) Focus on fixing the HIGHEST-VALUE failures first.",
+			warning = fmt.Sprintf("HALFWAY: %s left (%.0f%% elapsed). "+
+				"Confirm outputs exist and run verifier now; if pass rate is low, pivot immediately.",
 				remaining.Round(time.Second), pct*100)
 		case pct >= 0.25 && !warned25:
 			warned25 = true
-			warning = fmt.Sprintf("QUARTER TIME: %s remaining (%.0f%% elapsed). "+
-				"Checkpoint: (1) Output files should exist by now — if not, stop analyzing and start writing. "+
-				"(2) You should have run tests at least once. "+
-				"(3) If stuck on infrastructure (packages, compilation, networking), give it 2 more turns max then work around it.",
+			warning = fmt.Sprintf("QUARTER: %s left (%.0f%% elapsed). "+
+				"Outputs should exist by now and at least one verification run should be complete.",
 				remaining.Round(time.Second), pct*100)
 		}
 

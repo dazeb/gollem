@@ -787,6 +787,155 @@ func TestRequestIntegration(t *testing.T) {
 	}
 }
 
+func TestRequestFallsBackToResponsesForCodex(t *testing.T) {
+	chatHits := 0
+	responsesHits := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			chatHits++
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":{"message":"This is not a chat model and thus not supported in the v1/chat/completions endpoint. Did you mean to use v1/completions?"}}`))
+		case "/v1/responses":
+			responsesHits++
+			var req responsesRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode responses request: %v", err)
+			}
+			if req.Model != "gpt-5.2-codex" {
+				t.Fatalf("expected model gpt-5.2-codex, got %q", req.Model)
+			}
+			resp := responsesAPIResponse{
+				ID:    "resp_123",
+				Model: "gpt-5.2-codex",
+				Output: []responsesOutputItem{
+					{
+						Type:      "function_call",
+						Name:      "run_cmd",
+						CallID:    "call_1",
+						Arguments: `{"cmd":"ls"}`,
+					},
+				},
+				Usage: responsesUsage{
+					InputTokens:  12,
+					OutputTokens: 5,
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := New(
+		WithAPIKey("test-key"),
+		WithBaseURL(server.URL),
+		WithModel("gpt-5.2-codex"),
+	)
+
+	params := &core.ModelRequestParameters{
+		FunctionTools: []core.ToolDefinition{
+			{
+				Name:             "run_cmd",
+				ParametersSchema: core.Schema{"type": "object"},
+			},
+		},
+	}
+
+	resp, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "list files"},
+			},
+		},
+	}, nil, params)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+
+	if chatHits != 0 {
+		t.Fatalf("expected no chat requests for codex model, got %d", chatHits)
+	}
+	if responsesHits != 1 {
+		t.Fatalf("expected exactly one responses request, got %d", responsesHits)
+	}
+	toolCalls := resp.ToolCalls()
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
+	}
+	if toolCalls[0].ToolName != "run_cmd" {
+		t.Fatalf("expected tool run_cmd, got %q", toolCalls[0].ToolName)
+	}
+}
+
+func TestRequestRetriesOnChatMismatchThenPinsResponses(t *testing.T) {
+	chatHits := 0
+	responsesHits := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			chatHits++
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":{"message":"This is not a chat model and thus not supported in the v1/chat/completions endpoint. Did you mean to use v1/completions?"}}`))
+		case "/v1/responses":
+			responsesHits++
+			resp := responsesAPIResponse{
+				ID:    "resp_123",
+				Model: "gpt-5.2",
+				Output: []responsesOutputItem{
+					{
+						Type: "message",
+						Role: "assistant",
+						Content: []responsesContentItem{
+							{Type: "output_text", Text: "ok"},
+						},
+					},
+				},
+				Usage: responsesUsage{
+					InputTokens:  3,
+					OutputTokens: 1,
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := New(
+		WithAPIKey("test-key"),
+		WithBaseURL(server.URL),
+		WithModel("gpt-5.2"),
+	)
+
+	for i := 0; i < 2; i++ {
+		resp, err := p.Request(context.Background(), []core.ModelMessage{
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}},
+			},
+		}, nil, nil)
+		if err != nil {
+			t.Fatalf("request %d failed: %v", i+1, err)
+		}
+		if got := resp.TextContent(); got != "ok" {
+			t.Fatalf("request %d text = %q, want ok", i+1, got)
+		}
+	}
+
+	if chatHits != 1 {
+		t.Fatalf("expected 1 chat attempt before fallback pinning, got %d", chatHits)
+	}
+	if responsesHits != 2 {
+		t.Fatalf("expected 2 responses calls, got %d", responsesHits)
+	}
+}
+
 func TestRequestStreamIntegration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

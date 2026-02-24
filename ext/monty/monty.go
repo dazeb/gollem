@@ -163,7 +163,7 @@ func (cm *CodeMode) handler(ctx context.Context, rc *core.RunContext, argsJSON s
 		}))
 		result, err := cm.runner.Execute(ctx, params.Code, nil, opts...)
 		if err != nil {
-			return nil, err
+			return nil, normalizeExecuteError(err)
 		}
 		if prints.Len() > 0 {
 			return map[string]any{
@@ -174,7 +174,11 @@ func (cm *CodeMode) handler(ctx context.Context, rc *core.RunContext, argsJSON s
 		return result, nil
 	}
 
-	return cm.runner.Execute(ctx, params.Code, nil, opts...)
+	result, err := cm.runner.Execute(ctx, params.Code, nil, opts...)
+	if err != nil {
+		return nil, normalizeExecuteError(err)
+	}
+	return result, nil
 }
 
 func (cm *CodeMode) externalFunc(ctx context.Context, call *montygo.FunctionCall) (any, error) {
@@ -212,4 +216,20 @@ func truncateUTF8(s string, max int) string {
 		return "..."
 	}
 	return s[:n] + "..."
+}
+
+func normalizeExecuteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "modulenotfounderror") || strings.Contains(lower, "importerror") {
+		return &core.ModelRetryError{
+			Message: "execute_code sandbox limits from monty-go README: supports loops/comprehensions/try-except/builtins, " +
+				"plus `import os` and `from pathlib import Path` via OS callbacks. " +
+				"Not supported: class definitions, most stdlib modules, third-party libraries, `filter()`, `float('inf')`, `float('nan')`. " +
+				"Use direct tools (`bash`, `view`, `edit`, `write`) instead of imports.",
+		}
+	}
+	return err
 }
