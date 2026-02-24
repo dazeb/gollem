@@ -266,9 +266,16 @@ func stripOrphanedToolResults(messages []ModelMessage) []ModelMessage {
 
 		if modified {
 			if len(filtered) == 0 {
-				continue
+				// Keep a placeholder instead of dropping — dropping the
+				// ModelRequest entirely can create consecutive ModelResponse
+				// (assistant-role) messages, which violates the alternation
+				// requirement and causes Anthropic 400 errors.
+				req.Parts = []ModelRequestPart{
+					UserPromptPart{Content: "[Previous tool results removed during context recovery]"},
+				}
+			} else {
+				req.Parts = filtered
 			}
-			req.Parts = filtered
 		}
 		out = append(out, req)
 	}

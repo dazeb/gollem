@@ -13564,3 +13564,77 @@ func TestInjectUserPromptIntoLastRequest(t *testing.T) {
 		}
 	}
 }
+
+// TestStripOrphanedToolResults_NoConsecutiveMessages verifies that stripping
+// orphaned tool results does not create consecutive same-role messages.
+// When a ModelRequest contains ONLY orphaned tool results with empty/non-string
+// content, the message must be kept with a placeholder rather than dropped.
+func TestStripOrphanedToolResults_NoConsecutiveMessages(t *testing.T) {
+	messages := []core.ModelMessage{
+		// First message.
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Do the task"},
+			},
+		},
+		// Summary (assistant role).
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "[Summary] previous work"},
+			},
+		},
+		// Orphaned tool result with non-string content — previously this
+		// ModelRequest would be dropped entirely, creating consecutive
+		// ModelResponse messages.
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					ToolCallID: "orphan_1",
+					Content:    42, // non-string, conversion gives empty string
+				},
+			},
+		},
+		// Next response (assistant role).
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "edit",
+					ToolCallID: "valid_1",
+					ArgsJSON:   `{"path":"foo.go"}`,
+				},
+			},
+		},
+		// Valid tool result.
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "edit",
+					ToolCallID: "valid_1",
+					Content:    "edit applied",
+				},
+			},
+		},
+	}
+
+	result := stripOrphanedToolResults(messages)
+
+	// Verify no consecutive same-role messages.
+	for i := 1; i < len(result); i++ {
+		_, prevIsReq := result[i-1].(core.ModelRequest)
+		_, currIsReq := result[i].(core.ModelRequest)
+		_, prevIsResp := result[i-1].(core.ModelResponse)
+		_, currIsResp := result[i].(core.ModelResponse)
+		if prevIsReq && currIsReq {
+			t.Errorf("consecutive ModelRequest at %d and %d — would cause Anthropic 400", i-1, i)
+		}
+		if prevIsResp && currIsResp {
+			t.Errorf("consecutive ModelResponse at %d and %d — would cause Anthropic 400", i-1, i)
+		}
+	}
+
+	// The result should keep all 5 messages (none dropped).
+	if len(result) != 5 {
+		t.Errorf("expected 5 messages (placeholder for orphaned), got %d", len(result))
+	}
+}
