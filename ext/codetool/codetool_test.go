@@ -8334,6 +8334,59 @@ func TestVerificationCheckpoint_NoStaleTestWithFewEdits(t *testing.T) {
 	}
 }
 
+func TestVerificationCheckpoint_NoConsecutiveUserMessages(t *testing.T) {
+	// Verification warnings must be merged into the last ModelRequest, not
+	// appended as new ModelRequests. Consecutive user-role messages cause a
+	// 400 error from Anthropic's API.
+	mw, _ := VerificationCheckpoint("")
+
+	// Build a message history that triggers a regression warning:
+	// two test runs where pass count decreases.
+	var messages []core.ModelMessage
+	passCounts := []int{5, 3}
+	failCounts := []int{1, 3}
+	for i := 0; i < 2; i++ {
+		callID := fmt.Sprintf("consec%d", i+1)
+		output := fmt.Sprintf("%d passed, %d failed\n[exit code: 1]", passCounts[i], failCounts[i])
+		messages = append(messages,
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{
+						ToolName:   "bash",
+						ArgsJSON:   `{"command":"pytest"}`,
+						ToolCallID: callID,
+					},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.ToolReturnPart{
+						ToolName:   "bash",
+						Content:    output,
+						ToolCallID: callID,
+					},
+				},
+			},
+		)
+	}
+
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		for i := 1; i < len(msgs); i++ {
+			_, prevIsReq := msgs[i-1].(core.ModelRequest)
+			_, currIsReq := msgs[i].(core.ModelRequest)
+			if prevIsReq && currIsReq {
+				t.Errorf("consecutive ModelRequest messages at indices %d and %d — would cause Anthropic 400 error", i-1, i)
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	_, err := mw(context.Background(), messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildContextRecoverySummary_TestTrajectory(t *testing.T) {
 	// When the recovery summary contains verification results with test counts,
 	// it should include a compact TEST PROGRESS trajectory.

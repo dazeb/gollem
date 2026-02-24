@@ -185,12 +185,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 					"NEVER fix one test by breaking another. All tests must pass simultaneously.",
 				prev, curr, prev)
 			fmt.Fprintf(os.Stderr, "[gollem] verification: regression detected — %d → %d passed\n", prev, curr)
-			regressionMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{Content: guidance},
-				},
-			}
-			messages = append(messages, regressionMsg)
+			messages = injectUserPromptIntoLastRequest(messages, guidance)
 		} else if consecutiveFails >= 2 && consecutiveFails > sw && !isImproving {
 			// Inject stagnation guidance when the agent isn't making progress.
 			// Only inject when the stagnation level increases past a threshold
@@ -201,12 +196,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 
 			guidance := stagnationGuidance(consecutiveFails, runPassed, runSummary)
 			fmt.Fprintf(os.Stderr, "[gollem] verification: stagnation detected — %d consecutive failing runs\n", consecutiveFails)
-			stagnationMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{Content: guidance},
-				},
-			}
-			messages = append(messages, stagnationMsg)
+			messages = injectUserPromptIntoLastRequest(messages, guidance)
 		}
 
 		// Detect "stale test" — agent making many file edits without re-running
@@ -222,12 +212,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 				"catch issues early and are more effective than making many changes before testing.",
 				ealv)
 			fmt.Fprintf(os.Stderr, "[gollem] verification: stale test — %d edits since last verify\n", ealv)
-			staleMsg := core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{Content: guidance},
-				},
-			}
-			messages = append(messages, staleMsg)
+			messages = injectUserPromptIntoLastRequest(messages, guidance)
 		}
 		// Reset stale test warning when a new verification resets the counter.
 		if stw && ealv < staleTestThreshold {
