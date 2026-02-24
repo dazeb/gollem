@@ -823,6 +823,49 @@ func TestBuildRequestThinkingStripsTemperature(t *testing.T) {
 	}
 }
 
+// TestBuildRequestThinkingAutoAdjustsMaxTokens verifies that max_tokens is
+// auto-adjusted when the thinking budget exceeds it. Anthropic requires
+// max_tokens > budget_tokens; without this, the API returns 400.
+func TestBuildRequestThinkingAutoAdjustsMaxTokens(t *testing.T) {
+	budget := 10000
+	settings := &core.ModelSettings{
+		ThinkingBudget: &budget,
+	}
+
+	// Default max tokens is 4096, which is less than the budget (10000).
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if req.MaxTokens <= budget {
+		t.Errorf("max_tokens = %d, want > %d (budget_tokens)", req.MaxTokens, budget)
+	}
+	if req.MaxTokens != budget+16000 {
+		t.Errorf("max_tokens = %d, want %d", req.MaxTokens, budget+16000)
+	}
+}
+
+// TestBuildRequestThinkingKeepsExplicitMaxTokens verifies that an explicitly
+// set MaxTokens > budget_tokens is preserved (not overridden).
+func TestBuildRequestThinkingKeepsExplicitMaxTokens(t *testing.T) {
+	budget := 10000
+	maxTokens := 50000
+	settings := &core.ModelSettings{
+		ThinkingBudget: &budget,
+		MaxTokens:      &maxTokens,
+	}
+
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if req.MaxTokens != 50000 {
+		t.Errorf("max_tokens = %d, want 50000 (explicitly set)", req.MaxTokens)
+	}
+}
+
 func TestBuildRequestNoThinkingByDefault(t *testing.T) {
 	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false)
 	if err != nil {

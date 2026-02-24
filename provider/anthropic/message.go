@@ -106,6 +106,13 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 				Type:         "enabled",
 				BudgetTokens: *settings.ThinkingBudget,
 			}
+			// Anthropic requires max_tokens > budget_tokens. Auto-adjust if the
+			// caller didn't set MaxTokens high enough. Without this, the API
+			// returns 400 when ThinkingBudget is set but MaxTokens is left at
+			// the default (4096) or any value <= budget_tokens.
+			if req.MaxTokens <= *settings.ThinkingBudget {
+				req.MaxTokens = *settings.ThinkingBudget + 16000
+			}
 			// Anthropic requires temperature to be omitted when thinking is enabled.
 			req.Temperature = nil
 		}
