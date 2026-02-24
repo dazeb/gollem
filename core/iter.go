@@ -353,6 +353,17 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 		}
 
 		if len(deferredReqs) > 0 {
+			// Append non-deferred tool results to the message history before
+			// returning. Without this, when the caller resumes with the
+			// deferred results, the model would see tool_use blocks without
+			// matching tool_result blocks for the non-deferred calls, causing
+			// API 400 errors. (Same fix as in runLoop — see agent.go.)
+			if len(nextParts) > 0 {
+				ar.state.messages = append(ar.state.messages, ModelRequest{
+					Parts:     nextParts,
+					Timestamp: time.Now(),
+				})
+			}
 			ar.done = true
 			ar.err = &ErrDeferred[T]{
 				Result: RunResultDeferred[T]{

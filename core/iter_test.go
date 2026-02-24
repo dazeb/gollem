@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -355,5 +356,115 @@ func TestIterGlobalRetryResetsOnToolSuccess(t *testing.T) {
 	}
 	if result.Output != "done" {
 		t.Errorf("output = %q, want 'done'", result.Output)
+	}
+}
+
+// TestIterDeferredMixedToolResults verifies that when the Iter API encounters
+// mixed deferred and non-deferred tool calls, the non-deferred tool results are
+// preserved in the message history. This is the Iter equivalent of the bug fixed
+// in runLoop (agent.go) — without the fix, non-deferred tool results are lost
+// when ErrDeferred is returned, causing API 400 errors on resume.
+func TestIterDeferredMixedToolResults(t *testing.T) {
+	deferTool := Tool{
+		Definition: ToolDefinition{
+			Name:        "async_task",
+			Description: "An async tool",
+			Kind:        ToolKindFunction,
+		},
+		Handler: func(_ context.Context, _ *RunContext, _ string) (any, error) {
+			return nil, &CallDeferred{Message: "waiting"}
+		},
+	}
+	normalTool := Tool{
+		Definition: ToolDefinition{
+			Name:        "sync_task",
+			Description: "A sync tool",
+			Kind:        ToolKindFunction,
+		},
+		Handler: func(_ context.Context, _ *RunContext, _ string) (any, error) {
+			return "sync result", nil
+		},
+	}
+
+	model := NewTestModel(
+		MultiToolCallResponse(
+			ToolCallPart{ToolName: "sync_task", ArgsJSON: `{}`, ToolCallID: "call_sync"},
+			ToolCallPart{ToolName: "async_task", ArgsJSON: `{}`, ToolCallID: "call_async"},
+		),
+	)
+
+	agent := NewAgent[string](model, WithTools[string](deferTool, normalTool))
+	iter := agent.Iter(context.Background(), "do both")
+
+	// Step 1: model calls both tools, one defers.
+	_, err := iter.Next()
+
+	var deferredErr *ErrDeferred[string]
+	if !errors.As(err, &deferredErr) {
+		t.Fatalf("expected ErrDeferred, got %v", err)
+	}
+	if !iter.Done() {
+		t.Error("expected iter to be done after deferred")
+	}
+
+	// Verify that the non-deferred tool result (sync_task) is preserved in Messages.
+	foundSync := false
+	for _, msg := range deferredErr.Result.Messages {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if trp, ok := part.(ToolReturnPart); ok && trp.ToolCallID == "call_sync" {
+					foundSync = true
+				}
+			}
+		}
+	}
+	if !foundSync {
+		t.Error("missing tool result for sync_task (call_sync) in Iter messages — non-deferred tool results were lost")
+	}
+
+	// Resume with the deferred result and verify both results are visible.
+	model2 := NewTestModel(TextResponse("all done"))
+	agent2 := NewAgent[string](model2, WithTools[string](deferTool, normalTool))
+	result, err := agent2.Run(context.Background(), "do both",
+		WithMessages(deferredErr.Result.Messages...),
+		WithDeferredResults(DeferredToolResult{
+			ToolName:   "async_task",
+			ToolCallID: "call_async",
+			Content:    "async result",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("resume Run: %v", err)
+	}
+	if result.Output != "all done" {
+		t.Errorf("Output = %q, want %q", result.Output, "all done")
+	}
+
+	// Verify the resumed model saw both tool results.
+	calls := model2.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+	foundSync = false
+	foundAsync := false
+	for _, msg := range calls[0].Messages {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if trp, ok := part.(ToolReturnPart); ok {
+					if trp.ToolCallID == "call_sync" {
+						foundSync = true
+					}
+					if trp.ToolCallID == "call_async" {
+						foundAsync = true
+					}
+				}
+			}
+		}
+	}
+	if !foundSync {
+		t.Error("resumed model missing sync_task result — non-deferred tool results lost in Iter path")
+	}
+	if !foundAsync {
+		t.Error("resumed model missing async_task result — deferred result not injected")
 	}
 }
