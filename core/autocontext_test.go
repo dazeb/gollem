@@ -574,6 +574,92 @@ func TestAutoContext_ToolCallPairIntegrity(t *testing.T) {
 	}
 }
 
+// TestAutoContext_PersistentCompression verifies that auto-context compression
+// persists into state.messages so the summary model is only called when
+// compression triggers, not redundantly on every subsequent turn.
+// Before this fix, state.messages grew unbounded and the summary model was
+// called on every turn after the budget was first exceeded.
+func TestAutoContext_PersistentCompression(t *testing.T) {
+	// Track how many times the summary model is called.
+	summaryModel := NewTestModel(TextResponse("Summary of prior work"))
+
+	// Create a main model that generates several tool-call turns, then completes.
+	// Turns 1-6: tool call → tool result (builds up history)
+	// Turn 7: text response (completes)
+	mainModel := NewTestModel(
+		ToolCallResponseWithID("test_tool", `{"input":"step1"}`, "call_1"),
+		ToolCallResponseWithID("test_tool", `{"input":"step2"}`, "call_2"),
+		ToolCallResponseWithID("test_tool", `{"input":"step3"}`, "call_3"),
+		ToolCallResponseWithID("test_tool", `{"input":"step4"}`, "call_4"),
+		ToolCallResponseWithID("test_tool", `{"input":"step5"}`, "call_5"),
+		ToolCallResponseWithID("test_tool", `{"input":"step6"}`, "call_6"),
+		TextResponse("Done"),
+	)
+
+	type testInput struct {
+		Input string `json:"input"`
+	}
+
+	// Simple tool that returns a string.
+	testTool := FuncTool[testInput]("test_tool", "A test tool", func(ctx context.Context, params testInput) (string, error) {
+		return "result: " + params.Input + strings.Repeat(" padding words to inflate token count", 50), nil
+	})
+
+	agent := NewAgent[string](mainModel,
+		WithAutoContext[string](AutoContextConfig{
+			MaxTokens:    50, // Very low to force compression after a few turns.
+			KeepLastN:    4,
+			SummaryModel: summaryModel,
+		}),
+		WithTools[string](testTool),
+	)
+
+	result, err := agent.Run(context.Background(), "Run all steps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "Done" {
+		t.Errorf("expected 'Done', got %q", result.Output)
+	}
+
+	numSummaryCalls := len(summaryModel.Calls())
+	// With persistent compression, the summary model is called each time
+	// state.messages exceeds the budget — but after compression, the
+	// message count drops significantly. The key invariant is that the
+	// number of summary calls is bounded relative to the number of turns,
+	// not equal to the number of turns (which would happen without
+	// persistence).
+	numMainCalls := len(mainModel.Calls())
+	if numSummaryCalls == 0 {
+		t.Error("summary model was never called (compression should have triggered)")
+	}
+	if numSummaryCalls >= numMainCalls {
+		t.Errorf("summary model called %d times (>= main model calls %d) — compression not persisting effectively", numSummaryCalls, numMainCalls)
+	}
+	t.Logf("main model calls: %d, summary model calls: %d", numMainCalls, numSummaryCalls)
+
+	// Verify the result messages are compressed (fewer than the full
+	// uncompressed history which would be 1 + 6*2 + 1 = 14 messages).
+	if len(result.Messages) >= 14 {
+		t.Errorf("expected compressed messages (< 14), got %d — compression not persisting", len(result.Messages))
+	}
+	t.Logf("final message count: %d", len(result.Messages))
+
+	// Verify the result messages maintain proper alternation.
+	for i := 1; i < len(result.Messages); i++ {
+		_, prevReq := result.Messages[i-1].(ModelRequest)
+		_, currReq := result.Messages[i].(ModelRequest)
+		_, prevResp := result.Messages[i-1].(ModelResponse)
+		_, currResp := result.Messages[i].(ModelResponse)
+		if prevReq && currReq {
+			t.Errorf("adjacent ModelRequests at %d and %d", i-1, i)
+		}
+		if prevResp && currResp {
+			t.Errorf("adjacent ModelResponses at %d and %d", i-1, i)
+		}
+	}
+}
+
 // TestStripOrphanedToolResults_NoConsecutiveMessages verifies that stripping
 // orphaned tool results does not create consecutive same-role messages.
 // When a ModelRequest contains ONLY orphaned tool results (e.g., the tool

@@ -731,6 +731,20 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			}
 		}
 
+		// Apply auto context compression BEFORE history processors.
+		// Persisting the compressed result into state.messages is critical:
+		// without it, state.messages grows unbounded and the summary model
+		// is called on EVERY turn (not just when compression first triggers).
+		// For long conversations (200+ turns), this causes the summary input
+		// to eventually exceed the summary model's own context window,
+		// leading to silent failure → main model 413 → emergency truncation.
+		if a.autoContext != nil {
+			compressed, compErr := autoCompressMessages(ctx, state.messages, a.autoContext, a.model)
+			if compErr == nil && len(compressed) < len(state.messages) {
+				state.messages = compressed
+			}
+		}
+
 		// Apply history processors.
 		messages := state.messages
 		for _, proc := range a.historyProcessors {
@@ -739,14 +753,6 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 				return nil, fmt.Errorf("history processor failed: %w", procErr)
 			}
 			messages = processed
-		}
-
-		// Apply auto context compression.
-		if a.autoContext != nil {
-			compressed, compErr := autoCompressMessages(ctx, messages, a.autoContext, a.model)
-			if compErr == nil {
-				messages = compressed
-			}
 		}
 
 		// Run message interceptors.
