@@ -480,3 +480,96 @@ func TestStripOrphanedToolResults(t *testing.T) {
 		t.Error("orphaned tool result content was not preserved as UserPromptPart")
 	}
 }
+
+// TestAutoContext_ToolCallPairIntegrity verifies that auto-context compression
+// does not produce orphaned tool results when tool call/result pairs span the
+// compression boundary.
+func TestAutoContext_ToolCallPairIntegrity(t *testing.T) {
+	messages := []ModelMessage{
+		// First message.
+		ModelRequest{Parts: []ModelRequestPart{
+			UserPromptPart{Content: "Implement the feature with lots of words to inflate tokens"},
+		}},
+	}
+
+	// Add 6 tool call/result pairs to get enough messages.
+	for i := 0; i < 6; i++ {
+		messages = append(messages, ModelResponse{
+			Parts: []ModelResponsePart{
+				TextPart{Content: fmt.Sprintf("Working on step %d with many extra words to inflate count", i)},
+				ToolCallPart{
+					ToolName:   "edit",
+					ArgsJSON:   fmt.Sprintf(`{"path":"file%d.go"}`, i),
+					ToolCallID: fmt.Sprintf("call_%d", i),
+				},
+			},
+		})
+		messages = append(messages, ModelRequest{
+			Parts: []ModelRequestPart{
+				ToolReturnPart{
+					ToolName:   "edit",
+					ToolCallID: fmt.Sprintf("call_%d", i),
+					Content:    fmt.Sprintf("edit applied to file%d.go successfully with details", i),
+				},
+			},
+		})
+	}
+
+	// Add final response.
+	messages = append(messages, ModelResponse{
+		Parts: []ModelResponsePart{TextPart{Content: "Done with implementation work"}},
+	})
+
+	summaryModel := NewTestModel(TextResponse("Summary of work done"))
+	config := &AutoContextConfig{
+		MaxTokens:    10,  // very low to force compression
+		KeepLastN:    4,
+		SummaryModel: summaryModel,
+	}
+
+	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Collect all tool call IDs.
+	callIDs := make(map[string]bool)
+	for _, msg := range result {
+		if resp, ok := msg.(ModelResponse); ok {
+			for _, part := range resp.Parts {
+				if tc, ok := part.(ToolCallPart); ok {
+					callIDs[tc.ToolCallID] = true
+				}
+			}
+		}
+	}
+
+	// Verify no orphaned tool results.
+	for i, msg := range result {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if tr, ok := part.(ToolReturnPart); ok {
+					if !callIDs[tr.ToolCallID] {
+						t.Errorf("message %d has orphaned ToolReturnPart with ID %q", i, tr.ToolCallID)
+					}
+				}
+			}
+		}
+	}
+
+	// Verify proper alternation.
+	for i := 1; i < len(result); i++ {
+		_, prevReq := result[i-1].(ModelRequest)
+		_, prevResp := result[i-1].(ModelResponse)
+		_, curReq := result[i].(ModelRequest)
+		_, curResp := result[i].(ModelResponse)
+		if prevReq && curReq {
+			t.Errorf("adjacent ModelRequests at %d and %d", i-1, i)
+		}
+		if prevResp && curResp {
+			t.Errorf("adjacent ModelResponses at %d and %d", i-1, i)
+		}
+		_ = prevReq && prevResp
+		_ = curReq && curResp
+	}
+}
