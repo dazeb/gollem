@@ -53,12 +53,15 @@ func Write(opts ...Option) core.Tool {
 				// with the edit tool's CRLF preservation behavior — without
 				// it, using write for a full-file rewrite would silently
 				// convert Windows line endings to Unix.
-				if data, err := os.ReadFile(path); err == nil {
-					sample := string(data)
-					if len(sample) > 4096 {
-						sample = sample[:4096]
-					}
-					prevCRLF = strings.Contains(sample, "\r\n")
+				//
+				// Only read the first 4K instead of the whole file — for
+				// large files, os.ReadFile would allocate the entire file
+				// into memory just to check line endings.
+				if pf, err := os.Open(path); err == nil {
+					buf := make([]byte, 4096)
+					n, _ := pf.Read(buf)
+					pf.Close()
+					prevCRLF = strings.Contains(string(buf[:n]), "\r\n")
 				}
 			}
 
