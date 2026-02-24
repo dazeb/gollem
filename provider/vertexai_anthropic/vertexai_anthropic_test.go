@@ -405,6 +405,55 @@ func TestRequestHTTPError(t *testing.T) {
 	}
 }
 
+func TestBuildRequestThinkingAutoAdjustsMaxTokens(t *testing.T) {
+	budget := 10000
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hi"}},
+		},
+	}
+	settings := &core.ModelSettings{
+		ThinkingBudget: &budget,
+	}
+	// Default max tokens is 4096, which is less than budget (10000).
+	req, err := buildRequest(messages, settings, nil, "claude-sonnet-4-5", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Thinking == nil {
+		t.Fatal("expected thinking to be enabled")
+	}
+	// max_tokens must be > budget_tokens for the Anthropic API.
+	if req.MaxTokens <= budget {
+		t.Errorf("expected max_tokens > %d, got %d", budget, req.MaxTokens)
+	}
+	if req.MaxTokens != budget+16000 {
+		t.Errorf("expected max_tokens = %d, got %d", budget+16000, req.MaxTokens)
+	}
+}
+
+func TestBuildRequestThinkingKeepsExplicitMaxTokens(t *testing.T) {
+	budget := 10000
+	maxTokens := 50000
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hi"}},
+		},
+	}
+	settings := &core.ModelSettings{
+		ThinkingBudget: &budget,
+		MaxTokens:      &maxTokens,
+	}
+	req, err := buildRequest(messages, settings, nil, "claude-sonnet-4-5", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Explicit max_tokens (50000) > budget (10000), should be preserved.
+	if req.MaxTokens != maxTokens {
+		t.Errorf("expected max_tokens = %d, got %d", maxTokens, req.MaxTokens)
+	}
+}
+
 // --- Test helpers ---
 
 type staticTokenSource struct {
