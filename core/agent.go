@@ -636,10 +636,13 @@ func (a *Agent[T]) hasToolPrepareFuncs(tools []Tool) bool {
 
 // runLoop is the core agent loop.
 func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt string, settings *ModelSettings, limits UsageLimits, deps any, deferredResults []DeferredToolResult) (*RunResult[T], error) {
-	// When deferred results are provided, inject them BEFORE the new initial request.
-	// This ensures tool_result blocks immediately follow the tool_use blocks in the
-	// existing message history, which providers like Anthropic require.
-	if len(deferredResults) > 0 {
+	// When deferred results are provided with pre-existing messages (resume
+	// case), inject the tool results and skip building a new initial request.
+	// The original system prompt and user prompt are already in the message
+	// history from WithMessages. Adding a new initial request would create
+	// two consecutive ModelRequests (user role), which violates the Anthropic
+	// API's strict user/assistant alternation requirement.
+	if len(deferredResults) > 0 && len(state.messages) > 0 {
 		var deferredParts []ModelRequestPart
 		for _, dr := range deferredResults {
 			if dr.IsError {
@@ -662,14 +665,15 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			Parts:     deferredParts,
 			Timestamp: time.Now(),
 		})
+	} else {
+		// Normal case (no deferred results, or deferred without prior history):
+		// build the initial request with system prompts and user prompt.
+		req, err := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build initial request: %w", err)
+		}
+		state.messages = append(state.messages, req)
 	}
-
-	// Build the initial request with dynamic system prompts.
-	req, err := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build initial request: %w", err)
-	}
-	state.messages = append(state.messages, req)
 
 	// Gather all tools (direct + toolsets).
 	allTools := a.allTools()
@@ -804,6 +808,7 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 
 		// Call the model (through middleware chain if configured).
 		var resp *ModelResponse
+		var err error
 		if len(a.middleware) > 0 {
 			chain := buildMiddlewareChain(a.middleware, a.model)
 			resp, err = chain(ctx, messages, settings, params)

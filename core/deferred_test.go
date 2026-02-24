@@ -327,3 +327,65 @@ func TestDeferredTool_ToolNamePreserved(t *testing.T) {
 		t.Error("expected ToolReturnPart with ToolCallID 'call_42' in model messages")
 	}
 }
+
+
+// TestDeferredTool_ResumeMessageAlternation verifies that resuming with
+// WithDeferredResults does not produce consecutive user-role messages.
+// The Anthropic API rejects conversations where two user messages appear
+// in a row without an assistant message between them.
+func TestDeferredTool_ResumeMessageAlternation(t *testing.T) {
+	model := NewTestModel(TextResponse("resumed"))
+
+	agent := NewAgent[string](model)
+
+	_, err := agent.Run(context.Background(), "resume",
+		WithMessages(
+			ModelRequest{
+				Parts:     []ModelRequestPart{UserPromptPart{Content: "original prompt"}},
+				Timestamp: time.Now(),
+			},
+			ModelResponse{
+				Parts: []ModelResponsePart{
+					ToolCallPart{ToolName: "my_tool", ArgsJSON: `{}`, ToolCallID: "call_1"},
+				},
+				FinishReason: FinishReasonToolCall,
+				Timestamp:    time.Now(),
+			},
+		),
+		WithDeferredResults(DeferredToolResult{
+			ToolName:   "my_tool",
+			ToolCallID: "call_1",
+			Content:    "result data",
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Verify message alternation: no two consecutive ModelRequests.
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+	msgs := calls[0].Messages
+	for i := 1; i < len(msgs); i++ {
+		_, prevIsReq := msgs[i-1].(ModelRequest)
+		_, currIsReq := msgs[i].(ModelRequest)
+		if prevIsReq && currIsReq {
+			// Check if the first one only has system prompts (which don't
+			// produce API messages in Anthropic). That's OK.
+			prevReq := msgs[i-1].(ModelRequest)
+			hasNonSystem := false
+			for _, part := range prevReq.Parts {
+				if _, isSys := part.(SystemPromptPart); !isSys {
+					hasNonSystem = true
+					break
+				}
+			}
+			if hasNonSystem {
+				t.Errorf("consecutive ModelRequests at positions %d and %d — "+
+					"this produces consecutive user-role messages that Anthropic rejects", i-1, i)
+			}
+		}
+	}
+}
