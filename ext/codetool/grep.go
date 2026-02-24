@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"unicode/utf8"
 	"strings"
 
 	"github.com/fugue-labs/gollem/core"
@@ -225,7 +226,11 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 				}
 				lineText := line
 				if len(lineText) > 2000 {
-					lineText = lineText[:2000] + "..."
+					n := 2000
+					for n > 0 && !utf8.RuneStart(lineText[n]) {
+						n--
+					}
+					lineText = lineText[:n] + "..."
 				}
 				*matches = append(*matches, fmt.Sprintf("%s:%d: %s", relPath, lineNum, lineText))
 			}
@@ -287,7 +292,11 @@ func searchFile(ctx context.Context, absPath, relPath string, re *regexp.Regexp,
 				}
 				lineText := allLines[j]
 				if len(lineText) > 2000 {
-					lineText = lineText[:2000] + "..."
+					n := 2000
+					for n > 0 && !utf8.RuneStart(lineText[n]) {
+						n--
+					}
+					lineText = lineText[:n] + "..."
 				}
 				*matches = append(*matches, fmt.Sprintf("%s%s:%d: %s", prefix, relPath, j+1, lineText))
 			}

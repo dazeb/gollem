@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"unicode/utf8"
+
 	"github.com/fugue-labs/gollem/core"
 )
 
@@ -122,7 +124,11 @@ func View(opts ...Option) core.Tool {
 				for i := start; i < len(allLines); i++ {
 					line := allLines[i]
 					if len(line) > 2000 {
-						line = line[:2000] + "..."
+						n := 2000
+					for n > 0 && !utf8.RuneStart(line[n]) {
+						n--
+					}
+					line = line[:n] + "..."
 					}
 					lines = append(lines, fmt.Sprintf("%6d\t%s", i+1, line))
 				}
@@ -155,7 +161,11 @@ func View(opts ...Option) core.Tool {
 				line := scanner.Text()
 				// Truncate very long lines.
 				if len(line) > 2000 {
-					line = line[:2000] + "..."
+					n := 2000
+					for n > 0 && !utf8.RuneStart(line[n]) {
+						n--
+					}
+					line = line[:n] + "..."
 				}
 				lines = append(lines, fmt.Sprintf("%6d\t%s", lineNum, line))
 			}

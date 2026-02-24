@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -147,7 +148,11 @@ func Write(opts ...Option) core.Tool {
 				preview.WriteString("\n\nContent:\n")
 				for i, line := range lines {
 					if len(line) > 200 {
-						line = line[:200] + "..."
+						n := 200
+					for n > 0 && !utf8.RuneStart(line[n]) {
+						n--
+					}
+					line = line[:n] + "..."
 					}
 					fmt.Fprintf(&preview, "%6d\t%s\n", i+1, line)
 				}
