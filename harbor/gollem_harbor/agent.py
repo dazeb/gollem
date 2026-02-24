@@ -350,6 +350,21 @@ class GollemAgent(BaseInstalledAgent):
                     "Vertex AI auth will not work in remote environments."
                 )
 
+        # Install uv (fast Python package manager, 10-100x faster than pip).
+        # We still keep pip fallbacks below because not all images support uv.
+        await environment.exec(
+            command=(
+                "timeout 30 sh -c '"
+                "if ! command -v uv >/dev/null 2>&1; then "
+                "  curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | "
+                "    sh 2>/dev/null && "
+                "  export PATH=\"$HOME/.local/bin:$PATH\" && "
+                "  ln -sf $HOME/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true; "
+                "fi"
+                "' || true"
+            )
+        )
+
         # Auto-install task dependencies found in the container.
         # This runs during setup (before the agent timer starts), saving 2-5
         # agent turns that would otherwise be spent on `pip install` / `npm install`.
@@ -361,6 +376,9 @@ class GollemAgent(BaseInstalledAgent):
                 # verifier tests use pytest. numpy/scipy/pandas/requests/pyyaml
                 # cover ~80% of TB2 task dependencies. Installing here is free
                 # (setup time doesn't count against agent timeout).
+                "uv pip install --system -q "
+                "  pytest numpy scipy pandas requests pyyaml matplotlib "
+                "  scikit-learn pillow sympy 2>/dev/null || "
                 "pip install --break-system-packages -q "
                 "  pytest numpy scipy pandas requests pyyaml matplotlib "
                 "  scikit-learn pillow sympy 2>/dev/null || "
@@ -370,6 +388,7 @@ class GollemAgent(BaseInstalledAgent):
                 # Python: requirements.txt
                 "for f in /app/requirements.txt /requirements.txt; do "
                 "  if [ -f \"$f\" ]; then "
+                "    uv pip install --system -r \"$f\" 2>&1 | tail -5 || "
                 "    pip install --break-system-packages -r \"$f\" 2>&1 | tail -5 || "
                 "    pip3 install --break-system-packages -r \"$f\" 2>&1 | tail -5 || "
                 "    python3 -m pip install --break-system-packages -r \"$f\" 2>&1 | tail -5 || true; "
@@ -379,7 +398,8 @@ class GollemAgent(BaseInstalledAgent):
                 # Python: setup.py (editable install for projects with setup.py)
                 "for d in /app .; do "
                 "  if [ -f \"$d/setup.py\" ] && ! [ -f \"$d/requirements.txt\" ]; then "
-                "    cd \"$d\" && pip install --break-system-packages -e . 2>&1 | tail -5 || true; "
+                "    cd \"$d\" && uv pip install --system -e . 2>&1 | tail -5 || "
+                "    pip install --break-system-packages -e . 2>&1 | tail -5 || true; "
                 "    break; "
                 "  fi; "
                 "done; "
@@ -390,6 +410,7 @@ class GollemAgent(BaseInstalledAgent):
                 "      sed \"s/^import //;s/^from //;s/ .*//;s/\\..*//\" | "
                 "      sort -u | while read mod; do "
                 "        python3 -c \"import $mod\" 2>/dev/null || "
+                "          uv pip install --system -q \"$mod\" 2>/dev/null || "
                 "          pip install --break-system-packages -q \"$mod\" 2>/dev/null || true; "
                 "    done; "
                 "    break; "
@@ -419,7 +440,8 @@ class GollemAgent(BaseInstalledAgent):
                 # Python: pyproject.toml (PEP 517/518 projects without requirements.txt)
                 "for d in /app .; do "
                 "  if [ -f \"$d/pyproject.toml\" ] && ! [ -f \"$d/requirements.txt\" ] && ! [ -f \"$d/setup.py\" ]; then "
-                "    cd \"$d\" && pip install --break-system-packages -e . 2>&1 | tail -5 || "
+                "    cd \"$d\" && uv pip install --system -e . 2>&1 | tail -5 || "
+                "    pip install --break-system-packages -e . 2>&1 | tail -5 || "
                 "    pip3 install --break-system-packages -e . 2>&1 | tail -5 || true; "
                 "    break; "
                 "  fi; "
@@ -457,25 +479,11 @@ class GollemAgent(BaseInstalledAgent):
                 "      sed \"s/^import //;s/^from //;s/ .*//;s/\\..*//\" | "
                 "      sort -u | while read mod; do "
                 "        python3 -c \"import $mod\" 2>/dev/null || "
+                "          uv pip install --system -q \"$mod\" 2>/dev/null || "
                 "          pip install --break-system-packages -q \"$mod\" 2>/dev/null || true; "
                 "    done; "
                 "  fi; "
                 "done"
-                "' || true"
-            )
-        )
-
-        # Install uv (fast Python package manager, 10-100x faster than pip).
-        # The agent's system prompt tells it to prefer `uv pip install` over pip.
-        await environment.exec(
-            command=(
-                "timeout 30 sh -c '"
-                "if ! command -v uv >/dev/null 2>&1; then "
-                "  curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | "
-                "    sh 2>/dev/null && "
-                "  export PATH=\"$HOME/.local/bin:$PATH\" && "
-                "  ln -sf $HOME/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true; "
-                "fi"
                 "' || true"
             )
         )
@@ -489,6 +497,7 @@ class GollemAgent(BaseInstalledAgent):
             command=(
                 "timeout 90 sh -c '"
                 # pylsp: covers 27/89 TB2 tasks (Python). Pure Python, no Node needed.
+                "uv pip install --system -q python-lsp-server pyright 2>/dev/null || "
                 "pip install --break-system-packages -q python-lsp-server pyright 2>/dev/null || "
                 "pip3 install --break-system-packages -q python-lsp-server pyright 2>/dev/null || true; "
                 # gopls: Go LSP (if Go is available)
