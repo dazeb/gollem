@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -434,6 +435,41 @@ func TestSSEClientNoSpaceAfterColon(t *testing.T) {
 	}
 	if tools[0].Name != "get_data" {
 		t.Errorf("expected get_data, got %s", tools[0].Name)
+	}
+}
+
+func TestSSEClientLargeToolResult(t *testing.T) {
+	// MCP tool results can exceed the default bufio.Scanner max token size
+	// of 64KB (e.g., file contents, command output). Verify that large
+	// responses are handled correctly.
+	mock := newMockSSEServer()
+
+	// Create a tool result larger than bufio.MaxScanTokenSize (64KB).
+	largeText := strings.Repeat("x", 100*1024) // 100KB
+	mock.toolResults["read_file"] = &ToolResult{
+		Content: []Content{{Type: "text", Text: largeText}},
+	}
+
+	server := httptest.NewServer(mock.handler())
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := NewSSEClient(ctx, server.URL+"/sse")
+	if err != nil {
+		t.Fatalf("failed to create SSE client: %v", err)
+	}
+	defer client.Close()
+
+	result, err := client.CallTool(ctx, "read_file", map[string]any{"path": "/big/file"})
+	if err != nil {
+		t.Fatalf("CallTool failed for large result: %v", err)
+	}
+
+	got := result.TextContent()
+	if len(got) != 100*1024 {
+		t.Errorf("expected 100KB result, got %d bytes", len(got))
 	}
 }
 

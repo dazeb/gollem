@@ -140,6 +140,9 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 
 	data, err := json.Marshal(req)
 	if err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
 		return nil, err
 	}
 

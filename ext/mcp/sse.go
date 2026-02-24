@@ -119,6 +119,10 @@ func (c *SSEClient) readSSE(body io.ReadCloser) {
 	defer body.Close()
 
 	scanner := bufio.NewScanner(body)
+	// MCP tool results can be large (file contents, command output). The
+	// default bufio.Scanner max token size is only 64KB, which would cause
+	// ErrTooLong and kill the SSE connection for any response > 64KB.
+	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024) // 10MB max line
 	var eventType string
 	var dataLines []string
 
@@ -255,6 +259,9 @@ func (c *SSEClient) call(ctx context.Context, method string, params any) (json.R
 
 	data, err := json.Marshal(req)
 	if err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
 		return nil, err
 	}
 
