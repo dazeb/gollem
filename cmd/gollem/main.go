@@ -694,6 +694,11 @@ Examples:
 Environment variables:
   ANTHROPIC_API_KEY        API key for the anthropic provider
   OPENAI_API_KEY           API key for the openai provider
+  OPENAI_PROMPT_CACHE_KEY  Optional stable key for OpenAI prompt caching
+  OPENAI_PROMPT_CACHE_RETENTION Optional OpenAI cache retention policy (e.g. in_memory, 24h)
+  GOLLEM_CODE_MODE_FAILURE_THRESHOLD Consecutive execute_code capability failures before cooldown (default: 3)
+  GOLLEM_CODE_MODE_COOLDOWN_TURNS Turns to keep execute_code disabled before retrying (default: 2)
+  GOLLEM_CODE_MODE_MAX_RECENT_RESULTS Number of recent execute_code results to inspect (default: 12)
   GOOGLE_CLOUD_PROJECT     GCP project for vertexai and vertexai-anthropic providers
   LANGFUSE_SECRET_KEY      Langfuse secret key (enables tracing)
   LANGFUSE_PUBLIC_KEY      Langfuse public key

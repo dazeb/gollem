@@ -47,4 +47,7 @@ Set your API key before running:
 export ANTHROPIC_API_KEY="sk-..."
 # or
 export OPENAI_API_KEY="sk-..."
+# Optional: improve OpenAI prompt cache hit rate/retention
+export OPENAI_PROMPT_CACHE_KEY="tbench2-gollem"
+export OPENAI_PROMPT_CACHE_RETENTION="in_memory"
 ```

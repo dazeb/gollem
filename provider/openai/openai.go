@@ -38,12 +38,14 @@ const (
 
 // Provider implements core.Model for OpenAI's Chat Completions API.
 type Provider struct {
-	apiKey       string
-	model        string
-	baseURL      string
-	httpClient   *http.Client
-	maxTokens    int
-	useResponses bool
+	apiKey               string
+	model                string
+	baseURL              string
+	httpClient           *http.Client
+	maxTokens            int
+	promptCacheKey       string
+	promptCacheRetention string
+	useResponses         bool
 }
 
 // Option configures the OpenAI provider.
@@ -84,6 +86,22 @@ func WithMaxTokens(n int) Option {
 	}
 }
 
+// WithPromptCacheKey sets a stable prompt cache key for OpenAI prompt caching.
+// Useful to increase cache hit rates across related requests.
+func WithPromptCacheKey(key string) Option {
+	return func(p *Provider) {
+		p.promptCacheKey = key
+	}
+}
+
+// WithPromptCacheRetention sets OpenAI prompt cache retention policy
+// (for example: "in_memory" or "24h", model-dependent).
+func WithPromptCacheRetention(retention string) Option {
+	return func(p *Provider) {
+		p.promptCacheRetention = retention
+	}
+}
+
 // New creates a new OpenAI provider with the given options.
 // Supports OPENAI_API_KEY and OPENAI_BASE_URL environment variables
 // for compatibility with OpenAI-compatible APIs (xAI, Together, etc.).
@@ -105,6 +123,12 @@ func New(opts ...Option) *Provider {
 		if envURL := os.Getenv("OPENAI_BASE_URL"); envURL != "" {
 			p.baseURL = envURL
 		}
+	}
+	if p.promptCacheKey == "" {
+		p.promptCacheKey = os.Getenv("OPENAI_PROMPT_CACHE_KEY")
+	}
+	if p.promptCacheRetention == "" {
+		p.promptCacheRetention = os.Getenv("OPENAI_PROMPT_CACHE_RETENTION")
 	}
 	// Strip trailing /v1 or /v1/ from the base URL. Our endpoint path
 	// already includes /v1, so a base URL with /v1 (which is the convention
@@ -151,6 +175,8 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build request: %w", err)
 	}
+	req.PromptCacheKey = p.promptCacheKey
+	req.PromptCacheRetention = p.promptCacheRetention
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -186,6 +212,8 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build request: %w", err)
 	}
+	req.PromptCacheKey = p.promptCacheKey
+	req.PromptCacheRetention = p.promptCacheRetention
 
 	body, err := json.Marshal(req)
 	if err != nil {

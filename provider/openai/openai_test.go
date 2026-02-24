@@ -711,6 +711,8 @@ data: [DONE]
 
 func TestNewProviderDefaults(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key-123")
+	t.Setenv("OPENAI_PROMPT_CACHE_KEY", "repo:gollem")
+	t.Setenv("OPENAI_PROMPT_CACHE_RETENTION", "in_memory")
 	p := New()
 	if p.model != defaultModel {
 		t.Errorf("expected model %s, got %s", defaultModel, p.model)
@@ -720,6 +722,12 @@ func TestNewProviderDefaults(t *testing.T) {
 	}
 	if p.apiKey != "test-key-123" {
 		t.Errorf("expected API key from env, got %s", p.apiKey)
+	}
+	if p.promptCacheKey != "repo:gollem" {
+		t.Errorf("expected prompt cache key from env, got %q", p.promptCacheKey)
+	}
+	if p.promptCacheRetention != "in_memory" {
+		t.Errorf("expected prompt cache retention from env, got %q", p.promptCacheRetention)
 	}
 	if p.ModelName() != defaultModel {
 		t.Errorf("expected ModelName() %s, got %s", defaultModel, p.ModelName())
@@ -732,6 +740,8 @@ func TestNewProviderOptions(t *testing.T) {
 		WithModel("gpt-4o-mini"),
 		WithBaseURL("https://custom.api.com"),
 		WithMaxTokens(2048),
+		WithPromptCacheKey("stable-key"),
+		WithPromptCacheRetention("24h"),
 	)
 	if p.apiKey != "my-key" {
 		t.Errorf("expected API key my-key, got %s", p.apiKey)
@@ -744,6 +754,12 @@ func TestNewProviderOptions(t *testing.T) {
 	}
 	if p.maxTokens != 2048 {
 		t.Errorf("expected maxTokens 2048, got %d", p.maxTokens)
+	}
+	if p.promptCacheKey != "stable-key" {
+		t.Errorf("expected prompt cache key stable-key, got %q", p.promptCacheKey)
+	}
+	if p.promptCacheRetention != "24h" {
+		t.Errorf("expected prompt cache retention 24h, got %q", p.promptCacheRetention)
 	}
 }
 
@@ -814,6 +830,12 @@ func TestRequestIntegration(t *testing.T) {
 		if req.Model != "gpt-4o" {
 			t.Errorf("expected model gpt-4o, got %s", req.Model)
 		}
+		if req.PromptCacheKey != "stable-key" {
+			t.Errorf("expected prompt_cache_key stable-key, got %q", req.PromptCacheKey)
+		}
+		if req.PromptCacheRetention != "in_memory" {
+			t.Errorf("expected prompt_cache_retention in_memory, got %q", req.PromptCacheRetention)
+		}
 
 		// Return a response.
 		resp := apiResponse{
@@ -838,7 +860,12 @@ func TestRequestIntegration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := New(WithAPIKey("test-key"), WithBaseURL(server.URL))
+	p := New(
+		WithAPIKey("test-key"),
+		WithBaseURL(server.URL),
+		WithPromptCacheKey("stable-key"),
+		WithPromptCacheRetention("in_memory"),
+	)
 	result, err := p.Request(context.Background(), []core.ModelMessage{
 		core.ModelRequest{
 			Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
@@ -875,6 +902,12 @@ func TestRequestFallsBackToResponsesForCodex(t *testing.T) {
 			if req.Model != "gpt-5.2-codex" {
 				t.Fatalf("expected model gpt-5.2-codex, got %q", req.Model)
 			}
+			if req.PromptCacheKey != "stable-key" {
+				t.Fatalf("expected prompt_cache_key stable-key, got %q", req.PromptCacheKey)
+			}
+			if req.PromptCacheRetention != "in_memory" {
+				t.Fatalf("expected prompt_cache_retention in_memory, got %q", req.PromptCacheRetention)
+			}
 			resp := responsesAPIResponse{
 				ID:    "resp_123",
 				Model: "gpt-5.2-codex",
@@ -903,6 +936,8 @@ func TestRequestFallsBackToResponsesForCodex(t *testing.T) {
 		WithAPIKey("test-key"),
 		WithBaseURL(server.URL),
 		WithModel("gpt-5.2-codex"),
+		WithPromptCacheKey("stable-key"),
+		WithPromptCacheRetention("in_memory"),
 	)
 
 	params := &core.ModelRequestParameters{

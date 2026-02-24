@@ -49,6 +49,12 @@ case "$PROVIDER" in
       echo "ERROR: OPENAI_API_KEY is required for openai models."
       exit 1
     fi
+    # OpenAI prompt caching tuning (applies only to OpenAI models).
+    # Keep stable defaults across runs; allow caller overrides.
+    : "${OPENAI_PROMPT_CACHE_KEY:=tbench2-gollem}"
+    : "${OPENAI_PROMPT_CACHE_RETENTION:=in_memory}"
+    export OPENAI_PROMPT_CACHE_KEY OPENAI_PROMPT_CACHE_RETENTION
+    echo "OpenAI prompt cache: key=${OPENAI_PROMPT_CACHE_KEY} retention=${OPENAI_PROMPT_CACHE_RETENTION}"
     ;;
   google|vertexai|vertex)
     echo "Provider: vertexai | Project: ${GOOGLE_CLOUD_PROJECT:-not set}"

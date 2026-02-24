@@ -44,10 +44,10 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 	completionAttempts := 0
 	lastVerifyFailed := false
 	lastVerifySummary := ""
-	failedCompletionAttempts := 0
-	stagnationWarned := 0 // consecutive fail level at which we last injected guidance
+	editsSinceLastVerify := 0
+	stagnationWarned := 0    // consecutive fail level at which we last injected guidance
 	staleTestWarned := false // whether we've warned about not running tests after edits
-	lastResetVerifyID := "" // tool call ID of the last verification that reset completion counters
+	lastResetVerifyID := ""  // tool call ID of the last verification that reset completion counters
 	startTime := time.Now()
 
 	// Determine effective timeout for skip-checklist logic.
@@ -77,23 +77,48 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		// so this is idempotent). This also tracks stagnation metrics.
 		var pendingCallID string
 		var lastVerifyCallID string // last verification tool call ID seen in this scan
-		var runFailed []bool  // whether each verification run failed
-		var runPassed []int   // pass count per run (-1 if unavailable)
+		var runFailed []bool        // whether each verification run failed
+		var runPassed []int         // pass count per run (-1 if unavailable)
 		var runSummary []string
+		pendingMutationCallIDs := map[string]struct{}{}
 		editsAfterLastVerify := 0 // file changes since last verification run
 
 		for _, msg := range messages {
 			if resp, ok := msg.(core.ModelResponse); ok {
 				for _, part := range resp.Parts {
 					if tc, ok := part.(core.ToolCallPart); ok {
-						if (tc.ToolName == "bash" && isVerificationCommand(tc.ArgsJSON)) ||
-							(tc.ToolName == "execute_code" && isVerificationCode(tc.ArgsJSON)) {
+						isVerify := (tc.ToolName == "bash" && isVerificationCommand(tc.ArgsJSON)) ||
+							(tc.ToolName == "execute_code" && isVerificationCode(tc.ArgsJSON))
+
+						bashMutation := tc.ToolName == "bash" && isMutatingBashCommand(tc.ArgsJSON)
+						if isVerify && bashMutation && !isStrongMutatingBashCommand(tc.ArgsJSON) {
+							// Verification commands often redirect output to logs
+							// (e.g., `pytest > /tmp/log`). Redirection alone should
+							// not mark workspace dirty or cause stale-verify loops.
+							bashMutation = false
+						}
+
+						isMutation := tc.ToolName == "edit" || tc.ToolName == "multi_edit" || tc.ToolName == "write" ||
+							(tc.ToolName == "lsp" && isMutatingLSPCall(tc.ArgsJSON)) ||
+							bashMutation
+
+						if isVerify {
 							verified = true
 							pendingCallID = tc.ToolCallID
 							lastVerifyCallID = tc.ToolCallID
 							editsAfterLastVerify = 0
-						} else if tc.ToolName == "edit" || tc.ToolName == "multi_edit" || tc.ToolName == "write" {
-							editsAfterLastVerify++
+							// Previous edits are now covered by this verification run.
+							clear(pendingMutationCallIDs)
+						}
+						if isMutation {
+							// Count edits on matching tool return, not tool call, so failed
+							// edit attempts don't force unnecessary re-verification.
+							if tc.ToolCallID != "" {
+								pendingMutationCallIDs[tc.ToolCallID] = struct{}{}
+							} else {
+								// Defensive fallback for malformed call IDs.
+								editsAfterLastVerify++
+							}
 						}
 					}
 				}
@@ -110,6 +135,13 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 							runSummary = append(runSummary, summary)
 							pendingCallID = ""
 						}
+						if _, ok := pendingMutationCallIDs[tr.ToolCallID]; ok {
+							content := toolReturnContentString(tr.Content)
+							if mutationToolReturnSucceeded(tr.ToolName, content) {
+								editsAfterLastVerify++
+							}
+							delete(pendingMutationCallIDs, tr.ToolCallID)
+						}
 					}
 				}
 			}
@@ -120,7 +152,6 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		// historical messages resets counters the validator already
 		// incremented, creating an infinite pre-completion checklist loop.
 		if lastVerifyCallID != "" && lastVerifyCallID != lastResetVerifyID {
-			failedCompletionAttempts = 0
 			completionAttempts = 0
 			lastResetVerifyID = lastVerifyCallID
 		}
@@ -130,6 +161,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 			lastVerifyFailed = runFailed[len(runFailed)-1]
 			lastVerifySummary = runSummary[len(runSummary)-1]
 		}
+		editsSinceLastVerify = editsAfterLastVerify
 
 		// Compute stagnation: count consecutive failing runs from the end
 		// that aren't showing improvement in pass counts.
@@ -229,7 +261,7 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		v := verified
 		lvf := lastVerifyFailed
 		lvs := lastVerifySummary
-		fca := failedCompletionAttempts
+		eslv := editsSinceLastVerify
 		mu.Unlock()
 
 		if !v {
@@ -242,12 +274,22 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 			}
 		}
 
+		// If files were edited after the last verification run, force a fresh
+		// verification before completion. This prevents stale "tests passed"
+		// state after subsequent code changes.
+		if eslv > 0 {
+			return output, &core.ModelRetryError{
+				Message: fmt.Sprintf(
+					"STOP. You made %d file edit(s) since your last verification run. "+
+						"Run tests/build again now and ensure they pass before declaring completion.",
+					eslv,
+				),
+			}
+		}
+
 		// If the last verification run failed, force the agent to fix and
-		// re-verify. Cap at 2 rejections to prevent infinite loops.
-		if lvf && fca < 2 {
-			mu.Lock()
-			failedCompletionAttempts++
-			mu.Unlock()
+		// re-verify. Never allow completion with failing tests.
+		if lvf {
 			msg := "STOP. Your last verification run FAILED"
 			if lvs != "" {
 				msg += ": " + lvs
@@ -255,9 +297,6 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 			msg += "\n" + failureGuidance(lvs)
 			msg += "Do NOT declare completion with failing tests."
 			return output, &core.ModelRetryError{Message: msg}
-		}
-		if lvf {
-			fmt.Fprintf(os.Stderr, "[gollem] verification: allowing completion despite test failures (rejected %d times)\n", fca)
 		}
 
 		mu.Lock()
@@ -370,7 +409,7 @@ func isVerificationCode(argsJSON string) bool {
 
 	// Check for verification-like code patterns.
 	codeVerifyPatterns := []string{
-		"assert ", "assert(",       // Python assertions
+		"assert ", "assert(", // Python assertions
 		"assertEqual", "assertTrue", // unittest assertions
 		"test_output", "test_result", "run_test",
 		"verify(", "validate(",
@@ -384,6 +423,140 @@ func isVerificationCode(argsJSON string) bool {
 		}
 	}
 	return false
+}
+
+// isMutatingLSPCall returns true when an lsp tool call is expected to apply
+// file edits (rename, or code_action with action_index). Listing code actions
+// without action_index is read-only and must not mark the workspace dirty.
+func isMutatingLSPCall(argsJSON string) bool {
+	var args struct {
+		Method      string `json:"method"`
+		ActionIndex *int   `json:"action_index,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(args.Method)) {
+	case "rename":
+		return true
+	case "code_action":
+		return args.ActionIndex != nil
+	default:
+		return false
+	}
+}
+
+// isMutatingBashCommand returns true when a bash tool call likely mutates the
+// filesystem (file edits, writes, copies, deletes, etc.). This keeps stale
+// verification detection aligned with real post-test code changes.
+func isMutatingBashCommand(argsJSON string) bool {
+	var args struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return false
+	}
+	return isMutatingBashString(args.Command)
+}
+
+func isStrongMutatingBashCommand(argsJSON string) bool {
+	var args struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return false
+	}
+	return hasStrongBashMutationString(args.Command)
+}
+
+func isMutatingBashString(command string) bool {
+	if strings.TrimSpace(command) == "" {
+		return false
+	}
+
+	if hasStrongBashMutationString(command) {
+		return true
+	}
+
+	lower := strings.ToLower(command)
+
+	// tee can write files; treat as mutating to avoid stale verification.
+	if strings.Contains(lower, "tee ") {
+		return true
+	}
+
+	// Redirections are file writes except for common fd redirects (2>, 1>, &>).
+	for i := 0; i < len(command); i++ {
+		if command[i] != '>' {
+			continue
+		}
+		if i > 0 {
+			prev := command[i-1]
+			if (prev >= '0' && prev <= '9') || prev == '&' {
+				continue
+			}
+		}
+		if i+1 < len(command) && command[i+1] == '&' {
+			continue
+		}
+		return true
+	}
+
+	return false
+}
+
+func hasStrongBashMutationString(command string) bool {
+	lower := strings.ToLower(command)
+
+	// Common file-mutation operations.
+	patterns := []string{
+		"sed -i", "perl -i", "perl -pi",
+		"rm ", "mv ", "cp ", "mkdir ", "rmdir ", "touch ", "ln ",
+		"truncate ", "dd ", "patch ", "git apply",
+	}
+	for _, p := range patterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+
+	// install (coreutils) writes files; ignore package-manager installs.
+	if strings.Contains(lower, "install ") &&
+		!strings.Contains(lower, "pip install") && !strings.Contains(lower, "npm install") &&
+		!strings.Contains(lower, "apt install") && !strings.Contains(lower, "apt-get install") {
+		return true
+	}
+
+	return false
+}
+
+// mutationToolReturnSucceeded returns whether a mutation call appears to have
+// succeeded. We only count successful mutations as "edits since verify".
+func mutationToolReturnSucceeded(toolName, content string) bool {
+	lower := strings.ToLower(strings.TrimSpace(content))
+	if strings.HasPrefix(lower, "error:") {
+		return false
+	}
+
+	if toolName == "bash" {
+		if strings.Contains(lower, "[timed out after") || strings.Contains(lower, "[exit code:") {
+			return false
+		}
+	}
+
+	if toolName == "lsp" {
+		if strings.Contains(lower, "no edits were produced") ||
+			strings.Contains(lower, "has no workspace edit") ||
+			strings.Contains(lower, "produced no edits") ||
+			strings.Contains(lower, "rename not supported") ||
+			strings.Contains(lower, "no renamable symbol found") ||
+			strings.Contains(lower, "cannot rename at this location") {
+			return false
+		}
+	}
+
+	return true
 }
 
 // isVerificationString checks whether a command/code string contains patterns
@@ -442,7 +615,7 @@ func isVerificationString(cmd string) bool {
 		"zig build", "zig test",
 		// Perl / TAP.
 		"prove ", "perl -e",
-		"pg_prove",         // PostgreSQL TAP runner
+		"pg_prove",            // PostgreSQL TAP runner
 		"npx tape", "npx tap", // Node.js TAP runners
 		// R language.
 		"rscript ", "rscript -e",
@@ -575,13 +748,13 @@ func isVerificationString(cmd string) bool {
 		"biome check", "biome lint",
 		"clippy", // rustfmt is format-only, clippy is lint
 		"pyright", "basedpyright",
-		"tsc --noEmit", // typecheck only
+		"tsc --noEmit",              // typecheck only
 		"terraform fmt", "tofu fmt", // Terraform formatting checks
-		"elm-format",                // Elm formatting
-		"statix check",              // Nix linter
-		"deadnix",                   // Nix dead code detection
-		"solhint",                   // Solidity linter
-		"slither",                   // Solidity security analysis
+		"elm-format",   // Elm formatting
+		"statix check", // Nix linter
+		"deadnix",      // Nix dead code detection
+		"solhint",      // Solidity linter
+		"slither",      // Solidity security analysis
 	}
 
 	// Constraint verification commands (size checks, output validation).
@@ -591,22 +764,22 @@ func isVerificationString(cmd string) bool {
 		"diff ", "cmp ",
 		"md5sum", "sha256sum", "sha1sum",
 		"grep -c", "grep --count", // counting matches is verification
-		"sqlite3 ",                 // querying database to verify contents
-		"xxd ",                     // hex dump for byte-level comparison
-		"valgrind ",                // memory leak checking
+		"sqlite3 ",                                                  // querying database to verify contents
+		"xxd ",                                                      // hex dump for byte-level comparison
+		"valgrind ",                                                 // memory leak checking
 		"curl localhost", "curl 127.0.0.1", "curl http://localhost", // service verification
 		"wget localhost", "wget 127.0.0.1",
 		// Network/service verification commands.
-		"nc localhost", "nc 127.0.0.1", "nc -z",       // netcat connectivity checks
+		"nc localhost", "nc 127.0.0.1", "nc -z", // netcat connectivity checks
 		"netcat localhost", "netcat 127.0.0.1",
-		"ss -tlnp", "ss -tnlp",                        // listening port checks
-		"lsof -i:",                                     // port ownership checks
-		"nginx -t", "apachectl configtest",             // config validation
-		"sshd -t",                                       // SSH config validation
-		"named-checkconf", "named-checkzone",           // DNS config validation
-		"postconf -n",                                   // Postfix config check
-		"systemctl status",                              // service status checks
-		"service ", // SysV service status
+		"ss -tlnp", "ss -tnlp", // listening port checks
+		"lsof -i:",                         // port ownership checks
+		"nginx -t", "apachectl configtest", // config validation
+		"sshd -t",                            // SSH config validation
+		"named-checkconf", "named-checkzone", // DNS config validation
+		"postconf -n",      // Postfix config check
+		"systemctl status", // service status checks
+		"service ",         // SysV service status
 	}
 
 	for _, p := range testPatterns {
@@ -651,18 +824,18 @@ func autoCleanupIntermediates(workDir string) int {
 	// These are common intermediates that can cause "extra files" test failures
 	// when tests check directory contents with os.listdir/ls.
 	cacheDirs := map[string]bool{
-		"__pycache__":   true,
-		".pytest_cache": true,
-		".mypy_cache":   true,
-		".ruff_cache":   true,
-		".tox":          true,
-		".eggs":         true,
-		"nimcache":      true, // Nim compilation cache
-		".nimcache":     true, // Nim compilation cache (dot variant)
-		".zig-cache":    true, // Zig build cache
-		"zig-out":       true, // Zig build output
-		".dub":                true, // D language package cache
-		".ipynb_checkpoints":  true, // Jupyter notebook checkpoints
+		"__pycache__":        true,
+		".pytest_cache":      true,
+		".mypy_cache":        true,
+		".ruff_cache":        true,
+		".tox":               true,
+		".eggs":              true,
+		"nimcache":           true, // Nim compilation cache
+		".nimcache":          true, // Nim compilation cache (dot variant)
+		".zig-cache":         true, // Zig build cache
+		"zig-out":            true, // Zig build output
+		".dub":               true, // D language package cache
+		".ipynb_checkpoints": true, // Jupyter notebook checkpoints
 	}
 
 	// Intermediate file extensions to remove: .pyc (Python), .class (Java),

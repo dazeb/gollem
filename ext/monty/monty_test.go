@@ -93,6 +93,12 @@ func TestToolDefinition(t *testing.T) {
 	if tool.Handler == nil {
 		t.Error("handler should not be nil")
 	}
+	if !strings.Contains(tool.Definition.Description, "multi-module imports") {
+		t.Error("tool description should mention multi-module import limitation")
+	}
+	if !strings.Contains(tool.Definition.Description, "context managers") {
+		t.Error("tool description should mention context manager limitation")
+	}
 }
 
 func TestWithToolName(t *testing.T) {
@@ -128,6 +134,12 @@ func TestSystemPrompt(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Search the knowledge base") {
 		t.Error("prompt should contain tool description")
+	}
+	if !strings.Contains(prompt, "multi-module imports") {
+		t.Error("prompt should mention multi-module import limitation")
+	}
+	if !strings.Contains(prompt, "context managers") {
+		t.Error("prompt should mention context manager limitation")
 	}
 }
 

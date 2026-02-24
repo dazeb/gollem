@@ -588,6 +588,8 @@ class GollemAgent(BaseInstalledAgent):
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "OPENAI_BASE_URL",
+            "OPENAI_PROMPT_CACHE_KEY",
+            "OPENAI_PROMPT_CACHE_RETENTION",
             "GOOGLE_CLOUD_PROJECT",
             "LANGFUSE_SECRET_KEY",
             "LANGFUSE_PUBLIC_KEY",

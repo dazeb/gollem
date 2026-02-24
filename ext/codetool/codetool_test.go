@@ -1798,6 +1798,8 @@ func TestIsDestructiveTestCommand(t *testing.T) {
 		{"dd to tests", "dd if=/dev/zero of=/tests/test.sh bs=1 count=0", true},
 		{"patch tests", "patch /tests/test.py < fix.patch", true},
 		{"install to tests", "install -m 755 solution.py /tests/test.py", true},
+		{"mkdir tests dir", "mkdir -p /tests", true},
+		{"ln into tests", "ln -s /app/filter.py /tests/filter.py", true},
 
 		// Non-destructive operations — should be allowed.
 		{"run test script", "bash /tests/test.sh", false},
@@ -1811,6 +1813,19 @@ func TestIsDestructiveTestCommand(t *testing.T) {
 		// pip/npm/apt install with /tests/ reference should NOT be blocked.
 		{"pip install tests dep", "pip install /tests/requirements.txt", false},
 		{"npm install in tests", "npm install --prefix /tests/", false},
+		// Non-root paths that contain "tests" should NOT be treated as verifier /tests.
+		{"mkdir tests backup", "mkdir -p /tests_backup", false},
+		{"redirect tests backup", "echo data > /tests_backup/out.txt", false},
+		{"rm app tests path", "rm -f /app/tests/unit/test_a.py", false},
+		{"touch app tests path", "touch /app/tests/generated.txt", false},
+		{"ln app tests path", "ln -s /app/a.py /app/tests/a.py", false},
+		// Conservative behavior: if /tests and mutating operators coexist anywhere
+		// in the same command, block to avoid shell-segmentation bypasses.
+		{"rm unrelated then read tests", "rm -f /tmp/a && cat /tests/test.sh", true},
+		{"read tests then rm unrelated", "cat /tests/test.sh && rm -f /tmp/a", true},
+		{"rm tests then unrelated", "rm -f /tests/test.sh && echo done", true},
+		{"pipeline xargs rm tests", "printf '/tests/test.sh\n' | xargs rm -f", true},
+		{"var indirection rm tests", "p=/tests/test.sh; rm -f \"$p\"", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1899,14 +1914,14 @@ func TestIsProtectedTestFile(t *testing.T) {
 		{"/tests/unit/test_check.py", true},
 		{"/tests/e2e/verify.sh", true},
 		{"/tests", true},
-		{"/app/tests/test.py", false},       // not root /tests/
-		{"/home/user/tests/foo.py", false},   // not root /tests/
-		{"/src/main.py", false},              // unrelated
-		{"/app/solution.py", false},          // unrelated
-		{"tests/test.sh", false},             // relative, not /tests/
-		{"/testing/foo.py", false},           // /testing != /tests
-		{"/tests/../app/foo.py", false},      // cleaned to /app/foo.py
-		{"/tests/./nested/test.sh", true},    // cleaned to /tests/nested/test.sh
+		{"/app/tests/test.py", false},      // not root /tests/
+		{"/home/user/tests/foo.py", false}, // not root /tests/
+		{"/src/main.py", false},            // unrelated
+		{"/app/solution.py", false},        // unrelated
+		{"tests/test.sh", false},           // relative, not /tests/
+		{"/testing/foo.py", false},         // /testing != /tests
+		{"/tests/../app/foo.py", false},    // cleaned to /app/foo.py
+		{"/tests/./nested/test.sh", true},  // cleaned to /tests/nested/test.sh
 	}
 	for _, tt := range tests {
 		got := isProtectedTestFile(tt.path)
@@ -2132,7 +2147,7 @@ func TestVerificationCheckpoint_AcceptsAfterFailureThenPass(t *testing.T) {
 	}
 }
 
-func TestVerificationCheckpoint_FailureCapAt2(t *testing.T) {
+func TestVerificationCheckpoint_RejectsRepeatedlyOnFailure(t *testing.T) {
 	mw, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
@@ -2164,36 +2179,477 @@ func TestVerificationCheckpoint_FailureCapAt2(t *testing.T) {
 	}
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	// Rejection 1.
+	for i := 0; i < 4; i++ {
+		_, err := validator(ctx, rc, "Done!")
+		if err == nil {
+			t.Fatalf("expected rejection on attempt %d", i+1)
+		}
+		var retryErr *core.ModelRetryError
+		if !errors.As(err, &retryErr) {
+			t.Fatalf("expected ModelRetryError on attempt %d, got: %v", i+1, err)
+		}
+		if !strings.Contains(retryErr.Message, "Your last verification run FAILED") {
+			t.Fatalf("attempt %d: expected failure rejection, got: %s", i+1, retryErr.Message)
+		}
+	}
+}
+
+func TestVerificationCheckpoint_RejectsWhenEditsAfterLastVerification(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// Verification passed, then file edited afterwards without re-running tests.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest"}`,
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 passed",
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "edit",
+					ArgsJSON:   `{"path":"main.py","old_string":"x","new_string":"y"}`,
+					ToolCallID: "edit1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "edit",
+					Content:    "edit applied",
+					ToolCallID: "edit1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
 	_, err := validator(ctx, rc, "Done!")
 	if err == nil {
-		t.Fatal("expected rejection 1")
-	}
-
-	// Rejection 2.
-	_, err = validator(ctx, rc, "Done!")
-	if err == nil {
-		t.Fatal("expected rejection 2")
-	}
-
-	// Attempt 3: should fall through to checklist (not another failure rejection).
-	_, err = validator(ctx, rc, "Done!")
-	if err == nil {
-		t.Fatal("expected checklist after failure cap")
+		t.Fatal("expected rejection when edits were made after last verification")
 	}
 	var retryErr *core.ModelRetryError
 	if !errors.As(err, &retryErr) {
 		t.Fatalf("expected ModelRetryError, got: %v", err)
 	}
-	// This should be the checklist, not a failure rejection.
-	if strings.Contains(retryErr.Message, "Your last verification run FAILED") {
-		t.Error("after 2 failure rejections, should get checklist, not another failure rejection")
+	if !strings.Contains(retryErr.Message, "since your last verification run") {
+		t.Fatalf("expected stale-verification message, got: %s", retryErr.Message)
+	}
+}
+
+func TestVerificationCheckpoint_RejectsWhenLSPRenameAfterLastVerification(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
 	}
 
-	// Attempt 4: should accept.
-	_, err = validator(ctx, rc, "Done!")
-	if err != nil {
-		t.Fatalf("should accept after checklist, got: %v", err)
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest"}`,
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 passed",
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "lsp",
+					ArgsJSON:   `{"method":"rename","file":"main.go","line":1,"character":1,"new_name":"NewSymbol"}`,
+					ToolCallID: "lsp1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "lsp",
+					Content:    "Applied \"Rename Symbol\" — 1 edit(s) across 1 file(s):\n  main.go (1 edit(s))",
+					ToolCallID: "lsp1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected rejection when lsp rename was made after last verification")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+	if !strings.Contains(retryErr.Message, "since your last verification run") {
+		t.Fatalf("expected stale-verification message, got: %s", retryErr.Message)
+	}
+}
+
+func TestVerificationCheckpoint_RejectsWhenBashMutationAfterLastVerification(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest"}`,
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 passed",
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"sed -i 's/x/y/' main.py"}`,
+					ToolCallID: "mut1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "done",
+					ToolCallID: "mut1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected rejection when bash mutation was made after last verification")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+	if !strings.Contains(retryErr.Message, "since your last verification run") {
+		t.Fatalf("expected stale-verification message, got: %s", retryErr.Message)
+	}
+}
+
+func TestVerificationCheckpoint_DoesNotRejectWhenPostVerifyMutationFails(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// Verification passed, then mutation call fails (non-zero exit). This should
+	// not count as a successful edit since last verification.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest"}`,
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 passed",
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"sed -i 's/x/y/' missing.py"}`,
+					ToolCallID: "mut1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "sed: can't read missing.py: No such file or directory\n[exit code: 2]",
+					ToolCallID: "mut1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected checklist on first completion attempt")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+	if strings.Contains(retryErr.Message, "since your last verification run") {
+		t.Fatalf("did not expect stale-verification rejection for failed mutation, got: %s", retryErr.Message)
+	}
+	if !strings.Contains(retryErr.Message, "Before finalizing") {
+		t.Fatalf("expected checklist message, got: %s", retryErr.Message)
+	}
+}
+
+func TestVerificationCheckpoint_VerificationWithRedirectDoesNotTriggerStaleReject(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest > /tmp/test.log"}`,
+					ToolCallID: "verify1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 passed",
+					ToolCallID: "verify1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected checklist on first completion attempt")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+	if strings.Contains(retryErr.Message, "since your last verification run") {
+		t.Fatalf("did not expect stale-verification rejection for verification redirect, got: %s", retryErr.Message)
+	}
+	if !strings.Contains(retryErr.Message, "Before finalizing") {
+		t.Fatalf("expected checklist message, got: %s", retryErr.Message)
+	}
+}
+
+func TestIsMutatingLSPCall(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want bool
+	}{
+		{
+			name: "rename mutates",
+			args: `{"method":"rename","file":"main.go","line":1,"character":1,"new_name":"X"}`,
+			want: true,
+		},
+		{
+			name: "code_action with action_index mutates",
+			args: `{"method":"code_action","file":"main.go","line":1,"character":1,"action_index":0}`,
+			want: true,
+		},
+		{
+			name: "code_action list is read-only",
+			args: `{"method":"code_action","file":"main.go","line":1,"character":1}`,
+			want: false,
+		},
+		{
+			name: "outline is read-only",
+			args: `{"method":"outline","file":"main.go"}`,
+			want: false,
+		},
+		{
+			name: "invalid json",
+			args: `{`,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isMutatingLSPCall(tt.args)
+			if got != tt.want {
+				t.Fatalf("isMutatingLSPCall(%q) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsMutatingBashCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want bool
+	}{
+		{
+			name: "sed in-place edit",
+			args: `{"command":"sed -i 's/a/b/' main.py"}`,
+			want: true,
+		},
+		{
+			name: "redirect write",
+			args: `{"command":"echo hi > out.txt"}`,
+			want: true,
+		},
+		{
+			name: "rm file",
+			args: `{"command":"rm -f out.txt"}`,
+			want: true,
+		},
+		{
+			name: "read-only grep",
+			args: `{"command":"grep -n foo main.py"}`,
+			want: false,
+		},
+		{
+			name: "stderr redirect only",
+			args: `{"command":"pytest 2>/tmp/err.log"}`,
+			want: false,
+		},
+		{
+			name: "invalid json",
+			args: `{`,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isMutatingBashCommand(tt.args)
+			if got != tt.want {
+				t.Fatalf("isMutatingBashCommand(%q) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsStrongMutatingBashCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want bool
+	}{
+		{
+			name: "strong mutation sed",
+			args: `{"command":"sed -i 's/a/b/' main.py"}`,
+			want: true,
+		},
+		{
+			name: "redirect only not strong",
+			args: `{"command":"pytest > /tmp/test.log"}`,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isStrongMutatingBashCommand(tt.args)
+			if got != tt.want {
+				t.Fatalf("isStrongMutatingBashCommand(%q) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMutationToolReturnSucceeded(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		content  string
+		want     bool
+	}{
+		{
+			name:     "bash success",
+			toolName: "bash",
+			content:  "ok",
+			want:     true,
+		},
+		{
+			name:     "bash non-zero exit",
+			toolName: "bash",
+			content:  "failed\n[exit code: 1]",
+			want:     false,
+		},
+		{
+			name:     "lsp no edits",
+			toolName: "lsp",
+			content:  "No edits were produced by the rename.",
+			want:     false,
+		},
+		{
+			name:     "edit generic error",
+			toolName: "edit",
+			content:  "error: failed to write",
+			want:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mutationToolReturnSucceeded(tt.toolName, tt.content)
+			if got != tt.want {
+				t.Fatalf("mutationToolReturnSucceeded(%q, %q) = %v, want %v", tt.toolName, tt.content, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -2436,9 +2892,9 @@ func TestVerificationCheckpoint_NoRegressionWhenImproving(t *testing.T) {
 
 func TestStagnationGuidance(t *testing.T) {
 	tests := []struct {
-		name            string
+		name             string
 		consecutiveFails int
-		wantSubstr      string
+		wantSubstr       string
 	}{
 		{"2_fails", 2, "VERIFICATION STAGNATION"},
 		{"3_fails", 3, "STAGNATION WARNING"},
@@ -2552,8 +3008,8 @@ func TestToolReturnContentString(t *testing.T) {
 
 func TestFailureGuidance(t *testing.T) {
 	tests := []struct {
-		summary     string
-		wantSubstr  string
+		summary    string
+		wantSubstr string
 	}{
 		{"verification command timed out", "TOO SLOW"},
 		{"compilation error: undefined variable", "COMPILATION"},
@@ -3095,8 +3551,8 @@ KeyError: 'missing'`,
 			contains: "data.py:8",
 		},
 		{
-			name: "file_not_found_no_traceback",
-			output: `FileNotFoundError: [Errno 2] No such file or directory: 'output.csv'`,
+			name:     "file_not_found_no_traceback",
+			output:   `FileNotFoundError: [Errno 2] No such file or directory: 'output.csv'`,
 			exitCode: 1,
 			contains: "output.csv",
 		},
@@ -3391,9 +3847,9 @@ Passed 7 out of 10 tests`,
 			want: "7 out of 10",
 		},
 		{
-			name: "Passed X of Y failed Z",
+			name:   "Passed X of Y failed Z",
 			output: `Test results: passed 3 of 5, failed 2`,
-			want: "passed 3 of 5",
+			want:   "passed 3 of 5",
 		},
 	}
 	for _, tt := range tests {
@@ -9711,9 +10167,9 @@ func TestMissingHeaderHint_Expanded(t *testing.T) {
 // Test expanded linkerHint mappings.
 func TestLinkerHint_Expanded(t *testing.T) {
 	tests := []struct {
-		name string
+		name   string
 		output string
-		flag string
+		flag   string
 	}{
 		{"rt_clock", "undefined reference to `clock_gettime'", "-lrt"},
 		{"rt_timer", "undefined reference to `timer_create'", "-lrt"},
@@ -12251,9 +12707,9 @@ func TestLooksLikePythonException(t *testing.T) {
 		{"django.core.exceptions.ImproperlyConfigured: SECRET_KEY", true},
 		{"myapp.errors.ValidationError: bad input", true},
 		{"error: command not found", false},          // lowercase start
-		{"This is not an error: just a note", false},  // spaces in name
-		{"  IndentedError: not at column 0", false},   // leading space is treated as non-exception
-		{"/usr/bin/python: can't open file", false},   // path, not exception
+		{"This is not an error: just a note", false}, // spaces in name
+		{"  IndentedError: not at column 0", false},  // leading space is treated as non-exception
+		{"/usr/bin/python: can't open file", false},  // path, not exception
 		{"", false},
 		{"NoColonHere", false},
 	}
@@ -13018,7 +13474,6 @@ func TestProgressTrackingMiddleware_SimpleCommandsStillDetected(t *testing.T) {
 	}
 }
 
-
 func TestTruncateAtRuneBoundary(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -13059,8 +13514,8 @@ func TestTruncateAtRuneBoundary(t *testing.T) {
 		{
 			name:     "Emoji, cut mid-character",
 			input:    "Hi 👋🌍", // "Hi " = 3 bytes, 👋 = 4 bytes, 🌍 = 4 bytes
-			maxBytes: 5,        // Falls in middle of 👋 (bytes 3,4,5,6)
-			wantLen:  3,        // Should back up to end of "Hi "
+			maxBytes: 5,       // Falls in middle of 👋 (bytes 3,4,5,6)
+			wantLen:  3,       // Should back up to end of "Hi "
 		},
 		{
 			name:     "Emoji, cut right after emoji",
@@ -13283,8 +13738,8 @@ func TestEmergencyCompressMessages_OrphanedToolResults(t *testing.T) {
 			Parts: []core.ModelResponsePart{
 				core.TextPart{Content: fmt.Sprintf("Let me check file %d", i)},
 				core.ToolCallPart{
-					ToolName: "view",
-					ArgsJSON: fmt.Sprintf(`{"path":"file%d.go"}`, i),
+					ToolName:   "view",
+					ArgsJSON:   fmt.Sprintf(`{"path":"file%d.go"}`, i),
 					ToolCallID: fmt.Sprintf("call_%d", i),
 				},
 			},
@@ -13307,8 +13762,8 @@ func TestEmergencyCompressMessages_OrphanedToolResults(t *testing.T) {
 			Parts: []core.ModelResponsePart{
 				core.TextPart{Content: fmt.Sprintf("Let me edit file %d", i)},
 				core.ToolCallPart{
-					ToolName: "edit",
-					ArgsJSON: fmt.Sprintf(`{"path":"file%d.go"}`, i),
+					ToolName:   "edit",
+					ArgsJSON:   fmt.Sprintf(`{"path":"file%d.go"}`, i),
 					ToolCallID: fmt.Sprintf("call_%d", i),
 				},
 			},
@@ -13546,7 +14001,6 @@ func readFileContent(t *testing.T, path string) string {
 	}
 	return string(data)
 }
-
 
 func TestInjectUserPromptIntoLastRequest(t *testing.T) {
 	// Messages ending with a ModelRequest — common case.

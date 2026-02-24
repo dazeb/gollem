@@ -1019,6 +1019,19 @@ func TestWithOverride(t *testing.T) {
 }
 ```
 
+## Terminal-Bench Submissions
+
+Before opening a Terminal-Bench 2.0 leaderboard PR, validate your submission folder locally:
+
+```bash
+make tbench-validate-submission SUBMISSION_DIR=submissions/terminal-bench/2.0/<agent>__<model>
+```
+
+For full requirements and common failure modes, see:
+
+- [AGENTS.md](AGENTS.md)
+- [contrib/tbench_submission_checklist.md](contrib/tbench_submission_checklist.md)
+
 ## Contributing
 
 Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, testing requirements, and the pull request process.

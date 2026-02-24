@@ -580,193 +580,193 @@ func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeou
 func commandNotFoundHint(stderr string) string {
 	// Common command → package mappings for Debian/Ubuntu containers.
 	packages := map[string]string{
-		"python3":    "python3",
-		"python":     "python3",
-		"pip3":       "python3-pip",
-		"pip":        "python3-pip",
-		"node":       "nodejs",
-		"npm":        "npm",
-		"gcc":        "build-essential",
-		"g++":        "build-essential",
-		"cc":         "build-essential",
-		"make":       "build-essential",
-		"cmake":      "cmake",
-		"meson":      "meson",
-		"bazel":      "bazel-bootstrap",
-		"curl":       "curl",
-		"wget":       "wget",
-		"git":        "git",
-		"java":       "default-jdk",
-		"javac":      "default-jdk",
-		"perl":       "perl",
-		"ruby":       "ruby",
-		"gfortran":   "gfortran",
-		"ffmpeg":     "ffmpeg",
-		"jq":         "jq",
-		"unzip":      "unzip",
-		"zip":        "zip",
-		"bc":         "bc",
-		"flex":       "flex",
-		"bison":      "bison",
-		"pkg-config": "pkg-config",
-		"autoconf":   "autoconf",
-		"automake":   "automake",
-		"libtool":    "libtool",
-		"rsync":      "rsync",
-		"sqlite3":    "sqlite3",
-		"lsof":       "lsof",
-		"netcat":     "netcat-openbsd",
-		"nc":         "netcat-openbsd",
-		"socat":      "socat",
-		"grpc":       "protobuf-compiler",
-		"protoc":     "protobuf-compiler",
-		"valgrind":   "valgrind",
-		"gdb":        "gdb",
-		"strace":     "strace",
-		"ltrace":     "ltrace",
-		"nasm":       "nasm",
-		"yasm":       "yasm",
-		"rustc":      "rustc",
-		"cargo":      "cargo",
-		"ghc":        "ghc",
-		"ocaml":      "ocaml",
-		"racket":     "racket",
-		"guile":      "guile-3.0",
-		"sbcl":       "sbcl",
-		"gawk":       "gawk",
-		"m4":         "m4",
-		"patch":      "patch",
-		"diffutils":  "diffutils",
-		"file":       "file",
-		"xxd":        "xxd",
-		"hexdump":    "bsdmainutils",
-		"strings":    "binutils",
-		"objdump":    "binutils",
-		"readelf":    "binutils",
-		"ar":         "binutils",
-		"nm":         "binutils",
-		"strip":      "binutils",
-		"as":         "binutils",
-		"ld":         "binutils",
-		"expect":     "expect",
-		"sshd":       "openssh-server",
-		"ssh":        "openssh-client",
-		"sshpass":    "sshpass",
-		"postfix":    "postfix",
-		"sendmail":   "sendmail",
-		"tesseract":  "tesseract-ocr",
-		"gnuplot":    "gnuplot-nox",
-		"dot":        "graphviz",
-		"neato":      "graphviz",
-		"latex":      "texlive-latex-base",
-		"pdflatex":   "texlive-latex-base",
-		"xelatex":    "texlive-xetex",
-		"convert":    "imagemagick",
-		"identify":   "imagemagick",
-		"sox":        "sox",
-		"mplayer":    "mplayer",
-		"qemu-system-x86_64":   "qemu-system-x86",
-		"qemu-system-mips":     "qemu-system-mips",
-		"qemu-system-arm":      "qemu-system-arm",
-		"qemu-img":             "qemu-utils",
-		"cobc":       "gnucobol",
-		"gnat":       "gnat",
-		"fpc":        "fp-compiler",
-		"swipl":      "swi-prolog",
-		"mono":       "mono-runtime",
-		"mcs":        "mono-mcs",
-		"R":          "r-base",
-		"Rscript":    "r-base",
-		"scala":      "scala",
-		"lua":        "lua5.4",
-		"luarocks":   "luarocks",
-		"tcl":        "tcl",
-		"wish":       "tk",
-		"tclsh":      "tcl",
-		"swift":      "swift",
-		"swiftc":     "swift",
-		"nim":        "nim",
-		"nimble":     "nim",
-		"choosenim":  "nim",
-		"elixir":     "elixir",
-		"mix":        "elixir",
-		"iex":        "elixir",
-		"erlc":       "erlang",
-		"erl":        "erlang",
-		"crystal":    "crystal",
-		"shards":     "crystal",
-		"zig":        "zig",
-		"opam":       "opam",
-		"dune":       "ocaml-dune",
-		"ocamlfind":  "ocaml-findlib",
-		"coqc":       "coq",
-		"pmars":      "pmars",
-		"xmllint":    "libxml2-utils",
-		"mvn":        "maven",
-		"gradle":     "gradle",
-		"ant":        "ant",
-		"sbt":        "sbt",
-		"dart":       "dart",
-		"flutter":    "flutter",
-		"docker":     "docker.io",
-		"podman":     "podman",
-		"xsltproc":   "xsltproc",
-		"tput":       "ncurses-bin",
-		"column":     "bsdmainutils",
-		"rename":     "rename",
-		"iconv":      "libc-bin",
-		"openssl":    "openssl",
-		"php":        "php",
-		"clang":      "clang",
-		"lldb":       "lldb",
-		"tree":       "tree",
-		"tmux":       "tmux",
-		"screen":     "screen",
-		"dig":        "dnsutils",
-		"nslookup":   "dnsutils",
-		"host":       "dnsutils",
-		"traceroute": "traceroute",
-		"ifconfig":   "net-tools",
-		"inotifywait": "inotify-tools",
-		"rg":         "ripgrep",
-		"fd":         "fd-find",
-		"pigz":       "pigz",
-		"pv":         "pv",
-		"entr":       "entr",
-		"sshfs":      "sshfs",
-		"parallel":   "parallel",
-		"csvtool":    "csvtool",
+		"python3":            "python3",
+		"python":             "python3",
+		"pip3":               "python3-pip",
+		"pip":                "python3-pip",
+		"node":               "nodejs",
+		"npm":                "npm",
+		"gcc":                "build-essential",
+		"g++":                "build-essential",
+		"cc":                 "build-essential",
+		"make":               "build-essential",
+		"cmake":              "cmake",
+		"meson":              "meson",
+		"bazel":              "bazel-bootstrap",
+		"curl":               "curl",
+		"wget":               "wget",
+		"git":                "git",
+		"java":               "default-jdk",
+		"javac":              "default-jdk",
+		"perl":               "perl",
+		"ruby":               "ruby",
+		"gfortran":           "gfortran",
+		"ffmpeg":             "ffmpeg",
+		"jq":                 "jq",
+		"unzip":              "unzip",
+		"zip":                "zip",
+		"bc":                 "bc",
+		"flex":               "flex",
+		"bison":              "bison",
+		"pkg-config":         "pkg-config",
+		"autoconf":           "autoconf",
+		"automake":           "automake",
+		"libtool":            "libtool",
+		"rsync":              "rsync",
+		"sqlite3":            "sqlite3",
+		"lsof":               "lsof",
+		"netcat":             "netcat-openbsd",
+		"nc":                 "netcat-openbsd",
+		"socat":              "socat",
+		"grpc":               "protobuf-compiler",
+		"protoc":             "protobuf-compiler",
+		"valgrind":           "valgrind",
+		"gdb":                "gdb",
+		"strace":             "strace",
+		"ltrace":             "ltrace",
+		"nasm":               "nasm",
+		"yasm":               "yasm",
+		"rustc":              "rustc",
+		"cargo":              "cargo",
+		"ghc":                "ghc",
+		"ocaml":              "ocaml",
+		"racket":             "racket",
+		"guile":              "guile-3.0",
+		"sbcl":               "sbcl",
+		"gawk":               "gawk",
+		"m4":                 "m4",
+		"patch":              "patch",
+		"diffutils":          "diffutils",
+		"file":               "file",
+		"xxd":                "xxd",
+		"hexdump":            "bsdmainutils",
+		"strings":            "binutils",
+		"objdump":            "binutils",
+		"readelf":            "binutils",
+		"ar":                 "binutils",
+		"nm":                 "binutils",
+		"strip":              "binutils",
+		"as":                 "binutils",
+		"ld":                 "binutils",
+		"expect":             "expect",
+		"sshd":               "openssh-server",
+		"ssh":                "openssh-client",
+		"sshpass":            "sshpass",
+		"postfix":            "postfix",
+		"sendmail":           "sendmail",
+		"tesseract":          "tesseract-ocr",
+		"gnuplot":            "gnuplot-nox",
+		"dot":                "graphviz",
+		"neato":              "graphviz",
+		"latex":              "texlive-latex-base",
+		"pdflatex":           "texlive-latex-base",
+		"xelatex":            "texlive-xetex",
+		"convert":            "imagemagick",
+		"identify":           "imagemagick",
+		"sox":                "sox",
+		"mplayer":            "mplayer",
+		"qemu-system-x86_64": "qemu-system-x86",
+		"qemu-system-mips":   "qemu-system-mips",
+		"qemu-system-arm":    "qemu-system-arm",
+		"qemu-img":           "qemu-utils",
+		"cobc":               "gnucobol",
+		"gnat":               "gnat",
+		"fpc":                "fp-compiler",
+		"swipl":              "swi-prolog",
+		"mono":               "mono-runtime",
+		"mcs":                "mono-mcs",
+		"R":                  "r-base",
+		"Rscript":            "r-base",
+		"scala":              "scala",
+		"lua":                "lua5.4",
+		"luarocks":           "luarocks",
+		"tcl":                "tcl",
+		"wish":               "tk",
+		"tclsh":              "tcl",
+		"swift":              "swift",
+		"swiftc":             "swift",
+		"nim":                "nim",
+		"nimble":             "nim",
+		"choosenim":          "nim",
+		"elixir":             "elixir",
+		"mix":                "elixir",
+		"iex":                "elixir",
+		"erlc":               "erlang",
+		"erl":                "erlang",
+		"crystal":            "crystal",
+		"shards":             "crystal",
+		"zig":                "zig",
+		"opam":               "opam",
+		"dune":               "ocaml-dune",
+		"ocamlfind":          "ocaml-findlib",
+		"coqc":               "coq",
+		"pmars":              "pmars",
+		"xmllint":            "libxml2-utils",
+		"mvn":                "maven",
+		"gradle":             "gradle",
+		"ant":                "ant",
+		"sbt":                "sbt",
+		"dart":               "dart",
+		"flutter":            "flutter",
+		"docker":             "docker.io",
+		"podman":             "podman",
+		"xsltproc":           "xsltproc",
+		"tput":               "ncurses-bin",
+		"column":             "bsdmainutils",
+		"rename":             "rename",
+		"iconv":              "libc-bin",
+		"openssl":            "openssl",
+		"php":                "php",
+		"clang":              "clang",
+		"lldb":               "lldb",
+		"tree":               "tree",
+		"tmux":               "tmux",
+		"screen":             "screen",
+		"dig":                "dnsutils",
+		"nslookup":           "dnsutils",
+		"host":               "dnsutils",
+		"traceroute":         "traceroute",
+		"ifconfig":           "net-tools",
+		"inotifywait":        "inotify-tools",
+		"rg":                 "ripgrep",
+		"fd":                 "fd-find",
+		"pigz":               "pigz",
+		"pv":                 "pv",
+		"entr":               "entr",
+		"sshfs":              "sshfs",
+		"parallel":           "parallel",
+		"csvtool":            "csvtool",
 		// JS/TS runtimes and package managers not covered above.
-		"bun":        "bun (install via: curl -fsSL https://bun.sh/install | bash)",
-		"deno":       "deno (install via: curl -fsSL https://deno.land/install.sh | sh)",
-		"pnpm":       "pnpm (install via: npm install -g pnpm)",
-		"npx":        "npm",
-		"tsx":        "tsx (install via: npm install -g tsx)",
+		"bun":  "bun (install via: curl -fsSL https://bun.sh/install | bash)",
+		"deno": "deno (install via: curl -fsSL https://deno.land/install.sh | sh)",
+		"pnpm": "pnpm (install via: npm install -g pnpm)",
+		"npx":  "npm",
+		"tsx":  "tsx (install via: npm install -g tsx)",
 		// Python tool runners.
-		"uv":         "uv (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)",
-		"ruff":       "ruff (install via: pip install ruff)",
-		"mypy":       "mypy (install via: pip install mypy)",
-		"black":      "black (install via: pip install black)",
-		"isort":      "isort (install via: pip install isort)",
-		"pyright":    "pyright (install via: pip install pyright)",
+		"uv":      "uv (install via: curl -LsSf https://astral.sh/uv/install.sh | sh)",
+		"ruff":    "ruff (install via: pip install ruff)",
+		"mypy":    "mypy (install via: pip install mypy)",
+		"black":   "black (install via: pip install black)",
+		"isort":   "isort (install via: pip install isort)",
+		"pyright": "pyright (install via: pip install pyright)",
 		// Language servers (for LSP tool).
-		"gopls":      "gopls (install via: go install golang.org/x/tools/gopls@latest)",
-		"clangd":     "clangd",
+		"gopls":  "gopls (install via: go install golang.org/x/tools/gopls@latest)",
+		"clangd": "clangd",
 		// Haskell tools.
-		"stack":      "haskell-stack",
-		"cabal":      "cabal-install",
-		"ghcup":      "ghcup (install via: curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh)",
+		"stack": "haskell-stack",
+		"cabal": "cabal-install",
+		"ghcup": "ghcup (install via: curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh)",
 		// Clojure.
-		"lein":       "leiningen (install via: apt-get install -y leiningen)",
-		"clj":        "clojure (install via: apt-get install -y clojure)",
+		"lein": "leiningen (install via: apt-get install -y leiningen)",
+		"clj":  "clojure (install via: apt-get install -y clojure)",
 		// Erlang.
-		"rebar3":     "rebar3 (install via: apt-get install -y erlang-dev && mix local.rebar --force)",
+		"rebar3": "rebar3 (install via: apt-get install -y erlang-dev && mix local.rebar --force)",
 		// Python tools.
-		"poetry":     "poetry (install via: pip install poetry)",
-		"pdm":        "pdm (install via: pip install pdm)",
-		"hatch":      "hatch (install via: pip install hatch)",
-		"pytest":     "pytest (install via: pip install pytest)",
-		"coverage":   "coverage (install via: pip install coverage)",
+		"poetry":   "poetry (install via: pip install poetry)",
+		"pdm":      "pdm (install via: pip install pdm)",
+		"hatch":    "hatch (install via: pip install hatch)",
+		"pytest":   "pytest (install via: pip install pytest)",
+		"coverage": "coverage (install via: pip install coverage)",
 	}
 
 	// Extract the missing command name from stderr.
@@ -793,98 +793,98 @@ func commandNotFoundHint(stderr string) string {
 func moduleNotFoundHint(output string, workDir ...string) string {
 	// Common module → pip package mappings where they differ.
 	aliases := map[string]string{
-		"cv2":         "opencv-python",
-		"PIL":         "Pillow",
-		"sklearn":     "scikit-learn",
-		"skimage":     "scikit-image",
-		"yaml":        "PyYAML",
-		"bs4":         "beautifulsoup4",
-		"attr":        "attrs",
-		"dotenv":      "python-dotenv",
-		"git":         "GitPython",
-		"serial":      "pyserial",
-		"usb":         "pyusb",
-		"magic":       "python-magic",
-		"Crypto":      "pycryptodome",
-		"dateutil":    "python-dateutil",
-		"jwt":         "PyJWT",
-		"lxml":        "lxml",
-		"wx":          "wxPython",
-		"gi":          "PyGObject",
-		"nacl":        "PyNaCl",
-		"socks":       "PySocks",
-		"zmq":         "pyzmq",
-		"Levenshtein": "python-Levenshtein",
-		"Bio":         "biopython",
-		"torch":       "torch",
-		"torchvision": "torchvision",
-		"tensorflow":  "tensorflow",
-		"tf":          "tensorflow",
-		"scipy":       "scipy",
-		"pandas":      "pandas",
-		"matplotlib":  "matplotlib",
-		"seaborn":     "seaborn",
-		"flask":       "flask",
-		"django":      "django",
-		"fastapi":     "fastapi",
-		"uvicorn":     "uvicorn",
-		"gunicorn":    "gunicorn",
-		"grpc":        "grpcio grpcio-tools",
+		"cv2":             "opencv-python",
+		"PIL":             "Pillow",
+		"sklearn":         "scikit-learn",
+		"skimage":         "scikit-image",
+		"yaml":            "PyYAML",
+		"bs4":             "beautifulsoup4",
+		"attr":            "attrs",
+		"dotenv":          "python-dotenv",
+		"git":             "GitPython",
+		"serial":          "pyserial",
+		"usb":             "pyusb",
+		"magic":           "python-magic",
+		"Crypto":          "pycryptodome",
+		"dateutil":        "python-dateutil",
+		"jwt":             "PyJWT",
+		"lxml":            "lxml",
+		"wx":              "wxPython",
+		"gi":              "PyGObject",
+		"nacl":            "PyNaCl",
+		"socks":           "PySocks",
+		"zmq":             "pyzmq",
+		"Levenshtein":     "python-Levenshtein",
+		"Bio":             "biopython",
+		"torch":           "torch",
+		"torchvision":     "torchvision",
+		"tensorflow":      "tensorflow",
+		"tf":              "tensorflow",
+		"scipy":           "scipy",
+		"pandas":          "pandas",
+		"matplotlib":      "matplotlib",
+		"seaborn":         "seaborn",
+		"flask":           "flask",
+		"django":          "django",
+		"fastapi":         "fastapi",
+		"uvicorn":         "uvicorn",
+		"gunicorn":        "gunicorn",
+		"grpc":            "grpcio grpcio-tools",
 		"google.protobuf": "protobuf",
-		"pydantic":    "pydantic",
-		"httpx":       "httpx",
-		"aiohttp":     "aiohttp",
-		"sqlalchemy":  "sqlalchemy",
-		"alembic":     "alembic",
-		"celery":      "celery",
-		"redis":       "redis",
-		"pymongo":     "pymongo",
-		"psycopg2":    "psycopg2-binary",
-		"MySQLdb":     "mysqlclient",
-		"mysql":       "mysqlclient",
-		"toml":        "toml",
-		"tomli":       "tomli",
-		"tomllib":     "tomli",
-		"msgpack":     "msgpack",
-		"protobuf":    "protobuf",
-		"Cython":      "cython",
-		"sympy":       "sympy",
-		"networkx":    "networkx",
-		"pyarrow":     "pyarrow",
-		"h5py":        "h5py",
-		"transformers": "transformers",
-		"datasets":    "datasets",
-		"tokenizers":  "tokenizers",
-		"tqdm":        "tqdm",
-		"click":       "click",
-		"rich":        "rich",
-		"paramiko":    "paramiko",
-		"fabric":      "fabric",
-		"pexpect":     "pexpect",
-		"ply":         "ply",
-		"lark":        "lark",
-		"pyparsing":   "pyparsing",
-		"construct":   "construct",
-		"bitstring":   "bitstring",
-		"elftools":    "pyelftools",
-		"imageio":     "imageio",
-		"shapely":     "shapely",
-		"geopandas":   "geopandas",
-		"trio":        "trio",
-		"anyio":       "anyio",
-		"gevent":      "gevent",
-		"cbor2":       "cbor2",
-		"zstandard":   "zstandard",
-		"lz4":         "lz4",
-		"pulp":        "PuLP",
-		"cvxpy":       "cvxpy",
-		"z3":          "z3-solver",
-		"typer":       "typer",
-		"astropy":     "astropy",
-		"pwn":         "pwntools",
-		"pwnlib":      "pwntools",
-		"capstone":    "capstone",
-		"angr":        "angr",
+		"pydantic":        "pydantic",
+		"httpx":           "httpx",
+		"aiohttp":         "aiohttp",
+		"sqlalchemy":      "sqlalchemy",
+		"alembic":         "alembic",
+		"celery":          "celery",
+		"redis":           "redis",
+		"pymongo":         "pymongo",
+		"psycopg2":        "psycopg2-binary",
+		"MySQLdb":         "mysqlclient",
+		"mysql":           "mysqlclient",
+		"toml":            "toml",
+		"tomli":           "tomli",
+		"tomllib":         "tomli",
+		"msgpack":         "msgpack",
+		"protobuf":        "protobuf",
+		"Cython":          "cython",
+		"sympy":           "sympy",
+		"networkx":        "networkx",
+		"pyarrow":         "pyarrow",
+		"h5py":            "h5py",
+		"transformers":    "transformers",
+		"datasets":        "datasets",
+		"tokenizers":      "tokenizers",
+		"tqdm":            "tqdm",
+		"click":           "click",
+		"rich":            "rich",
+		"paramiko":        "paramiko",
+		"fabric":          "fabric",
+		"pexpect":         "pexpect",
+		"ply":             "ply",
+		"lark":            "lark",
+		"pyparsing":       "pyparsing",
+		"construct":       "construct",
+		"bitstring":       "bitstring",
+		"elftools":        "pyelftools",
+		"imageio":         "imageio",
+		"shapely":         "shapely",
+		"geopandas":       "geopandas",
+		"trio":            "trio",
+		"anyio":           "anyio",
+		"gevent":          "gevent",
+		"cbor2":           "cbor2",
+		"zstandard":       "zstandard",
+		"lz4":             "lz4",
+		"pulp":            "PuLP",
+		"cvxpy":           "cvxpy",
+		"z3":              "z3-solver",
+		"typer":           "typer",
+		"astropy":         "astropy",
+		"pwn":             "pwntools",
+		"pwnlib":          "pwntools",
+		"capstone":        "capstone",
+		"angr":            "angr",
 	}
 
 	// Try to extract the module name from common error patterns.
@@ -2224,54 +2224,54 @@ func linkerHint(output string) string {
 func missingHeaderHint(output string) string {
 	// Common header → apt package mappings for Debian/Ubuntu containers.
 	headerPkgs := map[string]string{
-		"curl/curl.h":          "libcurl4-openssl-dev",
-		"openssl/ssl.h":        "libssl-dev",
-		"openssl/evp.h":        "libssl-dev",
-		"zlib.h":               "zlib1g-dev",
-		"png.h":                "libpng-dev",
-		"jpeglib.h":            "libjpeg-dev",
-		"sqlite3.h":            "libsqlite3-dev",
-		"ncurses.h":            "libncurses-dev",
-		"curses.h":             "libncurses-dev",
-		"readline/readline.h":  "libreadline-dev",
-		"uuid/uuid.h":          "uuid-dev",
-		"X11/Xlib.h":           "libx11-dev",
-		"SDL2/SDL.h":           "libsdl2-dev",
-		"glib.h":               "libglib2.0-dev",
-		"ffi.h":                "libffi-dev",
-		"pcre.h":               "libpcre3-dev",
-		"yaml.h":               "libyaml-dev",
-		"jansson.h":            "libjansson-dev",
-		"event.h":              "libevent-dev",
-		"boost/":               "libboost-all-dev",
-		"mysql/mysql.h":        "libmysqlclient-dev",
-		"postgresql/libpq-fe.h": "libpq-dev",
-		"libpq-fe.h":           "libpq-dev",
-		"gsl/":                 "libgsl-dev",
-		"tiff.h":               "libtiff-dev",
-		"lzma.h":               "liblzma-dev",
-		"bzlib.h":              "libbz2-dev",
-		"expat.h":              "libexpat1-dev",
-		"MagickWand/":          "libmagickwand-dev",
-		"cairo.h":              "libcairo2-dev",
-		"lapacke.h":            "liblapack-dev",
-		"gmp.h":                "libgmp-dev",
-		"mpfr.h":               "libmpfr-dev",
-		"alsa/asoundlib.h":     "libasound2-dev",
-		"pcap.h":               "libpcap-dev",
-		"pcap/pcap.h":          "libpcap-dev",
-		"libxml/parser.h":      "libxml2-dev",
-		"libxml/tree.h":        "libxml2-dev",
-		"ft2build.h":           "libfreetype-dev",
-		"sndfile.h":            "libsndfile1-dev",
-		"hdf5.h":               "libhdf5-dev",
-		"archive.h":            "libarchive-dev",
+		"curl/curl.h":             "libcurl4-openssl-dev",
+		"openssl/ssl.h":           "libssl-dev",
+		"openssl/evp.h":           "libssl-dev",
+		"zlib.h":                  "zlib1g-dev",
+		"png.h":                   "libpng-dev",
+		"jpeglib.h":               "libjpeg-dev",
+		"sqlite3.h":               "libsqlite3-dev",
+		"ncurses.h":               "libncurses-dev",
+		"curses.h":                "libncurses-dev",
+		"readline/readline.h":     "libreadline-dev",
+		"uuid/uuid.h":             "uuid-dev",
+		"X11/Xlib.h":              "libx11-dev",
+		"SDL2/SDL.h":              "libsdl2-dev",
+		"glib.h":                  "libglib2.0-dev",
+		"ffi.h":                   "libffi-dev",
+		"pcre.h":                  "libpcre3-dev",
+		"yaml.h":                  "libyaml-dev",
+		"jansson.h":               "libjansson-dev",
+		"event.h":                 "libevent-dev",
+		"boost/":                  "libboost-all-dev",
+		"mysql/mysql.h":           "libmysqlclient-dev",
+		"postgresql/libpq-fe.h":   "libpq-dev",
+		"libpq-fe.h":              "libpq-dev",
+		"gsl/":                    "libgsl-dev",
+		"tiff.h":                  "libtiff-dev",
+		"lzma.h":                  "liblzma-dev",
+		"bzlib.h":                 "libbz2-dev",
+		"expat.h":                 "libexpat1-dev",
+		"MagickWand/":             "libmagickwand-dev",
+		"cairo.h":                 "libcairo2-dev",
+		"lapacke.h":               "liblapack-dev",
+		"gmp.h":                   "libgmp-dev",
+		"mpfr.h":                  "libmpfr-dev",
+		"alsa/asoundlib.h":        "libasound2-dev",
+		"pcap.h":                  "libpcap-dev",
+		"pcap/pcap.h":             "libpcap-dev",
+		"libxml/parser.h":         "libxml2-dev",
+		"libxml/tree.h":           "libxml2-dev",
+		"ft2build.h":              "libfreetype-dev",
+		"sndfile.h":               "libsndfile1-dev",
+		"hdf5.h":                  "libhdf5-dev",
+		"archive.h":               "libarchive-dev",
 		"X11/extensions/Xrandr.h": "libxrandr-dev",
-		"X11/Xft/Xft.h":       "libxft-dev",
-		"netcdf.h":             "libnetcdf-dev",
-		"pcre2.h":              "libpcre2-dev",
-		"cblas.h":              "libopenblas-dev",
-		"openblas/":            "libopenblas-dev",
+		"X11/Xft/Xft.h":           "libxft-dev",
+		"netcdf.h":                "libnetcdf-dev",
+		"pcre2.h":                 "libpcre2-dev",
+		"cblas.h":                 "libopenblas-dev",
+		"openblas/":               "libopenblas-dev",
 	}
 
 	for header, pkg := range headerPkgs {
@@ -6280,23 +6280,23 @@ func compilationErrorSummary(output string, exitCode int) string {
 		"imported and not used", // Go: unused import
 		"declared and not used", // Go: unused variable
 		// GHC (Haskell): error details on continuation lines, match distinctive messages.
-		"Not in scope:",           // GHC: variable/function not found
-		"Could not deduce",        // GHC: type class constraint failure
-		"No instance for",         // GHC: missing type class instance
-		"Couldn't match type",     // GHC: type mismatch
-		"Couldn't match expected",                  // GHC: expected vs actual type
-		"Ambiguous type variable",                   // GHC: type inference failure
-		"Variable not in scope",                     // GHC: newer format
-		"Not a valid type signature",                // GHC: invalid type signature
-		"Parse error",             // GHC: syntax error
+		"Not in scope:",              // GHC: variable/function not found
+		"Could not deduce",           // GHC: type class constraint failure
+		"No instance for",            // GHC: missing type class instance
+		"Couldn't match type",        // GHC: type mismatch
+		"Couldn't match expected",    // GHC: expected vs actual type
+		"Ambiguous type variable",    // GHC: type inference failure
+		"Variable not in scope",      // GHC: newer format
+		"Not a valid type signature", // GHC: invalid type signature
+		"Parse error",                // GHC: syntax error
 		// Clojure compilation errors.
-		"Syntax error compiling",  // Clojure: Syntax error compiling at (file.clj:line:col)
-		"CompilerException",       // Clojure: older format
-		"Execution error",         // Clojure: runtime error with file reference
+		"Syntax error compiling", // Clojure: Syntax error compiling at (file.clj:line:col)
+		"CompilerException",      // Clojure: older format
+		"Execution error",        // Clojure: runtime error with file reference
 		// Erlang compilation errors.
-		"head mismatch",           // Erlang: function clause head mismatch
-		"syntax error before",     // Erlang: syntax error before: 'token'
-		"illegal pattern",         // Erlang: illegal pattern in clause
+		"head mismatch",       // Erlang: function clause head mismatch
+		"syntax error before", // Erlang: syntax error before: 'token'
+		"illegal pattern",     // Erlang: illegal pattern in clause
 	}
 	for _, p := range errorPatterns {
 		if strings.Contains(output, p) {
@@ -6365,13 +6365,13 @@ func compilationFingerprint(output string) string {
 		": error:", ": error[", ": fatal error:",
 		"undefined reference", "cannot find symbol",
 		"not found in scope",
-		") Error:",    // Nim: "file.nim(42, 5) Error:"
-		"): Error:",   // D: "file.d(42): Error:"
+		") Error:",     // Nim: "file.nim(42, 5) Error:"
+		"): Error:",    // D: "file.d(42): Error:"
 		"Fatal Error:", // Fortran gfortran fatal errors
 		// Python runtime/compile errors (not caught by `: error:` patterns).
-		"SyntaxError:",      // Python: SyntaxError: invalid syntax
-		"IndentationError:", // Python: IndentationError: unexpected indent
-		"NameError:",        // Python: NameError: name 'foo' is not defined
+		"SyntaxError:",         // Python: SyntaxError: invalid syntax
+		"IndentationError:",    // Python: IndentationError: unexpected indent
+		"NameError:",           // Python: NameError: name 'foo' is not defined
 		"ModuleNotFoundError:", // Python: ModuleNotFoundError: No module named 'x'
 		// Rust: error[E0425]: cannot find value (no leading colon).
 		"error[E",
@@ -6414,78 +6414,78 @@ func isLongRunningCommand(cmd string) bool {
 		"benchmark", "bench.",
 		"python3 train", "python train",
 		"python3 benchmark", "python benchmark",
-		"pytest",                    // any pytest invocation (bare, with args, etc.)
-		"make test", "make check",  // test targets through make
-		"ctest",                     // CMake test runner
+		"pytest",                  // any pytest invocation (bare, with args, etc.)
+		"make test", "make check", // test targets through make
+		"ctest", // CMake test runner
 		"go test -bench", "go test -count", "go test -run", "go test ./...",
 		"train.py", "training.py",
 		"fasttext ", "qemu-system",
-		"java -jar", "java -cp",     // JVM programs
-		"mvn ", "gradle ",           // Build tools
-		"npm run ", "npx ",          // npm scripts
-		"yarn ", "pnpm run ",        // Package manager scripts
+		"java -jar", "java -cp", // JVM programs
+		"mvn ", "gradle ", // Build tools
+		"npm run ", "npx ", // npm scripts
+		"yarn ", "pnpm run ", // Package manager scripts
 		"python3 -m ", "python -m ", // Module execution (e.g., python -m pytest)
-		"docker run",                // Container execution
-		"timeout ",                  // Already has own timeout, don't cut short
-		"lake build",                // Lean 4 proof checking
-		"dune build", "dune test",   // OCaml builds
+		"docker run",              // Container execution
+		"timeout ",                // Already has own timeout, don't cut short
+		"lake build",              // Lean 4 proof checking
+		"dune build", "dune test", // OCaml builds
 		"stack build", "cabal build", // Haskell builds
-		"cargo test",                // Rust tests
-		"python3 /app/", "python /app/",         // app scripts
-		"python3 solve", "python solve",         // solver scripts
-		"python3 process", "python process",     // data processing
-		"python3 run", "python run",             // generic runner scripts
-		"python3 main", "python main",           // main entry points
-		"python3 solution", "python solution",   // solution scripts
-		"node main", "node solution",            // Node.js entry points
-		"bash /app/", "sh /app/",        // shell scripts in /app/
-		"bash /tests/", "sh /tests/",    // test scripts
-		"julia ",                        // Julia JIT compilation is slow on first run
-		"coqc ",                         // Coq proof checking
-		"opam ",                         // OCaml package manager
-		"stack setup", "stack exec",     // Haskell GHC download / execution
-		"rscript ", "r -e ",             // R scripts
-		"dotnet test", "dotnet run",     // .NET execution
-		"sbt test", "sbt run",           // Scala/SBT
-		"dart test", "dart run",         // Dart
-		"flutter test", "flutter run",   // Flutter
-		"mix test",                      // Elixir tests
-		"bundle exec",                   // Ruby with bundler
-		"cabal test", "cabal run",       // Haskell
-		"busted",                        // Lua tests
-		"fpc ",                          // Free Pascal compilation
-		"crystal spec",                  // Crystal tests
-		"kotlinc ",                      // Kotlin compilation
-		"crystal build",                 // Crystal compilation
-		"zig test",                      // Zig tests
-		"nim c ", "nim compile",         // Nim compilation
-		"v test",                        // V language tests
-		"gleam test",                    // Gleam tests
-		"bun test",                      // Bun tests
-		"bun run ",                      // Bun scripts
-		"poetry run ",                   // Poetry scripts
-		"pdm run ",                      // PDM scripts
-		"uv run ",                       // uv scripts
-		"nox ", "nox -s",                // Nox test sessions
-		"tox ", "tox -e",                // Tox test environments
-		"hatch run ",                    // Hatch scripts
-		"deno test",                     // Deno tests
-		"deno run ",                     // Deno scripts
-		"swift test",                    // Swift package tests
-		"gleam run",                     // Gleam execution
-		"mix phx.",                      // Phoenix (Elixir) tasks
-		"ghci ",                         // GHCi interactive
-		"scala ",                        // Scala execution
-		"lein test", "lein run",         // Clojure Leiningen
-		"clj -M", "clj -X",             // Clojure deps.edn
-		"rebar3 ct", "rebar3 eunit",    // Erlang tests
+		"cargo test",                    // Rust tests
+		"python3 /app/", "python /app/", // app scripts
+		"python3 solve", "python solve", // solver scripts
+		"python3 process", "python process", // data processing
+		"python3 run", "python run", // generic runner scripts
+		"python3 main", "python main", // main entry points
+		"python3 solution", "python solution", // solution scripts
+		"node main", "node solution", // Node.js entry points
+		"bash /app/", "sh /app/", // shell scripts in /app/
+		"bash /tests/", "sh /tests/", // test scripts
+		"julia ",                    // Julia JIT compilation is slow on first run
+		"coqc ",                     // Coq proof checking
+		"opam ",                     // OCaml package manager
+		"stack setup", "stack exec", // Haskell GHC download / execution
+		"rscript ", "r -e ", // R scripts
+		"dotnet test", "dotnet run", // .NET execution
+		"sbt test", "sbt run", // Scala/SBT
+		"dart test", "dart run", // Dart
+		"flutter test", "flutter run", // Flutter
+		"mix test",                // Elixir tests
+		"bundle exec",             // Ruby with bundler
+		"cabal test", "cabal run", // Haskell
+		"busted",                // Lua tests
+		"fpc ",                  // Free Pascal compilation
+		"crystal spec",          // Crystal tests
+		"kotlinc ",              // Kotlin compilation
+		"crystal build",         // Crystal compilation
+		"zig test",              // Zig tests
+		"nim c ", "nim compile", // Nim compilation
+		"v test",         // V language tests
+		"gleam test",     // Gleam tests
+		"bun test",       // Bun tests
+		"bun run ",       // Bun scripts
+		"poetry run ",    // Poetry scripts
+		"pdm run ",       // PDM scripts
+		"uv run ",        // uv scripts
+		"nox ", "nox -s", // Nox test sessions
+		"tox ", "tox -e", // Tox test environments
+		"hatch run ",            // Hatch scripts
+		"deno test",             // Deno tests
+		"deno run ",             // Deno scripts
+		"swift test",            // Swift package tests
+		"gleam run",             // Gleam execution
+		"mix phx.",              // Phoenix (Elixir) tasks
+		"ghci ",                 // GHCi interactive
+		"scala ",                // Scala execution
+		"lein test", "lein run", // Clojure Leiningen
+		"clj -M", "clj -X", // Clojure deps.edn
+		"rebar3 ct", "rebar3 eunit", // Erlang tests
 		"conda install", "mamba install", // Conda/Mamba (downloads + solves)
 		"uv pip install",                // uv pip install (network + compile)
 		"swift build",                   // Swift compilation
 		"phpunit", "vendor/bin/phpunit", // PHP tests
-		"nimble test",                   // Nim tests
-		"dub test", "dub build",         // D language
-		"meson test", "meson compile",   // Meson build system
+		"nimble test",           // Nim tests
+		"dub test", "dub build", // D language
+		"meson test", "meson compile", // Meson build system
 		// Terraform/OpenTofu (provider downloads + API calls).
 		"terraform plan", "terraform apply", "terraform init",
 		"tofu plan", "tofu apply", "tofu init",
@@ -6526,21 +6526,21 @@ func timeoutContextHint(cmd string) string {
 		"cargo run", "go run",
 		"deno run --allow-net", "deno serve",
 		"bun run dev", "bun run serve",
-		"mix phx.server",          // Phoenix (Elixir)
-		"iex -s mix phx.server",   // Phoenix interactive
+		"mix phx.server",           // Phoenix (Elixir)
+		"iex -s mix phx.server",    // Phoenix interactive
 		"caddy run", "caddy start", // Caddy web server
-		"hypercorn", "daphne",     // ASGI servers
+		"hypercorn", "daphne", // ASGI servers
 		"php -s ", "php artisan serve", // PHP built-in server
 		// Modern JS/TS dev servers — extremely common to accidentally run blocking.
 		"vite", "next dev", "nuxt dev",
-		"ng serve",                          // Angular CLI
-		"gatsby develop",                    // Gatsby
-		"astro dev",                         // Astro
-		"remix dev",                         // Remix
-		"turbo dev",                         // Turborepo
+		"ng serve",                            // Angular CLI
+		"gatsby develop",                      // Gatsby
+		"astro dev",                           // Astro
+		"remix dev",                           // Remix
+		"turbo dev",                           // Turborepo
 		"webpack serve", "webpack-dev-server", // Webpack
 		// Python application servers and workers.
-		"streamlit run",          // Streamlit
+		"streamlit run",              // Streamlit
 		"celery worker", "celery -a", // Celery task worker
 		"jupyter notebook", "jupyter lab", // Jupyter (runs indefinitely)
 		// Background services.
@@ -6557,11 +6557,11 @@ func timeoutContextHint(cmd string) string {
 	// Interactive/blocking commands that should not be run directly.
 	blockingPatterns := []string{
 		"tail -f", "watch ",
-		"top", "htop", "btop", "nmon",     // System monitors
-		"less ", "more ",                   // Pagers
+		"top", "htop", "btop", "nmon", // System monitors
+		"less ", "more ", // Pagers
 		"journalctl -f", "journalctl --follow", // Log following
-		"docker logs -f", "docker attach",      // Docker live streams
-		"kubectl logs -f",                      // Kubernetes log following
+		"docker logs -f", "docker attach", // Docker live streams
+		"kubectl logs -f", // Kubernetes log following
 	}
 	for _, p := range blockingPatterns {
 		if strings.Contains(lower, p) {
@@ -6709,57 +6709,57 @@ func isBuildCommand(cmd string) bool {
 		"javac ", "mvn ", "gradle ",
 		"npm install", "npm ci", "yarn install", "pnpm install",
 		"pip install", "pip3 install", "python3 -m pip install", "python -m pip install",
-		"uv pip install", "uv sync", "uv add",     // uv (modern Python)
-		"poetry install", "poetry add",             // Poetry
-		"conda install", "mamba install",           // Conda/Mamba
+		"uv pip install", "uv sync", "uv add", // uv (modern Python)
+		"poetry install", "poetry add", // Poetry
+		"conda install", "mamba install", // Conda/Mamba
 		"apt-get install", "apt install", "apk add", "yum install", "dnf install",
 		"docker build",
-		"lake build",   // Lean 4
-		"dune build",   // OCaml
-		"stack build",  // Haskell
-		"cabal build",  // Haskell
-		"zig build",    // Zig
-		"mix compile",  // Elixir
+		"lake build",  // Lean 4
+		"dune build",  // OCaml
+		"stack build", // Haskell
+		"cabal build", // Haskell
+		"zig build",   // Zig
+		"mix compile", // Elixir
 		"./configure",
 		"rustup",
 		"gem install", "bundle install",
-		"composer install", // PHP
-		"sbt compile", "sbt assembly",   // Scala
-		"dart compile",                  // Dart
-		"flutter build",                 // Flutter
-		"pub get",                       // Dart package manager
+		"composer install",            // PHP
+		"sbt compile", "sbt assembly", // Scala
+		"dart compile",                   // Dart
+		"flutter build",                  // Flutter
+		"pub get",                        // Dart package manager
 		"dotnet restore", "dotnet build", // .NET
-		"gfortran ",   // Fortran
+		"gfortran ",      // Fortran
 		"nasm ", "yasm ", // Assembly
-		"fpc ",         // Free Pascal
+		"fpc ",                  // Free Pascal
 		"coqc ", "coq_makefile", // Coq proof checker
 		"nim c ", "nim compile", // Nim
-		"opam install", // OCaml
-		"stack setup",  // Haskell GHC download
-		"swiftc ",      // Swift
+		"opam install",  // OCaml
+		"stack setup",   // Haskell GHC download
+		"swiftc ",       // Swift
 		"ldc2 ", "gdc ", // D language
 		"julia -e \"using Pkg", // Julia package operations
-		"kotlinc ",    // Kotlin
-		"crystal build", // Crystal
-		"dmd ",        // D language (reference compiler)
-		"v build", "v run", // V language
-		"bun install",       // Bun package manager
-		"bun build",         // Bun bundler
-		"bun add",           // Bun add dependency
-		"gleam build",       // Gleam
-		"deno install",      // Deno dependencies
-		"deno cache",        // Deno dependency caching
-		"mix deps.get",      // Elixir dependencies
-		"stack install",     // Haskell
-		"cargo check",       // Rust quick check
-		"elixirc ",          // Elixir compilation
-		"scalac ",           // Scala compilation
-		"ghc ",              // GHC direct compilation
+		"kotlinc ",             // Kotlin
+		"crystal build",        // Crystal
+		"dmd ",                 // D language (reference compiler)
+		"v build", "v run",     // V language
+		"bun install",                       // Bun package manager
+		"bun build",                         // Bun bundler
+		"bun add",                           // Bun add dependency
+		"gleam build",                       // Gleam
+		"deno install",                      // Deno dependencies
+		"deno cache",                        // Deno dependency caching
+		"mix deps.get",                      // Elixir dependencies
+		"stack install",                     // Haskell
+		"cargo check",                       // Rust quick check
+		"elixirc ",                          // Elixir compilation
+		"scalac ",                           // Scala compilation
+		"ghc ",                              // GHC direct compilation
 		"rebar3 compile", "rebar3 get-deps", // Erlang
-		"nimble install", "nimble build",     // Nim packages
-		"dub build",                          // D language
-		"meson setup", "meson compile",       // Meson build system
-		"pub add",                            // Dart add dependency
+		"nimble install", "nimble build", // Nim packages
+		"dub build",                    // D language
+		"meson setup", "meson compile", // Meson build system
+		"pub add",                                    // Dart add dependency
 		"just build", "just compile", "just install", // Just task runner
 	}
 	for _, p := range buildPatterns {
@@ -6780,70 +6780,84 @@ func isBuildCommand(cmd string) bool {
 //
 // It does NOT block running tests (bash /tests/test.sh, python3 /tests/test.py)
 // or reading tests (cat /tests/test.sh, head /tests/test.py).
+//
+// Path matching is scoped to the root verifier directory (/tests/...), not
+// similarly named paths like /app/tests or /tmp/tests-data.
 func isDestructiveTestCommand(cmd string) bool {
-	// Quick check: if the command doesn't reference /tests/, skip.
-	if !strings.Contains(cmd, "/tests/") {
+	// Analyze the full command as one unit. This is intentionally conservative:
+	// it prevents bypasses where /tests appears in one segment and the mutating
+	// operation appears in another (pipelines, variable indirection, etc.).
+	return isDestructiveTestCommandSegment(cmd)
+}
+
+func isDestructiveTestCommandSegment(cmd string) bool {
+	// Quick check: if the command doesn't reference root /tests, skip.
+	if findVerifierTestsPath(cmd, 0) < 0 {
 		return false
 	}
 
 	// Destructive patterns that target /tests/ files.
 	lower := strings.ToLower(cmd)
 
+	// Creating or linking paths under /tests mutates verifier state.
+	if strings.Contains(lower, "mkdir ") || strings.Contains(lower, "ln ") || strings.Contains(lower, "touch ") {
+		return true
+	}
+
 	// Redirects to /tests/ files.
-	if (strings.Contains(cmd, "> /tests/") || strings.Contains(cmd, ">/tests/") ||
-		strings.Contains(cmd, ">> /tests/") || strings.Contains(cmd, ">>/tests/")) {
+	if strings.Contains(cmd, "> /tests") || strings.Contains(cmd, ">/tests") ||
+		strings.Contains(cmd, ">> /tests") || strings.Contains(cmd, ">>/tests") {
 		return true
 	}
 
 	// tee writing to /tests/ files.
-	if strings.Contains(lower, "tee ") && strings.Contains(cmd, "/tests/") {
-		// Check if /tests/ comes after tee (output target).
+	if strings.Contains(lower, "tee ") {
+		// Check if /tests comes after tee (output target).
 		teeIdx := strings.Index(lower, "tee ")
-		testsIdx := strings.Index(cmd[teeIdx:], "/tests/")
-		if testsIdx > 0 {
+		testsIdx := findVerifierTestsPath(cmd, teeIdx+len("tee "))
+		if testsIdx > teeIdx {
 			return true
 		}
 	}
 
 	// rm targeting /tests/ files.
-	if (strings.Contains(lower, "rm ") || strings.Contains(lower, "rm -")) && strings.Contains(cmd, "/tests/") {
+	if strings.Contains(lower, "rm ") || strings.Contains(lower, "rm -") {
 		return true
 	}
 
 	// sed -i (in-place edit) on /tests/ files.
-	if strings.Contains(lower, "sed ") && strings.Contains(lower, "-i") && strings.Contains(cmd, "/tests/") {
+	if strings.Contains(lower, "sed ") && strings.Contains(lower, "-i") {
 		return true
 	}
 
 	// chmod, chown on /tests/ files (prevents making tests non-executable, etc.).
-	if (strings.Contains(lower, "chmod ") || strings.Contains(lower, "chown ")) && strings.Contains(cmd, "/tests/") {
+	if strings.Contains(lower, "chmod ") || strings.Contains(lower, "chown ") {
 		return true
 	}
 
 	// truncate on /tests/ files.
-	if strings.Contains(lower, "truncate ") && strings.Contains(cmd, "/tests/") {
+	if strings.Contains(lower, "truncate ") {
 		return true
 	}
 
 	// perl -i / perl -pi (in-place edit) on /tests/ files.
 	if (strings.Contains(lower, "perl ") || strings.Contains(lower, "perl\t")) &&
-		(strings.Contains(lower, " -i") || strings.Contains(lower, " -pi")) &&
-		strings.Contains(cmd, "/tests/") {
+		(strings.Contains(lower, " -i") || strings.Contains(lower, " -pi")) {
 		return true
 	}
 
 	// dd writing to /tests/ files (dd of=/tests/...).
-	if strings.Contains(lower, "dd ") && strings.Contains(cmd, "of=/tests/") {
+	if strings.Contains(lower, "dd ") && strings.Contains(cmd, "of=/tests") {
 		return true
 	}
 
 	// patch applying to /tests/ files.
-	if strings.Contains(lower, "patch ") && strings.Contains(cmd, "/tests/") {
+	if strings.Contains(lower, "patch ") {
 		return true
 	}
 
 	// install (coreutils) targeting /tests/ files.
-	if strings.Contains(lower, "install ") && strings.Contains(cmd, "/tests/") &&
+	if strings.Contains(lower, "install ") &&
 		!strings.Contains(lower, "pip install") && !strings.Contains(lower, "npm install") &&
 		!strings.Contains(lower, "apt install") && !strings.Contains(lower, "apt-get install") {
 		return true
@@ -6852,10 +6866,10 @@ func isDestructiveTestCommand(cmd string) bool {
 	// mv/cp with /tests/ as destination (overwriting test files).
 	// Only block if /tests/ is in the latter part (destination).
 	if strings.Contains(lower, "cp ") || strings.Contains(lower, "mv ") {
-		// Split on /tests/ and check if it appears after the first argument.
-		parts := strings.SplitN(cmd, "/tests/", 2)
-		if len(parts) == 2 {
-			before := parts[0]
+		// Split on /tests and check if it appears after the first argument.
+		testsIdx := findVerifierTestsPath(cmd, 0)
+		if testsIdx >= 0 {
+			before := cmd[:testsIdx]
 			// If /tests/ follows the source argument (i.e., it's the destination), block.
 			if strings.Contains(before, "cp ") || strings.Contains(before, "mv ") {
 				// But NOT if /tests/ is the source (first arg after cp/mv).
@@ -6868,6 +6882,52 @@ func isDestructiveTestCommand(cmd string) bool {
 	}
 
 	return false
+}
+
+// findVerifierTestsPath returns the index of a root /tests path occurrence in s,
+// starting from start, or -1 if not found.
+//
+// Valid matches must be rooted at /tests and path-bounded:
+// - accepted: "/tests", "/tests/foo", "cmd '/tests/foo'", "of=/tests/file"
+// - rejected: "/app/tests/foo", "/tests_backup", "/tmp/tests-data"
+func findVerifierTestsPath(s string, start int) int {
+	const needle = "/tests"
+	if start < 0 {
+		start = 0
+	}
+	for start <= len(s)-len(needle) {
+		rel := strings.Index(s[start:], needle)
+		if rel < 0 {
+			return -1
+		}
+		idx := start + rel
+		if isVerifierTestsPathAt(s, idx) {
+			return idx
+		}
+		start = idx + len(needle)
+	}
+	return -1
+}
+
+func isVerifierTestsPathAt(s string, idx int) bool {
+	const needle = "/tests"
+	if idx < 0 || idx+len(needle) > len(s) || s[idx:idx+len(needle)] != needle {
+		return false
+	}
+	prevOK := idx == 0 || isShellPathDelimiter(s[idx-1])
+	nextIdx := idx + len(needle)
+	nextOK := nextIdx == len(s) || s[nextIdx] == '/' || isShellPathDelimiter(s[nextIdx])
+	return prevOK && nextOK
+}
+
+func isShellPathDelimiter(ch byte) bool {
+	switch ch {
+	case ' ', '\t', '\n', '\r', '"', '\'', '`', '=', ':', ',', ';', '|', '&',
+		'(', ')', '[', ']', '{', '}', '<', '>', '\\':
+		return true
+	default:
+		return false
+	}
 }
 
 // envVarHint detects missing environment variable errors.
@@ -7059,24 +7119,24 @@ func isTransientBashFailure(exitCode int, output string, command string) bool {
 		"dpkg was interrupted",
 		"unable to acquire the dpkg",
 		"is another process using it",
-		"hash sum mismatch",        // apt mirror inconsistency
-		"failed to fetch",          // apt download failure
+		"hash sum mismatch", // apt mirror inconsistency
+		"failed to fetch",   // apt download failure
 		"connection reset by peer",
 		"ssl_error_syscall",
 		"read: connection reset",
-		"429 too many requests",    // HTTP rate limiting
-		"rate limit exceeded",      // generic rate limiting
-		"service unavailable",      // HTTP 503
-		"502 bad gateway",          // reverse proxy transient
-		"connectionerror",          // Python requests ConnectionError
-		"econnreset",               // Node.js connection reset
-		"etimedout",                // Node.js timeout
-		"esockettimedout",          // Node.js socket timeout
-		"socket hang up",           // Node.js socket drop
-		"enotfound",                // Node.js DNS resolution failure
-		"getaddrinfo enotfound",    // Node.js DNS lookup failure
-		"getaddrinfo failed",       // Python/curl DNS lookup failure
-		"err_name_not_resolved",    // Chromium DNS failure
+		"429 too many requests", // HTTP rate limiting
+		"rate limit exceeded",   // generic rate limiting
+		"service unavailable",   // HTTP 503
+		"502 bad gateway",       // reverse proxy transient
+		"connectionerror",       // Python requests ConnectionError
+		"econnreset",            // Node.js connection reset
+		"etimedout",             // Node.js timeout
+		"esockettimedout",       // Node.js socket timeout
+		"socket hang up",        // Node.js socket drop
+		"enotfound",             // Node.js DNS resolution failure
+		"getaddrinfo enotfound", // Node.js DNS lookup failure
+		"getaddrinfo failed",    // Python/curl DNS lookup failure
+		"err_name_not_resolved", // Chromium DNS failure
 	}
 	for _, p := range transientPatterns {
 		if strings.Contains(lower, p) {

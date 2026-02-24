@@ -11,17 +11,19 @@ import (
 // --- API request types ---
 
 type apiRequest struct {
-	Model            string             `json:"model"`
-	Messages         []apiMessage       `json:"messages"`
-	Tools            []apiToolDef       `json:"tools,omitempty"`
-	ToolChoice       any                `json:"tool_choice,omitempty"`
-	Stream           bool               `json:"stream,omitempty"`
-	StreamOptions    *apiStreamOptions  `json:"stream_options,omitempty"`
-	MaxTokens        int                `json:"max_completion_tokens,omitempty"`
-	Temperature      *float64           `json:"temperature,omitempty"`
-	TopP             *float64           `json:"top_p,omitempty"`
-	ResponseFormat   *apiResponseFormat `json:"response_format,omitempty"`
-	ReasoningEffort  *string            `json:"reasoning_effort,omitempty"`
+	Model                string             `json:"model"`
+	Messages             []apiMessage       `json:"messages"`
+	Tools                []apiToolDef       `json:"tools,omitempty"`
+	ToolChoice           any                `json:"tool_choice,omitempty"`
+	Stream               bool               `json:"stream,omitempty"`
+	StreamOptions        *apiStreamOptions  `json:"stream_options,omitempty"`
+	PromptCacheKey       string             `json:"prompt_cache_key,omitempty"`
+	PromptCacheRetention string             `json:"prompt_cache_retention,omitempty"`
+	MaxTokens            int                `json:"max_completion_tokens,omitempty"`
+	Temperature          *float64           `json:"temperature,omitempty"`
+	TopP                 *float64           `json:"top_p,omitempty"`
+	ResponseFormat       *apiResponseFormat `json:"response_format,omitempty"`
+	ReasoningEffort      *string            `json:"reasoning_effort,omitempty"`
 }
 
 type apiStreamOptions struct {
@@ -29,10 +31,10 @@ type apiStreamOptions struct {
 }
 
 type apiMessage struct {
-	Role       string          `json:"role"` // system, user, assistant, tool
-	Content    string          `json:"content,omitempty"`
-	ToolCalls  []apiToolCall   `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	Role       string        `json:"role"` // system, user, assistant, tool
+	Content    string        `json:"content,omitempty"`
+	ToolCalls  []apiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
 type apiToolCall struct {
@@ -47,8 +49,8 @@ type apiToolFunction struct {
 }
 
 type apiToolDef struct {
-	Type     string          `json:"type"` // "function"
-	Function apiToolDefFunc  `json:"function"`
+	Type     string         `json:"type"` // "function"
+	Function apiToolDefFunc `json:"function"`
 }
 
 type apiToolDefFunc struct {
@@ -59,8 +61,8 @@ type apiToolDefFunc struct {
 }
 
 type apiResponseFormat struct {
-	Type       string          `json:"type"` // "json_schema" or "json_object"
-	JSONSchema *apiJSONSchema  `json:"json_schema,omitempty"`
+	Type       string         `json:"type"` // "json_schema" or "json_object"
+	JSONSchema *apiJSONSchema `json:"json_schema,omitempty"`
 }
 
 type apiJSONSchema struct {
@@ -94,11 +96,11 @@ type apiChatMsg struct {
 }
 
 type apiUsage struct {
-	PromptTokens            int                      `json:"prompt_tokens"`
-	CompletionTokens        int                      `json:"completion_tokens"`
-	TotalTokens             int                      `json:"total_tokens"`
-	PromptTokensDetails     *apiPromptTokensDetails  `json:"prompt_tokens_details,omitempty"`
-	CompletionTokensDetails *apiCompletionDetails    `json:"completion_tokens_details,omitempty"`
+	PromptTokens            int                     `json:"prompt_tokens"`
+	CompletionTokens        int                     `json:"completion_tokens"`
+	TotalTokens             int                     `json:"total_tokens"`
+	PromptTokensDetails     *apiPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *apiCompletionDetails   `json:"completion_tokens_details,omitempty"`
 }
 
 type apiPromptTokensDetails struct {

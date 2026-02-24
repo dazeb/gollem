@@ -138,8 +138,9 @@ func buildSystemPrompt(toolName string, tools map[string]*core.Tool, schemas map
 	b.WriteString("- Example: read 3 files, run a command, and write output — all in one code block\n")
 	b.WriteString("- Use try/except for error handling\n")
 	b.WriteString("- Sandbox support (monty-go README): loops/comprehensions/try-except/builtins are supported; `import os` and `from pathlib import Path` are supported via OS callbacks\n")
-	b.WriteString("- Not supported in execute_code: class definitions, most stdlib modules, third-party libraries, `filter()`, `float('inf')`, `float('nan')`\n")
+	b.WriteString("- Not supported in execute_code: class definitions, most stdlib modules, third-party libraries, `filter()`, `float('inf')`, `float('nan')`, multi-module imports (`import a, b`), context managers (`with ...`)\n")
 	b.WriteString("- If you hit ImportError/ModuleNotFoundError, switch to direct bash/view/edit tools instead of adding imports\n")
+	b.WriteString("- If you hit monty `NotImplementedError` parser limits, switch to `bash` with `python3 - <<'PY' ... PY`\n")
 	b.WriteString("- Functions return Python objects (dicts, lists, strings, numbers)\n")
 	b.WriteString("- You can mix execute_code with direct tool calls — use whichever is more efficient\n")
 

@@ -22,7 +22,7 @@ const runContextKey contextKey = iota
 
 // codeParams is the schema for the execute_code tool.
 type codeParams struct {
-	Code string `json:"code" jsonschema:"description=Python code to execute. Call the available functions directly. The last expression is the return value."`
+	Code string `json:"code" jsonschema:"description=Python code to execute. Call the available functions directly. The last expression is the return value. Note: monty parser does not support multi-module imports (for example: import a, b) or context managers (with ...)."`
 }
 
 // Option configures a CodeMode.
@@ -117,7 +117,7 @@ func (cm *CodeMode) Tool() core.Tool {
 	return core.Tool{
 		Definition: core.ToolDefinition{
 			Name:             cm.toolName,
-			Description:      "Execute Python code that calls the available functions. The last expression is the return value.",
+			Description:      "Execute Python code that calls the available functions. The last expression is the return value. Parser limits: no multi-module imports (for example: import a, b) and no context managers (with ...). Use bash/python3 if needed.",
 			ParametersSchema: core.SchemaFor[codeParams](),
 			Kind:             core.ToolKindFunction,
 		},
