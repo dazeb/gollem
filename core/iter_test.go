@@ -468,3 +468,79 @@ func TestIterDeferredMixedToolResults(t *testing.T) {
 		t.Error("resumed model missing async_task result — deferred result not injected")
 	}
 }
+
+// TestIterWithDeferredResultsResume verifies that the Iter API correctly handles
+// WithDeferredResults for resuming after a deferred tool call. Before the fix,
+// Iter silently ignored WithDeferredResults, dropping the deferred results.
+func TestIterWithDeferredResultsResume(t *testing.T) {
+	deferTool := Tool{
+		Definition: ToolDefinition{
+			Name:        "async_task",
+			Description: "An async tool",
+			Kind:        ToolKindFunction,
+		},
+		Handler: func(_ context.Context, _ *RunContext, _ string) (any, error) {
+			return nil, &CallDeferred{Message: "waiting"}
+		},
+	}
+
+	// Step 1: Run via Iter, get deferred.
+	model1 := NewTestModel(
+		ToolCallResponseWithID("async_task", `{}`, "call_1"),
+	)
+	agent1 := NewAgent[string](model1, WithTools[string](deferTool))
+	iter1 := agent1.Iter(context.Background(), "do async")
+	_, err := iter1.Next()
+	var deferredErr *ErrDeferred[string]
+	if !errors.As(err, &deferredErr) {
+		t.Fatalf("expected ErrDeferred, got %v", err)
+	}
+
+	// Step 2: Resume via Iter with WithDeferredResults.
+	model2 := NewTestModel(TextResponse("resumed ok"))
+	agent2 := NewAgent[string](model2, WithTools[string](deferTool))
+	iter2 := agent2.Iter(context.Background(), "do async",
+		WithMessages(deferredErr.Result.Messages...),
+		WithDeferredResults(DeferredToolResult{
+			ToolName:   "async_task",
+			ToolCallID: "call_1",
+			Content:    "async result",
+		}),
+	)
+
+	// The Iter should resume and produce a result.
+	resp, err := iter2.Next()
+	if err != nil {
+		t.Fatalf("resume Iter Next: %v", err)
+	}
+	if resp.TextContent() != "resumed ok" {
+		t.Errorf("expected 'resumed ok', got %q", resp.TextContent())
+	}
+
+	result, err := iter2.Result()
+	if err != nil {
+		t.Fatalf("resume Iter Result: %v", err)
+	}
+	if result.Output != "resumed ok" {
+		t.Errorf("Output = %q, want %q", result.Output, "resumed ok")
+	}
+
+	// Verify the deferred result was actually sent to the model.
+	calls := model2.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+	foundDeferred := false
+	for _, msg := range calls[0].Messages {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if trp, ok := part.(ToolReturnPart); ok && trp.ToolCallID == "call_1" {
+					foundDeferred = true
+				}
+			}
+		}
+	}
+	if !foundDeferred {
+		t.Error("deferred result (call_1) not found in model messages — Iter ignores WithDeferredResults")
+	}
+}

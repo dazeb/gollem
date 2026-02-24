@@ -81,18 +81,58 @@ func (a *Agent[T]) Iter(ctx context.Context, prompt string, opts ...RunOption) *
 	// Gather all tools.
 	allTools := a.allTools()
 
-	// Build the initial request with dynamic system prompts and knowledge base.
-	req, reqErr := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
-	if reqErr != nil {
-		return &AgentRun[T]{
-			agent: a,
-			ctx:   ctx,
-			state: state,
-			done:  true,
-			err:   fmt.Errorf("failed to build initial request: %w", reqErr),
+	// Handle deferred results resume (same logic as runLoop in agent.go).
+	// When deferred results are provided with pre-existing messages, inject
+	// the tool results and skip building a new initial request.
+	if len(cfg.deferredResults) > 0 && len(state.messages) > 0 {
+		var deferredParts []ModelRequestPart
+		for _, dr := range cfg.deferredResults {
+			if dr.IsError {
+				deferredParts = append(deferredParts, RetryPromptPart{
+					Content:    dr.Content,
+					ToolName:   dr.ToolName,
+					ToolCallID: dr.ToolCallID,
+					Timestamp:  time.Now(),
+				})
+			} else {
+				deferredParts = append(deferredParts, ToolReturnPart{
+					ToolName:   dr.ToolName,
+					Content:    dr.Content,
+					ToolCallID: dr.ToolCallID,
+					Timestamp:  time.Now(),
+				})
+			}
 		}
+		// Merge into the last ModelRequest if present (contains non-deferred
+		// tool results), otherwise create a new one.
+		merged := false
+		if lastIdx := len(state.messages) - 1; lastIdx >= 0 {
+			if lastReq, ok := state.messages[lastIdx].(ModelRequest); ok {
+				lastReq.Parts = append(lastReq.Parts, deferredParts...)
+				state.messages[lastIdx] = lastReq
+				merged = true
+			}
+		}
+		if !merged {
+			state.messages = append(state.messages, ModelRequest{
+				Parts:     deferredParts,
+				Timestamp: time.Now(),
+			})
+		}
+	} else {
+		// Normal case: build the initial request with dynamic system prompts and knowledge base.
+		req, reqErr := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
+		if reqErr != nil {
+			return &AgentRun[T]{
+				agent: a,
+				ctx:   ctx,
+				state: state,
+				done:  true,
+				err:   fmt.Errorf("failed to build initial request: %w", reqErr),
+			}
+		}
+		state.messages = append(state.messages, req)
 	}
-	state.messages = append(state.messages, req)
 
 	toolMap := make(map[string]*Tool)
 	for i := range allTools {
