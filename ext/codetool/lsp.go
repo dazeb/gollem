@@ -699,6 +699,13 @@ func (s *lspServer) ensureFileOpen(filePath, uri, langID string) (bool, error) {
 	s.fileMu.Lock()
 	defer s.fileMu.Unlock()
 
+	// Re-check state after re-acquiring the lock. Another goroutine may
+	// have opened or updated the file while we were reading from disk.
+	state, opened = s.openFiles[uri]
+	if opened && state.mtime == mtime {
+		return false, nil // another goroutine already synced it
+	}
+
 	if !opened {
 		s.openFiles[uri] = fileState{version: 1, mtime: mtime}
 		return true, s.notify("textDocument/didOpen", map[string]any{
