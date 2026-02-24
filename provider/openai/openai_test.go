@@ -1305,3 +1305,604 @@ data:[DONE]
 		t.Errorf("expected 'Hello world', got '%s'", tp.Content)
 	}
 }
+
+// --- Tool choice modes ---
+
+func TestBuildRequestToolChoiceModes(t *testing.T) {
+	tests := []struct {
+		name     string
+		choice   *core.ToolChoice
+		expected any
+	}{
+		{
+			name:     "none",
+			choice:   &core.ToolChoice{Mode: "none"},
+			expected: "none",
+		},
+		{
+			name:     "required",
+			choice:   &core.ToolChoice{Mode: "required"},
+			expected: "required",
+		},
+		{
+			name:     "auto",
+			choice:   &core.ToolChoice{Mode: "auto"},
+			expected: "auto",
+		},
+		{
+			name:   "specific tool",
+			choice: &core.ToolChoice{ToolName: "get_weather"},
+			expected: map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name": "get_weather",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := &core.ModelSettings{ToolChoice: tt.choice}
+			req, err := buildRequest(nil, settings, nil, "gpt-4o", 4096, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Marshal both to JSON for comparison.
+			got, _ := json.Marshal(req.ToolChoice)
+			want, _ := json.Marshal(tt.expected)
+			if string(got) != string(want) {
+				t.Errorf("tool_choice = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+// --- Unsupported request part ---
+// The ModelRequestPart interface has an unexported method, so we can't create
+// a custom type outside the core package. Instead, we don't test this error
+// path directly as it's unreachable from production code without adding a
+// new part type to core.
+
+// --- ToolReturn with non-string content ---
+
+func TestBuildRequestToolReturnNonString(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "search",
+					Content:    map[string]any{"results": []string{"a", "b"}},
+					ToolCallID: "call_99",
+				},
+			},
+		},
+	}
+	req, err := buildRequest(messages, nil, nil, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := req.Messages[0]
+	if msg.Role != "tool" {
+		t.Errorf("expected role tool, got %s", msg.Role)
+	}
+	// Non-string content should be JSON-marshaled.
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(msg.Content), &parsed); err != nil {
+		t.Fatalf("expected JSON content, got: %s", msg.Content)
+	}
+}
+
+// --- ResponseFormat with strict=false ---
+
+func TestBuildRequestResponseFormatStrictFalse(t *testing.T) {
+	strictFalse := false
+	params := &core.ModelRequestParameters{
+		OutputMode: core.OutputModeNative,
+		OutputObject: &core.OutputObjectDefinition{
+			Name:       "result",
+			JSONSchema: core.Schema{"type": "object"},
+			Strict:     &strictFalse,
+		},
+	}
+	req, err := buildRequest(nil, nil, params, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ResponseFormat == nil {
+		t.Fatal("expected response_format")
+	}
+	if req.ResponseFormat.JSONSchema.Strict {
+		t.Error("expected strict=false")
+	}
+}
+
+// --- Strict tool ---
+
+func TestBuildRequestStrictTool(t *testing.T) {
+	strict := true
+	params := &core.ModelRequestParameters{
+		FunctionTools: []core.ToolDefinition{
+			{
+				Name:             "calc",
+				Description:      "Calculator",
+				ParametersSchema: core.Schema{"type": "object"},
+				Strict:           &strict,
+			},
+		},
+	}
+	req, err := buildRequest(nil, nil, params, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+	if req.Tools[0].Function.Strict == nil || !*req.Tools[0].Function.Strict {
+		t.Error("expected strict=true on tool")
+	}
+}
+
+// --- parseResponse: refusal ---
+
+func TestParseResponseRefusal(t *testing.T) {
+	resp := &apiResponse{
+		Choices: []apiChoice{
+			{
+				Message: apiChatMsg{
+					Role:    "assistant",
+					Refusal: "I cannot help with that request.",
+				},
+				FinishReason: "stop",
+			},
+		},
+	}
+	result := parseResponse(resp, "gpt-4o")
+	if len(result.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(result.Parts))
+	}
+	tp, ok := result.Parts[0].(core.TextPart)
+	if !ok {
+		t.Fatal("expected TextPart for refusal")
+	}
+	if tp.Content != "I cannot help with that request." {
+		t.Errorf("unexpected refusal content: %s", tp.Content)
+	}
+}
+
+// --- parseResponse: empty choices ---
+
+func TestParseResponseEmptyChoices(t *testing.T) {
+	resp := &apiResponse{Choices: nil}
+	result := parseResponse(resp, "gpt-4o")
+	if len(result.Parts) != 0 {
+		t.Errorf("expected 0 parts for empty choices, got %d", len(result.Parts))
+	}
+	// mapFinishReason with empty choices should return stop.
+	if result.FinishReason != core.FinishReasonStop {
+		t.Errorf("expected FinishReasonStop, got %s", result.FinishReason)
+	}
+}
+
+// --- parseResponse: empty args gets "{}" ---
+
+func TestParseResponseEmptyToolArgs(t *testing.T) {
+	resp := &apiResponse{
+		Choices: []apiChoice{
+			{
+				Message: apiChatMsg{
+					Role: "assistant",
+					ToolCalls: []apiToolCall{
+						{
+							ID:   "call_x",
+							Type: "function",
+							Function: apiToolFunction{
+								Name:      "noop",
+								Arguments: "",
+							},
+						},
+					},
+				},
+				FinishReason: "tool_calls",
+			},
+		},
+	}
+	result := parseResponse(resp, "gpt-4o")
+	tc, ok := result.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatal("expected ToolCallPart")
+	}
+	if tc.ArgsJSON != "{}" {
+		t.Errorf("expected empty args to be '{}', got %q", tc.ArgsJSON)
+	}
+}
+
+// --- mapUsage: cache + reasoning tokens ---
+
+func TestMapUsageFull(t *testing.T) {
+	u := apiUsage{
+		PromptTokens:     100,
+		CompletionTokens: 50,
+		PromptTokensDetails: &apiPromptTokensDetails{
+			CachedTokens: 30,
+		},
+		CompletionTokensDetails: &apiCompletionDetails{
+			ReasoningTokens: 20,
+		},
+	}
+	usage := mapUsage(u)
+	if usage.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100", usage.InputTokens)
+	}
+	if usage.OutputTokens != 50 {
+		t.Errorf("OutputTokens = %d, want 50", usage.OutputTokens)
+	}
+	if usage.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30", usage.CacheReadTokens)
+	}
+	if usage.Details == nil || usage.Details["reasoning_tokens"] != 20 {
+		t.Errorf("expected reasoning_tokens=20 in details, got %v", usage.Details)
+	}
+}
+
+// --- mapFinishReasonStr: all variants ---
+
+func TestMapFinishReasonStrAll(t *testing.T) {
+	tests := []struct {
+		reason   string
+		expected core.FinishReason
+	}{
+		{"stop", core.FinishReasonStop},
+		{"length", core.FinishReasonLength},
+		{"tool_calls", core.FinishReasonToolCall},
+		{"content_filter", core.FinishReasonContentFilter},
+		{"unknown_reason", core.FinishReasonStop},
+		{"", core.FinishReasonStop},
+	}
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			got := mapFinishReasonStr(tt.reason)
+			if got != tt.expected {
+				t.Errorf("mapFinishReasonStr(%q) = %s, want %s", tt.reason, got, tt.expected)
+			}
+		})
+	}
+}
+
+// --- WithHTTPClient option ---
+
+func TestWithHTTPClientOption(t *testing.T) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	p := New(WithAPIKey("test"), WithHTTPClient(client))
+	if p.httpClient != client {
+		t.Error("expected custom HTTP client to be set")
+	}
+}
+
+// --- doRequest: Retry-After header ---
+
+func TestRequestHTTPErrorRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"message":"Rate limit exceeded"}}`))
+	}))
+	defer server.Close()
+
+	p := New(WithAPIKey("test-key"), WithBaseURL(server.URL))
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+		},
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var httpErr *core.ModelHTTPError
+	if !isHTTPError(err, &httpErr) {
+		t.Fatalf("expected ModelHTTPError, got %T", err)
+	}
+	if httpErr.RetryAfter != 30*time.Second {
+		t.Errorf("RetryAfter = %v, want 30s", httpErr.RetryAfter)
+	}
+}
+
+// --- RequestStream HTTP error ---
+
+func TestRequestStreamHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":{"message":"Internal server error"}}`))
+	}))
+	defer server.Close()
+
+	p := New(WithAPIKey("test-key"), WithBaseURL(server.URL))
+	_, err := p.RequestStream(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+		},
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var httpErr *core.ModelHTTPError
+	if !isHTTPError(err, &httpErr) {
+		t.Fatalf("expected ModelHTTPError, got %T: %v", err, err)
+	}
+	if httpErr.StatusCode != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", httpErr.StatusCode)
+	}
+}
+
+// --- Stream: non-JSON data line skipped ---
+
+func TestParseSSEStreamSkipsInvalidJSON(t *testing.T) {
+	sseData := `data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}
+
+data: not-valid-json
+
+data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"!"},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	var text strings.Builder
+	for {
+		event, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch e := event.(type) {
+		case core.PartStartEvent:
+			if tp, ok := e.Part.(core.TextPart); ok {
+				text.WriteString(tp.Content)
+			}
+		case core.PartDeltaEvent:
+			if td, ok := e.Delta.(core.TextPartDelta); ok {
+				text.WriteString(td.ContentDelta)
+			}
+		}
+	}
+	if text.String() != "Hi!" {
+		t.Errorf("expected 'Hi!', got %q", text.String())
+	}
+}
+
+// --- Stream: non-data lines skipped ---
+
+func TestParseSSEStreamSkipsNonDataLines(t *testing.T) {
+	sseData := `event: message
+: comment line
+data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	event, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := event.(core.PartStartEvent)
+	if !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event)
+	}
+	if tp, ok := start.Part.(core.TextPart); !ok || tp.Content != "OK" {
+		t.Errorf("expected 'OK', got %v", start.Part)
+	}
+}
+
+// --- Stream: chunk with no choices skipped ---
+
+func TestParseSSEStreamSkipsNoChoices(t *testing.T) {
+	sseData := `data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}
+
+data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	event, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := event.(core.PartStartEvent)
+	if !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event)
+	}
+	if tp, ok := start.Part.(core.TextPart); !ok || tp.Content != "Hi" {
+		t.Errorf("expected 'Hi', got %v", start.Part)
+	}
+	// Usage should still be captured from the no-choices chunk.
+	if stream.Usage().InputTokens != 5 {
+		t.Errorf("expected 5 input tokens from usage-only chunk, got %d", stream.Usage().InputTokens)
+	}
+}
+
+// --- Stream: finish reason "length" ---
+
+func TestParseSSEStreamFinishReasonLength(t *testing.T) {
+	sseData := `data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"text"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}
+
+data: [DONE]
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	for {
+		_, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp := stream.Response()
+	if resp.FinishReason != core.FinishReasonLength {
+		t.Errorf("expected FinishReasonLength, got %s", resp.FinishReason)
+	}
+}
+
+// --- Stream: two tool calls with delta ---
+
+func TestParseSSEStreamTwoToolCallsWithDelta(t *testing.T) {
+	sseData := `data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"search","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\":\"x\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"view","arguments":"{\"f\":\"y\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	var events []core.ModelResponseStreamEvent
+	for {
+		event, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+
+	resp := stream.Response()
+	if len(resp.Parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(resp.Parts))
+	}
+	tc0, ok := resp.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("part 0: expected ToolCallPart, got %T", resp.Parts[0])
+	}
+	if tc0.ToolName != "search" || tc0.ArgsJSON != `{"q":"x"}` {
+		t.Errorf("tc0: unexpected %+v", tc0)
+	}
+	tc1, ok := resp.Parts[1].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("part 1: expected ToolCallPart, got %T", resp.Parts[1])
+	}
+	if tc1.ToolName != "view" || tc1.ArgsJSON != `{"f":"y"}` {
+		t.Errorf("tc1: unexpected %+v", tc1)
+	}
+}
+
+// --- Stream: Usage() accessor ---
+
+func TestStreamUsageAccessor(t *testing.T) {
+	sseData := `data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"x"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":3},"completion_tokens_details":{"reasoning_tokens":2}}}
+
+data: [DONE]
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	for {
+		_, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	usage := stream.Usage()
+	if usage.InputTokens != 10 {
+		t.Errorf("InputTokens = %d, want 10", usage.InputTokens)
+	}
+	if usage.OutputTokens != 5 {
+		t.Errorf("OutputTokens = %d, want 5", usage.OutputTokens)
+	}
+	if usage.CacheReadTokens != 3 {
+		t.Errorf("CacheReadTokens = %d, want 3", usage.CacheReadTokens)
+	}
+	if usage.Details == nil || usage.Details["reasoning_tokens"] != 2 {
+		t.Errorf("expected reasoning_tokens=2, got %v", usage.Details)
+	}
+}
+
+// --- Stream: EOF without [DONE] ---
+
+func TestParseSSEStreamEOFWithoutDone(t *testing.T) {
+	// Some servers close the connection without sending [DONE].
+	sseData := `data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	event, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := event.(core.PartStartEvent); !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event)
+	}
+
+	// Next should be EOF (stream ended without [DONE]).
+	_, err = stream.Next()
+	if err != io.EOF {
+		t.Errorf("expected io.EOF, got %v", err)
+	}
+
+	resp := stream.Response()
+	if len(resp.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(resp.Parts))
+	}
+}
+
+// --- Stream: empty tool call args get "{}" in finalization ---
+
+func TestParseSSEStreamEmptyToolCallArgs(t *testing.T) {
+	sseData := `data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_e","type":"function","function":{"name":"ping","arguments":""}}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	for {
+		_, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resp := stream.Response()
+	if len(resp.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(resp.Parts))
+	}
+	tc, ok := resp.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatal("expected ToolCallPart")
+	}
+	if tc.ArgsJSON != "{}" {
+		t.Errorf("expected empty args to be '{}', got %q", tc.ArgsJSON)
+	}
+}
