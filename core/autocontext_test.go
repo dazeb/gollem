@@ -385,3 +385,98 @@ func TestAutoContext_CJKContent_UTF8Safety(t *testing.T) {
 		}
 	}
 }
+
+// TestStripOrphanedToolResults verifies that tool results whose matching tool
+// calls were dropped are converted to user prompts rather than remaining as
+// orphaned tool_result blocks that APIs would reject.
+func TestStripOrphanedToolResults(t *testing.T) {
+	messages := []ModelMessage{
+		// First message with system prompt.
+		ModelRequest{
+			Parts: []ModelRequestPart{
+				UserPromptPart{Content: "Do the task"},
+			},
+		},
+		// Summary (no tool calls).
+		ModelResponse{
+			Parts: []ModelResponsePart{
+				TextPart{Content: "[Summary] previous work"},
+			},
+		},
+		// Orphaned tool result — the matching tool call was dropped.
+		ModelRequest{
+			Parts: []ModelRequestPart{
+				ToolReturnPart{
+					ToolName:   "view",
+					ToolCallID: "orphan_1",
+					Content:    "file contents here",
+				},
+			},
+		},
+		// Valid tool call.
+		ModelResponse{
+			Parts: []ModelResponsePart{
+				ToolCallPart{
+					ToolName:   "edit",
+					ToolCallID: "valid_1",
+					ArgsJSON:   `{"path":"foo.go"}`,
+				},
+			},
+		},
+		// Matching tool result (should be kept).
+		ModelRequest{
+			Parts: []ModelRequestPart{
+				ToolReturnPart{
+					ToolName:   "edit",
+					ToolCallID: "valid_1",
+					Content:    "edit applied",
+				},
+			},
+		},
+	}
+
+	result := stripOrphanedToolResults(messages)
+
+	// The orphaned tool result should be converted, not left as ToolReturnPart.
+	for i, msg := range result {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if tr, ok := part.(ToolReturnPart); ok {
+					if tr.ToolCallID == "orphan_1" {
+						t.Errorf("message %d: orphaned ToolReturnPart with ID %q was not stripped", i, tr.ToolCallID)
+					}
+				}
+			}
+		}
+	}
+
+	// The valid tool result should still exist.
+	foundValid := false
+	for _, msg := range result {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if tr, ok := part.(ToolReturnPart); ok && tr.ToolCallID == "valid_1" {
+					foundValid = true
+				}
+			}
+		}
+	}
+	if !foundValid {
+		t.Error("valid ToolReturnPart (valid_1) was incorrectly removed")
+	}
+
+	// The orphaned content should be preserved as a UserPromptPart.
+	foundConverted := false
+	for _, msg := range result {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(UserPromptPart); ok && strings.Contains(up.Content, "file contents here") {
+					foundConverted = true
+				}
+			}
+		}
+	}
+	if !foundConverted {
+		t.Error("orphaned tool result content was not preserved as UserPromptPart")
+	}
+}

@@ -13171,6 +13171,111 @@ func TestEmergencyCompressMessages_Alternation(t *testing.T) {
 	}
 }
 
+// TestEmergencyCompressMessages_OrphanedToolResults verifies that emergency
+// compression strips tool results whose matching tool calls were dropped.
+// Without this fix, the Anthropic API rejects the compressed messages because
+// tool_result blocks reference tool_use IDs that no longer exist.
+func TestEmergencyCompressMessages_OrphanedToolResults(t *testing.T) {
+	messages := []core.ModelMessage{
+		// Message 0: task prompt (always kept).
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Implement the feature"},
+			},
+		},
+	}
+
+	// Messages 1-6: conversation with tool calls (will be dropped).
+	for i := 0; i < 3; i++ {
+		// Assistant response with a tool call.
+		messages = append(messages, core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: fmt.Sprintf("Let me check file %d", i)},
+				core.ToolCallPart{
+					ToolName: "view",
+					ArgsJSON: fmt.Sprintf(`{"path":"file%d.go"}`, i),
+					ToolCallID: fmt.Sprintf("call_%d", i),
+				},
+			},
+		})
+		// Tool result matching the call.
+		messages = append(messages, core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "view",
+					ToolCallID: fmt.Sprintf("call_%d", i),
+					Content:    fmt.Sprintf("contents of file%d.go", i),
+				},
+			},
+		})
+	}
+
+	// Messages 7-12: more conversation (these will be kept as the tail).
+	for i := 3; i < 6; i++ {
+		messages = append(messages, core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: fmt.Sprintf("Let me edit file %d", i)},
+				core.ToolCallPart{
+					ToolName: "edit",
+					ArgsJSON: fmt.Sprintf(`{"path":"file%d.go"}`, i),
+					ToolCallID: fmt.Sprintf("call_%d", i),
+				},
+			},
+		})
+		messages = append(messages, core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "edit",
+					ToolCallID: fmt.Sprintf("call_%d", i),
+					Content:    "edit applied",
+				},
+			},
+		})
+	}
+
+	// Add a final response.
+	messages = append(messages, core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.TextPart{Content: "Done editing"},
+		},
+	})
+
+	// Compress with keepLast=6. This should drop messages 1-6 (3 tool call/result pairs)
+	// and keep messages 7-12 + 13 as the tail. The tail's first ModelRequest
+	// should NOT have orphaned tool results.
+	compressed := emergencyCompressMessagesWithConfig(messages, 20000, 6)
+
+	// Collect all tool call IDs in the compressed messages.
+	toolCallIDs := make(map[string]bool)
+	for _, msg := range compressed {
+		if resp, ok := msg.(core.ModelResponse); ok {
+			for _, part := range resp.Parts {
+				if tc, ok := part.(core.ToolCallPart); ok {
+					toolCallIDs[tc.ToolCallID] = true
+				}
+			}
+		}
+	}
+
+	// Verify no orphaned tool results.
+	for i, msg := range compressed {
+		if req, ok := msg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if tr, ok := part.(core.ToolReturnPart); ok {
+					if !toolCallIDs[tr.ToolCallID] {
+						t.Errorf("message %d has orphaned ToolReturnPart with ID %q (no matching ToolCallPart)", i, tr.ToolCallID)
+					}
+				}
+				if rp, ok := part.(core.RetryPromptPart); ok {
+					if rp.ToolCallID != "" && !toolCallIDs[rp.ToolCallID] {
+						t.Errorf("message %d has orphaned RetryPromptPart with ID %q (no matching ToolCallPart)", i, rp.ToolCallID)
+					}
+				}
+			}
+		}
+	}
+}
+
 // TestEdit_AutoCorrectWhitespace_TabsVsSpaces verifies that whitespace auto-
 // correction handles the most common production failure: the model sends spaces
 // but the file uses tabs (or vice versa).

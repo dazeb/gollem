@@ -8566,6 +8566,88 @@ func emergencyCompressMessagesWithConfig(messages []core.ModelMessage, maxConten
 		result = append(result, truncateMessageContent(msg, maxContentBytes))
 	}
 
+	// Strip orphaned tool results: when compression drops a ModelResponse
+	// containing ToolCallParts but keeps the next ModelRequest with matching
+	// ToolReturnParts, the API will reject the conversation because tool_result
+	// blocks reference tool_use IDs that no longer exist. Collect all tool call
+	// IDs in the result and remove any tool returns that reference missing calls.
+	result = stripOrphanedToolResults(result)
+
+	return result
+}
+
+// stripOrphanedToolResults removes ToolReturnParts and RetryPromptParts whose
+// matching ToolCallParts were dropped during compression. Without this, APIs
+// (Anthropic, OpenAI) reject the conversation because tool_result blocks
+// reference tool_use IDs that no longer exist.
+func stripOrphanedToolResults(messages []core.ModelMessage) []core.ModelMessage {
+	// Collect all tool call IDs present in the messages.
+	callIDs := make(map[string]bool)
+	for _, msg := range messages {
+		if resp, ok := msg.(core.ModelResponse); ok {
+			for _, part := range resp.Parts {
+				if tc, ok := part.(core.ToolCallPart); ok {
+					callIDs[tc.ToolCallID] = true
+				}
+			}
+		}
+	}
+
+	// Scan for orphaned tool results and strip them.
+	result := make([]core.ModelMessage, 0, len(messages))
+	for _, msg := range messages {
+		req, ok := msg.(core.ModelRequest)
+		if !ok {
+			result = append(result, msg)
+			continue
+		}
+
+		// Filter out orphaned tool returns, convert to user text to preserve info.
+		var filtered []core.ModelRequestPart
+		modified := false
+		for _, part := range req.Parts {
+			switch p := part.(type) {
+			case core.ToolReturnPart:
+				if !callIDs[p.ToolCallID] {
+					// Convert to a user prompt to preserve the content.
+					content := ""
+					if s, ok := p.Content.(string); ok {
+						content = s
+					}
+					if content != "" {
+						filtered = append(filtered, core.UserPromptPart{
+							Content: fmt.Sprintf("[Previous %s result] %s",
+								p.ToolName, truncateAtRuneBoundary(content, 500)),
+						})
+					}
+					modified = true
+					continue
+				}
+			case core.RetryPromptPart:
+				if p.ToolCallID != "" && !callIDs[p.ToolCallID] {
+					// Convert to a user prompt.
+					if p.Content != "" {
+						filtered = append(filtered, core.UserPromptPart{
+							Content: "[Previous tool error] " + truncateAtRuneBoundary(p.Content, 500),
+						})
+					}
+					modified = true
+					continue
+				}
+			}
+			filtered = append(filtered, part)
+		}
+
+		if modified {
+			if len(filtered) == 0 {
+				// Don't emit an empty ModelRequest.
+				continue
+			}
+			req.Parts = filtered
+		}
+		result = append(result, req)
+	}
+
 	return result
 }
 

@@ -198,5 +198,80 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 	result = append(result, firstMsg)
 	result = append(result, summaryMsg)
 	result = append(result, recentMessages...)
+
+	// Strip tool results whose matching tool calls were dropped during
+	// compression. APIs (Anthropic, OpenAI) reject conversations where
+	// tool_result blocks reference tool_use IDs that no longer exist.
+	result = stripOrphanedToolResults(result)
+
 	return result, nil
+}
+
+// stripOrphanedToolResults removes ToolReturnParts and RetryPromptParts whose
+// matching ToolCallParts were dropped during compression.
+func stripOrphanedToolResults(messages []ModelMessage) []ModelMessage {
+	// Collect all tool call IDs present in the messages.
+	callIDs := make(map[string]bool)
+	for _, msg := range messages {
+		if resp, ok := msg.(ModelResponse); ok {
+			for _, part := range resp.Parts {
+				if tc, ok := part.(ToolCallPart); ok {
+					callIDs[tc.ToolCallID] = true
+				}
+			}
+		}
+	}
+
+	// Scan for orphaned tool results and convert to user text.
+	out := make([]ModelMessage, 0, len(messages))
+	for _, msg := range messages {
+		req, ok := msg.(ModelRequest)
+		if !ok {
+			out = append(out, msg)
+			continue
+		}
+
+		var filtered []ModelRequestPart
+		modified := false
+		for _, part := range req.Parts {
+			switch p := part.(type) {
+			case ToolReturnPart:
+				if !callIDs[p.ToolCallID] {
+					content := ""
+					if s, ok := p.Content.(string); ok {
+						content = s
+					}
+					if content != "" {
+						filtered = append(filtered, UserPromptPart{
+							Content: fmt.Sprintf("[Previous %s result] %s",
+								p.ToolName, truncateStr(content, 500)),
+						})
+					}
+					modified = true
+					continue
+				}
+			case RetryPromptPart:
+				if p.ToolCallID != "" && !callIDs[p.ToolCallID] {
+					if p.Content != "" {
+						filtered = append(filtered, UserPromptPart{
+							Content: "[Previous tool error] " + truncateStr(p.Content, 500),
+						})
+					}
+					modified = true
+					continue
+				}
+			}
+			filtered = append(filtered, part)
+		}
+
+		if modified {
+			if len(filtered) == 0 {
+				continue
+			}
+			req.Parts = filtered
+		}
+		out = append(out, req)
+	}
+
+	return out
 }
