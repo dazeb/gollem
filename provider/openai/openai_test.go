@@ -99,6 +99,55 @@ func TestBuildResponsesRequestCodexOmitsSamplingParams(t *testing.T) {
 	}
 }
 
+func TestConvertMessagesToResponsesInputAssistantUsesOutputText(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "sys"},
+				core.UserPromptPart{Content: "hello"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "assistant reply"},
+			},
+		},
+	}
+
+	input, err := convertMessagesToResponsesInput(messages)
+	if err != nil {
+		t.Fatalf("convertMessagesToResponsesInput failed: %v", err)
+	}
+	if len(input) != 3 {
+		t.Fatalf("expected 3 input items, got %d", len(input))
+	}
+
+	getContentType := func(item map[string]any) string {
+		content, ok := item["content"].([]map[string]string)
+		if ok && len(content) > 0 {
+			return content[0]["type"]
+		}
+		if contentAny, ok := item["content"].([]any); ok && len(contentAny) > 0 {
+			if m, ok := contentAny[0].(map[string]any); ok {
+				if s, ok := m["type"].(string); ok {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+
+	if got := getContentType(input[0]); got != "input_text" {
+		t.Fatalf("system content type = %q, want input_text", got)
+	}
+	if got := getContentType(input[1]); got != "input_text" {
+		t.Fatalf("user content type = %q, want input_text", got)
+	}
+	if got := getContentType(input[2]); got != "output_text" {
+		t.Fatalf("assistant content type = %q, want output_text", got)
+	}
+}
+
 func TestBuildRequestWithTools(t *testing.T) {
 	params := &core.ModelRequestParameters{
 		FunctionTools: []core.ToolDefinition{

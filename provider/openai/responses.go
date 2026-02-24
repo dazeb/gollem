@@ -271,12 +271,16 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 }
 
 func responsesMessage(role, text string) map[string]any {
+	contentType := "input_text"
+	if role == "assistant" {
+		contentType = "output_text"
+	}
 	return map[string]any{
 		"type": "message",
 		"role": role,
 		"content": []map[string]string{
 			{
-				"type": "input_text",
+				"type": contentType,
 				"text": text,
 			},
 		},
