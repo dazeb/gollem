@@ -10867,6 +10867,44 @@ func TestMultiEdit_CRLFInParams(t *testing.T) {
 	}
 }
 
+func TestEdit_CRLFContextDisplay(t *testing.T) {
+	// Verify that editing a CRLF file produces context around the edit.
+	// Before the fix, editResultWithContext received CRLF content but LF-only
+	// newStr, so strings.Index failed and no context was shown.
+	dir := t.TempDir()
+	crlfContent := "line1\r\nline2\r\nline3\r\nline4\r\nline5\r\n"
+	os.WriteFile(filepath.Join(dir, "crlf.txt"), []byte(crlfContent), 0o644)
+
+	tool := Edit(WithWorkDir(dir))
+	result := call(t, tool, `{"path": "crlf.txt", "old_string": "line3", "new_string": "LINE_THREE"}`)
+	assertContains(t, result, "Replaced 1")
+	// The result must include the context section showing surrounding lines.
+	assertContains(t, result, "Context:")
+	assertContains(t, result, "LINE_THREE")
+
+	// Also verify CRLF is preserved on disk.
+	data, _ := os.ReadFile(filepath.Join(dir, "crlf.txt"))
+	if !strings.Contains(string(data), "\r\n") {
+		t.Error("expected CRLF line endings to be preserved")
+	}
+}
+
+func TestEdit_CRLFAutoCorrectWhitespaceContext(t *testing.T) {
+	// Verify that auto-corrected whitespace edits on CRLF files show context.
+	dir := t.TempDir()
+	// File uses tabs, model sends spaces.
+	crlfContent := "func main() {\r\n\tline1\r\n\tline2\r\n\tline3\r\n}\r\n"
+	os.WriteFile(filepath.Join(dir, "crlf.go"), []byte(crlfContent), 0o644)
+
+	tool := Edit(WithWorkDir(dir))
+	// Model sends spaces (4) instead of tabs — triggers autoCorrectWhitespace.
+	result := call(t, tool, `{"path": "crlf.go", "old_string": "    line2", "new_string": "    LINE_TWO"}`)
+	assertContains(t, result, "Replaced 1")
+	assertContains(t, result, "auto-corrected whitespace")
+	assertContains(t, result, "Context:")
+	assertContains(t, result, "LINE_TWO")
+}
+
 func TestExtractGoFunctionSignatures(t *testing.T) {
 	tests := []struct {
 		name    string

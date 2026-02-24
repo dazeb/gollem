@@ -120,10 +120,11 @@ func Edit(opts ...Option) core.Tool {
 				// round-trip — whitespace mismatches are the #1 edit failure.
 				if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, oldStr, newStr); ok {
 					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+					writeContent := newContent
 					if hasCRLF {
-						newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+						writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 					}
-					if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+					if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
 						return "", fmt.Errorf("write file: %w", err)
 					}
 					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -139,10 +140,11 @@ func Edit(opts ...Option) core.Tool {
 					// Try exact match with stripped version first.
 					if strings.Count(content, trimmedOld) == 1 {
 						newContent := strings.Replace(content, trimmedOld, trimmedNew, 1)
+						writeContent := newContent
 						if hasCRLF {
-							newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+							writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 						}
-						if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+						if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
 						result := editResultWithContext(newContent, trimmedNew, 1, params.Path)
@@ -152,10 +154,11 @@ func Edit(opts ...Option) core.Tool {
 					// Also try whitespace auto-correct on the stripped version.
 					if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, trimmedOld, trimmedNew); ok {
 						newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+						writeContent := newContent
 						if hasCRLF {
-							newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+							writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 						}
-						if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+						if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
 						result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -171,10 +174,11 @@ func Edit(opts ...Option) core.Tool {
 				if normalizedOld, normalizedNew, ok := autoCorrectInternalBlankLines(content, oldStr, newStr); ok {
 					if strings.Count(content, normalizedOld) == 1 {
 						newContent := strings.Replace(content, normalizedOld, normalizedNew, 1)
+						writeContent := newContent
 						if hasCRLF {
-							newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+							writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 						}
-						if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+						if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
 						result := editResultWithContext(newContent, normalizedNew, 1, params.Path)
@@ -194,10 +198,11 @@ func Edit(opts ...Option) core.Tool {
 					if blankNormOld != oldStr { // blank line normalization changed something
 						if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, blankNormOld, blankNormNew); ok {
 							newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+							writeContent := newContent
 							if hasCRLF {
-								newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+								writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 							}
-							if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+							if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
 								return "", fmt.Errorf("write file: %w", err)
 							}
 							result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -213,10 +218,11 @@ func Edit(opts ...Option) core.Tool {
 				// Only trims lines that are identical in old and new (pure context).
 				if actualOld, adjustedNew, ok := autoCorrectLineTrim(content, oldStr, newStr); ok {
 					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
+					writeContent := newContent
 					if hasCRLF {
-						newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+						writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 					}
-					if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+					if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
 						return "", fmt.Errorf("write file: %w", err)
 					}
 					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -265,10 +271,11 @@ func Edit(opts ...Option) core.Tool {
 				newContent = strings.Replace(content, oldStr, newStr, 1)
 			}
 
+			writeContent := newContent
 			if hasCRLF {
-				newContent = strings.ReplaceAll(newContent, "\n", "\r\n")
+				writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 			}
-			if err := os.WriteFile(path, []byte(newContent), filePerm); err != nil {
+			if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 
@@ -512,8 +519,8 @@ func MultiEdit(opts ...Option) core.Tool {
 	return core.FuncTool[MultiEditParams](
 		"multi_edit",
 		"Apply multiple file edits in a single operation. Each edit specifies a file, an exact string "+
-			"to find (old_string), and its replacement (new_string). Edits are applied atomically — "+
-			"either all succeed or none are written. "+
+			"to find (old_string), and its replacement (new_string). All edits are validated before any "+
+			"files are written — if validation fails, no files are modified. "+
 			"Use this when you need to make coordinated changes across multiple files.",
 		func(ctx context.Context, params MultiEditParams) (string, error) {
 			if len(params.Edits) == 0 {
@@ -652,7 +659,7 @@ func MultiEdit(opts ...Option) core.Tool {
 				})
 			}
 
-			// Phase 2: Write all files atomically.
+			// Phase 2: Write validated edits to disk.
 			var results []string
 			for i, pw := range pending {
 				writeContent := pw.newContent
