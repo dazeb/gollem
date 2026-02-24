@@ -942,3 +942,60 @@ func TestBuildRequestRejectsUnsupportedParts(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildRequestSystemOnlyRequestAlternation verifies that a ModelRequest
+// containing ONLY SystemPromptParts doesn't create consecutive assistant
+// messages in the API request. SystemPromptParts get extracted to the
+// top-level system field — if no user message is emitted for the ModelRequest,
+// adjacent assistant messages violate Anthropic's alternation requirement.
+func TestBuildRequestSystemOnlyRequestAlternation(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "Hi there"},
+			},
+		},
+		// System-only request — SystemPromptPart extracted to top-level system
+		// field, but no user message generated. This creates consecutive
+		// assistant messages in the API request.
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "New context injected mid-conversation"},
+			},
+			Timestamp: time.Now(),
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "Acknowledged"},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify no adjacent same-role messages.
+	for i := 1; i < len(req.Messages); i++ {
+		if req.Messages[i-1].Role == req.Messages[i].Role {
+			t.Errorf("adjacent %q messages at indices %d and %d — would cause Anthropic 400", req.Messages[i].Role, i-1, i)
+		}
+	}
+
+	// Should have 4 messages (user, assistant, user-placeholder, assistant).
+	if len(req.Messages) != 4 {
+		t.Errorf("expected 4 messages, got %d", len(req.Messages))
+	}
+
+	// The system blocks should still be extracted.
+	if len(req.System) != 1 || req.System[0].Text != "New context injected mid-conversation" {
+		t.Errorf("expected system block with context, got %v", req.System)
+	}
+}

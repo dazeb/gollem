@@ -208,6 +208,15 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 					Role:    "user",
 					Content: userBlocks,
 				})
+			} else if len(m.Parts) > 0 {
+				// The ModelRequest contained only SystemPromptParts (extracted
+				// above to the top-level system field). Emit a placeholder user
+				// message to prevent consecutive assistant messages which violate
+				// Anthropic's alternation requirement and cause 400 errors.
+				apiMsgs = append(apiMsgs, apiMessage{
+					Role:    "user",
+					Content: []apiContentBlock{{Type: "text", Text: "[system context updated]"}},
+				})
 			}
 
 		case core.ModelResponse:
