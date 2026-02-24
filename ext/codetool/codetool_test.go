@@ -13170,3 +13170,183 @@ func TestEmergencyCompressMessages_Alternation(t *testing.T) {
 		t.Error("second message should be ModelResponse (recovery summary)")
 	}
 }
+
+// TestEdit_AutoCorrectWhitespace_TabsVsSpaces verifies that whitespace auto-
+// correction handles the most common production failure: the model sends spaces
+// but the file uses tabs (or vice versa).
+func TestEdit_AutoCorrectWhitespace_TabsVsSpaces(t *testing.T) {
+	dir := setupTestDir(t)
+
+	// File uses tabs for indentation.
+	tabContent := "package main\n\nfunc foo() {\n\tif true {\n\t\treturn 1\n\t}\n}\n"
+	writeTestFile(t, dir, "tabs.go", tabContent)
+
+	tool := Edit(WithWorkDir(dir))
+
+	// Model sends spaces (4-space indent) instead of tabs.
+	out := call(t, tool, `{
+		"path": "tabs.go",
+		"old_string": "    if true {\n        return 1\n    }",
+		"new_string": "    if true {\n        return 2\n    }"
+	}`)
+	if !strings.Contains(out, "auto-corrected") {
+		t.Errorf("expected auto-correction note, got: %s", out)
+	}
+
+	// Verify the file was updated correctly.
+	got := readFileContent(t, filepath.Join(dir, "tabs.go"))
+	if !strings.Contains(got, "\t\treturn 2") {
+		t.Errorf("expected tab-indented 'return 2', got:\n%s", got)
+	}
+}
+
+// TestEdit_AutoCorrectBlankLines_ExtraLeading verifies correction when the
+// model includes extra blank lines at the start of old_string.
+func TestEdit_AutoCorrectBlankLines_ExtraLeading(t *testing.T) {
+	dir := setupTestDir(t)
+
+	// File has exactly one blank line before the function.
+	fileContent := "package main\n\nfunc foo() {\n\treturn 1\n}\n"
+	writeTestFile(t, dir, "blank.go", fileContent)
+
+	tool := Edit(WithWorkDir(dir))
+
+	// Model includes TWO extra blank lines before the function,
+	// but the file only has one. This exercises blank line auto-correction.
+	out := call(t, tool, `{
+		"path": "blank.go",
+		"old_string": "\n\n\nfunc foo() {\n\treturn 1\n}",
+		"new_string": "\n\n\nfunc bar() {\n\treturn 2\n}"
+	}`)
+	if !strings.Contains(out, "auto-corrected") {
+		t.Errorf("expected auto-correction note, got: %s", out)
+	}
+	got := readFileContent(t, filepath.Join(dir, "blank.go"))
+	if !strings.Contains(got, "func bar()") {
+		t.Errorf("expected 'func bar()', got:\n%s", got)
+	}
+}
+
+// TestEdit_AutoCorrectLineTrim_WrongContextLine verifies that line trim
+// correction works when the model includes an incorrect context line.
+func TestEdit_AutoCorrectLineTrim_WrongContextLine(t *testing.T) {
+	dir := setupTestDir(t)
+
+	content := "package main\n\nimport \"fmt\"\n\nfunc foo() {\n\tfmt.Println(\"hello\")\n\treturn 1\n}\n"
+	writeTestFile(t, dir, "trim.go", content)
+
+	tool := Edit(WithWorkDir(dir))
+
+	// Model includes wrong first context line (import instead of blank line).
+	// The middle lines are unique, so line trim should fix it.
+	out := call(t, tool, `{
+		"path": "trim.go",
+		"old_string": "import \"os\"\n\nfunc foo() {\n\tfmt.Println(\"hello\")\n\treturn 1\n}",
+		"new_string": "import \"os\"\n\nfunc foo() {\n\tfmt.Println(\"world\")\n\treturn 2\n}"
+	}`)
+	if !strings.Contains(out, "auto-corrected") {
+		t.Errorf("expected auto-correction note, got: %s", out)
+	}
+	got := readFileContent(t, filepath.Join(dir, "trim.go"))
+	if !strings.Contains(got, "return 2") {
+		t.Errorf("expected 'return 2', got:\n%s", got)
+	}
+}
+
+// TestExtractTestCounts_VariousFrameworks exercises the test count parser with
+// real-world output from multiple test frameworks.
+func TestExtractTestCounts_VariousFrameworks(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     string
+		wantPassed int
+		wantFailed int
+		wantOK     bool
+	}{
+		{
+			name:       "pytest_pass_and_fail",
+			output:     "==== 8 passed, 2 failed in 1.23s ====",
+			wantPassed: 8, wantFailed: 2, wantOK: true,
+		},
+		{
+			name:       "pytest_all_pass",
+			output:     "==== 15 passed in 3.45s ====",
+			wantPassed: 15, wantFailed: 0, wantOK: true,
+		},
+		{
+			name:       "go_test_mixed",
+			output:     "--- PASS: TestFoo (0.01s)\n--- PASS: TestBar (0.02s)\n--- FAIL: TestBaz (0.01s)\nFAIL",
+			wantPassed: 2, wantFailed: 1, wantOK: true,
+		},
+		{
+			name:       "cargo_test",
+			output:     "test result: FAILED. 10 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out",
+			wantPassed: 10, wantFailed: 3, wantOK: true,
+		},
+		{
+			name:       "jest_output",
+			output:     "Test Suites:  2 passed, 1 failed, 3 total\nTests:        5 passed, 2 failed, 7 total",
+			wantPassed: 5, wantFailed: 2, wantOK: true,
+		},
+		{
+			name:       "rspec_output",
+			output:     "20 examples, 3 failures",
+			wantPassed: 17, wantFailed: 3, wantOK: true,
+		},
+		{
+			name:       "unittest_ok",
+			output:     "Ran 12 tests in 0.5s\n\nOK",
+			wantPassed: 12, wantFailed: 0, wantOK: true,
+		},
+		{
+			name:       "unittest_fail",
+			output:     "Ran 10 tests in 1.2s\n\nFAILED (failures=2, errors=1)",
+			wantPassed: 7, wantFailed: 3, wantOK: true,
+		},
+		{
+			name:       "mocha_output",
+			output:     "  7 passing (100ms)\n  2 failing",
+			wantPassed: 7, wantFailed: 2, wantOK: true,
+		},
+		{
+			name:       "catch2_all_pass",
+			output:     "All tests passed (42 assertions in 10 test cases)",
+			wantPassed: 10, wantFailed: 0, wantOK: true,
+		},
+		{
+			name:       "catch2_mixed",
+			output:     "test cases: 8 | 6 passed | 2 failed\nassertions: 20 | 16 passed | 4 failed",
+			wantPassed: 6, wantFailed: 2, wantOK: true,
+		},
+		{
+			name:       "no_test_output",
+			output:     "hello world\nall done",
+			wantPassed: 0, wantFailed: 0, wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			passed, failed, ok := extractTestCounts(tt.output)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if passed != tt.wantPassed {
+				t.Errorf("passed = %d, want %d", passed, tt.wantPassed)
+			}
+			if failed != tt.wantFailed {
+				t.Errorf("failed = %d, want %d", failed, tt.wantFailed)
+			}
+		})
+	}
+}
+
+// readFileContent is a test helper that reads a file's contents.
+func readFileContent(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("readFileContent: %v", err)
+	}
+	return string(data)
+}
