@@ -59,30 +59,40 @@ func TestTeamAwarenessMiddleware_InjectsMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should have original + injected message.
-	if len(injectedMessages) != 2 {
-		t.Fatalf("expected 2 messages (original + injected), got %d", len(injectedMessages))
+	// Should still have 1 message — content merged into existing ModelRequest
+	// to avoid consecutive user-role messages (Anthropic 400 error).
+	if len(injectedMessages) != 1 {
+		t.Fatalf("expected 1 message (merged), got %d", len(injectedMessages))
 	}
 
-	// Second message should be the injected one with both teammate messages.
-	req, ok := injectedMessages[1].(core.ModelRequest)
+	// The single ModelRequest should have the original part + injected part.
+	req, ok := injectedMessages[0].(core.ModelRequest)
 	if !ok {
-		t.Fatal("expected ModelRequest for injected message")
+		t.Fatal("expected ModelRequest")
 	}
-	if len(req.Parts) != 1 {
-		t.Fatalf("expected 1 part, got %d", len(req.Parts))
+	if len(req.Parts) != 2 {
+		t.Fatalf("expected 2 parts (original + injected), got %d", len(req.Parts))
 	}
-	userPart, ok := req.Parts[0].(core.UserPromptPart)
+	// First part: original prompt.
+	origPart, ok := req.Parts[0].(core.UserPromptPart)
 	if !ok {
-		t.Fatal("expected UserPromptPart")
+		t.Fatal("expected UserPromptPart for original")
 	}
-	if !strings.Contains(userPart.Content, "leader") {
+	if origPart.Content != "hello" {
+		t.Errorf("original content should be 'hello', got %q", origPart.Content)
+	}
+	// Second part: injected teammate messages.
+	injectedPart, ok := req.Parts[1].(core.UserPromptPart)
+	if !ok {
+		t.Fatal("expected UserPromptPart for injected content")
+	}
+	if !strings.Contains(injectedPart.Content, "leader") {
 		t.Error("injected content should mention 'leader'")
 	}
-	if !strings.Contains(userPart.Content, "alice") {
+	if !strings.Contains(injectedPart.Content, "alice") {
 		t.Error("injected content should mention 'alice'")
 	}
-	if !strings.Contains(userPart.Content, "do X") {
+	if !strings.Contains(injectedPart.Content, "do X") {
 		t.Error("injected content should contain message content 'do X'")
 	}
 }
@@ -108,13 +118,13 @@ func TestTeamAwarenessMiddleware_ShutdownMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The injected message should contain shutdown language.
-	req := injectedMessages[1].(core.ModelRequest)
-	userPart := req.Parts[0].(core.UserPromptPart)
-	if !strings.Contains(userPart.Content, "SHUTDOWN REQUEST") {
+	// Content merged into existing ModelRequest (last part).
+	req := injectedMessages[0].(core.ModelRequest)
+	lastPart := req.Parts[len(req.Parts)-1].(core.UserPromptPart)
+	if !strings.Contains(lastPart.Content, "SHUTDOWN REQUEST") {
 		t.Error("expected SHUTDOWN REQUEST in injected content")
 	}
-	if !strings.Contains(userPart.Content, "IMPORTANT") {
+	if !strings.Contains(lastPart.Content, "IMPORTANT") {
 		t.Error("expected IMPORTANT warning for shutdown")
 	}
 }
@@ -149,6 +159,44 @@ func TestTeamAwarenessMiddleware_DrainsOnce(t *testing.T) {
 
 	if len(secondMsgs) != 1 {
 		t.Errorf("second call should not inject messages, got %d", len(secondMsgs))
+	}
+}
+
+func TestTeamAwarenessMiddleware_NoConsecutiveUserMessages(t *testing.T) {
+	mb := NewMailbox(10)
+	tm := &Teammate{name: "worker", mailbox: mb}
+
+	mb.Send(Message{From: "leader", Content: "new task", Type: MessageText, Timestamp: time.Now()})
+
+	mw := TeamAwarenessMiddleware(tm)
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		// Verify no consecutive ModelRequest messages (would cause Anthropic 400).
+		for i := 1; i < len(msgs); i++ {
+			_, prevIsReq := msgs[i-1].(core.ModelRequest)
+			_, currIsReq := msgs[i].(core.ModelRequest)
+			if prevIsReq && currIsReq {
+				t.Errorf("consecutive ModelRequest messages at indices %d and %d — would cause Anthropic 400 error", i-1, i)
+			}
+		}
+		return core.TextResponse("ok"), nil
+	}
+
+	// Simulate a typical agent loop state: messages ending with a ModelRequest.
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.SystemPromptPart{Content: "You are a helpful agent."},
+			core.UserPromptPart{Content: "Fix the bug"},
+		}},
+		core.ModelResponse{Parts: []core.ModelResponsePart{
+			core.ToolCallPart{ToolName: "bash", ArgsJSON: `{"cmd":"ls"}`, ToolCallID: "tc1"},
+		}},
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.ToolReturnPart{ToolName: "bash", ToolCallID: "tc1", Content: "file.go"},
+		}},
+	}
+	_, err := mw(context.Background(), messages, nil, nil, next)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

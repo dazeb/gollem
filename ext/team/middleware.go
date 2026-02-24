@@ -42,16 +42,30 @@ func TeamAwarenessMiddleware(tm *Teammate) core.AgentMiddleware {
 			injection += "\n\nIMPORTANT: A shutdown has been requested. Complete your current task as quickly as possible and provide your final response."
 		}
 
-		injectedMsg := core.ModelRequest{
-			Parts: []core.ModelRequestPart{
-				core.UserPromptPart{Content: injection},
-			},
-		}
-
-		// Copy to avoid corrupting the caller's slice backing array.
-		newMessages := make([]core.ModelMessage, len(messages)+1)
+		// Merge into the last ModelRequest to avoid consecutive user-role
+		// messages, which cause a 400 error from Anthropic's API.
+		newMessages := make([]core.ModelMessage, len(messages))
 		copy(newMessages, messages)
-		newMessages[len(messages)] = injectedMsg
+		merged := false
+		for i := len(newMessages) - 1; i >= 0; i-- {
+			if req, ok := newMessages[i].(core.ModelRequest); ok {
+				newParts := make([]core.ModelRequestPart, len(req.Parts)+1)
+				copy(newParts, req.Parts)
+				newParts[len(req.Parts)] = core.UserPromptPart{Content: injection}
+				req.Parts = newParts
+				newMessages[i] = req
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			// Fallback: no ModelRequest found, append a new one.
+			newMessages = append(newMessages, core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{Content: injection},
+				},
+			})
+		}
 
 		return next(ctx, newMessages, settings, params)
 	}
