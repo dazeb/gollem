@@ -967,6 +967,369 @@ func TestBuildRequestSystemOnlyPlaceholder(t *testing.T) {
 
 // TestBuildRequestEmptyResponseAlternation verifies that an empty ModelResponse
 // doesn't create adjacent user messages in the Gemini API request.
+func TestBuildRequestThinkingConfig(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Think hard"},
+			},
+		},
+	}
+
+	budget := 4096
+	settings := &core.ModelSettings{
+		ThinkingBudget: &budget,
+	}
+
+	req, err := buildRequest(messages, settings, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req.GenerationConfig == nil {
+		t.Fatal("expected GenerationConfig to be set")
+	}
+	if req.GenerationConfig.ThinkingConfig == nil {
+		t.Fatal("expected ThinkingConfig to be set")
+	}
+	if req.GenerationConfig.ThinkingConfig.ThinkingBudget != 4096 {
+		t.Errorf("expected ThinkingBudget 4096, got %d", req.GenerationConfig.ThinkingConfig.ThinkingBudget)
+	}
+}
+
+func TestBuildRequestToolChoice(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		tc       *core.ToolChoice
+		wantMode string
+		wantName string
+	}{
+		{
+			name:     "none",
+			tc:       &core.ToolChoice{Mode: "none"},
+			wantMode: "NONE",
+		},
+		{
+			name:     "required",
+			tc:       &core.ToolChoice{Mode: "required"},
+			wantMode: "ANY",
+		},
+		{
+			name:     "specific tool",
+			tc:       &core.ToolChoice{ToolName: "my_tool"},
+			wantMode: "ANY",
+			wantName: "my_tool",
+		},
+		{
+			name:     "auto",
+			tc:       &core.ToolChoice{Mode: "auto"},
+			wantMode: "AUTO",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := &core.ModelSettings{ToolChoice: tt.tc}
+			req, err := buildRequest(messages, settings, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if req.ToolConfig == nil {
+				t.Fatal("expected ToolConfig to be set")
+			}
+			if req.ToolConfig.FunctionCallingConfig.Mode != tt.wantMode {
+				t.Errorf("expected mode %q, got %q", tt.wantMode, req.ToolConfig.FunctionCallingConfig.Mode)
+			}
+			if tt.wantName != "" {
+				names := req.ToolConfig.FunctionCallingConfig.AllowedFunctionNames
+				if len(names) != 1 || names[0] != tt.wantName {
+					t.Errorf("expected allowed function names [%s], got %v", tt.wantName, names)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildRequestNativeStructuredOutput(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Return structured data"},
+			},
+		},
+	}
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+		},
+	}
+
+	params := &core.ModelRequestParameters{
+		OutputMode: core.OutputModeNative,
+		OutputObject: &core.OutputObjectDefinition{
+			JSONSchema: schema,
+		},
+	}
+
+	req, err := buildRequest(messages, nil, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req.GenerationConfig == nil {
+		t.Fatal("expected GenerationConfig to be set")
+	}
+	if req.GenerationConfig.ResponseMimeType != "application/json" {
+		t.Errorf("expected ResponseMimeType 'application/json', got %q", req.GenerationConfig.ResponseMimeType)
+	}
+	if req.GenerationConfig.ResponseSchema == nil {
+		t.Fatal("expected ResponseSchema to be set")
+	}
+}
+
+func TestBuildRequestRetryPromptPart(t *testing.T) {
+	t.Run("with_tool_call_id", func(t *testing.T) {
+		messages := []core.ModelMessage{
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{Content: "Hello"},
+				},
+			},
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{
+						ToolName:   "my_tool",
+						ArgsJSON:   "{}",
+						ToolCallID: "call_1",
+					},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.RetryPromptPart{
+						Content:    "invalid args",
+						ToolName:   "my_tool",
+						ToolCallID: "call_1",
+					},
+				},
+			},
+		}
+		req, err := buildRequest(messages, nil, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The retry should be a FunctionResponse with error content.
+		lastContent := req.Contents[len(req.Contents)-1]
+		if lastContent.Role != "user" {
+			t.Errorf("expected role user, got %s", lastContent.Role)
+		}
+		found := false
+		for _, p := range lastContent.Parts {
+			if p.FunctionResponse != nil {
+				found = true
+				if p.FunctionResponse.Name != "my_tool" {
+					t.Errorf("expected tool name 'my_tool', got %q", p.FunctionResponse.Name)
+				}
+				if _, ok := p.FunctionResponse.Response["error"]; !ok {
+					t.Error("expected error key in function response")
+				}
+			}
+		}
+		if !found {
+			t.Error("expected FunctionResponse part for retry with tool call ID")
+		}
+	})
+
+	t.Run("without_tool_call_id", func(t *testing.T) {
+		messages := []core.ModelMessage{
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{Content: "Hello"},
+				},
+			},
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.TextPart{Content: "Some response"},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.RetryPromptPart{Content: "empty response, please provide a result"},
+				},
+			},
+		}
+		req, err := buildRequest(messages, nil, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		lastContent := req.Contents[len(req.Contents)-1]
+		if lastContent.Role != "user" {
+			t.Errorf("expected role user, got %s", lastContent.Role)
+		}
+		// Should be a text part, not a function response.
+		if lastContent.Parts[0].Text != "empty response, please provide a result" {
+			t.Errorf("expected retry text, got %q", lastContent.Parts[0].Text)
+		}
+		if lastContent.Parts[0].FunctionResponse != nil {
+			t.Error("expected no FunctionResponse for retry without tool call ID")
+		}
+	})
+}
+
+func TestBuildRequestThoughtSignatureRoundTrip(t *testing.T) {
+	// Simulate a Gemini 3.x response with thought signature, followed by
+	// tool return, to verify the signature survives the round-trip through
+	// buildRequest.
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Use a tool"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "search",
+					ArgsJSON:   `{"query":"test"}`,
+					ToolCallID: "call_0",
+					Metadata:   map[string]string{"thoughtSignature": "abc123sig"},
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "search",
+					Content:    "result: found it",
+					ToolCallID: "call_0",
+				},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Find the model response content and verify thought signature.
+	var foundSig bool
+	for _, c := range req.Contents {
+		if c.Role == "model" {
+			for _, p := range c.Parts {
+				if p.FunctionCall != nil && p.ThoughtSignature == "abc123sig" {
+					foundSig = true
+				}
+			}
+		}
+	}
+	if !foundSig {
+		t.Error("thought signature not preserved in round-trip")
+	}
+}
+
+func TestBuildRequestUnsupportedPartType(t *testing.T) {
+	// Verify that unsupported request part types return an error.
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ImagePart{URL: "http://example.com/img.png", MIMEType: "image/png"},
+			},
+		},
+	}
+	_, err := buildRequest(messages, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for unsupported part type")
+	}
+	if !strings.Contains(err.Error(), "unsupported request part type") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestParseResponseThoughtSignature(t *testing.T) {
+	resp := &geminiResponse{
+		Candidates: []geminiCandidate{{
+			Content: geminiContent{
+				Role: "model",
+				Parts: []geminiPart{
+					{
+						FunctionCall: &geminiFunctionCall{
+							Name: "search",
+							Args: map[string]any{"q": "test"},
+						},
+						ThoughtSignature: "sig_xyz",
+					},
+				},
+			},
+			FinishReason: "STOP",
+		}},
+		UsageMetadata: geminiUsage{
+			PromptTokenCount:     10,
+			CandidatesTokenCount: 5,
+			TotalTokenCount:      15,
+		},
+	}
+
+	result := parseResponse(resp, "gemini-2.5-flash")
+	if len(result.Parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(result.Parts))
+	}
+	tc, ok := result.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatal("expected ToolCallPart")
+	}
+	if tc.Metadata == nil || tc.Metadata["thoughtSignature"] != "sig_xyz" {
+		t.Errorf("expected thoughtSignature 'sig_xyz', got %v", tc.Metadata)
+	}
+}
+
+func TestParseSSEStreamFinishReasons(t *testing.T) {
+	tests := []struct {
+		reason string
+		want   core.FinishReason
+	}{
+		{"STOP", core.FinishReasonStop},
+		{"MAX_TOKENS", core.FinishReasonLength},
+		{"SAFETY", core.FinishReasonContentFilter},
+		{"RECITATION", core.FinishReasonContentFilter},
+		{"UNKNOWN", core.FinishReasonStop},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			// Build a minimal SSE stream with the specified finish reason.
+			sseStream := fmt.Sprintf("event: message_start\ndata: {\"candidates\":[]}\n\n"+
+				"event: content_block_start\ndata: {\"index\":0,\"part\":{\"text\":\"hi\"}}\n\n"+
+				"event: content_block_stop\ndata: {\"index\":0}\n\n"+
+				"event: message_end\ndata: {\"candidates\":[{\"finishReason\":\"%s\"}],\"usageMetadata\":{\"promptTokenCount\":1,\"candidatesTokenCount\":1,\"totalTokenCount\":2}}\n\n",
+				tt.reason)
+
+			body := io.NopCloser(strings.NewReader(sseStream))
+			stream := newStreamedResponse(body, "gemini-test")
+
+			for {
+				_, err := stream.Next()
+				if err != nil {
+					break
+				}
+			}
+
+			resp := stream.Response()
+			if resp.FinishReason != tt.want {
+				t.Errorf("expected %v, got %v", tt.want, resp.FinishReason)
+			}
+		})
+	}
+}
+
 func TestBuildRequestEmptyResponseAlternation(t *testing.T) {
 	messages := []core.ModelMessage{
 		core.ModelRequest{
