@@ -8584,8 +8584,19 @@ func stripOrphanedToolResults(messages []core.ModelMessage) []core.ModelMessage 
 				if !callIDs[p.ToolCallID] {
 					// Convert to a user prompt to preserve the content.
 					content := ""
-					if s, ok := p.Content.(string); ok {
-						content = s
+					switch v := p.Content.(type) {
+					case string:
+						content = v
+					case nil:
+						// No content to preserve.
+					default:
+						// Structured data (map, slice, number, etc.) — marshal
+						// to JSON string so it's preserved in the conversation.
+						if b, err := json.Marshal(v); err == nil {
+							content = string(b)
+						} else {
+							content = fmt.Sprintf("%v", v)
+						}
 					}
 					if content != "" {
 						filtered = append(filtered, core.UserPromptPart{

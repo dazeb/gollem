@@ -736,6 +736,76 @@ func TestStripOrphanedToolResults_NoConsecutiveMessages(t *testing.T) {
 	}
 }
 
+// TestStripOrphanedToolResults_NonStringContent verifies that orphaned
+// ToolReturnParts with non-string content (maps, slices, numbers) are
+// preserved as UserPromptParts. Previously, only string content was
+// converted — structured data was silently dropped.
+func TestStripOrphanedToolResults_NonStringContent(t *testing.T) {
+	messages := []ModelMessage{
+		ModelRequest{
+			Parts: []ModelRequestPart{
+				UserPromptPart{Content: "Do the task"},
+			},
+		},
+		ModelResponse{
+			Parts: []ModelResponsePart{
+				TextPart{Content: "[Summary] previous work"},
+			},
+		},
+		// Orphaned tool result with structured (map) content.
+		ModelRequest{
+			Parts: []ModelRequestPart{
+				ToolReturnPart{
+					ToolName:   "api_call",
+					ToolCallID: "orphan_map",
+					Content:    map[string]any{"status": "ok", "count": float64(42)},
+				},
+			},
+		},
+		// Orphaned tool result with numeric content.
+		ModelResponse{
+			Parts: []ModelResponsePart{
+				TextPart{Content: "Continuing work"},
+			},
+		},
+		ModelRequest{
+			Parts: []ModelRequestPart{
+				ToolReturnPart{
+					ToolName:   "counter",
+					ToolCallID: "orphan_num",
+					Content:    float64(99),
+				},
+			},
+		},
+	}
+
+	result := stripOrphanedToolResults(messages)
+
+	// The structured content should be preserved as JSON in UserPromptParts.
+	foundMap := false
+	foundNum := false
+	for _, msg := range result {
+		if req, ok := msg.(ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(UserPromptPart); ok {
+					if strings.Contains(up.Content, "api_call") && strings.Contains(up.Content, "count") {
+						foundMap = true
+					}
+					if strings.Contains(up.Content, "counter") && strings.Contains(up.Content, "99") {
+						foundNum = true
+					}
+				}
+			}
+		}
+	}
+	if !foundMap {
+		t.Error("orphaned tool result with map content was not preserved as UserPromptPart")
+	}
+	if !foundNum {
+		t.Error("orphaned tool result with numeric content was not preserved as UserPromptPart")
+	}
+}
+
 // TestAutoContext_IterPersistence verifies that auto-context compression in the
 // Iter API persists to state.messages, preventing unbounded growth. This catches
 // the bug fixed in 387a2b9 where compression was transient — applied to a local
