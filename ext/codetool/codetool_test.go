@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -12926,3 +12927,246 @@ func TestProgressTrackingMiddleware_SimpleCommandsStillDetected(t *testing.T) {
 	}
 }
 
+
+func TestTruncateAtRuneBoundary(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxBytes int
+		wantLen  int // expected byte length of result
+	}{
+		{
+			name:     "ASCII only, no truncation needed",
+			input:    "hello world",
+			maxBytes: 100,
+			wantLen:  11,
+		},
+		{
+			name:     "ASCII only, truncation",
+			input:    "hello world",
+			maxBytes: 5,
+			wantLen:  5,
+		},
+		{
+			name:     "CJK text, cut between characters",
+			input:    "Hello 世界你好", // "Hello " = 6 bytes, each CJK char = 3 bytes
+			maxBytes: 9,            // Falls right at end of 世
+			wantLen:  9,
+		},
+		{
+			name:     "CJK text, cut mid-character",
+			input:    "Hello 世界你好",
+			maxBytes: 7, // Falls in the middle of 世 (bytes 6,7,8)
+			wantLen:  6, // Should back up to end of "Hello "
+		},
+		{
+			name:     "CJK text, cut mid-character second byte",
+			input:    "Hello 世界你好",
+			maxBytes: 8, // Falls in the middle of 世 (bytes 6,7,8)
+			wantLen:  6, // Should back up to end of "Hello "
+		},
+		{
+			name:     "Emoji, cut mid-character",
+			input:    "Hi 👋🌍", // "Hi " = 3 bytes, 👋 = 4 bytes, 🌍 = 4 bytes
+			maxBytes: 5,        // Falls in middle of 👋 (bytes 3,4,5,6)
+			wantLen:  3,        // Should back up to end of "Hi "
+		},
+		{
+			name:     "Emoji, cut right after emoji",
+			input:    "Hi 👋🌍",
+			maxBytes: 7, // Right after 👋
+			wantLen:  7,
+		},
+		{
+			name:     "Empty string",
+			input:    "",
+			maxBytes: 10,
+			wantLen:  0,
+		},
+		{
+			name:     "All multi-byte, cut at zero",
+			input:    "世界",
+			maxBytes: 0,
+			wantLen:  0,
+		},
+		{
+			name:     "All multi-byte, cut at 1 (inside first char)",
+			input:    "世界",
+			maxBytes: 1,
+			wantLen:  0, // Can't fit even one CJK character
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateAtRuneBoundary(tt.input, tt.maxBytes)
+
+			if len(result) != tt.wantLen {
+				t.Errorf("truncateAtRuneBoundary(%q, %d): got len=%d, want len=%d (result=%q)",
+					tt.input, tt.maxBytes, len(result), tt.wantLen, result)
+			}
+
+			// The result must always be valid UTF-8.
+			if !utf8.ValidString(result) {
+				t.Errorf("truncateAtRuneBoundary(%q, %d): result %q is not valid UTF-8",
+					tt.input, tt.maxBytes, result)
+			}
+
+			// The result must be a prefix of the input.
+			if !strings.HasPrefix(tt.input, result) {
+				t.Errorf("truncateAtRuneBoundary(%q, %d): result %q is not a prefix of input",
+					tt.input, tt.maxBytes, result)
+			}
+		})
+	}
+}
+
+func TestTruncateMessageContent_UTF8Safety(t *testing.T) {
+	// Construct a message with CJK content that would be cut mid-character
+	// by naive byte truncation.
+	cjkContent := strings.Repeat("世界你好", 100) // 1200 bytes of CJK text
+
+	// Test ToolReturnPart truncation.
+	msg := core.ModelRequest{
+		Parts: []core.ModelRequestPart{
+			core.ToolReturnPart{
+				ToolCallID: "call_1",
+				Content:    cjkContent,
+			},
+		},
+	}
+
+	truncated := truncateMessageContent(msg, 50)
+	req, ok := truncated.(core.ModelRequest)
+	if !ok {
+		t.Fatal("expected ModelRequest")
+	}
+	tr, ok := req.Parts[0].(core.ToolReturnPart)
+	if !ok {
+		t.Fatal("expected ToolReturnPart")
+	}
+	content, ok := tr.Content.(string)
+	if !ok {
+		t.Fatal("expected string content")
+	}
+	if !utf8.ValidString(content) {
+		t.Errorf("ToolReturnPart content is not valid UTF-8 after truncation: %q...%q",
+			content[:20], content[len(content)-20:])
+	}
+
+	// Test UserPromptPart truncation.
+	msg2 := core.ModelRequest{
+		Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: cjkContent},
+		},
+	}
+
+	truncated2 := truncateMessageContent(msg2, 50)
+	req2 := truncated2.(core.ModelRequest)
+	up := req2.Parts[0].(core.UserPromptPart)
+	if !utf8.ValidString(up.Content) {
+		t.Errorf("UserPromptPart content is not valid UTF-8 after truncation")
+	}
+
+	// Test TextPart (ModelResponse) truncation.
+	msg3 := core.ModelResponse{
+		Parts: []core.ModelResponsePart{
+			core.TextPart{Content: cjkContent},
+		},
+	}
+
+	truncated3 := truncateMessageContent(msg3, 50)
+	resp := truncated3.(core.ModelResponse)
+	tp := resp.Parts[0].(core.TextPart)
+	if !utf8.ValidString(tp.Content) {
+		t.Errorf("TextPart content is not valid UTF-8 after truncation")
+	}
+}
+
+func TestTruncateOutput_UTF8Safety(t *testing.T) {
+	// Build a long string with CJK characters that would be cut mid-character.
+	input := strings.Repeat("错误信息：测试失败", 200) // ~5400 bytes of CJK
+
+	result := truncateOutput(input, 100)
+
+	if !utf8.ValidString(result) {
+		t.Errorf("truncateOutput produced invalid UTF-8")
+	}
+
+	// Verify it was actually truncated.
+	if !strings.Contains(result, "[truncated") {
+		t.Error("expected truncation marker in output")
+	}
+}
+
+func TestEmergencyCompressMessages_Alternation(t *testing.T) {
+	// Build a conversation with proper alternation: Req, Resp, Req, Resp, ...
+	// Then compress and verify the result still alternates properly.
+	messages := []core.ModelMessage{
+		// First message: user prompt (always kept)
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Implement the feature"},
+			},
+		},
+	}
+
+	// Add alternating messages to get past the threshold.
+	for i := 0; i < 14; i++ {
+		if i%2 == 0 {
+			messages = append(messages, core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.TextPart{Content: fmt.Sprintf("Assistant response %d", i)},
+				},
+			})
+		} else {
+			messages = append(messages, core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.UserPromptPart{Content: fmt.Sprintf("User message %d", i)},
+				},
+			})
+		}
+	}
+
+	compressed := emergencyCompressMessagesWithConfig(messages, 20000, 6)
+
+	// Check alternation: each message should alternate between request and response.
+	for i := 1; i < len(compressed); i++ {
+		_, prevIsReq := compressed[i-1].(core.ModelRequest)
+		_, prevIsResp := compressed[i-1].(core.ModelResponse)
+		_, curIsReq := compressed[i].(core.ModelRequest)
+		_, curIsResp := compressed[i].(core.ModelResponse)
+
+		if prevIsReq && curIsReq {
+			t.Errorf("adjacent ModelRequests at positions %d and %d", i-1, i)
+		}
+		if prevIsResp && curIsResp {
+			t.Errorf("adjacent ModelResponses at positions %d and %d", i-1, i)
+		}
+		if !prevIsReq && !prevIsResp {
+			t.Errorf("unknown message type at position %d", i-1)
+		}
+		if !curIsReq && !curIsResp {
+			t.Errorf("unknown message type at position %d", i)
+		}
+	}
+
+	// First message should still be the original user prompt.
+	firstReq, ok := compressed[0].(core.ModelRequest)
+	if !ok {
+		t.Fatal("first message should be ModelRequest")
+	}
+	up, ok := firstReq.Parts[0].(core.UserPromptPart)
+	if !ok {
+		t.Fatal("first part should be UserPromptPart")
+	}
+	if up.Content != "Implement the feature" {
+		t.Errorf("first message content changed: %q", up.Content)
+	}
+
+	// Second message should be the recovery summary (ModelResponse).
+	_, ok = compressed[1].(core.ModelResponse)
+	if !ok {
+		t.Error("second message should be ModelResponse (recovery summary)")
+	}
+}

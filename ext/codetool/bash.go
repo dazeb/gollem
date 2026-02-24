@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -44,9 +45,16 @@ func truncateOutput(s string, maxLen int) string {
 	if tailLen < 0 {
 		tailLen = 0
 	}
-	return s[:headLen] +
+	// Adjust head and tail cut points to valid UTF-8 rune boundaries
+	// to avoid splitting multi-byte characters (CJK, emoji, etc.).
+	head := truncateAtRuneBoundary(s, headLen)
+	tailStart := len(s) - tailLen
+	for tailStart < len(s) && !utf8.RuneStart(s[tailStart]) {
+		tailStart++
+	}
+	return head +
 		fmt.Sprintf("\n\n... [truncated %d bytes, showing first %d and last %d bytes] ...\n\n", len(s), headLen, tailLen) +
-		s[len(s)-tailLen:]
+		s[tailStart:]
 }
 
 // BashParams are the parameters for the bash tool.

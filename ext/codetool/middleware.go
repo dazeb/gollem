@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -8664,7 +8665,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 							pendingVerifyCallID = tc.ToolCallID
 							pendingVerifyCmd = args.Command
 							if len(pendingVerifyCmd) > 80 {
-								pendingVerifyCmd = pendingVerifyCmd[:80] + "..."
+								pendingVerifyCmd = truncateAtRuneBoundary(pendingVerifyCmd, 80) + "..."
 							}
 						}
 						// Track package installations to prevent re-installs after recovery.
@@ -8768,7 +8769,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 						pendingSubagentCallID = tc.ToolCallID
 						pendingSubagentTask = args.Task
 						if len(pendingSubagentTask) > 100 {
-							pendingSubagentTask = pendingSubagentTask[:100] + "..."
+							pendingSubagentTask = truncateAtRuneBoundary(pendingSubagentTask, 100) + "..."
 						}
 					}
 				}
@@ -8806,7 +8807,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 					if s, ok := tr.Content.(string); ok {
 						content = s
 						if len(content) > 150 {
-							content = content[:150] + "..."
+							content = truncateAtRuneBoundary(content, 150) + "..."
 						}
 					}
 					subagentTasks = append(subagentTasks, fmt.Sprintf("Task: %s → Result: %s", pendingSubagentTask, content))
@@ -8929,7 +8930,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	if lastAssistantText != "" {
 		truncated := lastAssistantText
 		if len(truncated) > 500 {
-			truncated = truncated[:500] + "..."
+			truncated = truncateAtRuneBoundary(truncated, 500) + "..."
 		}
 		b.WriteString("YOUR LAST APPROACH/THINKING:\n")
 		b.WriteString("  " + truncated + "\n\n")
@@ -8941,6 +8942,21 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	return b.String()
 }
 
+// truncateAtRuneBoundary truncates a string to at most maxBytes bytes without
+// cutting in the middle of a multi-byte UTF-8 sequence. This prevents producing
+// invalid UTF-8 when truncating content that contains CJK characters, emoji, or
+// other non-ASCII text.
+func truncateAtRuneBoundary(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	// Back up from the cut point until we find a byte that starts a UTF-8 rune.
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
+}
+
 // truncateMessageContent truncates oversized content within a single message.
 func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessage {
 	switch m := msg.(type) {
@@ -8950,19 +8966,19 @@ func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessa
 			switch p := part.(type) {
 			case core.ToolReturnPart:
 				if s, ok := p.Content.(string); ok && len(s) > maxBytes {
-					p.Content = s[:maxBytes] + "\n... [truncated for context management]"
+					p.Content = truncateAtRuneBoundary(s, maxBytes) + "\n... [truncated for context management]"
 					parts[i] = p
 					continue
 				}
 			case core.UserPromptPart:
 				if len(p.Content) > maxBytes {
-					p.Content = p.Content[:maxBytes] + "\n... [truncated for context management]"
+					p.Content = truncateAtRuneBoundary(p.Content, maxBytes) + "\n... [truncated for context management]"
 					parts[i] = p
 					continue
 				}
 			case core.RetryPromptPart:
 				if len(p.Content) > maxBytes {
-					p.Content = p.Content[:maxBytes] + "\n... [truncated for context management]"
+					p.Content = truncateAtRuneBoundary(p.Content, maxBytes) + "\n... [truncated for context management]"
 					parts[i] = p
 					continue
 				}
@@ -8977,7 +8993,7 @@ func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessa
 			switch p := part.(type) {
 			case core.TextPart:
 				if len(p.Content) > maxBytes {
-					p.Content = p.Content[:maxBytes] + "\n... [truncated]"
+					p.Content = truncateAtRuneBoundary(p.Content, maxBytes) + "\n... [truncated]"
 					parts[i] = p
 					continue
 				}
