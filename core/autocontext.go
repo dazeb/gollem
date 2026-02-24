@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // AutoContextConfig configures automatic context window management.
@@ -60,6 +61,18 @@ func estimateTokens(messages []ModelMessage) int {
 		}
 	}
 	return total
+}
+
+// truncateStr truncates a string to at most maxBytes without splitting
+// multi-byte UTF-8 characters. Returns the original string if it fits.
+func truncateStr(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes] + "..."
 }
 
 // estimateStringTokens estimates token count for a string.
@@ -132,33 +145,18 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 			for _, part := range m.Parts {
 				switch p := part.(type) {
 				case UserPromptPart:
-					content := p.Content
-					if len(content) > 500 {
-						content = content[:500] + "..."
-					}
-					fmt.Fprintf(&sb, "User: %s\n", content)
+					fmt.Fprintf(&sb, "User: %s\n", truncateStr(p.Content, 500))
 				case ToolReturnPart:
-					content := fmt.Sprintf("%v", p.Content)
-					if len(content) > 800 {
-						content = content[:800] + "..."
-					}
-					fmt.Fprintf(&sb, "[Tool result: %s] %s\n", p.ToolName, content)
+					fmt.Fprintf(&sb, "[Tool result: %s] %s\n", p.ToolName, truncateStr(fmt.Sprintf("%v", p.Content), 800))
 				}
 			}
 		case ModelResponse:
 			if text := m.TextContent(); text != "" {
-				if len(text) > 500 {
-					text = text[:500] + "..."
-				}
-				fmt.Fprintf(&sb, "Assistant: %s\n", text)
+				fmt.Fprintf(&sb, "Assistant: %s\n", truncateStr(text, 500))
 			}
 			for _, part := range m.Parts {
 				if tc, ok := part.(ToolCallPart); ok {
-					args := tc.ArgsJSON
-					if len(args) > 500 {
-						args = args[:500] + "..."
-					}
-					fmt.Fprintf(&sb, "[Tool call: %s] %s\n", tc.ToolName, args)
+					fmt.Fprintf(&sb, "[Tool call: %s] %s\n", tc.ToolName, truncateStr(tc.ArgsJSON, 500))
 				}
 			}
 		}

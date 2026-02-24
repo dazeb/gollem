@@ -3,6 +3,7 @@ package deep
 import (
 	"context"
 	"fmt"
+	"unicode/utf8"
 	"strings"
 	"sync"
 	"time"
@@ -350,7 +351,11 @@ func (cm *ContextManager) offloadContent(content string, tokens int) string {
 	// Build summary from first 200 chars.
 	preview := content
 	if len(preview) > 200 {
-		preview = preview[:200] + "..."
+		n := 200
+		for n > 0 && !utf8.RuneStart(preview[n]) {
+			n--
+		}
+		preview = preview[:n] + "..."
 	}
 	if !stored {
 		return fmt.Sprintf("[Content could not be offloaded — %d tokens retained inline. Summary: %s]", tokens, preview)

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"time"
+	"unicode/utf8"
 )
 
 // AgentMiddleware wraps a model call within the agent loop.
@@ -69,7 +70,11 @@ func summarizeMessages(messages []ModelMessage) string {
 		for i := len(req.Parts) - 1; i >= 0; i-- {
 			if up, ok := req.Parts[i].(UserPromptPart); ok {
 				if len(up.Content) > 50 {
-					return up.Content[:50] + "..."
+					n := 50
+					for n > 0 && !utf8.RuneStart(up.Content[n]) {
+						n--
+					}
+					return up.Content[:n] + "..."
 				}
 				return up.Content
 			}

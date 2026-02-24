@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestAutoContext_NoCompression(t *testing.T) {
@@ -299,5 +300,88 @@ func TestAutoContext_AgentIntegration(t *testing.T) {
 	}
 	if result.Output != "result" {
 		t.Errorf("expected 'result', got %q", result.Output)
+	}
+}
+
+func TestTruncateStr(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxBytes int
+		wantLen  bool // true = check len <= maxBytes+3 (for "...")
+	}{
+		{"ascii_no_truncate", "hello world", 100, false},
+		{"ascii_truncate", "hello world", 5, true},
+		{"cjk_between_chars", "世界你好测试", 9, true},  // 世界你 = 9 bytes, clean boundary
+		{"cjk_mid_char", "世界你好测试", 7, true},       // 7 is mid-char of 你 (starts at byte 6)
+		{"emoji_mid_char", "Hello 🌍🌎🌏", 8, true}, // 8 is mid-emoji
+		{"empty", "", 10, false},
+		{"zero_max", "hello", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateStr(tt.input, tt.maxBytes)
+			if !utf8.ValidString(result) {
+				t.Errorf("result is not valid UTF-8: %q", result)
+			}
+			if tt.wantLen {
+				// Should be truncated (contains "...")
+				if !strings.HasSuffix(result, "...") {
+					t.Errorf("expected truncated result to end with '...', got %q", result)
+				}
+			}
+		})
+	}
+}
+
+func TestAutoContext_CJKContent_UTF8Safety(t *testing.T) {
+	// Verify that CJK/multi-byte content doesn't produce invalid UTF-8
+	// during compression. This was a real bug: content[:500] splits multi-byte chars.
+	cjk := strings.Repeat("错误信息：测试失败了，需要修复代码。", 30) // ~900 bytes of CJK
+	var messages []ModelMessage
+	for i := range 10 {
+		messages = append(messages, ModelRequest{
+			Parts: []ModelRequestPart{
+				UserPromptPart{Content: fmt.Sprintf("用户消息 %d: %s", i, cjk)},
+				ToolReturnPart{ToolName: "bash", Content: cjk},
+			},
+		})
+		messages = append(messages, ModelResponse{
+			Parts: []ModelResponsePart{
+				TextPart{Content: fmt.Sprintf("助手回复 %d: %s", i, cjk)},
+				ToolCallPart{ToolName: "edit", ArgsJSON: fmt.Sprintf(`{"content":"%s"}`, cjk)},
+			},
+		})
+	}
+
+	summaryModel := NewTestModel(TextResponse("摘要：对话中讨论了代码修复。"))
+	config := &AutoContextConfig{
+		MaxTokens:    10,
+		KeepLastN:    4,
+		SummaryModel: summaryModel,
+	}
+
+	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify all messages in the result contain valid UTF-8.
+	for i, msg := range result {
+		switch m := msg.(type) {
+		case ModelRequest:
+			for _, part := range m.Parts {
+				switch p := part.(type) {
+				case UserPromptPart:
+					if !utf8.ValidString(p.Content) {
+						t.Errorf("message %d: UserPromptPart has invalid UTF-8", i)
+					}
+				}
+			}
+		case ModelResponse:
+			if text := m.TextContent(); !utf8.ValidString(text) {
+				t.Errorf("message %d: response text has invalid UTF-8", i)
+			}
+		}
 	}
 }

@@ -1609,7 +1609,7 @@ func buildActionSummaryCached(workDir string, expectedOutputs, testCmds, missing
 		// Truncate the pattern for the summary line.
 		pat := invocationPatterns[0]
 		if len(pat) > 120 {
-			pat = pat[:120] + "..."
+			pat = truncateAtRuneBoundary(pat, 120)
 		}
 		lines = append(lines, "INVOKE: "+pat)
 	}
@@ -3047,7 +3047,7 @@ func extractInvocationPatterns(workDir string) []string {
 			for _, marker := range invocationMarkers {
 				if strings.Contains(lower, marker) {
 					if len(trimmed) > 200 {
-						trimmed = trimmed[:200] + "..."
+						trimmed = truncateAtRuneBoundary(trimmed, 200)
 					}
 					if !seen[trimmed] {
 						seen[trimmed] = true
@@ -3096,7 +3096,7 @@ func extractInvocationPatterns(workDir string) []string {
 						}
 						if hasSolution {
 							if len(trimmed) > 200 {
-								trimmed = trimmed[:200] + "..."
+								trimmed = truncateAtRuneBoundary(trimmed, 200)
 							}
 							if !seen[trimmed] {
 								seen[trimmed] = true
@@ -3491,7 +3491,7 @@ func extractPythonFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -3590,7 +3590,7 @@ func extractJSFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -3723,7 +3723,7 @@ func extractGoFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -3828,7 +3828,7 @@ func extractRubyFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -3944,7 +3944,7 @@ func extractRustFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -4078,7 +4078,7 @@ func extractJavaFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -4213,7 +4213,7 @@ func extractCSharpFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -4353,7 +4353,7 @@ func extractCppFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -4482,7 +4482,7 @@ func extractElixirFunctionSignatures(content string) []string {
 			}
 			args := trimmed[argStart : argEnd-1]
 			if len(args) > 100 {
-				args = args[:100] + "..."
+				args = truncateAtRuneBoundary(args, 100)
 			}
 
 			sig := fullName + "(" + args + ")"
@@ -6961,7 +6961,7 @@ func extractTestConstraintsRecursive(dir string, constraints *[]string, seen map
 			if isConstraintLine && !seen[trimmed] {
 				// Truncate very long lines.
 				if len(trimmed) > 200 {
-					trimmed = trimmed[:200] + "..."
+					trimmed = truncateAtRuneBoundary(trimmed, 200)
 				}
 				*constraints = append(*constraints, trimmed)
 				seen[trimmed] = true
@@ -7998,7 +7998,7 @@ func extractFileStructure(path string) string {
 			// Truncate long definition lines.
 			def := trimmed
 			if len(def) > 120 {
-				def = def[:120] + "..."
+				def = truncateAtRuneBoundary(def, 120)
 			}
 			defs = append(defs, fmt.Sprintf("  L%d: %s", i+1, def))
 		}
@@ -8123,7 +8123,7 @@ func detectTodoStubsRecursive(rootDir, dir string, stubs *[]string, seen map[str
 						seen[key] = true
 						stub := fmt.Sprintf("  %s:%d: %s", relPath, lineNum+1, trimmed)
 						if len(stub) > 150 {
-							stub = stub[:150] + "..."
+							stub = truncateAtRuneBoundary(stub, 150)
 						}
 						*stubs = append(*stubs, stub)
 					}

@@ -3,6 +3,7 @@ package codetool
 import (
 	"context"
 	"fmt"
+	"unicode/utf8"
 	"os"
 	"strings"
 	"time"
@@ -172,7 +173,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		core.WithHooks[string](core.Hook{
 			OnRunStart: func(_ context.Context, _ *core.RunContext, prompt string) {
 				if len(prompt) > 100 {
-					prompt = prompt[:100] + "..."
+					n := 100
+					for n > 0 && !utf8.RuneStart(prompt[n]) {
+						n--
+					}
+					prompt = prompt[:n] + "..."
 				}
 				fmt.Fprintf(os.Stderr, "[gollem] run started: %s\n", prompt)
 			},
@@ -186,7 +191,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 			OnToolStart: func(_ context.Context, _ *core.RunContext, name string, argsJSON string) {
 				summary := argsJSON
 				if len(summary) > 200 {
-					summary = summary[:200] + "..."
+					n := 200
+						for n > 0 && !utf8.RuneStart(summary[n]) {
+							n--
+						}
+						summary = summary[:n] + "..."
 				}
 				fmt.Fprintf(os.Stderr, "[gollem] tool:start %s %s\n", name, summary)
 			},
@@ -196,7 +205,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 				} else {
 					summary := result
 					if len(summary) > 150 {
-						summary = summary[:150] + "..."
+						n := 150
+							for n > 0 && !utf8.RuneStart(summary[n]) {
+								n--
+							}
+							summary = summary[:n] + "..."
 					}
 					fmt.Fprintf(os.Stderr, "[gollem] tool:end   %s %s\n", name, strings.ReplaceAll(summary, "\n", "\\n"))
 				}
