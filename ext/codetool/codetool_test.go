@@ -12791,3 +12791,138 @@ func TestContextInjectionMiddleware_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
+func TestProgressTrackingMiddleware_CompoundBashCommands(t *testing.T) {
+	// ProgressTrackingMiddleware should detect file-writing commands even
+	// when they appear in compound bash commands (e.g. "cd /app && gcc main.c").
+	// Before the fix, HasPrefix-only checks for gcc/g++/cc/make/wget missed
+	// these compound forms, leading to false progress warnings.
+
+	compoundCommands := []string{
+		`cd /app && gcc main.c -o main`,
+		`cd /src && g++ app.cpp -o app`,
+		`cd /project && cc hello.c`,
+		`cd /build && make`,
+		`cd /build && make all`,
+		`cd /tmp && wget https://example.com/file.tar.gz`,
+		`export CFLAGS="-O2" && gcc -shared lib.c -o lib.so`,
+		`mkdir -p build && cd build && cmake .. && make`,
+	}
+
+	for _, cmd := range compoundCommands {
+		t.Run(cmd, func(t *testing.T) {
+			dir := t.TempDir()
+			mw := ProgressTrackingMiddleware(dir)
+			ctx := context.Background()
+
+			argsJSON, _ := json.Marshal(map[string]string{"command": cmd})
+
+			// Build message history with the bash tool call in a model response.
+			messages := []core.ModelMessage{
+				core.ModelRequest{
+					Parts: []core.ModelRequestPart{
+						core.UserPromptPart{Content: "Build the project"},
+					},
+				},
+				core.ModelResponse{
+					Parts: []core.ModelResponsePart{
+						core.ToolCallPart{
+							ToolName: "bash",
+							ArgsJSON: string(argsJSON),
+						},
+					},
+				},
+			}
+
+			next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+				// Check that no progress warning was injected.
+				for _, msg := range msgs {
+					if req, ok := msg.(core.ModelRequest); ok {
+						for _, part := range req.Parts {
+							if up, ok := part.(core.UserPromptPart); ok {
+								if strings.Contains(up.Content, "PROGRESS WARNING") || strings.Contains(up.Content, "CRITICAL") {
+									t.Errorf("unexpected progress warning injected for compound command %q: %s", cmd, up.Content)
+								}
+							}
+						}
+					}
+				}
+				return &core.ModelResponse{
+					Parts: []core.ModelResponsePart{core.TextPart{Content: "ok"}},
+				}, nil
+			}
+
+			// Run enough turns to trigger the warning threshold (default turnWarning=7).
+			for i := 0; i < 10; i++ {
+				_, err := mw(ctx, messages, nil, nil, next)
+				if err != nil {
+					t.Fatalf("turn %d: unexpected error: %v", i, err)
+				}
+			}
+		})
+	}
+}
+
+func TestProgressTrackingMiddleware_SimpleCommandsStillDetected(t *testing.T) {
+	// Verify that simple (non-compound) file-writing commands are still detected.
+	simpleCommands := []string{
+		`gcc main.c -o main`,
+		`g++ app.cpp -o app`,
+		`cc hello.c`,
+		`make`,
+		`make all`,
+		`wget https://example.com/file.tar.gz`,
+		`cp src/file.txt dst/`,
+		`mv old.txt new.txt`,
+	}
+
+	for _, cmd := range simpleCommands {
+		t.Run(cmd, func(t *testing.T) {
+			dir := t.TempDir()
+			mw := ProgressTrackingMiddleware(dir)
+			ctx := context.Background()
+
+			argsJSON, _ := json.Marshal(map[string]string{"command": cmd})
+
+			messages := []core.ModelMessage{
+				core.ModelRequest{
+					Parts: []core.ModelRequestPart{
+						core.UserPromptPart{Content: "Build"},
+					},
+				},
+				core.ModelResponse{
+					Parts: []core.ModelResponsePart{
+						core.ToolCallPart{
+							ToolName: "bash",
+							ArgsJSON: string(argsJSON),
+						},
+					},
+				},
+			}
+
+			next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+				for _, msg := range msgs {
+					if req, ok := msg.(core.ModelRequest); ok {
+						for _, part := range req.Parts {
+							if up, ok := part.(core.UserPromptPart); ok {
+								if strings.Contains(up.Content, "PROGRESS WARNING") || strings.Contains(up.Content, "CRITICAL") {
+									t.Errorf("unexpected progress warning for simple command %q: %s", cmd, up.Content)
+								}
+							}
+						}
+					}
+				}
+				return &core.ModelResponse{
+					Parts: []core.ModelResponsePart{core.TextPart{Content: "ok"}},
+				}, nil
+			}
+
+			for i := 0; i < 10; i++ {
+				_, err := mw(ctx, messages, nil, nil, next)
+				if err != nil {
+					t.Fatalf("turn %d: unexpected error: %v", i, err)
+				}
+			}
+		})
+	}
+}
+

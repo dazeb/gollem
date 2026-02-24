@@ -8290,7 +8290,7 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 										strings.HasPrefix(lower, "cp ") || strings.Contains(lower, " && cp ") ||
 										strings.HasPrefix(lower, "mv ") || strings.Contains(lower, " && mv ") ||
 										(strings.Contains(lower, "curl ") && strings.Contains(lower, " -o ")) ||
-										strings.HasPrefix(lower, "wget ") ||
+										strings.HasPrefix(lower, "wget ") || strings.Contains(lower, " && wget ") ||
 										// Commands referencing output directories (TB2 pattern).
 										strings.Contains(lower, "output_data") ||
 										// Solver/generator scripts that typically create output files.
@@ -8298,8 +8298,10 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 											(strings.Contains(lower, "solve") || strings.Contains(lower, "solution") ||
 												strings.Contains(lower, "generate") || strings.Contains(lower, "process"))) ||
 										// Compilation commands produce binaries — agent is actively building.
-										strings.HasPrefix(lower, "gcc ") || strings.HasPrefix(lower, "g++ ") ||
-										strings.HasPrefix(lower, "cc ") || strings.HasPrefix(lower, "make") ||
+										strings.HasPrefix(lower, "gcc ") || strings.Contains(lower, " && gcc ") ||
+										strings.HasPrefix(lower, "g++ ") || strings.Contains(lower, " && g++ ") ||
+										strings.HasPrefix(lower, "cc ") || strings.Contains(lower, " && cc ") ||
+										strings.HasPrefix(lower, "make") || strings.Contains(lower, " && make") ||
 										strings.Contains(lower, "go build") || strings.Contains(lower, "cargo build") ||
 										strings.Contains(lower, "javac ") || strings.Contains(lower, "rustc ") ||
 										strings.Contains(lower, "dotnet build") || strings.Contains(lower, "cmake --build") {
