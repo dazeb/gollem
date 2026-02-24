@@ -167,6 +167,16 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 			}
 		}
 
+		// Apply auto context compression BEFORE history processors.
+		// Persist into state.messages to prevent unbounded growth
+		// (same fix as in runLoop — see agent.go).
+		if ar.agent.autoContext != nil {
+			compressed, compErr := autoCompressMessages(ar.ctx, ar.state.messages, ar.agent.autoContext, ar.agent.model)
+			if compErr == nil && len(compressed) < len(ar.state.messages) {
+				ar.state.messages = compressed
+			}
+		}
+
 		messages := ar.state.messages
 		for _, proc := range ar.agent.historyProcessors {
 			processed, procErr := proc(ar.ctx, messages)
@@ -176,13 +186,6 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 				return nil, ar.err
 			}
 			messages = processed
-		}
-
-		if ar.agent.autoContext != nil {
-			compressed, compErr := autoCompressMessages(ar.ctx, messages, ar.agent.autoContext, ar.agent.model)
-			if compErr == nil {
-				messages = compressed
-			}
 		}
 
 		if len(ar.agent.messageInterceptors) > 0 {
