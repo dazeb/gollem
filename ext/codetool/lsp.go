@@ -393,13 +393,24 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 // --- LSP server management ---
 
 // startServer launches an LSP server process and performs the initialize handshake.
+//
+// The ctx parameter is used ONLY for the initialization handshake timeout. The
+// server process itself is NOT bound to ctx — it lives until explicitly killed
+// or the parent process exits. This is critical because ctx is typically a
+// per-tool-call context with a short timeout; binding the long-lived server
+// process to it would kill the server after every tool call, defeating the
+// purpose of keeping servers running across multiple LSP requests.
 func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) {
 	cfg, err := findServerConfig(lang)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, cfg.command, cfg.args...)
+	// Use exec.Command (not CommandContext) so the server process is NOT
+	// killed when the tool call's context is cancelled. The server should
+	// live across multiple tool calls and is cleaned up via shutdown() or
+	// process group kill when the parent exits.
+	cmd := exec.Command(cfg.command, cfg.args...)
 	cmd.Dir = workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
@@ -434,7 +445,7 @@ func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) 
 	// handled automatically during initialization.
 	go srv.readLoop(bufio.NewReaderSize(stdout, 256*1024))
 
-	// Initialize handshake.
+	// Initialize handshake (uses the caller's context for timeout).
 	if err := srv.initialize(ctx, workDir); err != nil {
 		srv.kill()
 		return nil, fmt.Errorf("LSP initialize: %w", err)
@@ -445,12 +456,6 @@ func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) 
 	go func() {
 		srv.cmd.Wait() //nolint:errcheck
 		srv.dead.Store(true)
-	}()
-
-	// Clean up when context is done.
-	go func() {
-		<-ctx.Done()
-		srv.shutdown()
 	}()
 
 	return srv, nil
