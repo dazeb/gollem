@@ -15,7 +15,7 @@ import (
 type ReasoningLevel struct {
 	// ThinkingBudget is the token budget for Anthropic extended thinking.
 	ThinkingBudget int
-	// ReasoningEffort is the effort level for OpenAI o-series ("low", "medium", "high").
+	// ReasoningEffort is the effort level for OpenAI models ("low", "medium", "high", "xhigh").
 	ReasoningEffort string
 }
 
@@ -49,14 +49,16 @@ type ReasoningSandwichConfig struct {
 // Based on LangChain's harness engineering research showing xhigh-high-xhigh
 // outperforms high-low-high by +3 points on Terminal-Bench 2.0.
 //
-// Planning: extra-high reasoning for deep task analysis (first 5 turns).
+// Planning: xhigh reasoning for deep task analysis (first 5 turns).
 // Implementation: high reasoning for quality code generation (middle turns).
-// Verification: extra-high reasoning for careful error analysis (when testing).
+// Verification: xhigh reasoning for careful error analysis (when testing).
 func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
-		Planning:       ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
+		// 32000 is the highest value that works across all providers:
+		// Gemini caps at 32768, Anthropic supports much higher.
+		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
 		Implementation: ReasoningLevel{ThinkingBudget: 16000, ReasoningEffort: "high"},
-		Verification:   ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
+		Verification:   ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
 		PlanningTurns:         5,
 		VerificationThreshold: 0, // Use heuristic: detect verification commands
 	}
@@ -68,9 +70,9 @@ func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 // gets high reasoning since careful error analysis is critical.
 func subagentReasoningConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
-		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
+		Planning:       ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
 		Implementation: ReasoningLevel{ThinkingBudget: 12000, ReasoningEffort: "medium"},
-		Verification:   ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
+		Verification:   ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
 		PlanningTurns:         3,
 		VerificationThreshold: 0, // Use heuristic
 	}

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	montygo "github.com/fugue-labs/monty-go"
 
@@ -181,5 +183,33 @@ func (cm *CodeMode) externalFunc(ctx context.Context, call *montygo.FunctionCall
 		return nil, fmt.Errorf("unknown function: %s", call.Name)
 	}
 	rc, _ := ctx.Value(runContextKey).(*core.RunContext)
-	return tool.Handler(ctx, rc, call.ArgsJSON())
+
+	// Nested tool calls inside execute_code bypass Agent hooks, so emit
+	// stderr logs here for observability with the same format family.
+	argsSummary := truncateUTF8(call.ArgsJSON(), 200)
+	fmt.Fprintf(os.Stderr, "[gollem] tool:start inner:%s %s\n", call.Name, argsSummary)
+
+	result, err := tool.Handler(ctx, rc, call.ArgsJSON())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[gollem] tool:end   inner:%s ERROR: %v\n", call.Name, err)
+		return nil, err
+	}
+
+	resultSummary := strings.ReplaceAll(truncateUTF8(fmt.Sprintf("%v", result), 150), "\n", "\\n")
+	fmt.Fprintf(os.Stderr, "[gollem] tool:end   inner:%s %s\n", call.Name, resultSummary)
+	return result, nil
+}
+
+func truncateUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	n := max
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	if n <= 0 {
+		return "..."
+	}
+	return s[:n] + "..."
 }

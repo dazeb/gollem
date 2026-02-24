@@ -96,12 +96,16 @@ class GollemAgent(BaseInstalledAgent):
         timeout_minutes: int = 210,
         thinking_budget: int = 0,
         reasoning_effort: str = "",
+        location: str = "",
+        project: str = "",
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self._timeout_minutes = timeout_minutes
         self._thinking_budget = thinking_budget
         self._reasoning_effort = reasoning_effort
+        self._location = location
+        self._project = project
 
     @staticmethod
     def name() -> str:
@@ -201,7 +205,8 @@ class GollemAgent(BaseInstalledAgent):
                 "      curl wget git jq unzip file bc sqlite3 xxd pkg-config "
                 "      cmake autoconf automake libtool libssl-dev libffi-dev "
                 "      zlib1g-dev libsqlite3-dev libreadline-dev "
-                "      netcat-openbsd socat nginx-light valgrind strace gdb 2>/dev/null; "
+                "      netcat-openbsd socat nginx-light valgrind strace gdb "
+                "      clangd 2>/dev/null; "
                 "  elif command -v apk >/dev/null 2>&1; then "
                 "    apk add --no-cache ca-certificates python3 py3-pip build-base "
                 "      curl wget git jq unzip file bc sqlite cmake openssl-dev 2>/dev/null; "
@@ -227,6 +232,33 @@ class GollemAgent(BaseInstalledAgent):
             raise RuntimeError(
                 f"gollem binary verification failed: {result.stderr}"
             )
+
+        # Upload GCP credentials file for Vertex AI authentication.
+        # SECURITY: Only upload credentials to local Docker containers, never
+        # to remote environments (Modal, E2B, GKE, etc.) where the file would
+        # leave this machine.
+        creds_file = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        if not creds_file:
+            # Fall back to default ADC location.
+            default_adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+            if default_adc.exists():
+                creds_file = str(default_adc)
+        if creds_file and Path(creds_file).exists():
+            from harbor.environments.docker.docker import DockerEnvironment
+            if isinstance(environment, DockerEnvironment):
+                await environment.exec(
+                    command="mkdir -p /root/.config/gcloud"
+                )
+                await environment.upload_file(
+                    source_path=Path(creds_file),
+                    target_path="/root/.config/gcloud/application_default_credentials.json",
+                )
+                logger.info("Uploaded GCP credentials to local Docker container")
+            else:
+                logger.warning(
+                    "Skipping GCP credentials upload: not a local Docker environment. "
+                    "Vertex AI auth will not work in remote environments."
+                )
 
         # Auto-install task dependencies found in the container.
         # This runs during setup (before the agent timer starts), saving 2-5
@@ -343,6 +375,44 @@ class GollemAgent(BaseInstalledAgent):
             )
         )
 
+        # Install uv (fast Python package manager, 10-100x faster than pip).
+        # The agent's system prompt tells it to prefer `uv pip install` over pip.
+        await environment.exec(
+            command=(
+                "timeout 30 sh -c '"
+                "if ! command -v uv >/dev/null 2>&1; then "
+                "  curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | "
+                "    sh 2>/dev/null && "
+                "  export PATH=\"$HOME/.local/bin:$PATH\" && "
+                "  ln -sf $HOME/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true; "
+                "fi"
+                "' || true"
+            )
+        )
+
+        # Install language servers for LSP-powered code intelligence.
+        # Setup time is free (doesn't count against agent timeout), so
+        # pre-installing these gives the agent semantic navigation (go-to-def,
+        # find-refs, hover, diagnostics, rename) from turn 1.
+        # clangd is installed via apt above. Here we add pip/npm/go-based servers.
+        await environment.exec(
+            command=(
+                "timeout 90 sh -c '"
+                # pylsp: covers 27/89 TB2 tasks (Python). Pure Python, no Node needed.
+                "pip install --break-system-packages -q python-lsp-server 2>/dev/null || "
+                "pip3 install --break-system-packages -q python-lsp-server 2>/dev/null || true; "
+                # gopls: Go LSP (if Go is available)
+                "if command -v go >/dev/null 2>&1; then "
+                "  GOBIN=/usr/local/bin go install golang.org/x/tools/gopls@latest 2>/dev/null || true; "
+                "fi; "
+                # typescript-language-server: TS/JS LSP (if npm is available)
+                "if command -v npm >/dev/null 2>&1; then "
+                "  npm i -g typescript-language-server typescript 2>/dev/null || true; "
+                "fi"
+                "' || true"
+            )
+        )
+
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         """Build the shell command to invoke gollem run inside the container."""
         provider, model = self._parse_model_name()
@@ -372,8 +442,18 @@ class GollemAgent(BaseInstalledAgent):
             cmd_parts.extend(["--thinking-budget", str(self._thinking_budget)])
         if self._reasoning_effort:
             cmd_parts.extend(["--reasoning-effort", self._reasoning_effort])
+        if self._location:
+            cmd_parts.extend(["--location", self._location])
+        if self._project:
+            cmd_parts.extend(["--project", self._project])
 
         cmd_parts.append(shlex.quote(instruction))
+
+        # Tee stderr to a log file for real-time observability.
+        # Use: docker exec <container> tail -f /tmp/gollem.log
+        # stdbuf -oL forces line buffering so logs appear in real-time.
+        raw_cmd = " ".join(cmd_parts)
+        cmd_with_logging = f"{{ {raw_cmd} ; }} 2>&1 | stdbuf -oL tee /tmp/gollem.log"
 
         env = {
             "PATH": "/root/.local/bin:/root/go/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
@@ -400,7 +480,6 @@ class GollemAgent(BaseInstalledAgent):
             "OPENAI_API_KEY",
             "OPENAI_BASE_URL",
             "GOOGLE_CLOUD_PROJECT",
-            "GOOGLE_APPLICATION_CREDENTIALS",
             "LANGFUSE_SECRET_KEY",
             "LANGFUSE_PUBLIC_KEY",
             "LANGFUSE_BASE_URL",
@@ -408,9 +487,23 @@ class GollemAgent(BaseInstalledAgent):
             if val := os.environ.get(key):
                 env[key] = val
 
+        # Point to the uploaded credentials file inside the container.
+        # Set this whenever we have GCP credentials (explicit or default ADC).
+        provider, _ = self._parse_model_name()
+        if provider in ("vertexai", "vertexai-anthropic"):
+            creds_file = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+            if not creds_file:
+                default_adc = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+                if default_adc.exists():
+                    creds_file = str(default_adc)
+            if creds_file and Path(creds_file).exists():
+                env["GOOGLE_APPLICATION_CREDENTIALS"] = (
+                    "/root/.config/gcloud/application_default_credentials.json"
+                )
+
         return [
             ExecInput(
-                command=" ".join(cmd_parts),
+                command=cmd_with_logging,
                 env=env,
                 timeout_sec=exec_timeout_sec,
             ),
@@ -461,9 +554,31 @@ class GollemAgent(BaseInstalledAgent):
             trajectory["tool_calls"] = int(done_match.group(3))
 
         # Count tool invocations from log hooks.
-        tool_starts = combined_output.count("[gollem] tool:start")
-        if tool_starts > 0:
-            trajectory["tool_invocations"] = tool_starts
+        # Split top-level tool calls from nested execute_code calls:
+        #   [gollem] tool:start <tool>
+        #   [gollem] tool:start inner:<tool>
+        top_level_tool_starts = len(
+            re.findall(
+                r"^\[gollem\] tool:start (?!inner:)",
+                combined_output,
+                flags=re.MULTILINE,
+            )
+        )
+        inner_tool_starts = len(
+            re.findall(
+                r"^\[gollem\] tool:start inner:",
+                combined_output,
+                flags=re.MULTILINE,
+            )
+        )
+        total_tool_starts = top_level_tool_starts + inner_tool_starts
+        if total_tool_starts > 0:
+            # Backward-compatible field: top-level tool calls only.
+            trajectory["tool_invocations"] = top_level_tool_starts
+            # Explicit split fields for analysis.
+            trajectory["tool_invocations_top_level"] = top_level_tool_starts
+            trajectory["tool_invocations_inner"] = inner_tool_starts
+            trajectory["tool_invocations_total"] = total_tool_starts
 
         traj_path = self.logs_dir / "trajectory.json"
         traj_path.write_text(json.dumps(trajectory, indent=2))
@@ -478,6 +593,9 @@ class GollemAgent(BaseInstalledAgent):
             "trajectory_path": str(traj_path),
             "return_code": return_code,
             "tool_invocations": trajectory.get("tool_invocations", 0),
+            "tool_invocations_top_level": trajectory.get("tool_invocations_top_level", 0),
+            "tool_invocations_inner": trajectory.get("tool_invocations_inner", 0),
+            "tool_invocations_total": trajectory.get("tool_invocations_total", 0),
         }
 
     def _parse_model_name(self) -> tuple[str, str]:

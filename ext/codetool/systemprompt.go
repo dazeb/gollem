@@ -192,7 +192,7 @@ When an approach isn't working after sustained effort:
 ## Package Installation
 
 When you need to install packages in an isolated environment:
-1. **Python**: Use pip install --break-system-packages (or pip3). If pip is missing, try python3 -m ensurepip or apt-get install python3-pip.
+1. **Python**: Prefer "uv pip install" if uv is available (10-100x faster than pip). Fall back to "pip install --break-system-packages" (or pip3). If pip is missing, try python3 -m ensurepip or apt-get install python3-pip.
 2. **Node.js**: Use npm install. If npm is missing, use apt-get install nodejs npm.
 3. **System packages**: Try apt-get install -y first, fall back to apk add or yum install -y.
 4. **Don't waste turns on broken package managers**: If apt-get fails after 2 attempts, work around the missing package or use a different approach.

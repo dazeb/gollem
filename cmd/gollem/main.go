@@ -58,6 +58,8 @@ func main() {
 type flags struct {
 	provider        string
 	modelName       string
+	location        string // GCP region for vertexai providers
+	project         string // GCP project ID for vertexai providers
 	workDir         string
 	prompt          string
 	timeout         time.Duration
@@ -83,6 +85,16 @@ func parseFlags(args []string) flags {
 		case "--model":
 			if i+1 < len(args) {
 				f.modelName = args[i+1]
+				i++
+			}
+		case "--location":
+			if i+1 < len(args) {
+				f.location = args[i+1]
+				i++
+			}
+		case "--project":
+			if i+1 < len(args) {
+				f.project = args[i+1]
 				i++
 			}
 		case "--workdir":
@@ -172,7 +184,7 @@ func runAgent() {
 		}
 	}
 
-	baseModel, err := createModel(f.provider, f.modelName)
+	baseModel, err := createModel(f.provider, f.modelName, f.location, f.project)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating model: %v\n", err)
 		os.Exit(1)
@@ -239,10 +251,16 @@ func runAgent() {
 		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 150K tokens (Claude) — main + subagents\n")
 	case "vertexai":
 		toolOpts = append(toolOpts, codetool.WithAutoContextConfig(core.AutoContextConfig{
-			MaxTokens: 150000,
-			KeepLastN: 12,
+			MaxTokens: 900000,
+			KeepLastN: 20,
 		}))
-		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 150K tokens (Gemini) — main + subagents\n")
+		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 900K tokens (Gemini 1M) — main + subagents\n")
+	case "openai":
+		toolOpts = append(toolOpts, codetool.WithAutoContextConfig(core.AutoContextConfig{
+			MaxTokens: 350000,
+			KeepLastN: 20,
+		}))
+		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 350K tokens (OpenAI 400K) — main + subagents\n")
 	}
 
 	// Build the coding agent with the full recommended setup.
@@ -267,11 +285,24 @@ func runAgent() {
 					f.thinkingBudget, maxTokens)
 			}
 		case "openai":
-			// Only enable reasoning effort for O-series models (o3, o4-mini, etc.)
-			// that actually support the parameter. Other OpenAI-compatible models
-			// (grok, together, etc.) may not support it.
+			// Auto-enable reasoning effort for models that support it:
+			// - O-series models (o3, o4-mini, etc.): default to "high"
+			// - Codex models (gpt-5.x-codex): default to "xhigh"
+			// Other OpenAI-compatible models (grok, together, etc.) may not
+			// support the parameter, so don't enable by default.
 			isOSeries := strings.HasPrefix(f.modelName, "o") && len(f.modelName) >= 2
-			if isOSeries {
+			isCodex := strings.Contains(f.modelName, "codex")
+			if isCodex {
+				if f.reasoningEffort == "" {
+					f.reasoningEffort = "xhigh"
+				}
+				agentOpts = append(agentOpts, core.WithReasoningEffort[string](f.reasoningEffort))
+				// Codex with xhigh reasoning needs a large output budget since
+				// reasoning tokens count toward max_output_tokens.
+				agentOpts = append(agentOpts, core.WithMaxTokens[string](50000))
+				agentOpts = append(agentOpts, core.WithTemperature[string](0))
+				fmt.Fprintf(os.Stderr, "gollem: codex mode (reasoning: %s, max_output: 50000, temp: 0)\n", f.reasoningEffort)
+			} else if isOSeries {
 				if f.reasoningEffort == "" {
 					f.reasoningEffort = "high"
 				}
@@ -455,7 +486,7 @@ func runDebug() {
 		provider = "test"
 	}
 
-	model, err := createModel(provider, modelName)
+	model, err := createModel(provider, modelName, f.location, f.project)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating model: %v\n", err)
 		os.Exit(1)
@@ -528,7 +559,7 @@ func detectProvider() string {
 	return ""
 }
 
-func createModel(provider, modelName string) (core.Model, error) {
+func createModel(provider, modelName, location, project string) (core.Model, error) {
 	// Use an HTTP client with a per-request timeout to prevent individual API
 	// calls from hanging forever. Without this, a single hanging connection
 	// (Docker networking, API overload) blocks the entire agent timeout,
@@ -558,11 +589,23 @@ func createModel(provider, modelName string) (core.Model, error) {
 		if modelName != "" {
 			opts = append(opts, vertexai.WithModel(modelName))
 		}
+		if location != "" {
+			opts = append(opts, vertexai.WithLocation(location))
+		}
+		if project != "" {
+			opts = append(opts, vertexai.WithProject(project))
+		}
 		return vertexai.New(opts...), nil
 	case "vertexai-anthropic":
 		opts := []vertexai_anthropic.Option{vertexai_anthropic.WithHTTPClient(httpClient)}
 		if modelName != "" {
 			opts = append(opts, vertexai_anthropic.WithModel(modelName))
+		}
+		if location != "" {
+			opts = append(opts, vertexai_anthropic.WithLocation(location))
+		}
+		if project != "" {
+			opts = append(opts, vertexai_anthropic.WithProject(project))
 		}
 		return vertexai_anthropic.New(opts...), nil
 	default:
@@ -594,6 +637,8 @@ Options:
   --provider <name>        Model provider (auto-detected from API keys if not set)
                            Available: anthropic, openai, vertexai, vertexai-anthropic
   --model <name>           Model name (uses provider default if not set)
+  --location <region>      GCP region for vertexai providers (default: us-central1)
+  --project <id>           GCP project ID for vertexai providers (default: GOOGLE_CLOUD_PROJECT)
   --workdir <path>         Working directory (default: current directory)
   --timeout <duration>     Maximum run time (default: 30m)
   --thinking-budget <n>    Thinking token budget for Anthropic (default: 16000)
@@ -606,6 +651,7 @@ Examples:
   gollem run --provider anthropic "Fix the failing tests in this project"
   gollem run --provider openai --model gpt-5.3 "Implement the TODO items"
   gollem run --workdir /path/to/project "Add error handling to main.go"
+  gollem run --provider vertexai --model gemini-3-flash-preview --location global "What is 2+2"
   gollem run --provider anthropic --thinking-budget 64000 "Refactor the auth system"
 
 Environment variables:
