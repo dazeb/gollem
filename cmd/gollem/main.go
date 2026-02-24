@@ -8,9 +8,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -65,14 +67,20 @@ type flags struct {
 	timeout         time.Duration
 	thinkingBudget  int
 	reasoningEffort string // OpenAI: "low", "medium", "high"
+	teamMode        string // "auto", "on", "off"
 	noCodeMode      bool
 	noReasoning     bool // Disable all reasoning (thinking + effort)
 }
 
 func parseFlags(args []string) flags {
+	teamMode := normalizeTeamMode(os.Getenv("GOLLEM_TEAM_MODE"))
+	if teamMode == "" {
+		teamMode = "auto"
+	}
 	f := flags{
 		timeout:        30 * time.Minute,
 		thinkingBudget: -1, // -1 means "use default"
+		teamMode:       teamMode,
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -119,6 +127,14 @@ func parseFlags(args []string) flags {
 		case "--reasoning-effort":
 			if i+1 < len(args) {
 				f.reasoningEffort = args[i+1]
+				i++
+			}
+		case "--team-mode":
+			if i+1 < len(args) {
+				f.teamMode = normalizeTeamMode(args[i+1])
+				if f.teamMode == "" {
+					f.teamMode = "auto"
+				}
 				i++
 			}
 		case "--no-thinking", "--no-reasoning":
@@ -257,6 +273,16 @@ func runAgent() {
 	// Pass the budget timeout (real deadline) for time budget warnings.
 	// This is separate from f.timeout (exec timeout) which may be shorter.
 	toolOpts = append(toolOpts, codetool.WithTimeout(budgetTimeout))
+
+	// Feature-based team routing: enable team tools on complex, long-horizon tasks.
+	// No task-name hardcoding; use prompt/instruction/workspace signals.
+	teamEnabled, teamReason := decideTeamMode(f.teamMode, f.workDir, f.prompt, budgetTimeout)
+	if teamEnabled {
+		toolOpts = append(toolOpts, codetool.WithTeamMode())
+		fmt.Fprintf(os.Stderr, "gollem: team mode enabled (%s)\n", teamReason)
+	} else {
+		fmt.Fprintf(os.Stderr, "gollem: team mode disabled (%s)\n", teamReason)
+	}
 
 	// Provider-aware auto-context limits. This flows through to BOTH the main
 	// agent AND subagents via WithAutoContextConfig. Previously, only the main
@@ -573,6 +599,245 @@ func detectTaskTimeout(workDir string) time.Duration {
 	return 0
 }
 
+type teamModeAutoDecision struct {
+	Enabled bool
+	Score   int
+	Reasons []string
+}
+
+func normalizeTeamMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "auto":
+		return "auto"
+	case "on", "true", "1", "yes":
+		return "on"
+	case "off", "false", "0", "no":
+		return "off"
+	default:
+		return ""
+	}
+}
+
+func decideTeamMode(mode, workDir, prompt string, budgetTimeout time.Duration) (bool, string) {
+	normalized := normalizeTeamMode(mode)
+	if normalized == "" {
+		normalized = "auto"
+	}
+	switch normalized {
+	case "on":
+		return true, "forced by --team-mode=on (or GOLLEM_TEAM_MODE=on)"
+	case "off":
+		return false, "forced by --team-mode=off (or GOLLEM_TEAM_MODE=off)"
+	default:
+		d := evaluateTeamModeAuto(workDir, prompt, budgetTimeout)
+		if len(d.Reasons) == 0 {
+			return d.Enabled, fmt.Sprintf("auto score=%d", d.Score)
+		}
+		return d.Enabled, fmt.Sprintf("auto score=%d (%s)", d.Score, strings.Join(d.Reasons, ", "))
+	}
+}
+
+func evaluateTeamModeAuto(workDir, prompt string, budgetTimeout time.Duration) teamModeAutoDecision {
+	instruction := loadTaskInstruction(workDir)
+	workspaceFiles := boundedWorkspaceFileCount(workDir, 160)
+	return evaluateTeamModeAutoFromSignals(prompt, instruction, budgetTimeout, workspaceFiles)
+}
+
+func evaluateTeamModeAutoFromSignals(
+	prompt string,
+	instruction string,
+	budgetTimeout time.Duration,
+	workspaceFileCount int,
+) teamModeAutoDecision {
+	score, reasons := computeTeamModeScore(prompt, instruction, budgetTimeout, workspaceFileCount)
+
+	// Conservative gate:
+	// - Enable for very strong complexity signals (score >= 5), OR
+	// - Enable for medium/high complexity when the task has enough budget.
+	enabled := score >= 5 || (budgetTimeout >= 20*time.Minute && score >= 4)
+
+	if budgetTimeout > 0 && budgetTimeout < 10*time.Minute && score < 6 {
+		enabled = false
+		reasons = append(reasons, "short timeout")
+	}
+
+	return teamModeAutoDecision{
+		Enabled: enabled,
+		Score:   score,
+		Reasons: reasons,
+	}
+}
+
+func computeTeamModeScore(
+	prompt string,
+	instruction string,
+	budgetTimeout time.Duration,
+	workspaceFileCount int,
+) (int, []string) {
+	score := 0
+	reasons := []string{}
+
+	if budgetTimeout >= 20*time.Minute {
+		score++
+		reasons = append(reasons, "timeout>=20m")
+	}
+	if budgetTimeout >= 45*time.Minute {
+		score++
+		reasons = append(reasons, "timeout>=45m")
+	}
+
+	chars := len(instruction)
+	lines := lineCount(instruction)
+	if chars >= 2000 {
+		score++
+		reasons = append(reasons, "long-instruction")
+	}
+	if chars >= 3500 {
+		score++
+		reasons = append(reasons, "very-long-instruction")
+	}
+	if lines >= 35 {
+		score++
+		reasons = append(reasons, "many-constraints")
+	}
+
+	text := strings.ToLower(prompt + "\n" + instruction)
+
+	if containsAny(text, []string{
+		"benchmark", "latency", "throughput", "threshold", "cost model",
+		"optimiz", "performance", "speedup", "faster",
+	}) {
+		score++
+		reasons = append(reasons, "perf-sensitive")
+	}
+
+	if containsAny(text, []string{
+		"pipeline parallel", "tensor parallel", "microbatch", "distributed",
+		"all-forward-all-backward", "process group", "scheduler",
+	}) {
+		score++
+		reasons = append(reasons, "distributed-logic")
+	}
+
+	if containsAny(text, []string{
+		"repository", "repo", "branch", "merge", "bundle", "history",
+		"sanitize", "vulnerability", "all files",
+	}) {
+		score++
+		reasons = append(reasons, "repo-wide-edits")
+	}
+
+	if containsAny(text, []string{
+		"image", "video", "pdf", "ocr", "transcribe", "mask", "jpg", "png",
+	}) {
+		score++
+		reasons = append(reasons, "multimodal")
+	}
+
+	if containsAny(text, []string{
+		"deliverables", "output_data", "summary.csv", "plan_b1", "plan_b2",
+		"output.toml", "exactly these columns",
+	}) {
+		score++
+		reasons = append(reasons, "multi-artifact")
+	}
+
+	if workspaceFileCount >= 40 {
+		score++
+		reasons = append(reasons, "workspace>=40-files")
+	}
+	if workspaceFileCount >= 120 {
+		score++
+		reasons = append(reasons, "workspace>=120-files")
+	}
+
+	return score, reasons
+}
+
+func lineCount(s string) int {
+	if strings.TrimSpace(s) == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+func containsAny(text string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(text, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func loadTaskInstruction(workDir string) string {
+	candidates := []string{
+		filepath.Join(workDir, "instruction.md"),
+		filepath.Join(workDir, "task_file", "instruction.md"),
+		"/app/instruction.md",
+		"/app/task_file/instruction.md",
+		filepath.Join(workDir, "README.md"),
+		"/app/README.md",
+	}
+
+	for _, path := range candidates {
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		// Cap for predictable startup overhead; enough for signal extraction.
+		if len(data) > 20000 {
+			data = data[:20000]
+		}
+		return string(data)
+	}
+	return ""
+}
+
+func boundedWorkspaceFileCount(workDir string, max int) int {
+	if workDir == "" || max <= 0 {
+		return 0
+	}
+
+	count := 0
+	stop := errors.New("stop-count")
+	skipDirs := map[string]bool{
+		".git":         true,
+		".venv":        true,
+		"venv":         true,
+		"node_modules": true,
+		"__pycache__":  true,
+		"dist":         true,
+		"build":        true,
+		".cache":       true,
+	}
+
+	err := filepath.WalkDir(workDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if skipDirs[d.Name()] && path != workDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		count++
+		if count >= max {
+			return stop
+		}
+		return nil
+	})
+
+	if err != nil && !errors.Is(err, stop) {
+		return count
+	}
+	return count
+}
+
 func detectProvider() string {
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return "anthropic"
@@ -678,6 +943,7 @@ Options:
   --project <id>           GCP project ID for vertexai providers (default: GOOGLE_CLOUD_PROJECT)
   --workdir <path>         Working directory (default: current directory)
   --timeout <duration>     Maximum run time (default: 30m)
+  --team-mode <mode>       Team tool routing: auto, on, off (default: auto)
   --thinking-budget <n>    Thinking token budget for Anthropic (default: 16000)
   --reasoning-effort <l>   Reasoning effort for OpenAI: low, medium, high (default: high)
   --no-reasoning           Disable all reasoning (thinking + effort)
@@ -696,6 +962,7 @@ Environment variables:
   OPENAI_API_KEY           API key for the openai provider
   OPENAI_PROMPT_CACHE_KEY  Optional stable key for OpenAI prompt caching
   OPENAI_PROMPT_CACHE_RETENTION Optional OpenAI cache retention policy (e.g. in_memory, 24h)
+  GOLLEM_TEAM_MODE         Team mode override: auto, on, off (default: auto)
   GOLLEM_CODE_MODE_FAILURE_THRESHOLD Consecutive execute_code capability failures before cooldown (default: 3)
   GOLLEM_CODE_MODE_COOLDOWN_TURNS Turns to keep execute_code disabled before retrying (default: 2)
   GOLLEM_CODE_MODE_MAX_RECENT_RESULTS Number of recent execute_code results to inspect (default: 12)
