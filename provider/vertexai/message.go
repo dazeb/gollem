@@ -221,8 +221,15 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 					case string:
 						content["result"] = v
 					default:
-						b, _ := json.Marshal(v)
-						_ = json.Unmarshal(b, &content)
+						b, marshalErr := json.Marshal(v)
+						if marshalErr != nil {
+							content["result"] = fmt.Sprintf("%v", v)
+						} else if json.Unmarshal(b, &content) != nil {
+							// Non-object JSON (array, number, bool, null) —
+							// wrap as string so Gemini's required map format
+							// is satisfied without silent data loss.
+							content["result"] = string(b)
+						}
 					}
 					userParts = append(userParts, geminiPart{
 						FunctionResponse: &geminiFunctionResponse{
@@ -250,6 +257,15 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 				req.Contents = append(req.Contents, geminiContent{
 					Role:  "user",
 					Parts: userParts,
+				})
+			} else if len(m.Parts) > 0 {
+				// The ModelRequest contained only SystemPromptParts (extracted
+				// above to the SystemInstruction field). Emit a placeholder user
+				// message to prevent consecutive model messages which violate
+				// the alternation requirement and cause Gemini API errors.
+				req.Contents = append(req.Contents, geminiContent{
+					Role:  "user",
+					Parts: []geminiPart{{Text: "[system context updated]"}},
 				})
 			}
 

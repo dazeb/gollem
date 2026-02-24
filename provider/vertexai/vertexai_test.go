@@ -772,9 +772,12 @@ func TestBuildRequestMultipleSystemPrompts(t *testing.T) {
 		t.Errorf("second system part = %q, want summary", req.SystemInstruction.Parts[1].Text)
 	}
 
-	// Should have 2 user content messages.
-	if len(req.Contents) != 2 {
-		t.Fatalf("expected 2 contents, got %d", len(req.Contents))
+	// Should have 3 user content messages: the original user prompt,
+	// a placeholder for the system-only request (prevents alternation
+	// violations when model responses appear between them), and the
+	// continuation prompt.
+	if len(req.Contents) != 3 {
+		t.Fatalf("expected 3 contents, got %d", len(req.Contents))
 	}
 }
 
@@ -841,6 +844,124 @@ data:{"candidates":[{"content":{"role":"model","parts":[{"text":" world"}]},"fin
 	}
 	if finalTp.Content != "Hello world" {
 		t.Errorf("expected 'Hello world', got '%s'", finalTp.Content)
+	}
+}
+
+// TestBuildRequestToolReturnNonObjectContent verifies that ToolReturnPart content
+// that marshals to non-object JSON (arrays, numbers, etc.) is preserved rather
+// than silently dropped. Gemini requires FunctionResponse.Response to be a map,
+// so non-object values must be wrapped.
+func TestBuildRequestToolReturnNonObjectContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		content any
+		wantKey string // expected key in response map
+	}{
+		{
+			name:    "string content",
+			content: "hello",
+			wantKey: "result",
+		},
+		{
+			name:    "slice content",
+			content: []string{"a", "b", "c"},
+			wantKey: "result",
+		},
+		{
+			name:    "int content",
+			content: 42,
+			wantKey: "result",
+		},
+		{
+			name:    "bool content",
+			content: true,
+			wantKey: "result",
+		},
+		{
+			name:    "object content",
+			content: map[string]any{"key": "value"},
+			wantKey: "key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			messages := []core.ModelMessage{
+				core.ModelRequest{
+					Parts: []core.ModelRequestPart{
+						core.ToolReturnPart{
+							ToolName:   "test_tool",
+							Content:    tt.content,
+							ToolCallID: "call_0",
+						},
+					},
+				},
+			}
+			req, err := buildRequest(messages, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(req.Contents) != 1 {
+				t.Fatalf("expected 1 content, got %d", len(req.Contents))
+			}
+			part := req.Contents[0].Parts[0]
+			if part.FunctionResponse == nil {
+				t.Fatal("expected FunctionResponse")
+			}
+			resp := part.FunctionResponse.Response
+			if len(resp) == 0 {
+				t.Fatalf("response map is empty — non-object content was silently dropped")
+			}
+			if _, ok := resp[tt.wantKey]; !ok {
+				t.Errorf("expected key %q in response, got %v", tt.wantKey, resp)
+			}
+		})
+	}
+}
+
+// TestBuildRequestSystemOnlyPlaceholder verifies that a ModelRequest containing
+// only SystemPromptParts emits a placeholder user message to prevent consecutive
+// model messages (which violate the Gemini API alternation requirement).
+func TestBuildRequestSystemOnlyPlaceholder(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "Hi there"},
+			},
+		},
+		// System-only request (e.g., from auto-context compression).
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "Updated context info"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "Continuing"},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify no adjacent same-role messages.
+	for i := 1; i < len(req.Contents); i++ {
+		if req.Contents[i-1].Role == req.Contents[i].Role {
+			t.Errorf("adjacent %q messages at indices %d and %d", req.Contents[i].Role, i-1, i)
+		}
+	}
+
+	// Should have 4 contents: user, model, user(placeholder), model.
+	if len(req.Contents) != 4 {
+		t.Fatalf("expected 4 contents, got %d", len(req.Contents))
 	}
 }
 
