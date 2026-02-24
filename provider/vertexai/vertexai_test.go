@@ -1361,3 +1361,341 @@ func TestBuildRequestEmptyResponseAlternation(t *testing.T) {
 		}
 	}
 }
+
+// --- Provider option tests ---
+
+func TestWithCredentialsFileOption(t *testing.T) {
+	p := New(WithCredentialsFile("/path/to/creds.json"))
+	if p.credentialsFile != "/path/to/creds.json" {
+		t.Errorf("expected credentialsFile '/path/to/creds.json', got %q", p.credentialsFile)
+	}
+}
+
+func TestWithCredentialsJSONOption(t *testing.T) {
+	data := []byte(`{"type":"service_account"}`)
+	p := New(WithCredentialsJSON(data))
+	if string(p.credentialsJSON) != string(data) {
+		t.Errorf("expected credentialsJSON to be set")
+	}
+}
+
+func TestWithHTTPClientOption(t *testing.T) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	p := New(WithHTTPClient(client))
+	if p.httpClient != client {
+		t.Error("expected custom HTTP client to be set")
+	}
+}
+
+// --- Endpoint tests ---
+
+func TestEndpointGlobalLocation(t *testing.T) {
+	p := New(WithProject("my-project"), WithLocation("global"), WithModel("gemini-2.5-flash"))
+	expected := "https://aiplatform.googleapis.com/v1/projects/my-project/locations/global/publishers/google/models/gemini-2.5-flash"
+	if got := p.endpoint(); got != expected {
+		t.Errorf("endpoint = %q, want %q", got, expected)
+	}
+}
+
+// --- mapFinishReason with empty candidates ---
+
+func TestMapFinishReasonEmptyCandidates(t *testing.T) {
+	resp := &geminiResponse{Candidates: nil}
+	if got := mapFinishReason(resp); got != core.FinishReasonStop {
+		t.Errorf("mapFinishReason(empty candidates) = %s, want FinishReasonStop", got)
+	}
+}
+
+// --- parseResponse with empty candidates ---
+
+func TestParseResponseEmptyCandidates(t *testing.T) {
+	resp := &geminiResponse{Candidates: nil}
+	result := parseResponse(resp, "gemini-2.5-flash")
+	if len(result.Parts) != 0 {
+		t.Errorf("expected 0 parts for empty candidates, got %d", len(result.Parts))
+	}
+}
+
+// --- parseResponse with nil function call args ---
+
+func TestParseResponseNilFunctionCallArgs(t *testing.T) {
+	resp := &geminiResponse{
+		Candidates: []geminiCandidate{
+			{
+				Content: geminiContent{
+					Role: "model",
+					Parts: []geminiPart{
+						{
+							FunctionCall: &geminiFunctionCall{
+								Name: "ping",
+								Args: nil,
+							},
+						},
+					},
+				},
+				FinishReason: "STOP",
+			},
+		},
+	}
+	result := parseResponse(resp, "gemini-2.5-flash")
+	tc, ok := result.Parts[0].(core.ToolCallPart)
+	if !ok {
+		t.Fatal("expected ToolCallPart")
+	}
+	if tc.ArgsJSON != "{}" {
+		t.Errorf("expected '{}' for nil args, got %q", tc.ArgsJSON)
+	}
+}
+
+// --- parseHTTPError with Retry-After header ---
+
+func TestRequestHTTPErrorRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "45")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"message":"Quota exceeded"}}`))
+	}))
+	defer server.Close()
+
+	p := New(WithProject("test-project"), WithLocation("us-central1"))
+	p.tokenSource = &staticTokenSource{token: "test-token"}
+	p.httpClient = &http.Client{
+		Transport: &rewriteTransport{
+			base:      server.Client().Transport,
+			targetURL: server.URL,
+		},
+	}
+
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+		},
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	httpErr, ok := err.(*core.ModelHTTPError)
+	if !ok {
+		t.Fatalf("expected *core.ModelHTTPError, got %T", err)
+	}
+	if httpErr.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", httpErr.StatusCode)
+	}
+	if httpErr.RetryAfter != 45*time.Second {
+		t.Errorf("RetryAfter = %v, want 45s", httpErr.RetryAfter)
+	}
+}
+
+// --- RequestStream HTTP error ---
+
+func TestRequestStreamHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":{"message":"Server error"}}`))
+	}))
+	defer server.Close()
+
+	p := New(WithProject("test-project"), WithLocation("us-central1"))
+	p.tokenSource = &staticTokenSource{token: "test-token"}
+	p.httpClient = &http.Client{
+		Transport: &rewriteTransport{
+			base:      server.Client().Transport,
+			targetURL: server.URL,
+		},
+	}
+
+	_, err := p.RequestStream(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+		},
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	httpErr, ok := err.(*core.ModelHTTPError)
+	if !ok {
+		t.Fatalf("expected *core.ModelHTTPError, got %T", err)
+	}
+	if httpErr.StatusCode != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", httpErr.StatusCode)
+	}
+}
+
+// --- Stream: Usage() accessor ---
+
+func TestStreamUsageAccessor(t *testing.T) {
+	sseData := `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Done"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":8,"totalTokenCount":28}}
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-2.5-flash")
+
+	for {
+		_, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	usage := stream.Usage()
+	if usage.InputTokens != 20 {
+		t.Errorf("InputTokens = %d, want 20", usage.InputTokens)
+	}
+	if usage.OutputTokens != 8 {
+		t.Errorf("OutputTokens = %d, want 8", usage.OutputTokens)
+	}
+}
+
+// --- Stream: invalid JSON skipped ---
+
+func TestParseSSEStreamSkipsInvalidJSON(t *testing.T) {
+	sseData := `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]},"finishReason":""}]}
+
+data: not-valid-json
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"!"}]},"finishReason":"STOP"}]}
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-2.5-flash")
+
+	var text strings.Builder
+	for {
+		event, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch e := event.(type) {
+		case core.PartStartEvent:
+			if tp, ok := e.Part.(core.TextPart); ok {
+				text.WriteString(tp.Content)
+			}
+		case core.PartDeltaEvent:
+			if td, ok := e.Delta.(core.TextPartDelta); ok {
+				text.WriteString(td.ContentDelta)
+			}
+		}
+	}
+	if text.String() != "Hi!" {
+		t.Errorf("expected 'Hi!', got %q", text.String())
+	}
+}
+
+// --- Stream: non-data lines skipped ---
+
+func TestParseSSEStreamSkipsNonDataLines(t *testing.T) {
+	sseData := `event: message
+: comment line
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"OK"}]},"finishReason":"STOP"}]}
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-2.5-flash")
+
+	event, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := event.(core.PartStartEvent)
+	if !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event)
+	}
+	if tp, ok := start.Part.(core.TextPart); !ok || tp.Content != "OK" {
+		t.Errorf("expected 'OK', got %v", start.Part)
+	}
+}
+
+// --- Stream: no-candidate chunk skipped but usage captured ---
+
+func TestParseSSEStreamSkipsNoCandidates(t *testing.T) {
+	sseData := `data: {"candidates":[],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":0}}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1}}
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-2.5-flash")
+
+	event, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := event.(core.PartStartEvent); !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event)
+	}
+}
+
+// --- Stream: function call with thought signature ---
+
+func TestParseSSEStreamFunctionCallThoughtSigPreserved(t *testing.T) {
+	sseData := `data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"search","args":{"q":"test"}},"thoughtSignature":"sig_abc"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-3.1-pro-preview")
+
+	event, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := event.(core.PartStartEvent)
+	if !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event)
+	}
+	tc, ok := start.Part.(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("expected ToolCallPart, got %T", start.Part)
+	}
+	if tc.Metadata == nil || tc.Metadata["thoughtSignature"] != "sig_abc" {
+		t.Errorf("expected thoughtSignature 'sig_abc', got %v", tc.Metadata)
+	}
+}
+
+// --- Stream: function call with nil args ---
+
+func TestParseSSEStreamFunctionCallNilArgs(t *testing.T) {
+	sseData := `data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"ping"}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}
+
+`
+	body := io.NopCloser(strings.NewReader(sseData))
+	stream := newStreamedResponse(body, "gemini-2.5-flash")
+
+	event, err := stream.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, ok := event.(core.PartStartEvent)
+	if !ok {
+		t.Fatalf("expected PartStartEvent, got %T", event)
+	}
+	tc, ok := start.Part.(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("expected ToolCallPart, got %T", start.Part)
+	}
+	if tc.ArgsJSON != "{}" {
+		t.Errorf("expected '{}' for nil args, got %q", tc.ArgsJSON)
+	}
+}
+
+// --- buildRequest with TopP ---
+
+func TestBuildRequestWithTopP(t *testing.T) {
+	topP := 0.95
+	settings := &core.ModelSettings{TopP: &topP}
+	req, err := buildRequest(nil, settings, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.GenerationConfig == nil {
+		t.Fatal("expected GenerationConfig")
+	}
+	if req.GenerationConfig.TopP == nil || *req.GenerationConfig.TopP != 0.95 {
+		t.Errorf("expected TopP 0.95, got %v", req.GenerationConfig.TopP)
+	}
+}
