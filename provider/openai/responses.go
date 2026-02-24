@@ -123,8 +123,12 @@ func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSet
 		if settings.MaxTokens != nil {
 			req.MaxOutputTokens = *settings.MaxTokens
 		}
-		req.Temperature = settings.Temperature
-		req.TopP = settings.TopP
+		// Codex-style models exposed through Responses API reject sampling
+		// parameters like temperature/top_p.
+		if !modelNeedsResponsesAPI(model) {
+			req.Temperature = settings.Temperature
+			req.TopP = settings.TopP
+		}
 		if settings.ReasoningEffort != nil {
 			req.Reasoning = &responsesReasoning{Effort: *settings.ReasoningEffort}
 		}

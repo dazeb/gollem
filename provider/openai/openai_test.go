@@ -79,6 +79,26 @@ func TestBuildRequestWithSettings(t *testing.T) {
 	}
 }
 
+func TestBuildResponsesRequestCodexOmitsSamplingParams(t *testing.T) {
+	temp := 0.2
+	topP := 0.9
+	settings := &core.ModelSettings{
+		Temperature: &temp,
+		TopP:        &topP,
+	}
+
+	req, err := buildResponsesRequest(nil, settings, nil, "gpt-5.2-codex", 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Temperature != nil {
+		t.Fatalf("expected temperature to be omitted for codex, got %v", *req.Temperature)
+	}
+	if req.TopP != nil {
+		t.Fatalf("expected top_p to be omitted for codex, got %v", *req.TopP)
+	}
+}
+
 func TestBuildRequestWithTools(t *testing.T) {
 	params := &core.ModelRequestParameters{
 		FunctionTools: []core.ToolDefinition{
