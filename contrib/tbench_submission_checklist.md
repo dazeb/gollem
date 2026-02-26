@@ -93,6 +93,36 @@ models:
 3. Environment build/start is also timed separately (`build_timeout_sec` in task config).
 4. Practical implication: move dependency/LSP bootstrapping to setup when useful, but keep setup/build bounded and avoid heavy/unnecessary installs.
 
+## Host Sizing Guidance (TB2)
+
+TB2 task limits are declared in each task's `task.toml`:
+
+1. `[environment]`: `cpus`, `memory`, `storage`, `build_timeout_sec`
+2. `[agent]`: `timeout_sec`
+3. `[verifier]`: `timeout_sec`
+
+Current TB2 max per-task footprint is approximately:
+
+1. 4 vCPU
+2. 8G RAM
+3. 10G storage
+
+Recommended host sizing for `harbor run`:
+
+| Concurrency (`-n`) | vCPU | RAM | NVMe Disk |
+|---:|---:|---:|---:|
+| 1 | 8 | 32 GB | 250 GB |
+| 2 | 16 | 64 GB | 500 GB |
+| 4 | 32 | 128 GB | 1 TB |
+
+Rule of thumb:
+
+1. vCPU ≈ `5 * n`
+2. RAM ≈ `10 * n` GB
+3. Disk working set ≈ `15 * n` GB, plus cache/log overhead
+
+Use Linux `x86_64` for leaderboard runs, and do not override task timeouts/resources.
+
 ## PR Process
 
 1. Fork leaderboard repo and create a branch.
