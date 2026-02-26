@@ -966,6 +966,7 @@ func TestNewProviderDefaults(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key-123")
 	t.Setenv("OPENAI_PROMPT_CACHE_KEY", "repo:gollem")
 	t.Setenv("OPENAI_PROMPT_CACHE_RETENTION", "in_memory")
+	t.Setenv("OPENAI_SERVICE_TIER", "priority")
 	p := New()
 	if p.model != defaultModel {
 		t.Errorf("expected model %s, got %s", defaultModel, p.model)
@@ -982,6 +983,9 @@ func TestNewProviderDefaults(t *testing.T) {
 	if p.promptCacheRetention != "in_memory" {
 		t.Errorf("expected prompt cache retention from env, got %q", p.promptCacheRetention)
 	}
+	if p.serviceTier != "priority" {
+		t.Errorf("expected service tier from env, got %q", p.serviceTier)
+	}
 	if p.ModelName() != defaultModel {
 		t.Errorf("expected ModelName() %s, got %s", defaultModel, p.ModelName())
 	}
@@ -995,6 +999,7 @@ func TestNewProviderOptions(t *testing.T) {
 		WithMaxTokens(2048),
 		WithPromptCacheKey("stable-key"),
 		WithPromptCacheRetention("24h"),
+		WithServiceTier("priority"),
 	)
 	if p.apiKey != "my-key" {
 		t.Errorf("expected API key my-key, got %s", p.apiKey)
@@ -1013,6 +1018,9 @@ func TestNewProviderOptions(t *testing.T) {
 	}
 	if p.promptCacheRetention != "24h" {
 		t.Errorf("expected prompt cache retention 24h, got %q", p.promptCacheRetention)
+	}
+	if p.serviceTier != "priority" {
+		t.Errorf("expected service tier priority, got %q", p.serviceTier)
 	}
 }
 
@@ -1089,6 +1097,9 @@ func TestRequestIntegration(t *testing.T) {
 		if req.PromptCacheRetention != "in_memory" {
 			t.Errorf("expected prompt_cache_retention in_memory, got %q", req.PromptCacheRetention)
 		}
+		if req.ServiceTier != "priority" {
+			t.Errorf("expected service_tier priority, got %q", req.ServiceTier)
+		}
 
 		// Return a response.
 		resp := apiResponse{
@@ -1118,6 +1129,7 @@ func TestRequestIntegration(t *testing.T) {
 		WithBaseURL(server.URL),
 		WithPromptCacheKey("stable-key"),
 		WithPromptCacheRetention("in_memory"),
+		WithServiceTier("priority"),
 	)
 	result, err := p.Request(context.Background(), []core.ModelMessage{
 		core.ModelRequest{
@@ -1161,6 +1173,9 @@ func TestRequestFallsBackToResponsesForCodex(t *testing.T) {
 			if req.PromptCacheRetention != "in_memory" {
 				t.Fatalf("expected prompt_cache_retention in_memory, got %q", req.PromptCacheRetention)
 			}
+			if req.ServiceTier != "priority" {
+				t.Fatalf("expected service_tier priority, got %q", req.ServiceTier)
+			}
 			resp := responsesAPIResponse{
 				ID:    "resp_123",
 				Model: "gpt-5.2-codex",
@@ -1191,6 +1206,7 @@ func TestRequestFallsBackToResponsesForCodex(t *testing.T) {
 		WithModel("gpt-5.2-codex"),
 		WithPromptCacheKey("stable-key"),
 		WithPromptCacheRetention("in_memory"),
+		WithServiceTier("priority"),
 	)
 
 	params := &core.ModelRequestParameters{

@@ -684,6 +684,7 @@ class GollemAgent(BaseInstalledAgent):
             "OPENAI_BASE_URL",
             "OPENAI_PROMPT_CACHE_KEY",
             "OPENAI_PROMPT_CACHE_RETENTION",
+            "OPENAI_SERVICE_TIER",
             "VERTEXAI_ANTHROPIC_PROMPT_CACHE",
             "VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL",
             "GOLLEM_MODEL_REQUEST_TIMEOUT_SEC",
@@ -694,6 +695,9 @@ class GollemAgent(BaseInstalledAgent):
         ]:
             if val := os.environ.get(key):
                 env[key] = val
+
+        if provider == "openai":
+            env.setdefault("OPENAI_SERVICE_TIER", "priority")
 
         # Point to the uploaded credentials file inside the container.
         # Set this whenever we have GCP credentials (explicit or default ADC).

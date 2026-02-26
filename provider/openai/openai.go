@@ -45,6 +45,7 @@ type Provider struct {
 	maxTokens            int
 	promptCacheKey       string
 	promptCacheRetention string
+	serviceTier          string
 	useResponses         bool
 }
 
@@ -102,6 +103,14 @@ func WithPromptCacheRetention(retention string) Option {
 	}
 }
 
+// WithServiceTier sets the OpenAI service tier (for example: "default", "flex",
+// or "priority"). If not set, reads from OPENAI_SERVICE_TIER env var.
+func WithServiceTier(tier string) Option {
+	return func(p *Provider) {
+		p.serviceTier = tier
+	}
+}
+
 // New creates a new OpenAI provider with the given options.
 // Supports OPENAI_API_KEY and OPENAI_BASE_URL environment variables
 // for compatibility with OpenAI-compatible APIs (xAI, Together, etc.).
@@ -129,6 +138,9 @@ func New(opts ...Option) *Provider {
 	}
 	if p.promptCacheRetention == "" {
 		p.promptCacheRetention = os.Getenv("OPENAI_PROMPT_CACHE_RETENTION")
+	}
+	if p.serviceTier == "" {
+		p.serviceTier = os.Getenv("OPENAI_SERVICE_TIER")
 	}
 	// Strip trailing /v1 or /v1/ from the base URL. Our endpoint path
 	// already includes /v1, so a base URL with /v1 (which is the convention
@@ -175,6 +187,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	}
 	req.PromptCacheKey = p.promptCacheKey
 	req.PromptCacheRetention = p.promptCacheRetention
+	req.ServiceTier = p.serviceTier
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -212,6 +225,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 	}
 	req.PromptCacheKey = p.promptCacheKey
 	req.PromptCacheRetention = p.promptCacheRetention
+	req.ServiceTier = p.serviceTier
 
 	body, err := json.Marshal(req)
 	if err != nil {

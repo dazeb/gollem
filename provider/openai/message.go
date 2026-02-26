@@ -15,6 +15,7 @@ type apiRequest struct {
 	Messages             []apiMessage       `json:"messages"`
 	Tools                []apiToolDef       `json:"tools,omitempty"`
 	ToolChoice           any                `json:"tool_choice,omitempty"`
+	ServiceTier          string             `json:"service_tier,omitempty"`
 	Stream               bool               `json:"stream,omitempty"`
 	StreamOptions        *apiStreamOptions  `json:"stream_options,omitempty"`
 	PromptCacheKey       string             `json:"prompt_cache_key,omitempty"`

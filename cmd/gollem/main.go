@@ -212,6 +212,7 @@ func runAgent() {
 	if f.provider == "openai" {
 		cacheKey := strings.TrimSpace(os.Getenv("OPENAI_PROMPT_CACHE_KEY"))
 		cacheRetention := strings.TrimSpace(os.Getenv("OPENAI_PROMPT_CACHE_RETENTION"))
+		serviceTier := strings.TrimSpace(os.Getenv("OPENAI_SERVICE_TIER"))
 		if cacheKey != "" {
 			if cacheRetention == "" {
 				cacheRetention = "default"
@@ -219,6 +220,9 @@ func runAgent() {
 			fmt.Fprintf(os.Stderr, "gollem: openai prompt cache enabled (key=%s, retention=%s)\n", cacheKey, cacheRetention)
 		} else {
 			fmt.Fprintf(os.Stderr, "gollem: openai prompt cache disabled (OPENAI_PROMPT_CACHE_KEY not set)\n")
+		}
+		if serviceTier != "" {
+			fmt.Fprintf(os.Stderr, "gollem: openai service tier: %s\n", serviceTier)
 		}
 	}
 	if f.provider == "vertexai-anthropic" {
@@ -1284,6 +1288,7 @@ Environment variables:
   OPENAI_API_KEY           API key for the openai provider
   OPENAI_PROMPT_CACHE_KEY  Optional stable key for OpenAI prompt caching
   OPENAI_PROMPT_CACHE_RETENTION Optional OpenAI cache retention policy (e.g. in_memory, 24h)
+  OPENAI_SERVICE_TIER      Optional OpenAI service tier (e.g. default, flex, priority)
   VERTEXAI_ANTHROPIC_PROMPT_CACHE Enable Anthropic prompt caching on Vertex AI (1/true/yes/on)
   VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL Optional Anthropic prompt cache TTL (e.g. 5m, 1h)
   GOLLEM_MODEL_REQUEST_TIMEOUT_SEC Optional per-model-call timeout in seconds (default derived from --timeout, capped at 6m)

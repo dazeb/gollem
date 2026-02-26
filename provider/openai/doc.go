@@ -7,6 +7,7 @@
 //	model := openai.New(
 //	    openai.WithAPIKey("sk-..."),    // or set OPENAI_API_KEY env var
 //	    openai.WithModel(openai.GPT4o),
+//	    openai.WithServiceTier("priority"), // or set OPENAI_SERVICE_TIER
 //	)
 //
 // # LiteLLM Proxy

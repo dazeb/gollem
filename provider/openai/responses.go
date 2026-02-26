@@ -15,6 +15,7 @@ type responsesRequest struct {
 	Input                []map[string]any    `json:"input"`
 	Tools                []responsesToolDef  `json:"tools,omitempty"`
 	ToolChoice           any                 `json:"tool_choice,omitempty"`
+	ServiceTier          string              `json:"service_tier,omitempty"`
 	PromptCacheKey       string              `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention string              `json:"prompt_cache_retention,omitempty"`
 	MaxOutputTokens      int                 `json:"max_output_tokens,omitempty"`
@@ -97,6 +98,7 @@ func (p *Provider) requestViaResponses(ctx context.Context, messages []core.Mode
 	}
 	req.PromptCacheKey = p.promptCacheKey
 	req.PromptCacheRetention = p.promptCacheRetention
+	req.ServiceTier = p.serviceTier
 
 	body, err := json.Marshal(req)
 	if err != nil {
