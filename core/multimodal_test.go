@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -124,5 +125,87 @@ func TestMultimodalSerialization(t *testing.T) {
 	}
 	if doc.Title != "Report" {
 		t.Errorf("DocumentPart.Title = %q", doc.Title)
+	}
+}
+
+func TestWithInitialRequestPartsRun(t *testing.T) {
+	model := NewTestModel(TextResponse("ok"))
+	agent := NewAgent[string](model)
+
+	image := ImagePart{
+		URL:      "data:image/png;base64,AAAA",
+		MIMEType: "image/png",
+		Detail:   "high",
+	}
+
+	_, err := agent.Run(context.Background(), "describe this board", WithInitialRequestParts(image))
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	calls := model.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 model call, got %d", len(calls))
+	}
+	if len(calls[0].Messages) != 1 {
+		t.Fatalf("expected 1 message in first call, got %d", len(calls[0].Messages))
+	}
+
+	req, ok := calls[0].Messages[0].(ModelRequest)
+	if !ok {
+		t.Fatalf("expected ModelRequest, got %T", calls[0].Messages[0])
+	}
+	if len(req.Parts) != 2 {
+		t.Fatalf("expected 2 request parts, got %d", len(req.Parts))
+	}
+
+	userPart, ok := req.Parts[0].(UserPromptPart)
+	if !ok {
+		t.Fatalf("part[0]: expected UserPromptPart, got %T", req.Parts[0])
+	}
+	if userPart.Content != "describe this board" {
+		t.Fatalf("unexpected user content: %q", userPart.Content)
+	}
+
+	imagePart, ok := req.Parts[1].(ImagePart)
+	if !ok {
+		t.Fatalf("part[1]: expected ImagePart, got %T", req.Parts[1])
+	}
+	if imagePart.URL != image.URL || imagePart.MIMEType != image.MIMEType || imagePart.Detail != image.Detail {
+		t.Fatalf("unexpected image part: %+v", imagePart)
+	}
+}
+
+func TestWithInitialRequestPartsIter(t *testing.T) {
+	model := NewTestModel(TextResponse("ok"))
+	agent := NewAgent[string](model)
+
+	image := ImagePart{
+		URL:      "data:image/png;base64,BBBB",
+		MIMEType: "image/png",
+	}
+
+	iter := agent.Iter(context.Background(), "analyze image", WithInitialRequestParts(image))
+	_, err := iter.Next()
+	if err != nil {
+		t.Fatalf("iter next failed: %v", err)
+	}
+
+	calls := model.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 model call, got %d", len(calls))
+	}
+	req, ok := calls[0].Messages[0].(ModelRequest)
+	if !ok {
+		t.Fatalf("expected ModelRequest, got %T", calls[0].Messages[0])
+	}
+	if len(req.Parts) != 2 {
+		t.Fatalf("expected 2 request parts, got %d", len(req.Parts))
+	}
+	if _, ok := req.Parts[0].(UserPromptPart); !ok {
+		t.Fatalf("part[0]: expected UserPromptPart, got %T", req.Parts[0])
+	}
+	if got, ok := req.Parts[1].(ImagePart); !ok || got.URL != image.URL {
+		t.Fatalf("part[1]: expected image URL %q, got %#v", image.URL, req.Parts[1])
 	}
 }

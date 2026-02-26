@@ -17,25 +17,27 @@ import (
 
 // RetryConfig configures retry behavior.
 type RetryConfig struct {
-	MaxRetries     int              // maximum number of retries (default: 3)
-	InitialBackoff time.Duration    // initial wait time (default: 1s)
-	MaxBackoff     time.Duration    // maximum wait time (default: 30s)
-	BackoffFactor  float64          // multiplier per retry (default: 2.0)
-	Jitter         bool             // add random jitter (default: true)
-	MinRemaining   time.Duration    // skip retries when context deadline is too close (default: 20s)
-	IsRetryable    func(error) bool // determines if an error should be retried
+	MaxRetries        int              // maximum number of retries (default: 3)
+	InitialBackoff    time.Duration    // initial wait time (default: 1s)
+	MaxBackoff        time.Duration    // maximum wait time (default: 30s)
+	BackoffFactor     float64          // multiplier per retry (default: 2.0)
+	Jitter            bool             // add random jitter (default: true)
+	MinRemaining      time.Duration    // skip retries when context deadline is too close (default: 20s)
+	HeartbeatInterval time.Duration    // periodic log while waiting on provider response (default: 30s)
+	IsRetryable       func(error) bool // determines if an error should be retried
 }
 
 // DefaultRetryConfig returns sensible defaults.
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxRetries:     5,
-		InitialBackoff: 1 * time.Second,
-		MaxBackoff:     30 * time.Second,
-		BackoffFactor:  2.0,
-		Jitter:         true,
-		MinRemaining:   20 * time.Second,
-		IsRetryable:    defaultIsRetryable,
+		MaxRetries:        5,
+		InitialBackoff:    1 * time.Second,
+		MaxBackoff:        30 * time.Second,
+		BackoffFactor:     2.0,
+		Jitter:            true,
+		MinRemaining:      20 * time.Second,
+		HeartbeatInterval: 0,
+		IsRetryable:       defaultIsRetryable,
 	}
 }
 
@@ -150,7 +152,7 @@ func retryLoop[T any](ctx context.Context, cfg RetryConfig, fn func() (T, error)
 	backoff := cfg.InitialBackoff
 
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
-		result, err := fn()
+		result, err := runWithHeartbeat(ctx, cfg.HeartbeatInterval, fn)
 		if err == nil {
 			return result, nil
 		}
@@ -218,4 +220,46 @@ func retryLoop[T any](ctx context.Context, cfg RetryConfig, fn func() (T, error)
 		fmt.Fprintf(os.Stderr, "[gollem] retry: all %d attempts exhausted, giving up: %v\n", cfg.MaxRetries+1, lastErr)
 	}
 	return zero, lastErr
+}
+
+func runWithHeartbeat[T any](ctx context.Context, interval time.Duration, fn func() (T, error)) (T, error) {
+	if interval <= 0 {
+		return fn()
+	}
+
+	var (
+		zero   T
+		result T
+		err    error
+	)
+	done := make(chan struct{})
+	start := time.Now()
+
+	go func() {
+		defer close(done)
+		result, err = fn()
+	}()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-done:
+			return result, err
+		case <-ticker.C:
+			elapsed := time.Since(start).Round(time.Second)
+			remaining := "unknown"
+			if deadline, ok := ctx.Deadline(); ok {
+				rem := time.Until(deadline)
+				if rem < 0 {
+					rem = 0
+				}
+				remaining = rem.Round(time.Second).String()
+			}
+			fmt.Fprintf(os.Stderr, "[gollem] model: still waiting for provider response (%s elapsed, %s remaining)\n", elapsed, remaining)
+		case <-ctx.Done():
+			return zero, ctx.Err()
+		}
+	}
 }

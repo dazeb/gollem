@@ -25,11 +25,11 @@ const (
 )
 
 const (
-	defaultBaseURL       = "https://api.anthropic.com"
-	defaultModel         = Claude4Sonnet
-	defaultMaxTokens     = 4096
-	anthropicVersion     = "2023-06-01"
-	messagesEndpoint     = "/v1/messages"
+	defaultBaseURL   = "https://api.anthropic.com"
+	defaultModel     = Claude4Sonnet
+	defaultMaxTokens = 4096
+	anthropicVersion = "2023-06-01"
+	messagesEndpoint = "/v1/messages"
 )
 
 // Provider implements core.Model for Anthropic's Messages API.
@@ -139,7 +139,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 		return nil, fmt.Errorf("anthropic: failed to marshal request: %w", err)
 	}
 
-	resp, err := p.doRequest(ctx, body)
+	resp, err := p.doRequest(ctx, body) //nolint:bodyclose // Response body ownership transfers to streamedResponse.
 	if err != nil {
 		return nil, err
 	}

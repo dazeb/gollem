@@ -16,7 +16,7 @@ type Config struct {
 	WorkDir string
 
 	// BashTimeout is the default timeout for shell commands.
-	// Defaults to 120 seconds.
+	// Defaults to 5 minutes.
 	BashTimeout time.Duration
 
 	// MaxFileSize is the maximum file size in bytes that View will read.
@@ -61,9 +61,9 @@ type Option func(*Config)
 
 func defaults() *Config {
 	return &Config{
-		BashTimeout:  120 * time.Second,
-		MaxFileSize:  1 << 20,      // 1MB
-		MaxOutputLen: 100 * 1024,   // 100KB — smart head+tail truncation preserves error info
+		BashTimeout:  5 * time.Minute,
+		MaxFileSize:  1 << 20,    // 1MB
+		MaxOutputLen: 100 * 1024, // 100KB — smart head+tail truncation preserves error info
 	}
 }
 

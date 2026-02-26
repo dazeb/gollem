@@ -11,11 +11,12 @@ import (
 // --- Gemini API request types ---
 
 type geminiRequest struct {
-	Contents         []geminiContent         `json:"contents"`
-	Tools            []geminiToolDecl        `json:"tools,omitempty"`
-	ToolConfig       *geminiToolConfig       `json:"toolConfig,omitempty"`
-	SystemInstruction *geminiContent         `json:"systemInstruction,omitempty"`
-	GenerationConfig *geminiGenerationConfig `json:"generationConfig,omitempty"`
+	Contents          []geminiContent         `json:"contents"`
+	Tools             []geminiToolDecl        `json:"tools,omitempty"`
+	ToolConfig        *geminiToolConfig       `json:"toolConfig,omitempty"`
+	SystemInstruction *geminiContent          `json:"systemInstruction,omitempty"`
+	GenerationConfig  *geminiGenerationConfig `json:"generationConfig,omitempty"`
+	CachedContent     string                  `json:"cachedContent,omitempty"`
 }
 
 type geminiToolConfig struct {
@@ -65,11 +66,11 @@ type geminiFunction struct {
 }
 
 type geminiGenerationConfig struct {
-	MaxOutputTokens  int                  `json:"maxOutputTokens,omitempty"`
-	Temperature      *float64             `json:"temperature,omitempty"`
-	TopP             *float64             `json:"topP,omitempty"`
-	ResponseMimeType string               `json:"responseMimeType,omitempty"`
-	ResponseSchema   any                  `json:"responseSchema,omitempty"`
+	MaxOutputTokens  int                   `json:"maxOutputTokens,omitempty"`
+	Temperature      *float64              `json:"temperature,omitempty"`
+	TopP             *float64              `json:"topP,omitempty"`
+	ResponseMimeType string                `json:"responseMimeType,omitempty"`
+	ResponseSchema   any                   `json:"responseSchema,omitempty"`
 	ThinkingConfig   *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
@@ -101,9 +102,10 @@ type geminiCandidate struct {
 }
 
 type geminiUsage struct {
-	PromptTokenCount     int `json:"promptTokenCount"`
-	CandidatesTokenCount int `json:"candidatesTokenCount"`
-	TotalTokenCount      int `json:"totalTokenCount"`
+	PromptTokenCount        int `json:"promptTokenCount"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount"`
+	TotalTokenCount         int `json:"totalTokenCount"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount,omitempty"`
 }
 
 // buildRequest converts gollem messages into a Gemini API request.
@@ -380,8 +382,12 @@ func mapFinishReason(resp *geminiResponse) core.FinishReason {
 
 // mapUsage converts Gemini usage to gollem Usage.
 func mapUsage(u geminiUsage) core.Usage {
-	return core.Usage{
+	usage := core.Usage{
 		InputTokens:  u.PromptTokenCount,
 		OutputTokens: u.CandidatesTokenCount,
 	}
+	if u.CachedContentTokenCount > 0 {
+		usage.CacheReadTokens = u.CachedContentTokenCount
+	}
+	return usage
 }

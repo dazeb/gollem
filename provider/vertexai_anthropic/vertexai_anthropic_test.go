@@ -161,6 +161,61 @@ func TestNewProviderOptions(t *testing.T) {
 	}
 }
 
+func TestPromptCachingOption(t *testing.T) {
+	p := New(WithPromptCaching(true))
+	if !p.promptCachingEnabled {
+		t.Error("expected prompt caching to be enabled")
+	}
+}
+
+func TestPromptCachingEnvVar(t *testing.T) {
+	t.Setenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE", "true")
+	p := New()
+	if !p.promptCachingEnabled {
+		t.Error("expected prompt caching from env")
+	}
+}
+
+func TestPromptCachingOptionOverridesEnv(t *testing.T) {
+	t.Setenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE", "true")
+	p := New(WithPromptCaching(false))
+	if p.promptCachingEnabled {
+		t.Error("expected option to override env and keep prompt caching disabled")
+	}
+}
+
+func TestPromptCachingOptionFalseOverridesEnvTTL(t *testing.T) {
+	t.Setenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE", "")
+	t.Setenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL", "1h")
+	p := New(WithPromptCaching(false))
+	if p.promptCachingEnabled {
+		t.Error("expected explicit disable to override env TTL")
+	}
+}
+
+func TestPromptCacheTTLFromEnvEnablesCaching(t *testing.T) {
+	t.Setenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE", "")
+	t.Setenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL", "1h")
+	p := New()
+	if !p.promptCachingEnabled {
+		t.Error("expected TTL env var to implicitly enable prompt caching")
+	}
+	if p.promptCacheTTL != "1h" {
+		t.Errorf("expected prompt cache TTL 1h, got %q", p.promptCacheTTL)
+	}
+}
+
+func TestPromptCachingOptionTrueStillUsesEnvTTL(t *testing.T) {
+	t.Setenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL", "30m")
+	p := New(WithPromptCaching(true))
+	if !p.promptCachingEnabled {
+		t.Fatal("expected prompt caching to stay enabled")
+	}
+	if p.promptCacheTTL != "30m" {
+		t.Fatalf("expected env TTL to be honored, got %q", p.promptCacheTTL)
+	}
+}
+
 func TestRequestIntegration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify GCP auth header.
@@ -210,6 +265,155 @@ func TestRequestIntegration(t *testing.T) {
 	}
 	if result.TextContent() != "Hi there!" {
 		t.Errorf("expected 'Hi there!', got '%s'", result.TextContent())
+	}
+}
+
+func TestPromptCachingInRequestPayload(t *testing.T) {
+	var captured []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		resp := apiResponse{
+			Content:    []apiContentBlock{{Type: "text", Text: "ok"}},
+			StopReason: "end_turn",
+			Usage:      apiUsage{InputTokens: 5, OutputTokens: 2},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := New(
+		WithProject("test-project"),
+		WithLocation("us-east5"),
+		WithPromptCaching(true),
+	)
+	p.tokenSource = &staticTokenSource{token: "test-token"}
+	p.httpClient = &http.Client{
+		Transport: &rewriteTransport{
+			base:      server.Client().Transport,
+			targetURL: server.URL,
+		},
+	}
+
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+		},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(captured, &payload); err != nil {
+		t.Fatal(err)
+	}
+	cc, ok := payload["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cache_control in payload, got %v", payload["cache_control"])
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("expected cache_control.type=ephemeral, got %v", cc["type"])
+	}
+	if _, hasTTL := cc["ttl"]; hasTTL {
+		t.Errorf("expected cache_control.ttl to be omitted, got %v", cc["ttl"])
+	}
+}
+
+func TestPromptCachingWithTTLInRequestPayload(t *testing.T) {
+	var captured []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		resp := apiResponse{
+			Content:    []apiContentBlock{{Type: "text", Text: "ok"}},
+			StopReason: "end_turn",
+			Usage:      apiUsage{InputTokens: 5, OutputTokens: 2},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := New(
+		WithProject("test-project"),
+		WithLocation("us-east5"),
+		WithPromptCaching(true),
+		WithPromptCacheTTL("1h"),
+	)
+	p.tokenSource = &staticTokenSource{token: "test-token"}
+	p.httpClient = &http.Client{
+		Transport: &rewriteTransport{
+			base:      server.Client().Transport,
+			targetURL: server.URL,
+		},
+	}
+
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+		},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(captured, &payload); err != nil {
+		t.Fatal(err)
+	}
+	cc, ok := payload["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cache_control in payload, got %v", payload["cache_control"])
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("expected cache_control.type=ephemeral, got %v", cc["type"])
+	}
+	if cc["ttl"] != "1h" {
+		t.Errorf("expected cache_control.ttl=1h, got %v", cc["ttl"])
+	}
+}
+
+func TestPromptCachingOmittedFromPayloadWhenDisabled(t *testing.T) {
+	var captured []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		resp := apiResponse{
+			Content:    []apiContentBlock{{Type: "text", Text: "ok"}},
+			StopReason: "end_turn",
+			Usage:      apiUsage{InputTokens: 5, OutputTokens: 2},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := New(
+		WithProject("test-project"),
+		WithLocation("us-east5"),
+	)
+	p.tokenSource = &staticTokenSource{token: "test-token"}
+	p.httpClient = &http.Client{
+		Transport: &rewriteTransport{
+			base:      server.Client().Transport,
+			targetURL: server.URL,
+		},
+	}
+
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+		},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(captured, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["cache_control"]; exists {
+		t.Errorf("cache_control should be omitted when disabled, got %v", payload["cache_control"])
 	}
 }
 
@@ -276,6 +480,69 @@ func TestRequestStreamIntegration(t *testing.T) {
 	resp := stream.Response()
 	if resp.Usage.OutputTokens != 5 {
 		t.Errorf("expected 5 output tokens, got %d", resp.Usage.OutputTokens)
+	}
+}
+
+func TestPromptCachingInStreamingPayload(t *testing.T) {
+	var captured []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		events := []string{
+			"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n",
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n",
+			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n",
+		}
+		for _, event := range events {
+			fmt.Fprint(w, event+"\n")
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	p := New(
+		WithProject("test-project"),
+		WithLocation("us-east5"),
+		WithPromptCaching(true),
+	)
+	p.tokenSource = &staticTokenSource{token: "test-token"}
+	p.httpClient = &http.Client{
+		Transport: &rewriteTransport{
+			base:      server.Client().Transport,
+			targetURL: server.URL,
+		},
+	}
+
+	stream, err := p.RequestStream(context.Background(), []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "Hello"}},
+		},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	for {
+		_, err := stream.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(captured, &payload); err != nil {
+		t.Fatal(err)
+	}
+	cc, ok := payload["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cache_control in streaming payload, got %v", payload["cache_control"])
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("expected cache_control.type=ephemeral, got %v", cc["type"])
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fugue-labs/gollem/core"
 )
 
 func TestNormalizeTeamMode(t *testing.T) {
@@ -29,62 +31,137 @@ func TestNormalizeTeamMode(t *testing.T) {
 	}
 }
 
-func TestEvaluateTeamModeAutoFromSignals_ComplexTaskEnables(t *testing.T) {
-	instruction := strings.Repeat(
-		"Benchmark latency threshold cost model and distributed pipeline parallel microbatch scheduling.\n",
-		50,
-	)
-	d := evaluateTeamModeAutoFromSignals(
-		"Implement a batching scheduler with output_data deliverables",
-		instruction,
-		30*time.Minute,
-		64,
-	)
-
-	if !d.Enabled {
-		t.Fatalf("expected team mode to be enabled, got disabled (score=%d reasons=%v)", d.Score, d.Reasons)
+func TestEffortAboveHigh(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"xhigh", true},
+		{"XHIGH", true},
+		{"high", false},
+		{"medium", false},
+		{"low", false},
+		{"", false},
 	}
-	if d.Score < 4 {
-		t.Fatalf("expected high complexity score, got %d", d.Score)
-	}
-}
 
-func TestEvaluateTeamModeAutoFromSignals_SimpleTaskDisables(t *testing.T) {
-	d := evaluateTeamModeAutoFromSignals(
-		"find my lost git changes and merge to master",
-		"Fix a small issue.",
-		10*time.Minute,
-		8,
-	)
-	if d.Enabled {
-		t.Fatalf("expected team mode disabled for simple short task (score=%d reasons=%v)", d.Score, d.Reasons)
+	for _, tt := range tests {
+		if got := effortAboveHigh(tt.in); got != tt.want {
+			t.Fatalf("effortAboveHigh(%q) = %v, want %v", tt.in, got, tt.want)
+		}
 	}
 }
 
-func TestEvaluateTeamModeAutoFromSignals_StrongSignalsCanEnable(t *testing.T) {
-	instruction := strings.Repeat(
-		"Repository merge branch history sanitize vulnerability deliverables output_data summary.csv.\n",
-		60,
-	)
-	d := evaluateTeamModeAutoFromSignals(
-		"multi-step repository rewrite and audit",
-		instruction,
-		15*time.Minute,
-		140,
-	)
-	if !d.Enabled {
-		t.Fatalf("expected strong-signal task to enable team mode (score=%d reasons=%v)", d.Score, d.Reasons)
-	}
-}
-
-func TestDecideTeamMode_Forced(t *testing.T) {
-	enabled, reason := decideTeamMode("on", "", "simple prompt", 5*time.Minute)
+func TestDecideTeamModeWithModel_Forced(t *testing.T) {
+	enabled, reason := decideTeamModeWithModel("on", "", "simple prompt", 5*time.Minute, nil)
 	if !enabled || !strings.Contains(reason, "forced") {
 		t.Fatalf("expected forced-on team mode, got enabled=%v reason=%q", enabled, reason)
 	}
 
-	enabled, reason = decideTeamMode("off", "", "complex prompt", 2*time.Hour)
+	enabled, reason = decideTeamModeWithModel("off", "", "complex prompt", 2*time.Hour, nil)
 	if enabled || !strings.Contains(reason, "forced") {
 		t.Fatalf("expected forced-off team mode, got enabled=%v reason=%q", enabled, reason)
+	}
+}
+
+func TestDecideTeamModeWithModel_AutoUsesLLMDecision(t *testing.T) {
+	model := core.NewTestModel(
+		core.ToolCallResponse("final_result", `{
+			"enable_team": true,
+			"complexity_score": 9,
+			"confidence": "high",
+			"reasons": ["multi-step", "cross-file coordination"]
+		}`),
+	)
+
+	enabled, reason := decideTeamModeWithModel("auto", "", "Fix tests", 15*time.Minute, model)
+	if !enabled {
+		t.Fatalf("expected team mode enabled by llm classifier, got disabled (reason=%q)", reason)
+	}
+	if !strings.Contains(reason, "llm score=9") {
+		t.Fatalf("expected llm reason, got %q", reason)
+	}
+}
+
+func TestDecideTeamModeWithModel_AutoFailsClosedOnClassifierFailure(t *testing.T) {
+	// Structured-output call fails with text-only response and 1-request limit;
+	// router should fail closed (team mode off).
+	model := core.NewTestModel(core.TextResponse("not structured"))
+
+	enabled, reason := decideTeamModeWithModel("auto", "", "tiny fix", 5*time.Minute, model)
+	if enabled {
+		t.Fatalf("expected team mode disabled on classifier failure, got enabled (reason=%q)", reason)
+	}
+	if !strings.Contains(reason, "llm-classifier-error") {
+		t.Fatalf("expected llm classifier error marker in reason, got %q", reason)
+	}
+}
+
+func TestDecideTeamModeWithModel_AutoNilModelFailsClosed(t *testing.T) {
+	enabled, reason := decideTeamModeWithModel("auto", "", "complex task", 30*time.Minute, nil)
+	if enabled {
+		t.Fatalf("expected team mode disabled when model is nil, got enabled (reason=%q)", reason)
+	}
+	if !strings.Contains(reason, "llm-classifier-error") {
+		t.Fatalf("expected llm classifier error marker in reason, got %q", reason)
+	}
+}
+
+func TestDecideTeamModeWithModel_AutoLowConfidenceHighScoreOverridesOn(t *testing.T) {
+	model := core.NewTestModel(
+		core.ToolCallResponse("final_result", `{
+			"enable_team": false,
+			"complexity_score": 8,
+			"confidence": "low",
+			"reasons": ["uncertain"]
+		}`),
+	)
+
+	enabled, reason := decideTeamModeWithModel("auto", "", "complex task", 30*time.Minute, model)
+	if !enabled {
+		t.Fatalf("expected team mode enabled for score override, got disabled (reason=%q)", reason)
+	}
+	if !strings.Contains(reason, "score-override") {
+		t.Fatalf("expected score-override marker in reason, got %q", reason)
+	}
+}
+
+func TestDecideTeamModeWithModel_AutoLowConfidenceLowScoreFailsClosed(t *testing.T) {
+	model := core.NewTestModel(
+		core.ToolCallResponse("final_result", `{
+			"enable_team": true,
+			"complexity_score": 7,
+			"confidence": "low",
+			"reasons": ["uncertain"]
+		}`),
+	)
+
+	enabled, reason := decideTeamModeWithModel("auto", "", "complex task", 30*time.Minute, model)
+	if enabled {
+		t.Fatalf("expected team mode disabled on low confidence with low score, got enabled (reason=%q)", reason)
+	}
+	if !strings.Contains(reason, "llm-low-confidence") {
+		t.Fatalf("expected low-confidence marker in reason, got %q", reason)
+	}
+}
+
+func TestSanitizeTeamModeLLMDecision(t *testing.T) {
+	got := sanitizeTeamModeLLMDecision(teamModeLLMDecision{
+		EnableTeam:      true,
+		ComplexityScore: 42,
+		Confidence:      "SURE",
+		Reasons:         []string{"  first  ", "", strings.Repeat("x", 140)},
+	})
+
+	if got.ComplexityScore != 10 {
+		t.Fatalf("complexity score = %d, want 10", got.ComplexityScore)
+	}
+	if got.Confidence != "low" {
+		t.Fatalf("confidence = %q, want low", got.Confidence)
+	}
+	if len(got.Reasons) != 2 {
+		t.Fatalf("reasons len = %d, want 2", len(got.Reasons))
+	}
+	if len(got.Reasons[1]) != 100 {
+		t.Fatalf("second reason len = %d, want 100", len(got.Reasons[1]))
 	}
 }

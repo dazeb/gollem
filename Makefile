@@ -1,4 +1,4 @@
-.PHONY: help test test-verbose coverage lint fmt vet vulncheck tidy clean ci doc tbench-validate-submission
+.PHONY: help test test-verbose coverage lint fmt vet vulncheck tidy clean ci doc hooks-install hooks-uninstall tbench-validate-submission
 
 ## help: show available targets (default)
 help: ## Show available targets
@@ -40,6 +40,15 @@ ci: lint vet test vulncheck ## Run full CI pipeline locally
 doc: ## Start local pkgsite documentation server
 	@echo "Starting pkgsite on http://localhost:8080"
 	pkgsite -http=:8080
+
+hooks-install: ## Install repo-managed git hooks (.githooks)
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-commit .githooks/pre-push
+	@echo "Installed hooks via core.hooksPath=.githooks"
+
+hooks-uninstall: ## Remove repo-managed git hooks
+	git config --unset core.hooksPath || true
+	@echo "Unset core.hooksPath"
 
 tbench-validate-submission: ## Validate TB2 submission folder (set SUBMISSION_DIR=...)
 	@./contrib/tbench_validate_submission.sh "$${SUBMISSION_DIR:?set SUBMISSION_DIR to a submission dir or submissions/terminal-bench/2.0}"

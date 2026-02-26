@@ -15,7 +15,7 @@ import (
 type TeammateState int
 
 const (
-	TeammateStarting     TeammateState = iota
+	TeammateStarting TeammateState = iota
 	TeammateRunning
 	TeammateIdle
 	TeammateShuttingDown
@@ -137,6 +137,11 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 			}
 		} else {
 			consecutiveErrors = 0
+			outputPreview := previewForLog(result.Output, 320)
+			summary := tm.name + " finished current task"
+			if outputPreview != "<empty>" {
+				summary = tm.name + ": " + outputPreview
+			}
 			// Notify leader of completion via their mailbox.
 			if tm.team.leader != "" {
 				leaderMB := tm.team.getMailbox(tm.team.leader)
@@ -146,7 +151,7 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 						To:        tm.team.leader,
 						Type:      MessageStatusUpdate,
 						Content:   result.Output,
-						Summary:   tm.name + " finished current task",
+						Summary:   summary,
 						Timestamp: time.Now(),
 					})
 				}
@@ -154,6 +159,8 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 
 			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s completed (tokens: %d in, %d out)\n",
 				tm.team.name, tm.name, result.Usage.InputTokens, result.Usage.OutputTokens)
+			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s output: %s\n",
+				tm.team.name, tm.name, outputPreview)
 		}
 
 		// Go idle and wait for new work or shutdown.

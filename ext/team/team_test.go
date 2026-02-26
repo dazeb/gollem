@@ -24,6 +24,28 @@ func TestTeam_NewTeam(t *testing.T) {
 	}
 }
 
+func TestTeam_NewTeam_WorkerExtraToolsConfigured(t *testing.T) {
+	extra := core.FuncTool[struct{}](
+		"dummy_extra_tool",
+		"dummy",
+		func(context.Context, struct{}) (any, error) { return "ok", nil },
+	)
+
+	tm := NewTeam(TeamConfig{
+		Name:             "test-team",
+		Leader:           "leader",
+		Model:            core.NewTestModel(core.TextResponse("done")),
+		WorkerExtraTools: []core.Tool{extra},
+	})
+
+	if len(tm.workerTools) != 1 {
+		t.Fatalf("expected 1 worker extra tool, got %d", len(tm.workerTools))
+	}
+	if tm.workerTools[0].Definition.Name != "dummy_extra_tool" {
+		t.Fatalf("unexpected worker extra tool %q", tm.workerTools[0].Definition.Name)
+	}
+}
+
 func TestTeam_SpawnTeammate(t *testing.T) {
 	model := core.NewTestModel(core.TextResponse("task complete"))
 	tm := NewTeam(TeamConfig{

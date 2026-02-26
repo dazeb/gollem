@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +45,11 @@ type Provider struct {
 	model      string
 	httpClient *http.Client
 	maxTokens  int
+
+	promptCachingEnabled     bool
+	promptCachingConfigured  bool
+	promptCacheTTL           string
+	promptCacheTTLConfigured bool
 
 	credentialsFile string
 	credentialsJSON []byte
@@ -104,6 +110,24 @@ func WithMaxTokens(n int) Option {
 	}
 }
 
+// WithPromptCaching enables or disables Anthropic prompt caching via Vertex AI.
+// When enabled, requests include top-level cache_control with type=ephemeral.
+func WithPromptCaching(enabled bool) Option {
+	return func(p *Provider) {
+		p.promptCachingEnabled = enabled
+		p.promptCachingConfigured = true
+	}
+}
+
+// WithPromptCacheTTL sets optional Anthropic prompt cache TTL (e.g. "5m", "1h").
+// Setting a TTL also implicitly enables prompt caching.
+func WithPromptCacheTTL(ttl string) Option {
+	return func(p *Provider) {
+		p.promptCacheTTL = strings.TrimSpace(ttl)
+		p.promptCacheTTLConfigured = true
+	}
+}
+
 // New creates a new Vertex AI Anthropic provider with the given options.
 func New(opts ...Option) *Provider {
 	p := &Provider{
@@ -117,6 +141,16 @@ func New(opts ...Option) *Provider {
 	}
 	if p.project == "" {
 		p.project = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	}
+	if !p.promptCacheTTLConfigured && p.promptCacheTTL == "" {
+		p.promptCacheTTL = strings.TrimSpace(os.Getenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL"))
+	}
+	if !p.promptCachingConfigured {
+		p.promptCachingEnabled = envEnabled("VERTEXAI_ANTHROPIC_PROMPT_CACHE")
+	}
+	// TTL implies caching unless explicitly disabled via WithPromptCaching(false).
+	if p.promptCacheTTL != "" && (!p.promptCachingConfigured || p.promptCachingEnabled) {
+		p.promptCachingEnabled = true
 	}
 	return p
 }
@@ -191,6 +225,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	if err != nil {
 		return nil, fmt.Errorf("vertexai_anthropic: failed to build request: %w", err)
 	}
+	p.applyPromptCacheControl(req)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -230,6 +265,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 	if err != nil {
 		return nil, fmt.Errorf("vertexai_anthropic: failed to build request: %w", err)
 	}
+	p.applyPromptCacheControl(req)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -286,6 +322,27 @@ func (p *Provider) parseHTTPError(resp *http.Response) error {
 		}
 	}
 	return httpErr
+}
+
+func envEnabled(name string) bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	switch raw {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Provider) applyPromptCacheControl(req *apiRequest) {
+	if req == nil || !p.promptCachingEnabled {
+		return
+	}
+	cc := &apiCacheControl{Type: "ephemeral"}
+	if p.promptCacheTTL != "" {
+		cc.TTL = p.promptCacheTTL
+	}
+	req.CacheControl = cc
 }
 
 // Verify Provider implements core.Model.

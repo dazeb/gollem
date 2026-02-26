@@ -24,12 +24,13 @@ import (
 // validator rejects the agent's output if no verification was detected, forcing
 // a retry with instructions to verify.
 //
-// When a timeout is provided, the pre-completion checklist is skipped if more
-// than 80% of the time has elapsed — wasting a turn on the checklist when the
-// agent is about to be killed is counterproductive.
+// This checkpoint intentionally uses hard blockers only:
+//  1. no verification run yet,
+//  2. edits after the last verification run,
+//  3. last verification run failed.
 //
-// When workDir is provided, the pre-completion checklist also programmatically
-// checks that expected output files actually exist.
+// Advisory guidance (stagnation/regression/stale-test reminders) is injected via
+// middleware, but does not force extra completion turns.
 //
 // Usage:
 //
@@ -38,31 +39,14 @@ import (
 //	    core.WithAgentMiddleware[string](mw),
 //	    core.WithOutputValidator[string](validator),
 //	)
-func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.AgentMiddleware, core.OutputValidatorFunc[string]) {
+func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware, core.OutputValidatorFunc[string]) {
 	var mu sync.Mutex
 	verified := false
-	completionAttempts := 0
 	lastVerifyFailed := false
 	lastVerifySummary := ""
 	editsSinceLastVerify := 0
 	stagnationWarned := 0    // consecutive fail level at which we last injected guidance
 	staleTestWarned := false // whether we've warned about not running tests after edits
-	lastResetVerifyID := ""  // tool call ID of the last verification that reset completion counters
-	startTime := time.Now()
-
-	// Determine effective timeout for skip-checklist logic.
-	effectiveTimeout := time.Duration(0)
-	if len(timeout) > 0 && timeout[0] > 0 {
-		effectiveTimeout = timeout[0]
-	}
-	if effectiveTimeout == 0 {
-		if envTimeout := os.Getenv("GOLLEM_TIMEOUT_SEC"); envTimeout != "" {
-			var secs float64
-			if _, err := fmt.Sscanf(envTimeout, "%f", &secs); err == nil && secs > 0 {
-				effectiveTimeout = time.Duration(secs) * time.Second
-			}
-		}
-	}
 
 	mw := func(
 		ctx context.Context,
@@ -76,9 +60,8 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 		// We rebuild the full run history each time (messages are immutable
 		// so this is idempotent). This also tracks stagnation metrics.
 		var pendingCallID string
-		var lastVerifyCallID string // last verification tool call ID seen in this scan
-		var runFailed []bool        // whether each verification run failed
-		var runPassed []int         // pass count per run (-1 if unavailable)
+		var runFailed []bool // whether each verification run failed
+		var runPassed []int  // pass count per run (-1 if unavailable)
 		var runSummary []string
 		pendingMutationCallIDs := map[string]struct{}{}
 		editsAfterLastVerify := 0 // file changes since last verification run
@@ -105,7 +88,6 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 						if isVerify {
 							verified = true
 							pendingCallID = tc.ToolCallID
-							lastVerifyCallID = tc.ToolCallID
 							editsAfterLastVerify = 0
 							// Previous edits are now covered by this verification run.
 							clear(pendingMutationCallIDs)
@@ -129,7 +111,12 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 						if pendingCallID != "" && tr.ToolCallID == pendingCallID {
 							content := toolReturnContentString(tr.Content)
 							failed, summary := verificationResultFailed(content)
-							p, _, _ := extractTestCounts(content)
+							p, _, countsOK := extractTestCounts(content)
+							if !countsOK {
+								// Unknown pass count must not be treated as 0, otherwise
+								// regression logic can fabricate false "1 -> 0" regressions.
+								p = -1
+							}
 							runFailed = append(runFailed, failed)
 							runPassed = append(runPassed, p)
 							runSummary = append(runSummary, summary)
@@ -145,15 +132,6 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 					}
 				}
 			}
-		}
-
-		// Only reset completion counters when we see a NEW verification
-		// command (one we haven't reset for yet). Without this, rescanning
-		// historical messages resets counters the validator already
-		// incremented, creating an infinite pre-completion checklist loop.
-		if lastVerifyCallID != "" && lastVerifyCallID != lastResetVerifyID {
-			completionAttempts = 0
-			lastResetVerifyID = lastVerifyCallID
 		}
 
 		// Update latest result for the validator.
@@ -299,75 +277,6 @@ func VerificationCheckpoint(workDir string, timeout ...time.Duration) (core.Agen
 			return output, &core.ModelRetryError{Message: msg}
 		}
 
-		mu.Lock()
-		attempts := completionAttempts
-		completionAttempts++
-		mu.Unlock()
-
-		// Pre-completion checklist: on first completion attempt after verification,
-		// force the agent to re-check requirements. This catches cases where the
-		// agent ran tests but missed requirements.
-		//
-		// Skip the checklist if time is running out — wasting a turn when the
-		// agent is about to be killed is worse than missing a requirement.
-		if attempts == 0 {
-			skipChecklist := false
-			if effectiveTimeout > 0 {
-				elapsed := time.Since(startTime)
-				pct := float64(elapsed) / float64(effectiveTimeout)
-				if pct > 0.80 {
-					skipChecklist = true
-					fmt.Fprintf(os.Stderr, "[gollem] verification: skipping checklist (%.0f%% time elapsed)\n", pct*100)
-				}
-			}
-			if !skipChecklist {
-				// Auto-clean build intermediates that can cause test failures
-				// (tests often check directory contents with os.listdir/ls).
-				// Doing this programmatically saves the agent 1 turn.
-				if workDir != "" {
-					cleaned := autoCleanupIntermediates(workDir)
-					// Also clean /app if workDir differs — tests often check
-					// directory contents in /app even when the agent works elsewhere.
-					if workDir != "/app" {
-						cleaned += autoCleanupIntermediates("/app")
-					}
-					if cleaned > 0 {
-						fmt.Fprintf(os.Stderr, "[gollem] verification: auto-cleaned %d intermediate artifacts\n", cleaned)
-					}
-				}
-
-				// Programmatic check: are expected output files actually present?
-				// This catches agents that ran tests but forgot to create outputs.
-				var missingOutputHint string
-				var formatIssuesHint string
-				if workDir != "" {
-					// Compute expected outputs once and pass to both checkers
-					// to avoid scanning test files twice.
-					expectedOutputs := detectExpectedOutputs(workDir)
-					missingOutputHint = checkExpectedOutputsExist(workDir, expectedOutputs)
-					formatIssuesHint = validateOutputFormats(workDir, expectedOutputs)
-				}
-				checklistMsg := "Before finalizing: run through this checklist.\n" +
-					"1. Re-read the ORIGINAL task requirements — did you address every single point?\n" +
-					"2. Build intermediates (__pycache__, *.pyc, *.o, a.out) have been AUTO-CLEANED.\n" +
-					"   DO NOT delete any other files \u2014 especially not executables, source files, or output data.\n" +
-					"3. If there are test scripts in /tests/ or test directories, run them one more time to confirm they pass.\n" +
-					"4. If global constraints exist (e.g., 'max N across all outputs'), verify them with a script.\n" +
-					"5. Check output file formatting (common gotchas that cause test failures):\n" +
-					"   - Trailing newline: some tests expect it, some don't. Check with: xxd <file> | tail -1\n" +
-					"   - Encoding: ensure UTF-8 (no BOM). Check with: file <output_file>\n" +
-					"   - If tests compare output: diff your output against expected output character-by-character\n"
-				if missingOutputHint != "" {
-					checklistMsg += missingOutputHint
-				}
-				if formatIssuesHint != "" {
-					checklistMsg += formatIssuesHint
-				}
-				checklistMsg += "Only declare completion after confirming all the above."
-				return output, &core.ModelRetryError{Message: checklistMsg}
-			}
-		}
-
 		return output, nil
 	}
 
@@ -487,7 +396,7 @@ func isMutatingBashString(command string) bool {
 	}
 
 	// Redirections are file writes except for common fd redirects (2>, 1>, &>).
-	for i := 0; i < len(command); i++ {
+	for i := range len(command) {
 		if command[i] != '>' {
 			continue
 		}
@@ -562,6 +471,20 @@ func mutationToolReturnSucceeded(toolName, content string) bool {
 // isVerificationString checks whether a command/code string contains patterns
 // that look like verification (tests, builds, lints, constraint checks).
 func isVerificationString(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+
+	// Help/discovery commands should not be treated as verification runs.
+	// They don't execute tests and can create false failing-verification loops.
+	if strings.Contains(cmd, "pytest --help") ||
+		strings.Contains(cmd, "pytest -h") ||
+		strings.Contains(cmd, "python -m pytest --help") ||
+		strings.Contains(cmd, "python3 -m pytest --help") {
+		return false
+	}
+
 	// Test commands.
 	testPatterns := []string{
 		"go test",
@@ -808,8 +731,7 @@ func isVerificationString(cmd string) bool {
 
 // checkExpectedOutputsExist checks whether expected output files/directories
 // actually exist. Returns a warning string if missing outputs are detected,
-// or empty string if everything looks fine. Called during the pre-completion
-// checklist to programmatically verify deliverables exist.
+// or empty string if everything looks fine.
 //
 // expectedOutputs is pre-computed by the caller (via detectExpectedOutputs)
 // to avoid scanning test files multiple times.
@@ -849,9 +771,9 @@ func autoCleanupIntermediates(workDir string) int {
 
 	// WalkDir is faster than Walk: avoids Stat on every entry.
 	// We only need file info for extension-based cleanup on matching files.
-	filepath.WalkDir(workDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
+	if err := filepath.WalkDir(workDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
 		name := d.Name()
 		if d.IsDir() {
@@ -884,7 +806,9 @@ func autoCleanupIntermediates(workDir string) int {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return cleaned
+	}
 
 	// Remove *.o and a.out in the workDir root only (not recursively —
 	// subdirectories may contain intentional object files).
@@ -1100,7 +1024,7 @@ func validateOutputFormats(workDir string, expectedOutputs []string) string {
 		// any .json file should be valid JSON regardless of how tests check it.
 		if strings.HasSuffix(o, ".json") {
 			if !json.Valid(bytes.TrimSpace(data)) {
-				issues = append(issues, fmt.Sprintf("%s is not valid JSON — check syntax (mismatched braces, trailing commas, unquoted keys)", o))
+				issues = append(issues, o+" is not valid JSON — check syntax (mismatched braces, trailing commas, unquoted keys)")
 			}
 		} else if strings.HasSuffix(o, ".jsonl") {
 			// Check first few lines of JSONL to catch structural errors early.
@@ -1173,9 +1097,11 @@ func validateOutputFormats(workDir string, expectedOutputs []string) string {
 		return ""
 	}
 	result := "7. FORMAT ISSUES found in your output files:\n"
+	var resultSb1098 strings.Builder
 	for _, issue := range issues {
-		result += "   - " + issue + "\n"
+		resultSb1098.WriteString("   - " + issue + "\n")
 	}
+	result += resultSb1098.String()
 	result += "   Fix these before declaring completion — they WILL cause test failures.\n"
 	return result
 }
@@ -1271,6 +1197,7 @@ func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []stri
 	if streakStart < 0 {
 		streakStart = 0
 	}
+	var historySb1196 strings.Builder
 	for i := streakStart; i < len(runPassed); i++ {
 		run := i - streakStart + 1
 		summary := ""
@@ -1278,11 +1205,12 @@ func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []stri
 			summary = runSummary[i]
 		}
 		if runPassed[i] >= 0 {
-			history += fmt.Sprintf("  Run %d: %s\n", run, summary)
+			fmt.Fprintf(&historySb1196, "  Run %d: %s\n", run, summary)
 		} else if summary != "" {
 			history += fmt.Sprintf("  Run %d: %s\n", run, summary)
 		}
 	}
+	history += historySb1196.String()
 
 	// Detect if the same error is repeating across runs. When two consecutive
 	// summaries contain the same failure detail, the agent's edits aren't
@@ -1303,8 +1231,8 @@ func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []stri
 			"Stop, re-read the error, and fix the ACTUAL problem — not what you think the problem is.\n"
 	}
 
-	switch {
-	case consecutiveFails == 2:
+	switch consecutiveFails {
+	case 2:
 		msg := "VERIFICATION STAGNATION: Tests have failed 2 times in a row.\n"
 		if history != "" {
 			msg += "Run history:\n" + history
@@ -1315,7 +1243,7 @@ func stagnationGuidance(consecutiveFails int, runPassed []int, runSummary []stri
 			"Before making more changes, re-read the test file to confirm what's actually expected."
 		return msg
 
-	case consecutiveFails == 3:
+	case 3:
 		msg := "STAGNATION WARNING: Tests have failed 3 times in a row without improvement.\n"
 		if history != "" {
 			msg += "Run history:\n" + history

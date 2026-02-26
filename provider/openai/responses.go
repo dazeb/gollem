@@ -141,7 +141,7 @@ func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSet
 	if params != nil {
 		allTools := params.AllToolDefs()
 		for _, td := range allTools {
-			schemaJSON, err := json.Marshal(td.ParametersSchema)
+			schemaJSON, err := marshalOpenAISchema(td.ParametersSchema)
 			if err != nil {
 				return nil, err
 			}
@@ -155,7 +155,7 @@ func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSet
 		}
 
 		if params.OutputMode == core.OutputModeNative && params.OutputObject != nil {
-			schemaJSON, err := json.Marshal(params.OutputObject.JSONSchema)
+			schemaJSON, err := marshalOpenAISchema(params.OutputObject.JSONSchema)
 			if err != nil {
 				return nil, err
 			}
@@ -206,13 +206,88 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 	for _, msg := range messages {
 		switch m := msg.(type) {
 		case core.ModelRequest:
+			hasImage := false
+			for _, part := range m.Parts {
+				if _, ok := part.(core.ImagePart); ok {
+					hasImage = true
+					break
+				}
+			}
+
+			if !hasImage {
+				for _, part := range m.Parts {
+					switch p := part.(type) {
+					case core.SystemPromptPart:
+						input = append(input, responsesMessage("system", p.Content))
+					case core.UserPromptPart:
+						input = append(input, responsesMessage("user", p.Content))
+					case core.ToolReturnPart:
+						content := stringifyToolContent(p.Content)
+						input = append(input, map[string]any{
+							"type":    "function_call_output",
+							"call_id": p.ToolCallID,
+							"output":  content,
+						})
+					case core.RetryPromptPart:
+						if p.ToolCallID != "" {
+							input = append(input, map[string]any{
+								"type":    "function_call_output",
+								"call_id": p.ToolCallID,
+								"output":  p.Content,
+							})
+						} else {
+							input = append(input, responsesMessage("user", p.Content))
+						}
+					default:
+						return nil, fmt.Errorf("openai responses provider: unsupported request part type %T", part)
+					}
+				}
+				break
+			}
+
+			contentType := func(role string) string {
+				if role == "assistant" {
+					return "output_text"
+				}
+				return "input_text"
+			}
+
+			var userContent []map[string]any
+			flushUser := func() {
+				if len(userContent) == 0 {
+					return
+				}
+				items := make([]map[string]any, len(userContent))
+				copy(items, userContent)
+				input = append(input, map[string]any{
+					"type":    "message",
+					"role":    "user",
+					"content": items,
+				})
+				userContent = userContent[:0]
+			}
+
 			for _, part := range m.Parts {
 				switch p := part.(type) {
 				case core.SystemPromptPart:
+					flushUser()
 					input = append(input, responsesMessage("system", p.Content))
 				case core.UserPromptPart:
-					input = append(input, responsesMessage("user", p.Content))
+					userContent = append(userContent, map[string]any{
+						"type": contentType("user"),
+						"text": p.Content,
+					})
+				case core.ImagePart:
+					item := map[string]any{
+						"type":      "input_image",
+						"image_url": p.URL,
+					}
+					if p.Detail != "" {
+						item["detail"] = p.Detail
+					}
+					userContent = append(userContent, item)
 				case core.ToolReturnPart:
+					flushUser()
 					content := stringifyToolContent(p.Content)
 					input = append(input, map[string]any{
 						"type":    "function_call_output",
@@ -221,18 +296,23 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 					})
 				case core.RetryPromptPart:
 					if p.ToolCallID != "" {
+						flushUser()
 						input = append(input, map[string]any{
 							"type":    "function_call_output",
 							"call_id": p.ToolCallID,
 							"output":  p.Content,
 						})
 					} else {
-						input = append(input, responsesMessage("user", p.Content))
+						userContent = append(userContent, map[string]any{
+							"type": contentType("user"),
+							"text": p.Content,
+						})
 					}
 				default:
 					return nil, fmt.Errorf("openai responses provider: unsupported request part type %T", part)
 				}
 			}
+			flushUser()
 
 		case core.ModelResponse:
 			var assistantText strings.Builder

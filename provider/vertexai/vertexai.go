@@ -23,11 +23,11 @@ import (
 
 // Model constants for Gemini models.
 const (
-	Gemini31ProPreview   = "gemini-3.1-pro-preview"
-	Gemini3FlashPreview  = "gemini-3-flash-preview"
-	Gemini25Pro          = "gemini-2.5-pro"
-	Gemini25Flash        = "gemini-2.5-flash"
-	Gemini20Flash        = "gemini-2.0-flash"
+	Gemini31ProPreview  = "gemini-3.1-pro-preview"
+	Gemini3FlashPreview = "gemini-3-flash-preview"
+	Gemini25Pro         = "gemini-2.5-pro"
+	Gemini25Flash       = "gemini-2.5-flash"
+	Gemini20Flash       = "gemini-2.0-flash"
 )
 
 const (
@@ -44,6 +44,7 @@ type Provider struct {
 	httpClient      *http.Client
 	credentialsFile string
 	credentialsJSON []byte
+	cachedContent   string
 
 	mu          sync.Mutex
 	tokenSource oauth2.TokenSource
@@ -87,6 +88,16 @@ func WithCredentialsJSON(data []byte) Option {
 	}
 }
 
+// WithCachedContent sets the resource name of an existing context cache to
+// attach to requests (e.g., "projects/.../locations/.../cachedContents/...").
+// When set, the Gemini API uses the cached content instead of re-processing
+// the corresponding prefix tokens, reducing cost and latency.
+func WithCachedContent(name string) Option {
+	return func(p *Provider) {
+		p.cachedContent = name
+	}
+}
+
 // WithHTTPClient sets a custom HTTP client.
 func WithHTTPClient(c *http.Client) Option {
 	return func(p *Provider) {
@@ -106,6 +117,9 @@ func New(opts ...Option) *Provider {
 	}
 	if p.project == "" {
 		p.project = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	}
+	if p.cachedContent == "" {
+		p.cachedContent = os.Getenv("VERTEXAI_CACHED_CONTENT")
 	}
 	return p
 }
@@ -179,6 +193,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	if err != nil {
 		return nil, fmt.Errorf("vertexai: failed to build request: %w", err)
 	}
+	p.applyCacheSettings(req)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -218,6 +233,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 	if err != nil {
 		return nil, fmt.Errorf("vertexai: failed to build request: %w", err)
 	}
+	p.applyCacheSettings(req)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -253,6 +269,14 @@ func (p *Provider) setHeaders(ctx context.Context, req *http.Request) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	return nil
+}
+
+// applyCacheSettings attaches the cached content reference to the request
+// if configured on the provider.
+func (p *Provider) applyCacheSettings(req *geminiRequest) {
+	if p.cachedContent != "" {
+		req.CachedContent = p.cachedContent
+	}
 }
 
 // parseHTTPError constructs a ModelHTTPError from a non-200 response,

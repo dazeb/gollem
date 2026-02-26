@@ -125,7 +125,7 @@ func TestToolPanic_NilPanic(t *testing.T) {
 	// Trigger a nil pointer dereference (common production panic).
 	panicTool := FuncTool[Params]("deref", "nil deref", func(ctx context.Context, p Params) (string, error) {
 		var s *string
-		return *s, nil //nolint:govet // intentional nil dereference for test
+		return *s, nil
 	})
 
 	model := NewTestModel(

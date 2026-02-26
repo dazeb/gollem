@@ -23,6 +23,9 @@ go mod download
 
 # Run the full CI pipeline locally.
 make ci
+
+# Install git hooks that run CI-style checks before push.
+make hooks-install
 ```
 
 ### Available Make Targets
@@ -41,6 +44,8 @@ make ci
 | `make clean` | Remove build artifacts |
 | `make ci` | Run full CI pipeline (lint + vet + test + vulncheck) |
 | `make doc` | Start local pkgsite documentation server |
+| `make hooks-install` | Enable repo-managed git hooks (`.githooks`) |
+| `make hooks-uninstall` | Disable repo-managed git hooks |
 
 ## Code Style
 
@@ -64,6 +69,18 @@ All code must pass `golangci-lint`:
 ```bash
 make lint
 ```
+
+### Git Hooks
+
+To reduce CI failures after push, install the repository's managed hooks:
+
+```bash
+make hooks-install
+```
+
+The hooks run:
+- `pre-commit`: `gofmt` check on staged `.go` files.
+- `pre-push`: `golangci-lint run ./...`, `go test -race ./...`, `go vet ./...`, and `go mod tidy` verification for `go.mod`/`go.sum`.
 
 ### Conventions
 

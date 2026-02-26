@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,6 +203,13 @@ func TestBash_BuildTimeout(t *testing.T) {
 	}
 }
 
+func TestBash_BuildTimeoutFloorWithExplicitShortTimeout(t *testing.T) {
+	tool := Bash(WithBashTimeout(1 * time.Second))
+	// Even with timeout=1, build commands get a 5m floor.
+	result := callBashStr(t, tool, `{"command": "make --version >/dev/null && sleep 2", "timeout": 1}`)
+	assertNotContains(t, result, "timed out")
+}
+
 func TestFormatBashOutput(t *testing.T) {
 	// Success with stdout only.
 	result := formatBashOutput("hello\n", "", 0, false, 0, "")
@@ -238,12 +246,12 @@ func TestModuleNotFoundHint(t *testing.T) {
 		output string
 		want   string
 	}{
-		{"simple module", "ModuleNotFoundError: No module named 'numpy'", "[hint: try: pip install --break-system-packages numpy]"},
-		{"aliased module", "ModuleNotFoundError: No module named 'cv2'", "[hint: try: pip install --break-system-packages opencv-python]"},
-		{"submodule", "ModuleNotFoundError: No module named 'sklearn.ensemble'", "[hint: try: pip install --break-system-packages scikit-learn]"},
-		{"double quotes", `ModuleNotFoundError: No module named "yaml"`, "[hint: try: pip install --break-system-packages PyYAML]"},
+		{"simple module", "ModuleNotFoundError: No module named 'numpy'", "[hint: try: uv pip install --system numpy (fallback: pip install --break-system-packages numpy)]"},
+		{"aliased module", "ModuleNotFoundError: No module named 'cv2'", "[hint: try: uv pip install --system opencv-python (fallback: pip install --break-system-packages opencv-python)]"},
+		{"submodule", "ModuleNotFoundError: No module named 'sklearn.ensemble'", "[hint: try: uv pip install --system scikit-learn (fallback: pip install --break-system-packages scikit-learn)]"},
+		{"double quotes", `ModuleNotFoundError: No module named "yaml"`, "[hint: try: uv pip install --system PyYAML (fallback: pip install --break-system-packages PyYAML)]"},
 		{"no match", "some random error output", ""},
-		{"PIL alias", "ModuleNotFoundError: No module named 'PIL'", "[hint: try: pip install --break-system-packages Pillow]"},
+		{"PIL alias", "ModuleNotFoundError: No module named 'PIL'", "[hint: try: uv pip install --system Pillow (fallback: pip install --break-system-packages Pillow)]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -277,16 +285,24 @@ func TestModuleNotFoundHintLocalModule(t *testing.T) {
 		t.Errorf("local package: got %q, want PYTHONPATH hint", got)
 	}
 
-	// Non-local module: should suggest pip install.
+	// Non-local module: should suggest uv first, then pip fallback.
 	got = moduleNotFoundHint("ModuleNotFoundError: No module named 'numpy'", dir)
-	if !strings.Contains(got, "pip install") {
-		t.Errorf("non-local module: got %q, want pip install hint", got)
+	if !strings.Contains(got, "uv pip install") || !strings.Contains(got, "pip install --break-system-packages") {
+		t.Errorf("non-local module: got %q, want uv+pip fallback hint", got)
 	}
 
-	// No workDir: should suggest pip install even for "solution".
+	// No workDir: should still suggest uv first with pip fallback.
 	got = moduleNotFoundHint("ModuleNotFoundError: No module named 'solution'")
-	if !strings.Contains(got, "pip install") {
-		t.Errorf("no workDir: got %q, want pip install hint", got)
+	if !strings.Contains(got, "uv pip install") || !strings.Contains(got, "pip install --break-system-packages") {
+		t.Errorf("no workDir: got %q, want uv+pip fallback hint", got)
+	}
+}
+
+func TestModuleNotFoundHintVirtualEnv(t *testing.T) {
+	t.Setenv("VIRTUAL_ENV", "/opt/.venv")
+	got := moduleNotFoundHint("ModuleNotFoundError: No module named 'numpy'")
+	if !strings.Contains(got, "uv pip install numpy") || strings.Contains(got, "--system") {
+		t.Errorf("virtualenv hint: got %q, want uv/pip without --system", got)
 	}
 }
 
@@ -529,7 +545,7 @@ func TestView_NormalFileNoMinifiedWarning(t *testing.T) {
 	dir := setupTestDir(t)
 	// Create a normal file with many short lines.
 	var lines []string
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		lines = append(lines, fmt.Sprintf("line %d: some content here", i))
 	}
 	os.WriteFile(filepath.Join(dir, "normal.js"), []byte(strings.Join(lines, "\n")), 0o644)
@@ -1433,34 +1449,20 @@ func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
 		t.Fatal("middleware did not call next")
 	}
 
-	// First validator call should trigger pre-completion checklist (retry).
+	// First validator call should accept immediately after verification.
 	rc := &core.RunContext{}
-	_, err = validator(ctx, rc, "Done! All tests pass.")
-	if err == nil {
-		t.Fatal("first validator call should trigger pre-completion checklist retry")
-	}
-	var retryErr *core.ModelRetryError
-	if !errors.As(err, &retryErr) {
-		t.Fatalf("expected ModelRetryError for checklist, got: %v", err)
-	}
-
-	// Second validator call should accept.
 	output, err := validator(ctx, rc, "Done! All tests pass.")
 	if err != nil {
-		t.Fatalf("validator should accept on second call after verification, got: %v", err)
+		t.Fatalf("validator should accept after verification, got: %v", err)
 	}
 	if output != "Done! All tests pass." {
 		t.Errorf("validator modified output: %q", output)
 	}
 }
 
-// TestVerificationCheckpoint_MiddlewareRescanDoesNotResetCounters verifies
-// that calling the middleware multiple times with the same verification command
-// in history does not reset completionAttempts. This is the production flow:
-// middleware→model→validator→retry→middleware→model→validator.
-// Without the fix, the second middleware call resets completionAttempts to 0,
-// causing an infinite pre-completion checklist loop.
-func TestVerificationCheckpoint_MiddlewareRescanDoesNotResetCounters(t *testing.T) {
+// TestVerificationCheckpoint_MiddlewareRescanStillAccepts verifies that
+// rescanning the same verification history does not regress completion gating.
+func TestVerificationCheckpoint_MiddlewareRescanStillAccepts(t *testing.T) {
 	mw, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
@@ -1501,39 +1503,32 @@ func TestVerificationCheckpoint_MiddlewareRescanDoesNotResetCounters(t *testing.
 		t.Fatalf("middleware 1 error: %v", err)
 	}
 
-	// First validator call → completionAttempts=0 → pre-completion checklist.
+	// First validator call should accept.
 	rc := &core.RunContext{}
 	_, err = validator(ctx, rc, "Done!")
-	if err == nil {
-		t.Fatal("first validator call should trigger pre-completion checklist")
-	}
-	var retryErr *core.ModelRetryError
-	if !errors.As(err, &retryErr) {
-		t.Fatalf("expected ModelRetryError, got: %v", err)
+	if err != nil {
+		t.Fatalf("validator should accept after verification, got: %v", err)
 	}
 
-	// Production flow: middleware runs AGAIN before the retry model call,
-	// rescanning the same messages. This must NOT reset completionAttempts.
+	// Middleware rescans the same messages before another completion attempt.
 	_, err = mw(ctx, messages, nil, nil, next)
 	if err != nil {
 		t.Fatalf("middleware 2 error: %v", err)
 	}
 
-	// Second validator call → completionAttempts should be 1, not 0.
-	// If the bug exists, this returns a retry error instead of accepting.
+	// Second validator call should still accept.
 	output, err := validator(ctx, rc, "Done!")
 	if err != nil {
-		t.Fatalf("second validator call after middleware rescan should accept, got: %v", err)
+		t.Fatalf("validator should still accept after middleware rescan, got: %v", err)
 	}
 	if output != "Done!" {
 		t.Errorf("validator modified output: %q", output)
 	}
 }
 
-// TestVerificationCheckpoint_NewVerificationResetsCounters verifies that
-// a genuinely new verification command (different tool call ID) DOES reset
-// the completion counters, re-triggering the pre-completion checklist.
-func TestVerificationCheckpoint_NewVerificationResetsCounters(t *testing.T) {
+// TestVerificationCheckpoint_NewVerificationStillAccepts verifies that
+// a new verification run keeps completion admissible (no forced extra turn).
+func TestVerificationCheckpoint_NewVerificationStillAccepts(t *testing.T) {
 	mw, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
@@ -1563,14 +1558,12 @@ func TestVerificationCheckpoint_NewVerificationResetsCounters(t *testing.T) {
 		return &core.ModelResponse{}, nil
 	}
 
-	// First pass: middleware → checklist → accept.
+	// First pass accepts.
 	mw(ctx, messages, nil, nil, next)
 	rc := &core.RunContext{}
-	validator(ctx, rc, "Done!") // checklist (attempts=0)
-	mw(ctx, messages, nil, nil, next)
-	_, err := validator(ctx, rc, "Done!") // accept (attempts=1)
+	_, err := validator(ctx, rc, "Done!")
 	if err != nil {
-		t.Fatalf("expected acceptance on second attempt, got: %v", err)
+		t.Fatalf("expected acceptance after initial verification, got: %v", err)
 	}
 
 	// Agent runs a NEW verification command.
@@ -1595,17 +1588,13 @@ func TestVerificationCheckpoint_NewVerificationResetsCounters(t *testing.T) {
 		},
 	)
 
-	// Middleware sees the new verification command → should reset counters.
+	// Middleware sees the new verification command.
 	mw(ctx, messages, nil, nil, next)
 
-	// Validator should trigger checklist again (completionAttempts reset to 0).
+	// Validator should continue to accept.
 	_, err = validator(ctx, rc, "Done!")
-	if err == nil {
-		t.Fatal("expected checklist after new verification command")
-	}
-	var retryErr *core.ModelRetryError
-	if !errors.As(err, &retryErr) {
-		t.Fatalf("expected ModelRetryError, got: %v", err)
+	if err != nil {
+		t.Fatalf("expected acceptance after new verification command, got: %v", err)
 	}
 }
 
@@ -1668,15 +1657,9 @@ func TestVerificationCheckpoint_AcceptsExecuteCode(t *testing.T) {
 	}
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	// First validator call triggers checklist.
+	// First validator call should accept.
 	rc := &core.RunContext{}
 	_, err := validator(ctx, rc, "Done!")
-	if err == nil {
-		t.Fatal("first call should trigger pre-completion checklist")
-	}
-
-	// Second call should accept.
-	_, err = validator(ctx, rc, "Done!")
 	if err != nil {
 		t.Fatalf("should accept after execute_code verification, got: %v", err)
 	}
@@ -1739,6 +1722,8 @@ func TestIsVerificationString(t *testing.T) {
 		{"bazel test //...", true},
 		{"bazel build //...", true},
 		{"bazel run //:target", true},
+		{"pytest --help | grep allow-no-tests", false},
+		{"python3 -m pytest --help", false},
 		{"echo hello world", false},
 		{"cat main.py", false},
 		{"ls -la", false},
@@ -2124,23 +2109,10 @@ func TestVerificationCheckpoint_AcceptsAfterFailureThenPass(t *testing.T) {
 	)
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	// First passing attempt: should trigger checklist.
-	_, err = validator(ctx, rc, "Done!")
-	if err == nil {
-		t.Fatal("expected checklist on first passing attempt")
-	}
-	var retryErr *core.ModelRetryError
-	if !errors.As(err, &retryErr) {
-		t.Fatalf("expected ModelRetryError for checklist, got: %v", err)
-	}
-	if strings.Contains(retryErr.Message, "FAILED") {
-		t.Error("checklist should not mention FAILED")
-	}
-
-	// Second attempt: should accept.
+	// Should accept immediately after the passing verification run.
 	output, err := validator(ctx, rc, "Done!")
 	if err != nil {
-		t.Fatalf("should accept on second passing attempt, got: %v", err)
+		t.Fatalf("should accept after passing verification, got: %v", err)
 	}
 	if output != "Done!" {
 		t.Errorf("modified output: %q", output)
@@ -2179,7 +2151,7 @@ func TestVerificationCheckpoint_RejectsRepeatedlyOnFailure(t *testing.T) {
 	}
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		_, err := validator(ctx, rc, "Done!")
 		if err == nil {
 			t.Fatalf("expected rejection on attempt %d", i+1)
@@ -2433,18 +2405,8 @@ func TestVerificationCheckpoint_DoesNotRejectWhenPostVerifyMutationFails(t *test
 	_, _ = mw(ctx, messages, nil, nil, next)
 
 	_, err := validator(ctx, rc, "Done!")
-	if err == nil {
-		t.Fatal("expected checklist on first completion attempt")
-	}
-	var retryErr *core.ModelRetryError
-	if !errors.As(err, &retryErr) {
-		t.Fatalf("expected ModelRetryError, got: %v", err)
-	}
-	if strings.Contains(retryErr.Message, "since your last verification run") {
-		t.Fatalf("did not expect stale-verification rejection for failed mutation, got: %s", retryErr.Message)
-	}
-	if !strings.Contains(retryErr.Message, "Before finalizing") {
-		t.Fatalf("expected checklist message, got: %s", retryErr.Message)
+	if err != nil {
+		t.Fatalf("expected acceptance when post-verify mutation failed, got: %v", err)
 	}
 }
 
@@ -2480,18 +2442,8 @@ func TestVerificationCheckpoint_VerificationWithRedirectDoesNotTriggerStaleRejec
 	_, _ = mw(ctx, messages, nil, nil, next)
 
 	_, err := validator(ctx, rc, "Done!")
-	if err == nil {
-		t.Fatal("expected checklist on first completion attempt")
-	}
-	var retryErr *core.ModelRetryError
-	if !errors.As(err, &retryErr) {
-		t.Fatalf("expected ModelRetryError, got: %v", err)
-	}
-	if strings.Contains(retryErr.Message, "since your last verification run") {
-		t.Fatalf("did not expect stale-verification rejection for verification redirect, got: %s", retryErr.Message)
-	}
-	if !strings.Contains(retryErr.Message, "Before finalizing") {
-		t.Fatalf("expected checklist message, got: %s", retryErr.Message)
+	if err != nil {
+		t.Fatalf("expected acceptance for verification with redirect, got: %v", err)
 	}
 }
 
@@ -2740,7 +2692,7 @@ func TestVerificationCheckpoint_NoStagnationWhenImproving(t *testing.T) {
 	messages := []core.ModelMessage{}
 	passCounts := []int{1, 2, 3}
 	failCounts := []int{2, 1, 1}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		callID := fmt.Sprintf("call%d", i+1)
 		output := fmt.Sprintf("%d passed, %d failed\n[exit code: 1]", passCounts[i], failCounts[i])
 		messages = append(messages,
@@ -2798,7 +2750,7 @@ func TestVerificationCheckpoint_RegressionDetection(t *testing.T) {
 	messages := []core.ModelMessage{}
 	passCounts := []int{5, 3}
 	failCounts := []int{1, 3}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		callID := fmt.Sprintf("reg%d", i+1)
 		output := fmt.Sprintf("%d passed, %d failed\n[exit code: 1]", passCounts[i], failCounts[i])
 		messages = append(messages,
@@ -2856,7 +2808,7 @@ func TestVerificationCheckpoint_NoRegressionWhenImproving(t *testing.T) {
 	messages := []core.ModelMessage{}
 	passCounts := []int{2, 4}
 	failCounts := []int{4, 2}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		callID := fmt.Sprintf("noreg%d", i+1)
 		output := fmt.Sprintf("%d passed, %d failed\n[exit code: 1]", passCounts[i], failCounts[i])
 		messages = append(messages,
@@ -2887,6 +2839,103 @@ func TestVerificationCheckpoint_NoRegressionWhenImproving(t *testing.T) {
 	}
 	if regressionInjected {
 		t.Error("should NOT inject regression warning when pass count improves")
+	}
+}
+
+func TestVerificationCheckpoint_NoRegressionOnUnknownPassCount(t *testing.T) {
+	mw, _ := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	regressionInjected := false
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		lastMsg := msgs[len(msgs)-1]
+		if req, ok := lastMsg.(core.ModelRequest); ok {
+			for _, part := range req.Parts {
+				if up, ok := part.(core.UserPromptPart); ok {
+					if strings.Contains(up.Content, "REGRESSION") {
+						regressionInjected = true
+					}
+				}
+			}
+		}
+		return &core.ModelResponse{}, nil
+	}
+
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{ToolName: "bash", ArgsJSON: `{"command":"pytest -q"}`, ToolCallID: "u1"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{ToolName: "bash", Content: "1 passed in 0.10s\n[exit code: 0]", ToolCallID: "u1"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{ToolName: "bash", ArgsJSON: `{"command":"pytest -q"}`, ToolCallID: "u2"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{ToolName: "bash", Content: "[exit code: 1]\n(no output)", ToolCallID: "u2"},
+			},
+		},
+	}
+
+	_, err := mw(ctx, messages, nil, nil, next)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if regressionInjected {
+		t.Error("should not inject regression warning when latest pass count is unknown")
+	}
+}
+
+func TestVerificationCheckpoint_IgnoresPytestHelpCommand(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Fix task"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{ToolName: "bash", ArgsJSON: `{"command":"pytest -q"}`, ToolCallID: "h1"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{ToolName: "bash", Content: ". [100%]\n1 passed in 0.10s\n[exit code: 0]", ToolCallID: "h1"},
+			},
+		},
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{ToolName: "bash", ArgsJSON: `{"command":"pytest --help | grep allow-no-tests"}`, ToolCallID: "h2"},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{ToolName: "bash", Content: "[exit code: 1]\n(no output)", ToolCallID: "h2"},
+			},
+		},
+	}
+
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+	if _, err := mw(ctx, messages, nil, nil, next); err != nil {
+		t.Fatalf("middleware error: %v", err)
+	}
+
+	rc := &core.RunContext{}
+	// Help-only command must not override last passing verify.
+	if _, err := validator(ctx, rc, "done"); err != nil {
+		t.Fatalf("validator should accept after passing verification; got: %v", err)
 	}
 }
 
@@ -6887,7 +6936,7 @@ func TestEmergencyCompressWithSummary(t *testing.T) {
 	})
 
 	// Middle: agent reads files and edits (tool name is "view").
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		callID := fmt.Sprintf("view%d", i)
 		messages = append(messages,
 			core.ModelResponse{
@@ -7245,7 +7294,7 @@ func TestTestPassRateRegression(t *testing.T) {
 			t.Fatal("test setup: prev should have >0 passes")
 		}
 		// Verify the regression condition matches what the code checks.
-		if !(curr.passed < prev.passed && prev.passed > 0) {
+		if curr.passed >= prev.passed || prev.passed <= 0 {
 			t.Error("regression condition should be true")
 		}
 	})
@@ -8673,7 +8722,7 @@ func TestVerificationCheckpoint_StaleTestWarning(t *testing.T) {
 	})
 
 	// 7 edit calls without any verification.
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		messages = append(messages, core.ModelResponse{
 			Parts: []core.ModelResponsePart{
 				core.ToolCallPart{
@@ -8749,7 +8798,7 @@ func TestVerificationCheckpoint_NoStaleTestWithFewEdits(t *testing.T) {
 		},
 	})
 	// Only 3 edits — below threshold.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		messages = append(messages, core.ModelResponse{
 			Parts: []core.ModelResponsePart{
 				core.ToolCallPart{
@@ -8801,7 +8850,7 @@ func TestVerificationCheckpoint_NoConsecutiveUserMessages(t *testing.T) {
 	var messages []core.ModelMessage
 	passCounts := []int{5, 3}
 	failCounts := []int{1, 3}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		callID := fmt.Sprintf("consec%d", i+1)
 		output := fmt.Sprintf("%d passed, %d failed\n[exit code: 1]", passCounts[i], failCounts[i])
 		messages = append(messages,
@@ -10349,7 +10398,7 @@ func TestElixirHint_HexNotFound(t *testing.T) {
 	}
 }
 
-// Test Nim compilation error format: "file.nim(line, col) Error: message"
+// Test Nim compilation error format: "file.nim(line, col) Error: message".
 func TestCompilationErrorHint_Nim(t *testing.T) {
 	output := `main.nim(42, 5) Error: undeclared identifier: 'foobar'`
 	hint := compilationErrorHint(output, 1)
@@ -10364,7 +10413,7 @@ func TestCompilationErrorHint_Nim(t *testing.T) {
 	}
 }
 
-// Test D language (DMD) compilation error format: "file.d(line): Error: message"
+// Test D language (DMD) compilation error format: "file.d(line): Error: message".
 func TestCompilationErrorHint_D(t *testing.T) {
 	output := "source/app.d(42): Error: undefined identifier `foo`"
 	hint := compilationErrorHint(output, 1)
@@ -10379,7 +10428,7 @@ func TestCompilationErrorHint_D(t *testing.T) {
 	}
 }
 
-// Test Scala 3 compilation error format: "-- [EXXXX] Error: file.scala:line:col ---"
+// Test Scala 3 compilation error format: "-- [EXXXX] Error: file.scala:line:col ---".
 func TestCompilationErrorHint_Scala3(t *testing.T) {
 	output := `-- [E007] Type Mismatch Error: src/Main.scala:42:5 -------
 42 |  val x: Int = "hello"
@@ -10398,7 +10447,7 @@ func TestCompilationErrorHint_Scala3(t *testing.T) {
 	}
 }
 
-// Test Scala 3 simple error format: "-- Error: file.scala:line:col ---"
+// Test Scala 3 simple error format: "-- Error: file.scala:line:col ---".
 func TestCompilationErrorHint_Scala3_Simple(t *testing.T) {
 	output := `-- Error: src/Main.scala:10:1 -------
 10 |object Foo {
@@ -10863,7 +10912,7 @@ func TestLoopDetectionMiddleware_ReadThenEdit(t *testing.T) {
 
 	// Simulate read-edit-read-edit cycle.
 	messages := []core.ModelMessage{}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		messages = append(messages, viewMsg)
 		_, _ = mw(ctx, messages, nil, nil, next)
 		messages = append(messages, editMsg)
@@ -10991,7 +11040,7 @@ func TestLoopDetectionMiddleware_LSPLoopCounterResets(t *testing.T) {
 	// never halved so it would fire on the very next turn.
 	// Track how many additional turns before the next warning.
 	turnsUntilNextWarning := 0
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		messages = append(messages, lspMsg, toolResultMsg)
 		_, _ = mw(ctx, messages, nil, nil, next)
 		turnsUntilNextWarning++
@@ -12285,7 +12334,7 @@ func TestContextOverflowMiddleware_ShortHistoryNoPanic(t *testing.T) {
 		t.Fatal("expected error from 413, got nil")
 	}
 	var httpErr *core.ModelHTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != 413 {
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413 error, got: %v", err)
 	}
 }
@@ -13400,7 +13449,7 @@ func TestProgressTrackingMiddleware_CompoundBashCommands(t *testing.T) {
 			}
 
 			// Run enough turns to trigger the warning threshold (default turnWarning=7).
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				_, err := mw(ctx, messages, nil, nil, next)
 				if err != nil {
 					t.Fatalf("turn %d: unexpected error: %v", i, err)
@@ -13464,7 +13513,7 @@ func TestProgressTrackingMiddleware_SimpleCommandsStillDetected(t *testing.T) {
 				}, nil
 			}
 
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				_, err := mw(ctx, messages, nil, nil, next)
 				if err != nil {
 					t.Fatalf("turn %d: unexpected error: %v", i, err)
@@ -13658,7 +13707,7 @@ func TestEmergencyCompressMessages_Alternation(t *testing.T) {
 	}
 
 	// Add alternating messages to get past the threshold.
-	for i := 0; i < 14; i++ {
+	for i := range 14 {
 		if i%2 == 0 {
 			messages = append(messages, core.ModelResponse{
 				Parts: []core.ModelResponsePart{
@@ -13732,7 +13781,7 @@ func TestEmergencyCompressMessages_OrphanedToolResults(t *testing.T) {
 	}
 
 	// Messages 1-6: conversation with tool calls (will be dropped).
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		// Assistant response with a tool call.
 		messages = append(messages, core.ModelResponse{
 			Parts: []core.ModelResponsePart{

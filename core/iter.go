@@ -121,7 +121,7 @@ func (a *Agent[T]) Iter(ctx context.Context, prompt string, opts ...RunOption) *
 		}
 	} else {
 		// Normal case: build the initial request with dynamic system prompts and knowledge base.
-		req, reqErr := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps)
+		req, reqErr := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps, cfg.initialRequestParts)
 		if reqErr != nil {
 			return &AgentRun[T]{
 				agent: a,

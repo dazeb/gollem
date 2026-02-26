@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
+
+// timeBudgetNow is overridden in tests for deterministic time-based behavior.
+var timeBudgetNow = time.Now
 
 // ReasoningLevel defines a provider-agnostic reasoning intensity.
 // It maps to ThinkingBudget (Anthropic) and ReasoningEffort (OpenAI).
@@ -46,19 +50,19 @@ type ReasoningSandwichConfig struct {
 }
 
 // DefaultReasoningSandwichConfig returns the recommended reasoning sandwich config.
-// Based on LangChain's harness engineering research showing xhigh-high-xhigh
-// outperforms high-low-high by +3 points on Terminal-Bench 2.0.
+// For OpenAI/Codex runs, cap reasoning effort at "high" to reduce long-tail
+// turn latency near benchmark time limits.
 //
-// Planning: xhigh reasoning for deep task analysis (first 5 turns).
+// Planning: high reasoning for deep task analysis (first 5 turns).
 // Implementation: high reasoning for quality code generation (middle turns).
-// Verification: xhigh reasoning for careful error analysis (when testing).
+// Verification: high reasoning for careful error analysis (when testing).
 func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
 		// 32000 is the highest value that works across all providers:
 		// Gemini caps at 32768, Anthropic supports much higher.
-		Planning:              ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
+		Planning:              ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
 		Implementation:        ReasoningLevel{ThinkingBudget: 16000, ReasoningEffort: "high"},
-		Verification:          ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
+		Verification:          ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
 		PlanningTurns:         5,
 		VerificationThreshold: 0, // Use heuristic: detect verification commands
 	}
@@ -70,9 +74,9 @@ func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 // gets high reasoning since careful error analysis is critical.
 func subagentReasoningConfig() ReasoningSandwichConfig {
 	return ReasoningSandwichConfig{
-		Planning:              ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
+		Planning:              ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
 		Implementation:        ReasoningLevel{ThinkingBudget: 12000, ReasoningEffort: "medium"},
-		Verification:          ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "xhigh"},
+		Verification:          ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
 		PlanningTurns:         3,
 		VerificationThreshold: 0, // Use heuristic
 	}
@@ -185,16 +189,141 @@ func detectVerificationPhase(messages []core.ModelMessage) bool {
 	return false
 }
 
+type greedyPressureProfile struct {
+	stage              string
+	thinkingBudgetCap  int
+	maxTokensCap       int
+	maxReasoningEffort string
+}
+
+func greedyPressureForPct(pct float64) (greedyPressureProfile, bool) {
+	switch {
+	case pct >= 0.95:
+		return greedyPressureProfile{
+			stage:              "emergency",
+			thinkingBudgetCap:  2000,
+			maxTokensCap:       6000,
+			maxReasoningEffort: "low",
+		}, true
+	case pct >= 0.90:
+		return greedyPressureProfile{
+			stage:              "critical",
+			thinkingBudgetCap:  4000,
+			maxTokensCap:       10000,
+			maxReasoningEffort: "low",
+		}, true
+	case pct >= 0.75:
+		return greedyPressureProfile{
+			stage:              "hurry",
+			thinkingBudgetCap:  8000,
+			maxTokensCap:       16000,
+			maxReasoningEffort: "medium",
+		}, true
+	case pct >= 0.50:
+		return greedyPressureProfile{
+			stage:              "conserve",
+			thinkingBudgetCap:  16000,
+			maxTokensCap:       28000,
+			maxReasoningEffort: "high",
+		}, true
+	default:
+		return greedyPressureProfile{}, false
+	}
+}
+
+func effortRank(level string) int {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	case "xhigh":
+		return 4
+	default:
+		// Unknown levels are treated as highest so caps still apply.
+		return 10
+	}
+}
+
+func capReasoningEffort(ptr *string, capLevel string) bool {
+	if ptr == nil || capLevel == "" {
+		return false
+	}
+	current := strings.TrimSpace(*ptr)
+	if current == "" {
+		return false
+	}
+	if effortRank(current) <= effortRank(capLevel) {
+		return false
+	}
+	*ptr = capLevel
+	return true
+}
+
+func capPositiveInt(ptr *int, maxAllowed int) bool {
+	if ptr == nil || maxAllowed <= 0 {
+		return false
+	}
+	if *ptr <= 0 || *ptr <= maxAllowed {
+		return false
+	}
+	*ptr = maxAllowed
+	return true
+}
+
+func applyGreedyPressure(settings *core.ModelSettings, pct float64) (greedyPressureProfile, bool) {
+	profile, ok := greedyPressureForPct(pct)
+	if !ok || settings == nil {
+		return profile, false
+	}
+
+	changed := false
+	changed = capPositiveInt(settings.MaxTokens, profile.maxTokensCap) || changed
+	changed = capPositiveInt(settings.ThinkingBudget, profile.thinkingBudgetCap) || changed
+	changed = capReasoningEffort(settings.ReasoningEffort, profile.maxReasoningEffort) || changed
+
+	// Keep Anthropic-compliant relation max_tokens > thinking_budget.
+	if settings.MaxTokens != nil && settings.ThinkingBudget != nil && *settings.MaxTokens <= *settings.ThinkingBudget {
+		mt := *settings.ThinkingBudget + 1024
+		*settings.MaxTokens = mt
+		changed = true
+	}
+	return profile, changed
+}
+
+func cloneModelSettingsForGreedyPressure(settings *core.ModelSettings) core.ModelSettings {
+	if settings == nil {
+		return core.ModelSettings{}
+	}
+	s := *settings
+	if settings.MaxTokens != nil {
+		v := *settings.MaxTokens
+		s.MaxTokens = &v
+	}
+	if settings.ThinkingBudget != nil {
+		v := *settings.ThinkingBudget
+		s.ThinkingBudget = &v
+	}
+	if settings.ReasoningEffort != nil {
+		v := *settings.ReasoningEffort
+		s.ReasoningEffort = &v
+	}
+	return s
+}
+
 // TimeBudgetMiddleware injects time-remaining warnings into the conversation
 // when the agent is approaching its timeout. This helps the agent prioritize
 // completing its work rather than spending time on perfection.
 func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
-	startTime := time.Now()
+	startTime := timeBudgetNow()
 	warned25 := false
 	warned50 := false
 	warned75 := false
 	warned90 := false
 	warned95 := false
+	lastGreedyStage := ""
 
 	return func(
 		ctx context.Context,
@@ -203,37 +332,52 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 		params *core.ModelRequestParameters,
 		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
 	) (*core.ModelResponse, error) {
-		elapsed := time.Since(startTime)
+		elapsed := timeBudgetNow().Sub(startTime)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		if timeout <= 0 {
+			return next(ctx, messages, settings, params)
+		}
 		pct := float64(elapsed) / float64(timeout)
+		if pct < 0 {
+			pct = 0
+		}
 		remaining := timeout - elapsed
+		if remaining < 0 {
+			remaining = 0
+		}
 
 		var warning string
 		switch {
 		case pct >= 0.95 && !warned95:
 			warned95 = true
-			warning = fmt.Sprintf("EMERGENCY: %s left (%.0f%% elapsed). "+
-				"Final move only: ensure required output files exist, run one last verification command, then stop.",
+			warning = fmt.Sprintf("TIME EMERGENCY: %s left (%.0f%% elapsed).",
 				remaining.Round(time.Second), pct*100)
 		case pct >= 0.90 && !warned90:
 			warned90 = true
-			warning = fmt.Sprintf("TIME CRITICAL: %s left (%.0f%% elapsed). "+
-				"No new approaches. Final verify + minimal cleanup (__pycache__, *.pyc, *.o) only.",
+			warning = fmt.Sprintf("TIME CRITICAL: %s left (%.0f%% elapsed).",
 				remaining.Round(time.Second), pct*100)
 		case pct >= 0.75 && !warned75:
 			warned75 = true
-			warning = fmt.Sprintf("TIME WARNING: %s left (%.0f%% elapsed). "+
-				"Wrap up current approach and prioritize verifier pass over new exploration.",
+			warning = fmt.Sprintf("TIME WARNING: %s left (%.0f%% elapsed).",
 				remaining.Round(time.Second), pct*100)
 		case pct >= 0.50 && !warned50:
 			warned50 = true
-			warning = fmt.Sprintf("HALFWAY: %s left (%.0f%% elapsed). "+
-				"Confirm outputs exist and run verifier now; if pass rate is low, pivot immediately.",
-				remaining.Round(time.Second), pct*100)
+			label := "HALFWAY"
+			if pct >= 0.60 {
+				label = "HALFWAY (late)"
+			}
+			warning = fmt.Sprintf("TIME %s: %s left (%.0f%% elapsed).",
+				label, remaining.Round(time.Second), pct*100)
 		case pct >= 0.25 && !warned25:
 			warned25 = true
-			warning = fmt.Sprintf("QUARTER: %s left (%.0f%% elapsed). "+
-				"Outputs should exist by now and at least one verification run should be complete.",
-				remaining.Round(time.Second), pct*100)
+			label := "QUARTER"
+			if pct >= 0.35 {
+				label = "QUARTER (late)"
+			}
+			warning = fmt.Sprintf("TIME %s: %s left (%.0f%% elapsed).",
+				label, remaining.Round(time.Second), pct*100)
 		}
 
 		if warning != "" {
@@ -246,7 +390,21 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 			messages = injectUserPromptIntoLastRequest(messages, warning)
 		}
 
-		return next(ctx, messages, settings, params)
+		adjustedSettings := settings
+		if settings != nil {
+			s := cloneModelSettingsForGreedyPressure(settings)
+			if profile, _ := applyGreedyPressure(&s, pct); profile.stage != "" {
+				if profile.stage != lastGreedyStage {
+					lastGreedyStage = profile.stage
+					fmt.Fprintf(os.Stderr,
+						"[gollem] time: greedy scaling -> %s (effort<=%s, thinking<=%d, max_tokens<=%d)\n",
+						profile.stage, profile.maxReasoningEffort, profile.thinkingBudgetCap, profile.maxTokensCap)
+				}
+				adjustedSettings = &s
+			}
+		}
+
+		return next(ctx, messages, adjustedSettings, params)
 	}
 }
 

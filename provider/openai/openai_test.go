@@ -99,6 +99,37 @@ func TestBuildResponsesRequestCodexOmitsSamplingParams(t *testing.T) {
 	}
 }
 
+func TestBuildResponsesRequestNormalizesObjectToolSchema(t *testing.T) {
+	params := &core.ModelRequestParameters{
+		FunctionTools: []core.ToolDefinition{
+			{
+				Name:             "task_list",
+				ParametersSchema: core.Schema{"type": "object"},
+			},
+		},
+	}
+
+	req, err := buildResponsesRequest(nil, nil, params, "gpt-5.2-codex", 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(req.Tools[0].Parameters, &schema); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties object in normalized schema, got: %#v", schema["properties"])
+	}
+	if len(props) != 0 {
+		t.Fatalf("expected empty properties object, got %v", props)
+	}
+}
+
 func TestConvertMessagesToResponsesInputAssistantUsesOutputText(t *testing.T) {
 	messages := []core.ModelMessage{
 		core.ModelRequest{
@@ -148,6 +179,167 @@ func TestConvertMessagesToResponsesInputAssistantUsesOutputText(t *testing.T) {
 	}
 }
 
+func TestBuildRequestMultimodalUserContent(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "sys"},
+				core.UserPromptPart{Content: "analyze this board"},
+				core.ImagePart{
+					URL:      "data:image/png;base64,AAAA",
+					MIMEType: "image/png",
+					Detail:   "high",
+				},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(req.Messages))
+	}
+	if req.Messages[0].Role != "system" {
+		t.Fatalf("expected first role system, got %q", req.Messages[0].Role)
+	}
+
+	user := req.Messages[1]
+	if user.Role != "user" {
+		t.Fatalf("expected user role, got %q", user.Role)
+	}
+	if user.Content != "" {
+		t.Fatalf("expected empty string content for multimodal user message, got %q", user.Content)
+	}
+	if len(user.ContentParts) != 2 {
+		t.Fatalf("expected 2 content parts, got %d", len(user.ContentParts))
+	}
+	if user.ContentParts[0].Type != "text" || user.ContentParts[0].Text != "analyze this board" {
+		t.Fatalf("unexpected first content part: %+v", user.ContentParts[0])
+	}
+	if user.ContentParts[1].Type != "image_url" {
+		t.Fatalf("expected image_url part, got %q", user.ContentParts[1].Type)
+	}
+	if user.ContentParts[1].ImageURL == nil {
+		t.Fatal("expected image_url payload")
+	}
+	if user.ContentParts[1].ImageURL.URL != "data:image/png;base64,AAAA" {
+		t.Fatalf("unexpected image url: %q", user.ContentParts[1].ImageURL.URL)
+	}
+	if user.ContentParts[1].ImageURL.Detail != "high" {
+		t.Fatalf("unexpected image detail: %q", user.ContentParts[1].ImageURL.Detail)
+	}
+}
+
+func TestBuildRequestMultimodalFlushesBeforeToolResult(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "analyze image"},
+				core.ImagePart{
+					URL:      "data:image/png;base64,AAAA",
+					MIMEType: "image/png",
+				},
+				core.ToolReturnPart{
+					ToolName:   "extract",
+					ToolCallID: "call_123",
+					Content:    "ok",
+				},
+			},
+		},
+	}
+
+	req, err := buildRequest(messages, nil, nil, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(req.Messages))
+	}
+	if req.Messages[0].Role != "user" {
+		t.Fatalf("expected first message role user, got %q", req.Messages[0].Role)
+	}
+	if len(req.Messages[0].ContentParts) != 2 {
+		t.Fatalf("expected first message to keep multimodal parts, got %d", len(req.Messages[0].ContentParts))
+	}
+	if req.Messages[1].Role != "tool" {
+		t.Fatalf("expected second message role tool, got %q", req.Messages[1].Role)
+	}
+	if req.Messages[1].ToolCallID != "call_123" {
+		t.Fatalf("expected tool_call_id call_123, got %q", req.Messages[1].ToolCallID)
+	}
+	if req.Messages[1].Content != "ok" {
+		t.Fatalf("expected tool content ok, got %q", req.Messages[1].Content)
+	}
+}
+
+func TestConvertMessagesToResponsesInputMultimodal(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "sys"},
+				core.UserPromptPart{Content: "analyze board"},
+				core.ImagePart{
+					URL:      "data:image/png;base64,AAAA",
+					MIMEType: "image/png",
+					Detail:   "high",
+				},
+				core.RetryPromptPart{Content: "be concise"},
+				core.ToolReturnPart{
+					ToolName:   "engine",
+					ToolCallID: "call_1",
+					Content:    map[string]any{"ok": true},
+				},
+			},
+		},
+	}
+
+	input, err := convertMessagesToResponsesInput(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input) != 3 {
+		t.Fatalf("expected 3 input entries, got %d", len(input))
+	}
+
+	if got := input[0]["role"]; got != "system" {
+		t.Fatalf("expected first role system, got %#v", got)
+	}
+
+	user := input[1]
+	if got := user["role"]; got != "user" {
+		t.Fatalf("expected second role user, got %#v", got)
+	}
+	content, ok := user["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected user content []map[string]any, got %T", user["content"])
+	}
+	if len(content) != 3 {
+		t.Fatalf("expected 3 user content items, got %d", len(content))
+	}
+	if content[0]["type"] != "input_text" || content[0]["text"] != "analyze board" {
+		t.Fatalf("unexpected first user content: %#v", content[0])
+	}
+	if content[1]["type"] != "input_image" || content[1]["image_url"] != "data:image/png;base64,AAAA" {
+		t.Fatalf("unexpected second user content: %#v", content[1])
+	}
+	if content[1]["detail"] != "high" {
+		t.Fatalf("unexpected image detail: %#v", content[1]["detail"])
+	}
+	if content[2]["type"] != "input_text" || content[2]["text"] != "be concise" {
+		t.Fatalf("unexpected third user content: %#v", content[2])
+	}
+
+	tool := input[2]
+	if tool["type"] != "function_call_output" || tool["call_id"] != "call_1" {
+		t.Fatalf("unexpected tool output envelope: %#v", tool)
+	}
+	if tool["output"] != `{"ok":true}` {
+		t.Fatalf("unexpected tool output content: %#v", tool["output"])
+	}
+}
+
 func TestBuildRequestWithTools(t *testing.T) {
 	params := &core.ModelRequestParameters{
 		FunctionTools: []core.ToolDefinition{
@@ -175,6 +367,37 @@ func TestBuildRequestWithTools(t *testing.T) {
 	}
 	if req.Tools[0].Function.Name != "get_weather" {
 		t.Errorf("expected name get_weather, got %s", req.Tools[0].Function.Name)
+	}
+}
+
+func TestBuildRequestNormalizesObjectToolSchema(t *testing.T) {
+	params := &core.ModelRequestParameters{
+		FunctionTools: []core.ToolDefinition{
+			{
+				Name:             "task_list",
+				ParametersSchema: core.Schema{"type": "object"},
+			},
+		},
+	}
+
+	req, err := buildRequest(nil, nil, params, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(req.Tools[0].Function.Parameters, &schema); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties object in normalized schema, got: %#v", schema["properties"])
+	}
+	if len(props) != 0 {
+		t.Fatalf("expected empty properties object, got %v", props)
 	}
 }
 
@@ -209,6 +432,36 @@ func TestBuildRequestWithResponseFormat(t *testing.T) {
 	}
 	if !req.ResponseFormat.JSONSchema.Strict {
 		t.Error("expected strict=true by default")
+	}
+}
+
+func TestBuildRequestNormalizesObjectOutputSchema(t *testing.T) {
+	params := &core.ModelRequestParameters{
+		OutputMode: core.OutputModeNative,
+		OutputObject: &core.OutputObjectDefinition{
+			Name:       "result",
+			JSONSchema: core.Schema{"type": "object"},
+		},
+	}
+
+	req, err := buildRequest(nil, nil, params, "gpt-4o", 4096, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ResponseFormat == nil || req.ResponseFormat.JSONSchema == nil {
+		t.Fatal("expected response_format json_schema")
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(req.ResponseFormat.JSONSchema.Schema, &schema); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected properties object in normalized output schema, got: %#v", schema["properties"])
+	}
+	if len(props) != 0 {
+		t.Fatalf("expected empty properties object, got %v", props)
 	}
 }
 
@@ -1018,7 +1271,7 @@ func TestRequestRetriesOnChatMismatchThenPinsResponses(t *testing.T) {
 		WithModel("gpt-5.2"),
 	)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		resp, err := p.Request(context.Background(), []core.ModelMessage{
 			core.ModelRequest{
 				Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}},
@@ -2028,16 +2281,14 @@ data: [DONE]
 	body := io.NopCloser(strings.NewReader(sseData))
 	stream := newStreamedResponse(body, "gpt-4o")
 
-	var events []core.ModelResponseStreamEvent
 	for {
-		event, err := stream.Next()
+		_, err := stream.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		events = append(events, event)
 	}
 
 	resp := stream.Response()

@@ -295,7 +295,7 @@ func TestStdioClientConcurrentCalls(t *testing.T) {
 	// Fire 10 concurrent calls.
 	const n = 10
 	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func() {
 			result, err := c.CallTool(ctx, "echo", map[string]any{"i": i})
 			if err != nil {
@@ -310,7 +310,7 @@ func TestStdioClientConcurrentCalls(t *testing.T) {
 		}()
 	}
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if err := <-errs; err != nil {
 			t.Errorf("concurrent call %d failed: %v", i, err)
 		}

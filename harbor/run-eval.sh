@@ -18,6 +18,22 @@ TASKS="${3:-}"  # Optional: comma-separated task names, or "all" for everything
 # Tasks that require Selenium/Chromium (won't work under QEMU on ARM Mac)
 SELENIUM_TASKS="break-filter-js-from-html,filter-js-from-html"
 
+# Keep uv cache in a sandbox-friendly writable path by default.
+# Caller can override UV_CACHE_DIR explicitly.
+: "${UV_CACHE_DIR:=/tmp/uv-cache}"
+export UV_CACHE_DIR
+mkdir -p "$UV_CACHE_DIR" 2>/dev/null || true
+
+# Model API request timeout per call (seconds). Higher than old 240s cap to
+# reduce false timeouts on long reasoning/tool-heavy turns.
+: "${GOLLEM_MODEL_REQUEST_TIMEOUT_SEC:=360}"
+export GOLLEM_MODEL_REQUEST_TIMEOUT_SEC
+
+# Default to single-agent execution to avoid shared provider throughput
+# contention; override by setting GOLLEM_TEAM_MODE=auto|on explicitly.
+: "${GOLLEM_TEAM_MODE:=off}"
+export GOLLEM_TEAM_MODE
+
 # Load API keys from ~/.envrc (provider-specific keys)
 if [[ -f ~/.envrc ]]; then
   source ~/.envrc
@@ -56,7 +72,7 @@ case "$PROVIDER" in
     export OPENAI_PROMPT_CACHE_KEY OPENAI_PROMPT_CACHE_RETENTION
     echo "OpenAI prompt cache: key=${OPENAI_PROMPT_CACHE_KEY} retention=${OPENAI_PROMPT_CACHE_RETENTION}"
     ;;
-  google|vertexai|vertex)
+  google|vertexai|vertex|vertexai-anthropic)
     echo "Provider: vertexai | Project: ${GOOGLE_CLOUD_PROJECT:-not set}"
     if [[ -z "$GOOGLE_CLOUD_PROJECT" ]]; then
       echo "ERROR: GOOGLE_CLOUD_PROJECT is required for Vertex AI models."
@@ -68,6 +84,16 @@ case "$PROVIDER" in
       echo "Run: gcloud auth application-default login"
       exit 1
     fi
+    if [[ "$PROVIDER" == "vertexai-anthropic" ]]; then
+      # Anthropic prompt caching via Vertex AI (cache_control: {type: "ephemeral"}).
+      # Enable by default for eval cost/latency; allow caller overrides.
+      : "${VERTEXAI_ANTHROPIC_PROMPT_CACHE:=1}"
+      export VERTEXAI_ANTHROPIC_PROMPT_CACHE
+      if [[ -n "${VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL:-}" ]]; then
+        export VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL
+      fi
+      echo "Vertex Anthropic prompt cache: enabled=${VERTEXAI_ANTHROPIC_PROMPT_CACHE} ttl=${VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL:-default}"
+    fi
     ;;
   *)
     echo "Provider: $PROVIDER"
@@ -75,6 +101,9 @@ case "$PROVIDER" in
 esac
 
 echo "Model: $MODEL | Concurrency: $CONCURRENCY"
+echo "uv cache dir: $UV_CACHE_DIR"
+echo "model request timeout: ${GOLLEM_MODEL_REQUEST_TIMEOUT_SEC}s"
+echo "team mode: ${GOLLEM_TEAM_MODE}"
 
 # Build Linux binary with latest changes
 echo "Building gollem-linux-amd64..."

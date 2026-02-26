@@ -26,6 +26,11 @@ type TeamConfig struct {
 	// The team package is decoupled from codetool — the caller provides the toolset.
 	Toolset *core.Toolset
 
+	// WorkerExtraTools are additional tools attached to each spawned teammate.
+	// Useful for capabilities like subagent delegation that should be available
+	// in worker contexts as well as the leader.
+	WorkerExtraTools []core.Tool
+
 	// EventBus receives team lifecycle events. Optional.
 	EventBus *core.EventBus
 
@@ -49,6 +54,7 @@ type Team struct {
 	eventBus       *core.EventBus
 	model          core.Model
 	toolset        *core.Toolset
+	workerTools    []core.Tool
 	mailboxSize    int
 	personalityGen modelutil.PersonalityGeneratorFunc
 	done           chan struct{}
@@ -70,6 +76,7 @@ func NewTeam(cfg TeamConfig) *Team {
 		eventBus:       cfg.EventBus,
 		model:          cfg.Model,
 		toolset:        cfg.Toolset,
+		workerTools:    cfg.WorkerExtraTools,
 		mailboxSize:    mailboxSize,
 		personalityGen: cfg.PersonalityGenerator,
 		done:           make(chan struct{}),
@@ -162,6 +169,9 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 	}
 	if t.toolset != nil {
 		agentOpts = append(agentOpts, core.WithToolsets[string](t.toolset))
+	}
+	if len(t.workerTools) > 0 {
+		agentOpts = append(agentOpts, core.WithTools[string](t.workerTools...))
 	}
 	if t.eventBus != nil {
 		agentOpts = append(agentOpts, core.WithEventBus[string](t.eventBus))

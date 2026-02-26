@@ -314,3 +314,10 @@ func TestRetryModel_StreamRetry(t *testing.T) {
 		t.Errorf("expected 'streamed', got %q", resp.TextContent())
 	}
 }
+
+func TestDefaultRetryConfig_HeartbeatInterval(t *testing.T) {
+	cfg := DefaultRetryConfig()
+	if cfg.HeartbeatInterval != 0 {
+		t.Fatalf("heartbeat interval = %v, want 0 (disabled by default)", cfg.HeartbeatInterval)
+	}
+}

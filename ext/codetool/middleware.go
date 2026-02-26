@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -514,14 +515,14 @@ func discoverEnvironment(workDir string) string {
 		// preemptively saves 1-2 turns of debugging.
 		if runQuiet(workDir, "which", "python") == "" {
 			if py3Path := runQuiet(workDir, "which", "python3"); py3Path != "" {
-				os.Symlink(py3Path, "/usr/local/bin/python")
+				_ = os.Symlink(py3Path, "/usr/local/bin/python")
 				fmt.Fprintf(os.Stderr, "[gollem] created python → python3 symlink\n")
 			}
 		}
 		// Also create pip → pip3 symlink for the same reason.
 		if runQuiet(workDir, "which", "pip") == "" {
 			if pip3Path := runQuiet(workDir, "which", "pip3"); pip3Path != "" {
-				os.Symlink(pip3Path, "/usr/local/bin/pip")
+				_ = os.Symlink(pip3Path, "/usr/local/bin/pip")
 				fmt.Fprintf(os.Stderr, "[gollem] created pip → pip3 symlink\n")
 			}
 		}
@@ -532,8 +533,8 @@ func discoverEnvironment(workDir string) string {
 	//   "extra files in directory" test failures. This is the #2 cleanup issue.
 	// - PYTHONUNBUFFERED: ensures real-time output flushing, so error messages
 	//   aren't lost when commands timeout.
-	os.Setenv("PYTHONDONTWRITEBYTECODE", "1")
-	os.Setenv("PYTHONUNBUFFERED", "1")
+	_ = os.Setenv("PYTHONDONTWRITEBYTECODE", "1")
+	_ = os.Setenv("PYTHONUNBUFFERED", "1")
 
 	// Set PYTHONPATH to include the working directory and /app so that test
 	// scripts can import local modules regardless of their cwd. This is the #1
@@ -552,7 +553,7 @@ func discoverEnvironment(workDir string) string {
 		pythonPaths = append(pythonPaths, existing)
 	}
 	if len(pythonPaths) > 0 {
-		os.Setenv("PYTHONPATH", strings.Join(pythonPaths, ":"))
+		_ = os.Setenv("PYTHONPATH", strings.Join(pythonPaths, ":"))
 	}
 
 	// Detect Python virtual environments (venv/conda) that need activation.
@@ -571,6 +572,13 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "\nWARNING: No internet access detected. Use only locally installed packages and tools.")
 		parts = append(parts, "For Python: check with `python3 -c \"import <module>\"` before trying to install.")
 		parts = append(parts, "For system packages: check with `dpkg -l | grep <pkg>` or `which <tool>`.")
+	}
+	runtimeDepInstallDisabled := envEnabled("GOLLEM_DISABLE_RUNTIME_DEP_INSTALL")
+	if runtimeDepInstallDisabled {
+		parts = append(parts, "Runtime dependency auto-install: disabled (GOLLEM_DISABLE_RUNTIME_DEP_INSTALL=1).")
+	}
+	if preinstalledPy := strings.TrimSpace(os.Getenv("GOLLEM_PREINSTALLED_PYTHON_PACKAGES")); preinstalledPy != "" {
+		parts = append(parts, "Preinstalled Python packages: "+preinstalledPy)
 	}
 
 	// Top-level directory listing (first 30 entries, one level deep).
@@ -609,7 +617,7 @@ func discoverEnvironment(workDir string) string {
 		"/app/task_file/prompts/agent.md",
 	}
 	readmeFound := false
-	readmeBudget := 8000   // total budget for all README/instruction files
+	readmeBudget := 8000                // total budget for all README/instruction files
 	readmeSeen := make(map[string]bool) // deduplicate by resolved path
 	for _, rp := range readmePaths {
 		if readmeBudget <= 0 {
@@ -759,21 +767,21 @@ func discoverEnvironment(workDir string) string {
 			"Dockerfile",
 			"deno.json", "deno.jsonc",
 			"Taskfile.yml", "Justfile", "justfile",
-			"tsconfig.json",                // TypeScript config (compilation/path mapping)
-			"project.clj", "deps.edn",     // Clojure
-			"rebar.config",                 // Erlang
-			"Gemfile",                      // Ruby
-			"mix.exs",                      // Elixir
-			"shard.yml",                    // Crystal
-			"gleam.toml",                   // Gleam
-			"build.zig",                    // Zig
-			"stack.yaml",                   // Haskell Stack
-			"dub.json", "dub.sdl",         // D language
-			"v.mod",                        // V language
+			"tsconfig.json",           // TypeScript config (compilation/path mapping)
+			"project.clj", "deps.edn", // Clojure
+			"rebar.config",        // Erlang
+			"Gemfile",             // Ruby
+			"mix.exs",             // Elixir
+			"shard.yml",           // Crystal
+			"gleam.toml",          // Gleam
+			"build.zig",           // Zig
+			"stack.yaml",          // Haskell Stack
+			"dub.json", "dub.sdl", // D language
+			"v.mod",                          // V language
 			"lakefile.lean", "lakefile.toml", // Lean 4
-			"elm.json",                     // Elm
-			"flake.nix",                    // Nix
-			"foundry.toml",                 // Solidity (Foundry)
+			"elm.json",     // Elm
+			"flake.nix",    // Nix
+			"foundry.toml", // Solidity (Foundry)
 		}
 		for _, bf := range buildFiles {
 			if autoReadBudget <= 0 {
@@ -783,7 +791,7 @@ func discoverEnvironment(workDir string) string {
 				path := filepath.Join(dir, bf)
 				content := readFileTruncated(path, min(5000, autoReadBudget))
 				if content != "" {
-					parts = append(parts, fmt.Sprintf("\n## Build file auto-read: %s", path))
+					parts = append(parts, "\n## Build file auto-read: "+path)
 					parts = append(parts, content)
 					autoReadBudget -= len(content)
 					break
@@ -792,476 +800,480 @@ func discoverEnvironment(workDir string) string {
 		}
 	}
 
-	// Skip dependency installation if another agent (parent) already did it.
-	// This prevents subagents from wasting 10-60 seconds re-installing Maven,
-	// Gradle, Haskell, or OCaml dependencies that the parent already resolved.
-	depsMarker := depsMarkerPath(workDir)
-	depsAlreadyInstalled := fileExists(depsMarker)
+	if !runtimeDepInstallDisabled {
+		// Skip dependency installation if another agent (parent) already did it.
+		// This prevents subagents from wasting 10-60 seconds re-installing Maven,
+		// Gradle, Haskell, or OCaml dependencies that the parent already resolved.
+		depsMarker := depsMarkerPath(workDir)
+		depsAlreadyInstalled := fileExists(depsMarker)
 
-	// Detect Python requirements files and auto-install if possible.
-	// This saves 1-2 turns on EVERY Python task — the agent's first action is
-	// almost always `pip install -r requirements.txt`.
-	foundPyDeps := false
-	for _, dir := range []string{workDir, "/app"} {
-		reqPath := filepath.Join(dir, "requirements.txt")
-		if content := readFileTruncated(reqPath, 2000); content != "" {
-			parts = append(parts, fmt.Sprintf("\n## Python dependencies found: %s", reqPath))
-			parts = append(parts, content)
-			// Auto-install if network is available and python3/pip exist.
-			if networkAvailable && runQuiet(workDir, "which", "python3") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Python dependencies from %s\n", reqPath)
-				installed := pipInstall(workDir, "-q", "-r", reqPath)
-				if installed {
-					parts = append(parts, "AUTO-INSTALLED: Python dependencies from "+reqPath+" (already done, no need to install again)")
-				} else {
-					parts = append(parts, "NOTE: Auto-install attempted but may have failed. Verify with: pip install --break-system-packages -r "+reqPath)
-				}
-			} else {
-				parts = append(parts, "HINT: Install these FIRST with: pip install --break-system-packages -r "+reqPath)
-			}
-			foundPyDeps = true
-			break
-		}
-	}
-	// Fallback: check for Pipfile or pyproject.toml with dependencies.
-	if !foundPyDeps {
+		// Detect Python requirements files and auto-install if possible.
+		// This saves 1-2 turns on EVERY Python task — the agent's first action is
+		// almost always `pip install -r requirements.txt`.
+		foundPyDeps := false
 		for _, dir := range []string{workDir, "/app"} {
-			pipfilePath := filepath.Join(dir, "Pipfile")
-			if fileExists(pipfilePath) {
-				parts = append(parts, "\n## Pipfile found: "+pipfilePath)
-				parts = append(parts, "HINT: Install with: pip install --break-system-packages pipenv && pipenv install --system, or manually install packages listed in Pipfile")
+			reqPath := filepath.Join(dir, "requirements.txt")
+			if content := readFileTruncated(reqPath, 2000); content != "" {
+				parts = append(parts, "\n## Python dependencies found: "+reqPath)
+				parts = append(parts, content)
+				// Auto-install if network is available and python3/pip exist.
+				if networkAvailable && runQuiet(workDir, "which", "python3") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Python dependencies from %s\n", reqPath)
+					installed := pipInstall(workDir, "-q", "-r", reqPath)
+					if installed {
+						parts = append(parts, "AUTO-INSTALLED: Python dependencies from "+reqPath+" (already done, no need to install again)")
+					} else {
+						parts = append(parts, "NOTE: Auto-install attempted but may have failed. Verify with: pip install --break-system-packages -r "+reqPath)
+					}
+				} else {
+					parts = append(parts, "HINT: Install these FIRST with: pip install --break-system-packages -r "+reqPath)
+				}
 				foundPyDeps = true
 				break
 			}
 		}
-	}
-
-	// Auto-install npm/bun dependencies for Node.js projects.
-	// Note: don't gate on !foundPyDeps — projects can need both Python and npm deps.
-	// Prefer bun if bun.lockb exists and bun is available.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			pkgPath := filepath.Join(dir, "package.json")
-			if !fileExists(pkgPath) {
-				continue
+		// Fallback: check for Pipfile or pyproject.toml with dependencies.
+		if !foundPyDeps {
+			for _, dir := range []string{workDir, "/app"} {
+				pipfilePath := filepath.Join(dir, "Pipfile")
+				if fileExists(pipfilePath) {
+					parts = append(parts, "\n## Pipfile found: "+pipfilePath)
+					parts = append(parts, "HINT: Install with: pip install --break-system-packages pipenv && pipenv install --system, or manually install packages listed in Pipfile")
+					foundPyDeps = true
+					break
+				}
 			}
-			lockPath := filepath.Join(dir, "node_modules")
-			if dirExists(lockPath) {
-				break
-			}
-			// Prefer the package manager matching the lockfile.
-			if (fileExists(filepath.Join(dir, "bun.lockb")) || fileExists(filepath.Join(dir, "bun.lock"))) && runQuiet(workDir, "which", "bun") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Bun dependencies in %s\n", dir)
-				runQuietTimeout(dir, 60*time.Second, "bun", "install")
-				parts = append(parts, "AUTO-INSTALLED: Bun dependencies (already done, no need to install again)")
-			} else if fileExists(filepath.Join(dir, "pnpm-lock.yaml")) && runQuiet(workDir, "which", "pnpm") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-installing pnpm dependencies in %s\n", dir)
-				runQuietTimeout(dir, 60*time.Second, "pnpm", "install")
-				parts = append(parts, "AUTO-INSTALLED: pnpm dependencies (already done, no need to install again)")
-			} else if fileExists(filepath.Join(dir, "yarn.lock")) && runQuiet(workDir, "which", "yarn") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Yarn dependencies in %s\n", dir)
-				runQuietTimeout(dir, 60*time.Second, "yarn", "install")
-				parts = append(parts, "AUTO-INSTALLED: Yarn dependencies (already done, no need to install again)")
-			} else if runQuiet(workDir, "which", "npm") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-installing npm dependencies in %s\n", dir)
-				runQuietTimeout(dir, 60*time.Second, "npm", "install", "--no-audit", "--no-fund")
-				parts = append(parts, "AUTO-INSTALLED: npm dependencies (already done, no need to install again)")
-			}
-			break
 		}
-	}
 
-	// Auto-install Deno dependencies from deno.json/deno.jsonc.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if (fileExists(filepath.Join(dir, "deno.json")) || fileExists(filepath.Join(dir, "deno.jsonc"))) &&
-				runQuiet(workDir, "which", "deno") != "" {
-				if !dirExists(filepath.Join(dir, "node_modules")) {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Deno dependencies in %s\n", dir)
-					runQuietTimeout(dir, 60*time.Second, "deno", "install")
-					parts = append(parts, "AUTO-INSTALLED: Deno dependencies (already done, no need to install again)")
+		// Auto-install npm/bun dependencies for Node.js projects.
+		// Note: don't gate on !foundPyDeps — projects can need both Python and npm deps.
+		// Prefer bun if bun.lockb exists and bun is available.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				pkgPath := filepath.Join(dir, "package.json")
+				if !fileExists(pkgPath) {
+					continue
+				}
+				lockPath := filepath.Join(dir, "node_modules")
+				if dirExists(lockPath) {
+					break
+				}
+				// Prefer the package manager matching the lockfile.
+				if (fileExists(filepath.Join(dir, "bun.lockb")) || fileExists(filepath.Join(dir, "bun.lock"))) && runQuiet(workDir, "which", "bun") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Bun dependencies in %s\n", dir)
+					runQuietTimeout(dir, 60*time.Second, "bun", "install")
+					parts = append(parts, "AUTO-INSTALLED: Bun dependencies (already done, no need to install again)")
+				} else if fileExists(filepath.Join(dir, "pnpm-lock.yaml")) && runQuiet(workDir, "which", "pnpm") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing pnpm dependencies in %s\n", dir)
+					runQuietTimeout(dir, 60*time.Second, "pnpm", "install")
+					parts = append(parts, "AUTO-INSTALLED: pnpm dependencies (already done, no need to install again)")
+				} else if fileExists(filepath.Join(dir, "yarn.lock")) && runQuiet(workDir, "which", "yarn") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Yarn dependencies in %s\n", dir)
+					runQuietTimeout(dir, 60*time.Second, "yarn", "install")
+					parts = append(parts, "AUTO-INSTALLED: Yarn dependencies (already done, no need to install again)")
+				} else if runQuiet(workDir, "which", "npm") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing npm dependencies in %s\n", dir)
+					runQuietTimeout(dir, 60*time.Second, "npm", "install", "--no-audit", "--no-fund")
+					parts = append(parts, "AUTO-INSTALLED: npm dependencies (already done, no need to install again)")
 				}
 				break
 			}
 		}
-	}
 
-	// Auto-download Go module dependencies.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "go.mod")) && runQuiet(dir, "which", "go") != "" {
-				if !dirExists(filepath.Join(dir, "vendor")) { // skip if vendor/ already exists
-					fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Go module dependencies in %s\n", dir)
-					runQuietTimeout(dir, 60*time.Second, "go", "mod", "download")
-					parts = append(parts, "AUTO-INSTALLED: Go module dependencies (already done, no need to download again)")
-				}
-				break
-			}
-		}
-	}
-
-	// Auto-fetch Rust/Cargo dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "Cargo.toml")) && runQuiet(dir, "which", "cargo") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-fetching Cargo dependencies in %s\n", dir)
-				runQuietTimeout(dir, 60*time.Second, "cargo", "fetch", "--quiet")
-				parts = append(parts, "AUTO-INSTALLED: Cargo dependencies (already done, no need to fetch again)")
-				break
-			}
-		}
-	}
-
-	// Auto-install Ruby gems (Gemfile with bundle).
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "Gemfile")) && runQuiet(dir, "which", "bundle") != "" {
-				if !dirExists(filepath.Join(dir, "vendor", "bundle")) { // skip if already vendored
-					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Ruby gems in %s\n", dir)
-					runQuietTimeout(dir, 90*time.Second, "bundle", "install", "--quiet")
-					parts = append(parts, "AUTO-INSTALLED: Ruby gems via bundle install (already done, no need to install again)")
-				}
-				break
-			}
-		}
-	}
-
-	// Auto-install PHP Composer dependencies.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "composer.json")) && runQuiet(dir, "which", "composer") != "" {
-				if !dirExists(filepath.Join(dir, "vendor")) {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Composer dependencies in %s\n", dir)
-					runQuietTimeout(dir, 90*time.Second, "composer", "install", "--no-interaction", "--quiet")
-					parts = append(parts, "AUTO-INSTALLED: Composer dependencies (already done, no need to install again)")
-				}
-				break
-			}
-		}
-	}
-
-	// Auto-install from pyproject.toml (modern Python projects without requirements.txt).
-	if networkAvailable && !foundPyDeps {
-		for _, dir := range []string{workDir, "/app"} {
-			pyprojectPath := filepath.Join(dir, "pyproject.toml")
-			if fileExists(pyprojectPath) && runQuiet(workDir, "which", "python3") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-installing from pyproject.toml in %s\n", dir)
-				installed := pipInstall(dir, "-q", "-e", ".")
-				if installed {
-					parts = append(parts, "AUTO-INSTALLED: Python project from pyproject.toml (already done)")
-				}
-				break
-			}
-		}
-	}
-
-	// Auto-resolve Maven dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "pom.xml")) && runQuiet(dir, "which", "mvn") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Maven dependencies in %s\n", dir)
-				runQuietTimeout(dir, 120*time.Second, "mvn", "dependency:resolve", "-q", "-B")
-				parts = append(parts, "AUTO-INSTALLED: Maven dependencies (already done, no need to install again)")
-				break
-			}
-		}
-	}
-
-	// Auto-resolve Gradle dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if (fileExists(filepath.Join(dir, "build.gradle")) || fileExists(filepath.Join(dir, "build.gradle.kts"))) &&
-				(runQuiet(dir, "which", "gradle") != "" || fileExists(filepath.Join(dir, "gradlew"))) {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Gradle dependencies in %s\n", dir)
-				gradleCmd := "gradle"
-				if fileExists(filepath.Join(dir, "gradlew")) {
-					gradleCmd = filepath.Join(dir, "gradlew")
-					os.Chmod(gradleCmd, 0o755)
-				}
-				runQuietTimeout(dir, 120*time.Second, gradleCmd, "dependencies", "--quiet")
-				parts = append(parts, "AUTO-INSTALLED: Gradle dependencies (already done, no need to install again)")
-				break
-			}
-		}
-	}
-
-	// Auto-restore .NET dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			hasProject := false
-			if matches, _ := filepath.Glob(filepath.Join(dir, "*.csproj")); len(matches) > 0 {
-				hasProject = true
-			} else if matches, _ := filepath.Glob(filepath.Join(dir, "*.sln")); len(matches) > 0 {
-				hasProject = true
-			} else if matches, _ := filepath.Glob(filepath.Join(dir, "*.fsproj")); len(matches) > 0 {
-				hasProject = true
-			}
-			if hasProject && runQuiet(dir, "which", "dotnet") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-restoring .NET packages in %s\n", dir)
-				runQuietTimeout(dir, 90*time.Second, "dotnet", "restore")
-				parts = append(parts, "AUTO-INSTALLED: .NET packages via dotnet restore (already done, no need to restore again)")
-				break
-			}
-		}
-	}
-
-	// Auto-setup Haskell Stack (download dependencies and build setup).
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "stack.yaml")) && runQuiet(dir, "which", "stack") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-setting up Haskell Stack in %s\n", dir)
-				runQuietTimeout(dir, 120*time.Second, "stack", "setup", "--no-terminal")
-				runQuietTimeout(dir, 120*time.Second, "stack", "build", "--only-dependencies", "--no-terminal")
-				parts = append(parts, "AUTO-INSTALLED: Haskell Stack dependencies (already done, no need to install again)")
-				break
-			}
-		}
-	}
-
-	// Auto-install Elixir Mix dependencies.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "mix.exs")) && runQuiet(dir, "which", "mix") != "" {
-				if !dirExists(filepath.Join(dir, "deps")) {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Elixir dependencies in %s\n", dir)
-					runQuietTimeout(dir, 90*time.Second, "mix", "deps.get")
-					runQuietTimeout(dir, 90*time.Second, "mix", "deps.compile")
-					parts = append(parts, "AUTO-INSTALLED: Elixir Mix dependencies (already done, no need to install again)")
-				}
-				break
-			}
-		}
-	}
-
-	// Auto-resolve Swift Package Manager dependencies.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "Package.swift")) && runQuiet(dir, "which", "swift") != "" {
-				if !dirExists(filepath.Join(dir, ".build")) {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Swift packages in %s\n", dir)
-					runQuietTimeout(dir, 120*time.Second, "swift", "package", "resolve")
-					parts = append(parts, "AUTO-INSTALLED: Swift packages via swift package resolve (already done, no need to resolve again)")
-				}
-				break
-			}
-		}
-	}
-
-	// Auto-install Dart/Flutter dependencies.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "pubspec.yaml")) {
-				if !dirExists(filepath.Join(dir, ".dart_tool")) {
-					if runQuiet(dir, "which", "flutter") != "" {
-						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Flutter dependencies in %s\n", dir)
-						runQuietTimeout(dir, 120*time.Second, "flutter", "pub", "get")
-						parts = append(parts, "AUTO-INSTALLED: Flutter dependencies via flutter pub get (already done, no need to install again)")
-					} else if runQuiet(dir, "which", "dart") != "" {
-						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Dart dependencies in %s\n", dir)
-						runQuietTimeout(dir, 90*time.Second, "dart", "pub", "get")
-						parts = append(parts, "AUTO-INSTALLED: Dart dependencies via dart pub get (already done, no need to install again)")
+		// Auto-install Deno dependencies from deno.json/deno.jsonc.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if (fileExists(filepath.Join(dir, "deno.json")) || fileExists(filepath.Join(dir, "deno.jsonc"))) &&
+					runQuiet(workDir, "which", "deno") != "" {
+					if !dirExists(filepath.Join(dir, "node_modules")) {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Deno dependencies in %s\n", dir)
+						runQuietTimeout(dir, 60*time.Second, "deno", "install")
+						parts = append(parts, "AUTO-INSTALLED: Deno dependencies (already done, no need to install again)")
 					}
+					break
 				}
-				break
 			}
 		}
-	}
 
-	// Julia: instantiate packages from Project.toml.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "Project.toml")) && runQuiet(dir, "which", "julia") != "" {
-				// Check if Manifest.toml already exists (already instantiated).
-				if !fileExists(filepath.Join(dir, "Manifest.toml")) {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-instantiating Julia packages in %s\n", dir)
-					runQuietTimeout(dir, 120*time.Second, "julia", "--project="+dir, "-e", "using Pkg; Pkg.instantiate()")
-					parts = append(parts, "AUTO-INSTALLED: Julia packages via Pkg.instantiate() (already done, no need to install again)")
+		// Auto-download Go module dependencies.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "go.mod")) && runQuiet(dir, "which", "go") != "" {
+					if !dirExists(filepath.Join(dir, "vendor")) { // skip if vendor/ already exists
+						fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Go module dependencies in %s\n", dir)
+						runQuietTimeout(dir, 60*time.Second, "go", "mod", "download")
+						parts = append(parts, "AUTO-INSTALLED: Go module dependencies (already done, no need to download again)")
+					}
+					break
 				}
-				break
 			}
 		}
-	}
 
-	// Gleam: download dependencies from gleam.toml.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "gleam.toml")) && runQuiet(dir, "which", "gleam") != "" {
-				if !dirExists(filepath.Join(dir, "build")) {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Gleam dependencies in %s\n", dir)
-					runQuietTimeout(dir, 90*time.Second, "gleam", "deps", "download")
-					parts = append(parts, "AUTO-INSTALLED: Gleam dependencies via gleam deps download (already done, no need to install again)")
+		// Auto-fetch Rust/Cargo dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "Cargo.toml")) && runQuiet(dir, "which", "cargo") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-fetching Cargo dependencies in %s\n", dir)
+					runQuietTimeout(dir, 60*time.Second, "cargo", "fetch", "--quiet")
+					parts = append(parts, "AUTO-INSTALLED: Cargo dependencies (already done, no need to fetch again)")
+					break
 				}
-				break
 			}
 		}
-	}
 
-	// OCaml/Dune: install opam dependencies if available.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "dune-project")) && runQuiet(dir, "which", "opam") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-installing OCaml dependencies in %s\n", dir)
-				// opam install . --deps-only -y installs project deps without building.
-				runQuietTimeout(dir, 120*time.Second, "opam", "install", ".", "--deps-only", "-y")
-				parts = append(parts, "AUTO-INSTALLED: OCaml opam dependencies (already done, no need to install again)")
-				break
-			}
-		}
-	}
-
-	// Auto-install Haskell Cabal dependencies (*.cabal without stack.yaml).
-	// Stack is handled above; this covers Cabal-only projects.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "stack.yaml")) {
-				break // already handled by Stack section above
-			}
-			if matches, _ := filepath.Glob(filepath.Join(dir, "*.cabal")); len(matches) > 0 {
-				if runQuiet(dir, "which", "cabal") != "" {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Cabal dependencies in %s\n", dir)
-					runQuietTimeout(dir, 30*time.Second, "cabal", "update")
-					runQuietTimeout(dir, 120*time.Second, "cabal", "build", "--only-dependencies")
-					parts = append(parts, "AUTO-INSTALLED: Cabal dependencies (already done, no need to install again)")
+		// Auto-install Ruby gems (Gemfile with bundle).
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "Gemfile")) && runQuiet(dir, "which", "bundle") != "" {
+					if !dirExists(filepath.Join(dir, "vendor", "bundle")) { // skip if already vendored
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Ruby gems in %s\n", dir)
+						runQuietTimeout(dir, 90*time.Second, "bundle", "install", "--quiet")
+						parts = append(parts, "AUTO-INSTALLED: Ruby gems via bundle install (already done, no need to install again)")
+					}
+					break
 				}
-				break
 			}
 		}
-	}
 
-	// Auto-resolve SBT (Scala) dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "build.sbt")) && runQuiet(dir, "which", "sbt") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-resolving SBT dependencies in %s\n", dir)
-				runQuietTimeout(dir, 120*time.Second, "sbt", "update")
-				parts = append(parts, "AUTO-INSTALLED: SBT dependencies (already done, no need to install again)")
-				break
-			}
-		}
-	}
-
-	// Auto-install Perl dependencies from cpanfile.
-	if networkAvailable {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "cpanfile")) && runQuiet(dir, "which", "cpanm") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-installing Perl dependencies from cpanfile in %s\n", dir)
-				runQuietTimeout(dir, 120*time.Second, "cpanm", "--installdeps", "--notest", "-q", ".")
-				parts = append(parts, "AUTO-INSTALLED: Perl dependencies via cpanm (already done, no need to install again)")
-				break
-			}
-		}
-	}
-
-	// Auto-download Clojure/Leiningen dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "project.clj")) && runQuiet(dir, "which", "lein") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Leiningen dependencies in %s\n", dir)
-				runQuietTimeout(dir, 120*time.Second, "lein", "deps")
-				parts = append(parts, "AUTO-INSTALLED: Leiningen dependencies via lein deps (already done, no need to install again)")
-				break
-			}
-		}
-	}
-
-	// Auto-download Erlang/Rebar3 dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "rebar.config")) && runQuiet(dir, "which", "rebar3") != "" {
-				fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Rebar3 dependencies in %s\n", dir)
-				runQuietTimeout(dir, 120*time.Second, "rebar3", "get-deps")
-				parts = append(parts, "AUTO-INSTALLED: Erlang dependencies via rebar3 get-deps (already done, no need to install again)")
-				break
-			}
-		}
-	}
-
-	// Auto-install Nim/nimble dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if matches, _ := filepath.Glob(filepath.Join(dir, "*.nimble")); len(matches) > 0 {
-				if runQuiet(dir, "which", "nimble") != "" {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Nimble dependencies in %s\n", dir)
-					runQuietTimeout(dir, 120*time.Second, "nimble", "install", "-y", "-d")
-					parts = append(parts, "AUTO-INSTALLED: Nimble dependencies (already done, no need to install again)")
+		// Auto-install PHP Composer dependencies.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "composer.json")) && runQuiet(dir, "which", "composer") != "" {
+					if !dirExists(filepath.Join(dir, "vendor")) {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Composer dependencies in %s\n", dir)
+						runQuietTimeout(dir, 90*time.Second, "composer", "install", "--no-interaction", "--quiet")
+						parts = append(parts, "AUTO-INSTALLED: Composer dependencies (already done, no need to install again)")
+					}
+					break
 				}
-				break
 			}
 		}
-	}
 
-	// Auto-install D/dub dependencies. DUB auto-fetches during build, so
-	// running `dub describe` triggers dependency resolution without building.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "dub.json")) || fileExists(filepath.Join(dir, "dub.sdl")) {
-				if runQuiet(dir, "which", "dub") != "" {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-resolving DUB dependencies in %s\n", dir)
-					runQuietTimeout(dir, 120*time.Second, "dub", "describe")
-					parts = append(parts, "AUTO-INSTALLED: DUB dependencies (already done, no need to install again)")
+		// Auto-install from pyproject.toml (modern Python projects without requirements.txt).
+		if networkAvailable && !foundPyDeps {
+			for _, dir := range []string{workDir, "/app"} {
+				pyprojectPath := filepath.Join(dir, "pyproject.toml")
+				if fileExists(pyprojectPath) && runQuiet(workDir, "which", "python3") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing from pyproject.toml in %s\n", dir)
+					installed := pipInstall(dir, "-q", "-e", ".")
+					if installed {
+						parts = append(parts, "AUTO-INSTALLED: Python project from pyproject.toml (already done)")
+					}
+					break
 				}
-				break
 			}
 		}
-	}
 
-	// Auto-install Crystal/shards dependencies.
-	if networkAvailable && !depsAlreadyInstalled {
-		for _, dir := range []string{workDir, "/app"} {
-			if fileExists(filepath.Join(dir, "shard.yml")) && runQuiet(dir, "which", "shards") != "" {
-				if !dirExists(filepath.Join(dir, "lib")) {
-					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Crystal shards in %s\n", dir)
-					runQuietTimeout(dir, 120*time.Second, "shards", "install")
-					parts = append(parts, "AUTO-INSTALLED: Crystal shards (already done, no need to install again)")
+		// Auto-resolve Maven dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "pom.xml")) && runQuiet(dir, "which", "mvn") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Maven dependencies in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "mvn", "dependency:resolve", "-q", "-B")
+					parts = append(parts, "AUTO-INSTALLED: Maven dependencies (already done, no need to install again)")
+					break
 				}
-				break
 			}
 		}
-	}
 
-	// Auto-detect and install Python packages from source imports.
-	// When no requirements.txt exists, scan .py files for third-party imports
-	// and install them. This saves 2-3 turns of ModuleNotFoundError debugging.
-	if networkAvailable && !foundPyDeps && runQuiet(workDir, "which", "python3") != "" {
-		if pkgs := detectPythonImports(workDir); len(pkgs) > 0 {
-			fmt.Fprintf(os.Stderr, "[gollem] auto-installing detected Python imports: %s\n", strings.Join(pkgs, " "))
-			pipInstall(workDir, append([]string{"-q"}, pkgs...)...)
-			parts = append(parts, "AUTO-INSTALLED: detected Python imports ("+strings.Join(pkgs, ", ")+")")
-		}
-	}
-
-	// Auto-detect and install system packages referenced in test scripts.
-	// Test scripts (.sh) often use commands like jq, bc, xmllint, xxd that
-	// may not be installed in the container. Detecting and installing them
-	// preemptively saves 1-2 turns of "command not found" debugging.
-	if networkAvailable && !depsAlreadyInstalled {
-		// Fix broken dpkg state before any apt operations. Many containers have
-		// interrupted dpkg from a prior build, causing all apt-get installs to fail
-		// with "dpkg was interrupted" until configured. This is the #1 container
-		// package manager failure mode.
-		runQuietTimeout(workDir, 30*time.Second, "dpkg", "--configure", "-a")
-
-		// Ensure curl is available — many verifiers and Python installers (uv, pip)
-		// need curl but containers often omit it. Auto-install preemptively.
-		if runQuiet(workDir, "which", "curl") == "" {
-			fmt.Fprintf(os.Stderr, "[gollem] auto-installing curl (required for package installers)\n")
-			runQuietTimeout(workDir, 30*time.Second, "apt-get", "update", "-qq")
-			runQuietTimeout(workDir, 30*time.Second, "apt-get", "install", "-y", "-q", "curl")
+		// Auto-resolve Gradle dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if (fileExists(filepath.Join(dir, "build.gradle")) || fileExists(filepath.Join(dir, "build.gradle.kts"))) &&
+					(runQuiet(dir, "which", "gradle") != "" || fileExists(filepath.Join(dir, "gradlew"))) {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Gradle dependencies in %s\n", dir)
+					gradleCmd := "gradle"
+					if fileExists(filepath.Join(dir, "gradlew")) {
+						gradleCmd = filepath.Join(dir, "gradlew")
+						//nolint:gosec // gradlew must be executable to run dependency resolution.
+						_ = os.Chmod(gradleCmd, 0o755)
+					}
+					runQuietTimeout(dir, 120*time.Second, gradleCmd, "dependencies", "--quiet")
+					parts = append(parts, "AUTO-INSTALLED: Gradle dependencies (already done, no need to install again)")
+					break
+				}
+			}
 		}
 
-		if sysPkgs := detectSystemPackagesFromTests(workDir); len(sysPkgs) > 0 {
-			fmt.Fprintf(os.Stderr, "[gollem] auto-installing system packages from test scripts: %s\n", strings.Join(sysPkgs, " "))
-			// Run apt-get update first — many containers have stale package lists
-			// and install fails with "Unable to locate package" without it.
-			runQuietTimeout(workDir, 30*time.Second, "apt-get", "update", "-qq")
-			runQuietTimeout(workDir, 60*time.Second, "apt-get", append([]string{"install", "-y", "-q"}, sysPkgs...)...)
-			parts = append(parts, "AUTO-INSTALLED: system packages ("+strings.Join(sysPkgs, ", ")+")")
+		// Auto-restore .NET dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				hasProject := false
+				if matches, _ := filepath.Glob(filepath.Join(dir, "*.csproj")); len(matches) > 0 {
+					hasProject = true
+				} else if matches, _ := filepath.Glob(filepath.Join(dir, "*.sln")); len(matches) > 0 {
+					hasProject = true
+				} else if matches, _ := filepath.Glob(filepath.Join(dir, "*.fsproj")); len(matches) > 0 {
+					hasProject = true
+				}
+				if hasProject && runQuiet(dir, "which", "dotnet") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-restoring .NET packages in %s\n", dir)
+					runQuietTimeout(dir, 90*time.Second, "dotnet", "restore")
+					parts = append(parts, "AUTO-INSTALLED: .NET packages via dotnet restore (already done, no need to restore again)")
+					break
+				}
+			}
 		}
-	}
 
-	// Mark dependencies as installed so subagents skip redundant installs.
-	if !depsAlreadyInstalled {
-		os.WriteFile(depsMarker, []byte("1"), 0o644)
+		// Auto-setup Haskell Stack (download dependencies and build setup).
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "stack.yaml")) && runQuiet(dir, "which", "stack") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-setting up Haskell Stack in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "stack", "setup", "--no-terminal")
+					runQuietTimeout(dir, 120*time.Second, "stack", "build", "--only-dependencies", "--no-terminal")
+					parts = append(parts, "AUTO-INSTALLED: Haskell Stack dependencies (already done, no need to install again)")
+					break
+				}
+			}
+		}
+
+		// Auto-install Elixir Mix dependencies.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "mix.exs")) && runQuiet(dir, "which", "mix") != "" {
+					if !dirExists(filepath.Join(dir, "deps")) {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Elixir dependencies in %s\n", dir)
+						runQuietTimeout(dir, 90*time.Second, "mix", "deps.get")
+						runQuietTimeout(dir, 90*time.Second, "mix", "deps.compile")
+						parts = append(parts, "AUTO-INSTALLED: Elixir Mix dependencies (already done, no need to install again)")
+					}
+					break
+				}
+			}
+		}
+
+		// Auto-resolve Swift Package Manager dependencies.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "Package.swift")) && runQuiet(dir, "which", "swift") != "" {
+					if !dirExists(filepath.Join(dir, ".build")) {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-resolving Swift packages in %s\n", dir)
+						runQuietTimeout(dir, 120*time.Second, "swift", "package", "resolve")
+						parts = append(parts, "AUTO-INSTALLED: Swift packages via swift package resolve (already done, no need to resolve again)")
+					}
+					break
+				}
+			}
+		}
+
+		// Auto-install Dart/Flutter dependencies.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "pubspec.yaml")) {
+					if !dirExists(filepath.Join(dir, ".dart_tool")) {
+						if runQuiet(dir, "which", "flutter") != "" {
+							fmt.Fprintf(os.Stderr, "[gollem] auto-installing Flutter dependencies in %s\n", dir)
+							runQuietTimeout(dir, 120*time.Second, "flutter", "pub", "get")
+							parts = append(parts, "AUTO-INSTALLED: Flutter dependencies via flutter pub get (already done, no need to install again)")
+						} else if runQuiet(dir, "which", "dart") != "" {
+							fmt.Fprintf(os.Stderr, "[gollem] auto-installing Dart dependencies in %s\n", dir)
+							runQuietTimeout(dir, 90*time.Second, "dart", "pub", "get")
+							parts = append(parts, "AUTO-INSTALLED: Dart dependencies via dart pub get (already done, no need to install again)")
+						}
+					}
+					break
+				}
+			}
+		}
+
+		// Julia: instantiate packages from Project.toml.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "Project.toml")) && runQuiet(dir, "which", "julia") != "" {
+					// Check if Manifest.toml already exists (already instantiated).
+					if !fileExists(filepath.Join(dir, "Manifest.toml")) {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-instantiating Julia packages in %s\n", dir)
+						runQuietTimeout(dir, 120*time.Second, "julia", "--project="+dir, "-e", "using Pkg; Pkg.instantiate()")
+						parts = append(parts, "AUTO-INSTALLED: Julia packages via Pkg.instantiate() (already done, no need to install again)")
+					}
+					break
+				}
+			}
+		}
+
+		// Gleam: download dependencies from gleam.toml.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "gleam.toml")) && runQuiet(dir, "which", "gleam") != "" {
+					if !dirExists(filepath.Join(dir, "build")) {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Gleam dependencies in %s\n", dir)
+						runQuietTimeout(dir, 90*time.Second, "gleam", "deps", "download")
+						parts = append(parts, "AUTO-INSTALLED: Gleam dependencies via gleam deps download (already done, no need to install again)")
+					}
+					break
+				}
+			}
+		}
+
+		// OCaml/Dune: install opam dependencies if available.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "dune-project")) && runQuiet(dir, "which", "opam") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing OCaml dependencies in %s\n", dir)
+					// opam install . --deps-only -y installs project deps without building.
+					runQuietTimeout(dir, 120*time.Second, "opam", "install", ".", "--deps-only", "-y")
+					parts = append(parts, "AUTO-INSTALLED: OCaml opam dependencies (already done, no need to install again)")
+					break
+				}
+			}
+		}
+
+		// Auto-install Haskell Cabal dependencies (*.cabal without stack.yaml).
+		// Stack is handled above; this covers Cabal-only projects.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "stack.yaml")) {
+					break // already handled by Stack section above
+				}
+				if matches, _ := filepath.Glob(filepath.Join(dir, "*.cabal")); len(matches) > 0 {
+					if runQuiet(dir, "which", "cabal") != "" {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Cabal dependencies in %s\n", dir)
+						runQuietTimeout(dir, 30*time.Second, "cabal", "update")
+						runQuietTimeout(dir, 120*time.Second, "cabal", "build", "--only-dependencies")
+						parts = append(parts, "AUTO-INSTALLED: Cabal dependencies (already done, no need to install again)")
+					}
+					break
+				}
+			}
+		}
+
+		// Auto-resolve SBT (Scala) dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "build.sbt")) && runQuiet(dir, "which", "sbt") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-resolving SBT dependencies in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "sbt", "update")
+					parts = append(parts, "AUTO-INSTALLED: SBT dependencies (already done, no need to install again)")
+					break
+				}
+			}
+		}
+
+		// Auto-install Perl dependencies from cpanfile.
+		if networkAvailable {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "cpanfile")) && runQuiet(dir, "which", "cpanm") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-installing Perl dependencies from cpanfile in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "cpanm", "--installdeps", "--notest", "-q", ".")
+					parts = append(parts, "AUTO-INSTALLED: Perl dependencies via cpanm (already done, no need to install again)")
+					break
+				}
+			}
+		}
+
+		// Auto-download Clojure/Leiningen dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "project.clj")) && runQuiet(dir, "which", "lein") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Leiningen dependencies in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "lein", "deps")
+					parts = append(parts, "AUTO-INSTALLED: Leiningen dependencies via lein deps (already done, no need to install again)")
+					break
+				}
+			}
+		}
+
+		// Auto-download Erlang/Rebar3 dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "rebar.config")) && runQuiet(dir, "which", "rebar3") != "" {
+					fmt.Fprintf(os.Stderr, "[gollem] auto-downloading Rebar3 dependencies in %s\n", dir)
+					runQuietTimeout(dir, 120*time.Second, "rebar3", "get-deps")
+					parts = append(parts, "AUTO-INSTALLED: Erlang dependencies via rebar3 get-deps (already done, no need to install again)")
+					break
+				}
+			}
+		}
+
+		// Auto-install Nim/nimble dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if matches, _ := filepath.Glob(filepath.Join(dir, "*.nimble")); len(matches) > 0 {
+					if runQuiet(dir, "which", "nimble") != "" {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Nimble dependencies in %s\n", dir)
+						runQuietTimeout(dir, 120*time.Second, "nimble", "install", "-y", "-d")
+						parts = append(parts, "AUTO-INSTALLED: Nimble dependencies (already done, no need to install again)")
+					}
+					break
+				}
+			}
+		}
+
+		// Auto-install D/dub dependencies. DUB auto-fetches during build, so
+		// running `dub describe` triggers dependency resolution without building.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "dub.json")) || fileExists(filepath.Join(dir, "dub.sdl")) {
+					if runQuiet(dir, "which", "dub") != "" {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-resolving DUB dependencies in %s\n", dir)
+						runQuietTimeout(dir, 120*time.Second, "dub", "describe")
+						parts = append(parts, "AUTO-INSTALLED: DUB dependencies (already done, no need to install again)")
+					}
+					break
+				}
+			}
+		}
+
+		// Auto-install Crystal/shards dependencies.
+		if networkAvailable && !depsAlreadyInstalled {
+			for _, dir := range []string{workDir, "/app"} {
+				if fileExists(filepath.Join(dir, "shard.yml")) && runQuiet(dir, "which", "shards") != "" {
+					if !dirExists(filepath.Join(dir, "lib")) {
+						fmt.Fprintf(os.Stderr, "[gollem] auto-installing Crystal shards in %s\n", dir)
+						runQuietTimeout(dir, 120*time.Second, "shards", "install")
+						parts = append(parts, "AUTO-INSTALLED: Crystal shards (already done, no need to install again)")
+					}
+					break
+				}
+			}
+		}
+
+		// Auto-detect and install Python packages from source imports.
+		// When no requirements.txt exists, scan .py files for third-party imports
+		// and install them. This saves 2-3 turns of ModuleNotFoundError debugging.
+		if networkAvailable && !foundPyDeps && runQuiet(workDir, "which", "python3") != "" {
+			if pkgs := detectPythonImports(workDir); len(pkgs) > 0 {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing detected Python imports: %s\n", strings.Join(pkgs, " "))
+				pipInstall(workDir, append([]string{"-q"}, pkgs...)...)
+				parts = append(parts, "AUTO-INSTALLED: detected Python imports ("+strings.Join(pkgs, ", ")+")")
+			}
+		}
+
+		// Auto-detect and install system packages referenced in test scripts.
+		// Test scripts (.sh) often use commands like jq, bc, xmllint, xxd that
+		// may not be installed in the container. Detecting and installing them
+		// preemptively saves 1-2 turns of "command not found" debugging.
+		if networkAvailable && !depsAlreadyInstalled {
+			// Fix broken dpkg state before any apt operations. Many containers have
+			// interrupted dpkg from a prior build, causing all apt-get installs to fail
+			// with "dpkg was interrupted" until configured. This is the #1 container
+			// package manager failure mode.
+			runQuietTimeout(workDir, 30*time.Second, "dpkg", "--configure", "-a")
+
+			// Ensure curl is available — many verifiers and Python installers (uv, pip)
+			// need curl but containers often omit it. Auto-install preemptively.
+			if runQuiet(workDir, "which", "curl") == "" {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing curl (required for package installers)\n")
+				runQuietTimeout(workDir, 30*time.Second, "apt-get", "update", "-qq")
+				runQuietTimeout(workDir, 30*time.Second, "apt-get", "install", "-y", "-q", "curl")
+			}
+
+			if sysPkgs := detectSystemPackagesFromTests(workDir); len(sysPkgs) > 0 {
+				fmt.Fprintf(os.Stderr, "[gollem] auto-installing system packages from test scripts: %s\n", strings.Join(sysPkgs, " "))
+				// Run apt-get update first — many containers have stale package lists
+				// and install fails with "Unable to locate package" without it.
+				runQuietTimeout(workDir, 30*time.Second, "apt-get", "update", "-qq")
+				runQuietTimeout(workDir, 60*time.Second, "apt-get", append([]string{"install", "-y", "-q"}, sysPkgs...)...)
+				parts = append(parts, "AUTO-INSTALLED: system packages ("+strings.Join(sysPkgs, ", ")+")")
+			}
+		}
+
+		// Mark dependencies as installed so subagents skip redundant installs.
+		if !depsAlreadyInstalled {
+			//nolint:gosec // deps marker is non-sensitive workspace state.
+			_ = os.WriteFile(depsMarker, []byte("1"), 0o644)
+		}
 	}
 
 	// Detect .env files and surface environment variable requirements.
@@ -1683,9 +1695,9 @@ func readFileTruncated(path string, maxBytes int) string {
 // files in the working directory.
 func detectProject(workDir string) (language, buildSystem string) {
 	markers := []struct {
-		file     string
-		lang     string
-		build    string
+		file  string
+		lang  string
+		build string
 	}{
 		{"go.mod", "Go", "go"},
 		{"Cargo.toml", "Rust", "cargo"},
@@ -1799,6 +1811,15 @@ func pipInstall(workDir string, args ...string) bool {
 		}
 	}
 	return false
+}
+
+func envEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // runQuiet runs a command in workDir and returns trimmed stdout, or empty
@@ -2023,7 +2044,7 @@ func autoReadTestRecursive(dir string, parts *[]string, maxBytes int, remaining 
 			break
 		}
 		if skeleton := extractFileStructure(path); skeleton != "" {
-			*parts = append(*parts, fmt.Sprintf("\n## Large test file structure (DO NOT MODIFY): %s", path))
+			*parts = append(*parts, "\n## Large test file structure (DO NOT MODIFY): "+path)
 			*parts = append(*parts, skeleton)
 			*parts = append(*parts, "NOTE: File too large to auto-read. Use view tool to read specific test functions.")
 			*budget -= len(skeleton)
@@ -2152,7 +2173,7 @@ func autoReadSourceRecursive(dir string, parts *[]string, maxBytes int, remainin
 			break
 		}
 		if skeleton := extractFileStructure(path); skeleton != "" {
-			*parts = append(*parts, fmt.Sprintf("\n## Source file structure (too large to auto-read): %s", path))
+			*parts = append(*parts, "\n## Source file structure (too large to auto-read): "+path)
 			*parts = append(*parts, skeleton)
 			*budget -= len(skeleton)
 		}
@@ -3324,7 +3345,7 @@ func addJSNamesToResult(names, mod string, moduleToFile map[string]string, resul
 // determine the exact API the solution needs to implement. Goes beyond
 // extractImportedNames by showing HOW functions are called (parameter names,
 // argument patterns), not just WHAT is imported.
-// Example: from "assert solve(3, [1,2,3]) == 6" → "solve(n, list) → called with int and list args"
+// Example: from "assert solve(3, [1,2,3]) == 6" → "solve(n, list) → called with int and list args".
 func extractFunctionSignatures(workDir string) []string {
 	testDirs := []string{"/tests", filepath.Join(workDir, "tests"), filepath.Join(workDir, "test")}
 	var signatures []string
@@ -3440,7 +3461,7 @@ func extractPythonFunctionSignatures(content string) []string {
 		// Look for function calls: word( or word.word(
 		// Patterns: "result = solve(n, k)", "assert process(data) == expected",
 		// "solution.solve(3, [1,2,3])"
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -3476,9 +3497,10 @@ func extractPythonFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -3549,7 +3571,7 @@ func extractJSFunctionSignatures(content string) []string {
 			continue
 		}
 
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -3575,9 +3597,10 @@ func extractJSFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -3650,22 +3673,22 @@ func extractGoFunctionSignatures(content string) []string {
 		"errors":  true,
 		"log":     true,
 		"Fatal":   true, "Fatalf": true,
-		"Error":   true, "Errorf": true,
-		"Run":     true, "Parallel": true,
-		"Equal":       true, "NotEqual": true,
-		"True":        true, "False": true,
-		"Nil":         true, "NotNil": true,
-		"Contains":    true, "ElementsMatch": true,
-		"NoError":     true, "EqualError": true,
-		"InDelta":     true, "InEpsilon": true,
-		"Len":         true, "Empty": true,
-		"Require":     true,
-		"assert":      true, "require": true,
-		"append":      true, "make": true, "len": true, "cap": true,
-		"new":         true, "delete": true, "close": true,
-		"panic":       true, "recover": true, "copy": true,
-		"Sprintf":     true, "Printf": true, "Println": true,
-		"Fprintf":     true,
+		"Error": true, "Errorf": true,
+		"Run": true, "Parallel": true,
+		"Equal": true, "NotEqual": true,
+		"True": true, "False": true,
+		"Nil": true, "NotNil": true,
+		"Contains": true, "ElementsMatch": true,
+		"NoError": true, "EqualError": true,
+		"InDelta": true, "InEpsilon": true,
+		"Len": true, "Empty": true,
+		"Require": true,
+		"assert":  true, "require": true,
+		"append": true, "make": true, "len": true, "cap": true,
+		"new": true, "delete": true, "close": true,
+		"panic": true, "recover": true, "copy": true,
+		"Sprintf": true, "Printf": true, "Println": true,
+		"Fprintf": true,
 	}
 
 	for _, line := range strings.Split(content, "\n") {
@@ -3675,7 +3698,7 @@ func extractGoFunctionSignatures(content string) []string {
 			continue
 		}
 
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -3708,9 +3731,10 @@ func extractGoFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -3764,19 +3788,19 @@ func extractRubyFunctionSignatures(content string) []string {
 	seen := make(map[string]bool)
 
 	skipFuncs := map[string]bool{
-		"describe":   true, "it": true, "context": true,
-		"before":     true, "after": true, "let": true,
-		"expect":     true, "eq": true, "be": true,
-		"include":    true, "raise_error": true, "match": true,
-		"assert":     true, "assert_equal": true, "assert_nil": true,
+		"describe": true, "it": true, "context": true,
+		"before": true, "after": true, "let": true,
+		"expect": true, "eq": true, "be": true,
+		"include": true, "raise_error": true, "match": true,
+		"assert": true, "assert_equal": true, "assert_nil": true,
 		"assert_raises": true, "assert_includes": true,
 		"assert_in_delta": true, "assert_match": true,
-		"refute":     true, "refute_equal": true, "refute_nil": true,
-		"require":    true, "require_relative": true,
-		"puts":       true, "print": true, "p": true, "pp": true,
-		"new":        true, "to": true, "not_to": true, "be_within": true,
-		"of":         true,
-		"subject":    true, "is_expected": true,
+		"refute": true, "refute_equal": true, "refute_nil": true,
+		"require": true, "require_relative": true,
+		"puts": true, "print": true, "p": true, "pp": true,
+		"new": true, "to": true, "not_to": true, "be_within": true,
+		"of":      true,
+		"subject": true, "is_expected": true,
 	}
 
 	for _, line := range strings.Split(content, "\n") {
@@ -3787,7 +3811,7 @@ func extractRubyFunctionSignatures(content string) []string {
 			continue
 		}
 
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -3813,9 +3837,10 @@ func extractRubyFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -3868,21 +3893,21 @@ func extractRustFunctionSignatures(content string) []string {
 	seen := make(map[string]bool)
 
 	skipFuncs := map[string]bool{
-		"assert":        true, "assert_eq": true, "assert_ne": true,
-		"debug_assert":  true, "debug_assert_eq": true, "debug_assert_ne": true,
-		"panic":         true, "unreachable": true, "todo": true,
+		"assert": true, "assert_eq": true, "assert_ne": true,
+		"debug_assert": true, "debug_assert_eq": true, "debug_assert_ne": true,
+		"panic": true, "unreachable": true, "todo": true,
 		"unimplemented": true,
 		"println":       true, "print": true, "eprintln": true, "eprint": true,
-		"format":        true, "write": true, "writeln": true,
-		"vec":           true, "Vec": true, "String": true, "Box": true,
-		"Some":          true, "None": true, "Ok": true, "Err": true,
-		"unwrap":        true, "expect": true, "unwrap_or": true,
-		"clone":         true, "into": true, "from": true, "as_ref": true,
-		"iter":          true, "collect": true, "map": true, "filter": true,
-		"fold":          true, "for_each": true,
-		"len":           true, "is_empty": true, "push": true, "pop": true,
-		"contains":      true, "get": true, "insert": true, "remove": true,
-		"abs_diff":      true, "abs": true, "min": true, "max": true,
+		"format": true, "write": true, "writeln": true,
+		"vec": true, "Vec": true, "String": true, "Box": true,
+		"Some": true, "None": true, "Ok": true, "Err": true,
+		"unwrap": true, "expect": true, "unwrap_or": true,
+		"clone": true, "into": true, "from": true, "as_ref": true,
+		"iter": true, "collect": true, "map": true, "filter": true,
+		"fold": true, "for_each": true,
+		"len": true, "is_empty": true, "push": true, "pop": true,
+		"contains": true, "get": true, "insert": true, "remove": true,
+		"abs_diff": true, "abs": true, "min": true, "max": true,
 	}
 
 	for _, line := range strings.Split(content, "\n") {
@@ -3893,7 +3918,7 @@ func extractRustFunctionSignatures(content string) []string {
 			continue
 		}
 
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -3929,9 +3954,10 @@ func extractRustFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -3987,33 +4013,33 @@ func extractJavaFunctionSignatures(content string) []string {
 
 	skipFuncs := map[string]bool{
 		// JUnit assertions.
-		"assertEquals":         true, "assertNotEquals": true,
-		"assertTrue":           true, "assertFalse": true,
-		"assertNull":           true, "assertNotNull": true,
-		"assertArrayEquals":    true, "assertThrows": true,
-		"assertDoesNotThrow":   true, "assertAll": true,
-		"assertTimeout":        true, "assertIterableEquals": true,
-		"assertLinesMatch":     true, "assertSame": true,
-		"assertNotSame":        true, "fail": true,
+		"assertEquals": true, "assertNotEquals": true,
+		"assertTrue": true, "assertFalse": true,
+		"assertNull": true, "assertNotNull": true,
+		"assertArrayEquals": true, "assertThrows": true,
+		"assertDoesNotThrow": true, "assertAll": true,
+		"assertTimeout": true, "assertIterableEquals": true,
+		"assertLinesMatch": true, "assertSame": true,
+		"assertNotSame": true, "fail": true,
 		// Hamcrest matchers.
 		"assertThat": true, "is": true, "equalTo": true, "not": true,
 		"hasItem": true, "hasSize": true, "containsString": true,
 		"closeTo": true, "greaterThan": true, "lessThan": true,
 		// Java stdlib.
-		"println":     true, "print": true, "printf": true,
-		"format":      true, "valueOf": true, "toString": true,
-		"parseInt":    true, "parseDouble": true, "parseLong": true,
-		"asList":      true, "of": true, "copyOf": true,
-		"stream":      true, "collect": true, "map": true, "filter": true,
-		"forEach":     true, "reduce": true, "sorted": true,
-		"add":         true, "get": true, "put": true, "remove": true,
-		"contains":    true, "size": true, "isEmpty": true,
-		"toArray":     true, "subList": true, "sort": true,
-		"abs":         true, "min": true, "max": true, "sqrt": true,
-		"pow":         true, "round": true,
-		"equals":      true, "hashCode": true, "compareTo": true,
-		"length":      true, "charAt": true, "substring": true,
-		"split":       true, "trim": true, "replace": true, "matches": true,
+		"println": true, "print": true, "printf": true,
+		"format": true, "valueOf": true, "toString": true,
+		"parseInt": true, "parseDouble": true, "parseLong": true,
+		"asList": true, "of": true, "copyOf": true,
+		"stream": true, "collect": true, "map": true, "filter": true,
+		"forEach": true, "reduce": true, "sorted": true,
+		"add": true, "get": true, "put": true, "remove": true,
+		"contains": true, "size": true, "isEmpty": true,
+		"toArray": true, "subList": true, "sort": true,
+		"abs": true, "min": true, "max": true, "sqrt": true,
+		"pow": true, "round": true,
+		"equals": true, "hashCode": true, "compareTo": true,
+		"length": true, "charAt": true, "substring": true,
+		"split": true, "trim": true, "replace": true, "matches": true,
 		// Test setup.
 		"setUp": true, "tearDown": true, "beforeEach": true, "afterEach": true,
 	}
@@ -4027,7 +4053,7 @@ func extractJavaFunctionSignatures(content string) []string {
 			continue
 		}
 
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -4063,9 +4089,10 @@ func extractJavaFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -4119,37 +4146,37 @@ func extractCSharpFunctionSignatures(content string) []string {
 
 	skipFuncs := map[string]bool{
 		// NUnit assertions.
-		"AreEqual":    true, "AreNotEqual": true,
-		"IsTrue":      true, "IsFalse": true,
-		"IsNull":      true, "IsNotNull": true,
-		"That":        true, "Throws": true,
+		"AreEqual": true, "AreNotEqual": true,
+		"IsTrue": true, "IsFalse": true,
+		"IsNull": true, "IsNotNull": true,
+		"That": true, "Throws": true,
 		"DoesNotThrow": true, "IsEmpty": true,
 		"IsInstanceOf": true, "Greater": true, "Less": true,
-		"Contains":    true, "Pass": true, "Fail": true,
+		"Contains": true, "Pass": true, "Fail": true,
 		// xUnit assertions.
-		"Equal":       true, "NotEqual": true,
-		"True":        true, "False": true,
-		"Null":        true, "NotNull": true,
-		"Empty":       true, "NotEmpty": true,
-		"Single":      true, "InRange": true,
-		"Collection":  true,
+		"Equal": true, "NotEqual": true,
+		"True": true, "False": true,
+		"Null": true, "NotNull": true,
+		"Empty": true, "NotEmpty": true,
+		"Single": true, "InRange": true,
+		"Collection": true,
 		// MSTest assertions.
 		"AreEqual_": true, "AreSame": true,
 		"IsNotNull_": true,
 		// C# stdlib.
-		"WriteLine":   true, "Write": true, "ReadLine": true,
-		"ToString":    true, "Parse": true, "TryParse": true,
-		"Format":      true, "Join": true, "Split": true,
-		"Trim":        true, "Replace": true, "Substring": true,
-		"ToLower":     true, "ToUpper": true,
-		"Add":         true, "Remove": true, "Insert": true,
-		"Count":       true, "Clear": true, "Sort": true,
-		"ToList":      true, "ToArray": true, "ToDictionary": true,
-		"Select":      true, "Where": true, "OrderBy": true,
+		"WriteLine": true, "Write": true, "ReadLine": true,
+		"ToString": true, "Parse": true, "TryParse": true,
+		"Format": true, "Join": true, "Split": true,
+		"Trim": true, "Replace": true, "Substring": true,
+		"ToLower": true, "ToUpper": true,
+		"Add": true, "Remove": true, "Insert": true,
+		"Count": true, "Clear": true, "Sort": true,
+		"ToList": true, "ToArray": true, "ToDictionary": true,
+		"Select": true, "Where": true, "OrderBy": true,
 		"FirstOrDefault": true, "Any": true, "All": true,
-		"Sum":         true, "Average": true, "Min": true, "Max": true,
-		"Abs":         true, "Sqrt": true, "Pow": true, "Round": true,
-		"GetType":     true, "Equals": true, "GetHashCode": true,
+		"Sum": true, "Average": true, "Min": true, "Max": true,
+		"Abs": true, "Sqrt": true, "Pow": true, "Round": true,
+		"GetType": true, "Equals": true, "GetHashCode": true,
 		// Test setup.
 		"SetUp": true, "TearDown": true, "TestInitialize": true,
 	}
@@ -4163,7 +4190,7 @@ func extractCSharpFunctionSignatures(content string) []string {
 			continue
 		}
 
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -4198,9 +4225,10 @@ func extractCSharpFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -4302,7 +4330,7 @@ func extractCppFunctionSignatures(content string) []string {
 			continue
 		}
 
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -4338,9 +4366,10 @@ func extractCppFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -4396,26 +4425,26 @@ func extractElixirFunctionSignatures(content string) []string {
 
 	skipFuncs := map[string]bool{
 		// ExUnit assertions/helpers.
-		"assert":          true, "refute": true,
-		"assert_receive":  true, "refute_receive": true,
-		"assert_raise":    true, "assert_in_delta": true,
-		"catch_error":     true, "catch_exit": true,
-		"describe":        true, "test": true,
-		"setup":           true, "setup_all": true, "on_exit": true,
+		"assert": true, "refute": true,
+		"assert_receive": true, "refute_receive": true,
+		"assert_raise": true, "assert_in_delta": true,
+		"catch_error": true, "catch_exit": true,
+		"describe": true, "test": true,
+		"setup": true, "setup_all": true, "on_exit": true,
 		"start_supervised": true,
 		// Kernel/stdlib.
-		"puts":     true, "inspect": true, "raise": true,
-		"is_nil":   true, "is_list": true, "is_map": true,
-		"is_atom":  true, "is_binary": true, "is_integer": true,
+		"puts": true, "inspect": true, "raise": true,
+		"is_nil": true, "is_list": true, "is_map": true,
+		"is_atom": true, "is_binary": true, "is_integer": true,
 		"to_string": true, "to_integer": true, "to_float": true,
-		"length":   true, "hd": true, "tl": true, "elem": true,
-		"get_in":   true, "put_in": true, "update_in": true,
-		"send":     true, "spawn": true, "self": true,
+		"length": true, "hd": true, "tl": true, "elem": true,
+		"get_in": true, "put_in": true, "update_in": true,
+		"send": true, "spawn": true, "self": true,
 		// Elixir stdlib modules (commonly used as prefixes).
-		"IO":      true, "Enum": true, "Map": true, "List": true,
-		"String":  true, "Keyword": true, "Tuple": true, "File": true,
-		"Path":    true, "Agent": true, "Task": true, "GenServer": true,
-		"Logger":  true, "Regex": true, "Stream": true,
+		"IO": true, "Enum": true, "Map": true, "List": true,
+		"String": true, "Keyword": true, "Tuple": true, "File": true,
+		"Path": true, "Agent": true, "Task": true, "GenServer": true,
+		"Logger": true, "Regex": true, "Stream": true,
 		"Integer": true, "Float": true,
 		// Common stdlib function names.
 		"map": true, "filter": true, "reduce": true, "each": true,
@@ -4434,7 +4463,7 @@ func extractElixirFunctionSignatures(content string) []string {
 			continue
 		}
 
-		for i := 0; i < len(trimmed)-2; i++ {
+		for i := range len(trimmed) - 2 {
 			if trimmed[i] != '(' {
 				continue
 			}
@@ -4467,9 +4496,10 @@ func extractElixirFunctionSignatures(content string) []string {
 			depth := 1
 			argEnd := argStart
 			for argEnd < len(trimmed) && depth > 0 {
-				if trimmed[argEnd] == '(' {
+				switch trimmed[argEnd] {
+				case '(':
 					depth++
-				} else if trimmed[argEnd] == ')' {
+				case ')':
 					depth--
 				}
 				argEnd++
@@ -4626,7 +4656,7 @@ func detectComparisonTolerances(workDir string) []string {
 }
 
 // extractKVFromLine extracts the value for a key=value pattern in a line.
-// E.g., extractKVFromLine("isclose(a, b, rel_tol=1e-9)", "rel_tol") → "1e-9"
+// E.g., extractKVFromLine("isclose(a, b, rel_tol=1e-9)", "rel_tol") → "1e-9".
 func extractKVFromLine(line, key string) string {
 	idx := strings.Index(line, key+"=")
 	if idx < 0 {
@@ -5083,7 +5113,7 @@ func autoReadDiffExpectedFiles(workDir string, parts *[]string, budget int) int 
 			}
 			content := readFileTruncated(candidate, limit)
 			if content != "" {
-				*parts = append(*parts, fmt.Sprintf("\n## Expected output reference (from test diff): %s", candidate))
+				*parts = append(*parts, "\n## Expected output reference (from test diff): "+candidate)
 				*parts = append(*parts, content)
 				*parts = append(*parts, "Your output MUST match this file exactly. Verify with: diff <expected> <your_output>")
 				budget -= len(content)
@@ -5652,7 +5682,8 @@ func chmodScripts(scripts []string) {
 		if strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash") ||
 			strings.HasSuffix(lower, ".py") || strings.HasSuffix(lower, ".rb") ||
 			strings.HasSuffix(lower, ".pl") {
-			os.Chmod(s, 0o755)
+			//nolint:gosec // scripts must be executable to run verification commands.
+			_ = os.Chmod(s, 0o755)
 		}
 	}
 }
@@ -5684,7 +5715,8 @@ func chmodScriptsInDirRecursive(dir string, depth, maxDepth int) {
 		if strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash") ||
 			strings.HasSuffix(lower, ".py") || strings.HasSuffix(lower, ".rb") ||
 			strings.HasSuffix(lower, ".pl") {
-			os.Chmod(filepath.Join(dir, entry.Name()), 0o755)
+			//nolint:gosec // scripts must be executable to run verification commands.
+			_ = os.Chmod(filepath.Join(dir, entry.Name()), 0o755)
 		}
 	}
 }
@@ -5708,7 +5740,7 @@ func detectAndActivateVenv(workDir string) string {
 			binDir := filepath.Join(vp, "bin")
 			currentPath := os.Getenv("PATH")
 			if !strings.Contains(currentPath, binDir) {
-				os.Setenv("PATH", binDir+":"+currentPath)
+				_ = os.Setenv("PATH", binDir+":"+currentPath)
 			}
 			return fmt.Sprintf("Python venv detected: %s (auto-activated — python/pip resolve to venv)", vp)
 		}
@@ -5815,21 +5847,21 @@ func detectPythonImports(workDir string) []string {
 		"bitstring":    "bitstring",
 		"elftools":     "pyelftools",
 		// Test-related packages (common in TB2 test scripts).
-		"hypothesis":   "hypothesis",
-		"freezegun":    "freezegun",
-		"mock":         "mock",
-		"responses":    "responses",
-		"faker":        "Faker",
-		"factory":      "factory-boy",
-		"parameterized": "parameterized",
-		"colorama":     "colorama",
-		"tabulate":     "tabulate",
-		"jinja2":       "Jinja2",
-		"Levenshtein":  "python-Levenshtein",
-		"regex":        "regex",
-		"orjson":       "orjson",
-		"ujson":        "ujson",
-		"xxhash":       "xxhash",
+		"hypothesis":       "hypothesis",
+		"freezegun":        "freezegun",
+		"mock":             "mock",
+		"responses":        "responses",
+		"faker":            "Faker",
+		"factory":          "factory-boy",
+		"parameterized":    "parameterized",
+		"colorama":         "colorama",
+		"tabulate":         "tabulate",
+		"jinja2":           "Jinja2",
+		"Levenshtein":      "python-Levenshtein",
+		"regex":            "regex",
+		"orjson":           "orjson",
+		"ujson":            "ujson",
+		"xxhash":           "xxhash",
 		"sortedcontainers": "sortedcontainers",
 		// Crypto and security.
 		"cryptography": "cryptography",
@@ -5846,84 +5878,84 @@ func detectPythonImports(workDir string) []string {
 		"more_itertools": "more-itertools",
 		"bitarray":       "bitarray",
 		// Image processing and scientific.
-		"imageio":        "imageio",
-		"skfuzzy":        "scikit-fuzzy",
-		"astropy":        "astropy",
-		"Bio":            "biopython",
-		"rdkit":          "rdkit",
-		"shapely":        "shapely",
-		"fiona":          "fiona",
-		"geopandas":      "geopandas",
+		"imageio":   "imageio",
+		"skfuzzy":   "scikit-fuzzy",
+		"astropy":   "astropy",
+		"Bio":       "biopython",
+		"rdkit":     "rdkit",
+		"shapely":   "shapely",
+		"fiona":     "fiona",
+		"geopandas": "geopandas",
 		// Concurrency and async.
-		"trio":           "trio",
-		"anyio":          "anyio",
-		"gevent":         "gevent",
+		"trio":   "trio",
+		"anyio":  "anyio",
+		"gevent": "gevent",
 		// Serialization and compression.
-		"cbor2":          "cbor2",
-		"bson":           "pymongo",
-		"blosc":          "blosc",
-		"zstandard":      "zstandard",
-		"lz4":            "lz4",
+		"cbor2":     "cbor2",
+		"bson":      "pymongo",
+		"blosc":     "blosc",
+		"zstandard": "zstandard",
+		"lz4":       "lz4",
 		// Math and optimization.
-		"pulp":           "PuLP",
-		"cvxpy":          "cvxpy",
-		"z3":             "z3-solver",
-		"ortools":        "ortools",
-		"statsmodels":    "statsmodels",
+		"pulp":        "PuLP",
+		"cvxpy":       "cvxpy",
+		"z3":          "z3-solver",
+		"ortools":     "ortools",
+		"statsmodels": "statsmodels",
 		// CLI and config.
-		"typer":          "typer",
+		"typer": "typer",
 		// NLP and text processing.
-		"nltk":           "nltk",
-		"spacy":          "spacy",
-		"rapidfuzz":      "rapidfuzz",
-		"editdistance":   "editdistance",
+		"nltk":         "nltk",
+		"spacy":        "spacy",
+		"rapidfuzz":    "rapidfuzz",
+		"editdistance": "editdistance",
 		// Audio processing.
-		"librosa":        "librosa",
-		"soundfile":      "soundfile",
+		"librosa":   "librosa",
+		"soundfile": "soundfile",
 		// ML frameworks (additional).
-		"xgboost":        "xgboost",
-		"lightgbm":       "lightgbm",
+		"xgboost":  "xgboost",
+		"lightgbm": "lightgbm",
 		// Visualization.
-		"plotly":         "plotly",
-		"pygments":       "Pygments",
-		"graphviz":       "graphviz",
-		"pydot":          "pydot",
+		"plotly":   "plotly",
+		"pygments": "Pygments",
+		"graphviz": "graphviz",
+		"pydot":    "pydot",
 		// Performance and compilation.
-		"numba":          "numba",
+		"numba": "numba",
 		// Game/simulation.
-		"pygame":         "pygame",
-		"chess":          "chess",
+		"pygame": "pygame",
+		"chess":  "chess",
 		// Date/time.
-		"arrow":          "arrow",
-		"pendulum":       "pendulum",
+		"arrow":    "arrow",
+		"pendulum": "pendulum",
 		// Parsing.
-		"ply":            "ply",
-		"parsimonious":   "parsimonious",
+		"ply":          "ply",
+		"parsimonious": "parsimonious",
 		// TOML (for Python < 3.11).
-		"tomlkit":        "tomlkit",
-		"tomli":          "tomli",
+		"tomlkit": "tomlkit",
+		"tomli":   "tomli",
 		// Security / CTF.
-		"pwn":            "pwntools",
-		"pwnlib":         "pwntools",
-		"capstone":       "capstone",
-		"angr":           "angr",
+		"pwn":      "pwntools",
+		"pwnlib":   "pwntools",
+		"capstone": "capstone",
+		"angr":     "angr",
 		// Data structures.
-		"intervaltree":   "intervaltree",
+		"intervaltree":      "intervaltree",
 		"sortedcollections": "sortedcollections",
-		"cachetools":     "cachetools",
+		"cachetools":        "cachetools",
 		// Modern data processing.
-		"polars":         "polars",
-		"duckdb":         "duckdb",
-		"xmltodict":      "xmltodict",
-		"ijson":          "ijson",
-		"msgspec":        "msgspec",
+		"polars":    "polars",
+		"duckdb":    "duckdb",
+		"xmltodict": "xmltodict",
+		"ijson":     "ijson",
+		"msgspec":   "msgspec",
 		// Database drivers.
-		"peewee":         "peewee",
-		"aiosqlite":      "aiosqlite",
-		"pymysql":        "PyMySQL",
+		"peewee":    "peewee",
+		"aiosqlite": "aiosqlite",
+		"pymysql":   "PyMySQL",
 		// Protobuf / gRPC.
 		"google.protobuf": "protobuf",
-		"grpc_tools":     "grpcio-tools",
+		"grpc_tools":      "grpcio-tools",
 	}
 
 	needed := make(map[string]string) // module → pip package
@@ -6065,21 +6097,21 @@ func detectSystemPackagesFromTests(workDir string) []string {
 		"sox":       "sox",
 		"pandoc":    "pandoc",
 		// Build tools — needed when test scripts invoke compilers directly.
-		"cmake":     "cmake",
+		"cmake":      "cmake",
 		"pkg-config": "pkg-config",
-		"gfortran":  "gfortran",
-		"m4":        "m4",
-		"bison":     "bison",
-		"flex":      "flex",
-		"autoconf":  "autoconf",
-		"automake":  "automake",
+		"gfortran":   "gfortran",
+		"m4":         "m4",
+		"bison":      "bison",
+		"flex":       "flex",
+		"autoconf":   "autoconf",
+		"automake":   "automake",
 		// Other common tools.
-		"column":    "bsdmainutils",
-		"tput":      "ncurses-bin",
-		"timeout":   "coreutils",
-		"numfmt":    "coreutils",
-		"shuf":      "coreutils",
-		"realpath":  "coreutils",
+		"column":   "bsdmainutils",
+		"tput":     "ncurses-bin",
+		"timeout":  "coreutils",
+		"numfmt":   "coreutils",
+		"shuf":     "coreutils",
+		"realpath": "coreutils",
 	}
 
 	// Scan .sh and .py files in test directories.
@@ -6886,11 +6918,11 @@ func extractTestConstraintsRecursive(dir string, constraints *[]string, seen map
 			// Shell tests: diff, test -f, wc, file existence checks.
 			if isShellTest && !isConstraintLine {
 				for _, shellPat := range []string{
-					"diff ", "cmp ",           // file comparison
-					"test -f ", "test -s ",     // file existence/non-empty checks
-					"[ -f ", "[ -s ",           // bracket syntax file checks
-					"wc -l", "wc -c",          // line/byte count checks
-					"md5sum", "sha256sum",      // hash checks
+					"diff ", "cmp ", // file comparison
+					"test -f ", "test -s ", // file existence/non-empty checks
+					"[ -f ", "[ -s ", // bracket syntax file checks
+					"wc -l", "wc -c", // line/byte count checks
+					"md5sum", "sha256sum", // hash checks
 					"grep -c",                  // count matches
 					"test $(", "[ $(", "[[ $(", // subshell comparison
 				} {
@@ -7087,9 +7119,10 @@ func detectTestCommands(workDir string) []string {
 			// Priority 1: test.sh or test.py (standard verification scripts).
 			for _, e := range entries {
 				name := e.Name()
-				if name == "test.sh" {
+				switch name {
+				case "test.sh":
 					cmds = append(cmds, "Test: bash "+filepath.Join(td, name))
-				} else if name == "test.py" {
+				case "test.py":
 					cmds = append(cmds, "Test: python3 "+filepath.Join(td, name))
 				}
 			}
@@ -7423,15 +7456,15 @@ func isEntryPointFile(lowerName string) bool {
 		"conftest.py", // pytest fixtures
 		"manage.py",   // Django
 		"wsgi.py", "asgi.py",
-		"urls.py",              // Django URL routing
+		"urls.py",                        // Django URL routing
 		"solution.", "solve.", "answer.", // common TB2 deliverable names
-		"lib.", "mod.",          // Rust lib.rs, mod.rs
-		"build.rs",             // Rust build script
+		"lib.", "mod.", // Rust lib.rs, mod.rs
+		"build.rs",              // Rust build script
 		"setup.py", "setup.cfg", // Python packaging
-		"program.", "run.",     // common names
+		"program.", "run.", // common names
 		"handler.", "handlers.", // common API handler files
-		"routes.", "router.",   // routing files
-		"config.",              // configuration modules
+		"routes.", "router.", // routing files
+		"config.", // configuration modules
 	}
 	// Also check exact matches for config/build files the agent should see.
 	exactMatches := []string{
@@ -7441,17 +7474,17 @@ func isEntryPointFile(lowerName string) bool {
 		"build.sbt", "mix.exs", "dune-project", "build.zig",
 		"gleam.toml", "pubspec.yaml",
 		"tsconfig.json", "pyproject.toml",
-		"project.clj", "deps.edn",  // Clojure
-		"rebar.config",              // Erlang
-		"justfile",                  // Just task runner
-		"taskfile.yml",              // Task task runner
-		"stack.yaml",                // Haskell Stack
-		"dub.json", "dub.sdl",      // D language
-		"shard.yml",                 // Crystal
-		"v.mod",                     // V language
-		"lakefile.lean",             // Lean 4
-		"meson.build",               // Meson build system
-		"composer.json",             // PHP Composer
+		"project.clj", "deps.edn", // Clojure
+		"rebar.config",        // Erlang
+		"justfile",            // Just task runner
+		"taskfile.yml",        // Task task runner
+		"stack.yaml",          // Haskell Stack
+		"dub.json", "dub.sdl", // D language
+		"shard.yml",     // Crystal
+		"v.mod",         // V language
+		"lakefile.lean", // Lean 4
+		"meson.build",   // Meson build system
+		"composer.json", // PHP Composer
 	}
 	for _, ep := range entryPoints {
 		if strings.HasPrefix(lowerName, ep) || lowerName == ep {
@@ -7583,7 +7616,7 @@ func parseJustfileTargets(content string) []string {
 // (database URLs, API keys, ports) that are defined in these files.
 func detectEnvFiles(workDir string) string {
 	envFiles := []struct {
-		name     string
+		name      string
 		isExample bool
 	}{
 		{".env.example", true},
@@ -7603,12 +7636,12 @@ func detectEnvFiles(workDir string) string {
 
 			var hint strings.Builder
 			if ef.isExample {
-				hint.WriteString(fmt.Sprintf("\n## Environment Config Found: %s", path))
+				fmt.Fprintf(&hint, "\n## Environment Config Found: %s", path)
 				hint.WriteString("\n" + content)
 				hint.WriteString("\nHINT: Copy this to .env and fill in any placeholder values: cp " + path + " " + filepath.Join(dir, ".env"))
 			} else {
 				// .env file exists — check for placeholder values that need filling
-				hint.WriteString(fmt.Sprintf("\n## Environment Config Found: %s", path))
+				fmt.Fprintf(&hint, "\n## Environment Config Found: %s", path)
 				hint.WriteString("\n" + content)
 				// Check for common placeholder patterns
 				if strings.Contains(content, "TODO") || strings.Contains(content, "CHANGEME") ||
@@ -7633,7 +7666,7 @@ func detectEnvFiles(workDir string) string {
 				}
 			}
 			if len(varNames) > 0 {
-				hint.WriteString(fmt.Sprintf("\nRequired env vars: %s", strings.Join(varNames, ", ")))
+				fmt.Fprintf(&hint, "\nRequired env vars: %s", strings.Join(varNames, ", "))
 			}
 
 			return hint.String()
@@ -8162,11 +8195,11 @@ func isSourceFile(name string) bool {
 		".go", ".rs",
 		".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh",
 		".java", ".rb", ".sh", ".bash", ".fish", ".ksh", ".pl", ".lua", ".tcl", ".r",
-		".cs", ".fs", ".fsx",        // C#, F#
+		".cs", ".fs", ".fsx", // C#, F#
 		".dart", ".php", ".d", ".cr", // Dart, PHP, D, Crystal
-		".groovy", ".gradle",        // Groovy/Gradle
-		".clj", ".cljs", ".cljc",    // Clojure
-		".elm",                      // Elm
+		".groovy", ".gradle", // Groovy/Gradle
+		".clj", ".cljs", ".cljc", // Clojure
+		".elm", // Elm
 		".sql", ".html", ".css", ".scss", ".sass", ".less",
 		".json", ".yaml", ".yml", ".toml",
 		".xml", ".md", ".txt", ".cfg", ".ini", ".conf",
@@ -8182,13 +8215,13 @@ func isSourceFile(name string) bool {
 		".proto", ".thrift", ".graphql",
 		".cmake",
 		".rkt", ".scm", ".lisp", ".cl",
-		".tf", ".hcl",           // Terraform, HCL
-		".nix",                  // Nix
-		".sol", ".vy",           // Solidity, Vyper
+		".tf", ".hcl", // Terraform, HCL
+		".nix",        // Nix
+		".sol", ".vy", // Solidity, Vyper
 		".tex", ".sty", ".bib", // LaTeX
-		".astro", ".mdx",       // Astro, MDX
-		".prisma",              // Prisma ORM
-		".pas", ".pp",          // Pascal/Free Pascal
+		".astro", ".mdx", // Astro, MDX
+		".prisma",     // Prisma ORM
+		".pas", ".pp", // Pascal/Free Pascal
 		".ada", ".adb", ".ads", // Ada
 		".glsl", ".hlsl", ".wgsl": // Shader languages
 		return true
@@ -8269,7 +8302,7 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 				if resp, ok := msg.(core.ModelResponse); ok {
 					for _, part := range resp.Parts {
 						if tc, ok := part.(core.ToolCallPart); ok {
-							if tc.ToolName == "write" || tc.ToolName == "multi_edit" || tc.ToolName == "edit" || tc.ToolName == "execute_code" || tc.ToolName == "delegate" {
+							if tc.ToolName == "write" || tc.ToolName == "multi_edit" || tc.ToolName == "edit" || tc.ToolName == "execute_code" || tc.ToolName == "delegate" || tc.ToolName == "spawn_teammate" {
 								hasWritten = true
 								break
 							}
@@ -8343,6 +8376,8 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 		}
 		mu.Unlock()
 
+		delegationHint := progressDelegationHint(params)
+
 		// Time-based warnings take priority over turn-based ones.
 		// All warnings use injectUserPromptIntoLastRequest to avoid creating
 		// consecutive user-role messages that Anthropic rejects.
@@ -8351,29 +8386,275 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 			messages = injectUserPromptIntoLastRequest(messages, fmt.Sprintf("CRITICAL: %.0f%% of your time is gone and you have NOT created any output files. "+
 				"You MUST produce output NOW. Stop ALL research, analysis, and debugging. "+
 				"Write your best attempt at a solution IMMEDIATELY using write or bash redirects. "+
-				"An imperfect solution that exists scores infinitely higher than a perfect solution that doesn't.", timePct*100))
+				"An imperfect solution that exists scores infinitely higher than a perfect solution that doesn't.%s", timePct*100, delegationHint))
 		} else if needsWarning && timePct >= 0.30 && !wt30 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: warning — %.0f%% time used with no output files\n", timePct*100)
 			messages = injectUserPromptIntoLastRequest(messages, fmt.Sprintf("PROGRESS WARNING: %.0f%% of your time is used and no output files exist yet. "+
-				"Rule #1: Output First, Perfect Later. Write your best attempt NOW, then iterate.", timePct*100))
+				"Rule #1: Output First, Perfect Later. Write your best attempt NOW, then iterate.%s", timePct*100, delegationHint))
 		} else if needsWarning && currentTurn >= turnCritical && !w2 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: CRITICAL — turn %d with no output files created\n", currentTurn)
 			messages = injectUserPromptIntoLastRequest(messages,
-				"CRITICAL: You are "+fmt.Sprintf("%d", currentTurn)+" turns in and have NOT created any output files yet. "+
+				"CRITICAL: You are "+strconv.Itoa(currentTurn)+" turns in and have NOT created any output files yet. "+
 					"You MUST produce output NOW. Stop researching, stop analyzing, stop debugging infrastructure. "+
 					"Write your best attempt at a solution immediately using the write tool or bash redirects. "+
 					"You can refine it after — but you MUST have something written. "+
-					"An imperfect solution that exists scores higher than a perfect solution that doesn't.")
+					"An imperfect solution that exists scores higher than a perfect solution that doesn't."+delegationHint)
 		} else if needsWarning && currentTurn >= turnWarning && !w1 {
 			fmt.Fprintf(os.Stderr, "[gollem] progress: warning — turn %d with no output files created\n", currentTurn)
 			messages = injectUserPromptIntoLastRequest(messages,
-				"PROGRESS WARNING: You are "+fmt.Sprintf("%d", currentTurn)+" turns in and have not created any output files yet. "+
+				"PROGRESS WARNING: You are "+strconv.Itoa(currentTurn)+" turns in and have not created any output files yet. "+
 					"Remember Rule #1: Output First, Perfect Later. "+
 					"Write your best attempt at a solution NOW, then iterate to improve it. "+
-					"Don't spend more time researching — start producing output.")
+					"Don't spend more time researching — start producing output."+delegationHint)
 		}
 
 		return next(ctx, messages, settings, params)
+	}
+}
+
+// EarlyTeamKickoffMiddleware pushes team-enabled runs to spawn teammates early.
+// It nudges on turn 1 and force-selects spawn_teammate on turn 2 if no teammate
+// has been spawned yet. This avoids waiting for late progress warnings before
+// parallelizing clearly complex tasks.
+func EarlyTeamKickoffMiddleware() core.AgentMiddleware {
+	var mu sync.Mutex
+	turn := 0
+	hasSpawned := false
+
+	return func(
+		ctx context.Context,
+		messages []core.ModelMessage,
+		settings *core.ModelSettings,
+		params *core.ModelRequestParameters,
+		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
+	) (*core.ModelResponse, error) {
+		mu.Lock()
+		turn++
+		currentTurn := turn
+
+		// Track whether spawn_teammate has already been used.
+		if !hasSpawned {
+			for _, msg := range messages {
+				resp, ok := msg.(core.ModelResponse)
+				if !ok {
+					continue
+				}
+				for _, part := range resp.Parts {
+					tc, ok := part.(core.ToolCallPart)
+					if !ok {
+						continue
+					}
+					if tc.ToolName == "spawn_teammate" {
+						hasSpawned = true
+						break
+					}
+				}
+				if hasSpawned {
+					break
+				}
+			}
+		}
+		alreadySpawned := hasSpawned
+		mu.Unlock()
+
+		// No-op unless team leader tools are actually available this turn.
+		if !hasTool(params, "spawn_teammate") || alreadySpawned {
+			return next(ctx, messages, settings, params)
+		}
+
+		if currentTurn == 1 {
+			fmt.Fprintf(os.Stderr, "[gollem] team: kickoff nudge — spawn teammate early\n")
+			messages = injectUserPromptIntoLastRequest(messages,
+				"TEAM KICKOFF: Team mode is enabled for a complex task. "+
+					"Spawn at least one focused teammate now (spawn_teammate) for parallel work, "+
+					"then continue implementation in the main thread.")
+			return next(ctx, messages, settings, params)
+		}
+
+		if currentTurn == 2 {
+			fmt.Fprintf(os.Stderr, "[gollem] team: kickoff forcing spawn_teammate on turn 2\n")
+			messages = injectUserPromptIntoLastRequest(messages,
+				"TEAM KICKOFF ENFORCEMENT: You still have no active teammates. "+
+					"Use spawn_teammate in this turn with a concrete, self-contained task.")
+			s := copyModelSettings(settings)
+			s.ToolChoice = core.ToolChoiceForce("spawn_teammate")
+			return next(ctx, messages, &s, params)
+		}
+
+		return next(ctx, messages, settings, params)
+	}
+}
+
+// EarlyDelegateKickoffMiddleware pushes non-team runs to delegate early when
+// the task appears complex. It nudges on turn 1 and force-selects delegate on
+// turn 2 if delegation has not happened yet.
+func EarlyDelegateKickoffMiddleware() core.AgentMiddleware {
+	var mu sync.Mutex
+	turn := 0
+	hasDelegated := false
+
+	return func(
+		ctx context.Context,
+		messages []core.ModelMessage,
+		settings *core.ModelSettings,
+		params *core.ModelRequestParameters,
+		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
+	) (*core.ModelResponse, error) {
+		mu.Lock()
+		turn++
+		currentTurn := turn
+
+		// Track whether delegate has already been used.
+		if !hasDelegated {
+			for _, msg := range messages {
+				resp, ok := msg.(core.ModelResponse)
+				if !ok {
+					continue
+				}
+				for _, part := range resp.Parts {
+					tc, ok := part.(core.ToolCallPart)
+					if !ok {
+						continue
+					}
+					if tc.ToolName == "delegate" {
+						hasDelegated = true
+						break
+					}
+				}
+				if hasDelegated {
+					break
+				}
+			}
+		}
+		alreadyDelegated := hasDelegated
+		mu.Unlock()
+
+		// Non-team only: require delegate tool and absence of team spawn tool.
+		if !hasTool(params, "delegate") || hasTool(params, "spawn_teammate") || alreadyDelegated {
+			return next(ctx, messages, settings, params)
+		}
+		if !isLikelyComplexTask(messages) {
+			return next(ctx, messages, settings, params)
+		}
+
+		if currentTurn == 1 {
+			fmt.Fprintf(os.Stderr, "[gollem] delegate: kickoff nudge — delegate early\n")
+			messages = injectUserPromptIntoLastRequest(messages,
+				"DELEGATION KICKOFF: This task appears complex. "+
+					"Delegate at least one focused, self-contained subtask now (delegate), "+
+					"then continue implementation in parallel.")
+			return next(ctx, messages, settings, params)
+		}
+
+		if currentTurn == 2 {
+			fmt.Fprintf(os.Stderr, "[gollem] delegate: kickoff forcing delegate on turn 2\n")
+			messages = injectUserPromptIntoLastRequest(messages,
+				"DELEGATION KICKOFF ENFORCEMENT: You have not delegated yet. "+
+					"Use delegate in this turn with a concrete, self-contained task.")
+			s := copyModelSettings(settings)
+			s.ToolChoice = core.ToolChoiceForce("delegate")
+			return next(ctx, messages, &s, params)
+		}
+
+		return next(ctx, messages, settings, params)
+	}
+}
+
+func isLikelyComplexTask(messages []core.ModelMessage) bool {
+	prompt := strings.ToLower(strings.TrimSpace(primaryUserPrompt(messages)))
+	if prompt == "" {
+		return false
+	}
+	if len(prompt) >= 500 || strings.Count(prompt, "\n") >= 8 {
+		return true
+	}
+
+	keywords := []string{
+		"constraints",
+		"strict",
+		"performance",
+		"optimiz",
+		"checkpoint",
+		"weights",
+		"bpe",
+		"dependency-free",
+		"from scratch",
+		"multiple",
+		"across",
+		"binary",
+	}
+	hits := 0
+	for _, kw := range keywords {
+		if strings.Contains(prompt, kw) {
+			hits++
+		}
+	}
+	return hits >= 2
+}
+
+func primaryUserPrompt(messages []core.ModelMessage) string {
+	for _, msg := range messages {
+		req, ok := msg.(core.ModelRequest)
+		if !ok {
+			continue
+		}
+		for _, part := range req.Parts {
+			up, ok := part.(core.UserPromptPart)
+			if !ok {
+				continue
+			}
+			if s := strings.TrimSpace(up.Content); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func hasTool(params *core.ModelRequestParameters, name string) bool {
+	if params == nil || name == "" {
+		return false
+	}
+	for _, td := range params.AllToolDefs() {
+		if td.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func copyModelSettings(settings *core.ModelSettings) core.ModelSettings {
+	if settings == nil {
+		return core.ModelSettings{}
+	}
+	return *settings
+}
+
+// progressDelegationHint returns a concise delegation nudge when delegation
+// tools are available in this turn.
+func progressDelegationHint(params *core.ModelRequestParameters) string {
+	if params == nil {
+		return ""
+	}
+
+	hasSpawn := false
+	hasDelegate := false
+	for _, td := range params.AllToolDefs() {
+		switch td.Name {
+		case "spawn_teammate":
+			hasSpawn = true
+		case "delegate":
+			hasDelegate = true
+		}
+	}
+
+	switch {
+	case hasSpawn:
+		return " If the task is broad, spawn_teammate now for parallel work while you continue implementing."
+	case hasDelegate:
+		return " If the task is broad, use delegate now for a self-contained subtask in parallel."
+	default:
+		return ""
 	}
 }
 
@@ -8454,7 +8735,7 @@ func isContextOverflowError(err error) bool {
 	if httpErr.StatusCode == http.StatusRequestEntityTooLarge {
 		return true
 	}
-	if httpErr.StatusCode == http.StatusBadRequest || httpErr.StatusCode == 422 {
+	if httpErr.StatusCode == http.StatusBadRequest || httpErr.StatusCode == http.StatusUnprocessableEntity {
 		lower := strings.ToLower(httpErr.Body + httpErr.Message)
 		// OpenAI/xAI: "maximum context length", "context too long"
 		if strings.Contains(lower, "context") && (strings.Contains(lower, "too long") || strings.Contains(lower, "too large") || strings.Contains(lower, "exceed") || strings.Contains(lower, "maximum")) {
@@ -8480,11 +8761,6 @@ func isContextOverflowError(err error) bool {
 		}
 	}
 	return false
-}
-
-// emergencyCompressMessages performs aggressive message truncation for 413 recovery.
-func emergencyCompressMessages(messages []core.ModelMessage) []core.ModelMessage {
-	return emergencyCompressMessagesWithConfig(messages, 20000, 6)
 }
 
 // emergencyCompressMessagesWithConfig performs message truncation with configurable parameters.

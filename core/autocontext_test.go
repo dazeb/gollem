@@ -312,8 +312,8 @@ func TestTruncateStr(t *testing.T) {
 	}{
 		{"ascii_no_truncate", "hello world", 100, false},
 		{"ascii_truncate", "hello world", 5, true},
-		{"cjk_between_chars", "世界你好测试", 9, true},  // 世界你 = 9 bytes, clean boundary
-		{"cjk_mid_char", "世界你好测试", 7, true},       // 7 is mid-char of 你 (starts at byte 6)
+		{"cjk_between_chars", "世界你好测试", 9, true}, // 世界你 = 9 bytes, clean boundary
+		{"cjk_mid_char", "世界你好测试", 7, true},      // 7 is mid-char of 你 (starts at byte 6)
 		{"emoji_mid_char", "Hello 🌍🌎🌏", 8, true}, // 8 is mid-emoji
 		{"empty", "", 10, false},
 		{"zero_max", "hello", 0, true},
@@ -493,7 +493,7 @@ func TestAutoContext_ToolCallPairIntegrity(t *testing.T) {
 	}
 
 	// Add 6 tool call/result pairs to get enough messages.
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		messages = append(messages, ModelResponse{
 			Parts: []ModelResponsePart{
 				TextPart{Content: fmt.Sprintf("Working on step %d with many extra words to inflate count", i)},
@@ -522,7 +522,7 @@ func TestAutoContext_ToolCallPairIntegrity(t *testing.T) {
 
 	summaryModel := NewTestModel(TextResponse("Summary of work done"))
 	config := &AutoContextConfig{
-		MaxTokens:    10,  // very low to force compression
+		MaxTokens:    10, // very low to force compression
 		KeepLastN:    4,
 		SummaryModel: summaryModel,
 	}

@@ -92,11 +92,9 @@ func Glob(opts ...Option) core.Tool {
 					if matchDoublestar(params.Pattern, relPath) {
 						// Only call Info() on matches — avoids Stat on
 						// the vast majority of non-matching files.
-						info, err := d.Info()
-						if err != nil {
-							return nil // skip files we can't stat
+						if info, err := d.Info(); err == nil {
+							results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})
 						}
-						results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})
 					}
 					return nil
 				})

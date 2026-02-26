@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/fugue-labs/gollem/core"
@@ -341,7 +342,7 @@ func findOccurrenceLines(content, old string) string {
 			break
 		}
 		lineNum := strings.Count(content[:offset+idx], "\n") + 1
-		lineNums = append(lineNums, fmt.Sprintf("%d", lineNum))
+		lineNums = append(lineNums, strconv.Itoa(lineNum))
 		offset += idx + len(old)
 		if len(lineNums) >= 6 {
 			lineNums = append(lineNums, "...")
@@ -985,6 +986,7 @@ func autoCorrectBlankLines(content, oldStr, newStr string) (trimmedOld, trimmedN
 //   - actualOld: the actual content region in the file (with original blank lines)
 //   - adjustedNew: new_string (kept as-is — model's intended blank lines)
 //   - ok: true if normalization produced a unique match
+//
 // normalizeBlankRuns collapses runs of 2+ consecutive blank lines to 1 blank line.
 func normalizeBlankRuns(s string) string {
 	lines := strings.Split(s, "\n")
@@ -1016,7 +1018,7 @@ func autoCorrectInternalBlankLines(content, oldStr, newStr string) (actualOld, a
 		return "", "", false
 	}
 	// Check uniqueness.
-	if strings.Index(normalizedContent[idx+1:], normalizedOld) >= 0 {
+	if strings.Contains(normalizedContent[idx+1:], normalizedOld) {
 		return "", "", false
 	}
 

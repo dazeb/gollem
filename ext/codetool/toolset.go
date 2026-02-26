@@ -64,6 +64,14 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	}
 	cfg := applyOpts(toolOpts)
 	verifyMW, verifyValidator := VerificationCheckpoint(workDir, cfg.Timeout)
+	var kickoffMW core.AgentMiddleware
+	if cfg.Model != nil {
+		if cfg.TeamMode {
+			kickoffMW = EarlyTeamKickoffMiddleware()
+		} else {
+			kickoffMW = EarlyDelegateKickoffMiddleware()
+		}
+	}
 
 	// Build system prompt and tool options.
 	// When code mode is enabled, the agent gets both individual tools AND
@@ -94,9 +102,9 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		toolOpts = append(toolOpts, WithPersonalityGenerator(cfg.PersonalityGenerator))
 	}
 
-	// SubAgent delegation: spawn focused subagents for subtask execution.
-	// Disabled in team mode (team tools replace delegation).
-	if cfg.Model != nil && !cfg.TeamMode {
+	// SubAgent delegation: always available. Even in team mode, delegate is
+	// useful for one-shot focused work that avoids long conversational latency.
+	if cfg.Model != nil {
 		toolOptions = append(toolOptions, core.WithTools[string](SubAgentTool(cfg.Model, toolOpts...)))
 	}
 
@@ -108,6 +116,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 			Leader:               "leader",
 			Model:                cfg.Model,
 			Toolset:              Toolset(toolOpts...),
+			WorkerExtraTools:     []core.Tool{SubAgentTool(cfg.Model, toolOpts...)},
 			PersonalityGenerator: cfg.PersonalityGenerator,
 		})
 		// Register the leader so workers can send messages to it.
@@ -220,6 +229,12 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		}),
 	)
 
+	if kickoffMW != nil {
+		// Keep kickoff outside the fixed append block so middleware state
+		// persists for the whole run (turn counters, spawn tracking).
+		opts = append(opts, core.WithAgentMiddleware[string](kickoffMW))
+	}
+
 	// Team leader middleware: drain incoming messages from workers between turns.
 	if teamLeaderMW != nil {
 		opts = append(opts, core.WithAgentMiddleware[string](teamLeaderMW))
@@ -293,8 +308,21 @@ func stderrLoggingMiddleware() core.AgentMiddleware {
 				}
 			}
 			textLen := len(resp.TextContent())
-			fmt.Fprintf(os.Stderr, "[gollem] turn %d: response in %v (tools: %d, text: %d chars)\n",
-				turn, elapsed.Round(time.Millisecond), toolCalls, textLen)
+			reasoningTokens := 0
+			if resp.Usage.Details != nil {
+				reasoningTokens = resp.Usage.Details["reasoning_tokens"]
+			}
+			fmt.Fprintf(os.Stderr,
+				"[gollem] turn %d: response in %v (tools: %d, text: %d chars, tokens: in=%d out=%d cache_read=%d reasoning=%d)\n",
+				turn,
+				elapsed.Round(time.Millisecond),
+				toolCalls,
+				textLen,
+				resp.Usage.InputTokens,
+				resp.Usage.OutputTokens,
+				resp.Usage.CacheReadTokens,
+				reasoningTokens,
+			)
 		}
 		return resp, err
 	}

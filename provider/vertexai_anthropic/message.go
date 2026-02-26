@@ -11,18 +11,24 @@ import (
 // Anthropic API types — identical format used via Vertex AI rawPredict.
 
 type apiRequest struct {
-	Model       string           `json:"model"`
-	MaxTokens   int              `json:"max_tokens"`
-	System      []apiSystemBlock `json:"system,omitempty"`
-	Messages    []apiMessage     `json:"messages"`
-	Tools       []apiTool        `json:"tools,omitempty"`
-	ToolChoice  *apiToolChoice   `json:"tool_choice,omitempty"`
-	Stream      bool             `json:"stream,omitempty"`
-	Temperature *float64         `json:"temperature,omitempty"`
-	TopP        *float64         `json:"top_p,omitempty"`
-	Thinking    *apiThinking     `json:"thinking,omitempty"`
+	Model        string           `json:"model"`
+	MaxTokens    int              `json:"max_tokens"`
+	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+	System       []apiSystemBlock `json:"system,omitempty"`
+	Messages     []apiMessage     `json:"messages"`
+	Tools        []apiTool        `json:"tools,omitempty"`
+	ToolChoice   *apiToolChoice   `json:"tool_choice,omitempty"`
+	Stream       bool             `json:"stream,omitempty"`
+	Temperature  *float64         `json:"temperature,omitempty"`
+	TopP         *float64         `json:"top_p,omitempty"`
+	Thinking     *apiThinking     `json:"thinking,omitempty"`
 	// AnthropicVersion is sent in the request body for Vertex AI.
 	AnthropicVersion string `json:"anthropic_version"`
+}
+
+type apiCacheControl struct {
+	Type string `json:"type"`
+	TTL  string `json:"ttl,omitempty"`
 }
 
 type apiToolChoice struct {
@@ -31,8 +37,8 @@ type apiToolChoice struct {
 }
 
 type apiThinking struct {
-	Type         string `json:"type"`           // "enabled" or "disabled"
-	BudgetTokens int    `json:"budget_tokens"`  // Max tokens for thinking
+	Type         string `json:"type"`          // "enabled" or "disabled"
+	BudgetTokens int    `json:"budget_tokens"` // Max tokens for thinking
 }
 
 type apiSystemBlock struct {

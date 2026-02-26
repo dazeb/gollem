@@ -277,7 +277,7 @@ func TestFormatLocations(t *testing.T) {
 
 func TestFormatLocationsMaxResults(t *testing.T) {
 	var locs []lspLocation
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		locs = append(locs, lspLocation{
 			URI:   "file:///project/f.go",
 			Range: lspRange{Start: lspPosition{Line: i}},
@@ -423,8 +423,8 @@ func TestReadLoopHandlesServerRequests(t *testing.T) {
 	// server request and route the actual response to the channel.
 
 	// Create pipes to simulate server stdin/stdout.
-	clientRead, serverWrite, _ := os.Pipe()  // server writes, readLoop reads
-	serverRead, clientWrite, _ := os.Pipe()  // readLoop writes (via respondToServerRequest), server reads
+	clientRead, serverWrite, _ := os.Pipe() // server writes, readLoop reads
+	serverRead, clientWrite, _ := os.Pipe() // readLoop writes (via respondToServerRequest), server reads
 	defer clientRead.Close()
 	defer serverWrite.Close()
 	defer serverRead.Close()
@@ -998,7 +998,7 @@ func TestServerSurvivesContextCancellation(t *testing.T) {
 	// Create pipes to simulate stdin/stdout — we'll manually construct
 	// an lspServer with a real subprocess (sleep) to test process survival.
 	// Use a long-running command that we can check is still alive.
-	cmd := exec.Command("sleep", "30")
+	cmd := exec.CommandContext(context.Background(), "sleep", "30")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start sleep: %v", err)
@@ -1007,8 +1007,8 @@ func TestServerSurvivesContextCancellation(t *testing.T) {
 
 	// Clean up: kill the process after the test.
 	defer func() {
-		cmd.Process.Kill()   //nolint:errcheck
-		cmd.Process.Wait()   //nolint:errcheck
+		cmd.Process.Kill()
+		cmd.Process.Wait()
 	}()
 
 	// Simulate what the old code did: context cancelled after tool call.

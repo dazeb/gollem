@@ -134,9 +134,7 @@ func New(opts ...Option) *Provider {
 	// already includes /v1, so a base URL with /v1 (which is the convention
 	// in the OpenAI Python client) would produce /v1/v1/chat/completions.
 	p.baseURL = strings.TrimRight(p.baseURL, "/")
-	if strings.HasSuffix(p.baseURL, "/v1") {
-		p.baseURL = strings.TrimSuffix(p.baseURL, "/v1")
-	}
+	p.baseURL = strings.TrimSuffix(p.baseURL, "/v1")
 	return p
 }
 
@@ -220,7 +218,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
 
-	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body)
+	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body) //nolint:bodyclose // Response body ownership transfers to streamedResponse.
 	if err != nil {
 		if isChatCompletionsMismatch(err) {
 			p.useResponses = true

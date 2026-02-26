@@ -10,9 +10,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,6 +209,37 @@ func runAgent() {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "gollem: model request timeout: %v\n", requestTimeout)
+	if f.provider == "openai" {
+		cacheKey := strings.TrimSpace(os.Getenv("OPENAI_PROMPT_CACHE_KEY"))
+		cacheRetention := strings.TrimSpace(os.Getenv("OPENAI_PROMPT_CACHE_RETENTION"))
+		if cacheKey != "" {
+			if cacheRetention == "" {
+				cacheRetention = "default"
+			}
+			fmt.Fprintf(os.Stderr, "gollem: openai prompt cache enabled (key=%s, retention=%s)\n", cacheKey, cacheRetention)
+		} else {
+			fmt.Fprintf(os.Stderr, "gollem: openai prompt cache disabled (OPENAI_PROMPT_CACHE_KEY not set)\n")
+		}
+	}
+	if f.provider == "vertexai-anthropic" {
+		cacheTTL := strings.TrimSpace(os.Getenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL"))
+		cacheEnabled := false
+		switch strings.ToLower(strings.TrimSpace(os.Getenv("VERTEXAI_ANTHROPIC_PROMPT_CACHE"))) {
+		case "1", "true", "yes", "on":
+			cacheEnabled = true
+		}
+		if cacheTTL != "" {
+			cacheEnabled = true
+		}
+		if cacheEnabled {
+			if cacheTTL == "" {
+				cacheTTL = "default"
+			}
+			fmt.Fprintf(os.Stderr, "gollem: vertexai-anthropic prompt cache enabled (type=ephemeral, ttl=%s)\n", cacheTTL)
+		} else {
+			fmt.Fprintf(os.Stderr, "gollem: vertexai-anthropic prompt cache disabled (set VERTEXAI_ANTHROPIC_PROMPT_CACHE=1)\n")
+		}
+	}
 
 	// Apply middleware layers to the model.
 	var mws []middleware.Middleware
@@ -232,22 +265,7 @@ func runAgent() {
 	}
 
 	// Wrap with retry for API resilience (exponential backoff on 429/5xx).
-	retryCfg := modelutil.DefaultRetryConfig()
-	switch {
-	case f.timeout <= 5*time.Minute:
-		retryCfg.MaxRetries = 1
-		retryCfg.InitialBackoff = 500 * time.Millisecond
-		retryCfg.MaxBackoff = 2 * time.Second
-	case f.timeout <= 12*time.Minute:
-		retryCfg.MaxRetries = 2
-		retryCfg.InitialBackoff = 500 * time.Millisecond
-		retryCfg.MaxBackoff = 5 * time.Second
-	default:
-		retryCfg.MaxRetries = 3
-		retryCfg.InitialBackoff = 1 * time.Second
-		retryCfg.MaxBackoff = 8 * time.Second
-	}
-	retryCfg.MinRemaining = 20 * time.Second
+	retryCfg := buildRetryConfig(f.provider, f.modelName, f.timeout)
 	model = modelutil.NewRetryModel(model, retryCfg)
 	fmt.Fprintf(os.Stderr, "gollem: retry config: max_retries=%d backoff=%v..%v min_remaining=%v\n",
 		retryCfg.MaxRetries, retryCfg.InitialBackoff, retryCfg.MaxBackoff, retryCfg.MinRemaining)
@@ -274,9 +292,9 @@ func runAgent() {
 	// This is separate from f.timeout (exec timeout) which may be shorter.
 	toolOpts = append(toolOpts, codetool.WithTimeout(budgetTimeout))
 
-	// Feature-based team routing: enable team tools on complex, long-horizon tasks.
-	// No task-name hardcoding; use prompt/instruction/workspace signals.
-	teamEnabled, teamReason := decideTeamMode(f.teamMode, f.workDir, f.prompt, budgetTimeout)
+	// LLM-routed team mode: classifier decides whether delegation overhead is worth it.
+	// No task-name hardcoding; forced on/off still supported.
+	teamEnabled, teamReason := decideTeamModeWithModel(f.teamMode, f.workDir, f.prompt, budgetTimeout, model)
 	if teamEnabled {
 		toolOpts = append(toolOpts, codetool.WithTeamMode())
 		fmt.Fprintf(os.Stderr, "gollem: team mode enabled (%s)\n", teamReason)
@@ -333,17 +351,23 @@ func runAgent() {
 		case "openai":
 			// Auto-enable reasoning effort for models that support it:
 			// - O-series models (o3, o4-mini, etc.): default to "high"
-			// - Codex models (gpt-5.x-codex): default to "xhigh"
+			// - Codex models (gpt-5.x-codex): default to "high" (ceiling)
 			// Other OpenAI-compatible models (grok, together, etc.) may not
 			// support the parameter, so don't enable by default.
 			isOSeries := strings.HasPrefix(f.modelName, "o") && len(f.modelName) >= 2
 			isCodex := strings.Contains(f.modelName, "codex")
 			if isCodex {
 				if f.reasoningEffort == "" {
-					f.reasoningEffort = "xhigh"
+					f.reasoningEffort = "high"
+				}
+				if effortAboveHigh(f.reasoningEffort) {
+					fmt.Fprintf(os.Stderr, "gollem: codex reasoning effort clamped from %q to \"high\"\n", f.reasoningEffort)
+					f.reasoningEffort = "high"
 				}
 				agentOpts = append(agentOpts, core.WithReasoningEffort[string](f.reasoningEffort))
-				// Codex with xhigh reasoning needs a large output budget since
+				// Codex reasoning can consume output budget, so keep max_output high
+				// while capping effort at "high" for latency stability.
+				//
 				// reasoning tokens count toward max_output_tokens.
 				agentOpts = append(agentOpts, core.WithMaxTokens[string](50000))
 				agentOpts = append(agentOpts, core.WithTemperature[string](0))
@@ -365,12 +389,9 @@ func runAgent() {
 			}
 			if f.thinkingBudget > 0 {
 				agentOpts = append(agentOpts, core.WithThinkingBudget[string](f.thinkingBudget))
-				// Set an explicit output budget so long reasoning turns don't
-				// end with token-limit errors before producing a final answer.
-				maxTokens := f.thinkingBudget + 24000
-				if maxTokens < 40000 {
-					maxTokens = 40000
-				}
+				// Keep Gemini output budget moderate by default to reduce long
+				// 5+ minute turns that appear "hung" in benchmark logs.
+				maxTokens := deriveGeminiMaxOutputTokens()
 				agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
 				fmt.Fprintf(os.Stderr, "gollem: gemini thinking enabled (budget: %d, max_output: %d)\n",
 					f.thinkingBudget, maxTokens)
@@ -394,7 +415,21 @@ func runAgent() {
 	fmt.Fprintf(os.Stderr, "gollem: running with %s in %s (timeout: %v)\n",
 		baseModel.ModelName(), f.workDir, f.timeout)
 
-	result, err := agent.Run(ctx, f.prompt)
+	var runOpts []core.RunOption
+	if imageParts := detectPromptImageParts(f.prompt, f.workDir); len(imageParts) > 0 {
+		if f.provider == "openai" {
+			parts := make([]core.ModelRequestPart, 0, len(imageParts))
+			for _, p := range imageParts {
+				parts = append(parts, p)
+			}
+			runOpts = append(runOpts, core.WithInitialRequestParts(parts...))
+			fmt.Fprintf(os.Stderr, "gollem: multimodal attached %d image(s) to initial prompt\n", len(imageParts))
+		} else {
+			fmt.Fprintf(os.Stderr, "gollem: multimodal images detected but provider %q does not support ImagePart yet\n", f.provider)
+		}
+	}
+
+	result, err := agent.Run(ctx, f.prompt, runOpts...)
 
 	// Flush Langfuse traces before exiting.
 	if langfuseProcessor != nil {
@@ -408,8 +443,8 @@ func runAgent() {
 
 	// Print the result.
 	fmt.Println(result.Output)
-	fmt.Fprintf(os.Stderr, "\ngollem: done (tokens: %d in, %d out, tools: %d)\n",
-		result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.ToolCalls)
+	fmt.Fprintf(os.Stderr, "\ngollem: done (tokens: %d in, %d out, cache_read: %d, tools: %d)\n",
+		result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.CacheReadTokens, result.Usage.ToolCalls)
 }
 
 // newLangfuseMiddleware creates a provider-level middleware that sends traces
@@ -570,6 +605,7 @@ func detectTaskTimeout(workDir string) time.Duration {
 		"/app/task_file/task.toml",
 	}
 	for _, path := range candidates {
+		//nolint:gosec // Paths are fixed or derived from local workspace root.
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -599,11 +635,178 @@ func detectTaskTimeout(workDir string) time.Duration {
 	return 0
 }
 
-type teamModeAutoDecision struct {
-	Enabled bool
-	Score   int
-	Reasons []string
+func detectPromptImageParts(prompt, workDir string) []core.ImagePart {
+	candidates := imagePathCandidatesFromPrompt(prompt)
+	if len(candidates) == 0 && promptMentionsImageCue(prompt) {
+		// Conservative fallback: if task text clearly references an image and
+		// exactly one image exists in the working directory root, attach it.
+		entries, err := os.ReadDir(workDir)
+		if err == nil {
+			var rootImages []string
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				name := entry.Name()
+				ext := strings.ToLower(filepath.Ext(name))
+				if ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".gif" || ext == ".bmp" {
+					rootImages = append(rootImages, name)
+				}
+			}
+			if len(rootImages) == 1 {
+				candidates = append(candidates, rootImages[0])
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	maxBytes := promptImageMaxBytes()
+	seen := make(map[string]struct{}, len(candidates))
+	parts := make([]core.ImagePart, 0, len(candidates))
+
+	for _, candidate := range candidates {
+		path, ok := resolvePromptImagePath(workDir, candidate)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "gollem: multimodal skip image %q (outside workdir)\n", candidate)
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+
+		//nolint:gosec // path is validated by resolvePromptImagePath(workDir, candidate).
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if maxBytes > 0 && info.Size() > maxBytes {
+			fmt.Fprintf(os.Stderr, "gollem: multimodal skip image %s (size=%d exceeds max=%d)\n", path, info.Size(), maxBytes)
+			continue
+		}
+
+		//nolint:gosec // path is validated by resolvePromptImagePath(workDir, candidate).
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gollem: multimodal skip image %s (read error: %v)\n", path, err)
+			continue
+		}
+
+		mimeType := imageMIMEType(path)
+		parts = append(parts, core.ImagePart{
+			URL:       core.BinaryContent(data, mimeType),
+			MIMEType:  mimeType,
+			Detail:    "high",
+			Timestamp: time.Now(),
+		})
+		fmt.Fprintf(os.Stderr, "gollem: multimodal attached image %s (%d bytes)\n", path, len(data))
+	}
+
+	return parts
 }
+
+func resolvePromptImagePath(workDir, candidate string) (string, bool) {
+	if strings.TrimSpace(workDir) == "" || strings.TrimSpace(candidate) == "" {
+		return "", false
+	}
+	rootAbs, err := filepath.Abs(workDir)
+	if err != nil {
+		return "", false
+	}
+	rootAbs = filepath.Clean(rootAbs)
+
+	path := candidate
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(rootAbs, path)
+	}
+	pathAbs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	pathAbs = filepath.Clean(pathAbs)
+
+	rel, err := filepath.Rel(rootAbs, pathAbs)
+	if err != nil {
+		return "", false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", false
+	}
+	return pathAbs, true
+}
+
+func imagePathCandidatesFromPrompt(prompt string) []string {
+	fields := strings.Fields(prompt)
+	candidates := make([]string, 0, 2)
+	for _, field := range fields {
+		token := strings.Trim(field, "\"'`.,:;!?()[]{}<>")
+		if token == "" {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(token))
+		switch ext {
+		case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp":
+			candidates = append(candidates, token)
+		}
+	}
+	return candidates
+}
+
+func promptMentionsImageCue(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	return strings.Contains(lower, "image") ||
+		strings.Contains(lower, "photo") ||
+		strings.Contains(lower, "picture")
+}
+
+func promptImageMaxBytes() int64 {
+	const defaultMax = int64(10 * 1024 * 1024) // 10MB
+	raw := strings.TrimSpace(os.Getenv("GOLLEM_PROMPT_IMAGE_MAX_BYTES"))
+	if raw == "" {
+		return defaultMax
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return defaultMax
+	}
+	return n
+}
+
+func imageMIMEType(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	mimeType := mime.TypeByExtension(ext)
+	if idx := strings.Index(mimeType, ";"); idx >= 0 {
+		mimeType = mimeType[:idx]
+	}
+	if strings.HasPrefix(mimeType, "image/") {
+		return mimeType
+	}
+	switch ext {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".bmp":
+		return "image/bmp"
+	default:
+		return "image/png"
+	}
+}
+
+type teamModeLLMDecision struct {
+	EnableTeam      bool     `json:"enable_team" jsonschema:"description=Set true when Team mode should be enabled."`
+	ComplexityScore int      `json:"complexity_score" jsonschema:"description=Estimated task complexity from 0 to 10,minimum=0,maximum=10"`
+	Confidence      string   `json:"confidence" jsonschema:"description=Confidence level: low, medium, or high"`
+	Reasons         []string `json:"reasons" jsonschema:"description=Up to 4 short reasons"`
+}
+
+const teamModeScoreOverrideThreshold = 8
 
 func normalizeTeamMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
@@ -618,7 +821,16 @@ func normalizeTeamMode(mode string) string {
 	}
 }
 
-func decideTeamMode(mode, workDir, prompt string, budgetTimeout time.Duration) (bool, string) {
+func effortAboveHigh(level string) bool {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "xhigh":
+		return true
+	default:
+		return false
+	}
+}
+
+func decideTeamModeWithModel(mode, workDir, prompt string, budgetTimeout time.Duration, model core.Model) (bool, string) {
 	normalized := normalizeTeamMode(mode)
 	if normalized == "" {
 		normalized = "auto"
@@ -629,145 +841,165 @@ func decideTeamMode(mode, workDir, prompt string, budgetTimeout time.Duration) (
 	case "off":
 		return false, "forced by --team-mode=off (or GOLLEM_TEAM_MODE=off)"
 	default:
-		d := evaluateTeamModeAuto(workDir, prompt, budgetTimeout)
-		if len(d.Reasons) == 0 {
-			return d.Enabled, fmt.Sprintf("auto score=%d", d.Score)
+		instruction := loadTaskInstruction(workDir)
+		workspaceFiles := boundedWorkspaceFileCount(workDir, 160)
+
+		llmDecision, err := classifyTeamModeAuto(model, prompt, instruction, budgetTimeout, workspaceFiles)
+		if err != nil {
+			return false, fmt.Sprintf("auto llm-classifier-error (%s)", compactError(err, 120))
 		}
-		return d.Enabled, fmt.Sprintf("auto score=%d (%s)", d.Score, strings.Join(d.Reasons, ", "))
+
+		scoreOverride := llmDecision.ComplexityScore >= teamModeScoreOverrideThreshold
+		if llmDecision.Confidence == "low" && !scoreOverride {
+			return false, fmt.Sprintf(
+				"auto llm-low-confidence score=%d reasons=%s",
+				llmDecision.ComplexityScore,
+				strings.Join(llmDecision.Reasons, ", "),
+			)
+		}
+
+		enabled := llmDecision.EnableTeam
+		if scoreOverride {
+			enabled = true
+		}
+		shortTimeoutGuard := false
+		if budgetTimeout > 0 && budgetTimeout < 10*time.Minute && llmDecision.ComplexityScore < teamModeScoreOverrideThreshold {
+			enabled = false
+			shortTimeoutGuard = true
+		}
+
+		reason := fmt.Sprintf(
+			"llm score=%d confidence=%s reasons=%s",
+			llmDecision.ComplexityScore,
+			llmDecision.Confidence,
+			strings.Join(llmDecision.Reasons, ", "),
+		)
+		if shortTimeoutGuard {
+			reason += ", short-timeout-guard"
+		}
+		if scoreOverride {
+			reason += ", score-override"
+		}
+		return enabled, reason
 	}
 }
 
-func evaluateTeamModeAuto(workDir, prompt string, budgetTimeout time.Duration) teamModeAutoDecision {
-	instruction := loadTaskInstruction(workDir)
-	workspaceFiles := boundedWorkspaceFileCount(workDir, 160)
-	return evaluateTeamModeAutoFromSignals(prompt, instruction, budgetTimeout, workspaceFiles)
-}
-
-func evaluateTeamModeAutoFromSignals(
+func classifyTeamModeAuto(
+	model core.Model,
 	prompt string,
 	instruction string,
 	budgetTimeout time.Duration,
 	workspaceFileCount int,
-) teamModeAutoDecision {
-	score, reasons := computeTeamModeScore(prompt, instruction, budgetTimeout, workspaceFileCount)
-
-	// Conservative gate:
-	// - Enable for very strong complexity signals (score >= 5), OR
-	// - Enable for medium/high complexity when the task has enough budget.
-	enabled := score >= 5 || (budgetTimeout >= 20*time.Minute && score >= 4)
-
-	if budgetTimeout > 0 && budgetTimeout < 10*time.Minute && score < 6 {
-		enabled = false
-		reasons = append(reasons, "short timeout")
+) (teamModeLLMDecision, error) {
+	var zero teamModeLLMDecision
+	if model == nil {
+		return zero, errors.New("model unavailable")
 	}
 
-	return teamModeAutoDecision{
-		Enabled: enabled,
-		Score:   score,
-		Reasons: reasons,
+	classifierCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	agent := core.NewAgent[teamModeLLMDecision](
+		model,
+		core.WithSystemPrompt[teamModeLLMDecision](
+			"You are a routing classifier. Decide whether Team mode (delegation to multiple sub-agents) is worth the overhead for this coding task. Prefer false for simple or narrow tasks. Return only the structured result.",
+		),
+		core.WithMaxRetries[teamModeLLMDecision](0),
+		core.WithUsageLimits[teamModeLLMDecision](core.UsageLimits{
+			RequestLimit: core.IntPtr(1),
+		}),
+		core.WithMaxTokens[teamModeLLMDecision](900),
+	)
+
+	result, err := agent.Run(classifierCtx, buildTeamModeClassifierPrompt(prompt, instruction, budgetTimeout, workspaceFileCount))
+	if err != nil {
+		return zero, err
 	}
+	return sanitizeTeamModeLLMDecision(result.Output), nil
 }
 
-func computeTeamModeScore(
+func sanitizeTeamModeLLMDecision(decision teamModeLLMDecision) teamModeLLMDecision {
+	if decision.ComplexityScore < 0 {
+		decision.ComplexityScore = 0
+	}
+	if decision.ComplexityScore > 10 {
+		decision.ComplexityScore = 10
+	}
+
+	decision.Confidence = strings.ToLower(strings.TrimSpace(decision.Confidence))
+	switch decision.Confidence {
+	case "high", "medium", "low":
+	default:
+		decision.Confidence = "low"
+	}
+
+	cleanedReasons := make([]string, 0, len(decision.Reasons))
+	for _, reason := range decision.Reasons {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			continue
+		}
+		if len(reason) > 100 {
+			reason = reason[:100]
+		}
+		cleanedReasons = append(cleanedReasons, reason)
+		if len(cleanedReasons) >= 4 {
+			break
+		}
+	}
+	decision.Reasons = cleanedReasons
+	if len(decision.Reasons) == 0 {
+		decision.Reasons = []string{"no reasons provided"}
+	}
+	return decision
+}
+
+func buildTeamModeClassifierPrompt(
 	prompt string,
 	instruction string,
 	budgetTimeout time.Duration,
 	workspaceFileCount int,
-) (int, []string) {
-	score := 0
-	reasons := []string{}
+) string {
+	prompt = trimForClassifier(prompt, 2500)
+	instruction = trimForClassifier(instruction, 6000)
 
-	if budgetTimeout >= 20*time.Minute {
-		score++
-		reasons = append(reasons, "timeout>=20m")
-	}
-	if budgetTimeout >= 45*time.Minute {
-		score++
-		reasons = append(reasons, "timeout>=45m")
+	timeoutLabel := "unknown"
+	if budgetTimeout > 0 {
+		timeoutLabel = budgetTimeout.String()
 	}
 
-	chars := len(instruction)
-	lines := lineCount(instruction)
-	if chars >= 2000 {
-		score++
-		reasons = append(reasons, "long-instruction")
-	}
-	if chars >= 3500 {
-		score++
-		reasons = append(reasons, "very-long-instruction")
-	}
-	if lines >= 35 {
-		score++
-		reasons = append(reasons, "many-constraints")
-	}
-
-	text := strings.ToLower(prompt + "\n" + instruction)
-
-	if containsAny(text, []string{
-		"benchmark", "latency", "throughput", "threshold", "cost model",
-		"optimiz", "performance", "speedup", "faster",
-	}) {
-		score++
-		reasons = append(reasons, "perf-sensitive")
-	}
-
-	if containsAny(text, []string{
-		"pipeline parallel", "tensor parallel", "microbatch", "distributed",
-		"all-forward-all-backward", "process group", "scheduler",
-	}) {
-		score++
-		reasons = append(reasons, "distributed-logic")
-	}
-
-	if containsAny(text, []string{
-		"repository", "repo", "branch", "merge", "bundle", "history",
-		"sanitize", "vulnerability", "all files",
-	}) {
-		score++
-		reasons = append(reasons, "repo-wide-edits")
-	}
-
-	if containsAny(text, []string{
-		"image", "video", "pdf", "ocr", "transcribe", "mask", "jpg", "png",
-	}) {
-		score++
-		reasons = append(reasons, "multimodal")
-	}
-
-	if containsAny(text, []string{
-		"deliverables", "output_data", "summary.csv", "plan_b1", "plan_b2",
-		"output.toml", "exactly these columns",
-	}) {
-		score++
-		reasons = append(reasons, "multi-artifact")
-	}
-
-	if workspaceFileCount >= 40 {
-		score++
-		reasons = append(reasons, "workspace>=40-files")
-	}
-	if workspaceFileCount >= 120 {
-		score++
-		reasons = append(reasons, "workspace>=120-files")
-	}
-
-	return score, reasons
+	return fmt.Sprintf(
+		"Classify this task for Team mode routing.\n\n"+
+			"Team mode means spawning specialized sub-agents and coordinating their work. It helps on complex multi-step tasks but adds overhead.\n\n"+
+			"Routing target: set enable_team=true only when expected coordination benefits outweigh overhead.\n\n"+
+			"Task prompt:\n%s\n\n"+
+			"Instruction excerpt:\n%s\n\n"+
+			"Signals:\n- timeout_budget=%s\n- workspace_file_count=%d",
+		prompt,
+		instruction,
+		timeoutLabel,
+		workspaceFileCount,
+	)
 }
 
-func lineCount(s string) int {
-	if strings.TrimSpace(s) == "" {
-		return 0
+func trimForClassifier(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
 	}
-	return strings.Count(s, "\n") + 1
+	return s[:max]
 }
 
-func containsAny(text string, needles []string) bool {
-	for _, n := range needles {
-		if strings.Contains(text, n) {
-			return true
-		}
+func compactError(err error, max int) string {
+	if err == nil {
+		return ""
 	}
-	return false
+	s := strings.TrimSpace(err.Error())
+	s = strings.Join(strings.Fields(s), " ")
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max]
 }
 
 func loadTaskInstruction(workDir string) string {
@@ -784,6 +1016,7 @@ func loadTaskInstruction(workDir string) string {
 		if path == "" {
 			continue
 		}
+		//nolint:gosec // Paths are fixed or derived from local workspace root.
 		data, err := os.ReadFile(path)
 		if err != nil || len(data) == 0 {
 			continue
@@ -815,9 +1048,10 @@ func boundedWorkspaceFileCount(workDir string, max int) int {
 		".cache":       true,
 	}
 
+	//nolint:gosec // workDir is the local workspace root path provided by the runner.
 	err := filepath.WalkDir(workDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil
+			return walkErr
 		}
 		if d.IsDir() {
 			if skipDirs[d.Name()] && path != workDir {
@@ -851,15 +1085,103 @@ func detectProvider() string {
 	return ""
 }
 
+func deriveGeminiMaxOutputTokens() int {
+	const (
+		defaultMax = 12000
+		minMax     = 1024
+		hardMax    = 40000
+	)
+	raw := strings.TrimSpace(os.Getenv("GOLLEM_GEMINI_MAX_OUTPUT_TOKENS"))
+	if raw == "" {
+		return defaultMax
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultMax
+	}
+	if n < minMax {
+		return minMax
+	}
+	if n > hardMax {
+		return hardMax
+	}
+	return n
+}
+
+func buildRetryConfig(provider, modelName string, runTimeout time.Duration) modelutil.RetryConfig {
+	cfg := modelutil.DefaultRetryConfig()
+
+	switch {
+	case runTimeout <= 5*time.Minute:
+		cfg.MaxRetries = 1
+		cfg.InitialBackoff = 500 * time.Millisecond
+		cfg.MaxBackoff = 2 * time.Second
+	case runTimeout <= 12*time.Minute:
+		cfg.MaxRetries = 2
+		cfg.InitialBackoff = 500 * time.Millisecond
+		cfg.MaxBackoff = 5 * time.Second
+	default:
+		cfg.MaxRetries = 3
+		cfg.InitialBackoff = 1 * time.Second
+		cfg.MaxBackoff = 8 * time.Second
+	}
+
+	// Gemini on Vertex is more prone to transient 429/deadline spikes under
+	// benchmark load; allow more retry attempts before giving up.
+	if provider == "vertexai" && strings.Contains(strings.ToLower(modelName), "gemini") {
+		switch {
+		case runTimeout <= 5*time.Minute:
+			if cfg.MaxRetries < 2 {
+				cfg.MaxRetries = 2
+			}
+		case runTimeout <= 12*time.Minute:
+			if cfg.MaxRetries < 4 {
+				cfg.MaxRetries = 4
+			}
+		default:
+			if cfg.MaxRetries < 6 {
+				cfg.MaxRetries = 6
+			}
+		}
+		if cfg.MaxBackoff < 12*time.Second {
+			cfg.MaxBackoff = 12 * time.Second
+		}
+	}
+
+	cfg.MinRemaining = 20 * time.Second
+	return cfg
+}
+
 func deriveRequestTimeout(runTimeout time.Duration) time.Duration {
+	// Allow explicit override in seconds for benchmark tuning.
+	if raw := strings.TrimSpace(os.Getenv("GOLLEM_MODEL_REQUEST_TIMEOUT_SEC")); raw != "" {
+		if secs, err := strconv.ParseFloat(raw, 64); err == nil && secs > 0 {
+			override := time.Duration(secs * float64(time.Second))
+			// Avoid a single call consuming the entire run.
+			if runTimeout > 0 && override > runTimeout-10*time.Second {
+				override = runTimeout - 10*time.Second
+			}
+			if override < 30*time.Second {
+				override = 30 * time.Second
+			}
+			return override
+		}
+	}
+
 	// Keep per-request timeouts much shorter than the full run timeout so
 	// a single hung provider call doesn't consume the whole benchmark budget.
 	timeout := runTimeout / 5
-	if timeout < 45*time.Second {
-		timeout = 45 * time.Second
+	if timeout < 60*time.Second {
+		timeout = 60 * time.Second
 	}
-	if timeout > 4*time.Minute {
-		timeout = 4 * time.Minute
+	if timeout > 6*time.Minute {
+		timeout = 6 * time.Minute
+	}
+	if runTimeout > 0 && timeout > runTimeout-10*time.Second {
+		timeout = runTimeout - 10*time.Second
+	}
+	if timeout < 30*time.Second {
+		timeout = 30 * time.Second
 	}
 	return timeout
 }
@@ -962,6 +1284,9 @@ Environment variables:
   OPENAI_API_KEY           API key for the openai provider
   OPENAI_PROMPT_CACHE_KEY  Optional stable key for OpenAI prompt caching
   OPENAI_PROMPT_CACHE_RETENTION Optional OpenAI cache retention policy (e.g. in_memory, 24h)
+  VERTEXAI_ANTHROPIC_PROMPT_CACHE Enable Anthropic prompt caching on Vertex AI (1/true/yes/on)
+  VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL Optional Anthropic prompt cache TTL (e.g. 5m, 1h)
+  GOLLEM_MODEL_REQUEST_TIMEOUT_SEC Optional per-model-call timeout in seconds (default derived from --timeout, capped at 6m)
   GOLLEM_TEAM_MODE         Team mode override: auto, on, off (default: auto)
   GOLLEM_CODE_MODE_FAILURE_THRESHOLD Consecutive execute_code capability failures before cooldown (default: 3)
   GOLLEM_CODE_MODE_COOLDOWN_TURNS Turns to keep execute_code disabled before retrying (default: 2)

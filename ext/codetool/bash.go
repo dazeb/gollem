@@ -63,7 +63,7 @@ type BashParams struct {
 	Command string `json:"command" jsonschema:"description=The bash command to execute"`
 
 	// Timeout is an optional timeout in seconds. Overrides the default.
-	Timeout *int `json:"timeout,omitempty" jsonschema:"description=Optional timeout in seconds (default: 120)"`
+	Timeout *int `json:"timeout,omitempty" jsonschema:"description=Optional timeout in seconds (default: 300)"`
 }
 
 // BashResult is the result of a bash command execution (used in tests).
@@ -122,13 +122,12 @@ func Bash(opts ...Option) core.Tool {
 			timeout := cfg.BashTimeout
 			if params.Timeout != nil && *params.Timeout > 0 {
 				timeout = time.Duration(*params.Timeout) * time.Second
-			} else if isBuildCommand(params.Command) && timeout < 5*time.Minute {
-				// Auto-extend timeout for build/compile commands which often
-				// need much longer than the 120s default.
+			}
+			// Build/benchmark commands frequently exceed short timeouts.
+			// Keep a 5m floor even when the model explicitly passes a smaller value.
+			if isBuildCommand(params.Command) && timeout < 5*time.Minute {
 				timeout = 5 * time.Minute
 			} else if isLongRunningCommand(params.Command) && timeout < 5*time.Minute {
-				// Auto-extend timeout for benchmarks, model training, and data
-				// processing commands that typically exceed the 120s default.
 				timeout = 5 * time.Minute
 			}
 
@@ -161,7 +160,7 @@ func Bash(opts ...Option) core.Tool {
 			timedOut := false
 			retried := false
 
-			for attempt := 0; attempt < 2; attempt++ {
+			for attempt := range 2 {
 				var stdout, stderr bytes.Buffer
 				if attempt == 0 {
 					cmd.Stdout = &stdout
@@ -549,20 +548,20 @@ func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeou
 			b.WriteByte('\n')
 		}
 		if isBuildCommand(command) {
-			b.WriteString(fmt.Sprintf("[timed out after %s — compilation took too long. Strategies: "+
+			fmt.Fprintf(&b, "[timed out after %s — compilation took too long. Strategies: "+
 				"(1) Use parallel builds: `make -j$(nproc)`, `cargo build -j$(nproc)` "+
 				"(2) Add `-O0` instead of `-O2`/`-O3` for faster compilation (optimize for compile speed, not runtime) "+
 				"(3) Use `timeout` parameter with a longer value "+
 				"(4) Compile fewer files at once or split into stages "+
-				"(5) If building from source, check if a pre-built package exists]", timeout))
+				"(5) If building from source, check if a pre-built package exists]", timeout)
 		} else {
-			b.WriteString(fmt.Sprintf("[timed out after %s — if this is a test or benchmark, optimize YOUR code to be faster. Do NOT modify test/benchmark parameters. Use the timeout parameter for legitimately long-running commands.]", timeout))
+			fmt.Fprintf(&b, "[timed out after %s — if this is a test or benchmark, optimize YOUR code to be faster. Do NOT modify test/benchmark parameters. Use the timeout parameter for legitimately long-running commands.]", timeout)
 		}
 	} else if exitCode != 0 {
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(fmt.Sprintf("[exit code: %d]", exitCode))
+		fmt.Fprintf(&b, "[exit code: %d]", exitCode)
 		if !hasContent {
 			b.WriteString("\n(no output)")
 		}
@@ -923,7 +922,16 @@ func moduleNotFoundHint(output string, workDir ...string) string {
 		if alias, ok := aliases[module]; ok {
 			pkg = alias
 		}
-		return fmt.Sprintf("[hint: try: pip install --break-system-packages %s]", pkg)
+		if strings.TrimSpace(os.Getenv("VIRTUAL_ENV")) != "" {
+			return fmt.Sprintf(
+				"[hint: try: uv pip install %s (fallback: pip install %s)]",
+				pkg, pkg,
+			)
+		}
+		return fmt.Sprintf(
+			"[hint: try: uv pip install --system %s (fallback: pip install --break-system-packages %s)]",
+			pkg, pkg,
+		)
 	}
 
 	return ""
@@ -1176,7 +1184,7 @@ func looksLikePythonException(line string) bool {
 		return false
 	}
 	for _, c := range className {
-		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
 			return false
 		}
 	}
@@ -2576,13 +2584,10 @@ func systemctlNotFoundHint(output string, exitCode int) string {
 		return ""
 	}
 	lower := strings.ToLower(output)
-	detected := false
-	if strings.Contains(lower, "systemctl") && (strings.Contains(lower, "command not found") || strings.Contains(lower, "no such file")) {
-		detected = true
-	}
-	if strings.Contains(lower, "failed to connect to bus") || strings.Contains(lower, "system has not been booted with systemd") {
-		detected = true
-	}
+	detected := (strings.Contains(lower, "systemctl") &&
+		(strings.Contains(lower, "command not found") || strings.Contains(lower, "no such file"))) ||
+		strings.Contains(lower, "failed to connect to bus") ||
+		strings.Contains(lower, "system has not been booted with systemd")
 	if !detected {
 		return ""
 	}
@@ -3303,7 +3308,6 @@ func sslHint(output string, exitCode int) string {
 		strings.Contains(lower, "ssl: certificate_verify_failed") ||
 		strings.Contains(lower, "ssl_error_syscall") ||
 		(strings.Contains(lower, "ssl") && strings.Contains(lower, "certificate") && strings.Contains(lower, "error")) {
-
 		// Detect if this is a pip-related SSL error.
 		if strings.Contains(lower, "pip") || strings.Contains(lower, "pypi") {
 			return "[hint: SSL certificate error during pip install. Fix: " +
@@ -3710,8 +3714,7 @@ func outputMismatchHint(output string, exitCode int, workDir string) string {
 	lower := strings.ToLower(output)
 
 	// Detect output mismatch patterns from various test frameworks.
-	isMismatch := false
-	if (strings.Contains(lower, "expected") && strings.Contains(lower, "got")) ||
+	isMismatch := (strings.Contains(lower, "expected") && strings.Contains(lower, "got")) ||
 		(strings.Contains(lower, "expected") && strings.Contains(lower, "actual")) ||
 		(strings.Contains(lower, "assertequal") && strings.Contains(lower, "!=")) ||
 		strings.Contains(lower, "files differ") ||
@@ -3719,9 +3722,7 @@ func outputMismatchHint(output string, exitCode int, workDir string) string {
 		(strings.Contains(lower, "files ") && strings.Contains(lower, " differ")) ||
 		strings.Contains(lower, "differ: char") ||
 		strings.Contains(lower, "diff: ") ||
-		(strings.Contains(lower, "mismatch") && !strings.Contains(lower, "hash")) {
-		isMismatch = true
-	}
+		(strings.Contains(lower, "mismatch") && !strings.Contains(lower, "hash"))
 
 	if !isMismatch {
 		return ""
@@ -4384,10 +4385,7 @@ func testResultSummary(output string) string {
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "succeeded") && strings.Contains(lineLower, "failed") {
 				// Strip [info] prefix for cleaner summary.
-				display := line
-				if strings.HasPrefix(display, "[info] ") {
-					display = strings.TrimPrefix(display, "[info] ")
-				}
+				display := strings.TrimPrefix(line, "[info] ")
 				summary := "[test summary: " + display + "]"
 				if strings.Contains(lineLower, "failed") && !strings.HasSuffix(strings.TrimSpace(lineLower), "failed 0") {
 					if detail := firstFailureDetail(output); detail != "" {
@@ -4597,6 +4595,7 @@ func testResultSummary(output string) string {
 			}
 			summary += "]"
 			// Extract first failing test name.
+			var summarySb4608 strings.Builder
 			for _, line := range strings.Split(output, "\n") {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "not ok ") {
@@ -4604,10 +4603,11 @@ func testResultSummary(output string) string {
 					if len(detail) > 150 {
 						detail = detail[:150] + "..."
 					}
-					summary += "\n[first failure: " + detail + "]"
+					summarySb4608.WriteString("\n[first failure: " + detail + "]")
 					break
 				}
 			}
+			summary += summarySb4608.String()
 			return summary
 		}
 	}
@@ -4673,13 +4673,15 @@ func firstFailureDetail(output string) string {
 			strings.HasPrefix(trimmed, "error: AssertionError:") {
 			detail := trimmed
 			// Look ahead for diff details (Deno format: "[Diff] Actual / Expected").
+			var detailSb4684 strings.Builder
 			for j := i + 1; j < min(i+6, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				if strings.HasPrefix(ahead, "-") || strings.HasPrefix(ahead, "+") {
-					detail += " / " + ahead
+					detailSb4684.WriteString(" / " + ahead)
 					break
 				}
 			}
+			detail += detailSb4684.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -4770,13 +4772,15 @@ func firstFailureDetail(output string) string {
 		// ExUnit (Elixir): "Assertion with == failed" followed by "left:"/"right:"
 		if strings.HasPrefix(strings.ToLower(trimmed), "assertion with") && strings.Contains(strings.ToLower(trimmed), "failed") {
 			detail := trimmed
+			var detailSb4781 strings.Builder
 			for j := i + 1; j < min(i+6, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				aheadLower := strings.ToLower(ahead)
 				if strings.HasPrefix(aheadLower, "left:") || strings.HasPrefix(aheadLower, "right:") {
-					detail += " / " + ahead
+					detailSb4781.WriteString(" / " + ahead)
 				}
 			}
+			detail += detailSb4781.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -4808,14 +4812,16 @@ func firstFailureDetail(output string) string {
 		// or "Expected equality of these values:" followed by values on next lines.
 		if strings.HasPrefix(trimmed, "Value of:") && i+2 < len(lines) {
 			detail := trimmed
+			var detailSb4819 strings.Builder
 			for j := i + 1; j < min(i+4, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				aheadLower := strings.ToLower(ahead)
 				if strings.HasPrefix(aheadLower, "actual:") || strings.HasPrefix(aheadLower, "expected:") ||
 					strings.HasPrefix(aheadLower, "which is:") {
-					detail += " / " + ahead
+					detailSb4819.WriteString(" / " + ahead)
 				}
 			}
+			detail += detailSb4819.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -4823,6 +4829,7 @@ func firstFailureDetail(output string) string {
 		}
 		if strings.HasPrefix(trimmed, "Expected equality of these values:") && i+1 < len(lines) {
 			detail := trimmed
+			var detailSb4834 strings.Builder
 			for j := i + 1; j < min(i+5, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				if ahead == "" {
@@ -4830,11 +4837,12 @@ func firstFailureDetail(output string) string {
 				}
 				aheadLower := strings.ToLower(ahead)
 				if strings.HasPrefix(aheadLower, "which is:") {
-					detail += " / " + ahead
+					detailSb4834.WriteString(" / " + ahead)
 				} else if !strings.HasPrefix(ahead, "#") {
 					detail += " / " + ahead
 				}
 			}
+			detail += detailSb4834.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -4902,13 +4910,15 @@ func firstFailureDetail(output string) string {
 			lower := strings.ToLower(trimmed)
 			if strings.Contains(lower, "assert") || strings.Contains(lower, "left") || strings.Contains(lower, "unwrap") {
 				detail := trimmed
+				var detailSb4913 strings.Builder
 				for j := i + 1; j < min(i+5, len(lines)); j++ {
 					ahead := strings.TrimSpace(lines[j])
 					aheadLower := strings.ToLower(ahead)
 					if strings.HasPrefix(aheadLower, "left:") || strings.HasPrefix(aheadLower, "right:") {
-						detail += " / " + ahead
+						detailSb4913.WriteString(" / " + ahead)
 					}
 				}
+				detail += detailSb4913.String()
 				if len(detail) > 200 {
 					detail = detail[:200] + "..."
 				}
@@ -5041,15 +5051,17 @@ func firstFailureDetail(output string) string {
 			(strings.Contains(trimmed, "Failure") && strings.Contains(trimmed, ".R:")) {
 			detail := trimmed
 			// Look ahead for the assertion detail.
+			var detailSb5052 strings.Builder
 			for j := i + 1; j < min(i+4, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				aheadLower := strings.ToLower(ahead)
 				if strings.Contains(aheadLower, "not equal") || strings.Contains(aheadLower, "not identical") ||
 					strings.Contains(aheadLower, "not true") || strings.Contains(aheadLower, "threw an error") {
-					detail += " — " + ahead
+					detailSb5052.WriteString(" — " + ahead)
 					break
 				}
 			}
+			detail += detailSb5052.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -5088,15 +5100,17 @@ func firstFailureDetail(output string) string {
 		//     expected: 4
 		if strings.HasPrefix(trimmed, "[FAILED]") {
 			detail := trimmed
+			var detailSb5099 strings.Builder
 			for j := i + 1; j < min(i+6, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				aheadLower := strings.ToLower(ahead)
 				if strings.HasPrefix(aheadLower, "check failed") ||
 					strings.HasPrefix(aheadLower, "actual:") ||
 					strings.HasPrefix(aheadLower, "expected:") {
-					detail += " / " + ahead
+					detailSb5099.WriteString(" / " + ahead)
 				}
 			}
+			detail += detailSb5099.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -5108,15 +5122,17 @@ func firstFailureDetail(output string) string {
 		if strings.Contains(trimmed, "... FAIL") && strings.Contains(trimmed, "Test [") {
 			detail := trimmed
 			// Look ahead for the error detail line.
+			var detailSb5119 strings.Builder
 			for j := i + 1; j < min(i+5, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				aheadLower := strings.ToLower(ahead)
 				if strings.HasPrefix(aheadLower, "error:") ||
 					strings.Contains(aheadLower, "expected") {
-					detail += " — " + ahead
+					detailSb5119.WriteString(" — " + ahead)
 					break
 				}
 			}
+			detail += detailSb5119.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -5129,13 +5145,15 @@ func firstFailureDetail(output string) string {
 		if (strings.HasPrefix(trimmed, "FAIL in (") || strings.HasPrefix(trimmed, "ERROR in (")) &&
 			(strings.Contains(trimmed, ".clj:") || strings.Contains(trimmed, ".cljc:") || strings.Contains(trimmed, ".cljs:")) {
 			detail := trimmed
+			var detailSb5140 strings.Builder
 			for j := i + 1; j < min(i+4, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				aheadLower := strings.ToLower(ahead)
 				if strings.HasPrefix(aheadLower, "expected:") || strings.HasPrefix(aheadLower, "actual:") {
-					detail += " / " + ahead
+					detailSb5140.WriteString(" / " + ahead)
 				}
 			}
+			detail += detailSb5140.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -5146,15 +5164,17 @@ func firstFailureDetail(output string) string {
 		// error detail lines containing assertEqual/assertMatch info.
 		if strings.Contains(trimmed, "*failed*") && strings.Contains(trimmed, "...*") {
 			detail := trimmed
+			var detailSb5157 strings.Builder
 			for j := i + 1; j < min(i+8, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				aheadLower := strings.ToLower(ahead)
 				if strings.Contains(aheadLower, "expected") || strings.Contains(aheadLower, "value") ||
 					strings.Contains(aheadLower, "assertequal") || strings.Contains(aheadLower, "assertmatch") {
-					detail += " / " + ahead
+					detailSb5157.WriteString(" / " + ahead)
 					break
 				}
 			}
+			detail += detailSb5157.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -5166,15 +5186,17 @@ func firstFailureDetail(output string) string {
 		if (strings.Contains(trimmed, ": FAILED") && strings.HasPrefix(trimmed, "%%%")) ||
 			strings.Contains(trimmed, "=== Test failed ===") {
 			detail := trimmed
+			var detailSb5177 strings.Builder
 			for j := i + 1; j < min(i+5, len(lines)); j++ {
 				ahead := strings.TrimSpace(lines[j])
 				aheadLower := strings.ToLower(ahead)
 				if strings.HasPrefix(aheadLower, "reason") || strings.Contains(aheadLower, "assertEqual") ||
 					strings.Contains(aheadLower, "error") {
-					detail += " / " + ahead
+					detailSb5177.WriteString(" / " + ahead)
 					break
 				}
 			}
+			detail += detailSb5177.String()
 			if len(detail) > 200 {
 				detail = detail[:200] + "..."
 			}
@@ -5240,11 +5262,11 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			// "All tests passed (X assertions in Y test cases)"
 			if strings.HasPrefix(line, "all tests passed") {
 				var assertions, cases int
-				fmt.Sscanf(extractAfter(line, "("), "%d assertions in %d", &assertions, &cases)
+				_, _ = fmt.Sscanf(extractAfter(line, "("), "%d assertions in %d", &assertions, &cases)
 				if cases > 0 {
 					passed = cases
 					ok = true
-					return
+					return passed, failed, ok
 				}
 			}
 			// "test cases: 5 | 4 passed | 1 failed"
@@ -5256,7 +5278,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					if nextWord == "passed" {
 						p = n
@@ -5271,7 +5293,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = p
 				failed = f
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5290,7 +5312,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					switch {
 					case nextWord == "passed":
@@ -5306,7 +5328,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				}
 			}
 			if ok {
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5324,7 +5346,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			}
 		}
 		if ok {
-			return
+			return passed, failed, ok
 		}
 	}
 
@@ -5335,7 +5357,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "Ran ") {
-				fmt.Sscanf(trimmed, "Ran %d", &total)
+				_, _ = fmt.Sscanf(trimmed, "Ran %d", &total)
 			}
 		}
 		// Now scan from end for result line.
@@ -5344,19 +5366,19 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "failures=") || strings.Contains(lineLower, "errors=") {
 				var f, e int
-				fmt.Sscanf(extractAfter(lineLower, "failures="), "%d", &f)
-				fmt.Sscanf(extractAfter(lineLower, "errors="), "%d", &e)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "failures="), "%d", &f)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "errors="), "%d", &e)
 				failed = f + e
 				if total > 0 {
 					passed = total - failed
 				}
 				ok = total > 0
-				return
+				return passed, failed, ok
 			}
 			if line == "OK" && total > 0 {
 				passed = total
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5368,7 +5390,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "Ran ") {
-				fmt.Sscanf(trimmed, "Ran %d", &total)
+				_, _ = fmt.Sscanf(trimmed, "Ran %d", &total)
 			}
 		}
 		for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
@@ -5380,7 +5402,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				for j := 0; j+1 < len(words); j++ {
 					if isNumeric(words[j]) {
 						var n int
-						fmt.Sscanf(words[j], "%d", &n)
+						_, _ = fmt.Sscanf(words[j], "%d", &n)
 						nextWord := strings.TrimRight(words[j+1], ",.;:")
 						if strings.HasPrefix(nextWord, "failure") {
 							f = n
@@ -5393,7 +5415,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				if total > 0 {
 					passed = total - failed
 					ok = true
-					return
+					return passed, failed, ok
 				}
 			}
 		}
@@ -5410,20 +5432,20 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
-					switch {
-					case nextWord == "passed":
+					switch nextWord {
+					case "passed":
 						passed = n
 						ok = true
-					case nextWord == "failed":
+					case "failed":
 						failed += n
 						ok = true
 					}
 				}
 			}
 			if ok {
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5440,20 +5462,20 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
-					switch {
-					case nextWord == "passed":
+					switch nextWord {
+					case "passed":
 						passed = n
 						ok = true
-					case nextWord == "failed":
+					case "failed":
 						failed += n
 						ok = true
 					}
 				}
 			}
 			if ok {
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5466,17 +5488,17 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "Ok:") {
-				fmt.Sscanf(extractAfter(trimmed, "Ok:"), "%d", &mesonOk)
+				_, _ = fmt.Sscanf(extractAfter(trimmed, "Ok:"), "%d", &mesonOk)
 				foundMeson = true
 			} else if strings.HasPrefix(trimmed, "Fail:") {
-				fmt.Sscanf(extractAfter(trimmed, "Fail:"), "%d", &mesonFail)
+				_, _ = fmt.Sscanf(extractAfter(trimmed, "Fail:"), "%d", &mesonFail)
 			}
 		}
 		if foundMeson {
 			passed = mesonOk
 			failed = mesonFail
 			ok = true
-			return
+			return passed, failed, ok
 		}
 	}
 
@@ -5495,7 +5517,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					if nextWord == "tests" && j+2 < len(words) {
 						nextNextWord := strings.TrimRight(words[j+2], ",.;:")
@@ -5513,7 +5535,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = p
 				failed = f
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5531,7 +5553,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					if strings.HasPrefix(nextWord, "example") {
 						examples = n
@@ -5545,7 +5567,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = examples - failures
 				failed = failures
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5560,10 +5582,10 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			words := strings.Fields(lineLower)
 			if len(words) >= 2 {
 				if words[1] == "passing" && isNumeric(words[0]) {
-					fmt.Sscanf(words[0], "%d", &p)
+					_, _ = fmt.Sscanf(words[0], "%d", &p)
 					foundPassing = true
 				} else if words[1] == "failing" && isNumeric(words[0]) {
-					fmt.Sscanf(words[0], "%d", &f)
+					_, _ = fmt.Sscanf(words[0], "%d", &f)
 				}
 			}
 		}
@@ -5571,7 +5593,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			passed = p
 			failed = f
 			ok = true
-			return
+			return passed, failed, ok
 		}
 	}
 
@@ -5585,11 +5607,12 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			words := strings.Fields(strings.ToLower(strings.TrimSpace(lines[i])))
 			if len(words) >= 2 && isNumeric(words[0]) {
 				var n int
-				fmt.Sscanf(words[0], "%d", &n)
-				if words[1] == "pass" {
+				_, _ = fmt.Sscanf(words[0], "%d", &n)
+				switch words[1] {
+				case "pass":
 					p = n
 					foundBun = true
-				} else if words[1] == "fail" {
+				case "fail":
 					f = n
 					foundBun = true
 				}
@@ -5599,7 +5622,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			passed = p
 			failed = f
 			ok = true
-			return
+			return passed, failed, ok
 		}
 	}
 
@@ -5612,24 +5635,24 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			if strings.Contains(lineLower, "tests:") && strings.Contains(lineLower, "assertions:") {
 				var t, f, e int
 				// Parse "Tests: N, Assertions: M, Failures: F, Errors: E"
-				fmt.Sscanf(extractAfter(lineLower, "tests:"), "%d", &t)
-				fmt.Sscanf(extractAfter(lineLower, "failures:"), "%d", &f)
-				fmt.Sscanf(extractAfter(lineLower, "errors:"), "%d", &e)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "tests:"), "%d", &t)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "failures:"), "%d", &f)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "errors:"), "%d", &e)
 				if t > 0 {
 					failed = f + e
 					passed = t - failed
 					ok = true
-					return
+					return passed, failed, ok
 				}
 			}
 			// PHPUnit OK format: "OK (N tests, M assertions)"
 			if strings.HasPrefix(lineLower, "ok (") && strings.Contains(lineLower, "test") {
 				var t int
-				fmt.Sscanf(strings.TrimPrefix(lineLower, "ok ("), "%d", &t)
+				_, _ = fmt.Sscanf(strings.TrimPrefix(lineLower, "ok ("), "%d", &t)
 				if t > 0 {
 					passed = t
 					ok = true
-					return
+					return passed, failed, ok
 				}
 			}
 		}
@@ -5642,15 +5665,15 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			lineLower := strings.ToLower(line)
 			if strings.Contains(lineLower, "tests run:") {
 				var t, f, e, s int
-				fmt.Sscanf(extractAfter(lineLower, "tests run:"), "%d", &t)
-				fmt.Sscanf(extractAfter(lineLower, "failures:"), "%d", &f)
-				fmt.Sscanf(extractAfter(lineLower, "errors:"), "%d", &e)
-				fmt.Sscanf(extractAfter(lineLower, "skipped:"), "%d", &s)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "tests run:"), "%d", &t)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "failures:"), "%d", &f)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "errors:"), "%d", &e)
+				_, _ = fmt.Sscanf(extractAfter(lineLower, "skipped:"), "%d", &s)
 				if t > 0 {
 					failed = f + e
 					passed = t - failed - s
 					ok = true
-					return
+					return passed, failed, ok
 				}
 			}
 		}
@@ -5668,7 +5691,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					switch {
 					case strings.HasPrefix(nextWord, "run"):
@@ -5684,7 +5707,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				failed = failures + errs
 				passed = runs - failed
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5699,14 +5722,16 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			// .NET may put all on one line or spread across several.
 			// Gather a window of lines around "Total tests:".
 			window := line
+			var windowSb5710 strings.Builder
 			for j := i + 1; j < min(i+5, len(lines)); j++ {
-				window += " " + strings.ToLower(strings.TrimSpace(lines[j]))
+				windowSb5710.WriteString(" " + strings.ToLower(strings.TrimSpace(lines[j])))
 			}
-			fmt.Sscanf(extractAfter(window, "passed:"), "%d", &passed)
-			fmt.Sscanf(extractAfter(window, "failed:"), "%d", &failed)
+			window += windowSb5710.String()
+			_, _ = fmt.Sscanf(extractAfter(window, "passed:"), "%d", &passed)
+			_, _ = fmt.Sscanf(extractAfter(window, "failed:"), "%d", &failed)
 			if passed+failed > 0 {
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5723,16 +5748,16 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+3 < len(words); j++ {
 				if isNumeric(words[j]) && words[j+1] == "tests" && words[j+2] == "failed" {
 					var f int
-					fmt.Sscanf(words[j], "%d", &f)
+					_, _ = fmt.Sscanf(words[j], "%d", &f)
 					failed = f
 					// Look for "out of Z" after "failed"
 					for k := j + 3; k+2 < len(words); k++ {
 						if words[k] == "out" && words[k+1] == "of" && isNumeric(words[k+2]) {
 							var total int
-							fmt.Sscanf(words[k+2], "%d", &total)
+							_, _ = fmt.Sscanf(words[k+2], "%d", &total)
 							passed = total - failed
 							ok = true
-							return
+							return passed, failed, ok
 						}
 					}
 				}
@@ -5756,13 +5781,13 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+4 < len(words); j++ {
 				if isNumeric(words[j]) && words[j+1] == "out" && words[j+2] == "of" && isNumeric(words[j+3]) {
 					var f, total int
-					fmt.Sscanf(words[j], "%d", &f)
-					fmt.Sscanf(words[j+3], "%d", &total)
+					_, _ = fmt.Sscanf(words[j], "%d", &f)
+					_, _ = fmt.Sscanf(words[j+3], "%d", &total)
 					if total > 0 && f <= total {
 						failed = f
 						passed = total - f
 						ok = true
-						return
+						return passed, failed, ok
 					}
 				}
 			}
@@ -5784,7 +5809,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:/")
 					switch {
 					case strings.HasPrefix(nextWord, "success"):
@@ -5801,7 +5826,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = successes
 				failed = failures + errs
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5818,7 +5843,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					if strings.HasPrefix(nextWord, "test") && strings.Contains(nextWord, "completed") || (j+2 < len(words) && strings.TrimRight(words[j+2], ",.;:") == "completed") {
 						total = n
@@ -5831,7 +5856,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				failed = failures
 				passed = total - failed
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5853,11 +5878,12 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				numStr := strings.TrimRight(words[j+1], ",.;:")
 				if isNumeric(numStr) {
 					var n int
-					fmt.Sscanf(numStr, "%d", &n)
-					if keyword == "succeeded" {
+					_, _ = fmt.Sscanf(numStr, "%d", &n)
+					switch keyword {
+					case "succeeded":
 						s = n
 						foundSBT = true
-					} else if keyword == "failed" {
+					case "failed":
 						f = n
 						foundSBT = true
 					}
@@ -5867,7 +5893,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = s
 				failed = f
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5890,13 +5916,13 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				if strings.HasPrefix(w, "+") && len(w) > 1 {
 					numStr := strings.TrimRight(w[1:], ":")
 					if isNumeric(numStr) {
-						fmt.Sscanf(numStr, "%d", &p)
+						_, _ = fmt.Sscanf(numStr, "%d", &p)
 						foundDart = true
 					}
 				} else if strings.HasPrefix(w, "-") && len(w) > 1 {
 					numStr := strings.TrimRight(w[1:], ":")
 					if isNumeric(numStr) {
-						fmt.Sscanf(numStr, "%d", &f)
+						_, _ = fmt.Sscanf(numStr, "%d", &f)
 					}
 				}
 			}
@@ -5904,7 +5930,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = p
 				failed = f
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5924,7 +5950,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					if nextWord == "test" || nextWord == "tests" {
 						tests = n
@@ -5938,7 +5964,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = tests - failures
 				failed = failures
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5957,7 +5983,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					if nextWord == "test" || nextWord == "tests" {
 						tests = n
@@ -5971,7 +5997,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = tests - failures
 				failed = failures
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -5986,10 +6012,10 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				words := strings.Fields(lineLower)
 				if len(words) >= 3 && isNumeric(words[1]) {
 					var n int
-					fmt.Sscanf(words[1], "%d", &n)
+					_, _ = fmt.Sscanf(words[1], "%d", &n)
 					passed = n
 					ok = true
-					return
+					return passed, failed, ok
 				}
 			}
 		}
@@ -6015,7 +6041,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				words := strings.Fields(seg)
 				if len(words) >= 2 && isNumeric(words[1]) {
 					var n int
-					fmt.Sscanf(words[1], "%d", &n)
+					_, _ = fmt.Sscanf(words[1], "%d", &n)
 					switch words[0] {
 					case "PASS":
 						p = n
@@ -6030,7 +6056,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = p
 				failed = f
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -6046,11 +6072,11 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				words := strings.Fields(lineLower)
 				if len(words) >= 2 && isNumeric(words[1]) {
 					var n int
-					fmt.Sscanf(words[1], "%d", &n)
+					_, _ = fmt.Sscanf(words[1], "%d", &n)
 					if n > 0 {
 						passed = n
 						ok = true
-						return
+						return passed, failed, ok
 					}
 				}
 			}
@@ -6061,13 +6087,13 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				for j := 0; j+3 < len(words); j++ {
 					if isNumeric(words[j]) && words[j+1] == "of" && isNumeric(words[j+2]) {
 						var f, total int
-						fmt.Sscanf(words[j], "%d", &f)
-						fmt.Sscanf(words[j+2], "%d", &total)
+						_, _ = fmt.Sscanf(words[j], "%d", &f)
+						_, _ = fmt.Sscanf(words[j+2], "%d", &total)
 						if total > 0 && f <= total {
 							failed = f
 							passed = total - f
 							ok = true
-							return
+							return passed, failed, ok
 						}
 					}
 				}
@@ -6085,7 +6111,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			for j := 0; j+1 < len(words); j++ {
 				if isNumeric(words[j]) {
 					var n int
-					fmt.Sscanf(words[j], "%d", &n)
+					_, _ = fmt.Sscanf(words[j], "%d", &n)
 					nextWord := strings.TrimRight(words[j+1], ",.;:")
 					if nextWord == "tests" || nextWord == "test" {
 						total = n
@@ -6099,7 +6125,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = total - failures
 				failed = failures
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -6115,7 +6141,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 				passed = p
 				failed = t - p
 				ok = true
-				return
+				return passed, failed, ok
 			}
 		}
 	}
@@ -6126,7 +6152,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			passed = p
 			failed = f
 			ok = true
-			return
+			return passed, failed, ok
 		}
 	}
 
@@ -6142,19 +6168,19 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			if strings.HasPrefix(trimmed, "[  PASSED  ]") {
 				// "[  PASSED  ] N test(s)." — Fields: ["[", "PASSED", "]", "N", "test(s)."]
 				if len(words) >= 4 && isNumeric(words[3]) {
-					fmt.Sscanf(words[3], "%d", &p)
+					_, _ = fmt.Sscanf(words[3], "%d", &p)
 					foundGTest = true
 				}
 			} else if strings.HasPrefix(trimmed, "[  FAILED  ]") && strings.Contains(trimmed, "listed below") {
 				// "[  FAILED  ] N test(s), listed below:" — Fields: ["[", "FAILED", "]", "N", ...]
 				if len(words) >= 4 && isNumeric(words[3]) {
-					fmt.Sscanf(words[3], "%d", &f)
+					_, _ = fmt.Sscanf(words[3], "%d", &f)
 					foundGTest = true
 				}
 			} else if len(words) >= 3 && isNumeric(words[0]) &&
 				words[1] == "FAILED" && (words[2] == "TEST" || words[2] == "TESTS") {
 				// Standalone "N FAILED TEST(S)" final line.
-				fmt.Sscanf(words[0], "%d", &f)
+				_, _ = fmt.Sscanf(words[0], "%d", &f)
 				foundGTest = true
 			}
 		}
@@ -6162,7 +6188,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 			passed = p
 			failed = f
 			ok = true
-			return
+			return passed, failed, ok
 		}
 	}
 
@@ -6185,7 +6211,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 		passed = passCount
 		failed = failCount
 		ok = true
-		return
+		return passed, failed, ok
 	}
 
 	return 0, 0, false
@@ -6202,7 +6228,7 @@ func extractTestCounts(output string) (passed, failed int, ok bool) {
 //	not ok 2 - failing test
 //	ok 3 - another test
 //
-// Also handles TAP summary lines: "# tests 5" / "# pass 3" / "# fail 2"
+// Also handles TAP summary lines: "# tests 5" / "# pass 3" / "# fail 2".
 func extractTAPCounts(output string) (passed, failed int, ok bool) {
 	lines := strings.Split(output, "\n")
 
@@ -6214,13 +6240,13 @@ func extractTAPCounts(output string) (passed, failed int, ok bool) {
 		trimmed := strings.TrimSpace(line)
 		lower := strings.ToLower(trimmed)
 		if strings.HasPrefix(lower, "# tests ") {
-			fmt.Sscanf(lower[len("# tests "):], "%d", &summaryTests)
+			_, _ = fmt.Sscanf(lower[len("# tests "):], "%d", &summaryTests)
 			hasSummary = true
 		} else if strings.HasPrefix(lower, "# pass ") {
-			fmt.Sscanf(lower[len("# pass "):], "%d", &summaryPass)
+			_, _ = fmt.Sscanf(lower[len("# pass "):], "%d", &summaryPass)
 			hasSummary = true
 		} else if strings.HasPrefix(lower, "# fail ") {
-			fmt.Sscanf(lower[len("# fail "):], "%d", &summaryFail)
+			_, _ = fmt.Sscanf(lower[len("# fail "):], "%d", &summaryFail)
 			hasSummary = true
 		}
 	}
@@ -6246,7 +6272,7 @@ func extractTAPCounts(output string) (passed, failed int, ok bool) {
 			}
 		}
 	}
-	return
+	return passed, failed, ok
 }
 
 // extractAfter returns the substring after the given prefix in s.
@@ -6341,12 +6367,14 @@ func compilationErrorSummary(output string, exitCode int) string {
 
 	summary := fmt.Sprintf("[compilation: %d error(s) found", len(errorLines))
 	if len(errorLines) > 8 {
-		summary += fmt.Sprintf(" (showing first 8)")
+		summary += " (showing first 8)"
 	}
 	summary += ":\n"
+	var summarySb6355 strings.Builder
 	for _, line := range shown {
-		summary += "  " + line + "\n"
+		summarySb6355.WriteString("  " + line + "\n")
 	}
+	summary += summarySb6355.String()
 	summary += "]"
 
 	// Cascade hint: when many errors exist, fixing the first one often
@@ -6407,7 +6435,7 @@ func compilationFingerprint(output string) string {
 
 // isBuildCommand detects commands that typically need longer timeouts.
 // isLongRunningCommand returns true for commands that typically need more than
-// the default 120s timeout: benchmarks, model training, data processing, etc.
+// short default timeouts: benchmarks, model training, data processing, etc.
 func isLongRunningCommand(cmd string) bool {
 	lower := strings.ToLower(strings.TrimSpace(cmd))
 	longPatterns := []string{
@@ -6889,7 +6917,7 @@ func isDestructiveTestCommandSegment(cmd string) bool {
 //
 // Valid matches must be rooted at /tests and path-bounded:
 // - accepted: "/tests", "/tests/foo", "cmd '/tests/foo'", "of=/tests/file"
-// - rejected: "/app/tests/foo", "/tests_backup", "/tmp/tests-data"
+// - rejected: "/app/tests/foo", "/tests_backup", "/tmp/tests-data".
 func findVerifierTestsPath(s string, start int) int {
 	const needle = "/tests"
 	if start < 0 {

@@ -13,6 +13,7 @@ You have these team management tools:
 - shutdown_teammate: Request a teammate to stop when their work is complete
 - send_message: Send a message to a specific teammate
 - task_create/task_update/task_list/task_get: Manage the shared task board
+- delegate (if available): Launch a focused subagent for a one-shot subtask
 
 ## Strategy
 
@@ -21,9 +22,11 @@ You have these team management tools:
 3. **Speculative attempts**: For ambiguous tasks, spawn teammates trying different approaches
 4. **Background verification**: Have a teammate run tests while you continue implementing
 5. **Context efficiency**: Each teammate has a fresh context window, avoiding degradation
+6. **Latency-aware delegation**: Use delegate for one-shot focused work when multi-turn threads are too slow
 
 ## Rules
 
+- In the first 1-2 turns, spawn at least one focused teammate. Do not wait for repeated failures before parallelizing.
 - Teammates run concurrently as goroutines — they edit files in the same workspace
 - Assign disjoint files to avoid conflicts (two teammates editing the same file = race condition)
 - Messages arrive between your model turns — check the message content for updates
@@ -46,7 +49,7 @@ func WorkerSystemPrompt(name, teamName string) string {
 
 ## Your Role
 
-You have access to coding tools (bash, view, edit, write, grep, glob, ls) and team coordination tools (send_message, task_*).
+You have access to coding tools (bash, view, edit, write, grep, glob, ls), team coordination tools (send_message, task_*), and may also have delegate for one-shot subagent work.
 
 ## Rules
 
@@ -56,6 +59,7 @@ You have access to coding tools (bash, view, edit, write, grep, glob, ls) and te
 4. Use the task board to claim tasks and track your progress
 5. Only edit files assigned to you — avoid conflicts with other teammates
 6. If the task is impossible or blocked, explain why via send_message
+7. If delegate is available and a subtask is isolated, use it for quick one-shot acceleration
 
 ## Communication
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -51,8 +52,8 @@ type lspServer struct {
 	lang    string
 	workDir string
 
-	writeMu   sync.Mutex           // protects writes to stdin
-	callMu    sync.Mutex           // serializes call() invocations
+	writeMu   sync.Mutex // protects writes to stdin
+	callMu    sync.Mutex // serializes call() invocations
 	nextID    atomic.Int64
 	fileMu    sync.Mutex           // protects openFiles
 	openFiles map[string]fileState // URI → state
@@ -381,13 +382,17 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 		}
 	}
 	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length header")
+		return nil, errors.New("missing Content-Length header")
 	}
 	body := make([]byte, contentLength)
 	if _, err := io.ReadFull(r, body); err != nil {
 		return nil, fmt.Errorf("reading body: %w", err)
 	}
 	return body, nil
+}
+
+func decodeJSON(data []byte, v any) bool {
+	return json.Unmarshal(data, v) == nil
 }
 
 // --- LSP server management ---
@@ -410,6 +415,7 @@ func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) 
 	// killed when the tool call's context is cancelled. The server should
 	// live across multiple tool calls and is cleaned up via shutdown() or
 	// process group kill when the parent exits.
+	//nolint:noctx // Deliberately avoid CommandContext so server lifecycle outlives request context.
 	cmd := exec.Command(cfg.command, cfg.args...)
 	cmd.Dir = workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -515,8 +521,8 @@ func (s *lspServer) storeDiagnostics(params json.RawMessage) {
 		return
 	}
 	var diag struct {
-		URI         string           `json:"uri"`
-		Diagnostics []lspDiagnostic  `json:"diagnostics"`
+		URI         string          `json:"uri"`
+		Diagnostics []lspDiagnostic `json:"diagnostics"`
 	}
 	if err := json.Unmarshal(params, &diag); err != nil || diag.URI == "" {
 		return
@@ -658,7 +664,7 @@ func (s *lspServer) call(ctx context.Context, method string, params any) (json.R
 			return nil, ctx.Err()
 
 		case <-s.readDone:
-			return nil, fmt.Errorf("language server process exited")
+			return nil, errors.New("language server process exited")
 		}
 	}
 }
@@ -778,29 +784,6 @@ func (s *lspServer) syncModifiedFiles() {
 	}
 }
 
-// shutdown gracefully shuts down the server.
-func (s *lspServer) shutdown() {
-	// Best-effort shutdown request. Use a short timeout since
-	// the server may already be dead (readDone closed).
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	s.call(ctx, "shutdown", nil) //nolint:errcheck
-	s.notify("exit", nil)       //nolint:errcheck
-	s.stdin.Close()
-
-	// Wait briefly, then kill.
-	done := make(chan struct{})
-	go func() {
-		s.cmd.Wait() //nolint:errcheck
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		s.kill()
-	}
-}
-
 // kill forcefully kills the server process group.
 func (s *lspServer) kill() {
 	if s.cmd.Process != nil {
@@ -880,7 +863,7 @@ func formatLocations(locs []lspLocation, workDir string, maxResults int) string 
 	if maxResults > 0 && shown > maxResults {
 		shown = maxResults
 	}
-	for i := 0; i < shown; i++ {
+	for i := range shown {
 		loc := locs[i]
 		path := uriToPath(loc.URI)
 		relPath := path
@@ -988,7 +971,7 @@ func formatSymbols(symbols []lspSymbolInfo, workDir string) string {
 	if shown > 50 {
 		shown = 50
 	}
-	for i := 0; i < shown; i++ {
+	for i := range shown {
 		sym := symbols[i]
 		loc := formatLocation(sym.Location, workDir)
 		fmt.Fprintf(&b, "%s [%s] — %s\n", sym.Name, symbolKindName(sym.Kind), loc)
@@ -1054,6 +1037,48 @@ func LSP(opts ...Option) core.Tool {
 			}
 			if params.Method == "" {
 				return "", &core.ModelRetryError{Message: "method parameter is required (definition, references, hover, diagnostics, symbols, rename, outline, type_definition, implementation, code_action)"}
+			}
+			switch params.Method {
+			case "definition":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for definition (both 1-indexed)"}
+				}
+			case "references":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for references (both 1-indexed)"}
+				}
+			case "hover":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for hover (both 1-indexed)"}
+				}
+			case "rename":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for rename (both 1-indexed)"}
+				}
+				if params.NewName == "" {
+					return "", &core.ModelRetryError{Message: "new_name parameter is required for rename method"}
+				}
+			case "type_definition":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for type_definition (both 1-indexed)"}
+				}
+			case "implementation":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for implementation (both 1-indexed)"}
+				}
+			case "code_action":
+				if params.Line == 0 || params.Character == 0 {
+					return "", &core.ModelRetryError{Message: "line and character are required for code_action (both 1-indexed)"}
+				}
+			case "symbols":
+				if params.Query == "" {
+					return "", &core.ModelRetryError{Message: "query parameter is required for symbols method"}
+				}
+			case "diagnostics", "outline":
+			default:
+				return "", &core.ModelRetryError{
+					Message: fmt.Sprintf("unknown method %q — use: definition, references, hover, diagnostics, symbols, rename, outline, type_definition, implementation, code_action", params.Method),
+				}
 			}
 
 			// Resolve file path.
@@ -1192,10 +1217,9 @@ func lspDefinition(ctx context.Context, srv *lspServer, filePath string, line, c
 	if err := json.Unmarshal(result, &locs); err != nil {
 		// Try single location.
 		var loc lspLocation
-		if err2 := json.Unmarshal(result, &loc); err2 != nil {
-			return "No definition found.", nil
+		if json.Unmarshal(result, &loc) == nil {
+			locs = []lspLocation{loc}
 		}
-		locs = []lspLocation{loc}
 	}
 	if len(locs) == 0 {
 		return "No definition found.", nil
@@ -1214,7 +1238,7 @@ func lspReferences(ctx context.Context, srv *lspServer, filePath string, line, c
 	}
 
 	var locs []lspLocation
-	if err := json.Unmarshal(result, &locs); err != nil || len(locs) == 0 {
+	if !decodeJSON(result, &locs) || len(locs) == 0 {
 		return "No references found.", nil
 	}
 
@@ -1252,10 +1276,9 @@ func lspTypeDefinition(ctx context.Context, srv *lspServer, filePath string, lin
 	var locs []lspLocation
 	if err := json.Unmarshal(result, &locs); err != nil {
 		var loc lspLocation
-		if err2 := json.Unmarshal(result, &loc); err2 != nil {
-			return "No type definition found.", nil
+		if json.Unmarshal(result, &loc) == nil {
+			locs = []lspLocation{loc}
 		}
-		locs = []lspLocation{loc}
 	}
 	if len(locs) == 0 {
 		return "No type definition found.", nil
@@ -1276,7 +1299,7 @@ func lspImplementation(ctx context.Context, srv *lspServer, filePath string, lin
 	}
 
 	var locs []lspLocation
-	if err := json.Unmarshal(result, &locs); err != nil || len(locs) == 0 {
+	if !decodeJSON(result, &locs) || len(locs) == 0 {
 		return "No implementations found.", nil
 	}
 
@@ -1329,7 +1352,7 @@ func lspCodeAction(ctx context.Context, srv *lspServer, filePath string, line, c
 	}
 
 	var actions []lspCodeActionItem
-	if err := json.Unmarshal(result, &actions); err != nil || len(actions) == 0 {
+	if !decodeJSON(result, &actions) || len(actions) == 0 {
 		return "No code actions available at this position.", nil
 	}
 
@@ -1469,7 +1492,7 @@ func applyWorkspaceEdit(edit *lspWorkspaceEdit, srv *lspServer, absWorkDir strin
 		// Sync the modified file back to the LSP server so subsequent
 		// operations see the updated content.
 		uri2 := fileURI(path)
-		srv.ensureFileOpen(path, uri2, srv.lang)
+		_, _ = srv.ensureFileOpen(path, uri2, srv.lang)
 	}
 
 	return totalEdits, filesSummary, nil
@@ -1517,7 +1540,7 @@ func lspSymbols(ctx context.Context, srv *lspServer, query, workDir string) (str
 	}
 
 	var symbols []lspSymbolInfo
-	if err := json.Unmarshal(result, &symbols); err != nil || len(symbols) == 0 {
+	if !decodeJSON(result, &symbols) || len(symbols) == 0 {
 		return "No symbols found.", nil
 	}
 	return formatSymbols(symbols, workDir), nil
@@ -1537,7 +1560,7 @@ func lspRename(ctx context.Context, srv *lspServer, filePath string, line, char 
 		errMsg := prepErr.Error()
 		if strings.Contains(errMsg, "cannot rename") || strings.Contains(errMsg, "not renameable") ||
 			strings.Contains(errMsg, "no identifier") {
-			return fmt.Sprintf("Cannot rename at this location: %s", errMsg), nil
+			return "Cannot rename at this location: " + errMsg, nil
 		}
 	} else if string(prepResult) == "null" || len(prepResult) == 0 {
 		return "No renamable symbol found at this location. Check file, line, and character position.", nil
@@ -1557,7 +1580,7 @@ func lspRename(ctx context.Context, srv *lspServer, filePath string, line, char 
 
 	// Parse WorkspaceEdit response.
 	var edit lspWorkspaceEdit
-	if err := json.Unmarshal(result, &edit); err != nil {
+	if !decodeJSON(result, &edit) {
 		return "Rename returned an unexpected response.", nil
 	}
 

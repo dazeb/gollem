@@ -31,10 +31,43 @@ type apiStreamOptions struct {
 }
 
 type apiMessage struct {
-	Role       string        `json:"role"` // system, user, assistant, tool
-	Content    string        `json:"content,omitempty"`
-	ToolCalls  []apiToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string        `json:"tool_call_id,omitempty"`
+	Role         string           `json:"role"` // system, user, assistant, tool
+	Content      string           `json:"content,omitempty"`
+	ContentParts []apiContentPart `json:"-"`
+	ToolCalls    []apiToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID   string           `json:"tool_call_id,omitempty"`
+}
+
+type apiContentPart struct {
+	Type     string       `json:"type"` // "text", "image_url"
+	Text     string       `json:"text,omitempty"`
+	ImageURL *apiImageURL `json:"image_url,omitempty"`
+}
+
+type apiImageURL struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// MarshalJSON supports both string and array payloads for the "content" field.
+// OpenAI chat expects string content for text-only messages and array content
+// for multimodal messages (text + image parts).
+func (m apiMessage) MarshalJSON() ([]byte, error) {
+	payload := map[string]any{
+		"role": m.Role,
+	}
+	if len(m.ContentParts) > 0 {
+		payload["content"] = m.ContentParts
+	} else if m.Content != "" {
+		payload["content"] = m.Content
+	}
+	if len(m.ToolCalls) > 0 {
+		payload["tool_calls"] = m.ToolCalls
+	}
+	if m.ToolCallID != "" {
+		payload["tool_call_id"] = m.ToolCallID
+	}
+	return json.Marshal(payload)
 }
 
 type apiToolCall struct {
@@ -138,7 +171,7 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 	if params != nil {
 		allTools := params.AllToolDefs()
 		for _, td := range allTools {
-			schemaJSON, err := json.Marshal(td.ParametersSchema)
+			schemaJSON, err := marshalOpenAISchema(td.ParametersSchema)
 			if err != nil {
 				return nil, err
 			}
@@ -159,7 +192,7 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 
 		// Handle native structured output via response_format.
 		if params.OutputMode == core.OutputModeNative && params.OutputObject != nil {
-			schemaJSON, err := json.Marshal(params.OutputObject.JSONSchema)
+			schemaJSON, err := marshalOpenAISchema(params.OutputObject.JSONSchema)
 			if err != nil {
 				return nil, err
 			}
@@ -204,19 +237,106 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 	for _, msg := range messages {
 		switch m := msg.(type) {
 		case core.ModelRequest:
+			hasImage := false
+			for _, part := range m.Parts {
+				if _, ok := part.(core.ImagePart); ok {
+					hasImage = true
+					break
+				}
+			}
+
+			if !hasImage {
+				for _, part := range m.Parts {
+					switch p := part.(type) {
+					case core.SystemPromptPart:
+						apiMsgs = append(apiMsgs, apiMessage{
+							Role:    "system",
+							Content: p.Content,
+						})
+					case core.UserPromptPart:
+						apiMsgs = append(apiMsgs, apiMessage{
+							Role:    "user",
+							Content: p.Content,
+						})
+					case core.ToolReturnPart:
+						content := ""
+						switch v := p.Content.(type) {
+						case string:
+							content = v
+						default:
+							b, _ := json.Marshal(v)
+							content = string(b)
+						}
+						apiMsgs = append(apiMsgs, apiMessage{
+							Role:       "tool",
+							Content:    content,
+							ToolCallID: p.ToolCallID,
+						})
+					case core.RetryPromptPart:
+						if p.ToolCallID != "" {
+							apiMsgs = append(apiMsgs, apiMessage{
+								Role:       "tool",
+								Content:    p.Content,
+								ToolCallID: p.ToolCallID,
+							})
+						} else {
+							apiMsgs = append(apiMsgs, apiMessage{
+								Role:    "user",
+								Content: p.Content,
+							})
+						}
+					default:
+						return nil, fmt.Errorf("openai provider: unsupported request part type %T", part)
+					}
+				}
+				break
+			}
+
+			var userParts []apiContentPart
+			flushUserParts := func() {
+				if len(userParts) == 0 {
+					return
+				}
+				if len(userParts) == 1 && userParts[0].Type == "text" {
+					apiMsgs = append(apiMsgs, apiMessage{
+						Role:    "user",
+						Content: userParts[0].Text,
+					})
+				} else {
+					cp := make([]apiContentPart, len(userParts))
+					copy(cp, userParts)
+					apiMsgs = append(apiMsgs, apiMessage{
+						Role:         "user",
+						ContentParts: cp,
+					})
+				}
+				userParts = userParts[:0]
+			}
+
 			for _, part := range m.Parts {
 				switch p := part.(type) {
 				case core.SystemPromptPart:
+					flushUserParts()
 					apiMsgs = append(apiMsgs, apiMessage{
 						Role:    "system",
 						Content: p.Content,
 					})
 				case core.UserPromptPart:
-					apiMsgs = append(apiMsgs, apiMessage{
-						Role:    "user",
-						Content: p.Content,
+					userParts = append(userParts, apiContentPart{
+						Type: "text",
+						Text: p.Content,
+					})
+				case core.ImagePart:
+					image := &apiImageURL{URL: p.URL}
+					if p.Detail != "" {
+						image.Detail = p.Detail
+					}
+					userParts = append(userParts, apiContentPart{
+						Type:     "image_url",
+						ImageURL: image,
 					})
 				case core.ToolReturnPart:
+					flushUserParts()
 					content := ""
 					switch v := p.Content.(type) {
 					case string:
@@ -232,21 +352,23 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 					})
 				case core.RetryPromptPart:
 					if p.ToolCallID != "" {
+						flushUserParts()
 						apiMsgs = append(apiMsgs, apiMessage{
 							Role:       "tool",
 							Content:    p.Content,
 							ToolCallID: p.ToolCallID,
 						})
 					} else {
-						apiMsgs = append(apiMsgs, apiMessage{
-							Role:    "user",
-							Content: p.Content,
+						userParts = append(userParts, apiContentPart{
+							Type: "text",
+							Text: p.Content,
 						})
 					}
 				default:
 					return nil, fmt.Errorf("openai provider: unsupported request part type %T", part)
 				}
 			}
+			flushUserParts()
 
 		case core.ModelResponse:
 			assistantMsg := apiMessage{Role: "assistant"}

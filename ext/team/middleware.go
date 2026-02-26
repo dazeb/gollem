@@ -3,6 +3,7 @@ package team
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/fugue-labs/gollem/core"
@@ -23,6 +24,24 @@ func TeamAwarenessMiddleware(tm *Teammate) core.AgentMiddleware {
 		pending := tm.mailbox.DrainAll()
 		if len(pending) == 0 {
 			return next(ctx, messages, settings, params)
+		}
+
+		for _, msg := range pending {
+			preview := msg.Summary
+			if preview == "" {
+				preview = msg.Content
+			}
+			teamName := "unknown-team"
+			if tm != nil && tm.team != nil && tm.team.name != "" {
+				teamName = tm.team.name
+			}
+			memberName := "unknown-member"
+			if tm != nil && tm.name != "" {
+				memberName = tm.name
+			}
+			fmt.Fprintf(os.Stderr,
+				"[gollem] team:%s mailbox:%s <- %s (%s): %s\n",
+				teamName, memberName, msg.From, msg.Type, previewForLog(preview, 240))
 		}
 
 		// Format messages and inject as UserPromptPart.
