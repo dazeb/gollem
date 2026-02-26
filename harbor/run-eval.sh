@@ -1,19 +1,22 @@
 #!/bin/bash
 # Terminal-Bench 2.0 evaluation runner for gollem
-# Usage: ./run-eval.sh [model] [concurrency] [tasks]
+# Usage: ./run-eval.sh [model] [concurrency] [tasks] [attempts]
 #   model: provider/model (default: openai/gpt-5.2-codex)
 #   concurrency: number of parallel tasks (default: 2)
 #   tasks: comma-separated task names (default: all non-excluded tasks)
+#   attempts: trials per task, passed to harbor -k (default: 1, or $HARBOR_N_ATTEMPTS)
 #
 # Examples:
 #   ./run-eval.sh                                        # all tasks, gpt-5.2-codex
 #   ./run-eval.sh openai/gpt-5.2-codex 4                 # 4 concurrent
 #   ./run-eval.sh anthropic/claude-sonnet-4-20250514 2   # claude sonnet
 #   ./run-eval.sh google/gemini-3-flash-preview 1 gpt2-codegolf,chess-best-move
+#   ./run-eval.sh openai/gpt-5.3-codex 1 all 5           # official-style 5 trials/task
 
 MODEL="${1:-openai/gpt-5.2-codex}"
 CONCURRENCY="${2:-2}"
 TASKS="${3:-}"  # Optional: comma-separated task names, or "all" for everything
+ATTEMPTS="${4:-${HARBOR_N_ATTEMPTS:-1}}"
 
 # Tasks that require Selenium/Chromium (won't work under QEMU on ARM Mac)
 SELENIUM_TASKS="break-filter-js-from-html,filter-js-from-html"
@@ -69,8 +72,11 @@ case "$PROVIDER" in
     # Keep stable defaults across runs; allow caller overrides.
     : "${OPENAI_PROMPT_CACHE_KEY:=tbench2-gollem}"
     : "${OPENAI_PROMPT_CACHE_RETENTION:=in_memory}"
-    export OPENAI_PROMPT_CACHE_KEY OPENAI_PROMPT_CACHE_RETENTION
+    # Priority processing: explicitly request lowest-latency tier for TB2 runs.
+    : "${OPENAI_SERVICE_TIER:=priority}"
+    export OPENAI_PROMPT_CACHE_KEY OPENAI_PROMPT_CACHE_RETENTION OPENAI_SERVICE_TIER
     echo "OpenAI prompt cache: key=${OPENAI_PROMPT_CACHE_KEY} retention=${OPENAI_PROMPT_CACHE_RETENTION}"
+    echo "OpenAI service tier: ${OPENAI_SERVICE_TIER}"
     ;;
   google|vertexai|vertex|vertexai-anthropic)
     echo "Provider: vertexai | Project: ${GOOGLE_CLOUD_PROJECT:-not set}"
@@ -101,9 +107,15 @@ case "$PROVIDER" in
 esac
 
 echo "Model: $MODEL | Concurrency: $CONCURRENCY"
+echo "attempts per task: $ATTEMPTS"
 echo "uv cache dir: $UV_CACHE_DIR"
 echo "model request timeout: ${GOLLEM_MODEL_REQUEST_TIMEOUT_SEC}s"
 echo "team mode: ${GOLLEM_TEAM_MODE}"
+
+if ! [[ "$ATTEMPTS" =~ ^[0-9]+$ ]] || [[ "$ATTEMPTS" -lt 1 ]]; then
+  echo "ERROR: attempts must be a positive integer, got: $ATTEMPTS"
+  exit 1
+fi
 
 # Build Linux binary with latest changes
 echo "Building gollem-linux-amd64..."
@@ -144,6 +156,7 @@ exec uv run harbor run \
   -m "$MODEL" \
   --env docker \
   -n "$CONCURRENCY" \
+  -k "$ATTEMPTS" \
   "${TASK_ARGS[@]}" \
   "${EXCLUDE_ARGS[@]}" \
   "${EXTRA_ARGS[@]}"

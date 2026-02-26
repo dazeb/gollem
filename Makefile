@@ -1,4 +1,4 @@
-.PHONY: help test test-verbose coverage lint fmt vet vulncheck tidy clean ci doc hooks-install hooks-uninstall tbench-validate-submission
+.PHONY: help test test-verbose coverage lint fmt vet vulncheck tidy clean ci doc hooks-install hooks-uninstall tbench-validate-submission tbench-official tbench-official-validate tbench-pr-steps tbench-pr-prepare
 
 ## help: show available targets (default)
 help: ## Show available targets
@@ -52,3 +52,23 @@ hooks-uninstall: ## Remove repo-managed git hooks
 
 tbench-validate-submission: ## Validate TB2 submission folder (set SUBMISSION_DIR=...)
 	@./contrib/tbench_validate_submission.sh "$${SUBMISSION_DIR:?set SUBMISSION_DIR to a submission dir or submissions/terminal-bench/2.0}"
+
+tbench-official: ## Run official TB2 eval via harbor wrapper (MODEL=..., CONCURRENCY=1, TASKS=optional, ATTEMPTS=5)
+	@MODEL="$${MODEL:-openai/gpt-5.3-codex}"; \
+	CONCURRENCY="$${CONCURRENCY:-1}"; \
+	TASKS="$${TASKS:-}"; \
+	ATTEMPTS="$${ATTEMPTS:-5}"; \
+	cd harbor && ./run-official-leaderboard.sh "$$MODEL" "$$CONCURRENCY" "$$TASKS" "$$ATTEMPTS"
+
+tbench-official-validate: ## Run official TB2 eval and validate generated submission folder (ATTEMPTS=5)
+	@MODEL="$${MODEL:-openai/gpt-5.3-codex}"; \
+	CONCURRENCY="$${CONCURRENCY:-1}"; \
+	TASKS="$${TASKS:-}"; \
+	ATTEMPTS="$${ATTEMPTS:-5}"; \
+	cd harbor && TBENCH_VALIDATE_SUBMISSION=1 ./run-official-leaderboard.sh "$$MODEL" "$$CONCURRENCY" "$$TASKS" "$$ATTEMPTS"
+
+tbench-pr-steps: ## Print exact git/PR steps for a submission (SUBMISSION_DIR=... optional)
+	@./contrib/tbench_submission_pr_helper.sh "$${SUBMISSION_DIR:-}"
+
+tbench-pr-prepare: ## Create branch + commit + push submission (SUBMISSION_DIR=... optional)
+	@./contrib/tbench_submission_pr_helper.sh "$${SUBMISSION_DIR:-}" --execute
