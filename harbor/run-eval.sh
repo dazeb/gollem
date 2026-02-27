@@ -95,8 +95,8 @@ case "$PROVIDER" in
     : "${OPENAI_SERVICE_TIER:=priority}"
     # Use Responses WebSocket mode for long tool-call chains when supported.
     : "${OPENAI_TRANSPORT:=websocket}"
-    # Follow WS mode guidance strictly by default (no silent HTTP fallback).
-    : "${OPENAI_WEBSOCKET_HTTP_FALLBACK:=0}"
+    # Keep a safety net in eval runs: fallback to HTTP if WS transport fails.
+    : "${OPENAI_WEBSOCKET_HTTP_FALLBACK:=1}"
     export OPENAI_PROMPT_CACHE_KEY OPENAI_PROMPT_CACHE_RETENTION OPENAI_SERVICE_TIER OPENAI_TRANSPORT OPENAI_WEBSOCKET_HTTP_FALLBACK
     echo "OpenAI prompt cache: key=${OPENAI_PROMPT_CACHE_KEY} retention=${OPENAI_PROMPT_CACHE_RETENTION}"
     echo "OpenAI service tier: ${OPENAI_SERVICE_TIER}"

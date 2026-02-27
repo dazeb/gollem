@@ -745,7 +745,7 @@ class GollemAgent(BaseInstalledAgent):
         if provider == "openai":
             env.setdefault("OPENAI_SERVICE_TIER", "priority")
             env.setdefault("OPENAI_TRANSPORT", "websocket")
-            env.setdefault("OPENAI_WEBSOCKET_HTTP_FALLBACK", "0")
+            env.setdefault("OPENAI_WEBSOCKET_HTTP_FALLBACK", "1")
 
         # Point to the uploaded credentials file inside the container.
         # Set this whenever we have GCP credentials (explicit or default ADC).
