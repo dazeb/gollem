@@ -49,6 +49,14 @@ var (
 	fallbackWebSocketWriteTimeout = 30 * time.Second
 )
 
+const (
+	// minBudgetForWSRetry is the minimum remaining context budget required
+	// before attempting the inner websocket reconnect-retry. The model must
+	// re-reason from scratch on the retry, so there's no point reconnecting
+	// if there isn't enough time left.
+	minBudgetForWSRetry = 60 * time.Second
+)
+
 func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *responsesRequest) (*core.ModelResponse, error) {
 	p.wsMu.Lock()
 	defer p.wsMu.Unlock()
@@ -76,19 +84,23 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 	if err != nil {
 		// If continuation/cache state is lost, or socket lifetime is reached, or
 		// connection dropped, reconnect once and resend full context as a new chain.
+		// Skip the inner retry when the context budget is nearly exhausted — the
+		// model would need to re-reason from scratch and won't finish in time.
 		if isPreviousResponseNotFound(err) || isWebSocketConnectionLimitReached(err) || isWebSocketConnectionError(err) {
-			p.resetResponsesWebSocketLocked()
-			conn, connErr := p.ensureResponsesWebSocketLocked(ctx)
-			if connErr != nil {
-				return nil, connErr
-			}
-			fullReq := *req
-			fullReq.PreviousResponseID = ""
-			apiResp, err = p.sendResponsesCreateLocked(ctx, conn, &fullReq)
-			if err == nil {
-				// New chain started; local previous-response cache is reset.
-				p.wsPrevResponseID = ""
-				p.wsLastInputSigs = nil
+			if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) >= minBudgetForWSRetry {
+				p.resetResponsesWebSocketLocked()
+				conn, connErr := p.ensureResponsesWebSocketLocked(ctx)
+				if connErr != nil {
+					return nil, connErr
+				}
+				fullReq := *req
+				fullReq.PreviousResponseID = ""
+				apiResp, err = p.sendResponsesCreateLocked(ctx, conn, &fullReq)
+				if err == nil {
+					// New chain started; local previous-response cache is reset.
+					p.wsPrevResponseID = ""
+					p.wsLastInputSigs = nil
+				}
 			}
 		}
 		if err != nil {
@@ -209,25 +221,25 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 	}
 }
 
-// requestIODeadline returns the earliest applicable request deadline from:
-// - the provided context deadline (if any)
-// - the provider HTTP client's timeout (if configured and >0)
-// This keeps websocket request lifetime aligned with per-request timeout policy.
-func (p *Provider) requestIODeadline(ctx context.Context, now time.Time) (time.Time, bool) {
-	var deadline time.Time
-	has := false
+// requestIODeadline returns the applicable request deadline for websocket I/O.
+//
+// Unlike HTTP requests (where http.Client.Timeout bounds a single roundtrip),
+// websocket reads may legitimately block for extended periods while the model
+// reasons (especially with high/xhigh reasoning effort). Using the HTTP client
+// timeout as a websocket read deadline causes premature timeouts: the inner
+// reconnect-retry doubles the consumed time per outer retry attempt, and the
+// retry loop can exhaust the entire task budget without a single successful
+// model turn.
+//
+// Instead, we use only the context deadline (which represents the full run
+// budget) and the fallback constants. This lets the model use whatever time
+// the run budget allows for reasoning, while the fallback constants protect
+// against indefinite hangs when no context deadline is set.
+func (p *Provider) requestIODeadline(ctx context.Context, _ time.Time) (time.Time, bool) {
 	if d, ok := ctx.Deadline(); ok {
-		deadline = d
-		has = true
+		return d, true
 	}
-	if p.httpClient != nil && p.httpClient.Timeout > 0 {
-		d := now.Add(p.httpClient.Timeout)
-		if !has || d.Before(deadline) {
-			deadline = d
-			has = true
-		}
-	}
-	return deadline, has
+	return time.Time{}, false
 }
 
 func responsesInputSignatures(input []map[string]any) ([]string, error) {

@@ -839,16 +839,7 @@ func TestSendResponsesCreateLockedUsesFallbackReadTimeoutWithoutContextDeadline(
 	}
 }
 
-func TestRequestViaResponsesWebSocketUsesHTTPClientTimeoutAsDeadline(t *testing.T) {
-	oldRead := fallbackWebSocketReadTimeout
-	oldWrite := fallbackWebSocketWriteTimeout
-	fallbackWebSocketReadTimeout = 5 * time.Second
-	fallbackWebSocketWriteTimeout = 5 * time.Second
-	defer func() {
-		fallbackWebSocketReadTimeout = oldRead
-		fallbackWebSocketWriteTimeout = oldWrite
-	}()
-
+func TestRequestViaResponsesWebSocketUsesContextDeadlineNotHTTPTimeout(t *testing.T) {
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
@@ -870,16 +861,21 @@ func TestRequestViaResponsesWebSocketUsesHTTPClientTimeoutAsDeadline(t *testing.
 	}))
 	defer server.Close()
 
+	// HTTP client has a very short timeout, but websocket reads should be
+	// governed by the context deadline, not the HTTP client timeout.
 	p := New(
 		WithAPIKey("test-key"),
 		WithModel("gpt-5.3-codex"),
 		WithBaseURL(server.URL),
 		WithTransport("websocket"),
-		WithHTTPClient(&http.Client{Timeout: 120 * time.Millisecond}),
+		WithHTTPClient(&http.Client{Timeout: 50 * time.Millisecond}),
 	)
 
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
 	start := time.Now()
-	_, err := p.Request(context.Background(), []core.ModelMessage{
+	_, err := p.Request(ctx, []core.ModelMessage{
 		core.ModelRequest{
 			Parts: []core.ModelRequestPart{
 				core.UserPromptPart{Content: "hello"},
@@ -890,11 +886,12 @@ func TestRequestViaResponsesWebSocketUsesHTTPClientTimeoutAsDeadline(t *testing.
 	if err == nil {
 		t.Fatal("expected timeout-bound websocket read failure")
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "read failed") {
-		t.Fatalf("expected websocket read failure, got: %v", err)
+	// Should take ~200ms (context deadline), NOT ~50ms (HTTP client timeout).
+	if elapsed < 150*time.Millisecond {
+		t.Fatalf("websocket read timed out too early (%v); should use context deadline, not HTTP client timeout", elapsed)
 	}
 	if elapsed > time.Second {
-		t.Fatalf("expected timeout around HTTP client timeout, took too long: %v", elapsed)
+		t.Fatalf("expected timeout around context deadline (200ms), took too long: %v", elapsed)
 	}
 }
 
