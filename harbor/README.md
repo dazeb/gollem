@@ -92,6 +92,16 @@ export OPENAI_SERVICE_TIER="priority"
 export OPENAI_TRANSPORT="websocket"
 # Optional: strict WS mode (default), do not silently fall back to HTTP
 export OPENAI_WEBSOCKET_HTTP_FALLBACK="0"
+# Optional: per-task reasoning overrides (exact task name, then "*" fallback)
+export GOLLEM_REASONING_BY_TASK="model-extraction-relu-logits=xhigh,regex-chess=xhigh,*=high"
+# Optional: disable reasoning sandwich for specific tasks (flat effort across phases)
+export GOLLEM_REASONING_NO_SANDWICH_BY_TASK="model-extraction-relu-logits"
+# Optional: disable time-budget greedy reasoning caps for specific tasks
+export GOLLEM_REASONING_NO_GREEDY_BY_TASK="model-extraction-relu-logits"
+# Optional: enable top-level dynamic personality generation in gollem
+export GOLLEM_TOP_LEVEL_PERSONALITY="1"
+# Optional: require LLM-extracted hard invariant checklist to pass before completion
+export GOLLEM_REQUIRE_INVARIANT_CHECKLIST="1"
 ```
 
 ## OpenAI WebSocket Mode Notes
@@ -108,3 +118,10 @@ When `OPENAI_TRANSPORT=websocket` is enabled:
   restores the original `store` intent for the HTTP request.
 
 For Terminal-Bench style coding loops, this mode is usually beneficial.
+
+## Harbor Runner Defaults
+
+- `./run-eval.sh` (canary/local eval) defaults `GOLLEM_TOP_LEVEL_PERSONALITY=1`.
+- `./run-official-leaderboard.sh` defaults `GOLLEM_TOP_LEVEL_PERSONALITY=0` for reproducibility.
+- You can override either behavior by exporting `GOLLEM_TOP_LEVEL_PERSONALITY=0|1` before launch.
+- Both runners default `GOLLEM_REQUIRE_INVARIANT_CHECKLIST=1` (LLM-extracted hard constraints must be resolved before completion).

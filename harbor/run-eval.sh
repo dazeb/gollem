@@ -37,6 +37,25 @@ export GOLLEM_MODEL_REQUEST_TIMEOUT_SEC
 : "${GOLLEM_TEAM_MODE:=off}"
 export GOLLEM_TEAM_MODE
 
+# Canary default: enable top-level dynamic personality generation.
+# Official wrapper overrides this to 0 unless explicitly enabled.
+: "${GOLLEM_TOP_LEVEL_PERSONALITY:=1}"
+export GOLLEM_TOP_LEVEL_PERSONALITY
+
+# Per-task OpenAI reasoning routing defaults:
+# - model-extraction-relu-logits is sensitive to deep search; run xhigh.
+# - For that task, disable sandwich so effort stays xhigh across phases.
+: "${GOLLEM_REASONING_BY_TASK:=model-extraction-relu-logits=xhigh,*=high}"
+: "${GOLLEM_REASONING_NO_SANDWICH_BY_TASK:=model-extraction-relu-logits}"
+: "${GOLLEM_REASONING_NO_GREEDY_BY_TASK:=model-extraction-relu-logits}"
+export GOLLEM_REASONING_BY_TASK
+export GOLLEM_REASONING_NO_SANDWICH_BY_TASK
+export GOLLEM_REASONING_NO_GREEDY_BY_TASK
+
+# Require LLM-extracted invariant checklist before completion.
+: "${GOLLEM_REQUIRE_INVARIANT_CHECKLIST:=1}"
+export GOLLEM_REQUIRE_INVARIANT_CHECKLIST
+
 # Load API keys from ~/.envrc (provider-specific keys)
 if [[ -f ~/.envrc ]]; then
   source ~/.envrc
@@ -117,6 +136,10 @@ echo "attempts per task: $ATTEMPTS"
 echo "uv cache dir: $UV_CACHE_DIR"
 echo "model request timeout: ${GOLLEM_MODEL_REQUEST_TIMEOUT_SEC}s"
 echo "team mode: ${GOLLEM_TEAM_MODE}"
+echo "top-level personality: ${GOLLEM_TOP_LEVEL_PERSONALITY}"
+echo "reasoning by task: ${GOLLEM_REASONING_BY_TASK}"
+echo "reasoning no-sandwich by task: ${GOLLEM_REASONING_NO_SANDWICH_BY_TASK}"
+echo "reasoning no-greedy by task: ${GOLLEM_REASONING_NO_GREEDY_BY_TASK}"
 
 if ! [[ "$ATTEMPTS" =~ ^[0-9]+$ ]] || [[ "$ATTEMPTS" -lt 1 ]]; then
   echo "ERROR: attempts must be a positive integer, got: $ATTEMPTS"

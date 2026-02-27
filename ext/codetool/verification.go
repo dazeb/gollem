@@ -47,8 +47,14 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 	editsSinceLastVerify := 0
 	serviceCommandSeen := false
 	serviceReadinessVerified := false
+	invariantToolAvailable := false
+	invariantToolSeen := false
+	invariantSummarySeen := false
+	invariantHardUnresolved := 0
+	invariantHardFail := 0
 	stagnationWarned := 0    // consecutive fail level at which we last injected guidance
 	staleTestWarned := false // whether we've warned about not running tests after edits
+	requireInvariantChecklist := envEnabled("GOLLEM_REQUIRE_INVARIANT_CHECKLIST")
 
 	mw := func(
 		ctx context.Context,
@@ -67,14 +73,26 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		var runSummary []string
 		pendingMutationCallIDs := map[string]struct{}{}
 		pendingServiceReadinessCallIDs := map[string]struct{}{}
+		pendingInvariantCallIDs := map[string]struct{}{}
 		editsAfterLastVerify := 0 // file changes since last verification run
 		serviceCommandSeenNow := false
 		serviceReadinessVerifiedNow := false
+		invariantToolSeenNow := false
+		invariantSummarySeenNow := false
+		invariantHardUnresolvedNow := 0
+		invariantHardFailNow := 0
+		invariantToolAvailableNow := hasTool(params, "invariants")
 
 		for _, msg := range messages {
 			if resp, ok := msg.(core.ModelResponse); ok {
 				for _, part := range resp.Parts {
 					if tc, ok := part.(core.ToolCallPart); ok {
+						if tc.ToolName == "invariants" {
+							invariantToolSeenNow = true
+							if tc.ToolCallID != "" {
+								pendingInvariantCallIDs[tc.ToolCallID] = struct{}{}
+							}
+						}
 						if tc.ToolName == "bash" {
 							cmd := bashCommandFromArgsJSON(tc.ArgsJSON)
 							if isServiceLifecycleCommand(cmd) {
@@ -153,6 +171,15 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 							}
 							delete(pendingServiceReadinessCallIDs, tr.ToolCallID)
 						}
+						if _, ok := pendingInvariantCallIDs[tr.ToolCallID]; ok {
+							content := toolReturnContentString(tr.Content)
+							if unresolved, fail, countsOK := extractInvariantGateCounts(content); countsOK {
+								invariantSummarySeenNow = true
+								invariantHardUnresolvedNow = unresolved
+								invariantHardFailNow = fail
+							}
+							delete(pendingInvariantCallIDs, tr.ToolCallID)
+						}
 					}
 				}
 			}
@@ -166,6 +193,11 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		editsSinceLastVerify = editsAfterLastVerify
 		serviceCommandSeen = serviceCommandSeenNow
 		serviceReadinessVerified = serviceReadinessVerifiedNow
+		invariantToolAvailable = invariantToolAvailableNow
+		invariantToolSeen = invariantToolSeenNow
+		invariantSummarySeen = invariantSummarySeenNow
+		invariantHardUnresolved = invariantHardUnresolvedNow
+		invariantHardFail = invariantHardFailNow
 
 		// Compute stagnation: count consecutive failing runs from the end
 		// that aren't showing improvement in pass counts.
@@ -268,6 +300,11 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		eslv := editsSinceLastVerify
 		svcSeen := serviceCommandSeen
 		svcReady := serviceReadinessVerified
+		invAvailable := invariantToolAvailable
+		invSeen := invariantToolSeen
+		invSummarySeen := invariantSummarySeen
+		invHardUnresolved := invariantHardUnresolved
+		invHardFail := invariantHardFail
 		mu.Unlock()
 
 		if !v {
@@ -309,6 +346,28 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 				Message: "STOP. This task used service lifecycle commands, but no successful readiness proof was recorded. " +
 					"Before completion, prove service liveness the way the verifier will (e.g., port check with `ss -tlnp`/`nc -z` " +
 					"and a real protocol request such as curl/grpc call).",
+			}
+		}
+		if requireInvariantChecklist && invAvailable {
+			if !invSeen {
+				return output, &core.ModelRetryError{
+					Message: "STOP. You must run the `invariants` tool before completion. " +
+						"Run `invariants` command `extract`, then verify/update statuses with evidence.",
+				}
+			}
+			if !invSummarySeen {
+				return output, &core.ModelRetryError{
+					Message: "STOP. Invariant summary is missing. Run `invariants` command `summary` after your latest verification run.",
+				}
+			}
+			if invHardFail > 0 || invHardUnresolved > 0 {
+				return output, &core.ModelRetryError{
+					Message: fmt.Sprintf(
+						"STOP. Hard invariants are not all PASS (hard_fail=%d, hard_unresolved=%d). "+
+							"Fix remaining violations, update invariant statuses with evidence, and re-run verification.",
+						invHardFail, invHardUnresolved,
+					),
+				}
 			}
 		}
 
@@ -490,6 +549,47 @@ func isMutatingLSPCall(argsJSON string) bool {
 		return args.ActionIndex != nil
 	default:
 		return false
+	}
+}
+
+func extractInvariantGateCounts(content string) (hardUnresolved int, hardFail int, ok bool) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &payload); err != nil {
+		return 0, 0, false
+	}
+	unresolvedAny, unresolvedOK := payload["hard_unresolved"]
+	failAny, failOK := payload["hard_fail"]
+	if !unresolvedOK || !failOK {
+		return 0, 0, false
+	}
+	unresolved, unresolvedConv := anyToInt(unresolvedAny)
+	fail, failConv := anyToInt(failAny)
+	if !unresolvedConv || !failConv {
+		return 0, 0, false
+	}
+	return unresolved, fail, true
+}
+
+func anyToInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	default:
+		return 0, false
 	}
 }
 

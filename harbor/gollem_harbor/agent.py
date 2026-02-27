@@ -48,8 +48,10 @@ _DEFAULT_SETUP_PYTHON_PACKAGES = [
     "matplotlib",
     "pillow",
     "sympy",
+    "beautifulsoup4",
 ]
 _REQUIRED_SETUP_PYTHON_PACKAGES = [
+    "pytest",
     "pandas",
     "scipy",
 ]
@@ -169,6 +171,7 @@ class GollemAgent(BaseInstalledAgent):
         self._reasoning_effort = reasoning_effort
         self._location = location
         self._project = project
+        self._task_name: str | None = None
         self._setup_python_packages = self._resolve_setup_python_packages()
 
     @staticmethod
@@ -219,6 +222,9 @@ class GollemAgent(BaseInstalledAgent):
         the agent binary doesn't know the real deadline. We read the task
         timeout from the task cache and pass it via GOLLEM_TIMEOUT_SEC.
         """
+        task_name = self._detect_task_name()
+        self._task_name = task_name if task_name else None
+
         task_timeout = self._detect_task_timeout()
         if task_timeout:
             self._task_timeout_sec = task_timeout
@@ -232,6 +238,16 @@ class GollemAgent(BaseInstalledAgent):
 
         await super().run(instruction, environment, context)
 
+    def _detect_task_name(self) -> str:
+        """Extract task name from trial directory '<task-name>__<random>'."""
+        try:
+            trial_dir = self.logs_dir.parent
+            trial_name = trial_dir.name
+            task_name = trial_name.rsplit("__", 1)[0]
+            return task_name.strip()
+        except Exception:
+            return ""
+
     def _detect_task_timeout(self) -> int | None:
         """Find the task-specific timeout from Harbor's task cache.
 
@@ -239,10 +255,7 @@ class GollemAgent(BaseInstalledAgent):
         We extract the task name and search the task cache for task.toml.
         """
         try:
-            # Extract task name from trial directory name.
-            trial_dir = self.logs_dir.parent
-            trial_name = trial_dir.name
-            task_name = trial_name.rsplit("__", 1)[0]
+            task_name = self._task_name or self._detect_task_name()
             if not task_name:
                 return None
 
@@ -359,17 +372,17 @@ class GollemAgent(BaseInstalledAgent):
                 "    apt-get update -qq 2>/dev/null && "
                 "    apt-get install -y -qq --no-install-recommends "
                 "      ca-certificates python3 python3-venv build-essential "
-                "      curl wget git jq unzip file bc sqlite3 xxd pkg-config "
+                "      curl wget git jq unzip file bc sqlite3 xxd pkg-config time "
                 "      cmake libssl-dev libffi-dev zlib1g-dev "
                 "      libsqlite3-dev libreadline-dev 2>/dev/null; "
                 "    apt-get install -y -qq --no-install-recommends stockfish "
                 "      2>/dev/null || true; "
                 "  elif command -v apk >/dev/null 2>&1; then "
                 "    apk add --no-cache ca-certificates python3 build-base "
-                "      curl wget git jq unzip file bc sqlite cmake openssl-dev 2>/dev/null; "
+                "      curl wget git jq unzip file bc sqlite cmake openssl-dev time 2>/dev/null; "
                 "  elif command -v yum >/dev/null 2>&1; then "
                 "    yum install -y ca-certificates python3 gcc make "
-                "      curl wget git jq unzip file bc sqlite cmake openssl-devel 2>/dev/null; "
+                "      curl wget git jq unzip file bc sqlite cmake openssl-devel time 2>/dev/null; "
                 "  fi"
                 ") 2>&1 | tail -5' || true; "
                 "if [ -x /usr/games/stockfish ]; then "
@@ -466,11 +479,11 @@ class GollemAgent(BaseInstalledAgent):
                 "set -e; "
                 f"PY_INSTALL=\"uv pip install --python {_AGENT_VENV_PATH}/bin/python\"; "
                 f"$PY_INSTALL -q {setup_python_pkgs} 2>/dev/null || true; "
-                # Always keep pandas/scipy available even if caller overrides
+                # Always keep core Python test/scientific deps available even if caller overrides
                 # GOLLEM_SETUP_PYTHON_PACKAGES.
-                "$PY_INSTALL -q pandas scipy 2>/dev/null || true; "
-                # Fail setup if required scientific deps are not importable.
-                f"{_AGENT_VENV_PATH}/bin/python -c \"import pandas, scipy\" >/dev/null 2>&1; "
+                "$PY_INSTALL -q pytest pandas scipy 2>/dev/null || true; "
+                # Fail setup if required warmup deps are not importable.
+                f"{_AGENT_VENV_PATH}/bin/python -c \"import pytest, pandas, scipy\" >/dev/null 2>&1; "
                 # Python: requirements.txt
                 "for f in /app/requirements.txt /requirements.txt; do "
                 "  if [ -f \"$f\" ]; then "
@@ -637,6 +650,11 @@ class GollemAgent(BaseInstalledAgent):
                 "- Prioritize passing verifier checks over self-reported completion.\n"
                 "- Read verifier tests/scripts early and validate against them before finishing.\n"
                 "- Optimize for both correctness and runtime under timeout.\n"
+                "- Follow reference-first execution: minimal correct baseline -> verifier/tests -> fix exact deltas -> optimize last.\n"
+                "- Re-anchor on the latest task instruction and required outputs before each major pivot.\n"
+                "- Stop once required checks pass; avoid extra exploratory work after success.\n"
+                "- For HTML/XML sanitization tasks, prefer parser-based allowlist logic over "
+                "regex-only stripping. Preserve benign markup while removing executable content.\n"
                 "- For service tasks, do NOT use broad kill commands (pkill -f, killall). "
                 "Use PID files and exact PID-based stop/start.\n"
                 "- For service tasks, verify readiness before finishing (port listening + "
@@ -652,7 +670,19 @@ class GollemAgent(BaseInstalledAgent):
         # Use: docker exec <container> tail -f /tmp/gollem.log
         # stdbuf -oL forces line buffering so logs appear in real-time.
         raw_cmd = " ".join(cmd_parts)
-        cmd_with_logging = f"{{ {raw_cmd} ; }} 2>&1 | stdbuf -oL tee /tmp/gollem.log"
+        runtime_path = (
+            f"{_AGENT_VENV_PATH}/bin:/root/.local/bin:/root/go/bin:"
+            "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+        )
+        # Harbor shells can reset PATH (e.g., via login shell semantics), so
+        # force PATH/VIRTUAL_ENV at command runtime to guarantee venv tools.
+        cmd_with_logging = (
+            "{ "
+            f"export PATH={shlex.quote(runtime_path)}; "
+            f"export VIRTUAL_ENV={shlex.quote(_AGENT_VENV_PATH)}; "
+            f"{raw_cmd} ; "
+            "} 2>&1 | stdbuf -oL tee /tmp/gollem.log"
+        )
 
         env = {
             "PATH": f"{_AGENT_VENV_PATH}/bin:/root/.local/bin:/root/go/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
@@ -683,6 +713,8 @@ class GollemAgent(BaseInstalledAgent):
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
         }
+        if self._task_name:
+            env.setdefault("GOLLEM_TASK_NAME", self._task_name)
 
         for key in [
             "ANTHROPIC_API_KEY",
@@ -693,9 +725,15 @@ class GollemAgent(BaseInstalledAgent):
             "OPENAI_SERVICE_TIER",
             "OPENAI_TRANSPORT",
             "OPENAI_WEBSOCKET_HTTP_FALLBACK",
+            "GOLLEM_REASONING_BY_TASK",
+            "GOLLEM_REASONING_NO_SANDWICH_BY_TASK",
+            "GOLLEM_REASONING_NO_GREEDY_BY_TASK",
+            "GOLLEM_TASK_NAME",
             "VERTEXAI_ANTHROPIC_PROMPT_CACHE",
             "VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL",
             "GOLLEM_MODEL_REQUEST_TIMEOUT_SEC",
+            "GOLLEM_TOP_LEVEL_PERSONALITY",
+            "GOLLEM_REQUIRE_INVARIANT_CHECKLIST",
             "GOOGLE_CLOUD_PROJECT",
             "LANGFUSE_SECRET_KEY",
             "LANGFUSE_PUBLIC_KEY",

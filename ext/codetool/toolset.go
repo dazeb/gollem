@@ -91,6 +91,9 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 
 	// Planning tool: persistent task list for tracking progress on multi-step work.
 	toolOptions = append(toolOptions, core.WithTools[string](deep.PlanningTool()))
+	if cfg.Model != nil {
+		toolOptions = append(toolOptions, core.WithTools[string](InvariantsTool(cfg.Model)))
+	}
 
 	// Default personality generation: when a model is available but no
 	// explicit generator was provided, auto-create a cached generator.
@@ -127,6 +130,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		systemPrompt += "\n\n" + team.LeaderSystemPrompt("coding-team")
 	}
 
+	reasoningCfg := DefaultReasoningSandwichConfig()
+	if cfg.ReasoningSandwichConfig != nil {
+		reasoningCfg = *cfg.ReasoningSandwichConfig
+	}
+
 	opts := []core.AgentOption[string]{
 		// System prompt with coding agent instructions (+ code mode if enabled).
 		core.WithSystemPrompt[string](systemPrompt),
@@ -145,7 +153,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// 3. Context injection — discover environment on first turn.
 		core.WithAgentMiddleware[string](ContextInjectionMiddleware(workDir, cfg.Timeout)),
 		// 4. Reasoning sandwich — vary thinking budget by phase.
-		core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(DefaultReasoningSandwichConfig())),
+		core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(reasoningCfg)),
 		// 5. Verification tracking — track whether agent runs tests.
 		core.WithAgentMiddleware[string](verifyMW),
 		// 6. Context overflow recovery — catches 413 and retries with compressed messages.
@@ -242,7 +250,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 
 	// Time budget awareness: warn the agent when approaching timeout.
 	if cfg.Timeout > 0 {
-		opts = append(opts, core.WithAgentMiddleware[string](TimeBudgetMiddleware(cfg.Timeout)))
+		if cfg.DisableGreedyThinkingPressure {
+			opts = append(opts, core.WithAgentMiddleware[string](TimeBudgetMiddlewareNoGreedy(cfg.Timeout)))
+		} else {
+			opts = append(opts, core.WithAgentMiddleware[string](TimeBudgetMiddleware(cfg.Timeout)))
+		}
 	}
 
 	// Export traces to /tmp/gollem-traces if the dir is writable.

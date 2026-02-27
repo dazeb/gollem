@@ -63,10 +63,17 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 			// stagnation, regression, same-error, and stale-test detection without
 			// blocking their completion.
 			verifyMW, _ := VerificationCheckpoint("")
+			reasoningCfg := subagentReasoningConfig()
+			if cfg.ReasoningSandwichConfig != nil {
+				reasoningCfg = subagentReasoningConfigForMaxEffort(
+					cfg.ReasoningSandwichConfig.Planning.ReasoningEffort,
+				)
+			}
 
 			subOpts := []core.AgentOption[string]{
 				core.WithSystemPrompt[string](systemPrompt),
 				core.WithToolsets[string](Toolset(opts...)),
+				core.WithTools[string](InvariantsTool(model)),
 				core.WithMaxRetries[string](2),
 				core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(50)}),
 				core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(50)),
@@ -90,7 +97,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				// Reasoning sandwich: vary thinking budget by phase (planning vs
 				// implementation vs verification). Helps subagent reason carefully
 				// when analyzing errors and verifying fixes.
-				core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(subagentReasoningConfig())),
+				core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(reasoningCfg)),
 				// Verification tracking: detect stagnation, regression, same-error
 				// patterns, and stale tests. Subagents are not blocked from
 				// completing, but they get guidance when stuck in failing loops.

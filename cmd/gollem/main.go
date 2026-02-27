@@ -68,7 +68,7 @@ type flags struct {
 	prompt          string
 	timeout         time.Duration
 	thinkingBudget  int
-	reasoningEffort string // OpenAI: "low", "medium", "high"
+	reasoningEffort string // OpenAI: "low", "medium", "high", "xhigh"
 	teamMode        string // "auto", "on", "off"
 	noCodeMode      bool
 	noReasoning     bool // Disable all reasoning (thinking + effort)
@@ -202,11 +202,38 @@ func runAgent() {
 		}
 	}
 
+	// Optional per-task reasoning override, intended for single-run TB2 routing.
+	// Example:
+	//   GOLLEM_REASONING_BY_TASK="model-extraction-relu-logits=xhigh,regex-chess=xhigh,*=high"
+	//
+	// Exact task match wins; "*" acts as fallback.
+	if f.provider == "openai" {
+		if eff, source := resolveReasoningEffortByTask(f.workDir, f.reasoningEffort); eff != "" {
+			f.reasoningEffort = eff
+			if source != "" {
+				fmt.Fprintf(os.Stderr, "gollem: reasoning override applied (%s -> %s)\n", source, eff)
+			}
+		}
+		// Provider/model defaults still apply when override is absent.
+		if derived := deriveOpenAIReasoningEffort(f.modelName, f.reasoningEffort); derived != "" {
+			f.reasoningEffort = derived
+		}
+	}
+
 	requestTimeout := deriveRequestTimeout(f.timeout)
 	baseModel, err := createModel(f.provider, f.modelName, f.location, f.project, requestTimeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating model: %v\n", err)
 		os.Exit(1)
+	}
+	if f.modelName == "" {
+		f.modelName = strings.TrimSpace(baseModel.ModelName())
+	}
+	if f.provider == "openai" {
+		// Re-derive once we know the effective model name (including provider defaults).
+		if derived := deriveOpenAIReasoningEffort(f.modelName, f.reasoningEffort); derived != "" {
+			f.reasoningEffort = derived
+		}
 	}
 	fmt.Fprintf(os.Stderr, "gollem: model request timeout: %v\n", requestTimeout)
 	if f.provider == "openai" {
@@ -344,9 +371,68 @@ func runAgent() {
 		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 350K tokens (OpenAI 400K) — main + subagents\n")
 	}
 
+	// OpenAI reasoning profile: scale sandwich phases from the selected maximum.
+	// If max is xhigh, implementation runs at high; if max is high, implementation
+	// runs at medium. For task-specific overrides, GOLLEM_REASONING_NO_SANDWICH_BY_TASK
+	// forces a flat profile (planning/implementation/verification all equal).
+	if f.provider == "openai" && !f.noReasoning && f.reasoningEffort != "" {
+		if disableGreedy, source := shouldDisableGreedyPressureByTask(f.workDir); disableGreedy {
+			toolOpts = append(toolOpts, codetool.WithDisableGreedyThinkingPressure())
+			fmt.Fprintf(os.Stderr, "gollem: time-budget greedy scaling disabled (%s)\n", source)
+		}
+
+		sandwichCfg := codetool.ReasoningSandwichConfigForMaxEffort(f.reasoningEffort)
+		if disable, source := shouldDisableReasoningSandwichByTask(f.workDir); disable {
+			sandwichCfg.Implementation = sandwichCfg.Planning
+			sandwichCfg.Verification = sandwichCfg.Planning
+			toolOpts = append(toolOpts, codetool.WithReasoningSandwichConfig(sandwichCfg))
+			if source == "" {
+				source = "task override"
+			}
+			fmt.Fprintf(os.Stderr, "gollem: reasoning sandwich disabled (%s): flat effort=%s\n",
+				source,
+				sandwichCfg.Planning.ReasoningEffort,
+			)
+		} else {
+			toolOpts = append(toolOpts, codetool.WithReasoningSandwichConfig(sandwichCfg))
+			fmt.Fprintf(os.Stderr, "gollem: reasoning sandwich profile (max=%s, impl=%s)\n",
+				sandwichCfg.Planning.ReasoningEffort,
+				sandwichCfg.Implementation.ReasoningEffort,
+			)
+		}
+	}
+
 	// Build the coding agent with the full recommended setup.
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
 	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(f.timeout)))
+
+	// Optional top-level dynamic personality generation.
+	// This mirrors teammate/subagent personality generation at the main agent
+	// entrypoint and is opt-in to avoid unexpected behavior changes.
+	if isTruthyEnv("GOLLEM_TOP_LEVEL_PERSONALITY") {
+		personalityGen := modelutil.CachedPersonalityGenerator(modelutil.GeneratePersonality(model))
+		agentOpts = append(agentOpts, core.WithDynamicSystemPrompt[string](func(ctx context.Context, rc *core.RunContext) (string, error) {
+			req := modelutil.PersonalityRequest{
+				Task:       rc.Prompt,
+				Role:       "terminal coding agent",
+				BasePrompt: "Prioritize verifier-defined success criteria and deliver the minimal correct fix quickly.",
+				Context: map[string]string{
+					"provider": f.provider,
+					"model":    baseModel.ModelName(),
+					"workdir":  f.workDir,
+				},
+			}
+			generated, err := personalityGen(ctx, req)
+			if err != nil {
+				// Graceful fallback: keep static prompts if generation fails.
+				fmt.Fprintf(os.Stderr, "gollem: top-level personality fallback: %v\n", err)
+				return "", nil
+			}
+			fmt.Fprintf(os.Stderr, "gollem: top-level personality generated (%d chars)\n", len(generated))
+			return generated, nil
+		}))
+		fmt.Fprintf(os.Stderr, "gollem: top-level dynamic personality enabled (GOLLEM_TOP_LEVEL_PERSONALITY=1)\n")
+	}
 
 	// Enable reasoning by default for providers that support it.
 	// This is provider-agnostic: Anthropic uses ThinkingBudget,
@@ -368,22 +454,19 @@ func runAgent() {
 		case "openai":
 			// Auto-enable reasoning effort for models that support it:
 			// - O-series models (o3, o4-mini, etc.): default to "high"
-			// - Codex models (gpt-5.x-codex): default to "high" (ceiling)
+			// - Codex models (gpt-5.x-codex): default to "high"
 			// Other OpenAI-compatible models (grok, together, etc.) may not
 			// support the parameter, so don't enable by default.
-			isOSeries := strings.HasPrefix(f.modelName, "o") && len(f.modelName) >= 2
-			isCodex := strings.Contains(f.modelName, "codex")
+			lowerModel := strings.ToLower(f.modelName)
+			isOSeries := strings.HasPrefix(lowerModel, "o") && len(lowerModel) >= 2
+			isCodex := strings.Contains(lowerModel, "codex")
 			if isCodex {
 				if f.reasoningEffort == "" {
 					f.reasoningEffort = "high"
 				}
-				if effortAboveHigh(f.reasoningEffort) {
-					fmt.Fprintf(os.Stderr, "gollem: codex reasoning effort clamped from %q to \"high\"\n", f.reasoningEffort)
-					f.reasoningEffort = "high"
-				}
 				agentOpts = append(agentOpts, core.WithReasoningEffort[string](f.reasoningEffort))
 				// Codex reasoning can consume output budget, so keep max_output high
-				// while capping effort at "high" for latency stability.
+				// for deeper chains and larger tool-heavy turns.
 				//
 				// reasoning tokens count toward max_output_tokens.
 				agentOpts = append(agentOpts, core.WithMaxTokens[string](50000))
@@ -838,9 +921,169 @@ func normalizeTeamMode(mode string) string {
 	}
 }
 
-func effortAboveHigh(level string) bool {
+func normalizeReasoningEffortLevel(level string) string {
 	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
 	case "xhigh":
+		return "xhigh"
+	default:
+		return ""
+	}
+}
+
+func effortAboveHigh(level string) bool {
+	return normalizeReasoningEffortLevel(level) == "xhigh"
+}
+
+func parseReasoningByTask(raw string) map[string]string {
+	m := make(map[string]string)
+	raw = trimMatchingQuotes(strings.TrimSpace(raw))
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		k = trimMatchingQuotes(strings.TrimSpace(k))
+		v = normalizeReasoningEffortLevel(trimMatchingQuotes(v))
+		if k == "" || v == "" {
+			continue
+		}
+		m[k] = v
+	}
+	return m
+}
+
+func parseTaskSelectorSet(raw string) map[string]struct{} {
+	m := make(map[string]struct{})
+	raw = trimMatchingQuotes(strings.TrimSpace(raw))
+	if raw == "" {
+		return m
+	}
+	raw = strings.ReplaceAll(raw, ",", " ")
+	for _, token := range strings.Fields(raw) {
+		task := trimMatchingQuotes(strings.TrimSpace(token))
+		if task == "" {
+			continue
+		}
+		m[task] = struct{}{}
+	}
+	return m
+}
+
+func trimMatchingQuotes(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
+}
+
+func resolveReasoningTaskName(workDir string) string {
+	if taskName := strings.TrimSpace(os.Getenv("GOLLEM_TASK_NAME")); taskName != "" {
+		return taskName
+	}
+	// Fallback for non-Harbor runs where workdir may be task-specific.
+	base := strings.TrimSpace(filepath.Base(filepath.Clean(workDir)))
+	switch base {
+	case "", ".", "/", "app":
+		return ""
+	default:
+		return base
+	}
+}
+
+func resolveReasoningEffortByTask(workDir, current string) (string, string) {
+	current = normalizeReasoningEffortLevel(current)
+	raw := strings.TrimSpace(os.Getenv("GOLLEM_REASONING_BY_TASK"))
+	if raw == "" {
+		return current, ""
+	}
+	mapping := parseReasoningByTask(raw)
+	if len(mapping) == 0 {
+		return current, ""
+	}
+
+	taskName := resolveReasoningTaskName(workDir)
+	if taskName != "" {
+		if v, ok := mapping[taskName]; ok {
+			return v, "task:" + taskName
+		}
+	}
+	if v, ok := mapping["*"]; ok {
+		return v, "task:*"
+	}
+	return current, ""
+}
+
+func shouldDisableReasoningSandwichByTask(workDir string) (bool, string) {
+	raw := strings.TrimSpace(os.Getenv("GOLLEM_REASONING_NO_SANDWICH_BY_TASK"))
+	if raw == "" {
+		return false, ""
+	}
+	taskSet := parseTaskSelectorSet(raw)
+	if len(taskSet) == 0 {
+		return false, ""
+	}
+	taskName := resolveReasoningTaskName(workDir)
+	if taskName != "" {
+		if _, ok := taskSet[taskName]; ok {
+			return true, "task:" + taskName
+		}
+	}
+	if _, ok := taskSet["*"]; ok {
+		return true, "task:*"
+	}
+	return false, ""
+}
+
+func shouldDisableGreedyPressureByTask(workDir string) (bool, string) {
+	raw := strings.TrimSpace(os.Getenv("GOLLEM_REASONING_NO_GREEDY_BY_TASK"))
+	if raw == "" {
+		return false, ""
+	}
+	taskSet := parseTaskSelectorSet(raw)
+	if len(taskSet) == 0 {
+		return false, ""
+	}
+	taskName := resolveReasoningTaskName(workDir)
+	if taskName != "" {
+		if _, ok := taskSet[taskName]; ok {
+			return true, "task:" + taskName
+		}
+	}
+	if _, ok := taskSet["*"]; ok {
+		return true, "task:*"
+	}
+	return false, ""
+}
+
+func deriveOpenAIReasoningEffort(modelName, current string) string {
+	if v := normalizeReasoningEffortLevel(current); v != "" {
+		return v
+	}
+	lowerModel := strings.ToLower(strings.TrimSpace(modelName))
+	isCodex := strings.Contains(lowerModel, "codex")
+	isOSeries := strings.HasPrefix(lowerModel, "o") && len(lowerModel) >= 2
+	if isCodex || isOSeries {
+		return "high"
+	}
+	return ""
+}
+
+func isTruthyEnv(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
 		return true
 	default:
 		return false
@@ -1286,7 +1529,7 @@ Options:
   --timeout <duration>     Maximum run time (default: 30m)
   --team-mode <mode>       Team tool routing: auto, on, off (default: auto)
   --thinking-budget <n>    Thinking token budget for Anthropic (default: 16000)
-  --reasoning-effort <l>   Reasoning effort for OpenAI: low, medium, high (default: high)
+  --reasoning-effort <l>   Reasoning effort for OpenAI: low, medium, high, xhigh (default: high)
   --no-reasoning           Disable all reasoning (thinking + effort)
   --no-code-mode           Disable code mode (monty-go WASM Python batching)
   -h, --help               Show this help
@@ -1306,10 +1549,18 @@ Environment variables:
   OPENAI_SERVICE_TIER      Optional OpenAI service tier (e.g. default, flex, priority)
   OPENAI_TRANSPORT         Optional OpenAI transport: http (default) or websocket (Responses API only)
   OPENAI_WEBSOCKET_HTTP_FALLBACK Optional fallback to HTTP when websocket transport fails (0/1, default: 0)
+  GOLLEM_REASONING_BY_TASK Optional per-task OpenAI reasoning map, e.g.
+                           "model-extraction-relu-logits=xhigh,regex-chess=xhigh,*=high"
+  GOLLEM_REASONING_NO_SANDWICH_BY_TASK Optional task list where OpenAI uses flat reasoning (no sandwich),
+                           e.g. "model-extraction-relu-logits" or "model-extraction-relu-logits,*"
+  GOLLEM_REASONING_NO_GREEDY_BY_TASK Optional task list where time-budget greedy caps are disabled,
+                           e.g. "model-extraction-relu-logits"
+  GOLLEM_TASK_NAME         Optional current task name used by GOLLEM_REASONING_BY_TASK
   VERTEXAI_ANTHROPIC_PROMPT_CACHE Enable Anthropic prompt caching on Vertex AI (1/true/yes/on)
   VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL Optional Anthropic prompt cache TTL (e.g. 5m, 1h)
   GOLLEM_MODEL_REQUEST_TIMEOUT_SEC Optional per-model-call timeout in seconds (default derived from --timeout, capped at 6m)
   GOLLEM_TEAM_MODE         Team mode override: auto, on, off (default: auto)
+  GOLLEM_TOP_LEVEL_PERSONALITY Enable top-level dynamic personality generation (1/true/yes/on; default: off)
   GOLLEM_CODE_MODE_FAILURE_THRESHOLD Consecutive execute_code capability failures before cooldown (default: 3)
   GOLLEM_CODE_MODE_COOLDOWN_TURNS Turns to keep execute_code disabled before retrying (default: 2)
   GOLLEM_CODE_MODE_MAX_RECENT_RESULTS Number of recent execute_code results to inspect (default: 12)

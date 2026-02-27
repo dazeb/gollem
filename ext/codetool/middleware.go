@@ -8799,6 +8799,9 @@ func emergencyCompressMessagesWithConfig(messages []core.ModelMessage, maxConten
 	// Build a context recovery summary from dropped messages.
 	dropped := messages[1:tailStart]
 	summary := buildContextRecoverySummary(dropped)
+	if pin := core.BuildInstructionPin(messages); pin != "" {
+		summary += "\n\n" + pin
+	}
 
 	// Emit the summary as a ModelResponse (assistant role) to maintain proper
 	// user/assistant alternation. Using a ModelRequest with SystemPromptPart

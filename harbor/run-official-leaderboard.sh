@@ -54,6 +54,56 @@ if [[ -f "$HOME/.envrc" ]]; then
   source "$HOME/.envrc"
 fi
 
+# Auto-derive failed tasks from the latest Harbor result and promote them to
+# xhigh reasoning on the next official attempt. You can override with:
+#   GOLLEM_XHIGH_TASKS="task-a,task-b"
+#   GOLLEM_REASONING_SOURCE_RESULT_JSON="/path/to/result.json"
+#   GOLLEM_REASONING_BY_TASK="..." (explicit map takes precedence)
+if [[ -z "${GOLLEM_XHIGH_TASKS:-}" ]]; then
+  RESULT_SOURCE="${GOLLEM_REASONING_SOURCE_RESULT_JSON:-}"
+  if [[ -z "$RESULT_SOURCE" ]]; then
+    RESULT_SOURCE="$(ls -1t "${SCRIPT_DIR}"/jobs/*/result.json 2>/dev/null | head -n 1 || true)"
+  fi
+  if [[ -n "$RESULT_SOURCE" && -f "$RESULT_SOURCE" ]]; then
+    GOLLEM_XHIGH_TASKS="$(RESULT_SOURCE="$RESULT_SOURCE" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["RESULT_SOURCE"])
+try:
+    data = json.loads(path.read_text())
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+evals = data.get("stats", {}).get("evals", {})
+if isinstance(evals, dict) and evals:
+    eval_entry = next(iter(evals.values()))
+else:
+    eval_entry = {}
+
+reward_stats = eval_entry.get("reward_stats", {}).get("reward", {})
+failed = reward_stats.get("0.0", []) if isinstance(reward_stats, dict) else []
+if not isinstance(failed, list):
+    failed = []
+
+seen = set()
+tasks = []
+for name in failed:
+    if not isinstance(name, str):
+        continue
+    base = name.rsplit("__", 1)[0].strip()
+    if base and base not in seen:
+        seen.add(base)
+        tasks.append(base)
+
+print(",".join(tasks))
+PY
+)"
+  fi
+fi
+
 # Submission-oriented defaults.
 : "${GOLLEM_TEAM_MODE:=off}"
 : "${GOLLEM_DISABLE_RUNTIME_DEP_INSTALL:=1}"
@@ -61,6 +111,29 @@ fi
 : "${GOLLEM_SETUP_INSTALL_LSP:=1}"
 : "${GOLLEM_TBENCH_COMPETITION_PROMPT:=1}"
 : "${GOLLEM_MODEL_REQUEST_TIMEOUT_SEC:=360}"
+: "${GOLLEM_TOP_LEVEL_PERSONALITY:=0}"
+: "${GOLLEM_REQUIRE_INVARIANT_CHECKLIST:=1}"
+: "${GOLLEM_XHIGH_TASKS:=model-extraction-relu-logits}"
+if [[ -z "${GOLLEM_REASONING_BY_TASK:-}" ]]; then
+  GOLLEM_REASONING_BY_TASK="$(
+    GOLLEM_XHIGH_TASKS="$GOLLEM_XHIGH_TASKS" python3 - <<'PY'
+import os
+raw = os.environ.get("GOLLEM_XHIGH_TASKS", "")
+seen = set()
+tasks = []
+for token in raw.replace(",", " ").split():
+    t = token.strip()
+    if t and t not in seen:
+        seen.add(t)
+        tasks.append(t)
+parts = [f"{t}=xhigh" for t in tasks]
+parts.append("*=high")
+print(",".join(parts))
+PY
+  )"
+fi
+: "${GOLLEM_REASONING_NO_SANDWICH_BY_TASK:=${GOLLEM_XHIGH_TASKS}}"
+: "${GOLLEM_REASONING_NO_GREEDY_BY_TASK:=${GOLLEM_XHIGH_TASKS}}"
 : "${OPENAI_PROMPT_CACHE_KEY:=tbench2-gollem}"
 : "${OPENAI_PROMPT_CACHE_RETENTION:=in_memory}"
 : "${OPENAI_SERVICE_TIER:=priority}"
@@ -73,6 +146,12 @@ export GOLLEM_TASK_TIMEOUT_BUFFER_SEC
 export GOLLEM_SETUP_INSTALL_LSP
 export GOLLEM_TBENCH_COMPETITION_PROMPT
 export GOLLEM_MODEL_REQUEST_TIMEOUT_SEC
+export GOLLEM_TOP_LEVEL_PERSONALITY
+export GOLLEM_REQUIRE_INVARIANT_CHECKLIST
+export GOLLEM_XHIGH_TASKS
+export GOLLEM_REASONING_BY_TASK
+export GOLLEM_REASONING_NO_SANDWICH_BY_TASK
+export GOLLEM_REASONING_NO_GREEDY_BY_TASK
 export OPENAI_PROMPT_CACHE_KEY
 export OPENAI_PROMPT_CACHE_RETENTION
 export OPENAI_SERVICE_TIER
@@ -149,6 +228,11 @@ META_FILE="official-runs/${STAMP}.meta.txt"
   echo "openai_service_tier=${OPENAI_SERVICE_TIER}"
   echo "openai_transport=${OPENAI_TRANSPORT}"
   echo "openai_websocket_http_fallback=${OPENAI_WEBSOCKET_HTTP_FALLBACK}"
+  echo "top_level_personality=${GOLLEM_TOP_LEVEL_PERSONALITY}"
+  echo "xhigh_tasks=${GOLLEM_XHIGH_TASKS}"
+  echo "reasoning_by_task=${GOLLEM_REASONING_BY_TASK}"
+  echo "reasoning_no_sandwich_by_task=${GOLLEM_REASONING_NO_SANDWICH_BY_TASK}"
+  echo "reasoning_no_greedy_by_task=${GOLLEM_REASONING_NO_GREEDY_BY_TASK}"
   echo "submission_dir=${SUBMISSION_DIR}"
   echo "agent_url=${TBENCH_AGENT_URL}"
   echo "agent_display_name=${TBENCH_AGENT_DISPLAY_NAME}"

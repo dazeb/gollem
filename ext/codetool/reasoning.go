@@ -50,8 +50,6 @@ type ReasoningSandwichConfig struct {
 }
 
 // DefaultReasoningSandwichConfig returns the recommended reasoning sandwich config.
-// For OpenAI/Codex runs, cap reasoning effort at "high" to reduce long-tail
-// turn latency near benchmark time limits.
 //
 // Planning: high reasoning for deep task analysis (first 5 turns).
 // Implementation: high reasoning for quality code generation (middle turns).
@@ -68,6 +66,15 @@ func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 	}
 }
 
+// ReasoningSandwichConfigForMaxEffort returns a sandwich profile where planning
+// and verification use maxEffort, while implementation uses one step lower.
+// Examples:
+// - maxEffort="xhigh" => planning/verification=xhigh, implementation=high
+// - maxEffort="high"  => planning/verification=high, implementation=medium
+func ReasoningSandwichConfigForMaxEffort(maxEffort string) ReasoningSandwichConfig {
+	return withMaxReasoningEffort(DefaultReasoningSandwichConfig(), maxEffort)
+}
+
 // subagentReasoningConfig returns a reasoning sandwich config tuned for subagents.
 // Subagents run shorter tasks (50 turns max) so they get fewer planning turns
 // and slightly lower budgets to keep them fast. The verification phase still
@@ -79,6 +86,51 @@ func subagentReasoningConfig() ReasoningSandwichConfig {
 		Verification:          ReasoningLevel{ThinkingBudget: 32000, ReasoningEffort: "high"},
 		PlanningTurns:         3,
 		VerificationThreshold: 0, // Use heuristic
+	}
+}
+
+func subagentReasoningConfigForMaxEffort(maxEffort string) ReasoningSandwichConfig {
+	return withMaxReasoningEffort(subagentReasoningConfig(), maxEffort)
+}
+
+func withMaxReasoningEffort(base ReasoningSandwichConfig, maxEffort string) ReasoningSandwichConfig {
+	maxEffort = normalizeReasoningEffort(maxEffort)
+	if maxEffort == "" {
+		return base
+	}
+	base.Planning.ReasoningEffort = maxEffort
+	base.Verification.ReasoningEffort = maxEffort
+	base.Implementation.ReasoningEffort = lowerReasoningEffort(maxEffort)
+	return base
+}
+
+func normalizeReasoningEffort(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "xhigh":
+		return "xhigh"
+	default:
+		return ""
+	}
+}
+
+func lowerReasoningEffort(level string) string {
+	switch normalizeReasoningEffort(level) {
+	case "xhigh":
+		return "high"
+	case "high":
+		return "medium"
+	case "medium":
+		return "low"
+	case "low":
+		return "low"
+	default:
+		return "high"
 	}
 }
 
@@ -317,6 +369,16 @@ func cloneModelSettingsForGreedyPressure(settings *core.ModelSettings) core.Mode
 // when the agent is approaching its timeout. This helps the agent prioritize
 // completing its work rather than spending time on perfection.
 func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
+	return timeBudgetMiddleware(timeout, false)
+}
+
+// TimeBudgetMiddlewareNoGreedy injects time warnings but disables greedy
+// reasoning/token caps as time elapses.
+func TimeBudgetMiddlewareNoGreedy(timeout time.Duration) core.AgentMiddleware {
+	return timeBudgetMiddleware(timeout, true)
+}
+
+func timeBudgetMiddleware(timeout time.Duration, disableGreedyPressure bool) core.AgentMiddleware {
 	startTime := timeBudgetNow()
 	warned25 := false
 	warned50 := false
@@ -382,16 +444,20 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 
 		if warning != "" {
 			fmt.Fprintf(os.Stderr, "[gollem] time: %s\n", warning)
+			content := warning
+			if guidance := timeBudgetGuidance(pct); guidance != "" {
+				content = warning + "\n" + guidance
+			}
 			// Inject the time warning into the last ModelRequest rather than
 			// appending a new one. Messages always end with a ModelRequest
 			// (initial request or tool results), so appending another would
 			// create consecutive user-role messages that Anthropic rejects
 			// with a 400 error.
-			messages = injectUserPromptIntoLastRequest(messages, warning)
+			messages = injectUserPromptIntoLastRequest(messages, content)
 		}
 
 		adjustedSettings := settings
-		if settings != nil {
+		if settings != nil && !disableGreedyPressure {
 			s := cloneModelSettingsForGreedyPressure(settings)
 			if profile, _ := applyGreedyPressure(&s, pct); profile.stage != "" {
 				if profile.stage != lastGreedyStage {
@@ -405,6 +471,21 @@ func TimeBudgetMiddleware(timeout time.Duration) core.AgentMiddleware {
 		}
 
 		return next(ctx, messages, adjustedSettings, params)
+	}
+}
+
+func timeBudgetGuidance(pct float64) string {
+	switch {
+	case pct >= 0.90:
+		return "Execution mode: no new exploration. Finalize the highest-confidence candidate, run the verifier/tests now, and submit the best passing output."
+	case pct >= 0.75:
+		return "Pivot now: stop speculative paths. Use a reference-first loop: produce required artifacts, run verifier/tests, patch exact failing deltas only."
+	case pct >= 0.50:
+		return "Half-time checkpoint: re-anchor to the latest task instruction and verifier criteria. Prove a minimal correct path before any optimization/refactor."
+	case pct >= 0.25:
+		return "Quarter checkpoint: create runnable outputs early and validate quickly. Prefer simple baseline implementations before complex strategies."
+	default:
+		return ""
 	}
 }
 

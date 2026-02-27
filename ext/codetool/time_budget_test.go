@@ -176,6 +176,70 @@ func TestTimeBudgetMiddleware_DoesNotForceParallelAfterPriorDelegation(t *testin
 	}
 }
 
+func TestTimeBudgetMiddleware_InjectsGuidanceAtHalfway(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	now := base
+	oldNow := timeBudgetNow
+	timeBudgetNow = func() time.Time { return now }
+	defer func() { timeBudgetNow = oldNow }()
+
+	mw := TimeBudgetMiddleware(200 * time.Second)
+	now = base.Add(120 * time.Second)
+
+	var capturedMsgs []core.ModelMessage
+	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		capturedMsgs = msgs
+		return &core.ModelResponse{}, nil
+	}
+
+	msgs := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "keep going"},
+			},
+		},
+	}
+	_, err := mw(context.Background(), msgs, &core.ModelSettings{}, &core.ModelRequestParameters{}, next)
+	if err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+	if !containsInjectedPrompt(capturedMsgs, "TIME HALFWAY") {
+		t.Fatalf("expected halfway warning to be injected")
+	}
+	if !containsInjectedPrompt(capturedMsgs, "Half-time checkpoint") {
+		t.Fatalf("expected halfway execution guidance to be injected")
+	}
+}
+
+func TestTimeBudgetGuidanceThresholds(t *testing.T) {
+	tests := []struct {
+		name     string
+		pct      float64
+		contains string
+	}{
+		{name: "none", pct: 0.10, contains: ""},
+		{name: "quarter", pct: 0.30, contains: "Quarter checkpoint"},
+		{name: "halfway", pct: 0.50, contains: "Half-time checkpoint"},
+		{name: "warning", pct: 0.80, contains: "Pivot now"},
+		{name: "critical", pct: 0.92, contains: "Execution mode"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := timeBudgetGuidance(tt.pct)
+			if tt.contains == "" {
+				if got != "" {
+					t.Fatalf("expected empty guidance, got %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.contains) {
+				t.Fatalf("expected guidance %q to contain %q", got, tt.contains)
+			}
+		})
+	}
+}
+
 func containsInjectedPrompt(messages []core.ModelMessage, needle string) bool {
 	for _, msg := range messages {
 		req, ok := msg.(core.ModelRequest)

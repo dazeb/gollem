@@ -188,9 +188,14 @@ func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 	// separate field (e.g., Anthropic) to produce no API message for the
 	// summary, resulting in adjacent user messages that violate the
 	// alternation requirement.
+	summaryText := "[Conversation Summary] " + summaryResp.TextContent()
+	if pin := BuildInstructionPin(messages); pin != "" {
+		summaryText = "[Conversation Summary]\n" + pin + "\n\n" + summaryResp.TextContent()
+	}
+
 	summaryMsg := ModelResponse{
 		Parts: []ModelResponsePart{
-			TextPart{Content: "[Conversation Summary] " + summaryResp.TextContent()},
+			TextPart{Content: summaryText},
 		},
 		Timestamp: time.Now(),
 	}

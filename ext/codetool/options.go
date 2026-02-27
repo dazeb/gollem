@@ -54,6 +54,14 @@ type Config struct {
 	// When set, both the main agent and subagents use these limits. This allows
 	// provider-aware tuning (e.g., 150K for Claude's 200K context vs 80K for grok).
 	AutoContextConfig *core.AutoContextConfig
+
+	// ReasoningSandwichConfig overrides phase-specific reasoning settings.
+	// When set, both the main agent and subagents use this as the base profile.
+	ReasoningSandwichConfig *ReasoningSandwichConfig
+
+	// DisableGreedyThinkingPressure disables time-budget-based reasoning caps
+	// (effort/thinking/max_tokens). Time warnings are still injected.
+	DisableGreedyThinkingPressure bool
 }
 
 // Option configures coding tools.
@@ -138,4 +146,15 @@ func WithPersonalityGenerator(gen modelutil.PersonalityGeneratorFunc) Option {
 // provider (e.g., 150K for Claude, 80K for grok).
 func WithAutoContextConfig(cfg core.AutoContextConfig) Option {
 	return func(c *Config) { c.AutoContextConfig = &cfg }
+}
+
+// WithReasoningSandwichConfig overrides the default reasoning sandwich profile.
+func WithReasoningSandwichConfig(cfg ReasoningSandwichConfig) Option {
+	return func(c *Config) { c.ReasoningSandwichConfig = &cfg }
+}
+
+// WithDisableGreedyThinkingPressure disables time-budget-based reasoning caps
+// while keeping time warnings enabled.
+func WithDisableGreedyThinkingPressure() Option {
+	return func(c *Config) { c.DisableGreedyThinkingPressure = true }
 }

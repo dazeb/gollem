@@ -7108,6 +7108,7 @@ func TestEmergencyCompressWithSummary(t *testing.T) {
 	// First message: task description.
 	messages = append(messages, core.ModelRequest{
 		Parts: []core.ModelRequestPart{
+			core.SystemPromptPart{Content: "You are a coding agent. Preserve output format."},
 			core.UserPromptPart{Content: "Solve this coding problem"},
 		},
 	})
@@ -7158,6 +7159,9 @@ func TestEmergencyCompressWithSummary(t *testing.T) {
 		text := resp.TextContent()
 		if !strings.Contains(text, "EMERGENCY CONTEXT RECOVERY") {
 			t.Errorf("second message should be the recovery summary, got: %s", text)
+		}
+		if !strings.Contains(text, "[Instruction Pin]") {
+			t.Error("recovery summary should include instruction pin")
 		}
 		if !strings.Contains(text, "FILES PREVIOUSLY READ") {
 			t.Error("recovery summary should list files that were read")

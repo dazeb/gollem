@@ -119,8 +119,8 @@ func TestAutoContext_CustomModel(t *testing.T) {
 	// Summary is at index 1 (after the preserved first message) and is a ModelResponse.
 	if resp, ok := result[1].(ModelResponse); ok {
 		text := resp.TextContent()
-		if text != "[Conversation Summary] Custom summary" {
-			t.Errorf("expected custom summary, got %q", text)
+		if !strings.Contains(text, "Custom summary") {
+			t.Errorf("expected custom summary text, got %q", text)
 		}
 	} else {
 		t.Errorf("expected summary at index 1 to be ModelResponse, got %T", result[1])

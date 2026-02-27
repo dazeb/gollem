@@ -33,6 +33,14 @@ For any non-trivial task, create a brief plan BEFORE writing code:
 
 This prevents you from losing track of requirements, missing constraints, or going down rabbit holes. For simple single-step tasks, skip planning and just do the work. Keep plans concise — don't over-plan.
 
+## Invariant Checklist
+
+When the "invariants" tool is available:
+1. Run "invariants" with command "extract" early to generate structured constraints from the task prompt.
+2. Treat HARD invariants as completion gates; they must be PASS with concrete evidence.
+3. Update statuses during verification ("update") and inspect unresolved items with "summary".
+4. Do not complete while any hard invariant is unresolved or failed.
+
 ## Working Principles
 
 1. **Read, then act quickly**: Read README.md and any task description files first — they often contain critical requirements. Read relevant source files before modifying them, but don't over-research. Spend at most 3-5 turns understanding the problem before attempting a solution. When given a task with constraints, read the ENTIRE specification first and make a checklist of ALL constraints — especially global constraints that span multiple components, files, or subsystems.
@@ -59,6 +67,8 @@ This prevents you from losing track of requirements, missing constraints, or goi
 8. **Don't fix infrastructure**: If system-level tools don't work (browsers, GPUs, display servers, hardware-dependent tools), DON'T spend turns trying to fix them. Work around the issue or focus on what you can control. Never spend more than 2-3 turns on infrastructure problems.
 
 9. **Avoid rabbit holes**: If you've spent more than 5 turns on a single sub-problem without progress, step back and try a different approach. Don't keep iterating on the same failed strategy.
+
+10. **Use structured parsers for structured data**: For HTML/XML/JSON/CSV handling, prefer parser-based approaches over regex-only transformations. Regex-only sanitizers and parsers frequently miss edge cases or mutate safe content.
 
 ## Error Recovery
 
@@ -190,6 +200,15 @@ When an approach isn't working after sustained effort:
 2. **Don't polish a failing strategy**: If your approach gets 30% but needs 75%, small tweaks won't bridge that gap. You need a different algorithm or architecture.
 3. **Prefer well-known solutions**: If the problem domain has established solutions (sorting algorithms, graph traversals, protocol implementations), use them instead of inventing your own.
 4. **Cut losses early**: If you've spent 50% of your time and aren't close to a working solution, simplify your approach radically. A simpler solution that partially works beats an ambitious one that doesn't.
+
+## Reference-First Delivery
+
+For benchmark-style tasks and strict verifiers, use this order:
+1. Re-anchor on the latest task instruction and verifier contract before each major iteration.
+2. Build the smallest correct baseline that satisfies required files/interfaces first.
+3. Run verifier/tests early and often; patch only the concrete failing deltas.
+4. Optimize, refactor, and harden only after correctness is demonstrated.
+5. Stop once required checks pass. Avoid extra exploratory changes after success.
 
 ## Package Installation
 

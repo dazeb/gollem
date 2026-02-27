@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Install system dependencies (git is required for go install).
 if command -v apt-get &>/dev/null; then
-    apt-get update -qq && apt-get install -y -qq curl git ca-certificates >/dev/null 2>&1
+    apt-get update -qq && apt-get install -y -qq curl git ca-certificates time >/dev/null 2>&1
 elif command -v apk &>/dev/null; then
-    apk add --no-cache curl git ca-certificates >/dev/null 2>&1
+    apk add --no-cache curl git ca-certificates time >/dev/null 2>&1
 fi
 
 # Install Go 1.25.6+ (required by go.mod).
