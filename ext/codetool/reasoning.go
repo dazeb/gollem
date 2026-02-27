@@ -70,7 +70,7 @@ func DefaultReasoningSandwichConfig() ReasoningSandwichConfig {
 // and verification use maxEffort, while implementation uses one step lower.
 // Examples:
 // - maxEffort="xhigh" => planning/verification=xhigh, implementation=high
-// - maxEffort="high"  => planning/verification=high, implementation=medium
+// - maxEffort="high"  => planning/verification=high, implementation=medium.
 func ReasoningSandwichConfigForMaxEffort(maxEffort string) ReasoningSandwichConfig {
 	return withMaxReasoningEffort(DefaultReasoningSandwichConfig(), maxEffort)
 }
