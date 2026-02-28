@@ -1,0 +1,12 @@
+regex-chess xhigh personality=1 delegate=0
+mteb-retrieve xhigh personality=1 delegate=0
+dna-assembly xhigh personality=1 delegate=0
+polyglot-rust-c xhigh personality=1 delegate=0
+gcode-to-text xhigh personality=0 delegate=0
+chess-best-move xhigh personality=1 delegate=0
+code-from-image xhigh personality=1 delegate=0
+path-tracing xhigh personality=1 delegate=0
+
+# PENDING - need to figure out:
+raman-fitting xhigh personality=1 delegate=0
+train-fasttext xhigh personality=1 delegate=0
