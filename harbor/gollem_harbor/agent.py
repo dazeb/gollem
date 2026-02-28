@@ -814,6 +814,15 @@ class GollemAgent(BaseInstalledAgent):
                 trajectory["cache_read_tokens"] = int(cache_read_tokens)
             trajectory["tool_calls"] = int(tool_calls)
 
+        # Parse Langfuse trace ID for post-run score injection.
+        trace_id_match = re.search(
+            r"^gollem:\s+langfuse\s+trace_id=(\S+)",
+            combined_output,
+            flags=re.MULTILINE,
+        )
+        if trace_id_match:
+            trajectory["langfuse_trace_id"] = trace_id_match.group(1)
+
         # Count tool invocations from log hooks.
         # Split top-level tool calls from nested execute_code calls:
         #   [gollem] tool:start <tool>
@@ -859,6 +868,7 @@ class GollemAgent(BaseInstalledAgent):
             "tool_invocations_top_level": trajectory.get("tool_invocations_top_level", 0),
             "tool_invocations_inner": trajectory.get("tool_invocations_inner", 0),
             "tool_invocations_total": trajectory.get("tool_invocations_total", 0),
+            "langfuse_trace_id": trajectory.get("langfuse_trace_id", ""),
         }
 
     def _parse_model_name(self) -> tuple[str, str]:

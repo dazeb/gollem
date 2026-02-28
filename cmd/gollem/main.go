@@ -565,11 +565,19 @@ func runAgent() {
 // token usage, timing, input messages, and output.
 func newLangfuseMiddleware(processor *lf.BatchProcessor) middleware.Middleware {
 	traceID := lf.NewID()
-	processor.Enqueue(lf.TraceEvent{
+	taskName := strings.TrimSpace(os.Getenv("GOLLEM_TASK_NAME"))
+
+	traceEvent := lf.TraceEvent{
 		ID:        traceID,
 		Name:      "gollem-run",
 		Timestamp: time.Now().UTC(),
-	})
+	}
+	if taskName != "" {
+		traceEvent.Metadata = map[string]any{"task_name": taskName}
+		traceEvent.Tags = []string{taskName}
+	}
+	processor.Enqueue(traceEvent)
+	fmt.Fprintf(os.Stderr, "gollem: langfuse trace_id=%s\n", traceID)
 
 	turn := 0
 	return middleware.Func(func(next middleware.RequestFunc) middleware.RequestFunc {

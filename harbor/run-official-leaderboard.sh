@@ -295,4 +295,9 @@ else
   echo "Could not auto-detect result.json path from log."
 fi
 
+# Tag Langfuse traces with Harbor verification rewards.
+if [[ -n "${LANGFUSE_SECRET_KEY:-}" && -n "${JOB_DIR_ABS:-}" ]]; then
+  "${SCRIPT_DIR}/langfuse-tag-scores.sh" "${JOB_DIR_ABS}" || true
+fi
+
 echo "Official run wrapper complete."
