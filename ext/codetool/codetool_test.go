@@ -1370,7 +1370,7 @@ func TestIsVerificationCommand(t *testing.T) {
 		{"cat", `{"command":"cat file.txt"}`, false},
 		{"git status", `{"command":"git status"}`, false},
 		{"cd", `{"command":"cd /tmp"}`, false},
-		{"curl", `{"command":"curl https://example.com"}`, false},
+		{"curl", `{"command":"curl https://example.com"}`, true}, // curl can verify (e.g., health checks)
 		{"invalid json", `not json`, false},
 		{"empty command", `{"command":""}`, false},
 	}
@@ -1851,6 +1851,7 @@ func TestIsVerificationString(t *testing.T) {
 		cmd  string
 		want bool
 	}{
+		// Classic test/build/lint commands — all non-blocklisted.
 		{"go test ./...", true},
 		{"pytest -xvs", true},
 		{"npm test", true},
@@ -1860,44 +1861,139 @@ func TestIsVerificationString(t *testing.T) {
 		{"valgrind ./myprogram", true},
 		{"curl localhost:8080/api/health", true},
 		{"curl http://localhost:3000", true},
-		{"xxd output.bin | head", true},
 		{"Rscript test.R", true},
-		// Nim package manager.
 		{"nimble test", true},
 		{"nimble build", true},
-		// Crystal package manager.
 		{"shards build", true},
 		{"shards install", true},
-		// Meson build system.
 		{"meson test -C builddir", true},
 		{"meson compile -C builddir", true},
 		{"meson setup builddir", true},
-		// Bazel build system.
 		{"bazel test //...", true},
 		{"bazel build //...", true},
 		{"bazel run //:target", true},
-		// python3 -m py_compile (build pattern).
+		// The incident that triggered the blocklist refactor.
 		{"python3 -m py_compile /app/eigen.py", true},
 		{"python -m py_compile /app/eigen.py", true},
-		// python3 /app/eval (test pattern).
 		{"python3 /app/eval.py", true},
 		{"python /app/eval.py", true},
-		// Inline python via heredoc/stdin.
 		{"python3 - <<'PY'\nimport numpy\nassert True\nPY", true},
 		{"python - <<'EOF'\nprint('test')\nEOF", true},
-		// Multi-command verification chains.
 		{"python3 -m py_compile /app/eigen.py && python3 /app/eval.py", true},
+		// Multi-command chains: any non-blocklisted sub-command → true.
+		{"cd /app && pytest", true},
+		{"export FOO=1 && make test", true},
+		{"cat file.txt | grep pattern", true},
+		{"echo setup && python3 test.py && echo done", true},
+		{"cp backup.py main.py && python3 -m pytest", true},
+		// Commands with modifiers.
+		{"sudo python3 test.py", true},
+		{"timeout 30 pytest", true},
+		{"env FOO=bar python3 test.py", true},
+		{"FOO=bar BAZ=1 python3 script.py", true},
+		{"nice -n 10 make test", true},
+		// Script execution.
+		{"./test_outputs.sh", true},
+		{"./run_tests.sh", true},
+		{"bash /app/scripts/verify.sh", true},
+		// Help commands — explicitly excluded.
 		{"pytest --help | grep allow-no-tests", false},
 		{"python3 -m pytest --help", false},
+		// Blocklisted commands (never verification).
 		{"echo hello world", false},
 		{"cat main.py", false},
 		{"ls -la", false},
+		{"cd /app", false},
+		{"mkdir -p /tmp/out", false},
+		{"cp file1 file2", false},
+		{"mv old.py new.py", false},
+		{"rm -f temp.txt", false},
+		{"git add .", false},
+		{"git commit -m 'fix'", false},
+		{"git diff HEAD", false},
+		{"pip install numpy", false},
+		{"pip3 install -r requirements.txt", false},
+		{"apt-get install -y build-essential", false},
+		{"export PATH=/usr/local/bin:$PATH", false},
+		{"sed -i 's/old/new/g' file.py", false},
+		{"awk '{print $1}' data.txt", false},
+		{"tar xf archive.tar.gz", false},
+		{"touch output.txt", false},
+		{"chmod +x script.sh", false},
+		// All blocklisted sub-commands → false.
+		{"cd /app && ls -la && cat README.md", false},
+		{"echo start; echo end", false},
+		{"git add . && git commit -m 'test'", false},
+		// Empty / whitespace.
+		{"", false},
+		{"   ", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.cmd, func(t *testing.T) {
 			got := isVerificationString(strings.ToLower(tt.cmd))
 			if got != tt.want {
 				t.Errorf("isVerificationString(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSplitShellCommands(t *testing.T) {
+	tests := []struct {
+		cmd  string
+		want []string
+	}{
+		{"pytest", []string{"pytest"}},
+		{"cd /app && pytest", []string{"cd /app", "pytest"}},
+		{"echo a; echo b", []string{"echo a", "echo b"}},
+		{"cat file | grep pattern", []string{"cat file", "grep pattern"}},
+		{"a || b && c", []string{"a", "b", "c"}},
+		{"set -e\npython3 test.py", []string{"set -e", "python3 test.py"}},
+		{"", nil},
+		{"   ", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			got := splitShellCommands(tt.cmd)
+			if len(got) != len(tt.want) {
+				t.Fatalf("splitShellCommands(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("splitShellCommands(%q)[%d] = %q, want %q", tt.cmd, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestExtractFirstBinary(t *testing.T) {
+	tests := []struct {
+		subcmd string
+		want   string
+	}{
+		{"pytest -xvs", "pytest"},
+		{"python3 test.py", "python3"},
+		{"/usr/bin/python3 test.py", "python3"},
+		{"./test_outputs.sh", "test_outputs.sh"},
+		{"sudo python3 test.py", "python3"},
+		{"env FOO=bar python3 test.py", "python3"},
+		{"FOO=bar BAZ=1 python3 script.py", "python3"},
+		{"timeout 30 pytest", "pytest"},
+		{"nice -n 10 make", "make"},
+		{"nohup python3 server.py", "python3"},
+		{"cat file.txt", "cat"},
+		{"echo hello", "echo"},
+		{"git add .", "git"},
+		{"", ""},
+		{"FOO=bar", ""},
+		{"(python3 test.py)", "python3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.subcmd, func(t *testing.T) {
+			got := extractFirstBinary(tt.subcmd)
+			if got != tt.want {
+				t.Errorf("extractFirstBinary(%q) = %q, want %q", tt.subcmd, got, tt.want)
 			}
 		})
 	}
@@ -2351,6 +2447,57 @@ func TestVerificationCheckpoint_RejectsRepeatedlyOnFailure(t *testing.T) {
 		if !strings.Contains(retryErr.Message, "Your last verification run FAILED") {
 			t.Fatalf("attempt %d: expected failure rejection, got: %s", i+1, retryErr.Message)
 		}
+	}
+}
+
+func TestVerificationCheckpoint_RejectionCap(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// Tests fail — set up a perpetually-failing verification state.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest"}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 failed\n[exit code: 1]",
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// First 5 attempts should be rejected (rejection cap = 5).
+	for i := range 5 {
+		_, err := validator(ctx, rc, "Done!")
+		if err == nil {
+			t.Fatalf("expected rejection on attempt %d, but got nil", i+1)
+		}
+		var retryErr *core.ModelRetryError
+		if !errors.As(err, &retryErr) {
+			t.Fatalf("expected ModelRetryError on attempt %d, got: %v", i+1, err)
+		}
+	}
+
+	// 6th attempt should pass — rejection cap reached.
+	_, err := validator(ctx, rc, "Done!")
+	if err != nil {
+		t.Fatalf("expected rejection cap to allow completion on attempt 6, got: %v", err)
 	}
 }
 

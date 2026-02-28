@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -54,6 +56,7 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 	invariantHardFail := 0
 	stagnationWarned := 0    // consecutive fail level at which we last injected guidance
 	staleTestWarned := false // whether we've warned about not running tests after edits
+	rejectionCount := 0      // total validator rejections; capped to prevent infinite loops
 	requireInvariantChecklist := envEnabled("GOLLEM_REQUIRE_INVARIANT_CHECKLIST")
 
 	mw := func(
@@ -292,6 +295,16 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		return next(ctx, messages, settings, params)
 	}
 
+	// reject is a helper that increments the rejection counter and returns a retry error.
+	reject := func(output, message string) (string, error) {
+		mu.Lock()
+		rejectionCount++
+		mu.Unlock()
+		return output, &core.ModelRetryError{Message: message}
+	}
+
+	const maxRejections = 5
+
 	validator := func(_ context.Context, _ *core.RunContext, output string) (string, error) {
 		mu.Lock()
 		v := verified
@@ -305,29 +318,34 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		invSummarySeen := invariantSummarySeen
 		invHardUnresolved := invariantHardUnresolved
 		invHardFail := invariantHardFail
+		rc := rejectionCount
 		mu.Unlock()
 
+		// Safety cap: after maxRejections total rejections, allow completion
+		// to prevent infinite loops from any cause (pattern matching gaps,
+		// unfixable test failures, etc.).
+		if rc >= maxRejections {
+			fmt.Fprintf(os.Stderr, "[gollem] verification: rejection cap reached (%d), allowing completion\n", maxRejections)
+			return output, nil
+		}
+
 		if !v {
-			return output, &core.ModelRetryError{
-				Message: "STOP. You MUST verify your changes before completing the task. " +
-					"Run the relevant test suite (e.g., `go test ./...`, `pytest`, `npm test`) " +
-					"and/or build command (e.g., `go build ./...`, `make`, `cargo build`) to " +
-					"confirm your changes are correct. Do NOT declare completion without " +
-					"evidence that your solution works.",
-			}
+			return reject(output,
+				"STOP. You MUST verify your changes before completing the task. "+
+					"Run the relevant test suite (e.g., `go test ./...`, `pytest`, `npm test`) "+
+					"and/or build command (e.g., `go build ./...`, `make`, `cargo build`) to "+
+					"confirm your changes are correct. Do NOT declare completion without "+
+					"evidence that your solution works.")
 		}
 
 		// If files were edited after the last verification run, force a fresh
 		// verification before completion. This prevents stale "tests passed"
 		// state after subsequent code changes.
 		if eslv > 0 {
-			return output, &core.ModelRetryError{
-				Message: fmt.Sprintf(
-					"STOP. You made %d file edit(s) since your last verification run. "+
-						"Run tests/build again now and ensure they pass before declaring completion.",
-					eslv,
-				),
-			}
+			return reject(output, fmt.Sprintf(
+				"STOP. You made %d file edit(s) since your last verification run. "+
+					"Run tests/build again now and ensure they pass before declaring completion.",
+				eslv))
 		}
 
 		// If the last verification run failed, force the agent to fix and
@@ -339,35 +357,29 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 			}
 			msg += "\n" + failureGuidance(lvs)
 			msg += "Do NOT declare completion with failing tests."
-			return output, &core.ModelRetryError{Message: msg}
+			return reject(output, msg)
 		}
 		if svcSeen && !svcReady {
-			return output, &core.ModelRetryError{
-				Message: "STOP. This task used service lifecycle commands, but no successful readiness proof was recorded. " +
-					"Before completion, prove service liveness the way the verifier will (e.g., port check with `ss -tlnp`/`nc -z` " +
-					"and a real protocol request such as curl/grpc call).",
-			}
+			return reject(output,
+				"STOP. This task used service lifecycle commands, but no successful readiness proof was recorded. "+
+					"Before completion, prove service liveness the way the verifier will (e.g., port check with `ss -tlnp`/`nc -z` "+
+					"and a real protocol request such as curl/grpc call).")
 		}
 		if requireInvariantChecklist && invAvailable {
 			if !invSeen {
-				return output, &core.ModelRetryError{
-					Message: "STOP. You must run the `invariants` tool before completion. " +
-						"Run `invariants` command `extract`, then verify/update statuses with evidence.",
-				}
+				return reject(output,
+					"STOP. You must run the `invariants` tool before completion. "+
+						"Run `invariants` command `extract`, then verify/update statuses with evidence.")
 			}
 			if !invSummarySeen {
-				return output, &core.ModelRetryError{
-					Message: "STOP. Invariant summary is missing. Run `invariants` command `summary` after your latest verification run.",
-				}
+				return reject(output,
+					"STOP. Invariant summary is missing. Run `invariants` command `summary` after your latest verification run.")
 			}
 			if invHardFail > 0 || invHardUnresolved > 0 {
-				return output, &core.ModelRetryError{
-					Message: fmt.Sprintf(
-						"STOP. Hard invariants are not all PASS (hard_fail=%d, hard_unresolved=%d). "+
-							"Fix remaining violations, update invariant statuses with evidence, and re-run verification.",
-						invHardFail, invHardUnresolved,
-					),
-				}
+				return reject(output, fmt.Sprintf(
+					"STOP. Hard invariants are not all PASS (hard_fail=%d, hard_unresolved=%d). "+
+						"Fix remaining violations, update invariant statuses with evidence, and re-run verification.",
+					invHardFail, invHardUnresolved))
 			}
 		}
 
@@ -402,12 +414,12 @@ func isVerificationCode(argsJSON string) bool {
 	}
 	code := strings.ToLower(args.Code)
 
-	// Check if the code calls bash() with a verification command.
+	// If the code shells out via bash(), treat as verification.
 	// execute_code wraps tool calls as Python functions, e.g.:
 	//   bash(command="python /app/test_outputs.py")
 	//   bash(command="pytest")
 	if strings.Contains(code, "bash(") {
-		return isVerificationString(code)
+		return true
 	}
 
 	// Check for verification-like code patterns.
@@ -705,8 +717,154 @@ func mutationToolReturnSucceeded(toolName, content string) bool {
 	return true
 }
 
-// isVerificationString checks whether a command/code string contains patterns
-// that look like verification (tests, builds, lints, constraint checks).
+// nonVerificationCommands is a blocklist of commands that are NEVER used to
+// verify correctness. Everything NOT in this list is treated as potential
+// verification. This inverted approach (blocklist instead of allowlist) is
+// robust against unknown languages, frameworks, and task-specific scripts —
+// the list is small, stable, and doesn't grow with every new tool.
+var nonVerificationCommands = map[string]struct{}{
+	// File I/O (read only).
+	"cat": {}, "head": {}, "tail": {}, "less": {}, "more": {}, "bat": {},
+	"hexdump": {}, "od": {}, "strings": {},
+	// Directory listing.
+	"ls": {}, "dir": {}, "tree": {}, "find": {},
+	// Navigation.
+	"cd": {}, "pwd": {}, "pushd": {}, "popd": {},
+	// Output.
+	"echo": {}, "printf": {},
+	// File management.
+	"mkdir": {}, "touch": {}, "chmod": {}, "chown": {}, "cp": {}, "mv": {},
+	"rm": {}, "rmdir": {}, "ln": {},
+	// Environment.
+	"export": {}, "source": {}, "unset": {}, "alias": {}, "set": {},
+	"printenv": {},
+	// Editors.
+	"vim": {}, "nano": {}, "vi": {}, "emacs": {}, "code": {}, "ed": {},
+	// System info.
+	"which": {}, "type": {}, "whoami": {}, "hostname": {},
+	"uname": {}, "date": {}, "uptime": {}, "id": {}, "groups": {}, "locale": {},
+	// Control flow.
+	"true": {}, "false": {}, "sleep": {}, "wait": {}, "read": {},
+	// Process management.
+	"kill": {}, "pkill": {}, "killall": {},
+	// Version control (never runs tests).
+	"git": {}, "svn": {}, "hg": {},
+	// Install-only package managers.
+	"pip": {}, "pip3": {}, "apt": {}, "apt-get": {}, "dpkg": {},
+	"brew": {}, "conda": {}, "snap": {}, "yum": {}, "dnf": {},
+	// Archiving.
+	"tar": {}, "zip": {}, "unzip": {}, "gzip": {}, "gunzip": {},
+	"bzip2": {}, "xz": {},
+	// Shell utilities.
+	"history": {}, "clear": {}, "reset": {}, "man": {}, "info": {},
+	"help": {}, "tput": {},
+	// File transfer.
+	"scp": {}, "rsync": {}, "sftp": {}, "ftp": {},
+	// Text processing (editing/extraction, not verification).
+	"sed": {}, "awk": {},
+}
+
+// commandSplitter splits shell command chains on &&, ||, ;, |, and newlines.
+var commandSplitter = regexp.MustCompile(`\s*(?:&&|\|\||[;\n|])\s*`)
+
+// commandModifiers are binaries that wrap another command and should be
+// skipped when extracting the "real" binary from a sub-command.
+var commandModifiers = map[string]struct{}{
+	"sudo": {}, "env": {}, "nice": {}, "timeout": {}, "time": {},
+	"nohup": {}, "strace": {}, "ltrace": {}, "exec": {},
+	"unbuffer": {}, "script": {}, "ionice": {}, "taskset": {},
+	"chrt": {}, "numactl": {}, "command": {},
+}
+
+// splitShellCommands splits a shell command string into sub-commands by
+// common separators (&&, ||, ;, |, newlines). This is a heuristic — it
+// doesn't handle quoted strings or subshells, but is good enough for
+// verification classification.
+func splitShellCommands(cmd string) []string {
+	parts := commandSplitter.Split(cmd, -1)
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// extractFirstBinary extracts the first "real" binary name from a shell
+// sub-command, skipping env-var assignments (FOO=bar), command modifiers
+// (sudo, env, timeout, etc.), flags (-x), and pure numbers (timeout values).
+// Returns the base name (filepath.Base) for blocklist lookup.
+func extractFirstBinary(subcmd string) string {
+	// Strip leading subshell parens.
+	subcmd = strings.TrimLeft(subcmd, "( ")
+	tokens := strings.Fields(subcmd)
+
+	i := 0
+	for i < len(tokens) {
+		tok := tokens[i]
+
+		// Skip env-var assignments: FOO=bar (but not -flag or /path/cmd=arg).
+		if strings.Contains(tok, "=") && len(tok) > 0 &&
+			tok[0] != '-' && tok[0] != '/' && tok[0] != '.' {
+			// Check first char is a letter or underscore (valid env var start).
+			r := rune(tok[0])
+			if unicode.IsLetter(r) || r == '_' {
+				i++
+				continue
+			}
+		}
+
+		base := filepath.Base(tok)
+
+		// Skip command modifiers and their arguments.
+		if _, isMod := commandModifiers[base]; isMod {
+			i++
+			// Skip flags and numeric args that belong to the modifier
+			// (e.g., timeout -k 5 30 cmd, sudo -u root cmd).
+			for i < len(tokens) {
+				next := tokens[i]
+				if strings.HasPrefix(next, "-") {
+					i++
+					// If flag likely takes a value (e.g., -u root, -k 5),
+					// skip the next token too if it doesn't look like a flag.
+					if i < len(tokens) && !strings.HasPrefix(tokens[i], "-") {
+						// Check if it's a value (not another command).
+						val := tokens[i]
+						if isNumeric(val) || (len(val) > 0 && unicode.IsLower(rune(val[0])) && !strings.Contains(val, "/")) {
+							i++
+						}
+					}
+					continue
+				}
+				if isNumeric(next) {
+					i++
+					continue
+				}
+				// Also skip env-var assignments after modifiers (env FOO=bar cmd).
+				if strings.Contains(next, "=") && len(next) > 0 {
+					r := rune(next[0])
+					if unicode.IsLetter(r) || r == '_' {
+						i++
+						continue
+					}
+				}
+				break
+			}
+			continue
+		}
+
+		return base
+	}
+	return ""
+}
+
+// isVerificationString checks whether a command string looks like a
+// verification step (test, build, lint, constraint check). It uses a
+// blocklist approach: a short, stable list of commands that are definitively
+// NOT verification. Everything not on the blocklist is treated as potential
+// verification. This is robust against unknown languages and frameworks.
 func isVerificationString(cmd string) bool {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
@@ -722,251 +880,18 @@ func isVerificationString(cmd string) bool {
 		return false
 	}
 
-	// Test commands.
-	testPatterns := []string{
-		"go test",
-		"pytest", "python -m pytest", "python -m unittest", "python3 -m unittest",
-		"npm test", "npm run test", "yarn test", "pnpm test",
-		"npx jest", "npx mocha", "npx vitest", "bun test", "bunx vitest", "deno test",
-		"cargo test",
-		"make test", "make check",
-		"mvn test", "gradle test", "gradlew test", "./gradlew",
-		"dotnet test",
-		"ruby -e", "rake test", "rspec", "bundle exec", "ruby -itest",
-		"phpunit", "./vendor/bin/phpunit", "composer test",
-		"sbt test", "sbt compile",
-		"dart test", "flutter test",
-		"stack test", "cabal test",
-		"busted", "lua test",
-		"testthat",
-		"ctest",
-		"julia -e", "julia --project",
-		// Terminal-Bench patterns: tasks often have test scripts.
-		"test_outputs", "test_output", "run_tests",
-		"python3 /app/test", "python /app/test",
-		"python3 /app/eval", "python /app/eval",
-		"python3 /tests/", "python /tests/",
-		"python3 test_", "python test_",
-		"bash /tests/", "sh /tests/",
-		"bash run_", "sh run_",
-		"./test", "./run_test", "./check", "./verify", "./run_verify",
-		"./run_", // common script naming pattern
-		"node test", "node /tests/", "node /app/test",
-		"python3 verify", "python verify",
-		"python3 check", "python check",
-		"python3 /app/scripts/", "python /app/scripts/",
-		"bash /app/scripts/", "sh /app/scripts/",
-		// Pattern: inline test execution.
-		"python3 -c \"import", "python -c \"import",
-		"python3 -c 'import", "python -c 'import",
-		// Pattern: inline python via heredoc/stdin (python3 - <<'PY' ... PY).
-		"python3 - <<", "python - <<",
-		"python3 -<<", "python -<<",
-		// Pattern: pmars (corewars simulator).
-		"pmars ",
-		// Lean 4 build (theorem proving).
-		"lake build", "lake env",
-		// OCaml build systems.
-		"dune build", "dune test", "dune exec",
-		// Haskell build systems (test entries above, build-only here).
-		"stack build", "cabal build",
-		// Coq proof checker.
-		"coqc ", "coq_makefile",
-		// Elixir/Erlang.
-		"mix test", "mix compile",
-		"rebar3 eunit", "rebar3 ct", "rebar3 do compile",
-		// Zig build.
-		"zig build", "zig test",
-		// Perl / TAP.
-		"prove ", "perl -e",
-		"pg_prove",            // PostgreSQL TAP runner
-		"npx tape", "npx tap", // Node.js TAP runners
-		// R language.
-		"rscript ", "rscript -e",
-		// Swift.
-		"swift test", "swift build",
-		// Nim.
-		"nim c ", "nim compile", "nim test",
-		"nimble test", "nimble build", "nimble run",
-		// Python doctests.
-		"python3 -m doctest", "python -m doctest",
-		// Haskell execution.
-		"stack exec", "cabal exec",
-		// Free Pascal.
-		"fpc ",
-		// Crystal.
-		"crystal spec", "crystal build",
-		"shards build", "shards install",
-		// Kotlin.
-		"kotlinc ",
-		// D language.
-		"dmd ", "dub test", "dub build",
-		// V language.
-		"v test", "v build", "v run",
-		// Meson build system.
-		"meson test", "meson compile", "meson setup",
-		// Bazel build system.
-		"bazel test", "bazel build", "bazel run",
-		// Inline output validation patterns.
-		"python3 -c \"open(", "python -c \"open(",
-		"python3 -c 'open(", "python -c 'open(",
-		// Solution execution with output redirect (common test pattern).
-		"./solution >", "./program >", "./main >",
-		// E2E testing frameworks.
-		"playwright test", "npx playwright test",
-		"cypress run", "npx cypress run",
-		// Python packaging tool runners.
-		"tox", "python -m tox", "python3 -m tox",
-		"nox", "python -m nox", "python3 -m nox",
-		"hatch test", "hatch run test",
-		"pdm run test", "pdm test",
-		"uv run pytest", "uv run test",
-		"poetry run pytest", "poetry run test",
-		// Maven wrapper (matches ./gradlew pattern).
-		"./mvnw",
-		// Deno task runner and benchmarks.
-		"deno task test", "deno task check", "deno bench",
-		// Blockchain / smart contract testing.
-		"forge test",  // Foundry (Solidity)
-		"anchor test", // Solana
-		"hardhat test", "npx hardhat test",
-		// WebAssembly.
-		"wasm-pack test",
-		// Gleam.
-		"gleam test",
-		// Node.js built-in test runner (Node 18+).
-		"node --test",
-		// Clojure.
-		"lein test", "lein check",
-		"clj -M:test", "clj -X:test",
-		// Python coverage (runs tests under coverage).
-		"coverage run", "python3 -m coverage", "python -m coverage",
-		// Maven integration test lifecycle.
-		"mvn verify",
-		// Gradle comprehensive check.
-		"gradle check",
-		// Just task runner (modern Make alternative).
-		"just test", "just check", "just verify",
-		// Terraform/OpenTofu.
-		"terraform validate", "terraform plan", "tofu validate", "tofu plan",
-		// Elm.
-		"elm-test", "npx elm-test",
-		// Nix.
-		"nix build", "nix flake check", "nix-build",
-		// Bash testing (BATS).
-		"bats ",
-		// Solidity (Truffle).
-		"truffle test",
-	}
-
-	// Build/compile commands.
-	buildPatterns := []string{
-		"go build", "go vet",
-		"npm run build", "yarn build", "yarn run build", "pnpm build", "pnpm run build", "bun run build",
-		"cargo build", "cargo check", "cargo clippy",
-		"make", "cmake",
-		"gcc ", "g++ ", "clang ", "cc ",
-		"javac ", "mvn compile", "gradle build", "gradlew build",
-		"dotnet build",
-		"tsc",
-		"python -m py_compile", "python3 -m py_compile",
-		"python -c", "python3 -c",
-		"rustc ",
-		"gfortran ", "gdc ", "ldc2 ",
-		// Assembly.
-		"nasm ", "yasm ",
-		// Swift.
-		"swiftc ",
-		// OCaml direct compilation.
-		"ocamlopt ", "ocamlfind ",
-		// Haskell direct compilation.
-		"ghc ",
-		// Meson/Bazel build.
-		"meson compile", "bazel build",
-		// Modern CMake build (cmake --build <dir>).
-		"cmake --build",
-		// Just task runner (modern Make alternative).
-		"just build", "just compile",
-		// Clojure build.
-		"lein compile", "lein jar", "lein uberjar",
-		// Erlang build.
-		"rebar3 compile", "erlc ",
-		// D language.
-		"dmd ",
-		// MSBuild (.NET Framework).
-		"msbuild",
-		// Terraform/OpenTofu.
-		"terraform init", "terraform apply", "tofu init",
-		// Elm.
-		"elm make",
-		// Nix.
-		"nix-build", "nix develop",
-	}
-
-	// Lint/check commands.
-	lintPatterns := []string{
-		"eslint", "pylint", "flake8", "mypy",
-		"golangci-lint", "staticcheck",
-		"rubocop", "shellcheck",
-		"black --check", "ruff check",
-		"biome check", "biome lint",
-		"clippy", // rustfmt is format-only, clippy is lint
-		"pyright", "basedpyright",
-		"tsc --noEmit",              // typecheck only
-		"terraform fmt", "tofu fmt", // Terraform formatting checks
-		"elm-format",   // Elm formatting
-		"statix check", // Nix linter
-		"deadnix",      // Nix dead code detection
-		"solhint",      // Solidity linter
-		"slither",      // Solidity security analysis
-	}
-
-	// Constraint verification commands (size checks, output validation).
-	constraintPatterns := []string{
-		"wc -c", "wc -l", "stat ",
-		"du -", "file ",
-		"diff ", "cmp ",
-		"md5sum", "sha256sum", "sha1sum",
-		"grep -c", "grep --count", // counting matches is verification
-		"sqlite3 ",                                                  // querying database to verify contents
-		"xxd ",                                                      // hex dump for byte-level comparison
-		"valgrind ",                                                 // memory leak checking
-		"curl localhost", "curl 127.0.0.1", "curl http://localhost", // service verification
-		"wget localhost", "wget 127.0.0.1",
-		// Network/service verification commands.
-		"nc localhost", "nc 127.0.0.1", "nc -z", // netcat connectivity checks
-		"netcat localhost", "netcat 127.0.0.1",
-		"ss -tlnp", "ss -tnlp", // listening port checks
-		"lsof -i:",                         // port ownership checks
-		"nginx -t", "apachectl configtest", // config validation
-		"sshd -t",                            // SSH config validation
-		"named-checkconf", "named-checkzone", // DNS config validation
-		"postconf -n",      // Postfix config check
-		"systemctl status", // service status checks
-		"service ",         // SysV service status
-	}
-
-	for _, p := range testPatterns {
-		if strings.Contains(cmd, p) {
+	// Split into sub-commands and check each one's primary binary.
+	// If ANY sub-command is not in the blocklist, the command is verification.
+	subcmds := splitShellCommands(cmd)
+	for _, sub := range subcmds {
+		binary := extractFirstBinary(sub)
+		if binary == "" {
+			continue
+		}
+		if _, blocked := nonVerificationCommands[binary]; !blocked {
 			return true
 		}
 	}
-	for _, p := range buildPatterns {
-		if strings.Contains(cmd, p) {
-			return true
-		}
-	}
-	for _, p := range lintPatterns {
-		if strings.Contains(cmd, p) {
-			return true
-		}
-	}
-	for _, p := range constraintPatterns {
-		if strings.Contains(cmd, p) {
-			return true
-		}
-	}
-
 	return false
 }
 
