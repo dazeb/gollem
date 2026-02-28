@@ -142,6 +142,8 @@ func Bash(opts ...Option) core.Tool {
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 
+			startTime := time.Now()
+
 			cmd := exec.CommandContext(ctx, "bash", "-c", params.Command)
 			if cfg.WorkDir != "" {
 				cmd.Dir = cfg.WorkDir
@@ -255,7 +257,17 @@ func Bash(opts ...Option) core.Tool {
 			outStr = truncateOutput(outStr, cfg.MaxOutputLen)
 			errStr = truncateOutput(errStr, cfg.MaxOutputLen)
 
-			result := formatBashOutput(outStr, errStr, exitCode, timedOut, timeout, params.Command)
+			// Report actual elapsed time when timed out. The requested timeout
+			// may be much larger than reality if the parent context (job timeout)
+			// expired first, and showing the requested timeout is misleading.
+			reportedTimeout := timeout
+			if timedOut {
+				elapsed := time.Since(startTime).Round(time.Second)
+				if elapsed < timeout {
+					reportedTimeout = elapsed
+				}
+			}
+			result := formatBashOutput(outStr, errStr, exitCode, timedOut, reportedTimeout, params.Command)
 
 			// Context-aware timeout hint: server/daemon commands need background
 			// execution, not optimization. This saves a turn of confusion.
