@@ -13,9 +13,11 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	lf "github.com/fugue-labs/langfuse-go"
@@ -298,6 +300,17 @@ func runAgent() {
 		langfuseProcessor = lf.NewBatchProcessor(client)
 		mws = append(mws, newLangfuseMiddleware(langfuseProcessor))
 		fmt.Fprintf(os.Stderr, "gollem: langfuse tracing enabled\n")
+
+		// Flush Langfuse on termination signals so traces survive harness
+		// timeouts (SIGTERM before SIGKILL).
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+		go func() {
+			sig := <-sigCh
+			fmt.Fprintf(os.Stderr, "gollem: caught %v, flushing langfuse...\n", sig)
+			_ = langfuseProcessor.Close()
+			os.Exit(1)
+		}()
 	}
 
 	var model = baseModel
