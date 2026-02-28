@@ -150,7 +150,10 @@ fi
 echo "Building gollem-linux-amd64..."
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$SCRIPT_DIR/gollem-linux-amd64" "$REPO_ROOT/cmd/gollem/" || exit 1
+GIT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+    -ldflags "-X main.gitCommit=${GIT_COMMIT}" \
+    -o "$SCRIPT_DIR/gollem-linux-amd64" "$REPO_ROOT/cmd/gollem/" || exit 1
 echo "Build complete."
 
 # Construct extra agent kwargs for Google/Vertex AI

@@ -89,7 +89,8 @@ UV_CACHE_DIR="${UV_CACHE_DIR}" \
 GOCACHE="${GOCACHE}" \
 GOMODCACHE="${GOMODCACHE}" \
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-go build -o harbor/gollem-linux-amd64 ./cmd/gollem/
+go build -ldflags "-X main.gitCommit=$(git rev-parse HEAD)" \
+    -o harbor/gollem-linux-amd64 ./cmd/gollem/
 
 echo "[7/7] Writing Harbor env profile"
 mkdir -p "$HOME/.config"

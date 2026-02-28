@@ -39,6 +39,9 @@ import (
 // too many seconds per turn on time-limited benchmark tasks.
 const defaultThinkingBudget = 16000
 
+// gitCommit is set via -ldflags "-X main.gitCommit=..." at build time.
+var gitCommit string
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -298,7 +301,7 @@ func runAgent() {
 		}
 		client := lf.New(lfOpts...)
 		langfuseProcessor = lf.NewBatchProcessor(client)
-		mws = append(mws, newLangfuseMiddleware(langfuseProcessor))
+		mws = append(mws, newLangfuseMiddleware(langfuseProcessor, f))
 		fmt.Fprintf(os.Stderr, "gollem: langfuse tracing enabled\n")
 
 		// Flush Langfuse on termination signals so traces survive harness
@@ -563,18 +566,75 @@ func runAgent() {
 // newLangfuseMiddleware creates a provider-level middleware that sends traces
 // to Langfuse. It wraps each model request with a generation event containing
 // token usage, timing, input messages, and output.
-func newLangfuseMiddleware(processor *lf.BatchProcessor) middleware.Middleware {
+func newLangfuseMiddleware(processor *lf.BatchProcessor, f flags) middleware.Middleware {
 	traceID := lf.NewID()
 	taskName := strings.TrimSpace(os.Getenv("GOLLEM_TASK_NAME"))
 
+	// Build rich metadata from runtime config.
+	meta := map[string]any{
+		"provider":         f.provider,
+		"model":            f.modelName,
+		"task_name":        taskName,
+		"timeout":          f.timeout.String(),
+		"thinking_budget":  f.thinkingBudget,
+		"reasoning_effort": f.reasoningEffort,
+		"team_mode":        f.teamMode,
+		"no_reasoning":     f.noReasoning,
+		"prompt_preview":   truncate(f.prompt, 500),
+	}
+
+	// Add environment-derived config (only non-empty values).
+	envMeta := map[string]string{
+		"openai_prompt_cache_key":        "OPENAI_PROMPT_CACHE_KEY",
+		"openai_prompt_cache_retention":  "OPENAI_PROMPT_CACHE_RETENTION",
+		"openai_service_tier":            "OPENAI_SERVICE_TIER",
+		"openai_transport":               "OPENAI_TRANSPORT",
+		"openai_websocket_http_fallback": "OPENAI_WEBSOCKET_HTTP_FALLBACK",
+		"reasoning_by_task":              "GOLLEM_REASONING_BY_TASK",
+		"reasoning_no_sandwich_by_task":  "GOLLEM_REASONING_NO_SANDWICH_BY_TASK",
+		"reasoning_no_greedy_by_task":    "GOLLEM_REASONING_NO_GREEDY_BY_TASK",
+		"model_request_timeout_sec":      "GOLLEM_MODEL_REQUEST_TIMEOUT_SEC",
+		"top_level_personality":          "GOLLEM_TOP_LEVEL_PERSONALITY",
+		"require_invariant_checklist":    "GOLLEM_REQUIRE_INVARIANT_CHECKLIST",
+		"xhigh_tasks":                    "GOLLEM_XHIGH_TASKS",
+	}
+	for key, envVar := range envMeta {
+		if v := os.Getenv(envVar); v != "" {
+			meta[key] = v
+		}
+	}
+
+	if gitCommit != "" {
+		meta["git_commit"] = gitCommit
+	}
+
+	// Build tags for faceted search.
+	tags := []string{}
+	if taskName != "" {
+		tags = append(tags, taskName)
+	}
+	if f.provider != "" {
+		tags = append(tags, f.provider)
+	}
+	if f.modelName != "" {
+		tags = append(tags, f.modelName)
+	}
+
+	traceName := taskName
+	if traceName == "" {
+		traceName = "gollem-run"
+	}
+
 	traceEvent := lf.TraceEvent{
 		ID:        traceID,
-		Name:      "gollem-run",
+		Name:      traceName,
 		Timestamp: time.Now().UTC(),
-	}
-	if taskName != "" {
-		traceEvent.Metadata = map[string]any{"task_name": taskName}
-		traceEvent.Tags = []string{taskName}
+		Metadata:  meta,
+		Tags:      tags,
+		Release:   gitCommit,
+		Version:   f.modelName,
+		Input:     map[string]any{"prompt": f.prompt},
+		SessionID: taskName,
 	}
 	processor.Enqueue(traceEvent)
 	fmt.Fprintf(os.Stderr, "gollem: langfuse trace_id=%s\n", traceID)
@@ -670,6 +730,13 @@ func langfuseSummarizeResponse(resp *core.ModelResponse) map[string]any {
 		out["tool_calls"] = tools
 	}
 	return out
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func runDebug() {
