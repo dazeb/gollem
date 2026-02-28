@@ -860,6 +860,7 @@ class GollemAgent(BaseInstalledAgent):
             "tool_invocations_inner": trajectory.get("tool_invocations_inner", 0),
             "tool_invocations_total": trajectory.get("tool_invocations_total", 0),
             "langfuse_trace_id": trajectory.get("langfuse_trace_id", ""),
+            "langsmith_trace_id": trajectory.get("langsmith_trace_id", ""),
         }
 
     def _parse_model_name(self) -> tuple[str, str]:

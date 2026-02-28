@@ -305,17 +305,6 @@ func runAgent() {
 		langfuseProcessor = lf.NewBatchProcessor(client)
 		mws = append(mws, newLangfuseMiddleware(langfuseProcessor, f))
 		fmt.Fprintf(os.Stderr, "gollem: langfuse tracing enabled\n")
-
-		// Flush Langfuse on termination signals so traces survive harness
-		// timeouts (SIGTERM before SIGKILL).
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-		go func() {
-			sig := <-sigCh
-			fmt.Fprintf(os.Stderr, "gollem: caught %v, flushing langfuse...\n", sig)
-			_ = langfuseProcessor.Close()
-			os.Exit(1)
-		}()
 	}
 
 	// LangSmith observability (if configured via environment).
@@ -368,15 +357,23 @@ func runAgent() {
 		langsmithHandler = langsmith.New(lsOpts...)
 		fmt.Fprintf(os.Stderr, "gollem: langsmith tracing enabled\n")
 		fmt.Fprintf(os.Stderr, "gollem: langsmith trace_id=%s\n", traceID)
+	}
 
-		// Flush LangSmith on termination signals so traces survive harness
-		// timeouts (SIGTERM before SIGKILL).
-		lsSigCh := make(chan os.Signal, 1)
-		signal.Notify(lsSigCh, syscall.SIGTERM, syscall.SIGINT)
+	// Flush all trace backends on termination signals so traces survive
+	// harness timeouts (SIGTERM before SIGKILL). Single handler avoids
+	// the race of competing goroutines each calling os.Exit.
+	if langfuseProcessor != nil || langsmithHandler != nil {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		go func() {
-			sig := <-lsSigCh
-			fmt.Fprintf(os.Stderr, "gollem: caught %v, flushing langsmith...\n", sig)
-			_ = langsmithHandler.Close()
+			sig := <-sigCh
+			fmt.Fprintf(os.Stderr, "gollem: caught %v, flushing traces...\n", sig)
+			if langfuseProcessor != nil {
+				_ = langfuseProcessor.Close()
+			}
+			if langsmithHandler != nil {
+				_ = langsmithHandler.Close()
+			}
 			os.Exit(1)
 		}()
 	}
