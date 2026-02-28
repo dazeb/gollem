@@ -622,23 +622,11 @@ func langfuseSummarizeMessages(messages []core.ModelMessage) []map[string]any {
 			for _, part := range m.Parts {
 				switch p := part.(type) {
 				case core.SystemPromptPart:
-					content := p.Content
-					if len(content) > 500 {
-						content = content[:500] + "..."
-					}
-					result = append(result, map[string]any{"role": "system", "content": content})
+					result = append(result, map[string]any{"role": "system", "content": p.Content})
 				case core.UserPromptPart:
-					content := p.Content
-					if len(content) > 2000 {
-						content = content[:2000] + "..."
-					}
-					result = append(result, map[string]any{"role": "user", "content": content})
+					result = append(result, map[string]any{"role": "user", "content": p.Content})
 				case core.ToolReturnPart:
-					content := fmt.Sprintf("%v", p.Content)
-					if len(content) > 1000 {
-						content = content[:1000] + "..."
-					}
-					result = append(result, map[string]any{"role": "tool", "tool": p.ToolName, "content": content})
+					result = append(result, map[string]any{"role": "tool", "tool": p.ToolName, "content": fmt.Sprintf("%v", p.Content)})
 				}
 			}
 		case core.ModelResponse:
@@ -652,19 +640,12 @@ func langfuseSummarizeMessages(messages []core.ModelMessage) []map[string]any {
 func langfuseSummarizeResponse(resp *core.ModelResponse) map[string]any {
 	out := map[string]any{}
 	if text := resp.TextContent(); text != "" {
-		if len(text) > 2000 {
-			text = text[:2000] + "..."
-		}
 		out["text"] = text
 	}
 	var tools []map[string]string
 	for _, part := range resp.Parts {
 		if tc, ok := part.(core.ToolCallPart); ok {
-			args := tc.ArgsJSON
-			if len(args) > 500 {
-				args = args[:500] + "..."
-			}
-			tools = append(tools, map[string]string{"tool": tc.ToolName, "args": args})
+			tools = append(tools, map[string]string{"tool": tc.ToolName, "args": tc.ArgsJSON})
 		}
 	}
 	if len(tools) > 0 {
@@ -1094,6 +1075,9 @@ func deriveOpenAIReasoningEffort(modelName, current string) string {
 	return ""
 }
 
+// isTruthyEnv checks if an environment variable is set to a truthy value.
+// Mirrors codetool.envEnabled — kept local to avoid a dependency on ext/codetool
+// from cmd/gollem (which would create a circular-ish layering concern).
 func isTruthyEnv(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
 	case "1", "true", "yes", "on":
