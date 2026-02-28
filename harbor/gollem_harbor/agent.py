@@ -465,8 +465,11 @@ class GollemAgent(BaseInstalledAgent):
                 "  python3 -m pip install --break-system-packages -q --upgrade pip setuptools wheel >/dev/null 2>&1 || true; "
                 f"$PY_INSTALL_SYSTEM -q {setup_python_pkgs} 2>/dev/null || "
                 f"  python3 -m pip install --break-system-packages -q {setup_python_pkgs} 2>/dev/null || true; "
-                # Fail setup if required deps are not importable in system Python.
-                "python3 -c \"import pytest, pandas, scipy\" >/dev/null 2>&1; "
+                # Warn (but don't fail) if common deps are not importable.
+                # Some task containers (e.g. LaTeX-only) may not support
+                # heavy native packages like scipy — the agent can still work.
+                "python3 -c \"import pytest, pandas, scipy\" >/dev/null 2>&1 || "
+                "  echo 'prewarm: some Python deps not importable (continuing)' >&2; "
                 # Python: requirements.txt
                 "for f in /app/requirements.txt /requirements.txt; do "
                 "  if [ -f \"$f\" ]; then "
