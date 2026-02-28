@@ -8313,6 +8313,26 @@ func TestExtractCommandPrefix(t *testing.T) {
 			argsJSON: `{"command": "cd /app && python3 -m pytest; echo done"}`,
 			expected: "python3 -m pytest",
 		},
+		{
+			name:     "python heredoc stdin not fingerprinted",
+			argsJSON: `{"command": "python - <<'PY'\nimport numpy\nprint('hello')\nPY"}`,
+			expected: "",
+		},
+		{
+			name:     "python3 heredoc stdin not fingerprinted",
+			argsJSON: `{"command": "python3 - <<'PY'\nimport numpy\nPY"}`,
+			expected: "",
+		},
+		{
+			name:     "python /dev/stdin not fingerprinted",
+			argsJSON: `{"command": "python3 /dev/stdin <<'EOF'\nprint(1)\nEOF"}`,
+			expected: "",
+		},
+		{
+			name:     "python heredoc without dash not fingerprinted",
+			argsJSON: `{"command": "python3 <<'PY'\nprint(1)\nPY"}`,
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {

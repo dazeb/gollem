@@ -333,6 +333,12 @@ done:
 	}
 	if interpreters[base] && len(fields) >= 2 {
 		arg := fields[1]
+		// Heredoc / stdin invocations (e.g., `python - <<'PY'\n...`) use
+		// inline code that differs each time. Don't fingerprint these —
+		// they aren't true loops even when repeated many times.
+		if arg == "-" || arg == "/dev/stdin" || strings.HasPrefix(arg, "<<") {
+			return ""
+		}
 		// For flags like -m, -c, -e, include the flag + next token.
 		if strings.HasPrefix(arg, "-") && len(fields) >= 3 {
 			return base + " " + arg + " " + filepath.Base(fields[2])
