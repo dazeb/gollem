@@ -99,7 +99,7 @@ func personalityCacheKey(req PersonalityRequest) string {
 func buildMetaPrompt(req PersonalityRequest) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "Generate a system prompt for a coding agent with the following task:\n\n")
+	fmt.Fprintf(&b, "Generate a system prompt for an agent with the following task:\n\n")
 	fmt.Fprintf(&b, "TASK: %s\n", req.Task)
 
 	if req.Role != "" {
@@ -127,17 +127,20 @@ func buildMetaPrompt(req PersonalityRequest) string {
 	return b.String()
 }
 
-const personalityMetaSystem = `You are a prompt engineer. Your job is to write system prompts for coding agents.
+const personalityMetaSystem = `You are a prompt engineer. Your job is to write system prompts for AI agents that solve tasks in a terminal environment.
 
 Given a task description, role, and optional constraints, generate a focused system prompt that:
-1. Frames the agent's expertise and mindset for the specific task
-2. Sets clear behavioral guidelines tailored to the work
-3. Incorporates any base instructions provided
-4. Respects all stated constraints
+1. Identifies the domain(s) the task belongs to (e.g., spectroscopy, NLP, networking, compilers, signal processing, etc.) and frames the agent as a subject-matter expert in that domain
+2. Includes specific domain knowledge, terminology, and techniques relevant to the task — the kind of knowledge a human expert would bring
+3. Sets clear behavioral guidelines tailored to the work
+4. Incorporates any base instructions provided
+5. Respects all stated constraints
 
 Rules for the output:
 - Output ONLY the system prompt text, nothing else
 - No markdown wrapping, no explanations, no preamble
 - Keep it concise (under 500 words) but actionable
-- Be specific to the task, not generic
-- Include relevant technical focus areas based on the task`
+- Be specific to the task domain, not generic
+- Lead with domain expertise ("You are an expert in X with deep knowledge of Y") rather than generic coding ability
+- Include concrete technical details: algorithms, formulas, parameter ranges, common pitfalls, and best practices specific to the domain
+- The agent already knows how to code — focus on the specialized knowledge it needs to solve this particular problem correctly`
