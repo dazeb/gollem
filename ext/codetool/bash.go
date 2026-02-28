@@ -131,20 +131,29 @@ func Bash(opts ...Option) core.Tool {
 			if params.Timeout != nil && *params.Timeout > 0 {
 				timeout = time.Duration(*params.Timeout) * time.Second
 			}
-			// Build/benchmark commands frequently exceed short timeouts.
-			// Keep a 5m floor even when the model explicitly passes a smaller value.
-			if isBuildCommand(params.Command) && timeout < 5*time.Minute {
+			// Training/ML commands need generous timeouts — model training
+			// legitimately takes 10+ minutes per run.
+			if isTrainingCommand(params.Command) && timeout < 30*time.Minute {
+				timeout = 30 * time.Minute
+			} else if isBuildCommand(params.Command) && timeout < 5*time.Minute {
+				// Build/benchmark commands frequently exceed short timeouts.
 				timeout = 5 * time.Minute
 			} else if isLongRunningCommand(params.Command) && timeout < 5*time.Minute {
 				timeout = 5 * time.Minute
 			}
 
-			ctx, cancel := context.WithTimeout(ctx, timeout)
+			// Detach from the parent context's deadline so the bash command
+			// uses its own timeout, not the exec/budget timeout. Without this,
+			// context.WithTimeout picks min(parentDeadline, now+timeout) which
+			// kills training runs early when the exec timeout is closer than
+			// the requested bash timeout. The agent loop will still stop after
+			// this tool call completes if the exec context has expired.
+			cmdCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 			defer cancel()
 
 			startTime := time.Now()
 
-			cmd := exec.CommandContext(ctx, "bash", "-c", params.Command)
+			cmd := exec.CommandContext(cmdCtx, "bash", "-c", params.Command)
 			if cfg.WorkDir != "" {
 				cmd.Dir = cfg.WorkDir
 			}
@@ -178,7 +187,7 @@ func Bash(opts ...Option) core.Tool {
 				} else {
 					// Re-create cmd for retry (exec.Cmd can only be started once).
 					retried = true
-					cmd = exec.CommandContext(ctx, "bash", "-c", params.Command)
+					cmd = exec.CommandContext(cmdCtx, "bash", "-c", params.Command)
 					if cfg.WorkDir != "" {
 						cmd.Dir = cfg.WorkDir
 					}
@@ -201,7 +210,7 @@ func Bash(opts ...Option) core.Tool {
 				exitCode = 0
 				timedOut = false
 				if err != nil {
-					if ctx.Err() == context.DeadlineExceeded {
+					if cmdCtx.Err() == context.DeadlineExceeded {
 						timedOut = true
 						exitCode = 124
 					} else {
@@ -567,7 +576,13 @@ func formatBashOutput(stdout, stderr string, exitCode int, timedOut bool, timeou
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
-		if isBuildCommand(command) {
+		if isTrainingCommand(command) {
+			fmt.Fprintf(&b, "[timed out after %s — training/ML workload exceeded timeout. "+
+				"Strategies: (1) Train ONE configuration per command instead of sweeping multiple in a single script "+
+				"(2) Reduce data size for initial experiments, then scale up the best config "+
+				"(3) Use fewer epochs for exploration, more for the final model "+
+				"(4) Set a larger timeout parameter if the training legitimately needs more time]", timeout)
+		} else if isBuildCommand(command) {
 			fmt.Fprintf(&b, "[timed out after %s — compilation took too long. Strategies: "+
 				"(1) Use parallel builds: `make -j$(nproc)`, `cargo build -j$(nproc)` "+
 				"(2) Add `-O0` instead of `-O2`/`-O3` for faster compilation (optimize for compile speed, not runtime) "+
@@ -6549,6 +6564,36 @@ func isLongRunningCommand(cmd string) bool {
 		"bats ",
 	}
 	for _, p := range longPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTrainingCommand returns true for ML/model training commands that may
+// legitimately run for tens of minutes or hours.
+func isTrainingCommand(cmd string) bool {
+	lower := strings.ToLower(strings.TrimSpace(cmd))
+	patterns := []string{
+		"train_supervised", "train_unsupervised", // fasttext
+		"fasttext ",         // fasttext CLI
+		"model.fit(",        // keras/sklearn
+		"model.train(",      // various ML frameworks
+		"trainer.train(",    // huggingface transformers
+		".fit(",             // sklearn, keras, xgboost
+		"xgb.train(",        // xgboost
+		"lgb.train(",        // lightgbm
+		"catboost",          // catboost
+		"torchrun ",         // PyTorch distributed training
+		"accelerate launch", // HuggingFace Accelerate
+		"python3 train",     // train scripts
+		"python train",
+		"train.py",
+		"training.py",
+		"fine_tune", "finetune", // fine-tuning
+	}
+	for _, p := range patterns {
 		if strings.Contains(lower, p) {
 			return true
 		}
