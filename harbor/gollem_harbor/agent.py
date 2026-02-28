@@ -32,7 +32,6 @@ _PKG_DIR = Path(__file__).parent
 _TEMPLATES_DIR = _PKG_DIR / "templates"
 _REPO_ROOT = _PKG_DIR.parent.parent  # gollem repo root
 _TASK_CACHE_DIR = Path.home() / ".cache" / "harbor" / "tasks"
-_AGENT_VENV_PATH = "/opt/.venv"
 
 logger = logging.getLogger(__name__)
 
@@ -455,46 +454,32 @@ class GollemAgent(BaseInstalledAgent):
         if uv_install_result.return_code != 0:
             raise RuntimeError("setup failed: could not install/verify uv")
 
-        # Create an isolated virtualenv so Python package installs do not
-        # consume agent turns and do not mutate system Python.
-        venv_result = await environment.exec(
-            command=(
-                "timeout 60 sh -c '"
-                "set -e; "
-                f"if [ ! -x {_AGENT_VENV_PATH}/bin/python ]; then "
-                f"  uv venv {_AGENT_VENV_PATH} >/dev/null 2>&1; "
-                "fi; "
-                f"uv pip install --python {_AGENT_VENV_PATH}/bin/python -q "
-                "  --upgrade pip setuptools wheel >/dev/null 2>&1"
-                "'"
-            )
-        )
-        if venv_result.return_code != 0:
-            raise RuntimeError("setup failed: could not create Python venv with uv")
-
-        # Auto-install common task dependencies with uv only.
+        # Install common Python deps into system Python so agent runtime and
+        # verifier runtime see the same packages.
         py_setup_result = await environment.exec(
             command=(
-                "timeout 180 sh -c '"
+                "timeout 240 sh -c '"
                 "set -e; "
-                f"PY_INSTALL=\"uv pip install --python {_AGENT_VENV_PATH}/bin/python\"; "
-                f"$PY_INSTALL -q {setup_python_pkgs} 2>/dev/null || true; "
-                # Always keep core Python test/scientific deps available even if caller overrides
-                # GOLLEM_SETUP_PYTHON_PACKAGES.
-                "$PY_INSTALL -q pytest pandas scipy 2>/dev/null || true; "
-                # Fail setup if required warmup deps are not importable.
-                f"{_AGENT_VENV_PATH}/bin/python -c \"import pytest, pandas, scipy\" >/dev/null 2>&1; "
+                "PY_INSTALL_SYSTEM=\"uv pip install --system\"; "
+                "$PY_INSTALL_SYSTEM -q --upgrade pip setuptools wheel >/dev/null 2>&1 || "
+                "  python3 -m pip install --break-system-packages -q --upgrade pip setuptools wheel >/dev/null 2>&1 || true; "
+                f"$PY_INSTALL_SYSTEM -q {setup_python_pkgs} 2>/dev/null || "
+                f"  python3 -m pip install --break-system-packages -q {setup_python_pkgs} 2>/dev/null || true; "
+                # Fail setup if required deps are not importable in system Python.
+                "python3 -c \"import pytest, pandas, scipy\" >/dev/null 2>&1; "
                 # Python: requirements.txt
                 "for f in /app/requirements.txt /requirements.txt; do "
                 "  if [ -f \"$f\" ]; then "
-                "    $PY_INSTALL -r \"$f\" 2>&1 | tail -5 || true; "
+                "    $PY_INSTALL_SYSTEM -r \"$f\" 2>&1 | tail -5 || "
+                "      python3 -m pip install --break-system-packages -r \"$f\" 2>&1 | tail -5 || true; "
                 "    break; "
                 "  fi; "
                 "done; "
                 # Python: setup.py (editable install for projects with setup.py)
                 "for d in /app .; do "
                 "  if [ -f \"$d/setup.py\" ] && ! [ -f \"$d/requirements.txt\" ]; then "
-                "    cd \"$d\" && $PY_INSTALL -e . 2>&1 | tail -5 || true; "
+                "    cd \"$d\" && $PY_INSTALL_SYSTEM -e . 2>&1 | tail -5 || "
+                "      python3 -m pip install --break-system-packages -e . 2>&1 | tail -5 || true; "
                 "    break; "
                 "  fi; "
                 "done; "
@@ -522,7 +507,8 @@ class GollemAgent(BaseInstalledAgent):
                 # Python: pyproject.toml (PEP 517/518 projects without requirements.txt)
                 "for d in /app .; do "
                 "  if [ -f \"$d/pyproject.toml\" ] && ! [ -f \"$d/requirements.txt\" ] && ! [ -f \"$d/setup.py\" ]; then "
-                "    cd \"$d\" && $PY_INSTALL -e . 2>&1 | tail -5 || true; "
+                "    cd \"$d\" && $PY_INSTALL_SYSTEM -e . 2>&1 | tail -5 || "
+                "      python3 -m pip install --break-system-packages -e . 2>&1 | tail -5 || true; "
                 "    break; "
                 "  fi; "
                 "done; "
@@ -556,14 +542,14 @@ class GollemAgent(BaseInstalledAgent):
             )
         )
         if py_setup_result.return_code != 0:
-            raise RuntimeError("setup failed: Python dependency prewarm with uv failed")
+            raise RuntimeError("setup failed: system Python dependency prewarm failed")
 
-        # Always pre-install Python LSP via uv (pyright is the primary server).
+        # Always pre-install Python LSP in system Python (pyright is primary).
         await environment.exec(
             command=(
                 "timeout 60 sh -c '"
-                f"uv pip install --python {_AGENT_VENV_PATH}/bin/python -q "
-                "  pyright 2>/dev/null || true"
+                "uv pip install --system -q pyright 2>/dev/null || "
+                "python3 -m pip install --break-system-packages -q pyright 2>/dev/null || true"
                 "' || true"
             )
         )
@@ -671,23 +657,21 @@ class GollemAgent(BaseInstalledAgent):
         # stdbuf -oL forces line buffering so logs appear in real-time.
         raw_cmd = " ".join(cmd_parts)
         runtime_path = (
-            f"{_AGENT_VENV_PATH}/bin:/root/.local/bin:/root/go/bin:"
+            "/root/.local/bin:/root/go/bin:"
             "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
         )
         # Harbor shells can reset PATH (e.g., via login shell semantics), so
-        # force PATH/VIRTUAL_ENV at command runtime to guarantee venv tools.
+        # force PATH at command runtime.
         cmd_with_logging = (
             "{ "
             f"export PATH={shlex.quote(runtime_path)}; "
-            f"export VIRTUAL_ENV={shlex.quote(_AGENT_VENV_PATH)}; "
             f"{raw_cmd} ; "
             "} 2>&1 | stdbuf -oL tee /tmp/gollem.log"
         )
 
         env = {
-            "PATH": f"{_AGENT_VENV_PATH}/bin:/root/.local/bin:/root/go/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
+            "PATH": "/root/.local/bin:/root/go/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
             "HOME": "/root",
-            "VIRTUAL_ENV": _AGENT_VENV_PATH,
             # Common CA cert bundle paths for TLS verification.
             "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
             "SSL_CERT_DIR": "/etc/ssl/certs",
@@ -697,10 +681,6 @@ class GollemAgent(BaseInstalledAgent):
             # Default to single-agent execution on Harbor to avoid shared-throughput
             # contention. Can be overridden by explicitly setting GOLLEM_TEAM_MODE.
             "GOLLEM_TEAM_MODE": os.environ.get("GOLLEM_TEAM_MODE", "off"),
-            # Runtime dependency installs waste model budget; do them in setup.
-            "GOLLEM_DISABLE_RUNTIME_DEP_INSTALL": os.environ.get(
-                "GOLLEM_DISABLE_RUNTIME_DEP_INSTALL", "1"
-            ),
             # Inform the agent which Python packages are prewarmed.
             "GOLLEM_PREINSTALLED_PYTHON_PACKAGES": " ".join(self._setup_python_packages),
             # Prevent __pycache__ directories — they cause "extra files" failures
@@ -738,6 +718,8 @@ class GollemAgent(BaseInstalledAgent):
             "LANGFUSE_SECRET_KEY",
             "LANGFUSE_PUBLIC_KEY",
             "LANGFUSE_BASE_URL",
+            "LANGSMITH_API_KEY",
+            "LANGSMITH_PROJECT",
         ]:
             if val := os.environ.get(key):
                 env[key] = val
@@ -822,6 +804,15 @@ class GollemAgent(BaseInstalledAgent):
         )
         if trace_id_match:
             trajectory["langfuse_trace_id"] = trace_id_match.group(1)
+
+        # Parse LangSmith trace ID for post-run score injection.
+        ls_trace_id_match = re.search(
+            r"^gollem:\s+langsmith\s+trace_id=(\S+)",
+            combined_output,
+            flags=re.MULTILINE,
+        )
+        if ls_trace_id_match:
+            trajectory["langsmith_trace_id"] = ls_trace_id_match.group(1)
 
         # Count tool invocations from log hooks.
         # Split top-level tool calls from nested execute_code calls:

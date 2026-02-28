@@ -37,6 +37,9 @@ type TeamConfig struct {
 	// MailboxSize is the buffer size for teammate mailboxes. Defaults to 64.
 	MailboxSize int
 
+	// WorkerHooks are lifecycle hooks added to every spawned teammate.
+	WorkerHooks []core.Hook
+
 	// PersonalityGenerator generates task-specific system prompts for
 	// teammates. When set, each spawned teammate gets a dynamically
 	// generated personality tailored to its assigned task. Falls back
@@ -55,6 +58,7 @@ type Team struct {
 	model          core.Model
 	toolset        *core.Toolset
 	workerTools    []core.Tool
+	workerHooks    []core.Hook
 	mailboxSize    int
 	personalityGen modelutil.PersonalityGeneratorFunc
 	done           chan struct{}
@@ -77,6 +81,7 @@ func NewTeam(cfg TeamConfig) *Team {
 		model:          cfg.Model,
 		toolset:        cfg.Toolset,
 		workerTools:    cfg.WorkerExtraTools,
+		workerHooks:    cfg.WorkerHooks,
 		mailboxSize:    mailboxSize,
 		personalityGen: cfg.PersonalityGenerator,
 		done:           make(chan struct{}),
@@ -88,11 +93,17 @@ type TeammateOption func(*teammateConfig)
 
 type teammateConfig struct {
 	systemPrompt string
+	hooks        []core.Hook
 }
 
 // WithTeammateSystemPrompt overrides the default worker system prompt.
 func WithTeammateSystemPrompt(prompt string) TeammateOption {
 	return func(c *teammateConfig) { c.systemPrompt = prompt }
+}
+
+// WithTeammateHooks adds lifecycle hooks to a spawned teammate.
+func WithTeammateHooks(hooks ...core.Hook) TeammateOption {
+	return func(c *teammateConfig) { c.hooks = append(c.hooks, hooks...) }
 }
 
 // RegisterLeader registers the leader agent's mailbox in the team so that
@@ -175,6 +186,10 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 	}
 	if t.eventBus != nil {
 		agentOpts = append(agentOpts, core.WithEventBus[string](t.eventBus))
+	}
+	allHooks := append(t.workerHooks, cfg.hooks...)
+	if len(allHooks) > 0 {
+		agentOpts = append(agentOpts, core.WithHooks[string](allHooks...))
 	}
 
 	tm.agent = core.NewAgent[string](t.model, agentOpts...)

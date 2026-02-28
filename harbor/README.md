@@ -102,7 +102,12 @@ export GOLLEM_REASONING_NO_GREEDY_BY_TASK="model-extraction-relu-logits"
 export GOLLEM_TOP_LEVEL_PERSONALITY="1"
 # Optional: require LLM-extracted hard invariant checklist to pass before completion
 export GOLLEM_REQUIRE_INVARIANT_CHECKLIST="1"
+# Optional: setup-time Python prewarm package list (space or comma separated)
+export GOLLEM_SETUP_PYTHON_PACKAGES="pytest numpy scipy pandas statsmodels scikit-learn beautifulsoup4"
 ```
+
+Note: Harbor setup prewarms Python deps into system Python, so agent runtime and
+verifier runtime use the same package environment.
 
 ## OpenAI WebSocket Mode Notes
 

@@ -13,7 +13,7 @@ import (
 )
 
 type invariantItem struct {
-	ID          string `json:"id" jsonschema:"description=Stable identifier (e.g., I1, C2)"`
+	ID          string `json:"id" jsonschema:"description=Stable identifier (e.g., I1, I2)"`
 	Description string `json:"description" jsonschema:"description=Constraint text that must be satisfied"`
 	Kind        string `json:"kind,omitempty" jsonschema:"description=hard or soft"`
 	Status      string `json:"status,omitempty" jsonschema:"description=unknown, in_progress, pass, or fail"`
@@ -314,10 +314,9 @@ func normalizeInvariantItems(items []invariantItem) []invariantItem {
 		if desc == "" {
 			continue
 		}
-		id := strings.TrimSpace(it.ID)
-		if id == "" {
-			id = fmt.Sprintf("I%d", i+1)
-		}
+		// Canonicalize all IDs to I-prefix so nextInvariantIDLocked can
+		// always find the max. Models sometimes return C1, H2, etc.
+		id := fmt.Sprintf("I%d", i+1)
 		out = append(out, invariantItem{
 			ID:          id,
 			Description: desc,

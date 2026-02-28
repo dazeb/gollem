@@ -1876,6 +1876,17 @@ func TestIsVerificationString(t *testing.T) {
 		{"bazel test //...", true},
 		{"bazel build //...", true},
 		{"bazel run //:target", true},
+		// python3 -m py_compile (build pattern).
+		{"python3 -m py_compile /app/eigen.py", true},
+		{"python -m py_compile /app/eigen.py", true},
+		// python3 /app/eval (test pattern).
+		{"python3 /app/eval.py", true},
+		{"python /app/eval.py", true},
+		// Inline python via heredoc/stdin.
+		{"python3 - <<'PY'\nimport numpy\nassert True\nPY", true},
+		{"python - <<'EOF'\nprint('test')\nEOF", true},
+		// Multi-command verification chains.
+		{"python3 -m py_compile /app/eigen.py && python3 /app/eval.py", true},
 		{"pytest --help | grep allow-no-tests", false},
 		{"python3 -m pytest --help", false},
 		{"echo hello world", false},

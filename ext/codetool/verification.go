@@ -552,6 +552,10 @@ func isMutatingLSPCall(argsJSON string) bool {
 	}
 }
 
+// extractInvariantGateCounts parses the JSON output of the invariants tool to
+// read hard_unresolved and hard_fail counts. Returns ok=false (silently) if the
+// content isn't the expected shape — this is intentional so non-summary tool
+// returns (e.g., "extract" or "add") don't trigger false gate checks.
 func extractInvariantGateCounts(content string) (hardUnresolved int, hardFail int, ok bool) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &payload); err != nil {
@@ -574,13 +578,9 @@ func anyToInt(v any) (int, bool) {
 	switch n := v.(type) {
 	case float64:
 		return int(n), true
-	case float32:
-		return int(n), true
 	case int:
 		return n, true
 	case int64:
-		return int(n), true
-	case int32:
 		return int(n), true
 	case json.Number:
 		i, err := n.Int64()
@@ -744,6 +744,7 @@ func isVerificationString(cmd string) bool {
 		// Terminal-Bench patterns: tasks often have test scripts.
 		"test_outputs", "test_output", "run_tests",
 		"python3 /app/test", "python /app/test",
+		"python3 /app/eval", "python /app/eval",
 		"python3 /tests/", "python /tests/",
 		"python3 test_", "python test_",
 		"bash /tests/", "sh /tests/",
@@ -758,6 +759,9 @@ func isVerificationString(cmd string) bool {
 		// Pattern: inline test execution.
 		"python3 -c \"import", "python -c \"import",
 		"python3 -c 'import", "python -c 'import",
+		// Pattern: inline python via heredoc/stdin (python3 - <<'PY' ... PY).
+		"python3 - <<", "python - <<",
+		"python3 -<<", "python -<<",
 		// Pattern: pmars (corewars simulator).
 		"pmars ",
 		// Lean 4 build (theorem proving).
@@ -865,8 +869,8 @@ func isVerificationString(cmd string) bool {
 		"javac ", "mvn compile", "gradle build", "gradlew build",
 		"dotnet build",
 		"tsc",
-		"python -m py_compile", "python -c",
-		"python3 -c",
+		"python -m py_compile", "python3 -m py_compile",
+		"python -c", "python3 -c",
 		"rustc ",
 		"gfortran ", "gdc ", "ldc2 ",
 		// Assembly.

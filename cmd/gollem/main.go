@@ -20,8 +20,10 @@ import (
 	"syscall"
 	"time"
 
+	langsmith "github.com/fugue-labs/gollem-langsmith"
 	lf "github.com/fugue-labs/langfuse-go"
 	montygo "github.com/fugue-labs/monty-go"
+	"github.com/google/uuid"
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/codetool"
@@ -316,6 +318,69 @@ func runAgent() {
 		}()
 	}
 
+	// LangSmith observability (if configured via environment).
+	var langsmithHandler *langsmith.Handler
+	if os.Getenv("LANGSMITH_API_KEY") != "" {
+		taskName := strings.TrimSpace(os.Getenv("GOLLEM_TASK_NAME"))
+		traceID := uuid.New().String()
+
+		lsOpts := []langsmith.Option{
+			langsmith.WithTraceID(traceID),
+		}
+		if projectName := os.Getenv("LANGSMITH_PROJECT"); projectName != "" {
+			lsOpts = append(lsOpts, langsmith.WithProjectName(projectName))
+		} else {
+			lsOpts = append(lsOpts, langsmith.WithProjectName("gollem"))
+		}
+
+		// Build tags for faceted search.
+		var lsTags []string
+		if taskName != "" {
+			lsTags = append(lsTags, taskName)
+		}
+		if f.provider != "" {
+			lsTags = append(lsTags, f.provider)
+		}
+		if f.modelName != "" {
+			lsTags = append(lsTags, f.modelName)
+		}
+		if len(lsTags) > 0 {
+			lsOpts = append(lsOpts, langsmith.WithTags(lsTags...))
+		}
+
+		// Attach rich metadata matching the Langfuse pattern.
+		lsMeta := map[string]any{
+			"provider":         f.provider,
+			"model":            f.modelName,
+			"task_name":        taskName,
+			"timeout":          f.timeout.String(),
+			"thinking_budget":  f.thinkingBudget,
+			"reasoning_effort": f.reasoningEffort,
+			"team_mode":        f.teamMode,
+			"no_reasoning":     f.noReasoning,
+			"prompt_preview":   truncate(f.prompt, 500),
+		}
+		if gitCommit != "" {
+			lsMeta["git_commit"] = gitCommit
+		}
+		lsOpts = append(lsOpts, langsmith.WithMetadata(lsMeta))
+
+		langsmithHandler = langsmith.New(lsOpts...)
+		fmt.Fprintf(os.Stderr, "gollem: langsmith tracing enabled\n")
+		fmt.Fprintf(os.Stderr, "gollem: langsmith trace_id=%s\n", traceID)
+
+		// Flush LangSmith on termination signals so traces survive harness
+		// timeouts (SIGTERM before SIGKILL).
+		lsSigCh := make(chan os.Signal, 1)
+		signal.Notify(lsSigCh, syscall.SIGTERM, syscall.SIGINT)
+		go func() {
+			sig := <-lsSigCh
+			fmt.Fprintf(os.Stderr, "gollem: caught %v, flushing langsmith...\n", sig)
+			_ = langsmithHandler.Close()
+			os.Exit(1)
+		}()
+	}
+
 	var model = baseModel
 	if len(mws) > 0 {
 		model = middleware.Wrap(model, mws...)
@@ -421,6 +486,11 @@ func runAgent() {
 	// Build the coding agent with the full recommended setup.
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
 	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(f.timeout)))
+
+	// Add LangSmith hook if configured.
+	if langsmithHandler != nil {
+		agentOpts = append(agentOpts, core.WithHooks[string](langsmithHandler.Hook()))
+	}
 
 	// Optional top-level dynamic personality generation.
 	// This mirrors teammate/subagent personality generation at the main agent
@@ -547,9 +617,12 @@ func runAgent() {
 
 	result, err := agent.Run(ctx, f.prompt, runOpts...)
 
-	// Flush Langfuse traces before exiting.
+	// Flush traces before exiting.
 	if langfuseProcessor != nil {
 		_ = langfuseProcessor.Close()
+	}
+	if langsmithHandler != nil {
+		_ = langsmithHandler.Close()
 	}
 
 	if err != nil {
@@ -695,6 +768,8 @@ func langfuseSummarizeMessages(messages []core.ModelMessage) []map[string]any {
 					result = append(result, map[string]any{"role": "user", "content": p.Content})
 				case core.ToolReturnPart:
 					result = append(result, map[string]any{"role": "tool", "tool": p.ToolName, "content": fmt.Sprintf("%v", p.Content)})
+				case core.RetryPromptPart:
+					result = append(result, map[string]any{"role": "retry", "content": p.Content})
 				}
 			}
 		case core.ModelResponse:

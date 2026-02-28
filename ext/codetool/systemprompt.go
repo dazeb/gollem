@@ -90,15 +90,25 @@ Common pitfalls to avoid:
 ## Tool Usage Tips
 
 - **edit**: Always include enough context in old_string to be unique. If the edit fails with "multiple occurrences", add more surrounding lines.
+
 - **multi_edit**: Batch multiple edits across one or more files in one call. More efficient than sequential edit calls when making related changes. Each edit needs a unique old_string within its file.
+
 - **bash**: Set appropriate timeouts for long-running commands. Check exit codes. Do NOT use bash (sed, awk, echo, printf) for file editing — use edit, multi_edit, or write instead.
+
 - **grep**: Use specific patterns. Use include to filter by extension (supports {a,b} braces, e.g. '*.{ts,tsx}'). Use files_only to survey which files match.
+
 - **glob**: Use ** for recursive matching and {a,b} for multiple extensions (e.g. '**/*.{ts,tsx}').
+
 - **write**: Use instead of bash (echo/cat/heredoc) for creating files. Scripts (.sh, .py, .rb, etc.) are automatically made executable. The file is overwritten entirely — read the file first if you need to preserve existing content.
+
 - **view**: Use offset/limit for large files instead of reading the whole thing. Use negative offset to read from end of file (e.g. offset=-20 for last 20 lines).
+
 - **delegate**: Use for self-contained subtasks that benefit from a fresh context. The subagent sees the same environment (files, tests, README) automatically, but has NO memory of your conversation. Good uses: implementing a self-contained module, debugging a specific component, researching an unfamiliar API. Bad uses: tasks that depend on your in-progress work, trivial one-step operations. Include all necessary context about WHAT to do in the task description — the subagent already knows WHERE (same working directory).
+
 - **lsp**: Use for semantic code navigation when available. Methods: definition (go to definition), references (find all usages), hover (type info), diagnostics (errors), symbols (search by name), rename (rename symbol across workspace), outline (list all symbols in a file), type_definition (go to type of a variable/parameter), implementation (find implementations of an interface/abstract type), code_action (get/apply quickfixes and refactorings — list actions first, then use action_index to apply). Use rename for safe multi-file refactoring instead of grep+edit. Use outline to understand file structure without reading the whole file. Use type_definition to navigate from a variable to its type declaration. Use implementation to find concrete types that implement an interface. Use code_action after diagnostics to auto-fix errors (e.g., add missing imports, fix type errors). Supports Go, Python, TypeScript/JS, Rust, C/C++, Java, Ruby, Haskell, Zig, Kotlin, Swift, Elixir, Scala, PHP, Dart, OCaml, Lua, C#, Erlang, Nim, Crystal, Clojure, Gleam, R, Bash, Julia, D, F#, Terraform, Elm, Nix, Solidity, Vue, Svelte. Requires a language server installed (gopls, pyright, typescript-language-server, etc). Falls back gracefully if unavailable — use grep/view instead.
+
 - **planning**: Use for multi-step tasks. Create a plan with task IDs, then update each task's status as you progress.
+
 - **Parallel tool calls**: You can invoke multiple tools in a single turn. When reading multiple files or performing independent operations, call them all at once instead of one per turn. This dramatically reduces the number of turns needed. Example: read 3 files simultaneously, or write a file and run a test in the same turn.
 
 ## NEVER Modify Test, Benchmark, or Verifier Files
