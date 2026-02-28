@@ -39,3 +39,4 @@ harbor/gollem-linux-amd64
 # Claude Code local settings
 .claude/settings.local.json
 .claude/worktrees
+winning-configs.txt
