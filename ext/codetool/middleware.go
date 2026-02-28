@@ -574,9 +574,6 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "For system packages: check with `dpkg -l | grep <pkg>` or `which <tool>`.")
 	}
 	runtimeDepInstallDisabled := envEnabled("GOLLEM_DISABLE_RUNTIME_DEP_INSTALL")
-	if runtimeDepInstallDisabled {
-		parts = append(parts, "Runtime dependency auto-install: disabled (GOLLEM_DISABLE_RUNTIME_DEP_INSTALL=1).")
-	}
 	if preinstalledPy := strings.TrimSpace(os.Getenv("GOLLEM_PREINSTALLED_PYTHON_PACKAGES")); preinstalledPy != "" {
 		parts = append(parts, "Preinstalled Python packages: "+preinstalledPy)
 	}

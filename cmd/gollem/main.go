@@ -630,7 +630,17 @@ func langfuseSummarizeMessages(messages []core.ModelMessage) []map[string]any {
 				}
 			}
 		case core.ModelResponse:
-			result = append(result, map[string]any{"role": "assistant", "content": m.TextContent()})
+			entry := map[string]any{"role": "assistant", "content": m.TextContent()}
+			var tools []map[string]string
+			for _, part := range m.Parts {
+				if tc, ok := part.(core.ToolCallPart); ok {
+					tools = append(tools, map[string]string{"tool": tc.ToolName, "args": tc.ArgsJSON})
+				}
+			}
+			if len(tools) > 0 {
+				entry["tool_calls"] = tools
+			}
+			result = append(result, entry)
 		}
 	}
 	return result
