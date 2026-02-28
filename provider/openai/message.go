@@ -268,11 +268,28 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 							b, _ := json.Marshal(v)
 							content = string(b)
 						}
-						apiMsgs = append(apiMsgs, apiMessage{
+						msg := apiMessage{
 							Role:       "tool",
-							Content:    content,
 							ToolCallID: p.ToolCallID,
-						})
+						}
+						if len(p.Images) > 0 {
+							msg.ContentParts = []apiContentPart{
+								{Type: "text", Text: content},
+							}
+							for _, img := range p.Images {
+								cp := apiContentPart{
+									Type:     "image_url",
+									ImageURL: &apiImageURL{URL: img.URL},
+								}
+								if img.Detail != "" {
+									cp.ImageURL.Detail = img.Detail
+								}
+								msg.ContentParts = append(msg.ContentParts, cp)
+							}
+						} else {
+							msg.Content = content
+						}
+						apiMsgs = append(apiMsgs, msg)
 					case core.RetryPromptPart:
 						if p.ToolCallID != "" {
 							apiMsgs = append(apiMsgs, apiMessage{
@@ -346,11 +363,28 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 						b, _ := json.Marshal(v)
 						content = string(b)
 					}
-					apiMsgs = append(apiMsgs, apiMessage{
+					msg := apiMessage{
 						Role:       "tool",
-						Content:    content,
 						ToolCallID: p.ToolCallID,
-					})
+					}
+					if len(p.Images) > 0 {
+						msg.ContentParts = []apiContentPart{
+							{Type: "text", Text: content},
+						}
+						for _, img := range p.Images {
+							cp := apiContentPart{
+								Type:     "image_url",
+								ImageURL: &apiImageURL{URL: img.URL},
+							}
+							if img.Detail != "" {
+								cp.ImageURL.Detail = img.Detail
+							}
+							msg.ContentParts = append(msg.ContentParts, cp)
+						}
+					} else {
+						msg.Content = content
+					}
+					apiMsgs = append(apiMsgs, msg)
 				case core.RetryPromptPart:
 					if p.ToolCallID != "" {
 						flushUserParts()

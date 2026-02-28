@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 // Model constants for OpenAI models.
@@ -436,5 +437,34 @@ func isChatCompletionsMismatch(err error) bool {
 	return strings.Contains(body, "not a chat model") || strings.Contains(msg, "not a chat model")
 }
 
-// Verify Provider implements core.Model.
+// Profile returns the model's capability profile. Vision is supported by
+// GPT-4o, GPT-4o-mini, O-series, and Codex models.
+func (p *Provider) Profile() modelutil.ModelProfile {
+	return modelutil.ModelProfile{
+		SupportsToolCalls:        true,
+		SupportsStructuredOutput: true,
+		SupportsVision:           modelSupportsVision(p.model),
+		SupportsStreaming:        true,
+	}
+}
+
+// modelSupportsVision returns true for models known to support image input.
+func modelSupportsVision(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	// GPT-4o variants, O-series, and Codex all support vision.
+	// Only older text-only models (gpt-3.5, gpt-4-base) lack vision.
+	for _, prefix := range []string{"gpt-3.5", "gpt-4-turbo-2024-04-09"} {
+		if strings.HasPrefix(m, prefix) {
+			return false
+		}
+	}
+	// ft: fine-tuned models may not support vision.
+	if strings.HasPrefix(m, "ft:gpt-3.5") {
+		return false
+	}
+	return true
+}
+
+// Verify Provider implements core.Model and modelutil.Profiled.
 var _ core.Model = (*Provider)(nil)
+var _ modelutil.Profiled = (*Provider)(nil)

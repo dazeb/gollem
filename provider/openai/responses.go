@@ -262,11 +262,32 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 						input = append(input, responsesMessage("user", p.Content))
 					case core.ToolReturnPart:
 						content := stringifyToolContent(p.Content)
-						input = append(input, map[string]any{
-							"type":    "function_call_output",
-							"call_id": p.ToolCallID,
-							"output":  content,
-						})
+						if len(p.Images) > 0 {
+							outputItems := []map[string]any{
+								{"type": "input_text", "text": content},
+							}
+							for _, img := range p.Images {
+								item := map[string]any{
+									"type":      "input_image",
+									"image_url": img.URL,
+								}
+								if img.Detail != "" {
+									item["detail"] = img.Detail
+								}
+								outputItems = append(outputItems, item)
+							}
+							input = append(input, map[string]any{
+								"type":    "function_call_output",
+								"call_id": p.ToolCallID,
+								"output":  outputItems,
+							})
+						} else {
+							input = append(input, map[string]any{
+								"type":    "function_call_output",
+								"call_id": p.ToolCallID,
+								"output":  content,
+							})
+						}
 					case core.RetryPromptPart:
 						if p.ToolCallID != "" {
 							input = append(input, map[string]any{
@@ -328,11 +349,32 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 				case core.ToolReturnPart:
 					flushUser()
 					content := stringifyToolContent(p.Content)
-					input = append(input, map[string]any{
-						"type":    "function_call_output",
-						"call_id": p.ToolCallID,
-						"output":  content,
-					})
+					if len(p.Images) > 0 {
+						outputItems := []map[string]any{
+							{"type": "input_text", "text": content},
+						}
+						for _, img := range p.Images {
+							item := map[string]any{
+								"type":      "input_image",
+								"image_url": img.URL,
+							}
+							if img.Detail != "" {
+								item["detail"] = img.Detail
+							}
+							outputItems = append(outputItems, item)
+						}
+						input = append(input, map[string]any{
+							"type":    "function_call_output",
+							"call_id": p.ToolCallID,
+							"output":  outputItems,
+						})
+					} else {
+						input = append(input, map[string]any{
+							"type":    "function_call_output",
+							"call_id": p.ToolCallID,
+							"output":  content,
+						})
+					}
 				case core.RetryPromptPart:
 					if p.ToolCallID != "" {
 						flushUser()

@@ -114,6 +114,12 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		toolOptions = append(toolOptions, core.WithTools[string](SubAgentTool(cfg.Model, toolOpts...)))
 	}
 
+	// open_image: available when the model supports vision.
+	if cfg.Model != nil && modelutil.GetProfile(cfg.Model).SupportsVision {
+		toolOptions = append(toolOptions, core.WithTools[string](OpenImage(toolOpts...)))
+		systemPrompt += "\n\n" + openImageHint
+	}
+
 	// Team mode: leader agent with tools to spawn teammates and coordinate work.
 	var teamLeaderMW core.AgentMiddleware
 	if cfg.TeamMode && cfg.Model != nil {

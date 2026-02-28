@@ -50,6 +50,7 @@ type toolReturnJSON struct {
 	Content    json.RawMessage `json:"content"`
 	ToolCallID string          `json:"tool_call_id"`
 	Timestamp  time.Time       `json:"timestamp"`
+	Images     []ImagePart     `json:"images,omitempty"`
 }
 
 type retryPromptJSON struct {
@@ -250,6 +251,7 @@ func encodeRequestPart(part ModelRequestPart) (partEnvelope, error) {
 			Content:    contentData,
 			ToolCallID: p.ToolCallID,
 			Timestamp:  p.Timestamp,
+			Images:     p.Images,
 		})
 		if err != nil {
 			return partEnvelope{}, err
@@ -374,6 +376,7 @@ func decodeRequestPart(env partEnvelope) (ModelRequestPart, error) {
 			Content:    content,
 			ToolCallID: p.ToolCallID,
 			Timestamp:  p.Timestamp,
+			Images:     p.Images,
 		}, nil
 
 	case "retry-prompt":

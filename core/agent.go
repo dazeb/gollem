@@ -1533,14 +1533,22 @@ func (a *Agent[T]) executeSingleTool(
 		}
 	}
 
-	// Serialize result.
-	content, err := serializeToolResult(result)
-	if err != nil {
-		return ToolReturnPart{
-			ToolName:   call.ToolName,
-			Content:    "error serializing result: " + err.Error(),
-			ToolCallID: call.ToolCallID,
-			Timestamp:  time.Now(),
+	// Check for multimodal result before serializing.
+	var images []ImagePart
+	var content string
+	if mResult, ok := result.(ToolResultWithImages); ok {
+		content = mResult.Text
+		images = mResult.Images
+	} else {
+		var serErr error
+		content, serErr = serializeToolResult(result)
+		if serErr != nil {
+			return ToolReturnPart{
+				ToolName:   call.ToolName,
+				Content:    "error serializing result: " + serErr.Error(),
+				ToolCallID: call.ToolCallID,
+				Timestamp:  time.Now(),
+			}
 		}
 	}
 
@@ -1597,6 +1605,7 @@ func (a *Agent[T]) executeSingleTool(
 		Content:    content,
 		ToolCallID: call.ToolCallID,
 		Timestamp:  time.Now(),
+		Images:     images,
 	}
 }
 

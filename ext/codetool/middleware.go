@@ -9397,6 +9397,13 @@ func truncateMessageContentSmart(msg core.ModelMessage, maxBytes int) core.Model
 		for i, part := range m.Parts {
 			switch p := part.(type) {
 			case core.ToolReturnPart:
+				// Strip images from old messages to prevent context bloat.
+				// Base64-encoded images are huge; the current turn's images
+				// haven't been added to history yet when this processor runs.
+				if len(p.Images) > 0 {
+					p.Images = nil
+					parts[i] = p
+				}
 				if s, ok := p.Content.(string); ok && len(s) > maxBytes {
 					p.Content = truncateOutput(s, maxBytes)
 					parts[i] = p

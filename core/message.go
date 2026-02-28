@@ -43,6 +43,16 @@ type ToolReturnPart struct {
 	Content    any // string or structured data (serialized to JSON)
 	ToolCallID string
 	Timestamp  time.Time
+	Images     []ImagePart // optional images to include in tool result
+}
+
+// ToolResultWithImages allows tools to return images alongside text.
+// When a tool handler returns this type, the agent extracts the images
+// and attaches them to the ToolReturnPart so providers can serialize
+// them as multimodal tool results.
+type ToolResultWithImages struct {
+	Text   string
+	Images []ImagePart
 }
 
 func (p ToolReturnPart) requestPartKind() string { return "tool-return" }
