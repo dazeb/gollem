@@ -77,6 +77,9 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	// When code mode is enabled, the agent gets both individual tools AND
 	// an execute_code tool that batches N tool calls per API round-trip.
 	systemPrompt := SystemPrompt
+	if cfg.DisableDelegate {
+		systemPrompt = stripDelegateFromPrompt(systemPrompt)
+	}
 	toolOptions := []core.AgentOption[string]{
 		core.WithToolsets[string](Toolset(toolOpts...)),
 	}
@@ -105,9 +108,9 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		toolOpts = append(toolOpts, WithPersonalityGenerator(cfg.PersonalityGenerator))
 	}
 
-	// SubAgent delegation: always available. Even in team mode, delegate is
-	// useful for one-shot focused work that avoids long conversational latency.
-	if cfg.Model != nil {
+	// SubAgent delegation: available unless explicitly disabled.
+	// Even in team mode, delegate is useful for one-shot focused work.
+	if cfg.Model != nil && !cfg.DisableDelegate {
 		toolOptions = append(toolOptions, core.WithTools[string](SubAgentTool(cfg.Model, toolOpts...)))
 	}
 
@@ -338,4 +341,21 @@ func stderrLoggingMiddleware() core.AgentMiddleware {
 		}
 		return resp, err
 	}
+}
+
+// stripDelegateFromPrompt removes the "- **delegate**: ..." paragraph from
+// the system prompt so the model doesn't reference a tool that isn't available.
+func stripDelegateFromPrompt(prompt string) string {
+	const marker = "- **delegate**:"
+	idx := strings.Index(prompt, marker)
+	if idx < 0 {
+		return prompt
+	}
+	// Find the end of this bullet: next "\n\n" or "\n- **" signals a new section.
+	rest := prompt[idx:]
+	end := len(rest)
+	if i := strings.Index(rest, "\n\n"); i >= 0 {
+		end = i
+	}
+	return prompt[:idx] + prompt[idx+end:]
 }

@@ -687,6 +687,9 @@ class GollemAgent(BaseInstalledAgent):
             # Default to single-agent execution on Harbor to avoid shared-throughput
             # contention. Can be overridden by explicitly setting GOLLEM_TEAM_MODE.
             "GOLLEM_TEAM_MODE": os.environ.get("GOLLEM_TEAM_MODE", "off"),
+            # Pass through delegate disable flag if set.
+            **({"GOLLEM_DISABLE_DELEGATE": os.environ["GOLLEM_DISABLE_DELEGATE"]}
+               if os.environ.get("GOLLEM_DISABLE_DELEGATE") else {}),
             # Inform the agent which Python packages are prewarmed.
             "GOLLEM_PREINSTALLED_PYTHON_PACKAGES": " ".join(self._setup_python_packages),
             # Prevent __pycache__ directories — they cause "extra files" failures

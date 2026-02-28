@@ -414,6 +414,12 @@ func runAgent() {
 	// This is separate from f.timeout (exec timeout) which may be shorter.
 	toolOpts = append(toolOpts, codetool.WithTimeout(budgetTimeout))
 
+	// Disable delegate tool if requested.
+	if isTruthyEnv("GOLLEM_DISABLE_DELEGATE") {
+		toolOpts = append(toolOpts, codetool.WithDisableDelegate())
+		fmt.Fprintln(os.Stderr, "gollem: delegate tool disabled (GOLLEM_DISABLE_DELEGATE)")
+	}
+
 	// LLM-routed team mode: classifier decides whether delegation overhead is worth it.
 	// No task-name hardcoding; forced on/off still supported.
 	teamEnabled, teamReason := decideTeamModeWithModel(f.teamMode, f.workDir, f.prompt, budgetTimeout, model)
@@ -1714,6 +1720,7 @@ Environment variables:
   VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL Optional Anthropic prompt cache TTL (e.g. 5m, 1h)
   GOLLEM_MODEL_REQUEST_TIMEOUT_SEC Optional per-model-call timeout in seconds (default derived from --timeout, capped at 6m)
   GOLLEM_TEAM_MODE         Team mode override: auto, on, off (default: auto)
+  GOLLEM_DISABLE_DELEGATE  Disable the delegate (subagent) tool (1/true/yes/on; default: off)
   GOLLEM_TOP_LEVEL_PERSONALITY Enable top-level dynamic personality generation (1/true/yes/on; default: off)
   GOLLEM_CODE_MODE_FAILURE_THRESHOLD Consecutive execute_code capability failures before cooldown (default: 3)
   GOLLEM_CODE_MODE_COOLDOWN_TURNS Turns to keep execute_code disabled before retrying (default: 2)

@@ -62,6 +62,11 @@ type Config struct {
 	// DisableGreedyThinkingPressure disables time-budget-based reasoning caps
 	// (effort/thinking/max_tokens). Time warnings are still injected.
 	DisableGreedyThinkingPressure bool
+
+	// DisableDelegate disables the delegate (subagent) tool. When set, the
+	// agent cannot spawn subagents for delegation. Useful for benchmarks
+	// or constrained environments where single-agent execution is preferred.
+	DisableDelegate bool
 }
 
 // Option configures coding tools.
@@ -157,4 +162,10 @@ func WithReasoningSandwichConfig(cfg ReasoningSandwichConfig) Option {
 // while keeping time warnings enabled.
 func WithDisableGreedyThinkingPressure() Option {
 	return func(c *Config) { c.DisableGreedyThinkingPressure = true }
+}
+
+// WithDisableDelegate disables the delegate (subagent) tool so the agent
+// operates strictly in single-agent mode without any delegation capability.
+func WithDisableDelegate() Option {
+	return func(c *Config) { c.DisableDelegate = true }
 }
