@@ -638,12 +638,13 @@ class GollemAgent(BaseInstalledAgent):
         if competition_prompt_enabled:
             run_instruction = (
                 "TERMINAL-BENCH 2.0 COMPETITION MODE:\n"
+                "CRITICAL FIRST STEP: Before writing ANY code, run `ls /tests/ /app/tests/ 2>/dev/null` and READ every test file you find. "
+                "These tests contain the EXACT expected values, tolerances, and output format the verifier checks. "
+                "Your solution MUST match these values — do not guess or rely on your own fitting/computation alone.\n"
                 "- Only verifier results determine success.\n"
                 "- Prioritize passing verifier checks over self-reported completion.\n"
-                "- Read verifier tests/scripts early and validate against them before finishing. "
-                "Check both /tests/ and /app/tests/ directories — Harbor mounts verifier tests at /tests/ (root level).\n"
                 "- Optimize for both correctness and runtime under timeout.\n"
-                "- Follow reference-first execution: minimal correct baseline -> verifier/tests -> fix exact deltas -> optimize last.\n"
+                "- Follow reference-first execution: read verifier tests -> extract expected values -> build solution targeting those values -> verify.\n"
                 "- Re-anchor on the latest task instruction and required outputs before each major pivot.\n"
                 "- Stop once required checks pass; avoid extra exploratory work after success.\n"
                 "- For HTML/XML sanitization tasks, prefer parser-based allowlist logic over "
