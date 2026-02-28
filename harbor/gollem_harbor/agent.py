@@ -459,7 +459,6 @@ class GollemAgent(BaseInstalledAgent):
         py_setup_result = await environment.exec(
             command=(
                 "timeout 240 sh -c '"
-                "set -e; "
                 "PY_INSTALL_SYSTEM=\"uv pip install --system\"; "
                 "$PY_INSTALL_SYSTEM -q --upgrade pip setuptools wheel >/dev/null 2>&1 || "
                 "  python3 -m pip install --break-system-packages -q --upgrade pip setuptools wheel >/dev/null 2>&1 || true; "
@@ -545,7 +544,11 @@ class GollemAgent(BaseInstalledAgent):
             )
         )
         if py_setup_result.return_code != 0:
-            raise RuntimeError("setup failed: system Python dependency prewarm failed")
+            logger.warning(
+                "Python dependency prewarm returned non-zero (rc=%d); "
+                "continuing — agent can install deps at runtime",
+                py_setup_result.return_code,
+            )
 
         # Always pre-install Python LSP in system Python (pyright is primary).
         await environment.exec(
