@@ -2435,7 +2435,7 @@ func TestVerificationCheckpoint_RejectsRepeatedlyOnFailure(t *testing.T) {
 	}
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	for i := range 4 {
+	for i := range 3 {
 		_, err := validator(ctx, rc, "Done!")
 		if err == nil {
 			t.Fatalf("expected rejection on attempt %d", i+1)
@@ -2482,8 +2482,8 @@ func TestVerificationCheckpoint_RejectionCap(t *testing.T) {
 	}
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	// First 5 attempts should be rejected (rejection cap = 5).
-	for i := range 5 {
+	// First 3 attempts should be rejected (rejection cap = 3).
+	for i := range 3 {
 		_, err := validator(ctx, rc, "Done!")
 		if err == nil {
 			t.Fatalf("expected rejection on attempt %d, but got nil", i+1)
@@ -2494,10 +2494,122 @@ func TestVerificationCheckpoint_RejectionCap(t *testing.T) {
 		}
 	}
 
-	// 6th attempt should pass — rejection cap reached.
+	// 4th attempt should pass — rejection cap reached.
 	_, err := validator(ctx, rc, "Done!")
 	if err != nil {
-		t.Fatalf("expected rejection cap to allow completion on attempt 6, got: %v", err)
+		t.Fatalf("expected rejection cap to allow completion on attempt 4, got: %v", err)
+	}
+}
+
+func TestVerificationCheckpoint_CommandNotFoundNotCountedAsFailure(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// Agent runs a Python verification script that succeeds, THEN tries pytest
+	// which returns "command not found". The command-not-found should not count
+	// as a failed verification, so the earlier successful verification should
+	// still be the active state.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"python3 -m pytest test_output.py"}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "1 passed\n[exit code: 0]",
+					ToolCallID: "call1",
+				},
+			},
+		},
+		// Now pytest is not found — should NOT override the successful run above.
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest -q"}`,
+					ToolCallID: "call2",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "bash: line 1: pytest: command not found\n\n[exit code: 127]",
+					ToolCallID: "call2",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	// Should PASS — the successful verification is still active.
+	_, err := validator(ctx, rc, "Done!")
+	if err != nil {
+		t.Fatalf("expected pass (command-not-found should not count as failure), got: %v", err)
+	}
+}
+
+func TestVerificationCheckpoint_CommandNotFoundNoVerification(t *testing.T) {
+	mw, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// Agent tries pytest but it's not found — no prior successful verification.
+	// Should reject with "not verified" (not "last verify failed").
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "bash",
+					ArgsJSON:   `{"command":"pytest -q"}`,
+					ToolCallID: "call1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "bash",
+					Content:    "bash: line 1: pytest: command not found\n\n[exit code: 127]",
+					ToolCallID: "call1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
+
+	_, err := validator(ctx, rc, "Done!")
+	if err == nil {
+		t.Fatal("expected rejection (no verification run)")
+	}
+	var retryErr *core.ModelRetryError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("expected ModelRetryError, got: %v", err)
+	}
+	// Should say "MUST verify" not "FAILED" — since command wasn't found,
+	// it's not a failed run, it's no run at all.
+	if strings.Contains(retryErr.Message, "FAILED") {
+		t.Fatalf("should not say FAILED for command not found: %s", retryErr.Message)
+	}
+	if !strings.Contains(retryErr.Message, "MUST verify") {
+		t.Fatalf("expected 'MUST verify' rejection, got: %s", retryErr.Message)
 	}
 }
 

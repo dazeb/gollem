@@ -74,6 +74,8 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		var runFailed []bool // whether each verification run failed
 		var runPassed []int  // pass count per run (-1 if unavailable)
 		var runSummary []string
+		preVerifyVerified := false // verified state before last verification attempt
+		preVerifyEdits := 0        // editsAfterLastVerify before last verification attempt
 		pendingMutationCallIDs := map[string]struct{}{}
 		pendingServiceReadinessCallIDs := map[string]struct{}{}
 		pendingInvariantCallIDs := map[string]struct{}{}
@@ -124,6 +126,10 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 							bashMutation
 
 						if isVerify {
+							// Save state before marking verified, so we can revert
+							// if the command turns out to be "not found".
+							preVerifyVerified = verified
+							preVerifyEdits = editsAfterLastVerify
 							verified = true
 							pendingCallID = tc.ToolCallID
 							editsAfterLastVerify = 0
@@ -148,17 +154,27 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 					if tr, ok := part.(core.ToolReturnPart); ok {
 						if pendingCallID != "" && tr.ToolCallID == pendingCallID {
 							content := toolReturnContentString(tr.Content)
-							failed, summary := verificationResultFailed(content)
-							p, _, countsOK := extractTestCounts(content)
-							if !countsOK {
-								// Unknown pass count must not be treated as 0, otherwise
-								// regression logic can fabricate false "1 -> 0" regressions.
-								p = -1
+							// If the verification command wasn't found (e.g., pytest not
+							// installed), don't count it as a failed verification run.
+							// Revert to the pre-verify state so the agent isn't trapped
+							// by a "last verify failed" gate it can't resolve.
+							if isCommandNotFound(content) {
+								verified = preVerifyVerified
+								editsAfterLastVerify = preVerifyEdits
+								pendingCallID = ""
+							} else {
+								failed, summary := verificationResultFailed(content)
+								p, _, countsOK := extractTestCounts(content)
+								if !countsOK {
+									// Unknown pass count must not be treated as 0, otherwise
+									// regression logic can fabricate false "1 -> 0" regressions.
+									p = -1
+								}
+								runFailed = append(runFailed, failed)
+								runPassed = append(runPassed, p)
+								runSummary = append(runSummary, summary)
+								pendingCallID = ""
 							}
-							runFailed = append(runFailed, failed)
-							runPassed = append(runPassed, p)
-							runSummary = append(runSummary, summary)
-							pendingCallID = ""
 						}
 						if _, ok := pendingMutationCallIDs[tr.ToolCallID]; ok {
 							content := toolReturnContentString(tr.Content)
@@ -295,15 +311,17 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		return next(ctx, messages, settings, params)
 	}
 
+	const maxRejections = 3
+
 	// reject is a helper that increments the rejection counter and returns a retry error.
-	reject := func(output, message string) (string, error) {
+	reject := func(output, gate, message string) (string, error) {
 		mu.Lock()
 		rejectionCount++
+		rc := rejectionCount
 		mu.Unlock()
+		fmt.Fprintf(os.Stderr, "[gollem] verification: gate %q rejected completion (%d/%d)\n", gate, rc, maxRejections)
 		return output, &core.ModelRetryError{Message: message}
 	}
-
-	const maxRejections = 5
 
 	validator := func(_ context.Context, _ *core.RunContext, output string) (string, error) {
 		mu.Lock()
@@ -330,11 +348,12 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		}
 
 		if !v {
-			return reject(output,
+			return reject(output, "not-verified",
 				"STOP. You MUST verify your changes before completing the task. "+
 					"Run the relevant test suite (e.g., `go test ./...`, `pytest`, `npm test`) "+
 					"and/or build command (e.g., `go build ./...`, `make`, `cargo build`) to "+
-					"confirm your changes are correct. Do NOT declare completion without "+
+					"confirm your changes are correct. If a test tool is not installed, install "+
+					"it first (e.g., `pip install pytest`). Do NOT declare completion without "+
 					"evidence that your solution works.")
 		}
 
@@ -342,7 +361,7 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		// verification before completion. This prevents stale "tests passed"
 		// state after subsequent code changes.
 		if eslv > 0 {
-			return reject(output, fmt.Sprintf(
+			return reject(output, "edits-after-verify", fmt.Sprintf(
 				"STOP. You made %d file edit(s) since your last verification run. "+
 					"Run tests/build again now and ensure they pass before declaring completion.",
 				eslv))
@@ -357,26 +376,26 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 			}
 			msg += "\n" + failureGuidance(lvs)
 			msg += "Do NOT declare completion with failing tests."
-			return reject(output, msg)
+			return reject(output, "last-verify-failed", msg)
 		}
 		if svcSeen && !svcReady {
-			return reject(output,
+			return reject(output, "service-not-ready",
 				"STOP. This task used service lifecycle commands, but no successful readiness proof was recorded. "+
 					"Before completion, prove service liveness the way the verifier will (e.g., port check with `ss -tlnp`/`nc -z` "+
 					"and a real protocol request such as curl/grpc call).")
 		}
 		if requireInvariantChecklist && invAvailable {
 			if !invSeen {
-				return reject(output,
+				return reject(output, "invariants-not-run",
 					"STOP. You must run the `invariants` tool before completion. "+
 						"Run `invariants` command `extract`, then verify/update statuses with evidence.")
 			}
 			if !invSummarySeen {
-				return reject(output,
+				return reject(output, "invariants-no-summary",
 					"STOP. Invariant summary is missing. Run `invariants` command `summary` after your latest verification run.")
 			}
 			if invHardFail > 0 || invHardUnresolved > 0 {
-				return reject(output, fmt.Sprintf(
+				return reject(output, "invariants-failing", fmt.Sprintf(
 					"STOP. Hard invariants are not all PASS (hard_fail=%d, hard_unresolved=%d). "+
 						"Fix remaining violations, update invariant statuses with evidence, and re-run verification.",
 					invHardFail, invHardUnresolved))
@@ -448,6 +467,16 @@ func bashCommandFromArgsJSON(argsJSON string) string {
 		return ""
 	}
 	return args.Command
+}
+
+// isCommandNotFound checks whether verification output indicates the command
+// binary wasn't found (e.g., pytest not installed). These should not count as
+// failed verification runs since verification was never actually performed.
+func isCommandNotFound(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "command not found") ||
+		strings.Contains(lower, "no such file or directory") ||
+		(strings.Contains(lower, "no module named") && strings.Contains(output, "[exit code:"))
 }
 
 func isServiceLifecycleCommand(cmd string) bool {
