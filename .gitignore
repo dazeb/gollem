@@ -26,6 +26,7 @@ Thumbs.db
 /bin/
 /dist/
 /gollem
+harbor/gollem-linux-amd64
 
 # Dependency directories
 /vendor/
