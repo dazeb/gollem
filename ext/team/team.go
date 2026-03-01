@@ -94,6 +94,9 @@ type TeammateOption func(*teammateConfig)
 type teammateConfig struct {
 	systemPrompt string
 	hooks        []core.Hook
+	endStrategy  *core.EndStrategy
+	maxTokens    int
+	agentOpts    []core.AgentOption[string]
 }
 
 // WithTeammateSystemPrompt overrides the default worker system prompt.
@@ -104,6 +107,27 @@ func WithTeammateSystemPrompt(prompt string) TeammateOption {
 // WithTeammateHooks adds lifecycle hooks to a spawned teammate.
 func WithTeammateHooks(hooks ...core.Hook) TeammateOption {
 	return func(c *teammateConfig) { c.hooks = append(c.hooks, hooks...) }
+}
+
+// WithTeammateEndStrategy sets the end strategy for a spawned teammate.
+// By default, teammates use EndStrategyExhaustive so they process all
+// tool calls before completing.
+func WithTeammateEndStrategy(s core.EndStrategy) TeammateOption {
+	return func(c *teammateConfig) { c.endStrategy = &s }
+}
+
+// WithTeammateMaxTokens sets the max output tokens per model request
+// for a spawned teammate. Use this when teammates need to produce
+// large outputs (e.g. writing long documents via tool calls).
+func WithTeammateMaxTokens(n int) TeammateOption {
+	return func(c *teammateConfig) { c.maxTokens = n }
+}
+
+// WithTeammateAgentOptions appends arbitrary agent options to a spawned
+// teammate. This is an escape hatch for any core.AgentOption not
+// explicitly surfaced as a TeammateOption.
+func WithTeammateAgentOptions(opts ...core.AgentOption[string]) TeammateOption {
+	return func(c *teammateConfig) { c.agentOpts = append(c.agentOpts, opts...) }
 }
 
 // RegisterLeader registers the leader agent's mailbox in the team so that
@@ -168,15 +192,25 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 	t.members[name] = tm
 	t.mu.Unlock()
 
+	// Resolve end strategy: per-teammate override > default (exhaustive).
+	endStrategy := core.EndStrategyExhaustive
+	if cfg.endStrategy != nil {
+		endStrategy = *cfg.endStrategy
+	}
+
 	// Build agent with the configured toolset + team tools + awareness middleware.
 	agentOpts := []core.AgentOption[string]{
 		core.WithSystemPrompt[string](cfg.systemPrompt),
 		core.WithTools[string](WorkerTools(t, tm)...),
 		core.WithAgentMiddleware[string](TeamAwarenessMiddleware(tm)),
+		core.WithEndStrategy[string](endStrategy),
 		core.WithMaxRetries[string](2),
 		core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(200)}),
 		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(200)),
 		core.WithDefaultToolTimeout[string](2 * time.Minute),
+	}
+	if cfg.maxTokens > 0 {
+		agentOpts = append(agentOpts, core.WithMaxTokens[string](cfg.maxTokens))
 	}
 	if t.toolset != nil {
 		agentOpts = append(agentOpts, core.WithToolsets[string](t.toolset))
@@ -191,6 +225,8 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 	if len(allHooks) > 0 {
 		agentOpts = append(agentOpts, core.WithHooks[string](allHooks...))
 	}
+	// Apply caller-provided escape-hatch options last so they can override defaults.
+	agentOpts = append(agentOpts, cfg.agentOpts...)
 
 	tm.agent = core.NewAgent[string](t.model, agentOpts...)
 

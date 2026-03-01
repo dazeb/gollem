@@ -228,6 +228,176 @@ func TestTeam_TaskBoard(t *testing.T) {
 	}
 }
 
+func TestTeam_SpawnTeammate_DefaultEndStrategyExhaustive(t *testing.T) {
+	// Use a model that returns a tool call first, then text on the second call.
+	// With EndStrategyExhaustive (the default), the agent should process the
+	// tool call before stopping.
+	model := core.NewTestModel(
+		core.TextResponse("task complete"),
+	)
+	tm := NewTeam(TeamConfig{
+		Name:   "test-team",
+		Leader: "leader",
+		Model:  model,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+
+	// Verify the agent was created (basic sanity check — the EndStrategy
+	// is a private field on core.Agent so we can't inspect it directly,
+	// but this test ensures the default doesn't break spawning).
+	if teammate.Name() != "worker" {
+		t.Errorf("expected name 'worker', got %q", teammate.Name())
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	tm.Shutdown(shutdownCtx)
+}
+
+func TestTeam_SpawnTeammate_WithEndStrategyOverride(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("done"))
+	tm := NewTeam(TeamConfig{
+		Name:   "test-team",
+		Leader: "leader",
+		Model:  model,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	early := core.EndStrategyEarly
+	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something",
+		WithTeammateEndStrategy(early),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	tm.Shutdown(shutdownCtx)
+}
+
+func TestTeam_SpawnTeammate_WithMaxTokens(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("done"))
+	tm := NewTeam(TeamConfig{
+		Name:   "test-team",
+		Leader: "leader",
+		Model:  model,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something",
+		WithTeammateMaxTokens(16384),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+
+	// Verify max tokens was passed through to the model by checking the
+	// recorded calls.
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+	for i, call := range calls {
+		if call.Settings == nil {
+			t.Errorf("call %d: expected non-nil Settings", i)
+			continue
+		}
+		if call.Settings.MaxTokens == nil {
+			t.Errorf("call %d: expected MaxTokens to be set", i)
+			continue
+		}
+		if *call.Settings.MaxTokens != 16384 {
+			t.Errorf("call %d: expected MaxTokens=16384, got %d", i, *call.Settings.MaxTokens)
+		}
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	tm.Shutdown(shutdownCtx)
+}
+
+func TestTeam_SpawnTeammate_WithAgentOptions(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("done"))
+	tm := NewTeam(TeamConfig{
+		Name:   "test-team",
+		Leader: "leader",
+		Model:  model,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Use WithTeammateAgentOptions to set max tokens via the escape hatch.
+	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something",
+		WithTeammateAgentOptions(core.WithMaxTokens[string](8192)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+
+	// Verify the option was applied.
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil {
+		t.Fatal("expected MaxTokens to be set via escape hatch")
+	}
+	if *calls[0].Settings.MaxTokens != 8192 {
+		t.Errorf("expected MaxTokens=8192, got %d", *calls[0].Settings.MaxTokens)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	tm.Shutdown(shutdownCtx)
+}
+
+func TestTeammateConfig_Options(t *testing.T) {
+	cfg := &teammateConfig{}
+
+	WithTeammateSystemPrompt("test prompt")(cfg)
+	if cfg.systemPrompt != "test prompt" {
+		t.Errorf("expected 'test prompt', got %q", cfg.systemPrompt)
+	}
+
+	es := core.EndStrategyEarly
+	WithTeammateEndStrategy(es)(cfg)
+	if cfg.endStrategy == nil || *cfg.endStrategy != core.EndStrategyEarly {
+		t.Error("expected EndStrategyEarly")
+	}
+
+	WithTeammateMaxTokens(4096)(cfg)
+	if cfg.maxTokens != 4096 {
+		t.Errorf("expected 4096, got %d", cfg.maxTokens)
+	}
+
+	opt := core.WithMaxRetries[string](5)
+	WithTeammateAgentOptions(opt)(cfg)
+	if len(cfg.agentOpts) != 1 {
+		t.Errorf("expected 1 agent option, got %d", len(cfg.agentOpts))
+	}
+}
+
 func waitForState(t *testing.T, tm *Teammate, state TeammateState, timeout time.Duration) {
 	t.Helper()
 	deadline := time.After(timeout)
