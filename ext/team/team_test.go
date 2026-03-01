@@ -372,6 +372,80 @@ func TestTeam_SpawnTeammate_WithAgentOptions(t *testing.T) {
 	tm.Shutdown(shutdownCtx)
 }
 
+func TestTeam_WorkerMaxTokens(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("done"))
+	tm := NewTeam(TeamConfig{
+		Name:            "test-team",
+		Leader:          "leader",
+		Model:           model,
+		WorkerMaxTokens: 32768,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+
+	// Verify the team-level max tokens was applied.
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil {
+		t.Fatal("expected MaxTokens to be set from WorkerMaxTokens")
+	}
+	if *calls[0].Settings.MaxTokens != 32768 {
+		t.Errorf("expected MaxTokens=32768, got %d", *calls[0].Settings.MaxTokens)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	tm.Shutdown(shutdownCtx)
+}
+
+func TestTeam_WorkerMaxTokens_OverriddenByTeammateOption(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("done"))
+	tm := NewTeam(TeamConfig{
+		Name:            "test-team",
+		Leader:          "leader",
+		Model:           model,
+		WorkerMaxTokens: 32768,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Per-teammate override should win.
+	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something",
+		WithTeammateMaxTokens(8192),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil {
+		t.Fatal("expected MaxTokens to be set")
+	}
+	if *calls[0].Settings.MaxTokens != 8192 {
+		t.Errorf("expected MaxTokens=8192 (per-teammate override), got %d", *calls[0].Settings.MaxTokens)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	tm.Shutdown(shutdownCtx)
+}
+
 func TestTeammateConfig_Options(t *testing.T) {
 	cfg := &teammateConfig{}
 

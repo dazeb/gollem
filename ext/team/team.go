@@ -37,6 +37,12 @@ type TeamConfig struct {
 	// MailboxSize is the buffer size for teammate mailboxes. Defaults to 64.
 	MailboxSize int
 
+	// WorkerMaxTokens sets the default max output tokens per model request
+	// for all spawned teammates. Use this when teammates need to produce
+	// large outputs (e.g. writing long documents via tool calls). Can be
+	// overridden per-teammate with WithTeammateMaxTokens.
+	WorkerMaxTokens int
+
 	// WorkerHooks are lifecycle hooks added to every spawned teammate.
 	WorkerHooks []core.Hook
 
@@ -49,21 +55,22 @@ type TeamConfig struct {
 
 // Team manages a group of teammate agents.
 type Team struct {
-	mu             sync.RWMutex
-	name           string
-	leader         string
-	members        map[string]*Teammate
-	taskBoard      *TaskBoard
-	eventBus       *core.EventBus
-	model          core.Model
-	toolset        *core.Toolset
-	workerTools    []core.Tool
-	workerHooks    []core.Hook
-	mailboxSize    int
-	personalityGen modelutil.PersonalityGeneratorFunc
-	done           chan struct{}
-	closeOnce      sync.Once
-	wg             sync.WaitGroup
+	mu              sync.RWMutex
+	name            string
+	leader          string
+	members         map[string]*Teammate
+	taskBoard       *TaskBoard
+	eventBus        *core.EventBus
+	model           core.Model
+	toolset         *core.Toolset
+	workerTools     []core.Tool
+	workerMaxTokens int
+	workerHooks     []core.Hook
+	mailboxSize     int
+	personalityGen  modelutil.PersonalityGeneratorFunc
+	done            chan struct{}
+	closeOnce       sync.Once
+	wg              sync.WaitGroup
 }
 
 // NewTeam creates a team with the given configuration.
@@ -73,18 +80,19 @@ func NewTeam(cfg TeamConfig) *Team {
 		mailboxSize = 64
 	}
 	return &Team{
-		name:           cfg.Name,
-		leader:         cfg.Leader,
-		members:        make(map[string]*Teammate),
-		taskBoard:      NewTaskBoard(),
-		eventBus:       cfg.EventBus,
-		model:          cfg.Model,
-		toolset:        cfg.Toolset,
-		workerTools:    cfg.WorkerExtraTools,
-		workerHooks:    cfg.WorkerHooks,
-		mailboxSize:    mailboxSize,
-		personalityGen: cfg.PersonalityGenerator,
-		done:           make(chan struct{}),
+		name:            cfg.Name,
+		leader:          cfg.Leader,
+		members:         make(map[string]*Teammate),
+		taskBoard:       NewTaskBoard(),
+		eventBus:        cfg.EventBus,
+		model:           cfg.Model,
+		toolset:         cfg.Toolset,
+		workerTools:     cfg.WorkerExtraTools,
+		workerMaxTokens: cfg.WorkerMaxTokens,
+		workerHooks:     cfg.WorkerHooks,
+		mailboxSize:     mailboxSize,
+		personalityGen:  cfg.PersonalityGenerator,
+		done:            make(chan struct{}),
 	}
 }
 
@@ -209,8 +217,13 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(200)),
 		core.WithDefaultToolTimeout[string](2 * time.Minute),
 	}
+	// Resolve max tokens: per-teammate override > team default.
+	maxTokens := t.workerMaxTokens
 	if cfg.maxTokens > 0 {
-		agentOpts = append(agentOpts, core.WithMaxTokens[string](cfg.maxTokens))
+		maxTokens = cfg.maxTokens
+	}
+	if maxTokens > 0 {
+		agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
 	}
 	if t.toolset != nil {
 		agentOpts = append(agentOpts, core.WithToolsets[string](t.toolset))
