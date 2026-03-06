@@ -29,7 +29,7 @@ mkdir -p "$UV_CACHE_DIR" 2>/dev/null || true
 
 # Model API request timeout per call (seconds). Higher than old 240s cap to
 # reduce false timeouts on long reasoning/tool-heavy turns.
-: "${GOLLEM_MODEL_REQUEST_TIMEOUT_SEC:=360}"
+: "${GOLLEM_MODEL_REQUEST_TIMEOUT_SEC:=600}"
 export GOLLEM_MODEL_REQUEST_TIMEOUT_SEC
 
 # Default to single-agent execution to avoid shared provider throughput
