@@ -453,6 +453,12 @@ func runAgent() {
 			KeepLastN: 20,
 		}))
 		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 350K tokens (OpenAI 400K) — main + subagents\n")
+	case "xai":
+		toolOpts = append(toolOpts, codetool.WithAutoContextConfig(core.AutoContextConfig{
+			MaxTokens: 900000,
+			KeepLastN: 20,
+		}))
+		fmt.Fprintf(os.Stderr, "gollem: auto-context limit: 900K tokens (xAI 2M) — main + subagents\n")
 	}
 
 	// OpenAI reasoning profile: scale sandwich phases from the selected maximum.

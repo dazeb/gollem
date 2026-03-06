@@ -105,6 +105,8 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				// Context overflow recovery: catches 413 and retries with compressed
 				// messages. Subagents can hit overflow on long-running subtasks.
 				core.WithAgentMiddleware[string](ContextOverflowMiddleware()),
+				// Stderr logging: real-time per-turn observability for subagents.
+				core.WithAgentMiddleware[string](stderrLoggingMiddleware()),
 			}
 
 			agent := core.NewAgent[string](model, subOpts...)
