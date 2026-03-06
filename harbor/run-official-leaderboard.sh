@@ -175,8 +175,10 @@ print(",".join(parts))
 PY
   )"
 fi
-: "${GOLLEM_REASONING_NO_SANDWICH_BY_TASK:=${GOLLEM_XHIGH_TASKS}}"
-: "${GOLLEM_REASONING_NO_GREEDY_BY_TASK:=${GOLLEM_XHIGH_TASKS}}"
+# model-extraction-relu-logits is sensitive to sandwich phase changes;
+# always disable sandwich/greedy for it regardless of auto-derived xhigh tasks.
+: "${GOLLEM_REASONING_NO_SANDWICH_BY_TASK:=model-extraction-relu-logits}"
+: "${GOLLEM_REASONING_NO_GREEDY_BY_TASK:=model-extraction-relu-logits}"
 : "${OPENAI_PROMPT_CACHE_KEY:=tbench2-gollem}"
 : "${OPENAI_PROMPT_CACHE_RETENTION:=24h}"
 : "${OPENAI_SERVICE_TIER:=priority}"
