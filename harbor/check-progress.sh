@@ -57,7 +57,7 @@ for trial_dir in sorted(job_dir.iterdir()):
         continue
 
     exc = r.get("exception_info")
-    reward = r.get("verifier_result", {}).get("rewards", {}).get("reward", -1)
+    reward = (r.get("verifier_result") or {}).get("rewards", {}).get("reward", -1)
 
     if exc:
         tasks[task]["error"] += 1

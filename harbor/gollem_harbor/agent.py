@@ -439,7 +439,7 @@ class GollemAgent(BaseInstalledAgent):
         # unavailable so we don't silently fall back to slower pip paths.
         uv_install_result = await environment.exec(
             command=(
-                "timeout 60 sh -c '"
+                "timeout 90 sh -c '"
                 "set -e; "
                 "if ! command -v uv >/dev/null 2>&1; then "
                 "  ok=0; "
@@ -449,7 +449,9 @@ class GollemAgent(BaseInstalledAgent):
                 "    fi; "
                 "    sleep $((i * 2)); "
                 "  done; "
-                "  if [ \"$ok\" -ne 1 ]; then exit 1; fi; "
+                "  if [ \"$ok\" -ne 1 ]; then "
+                "    pip install uv >/dev/null 2>&1 || exit 1; "
+                "  fi; "
                 "fi; "
                 "export PATH=\"$HOME/.local/bin:$PATH\"; "
                 "if command -v uv >/dev/null 2>&1; then "
