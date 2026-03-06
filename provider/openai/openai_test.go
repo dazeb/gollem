@@ -1272,14 +1272,11 @@ func TestRequestFallsBackToResponsesForCodex(t *testing.T) {
 			if req.Model != "gpt-5.2-codex" {
 				t.Fatalf("expected model gpt-5.2-codex, got %q", req.Model)
 			}
-			if req.PromptCacheKey != "stable-key" {
-				t.Fatalf("expected prompt_cache_key stable-key, got %q", req.PromptCacheKey)
-			}
+			// prompt_cache_key and service_tier are only sent to openai.com
+			// endpoints; test servers won't receive them. prompt_cache_retention
+			// is sent to all endpoints.
 			if req.PromptCacheRetention != "in_memory" {
 				t.Fatalf("expected prompt_cache_retention in_memory, got %q", req.PromptCacheRetention)
-			}
-			if req.ServiceTier != "priority" {
-				t.Fatalf("expected service_tier priority, got %q", req.ServiceTier)
 			}
 			resp := responsesAPIResponse{
 				ID:    "resp_123",

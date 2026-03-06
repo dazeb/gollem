@@ -330,6 +330,14 @@ class GollemAgent(BaseInstalledAgent):
                 )
             return
 
+        if provider == "xai":
+            if not os.environ.get("OPENAI_API_KEY"):
+                raise RuntimeError(
+                    "Missing OPENAI_API_KEY for xAI model. "
+                    "Set OPENAI_API_KEY with your xAI API key before running Harbor."
+                )
+            return
+
         if provider in ("vertexai", "vertexai-anthropic"):
             project = self._project or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
             if not project:
@@ -739,6 +747,9 @@ class GollemAgent(BaseInstalledAgent):
             env.setdefault("OPENAI_TRANSPORT", "websocket")
             env.setdefault("OPENAI_WEBSOCKET_HTTP_FALLBACK", "1")
 
+        if provider == "xai":
+            env.setdefault("OPENAI_BASE_URL", "https://api.x.ai")
+
         # Point to the uploaded credentials file inside the container.
         # Set this whenever we have GCP credentials (explicit or default ADC).
         provider, _ = self._parse_model_name()
@@ -887,6 +898,7 @@ class GollemAgent(BaseInstalledAgent):
             provider_map = {
                 "anthropic": "anthropic",
                 "openai": "openai",
+                "xai": "xai",
                 "google": "vertexai",
                 "vertexai": "vertexai",
                 "vertex": "vertexai",

@@ -1496,7 +1496,10 @@ func detectProvider() string {
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return "anthropic"
 	}
-	if os.Getenv("OPENAI_API_KEY") != "" {
+	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		if strings.HasPrefix(key, "xai-") {
+			return "xai"
+		}
 		return "openai"
 	}
 	if os.Getenv("GOOGLE_CLOUD_PROJECT") != "" {
@@ -1630,6 +1633,12 @@ func createModel(provider, modelName, location, project string, requestTimeout t
 			opts = append(opts, openai.WithModel(modelName))
 		}
 		return openai.New(opts...), nil
+	case "xai":
+		opts := []openai.Option{openai.WithHTTPClient(httpClient)}
+		if modelName != "" {
+			opts = append(opts, openai.WithModel(modelName))
+		}
+		return openai.NewXAI(opts...), nil
 	case "vertexai":
 		opts := []vertexai.Option{vertexai.WithHTTPClient(httpClient)}
 		if modelName != "" {
@@ -1655,7 +1664,7 @@ func createModel(provider, modelName, location, project string, requestTimeout t
 		}
 		return vertexai_anthropic.New(opts...), nil
 	default:
-		return nil, fmt.Errorf("provider %q not supported (available: test, anthropic, openai, vertexai, vertexai-anthropic)", provider)
+		return nil, fmt.Errorf("provider %q not supported (available: test, anthropic, openai, xai, vertexai, vertexai-anthropic)", provider)
 	}
 }
 

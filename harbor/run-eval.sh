@@ -64,11 +64,7 @@ if [[ -f ~/.anthropic-key ]]; then
   export ANTHROPIC_API_KEY=$(sed -n 's/^ANTHROPIC_API_KEY=//p' ~/.anthropic-key | tr -d '[:space:]')
 fi
 
-# Auto-detect xAI models and set base URL (only for non-OpenAI providers)
 PROVIDER="${MODEL%%/*}"
-if [[ "$PROVIDER" != "openai" ]] && [[ "$OPENAI_API_KEY" == xai-* ]] && [[ -z "$OPENAI_BASE_URL" ]]; then
-  export OPENAI_BASE_URL="https://api.x.ai"
-fi
 
 # Verify we have the right API key for the provider
 case "$PROVIDER" in
@@ -78,6 +74,15 @@ case "$PROVIDER" in
       echo "ERROR: ANTHROPIC_API_KEY is required for anthropic models."
       exit 1
     fi
+    ;;
+  xai)
+    echo "Provider: xai | Key: ${OPENAI_API_KEY:+${#OPENAI_API_KEY} chars}"
+    if [[ -z "$OPENAI_API_KEY" ]]; then
+      echo "ERROR: OPENAI_API_KEY is required for xAI models."
+      exit 1
+    fi
+    export OPENAI_BASE_URL="https://api.x.ai"
+    echo "xAI base URL: ${OPENAI_BASE_URL}"
     ;;
   openai)
     # Ensure we're hitting real OpenAI, not xAI

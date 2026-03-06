@@ -211,6 +211,20 @@ func NewOllama(opts ...Option) *Provider {
 	return New(allOpts...)
 }
 
+// NewXAI creates an OpenAI-compatible provider configured for xAI's API.
+// By default it connects to https://api.x.ai with prompt cache retention
+// set to "24h" for cost savings. The API key should be set via WithAPIKey
+// or the OPENAI_API_KEY env var (xAI uses the same Bearer auth format).
+func NewXAI(opts ...Option) *Provider {
+	allOpts := append([]Option{
+		WithBaseURL("https://api.x.ai"),
+		WithPromptCacheRetention("24h"),
+	}, opts...)
+	p := New(allOpts...)
+	p.useResponses = true // xAI only supports Responses API
+	return p
+}
+
 // NewSession returns an equivalent provider instance with isolated transient
 // request/session state (for example websocket continuation state). Use this
 // when spawning parallel agents that must not share a websocket chain.
@@ -421,7 +435,7 @@ func responsesWebSocketURL(baseURL string) (string, error) {
 
 func modelNeedsResponsesAPI(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
-	return strings.Contains(m, "codex")
+	return strings.Contains(m, "codex") || strings.Contains(m, "multi-agent")
 }
 
 func isChatCompletionsMismatch(err error) bool {
@@ -435,6 +449,12 @@ func isChatCompletionsMismatch(err error) bool {
 	body := strings.ToLower(httpErr.Body)
 	msg := strings.ToLower(httpErr.Message)
 	return strings.Contains(body, "not a chat model") || strings.Contains(msg, "not a chat model")
+}
+
+// isOpenAIEndpoint reports whether the provider is configured for the
+// official OpenAI API (as opposed to a compatible third-party like xAI).
+func (p *Provider) isOpenAIEndpoint() bool {
+	return strings.Contains(p.baseURL, "openai.com")
 }
 
 // Profile returns the model's capability profile. Vision is supported by

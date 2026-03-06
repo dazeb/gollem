@@ -98,9 +98,16 @@ func (p *Provider) requestViaResponses(ctx context.Context, messages []core.Mode
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
 	}
-	req.PromptCacheKey = p.promptCacheKey
-	req.PromptCacheRetention = p.promptCacheRetention
-	req.ServiceTier = p.serviceTier
+	if p.isOpenAIEndpoint() {
+		req.PromptCacheKey = p.promptCacheKey
+		req.PromptCacheRetention = p.promptCacheRetention
+		req.ServiceTier = p.serviceTier
+	} else {
+		// Non-OpenAI endpoints (xAI, etc.) don't support reasoning effort
+		// or prompt_cache_key, but do support prompt_cache_retention.
+		req.Reasoning = nil
+		req.PromptCacheRetention = p.promptCacheRetention
+	}
 	return p.requestViaResponsesWithReq(ctx, req)
 }
 
