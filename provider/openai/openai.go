@@ -213,13 +213,18 @@ func NewOllama(opts ...Option) *Provider {
 
 // NewXAI creates an OpenAI-compatible provider configured for xAI's API.
 // By default it connects to https://api.x.ai with prompt cache retention
-// set to "24h" for cost savings. The API key should be set via WithAPIKey
-// or the OPENAI_API_KEY env var (xAI uses the same Bearer auth format).
+// set to "24h" for cost savings. The API key is read from XAI_API_KEY first,
+// then OPENAI_API_KEY, or can be set explicitly via WithAPIKey.
 func NewXAI(opts ...Option) *Provider {
-	allOpts := append([]Option{
+	allOpts := []Option{
 		WithBaseURL("https://api.x.ai"),
 		WithPromptCacheRetention("24h"),
-	}, opts...)
+	}
+	// Prefer XAI_API_KEY over OPENAI_API_KEY for xAI provider.
+	if key := os.Getenv("XAI_API_KEY"); key != "" {
+		allOpts = append(allOpts, WithAPIKey(key))
+	}
+	allOpts = append(allOpts, opts...)
 	p := New(allOpts...)
 	p.useResponses = true // xAI only supports Responses API
 	return p

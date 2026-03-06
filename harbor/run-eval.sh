@@ -76,9 +76,13 @@ case "$PROVIDER" in
     fi
     ;;
   xai)
-    echo "Provider: xai | Key: ${OPENAI_API_KEY:+${#OPENAI_API_KEY} chars}"
-    if [[ -z "$OPENAI_API_KEY" ]]; then
-      echo "ERROR: OPENAI_API_KEY is required for xAI models."
+    # Prefer XAI_API_KEY; fall back to OPENAI_API_KEY.
+    if [[ -n "$XAI_API_KEY" ]]; then
+      echo "Provider: xai | XAI_API_KEY: ${#XAI_API_KEY} chars"
+    elif [[ -n "$OPENAI_API_KEY" ]]; then
+      echo "Provider: xai | OPENAI_API_KEY: ${#OPENAI_API_KEY} chars"
+    else
+      echo "ERROR: XAI_API_KEY (or OPENAI_API_KEY) is required for xAI models."
       exit 1
     fi
     export OPENAI_BASE_URL="https://api.x.ai"

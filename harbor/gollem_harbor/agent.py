@@ -331,10 +331,10 @@ class GollemAgent(BaseInstalledAgent):
             return
 
         if provider == "xai":
-            if not os.environ.get("OPENAI_API_KEY"):
+            if not os.environ.get("XAI_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
                 raise RuntimeError(
-                    "Missing OPENAI_API_KEY for xAI model. "
-                    "Set OPENAI_API_KEY with your xAI API key before running Harbor."
+                    "Missing API key for xAI model. "
+                    "Set XAI_API_KEY (or OPENAI_API_KEY) before running Harbor."
                 )
             return
 
@@ -716,6 +716,7 @@ class GollemAgent(BaseInstalledAgent):
 
         for key in [
             "ANTHROPIC_API_KEY",
+            "XAI_API_KEY",
             "OPENAI_API_KEY",
             "OPENAI_BASE_URL",
             "OPENAI_PROMPT_CACHE_KEY",

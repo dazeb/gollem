@@ -1496,6 +1496,9 @@ func detectProvider() string {
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return "anthropic"
 	}
+	if os.Getenv("XAI_API_KEY") != "" {
+		return "xai"
+	}
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
 		if strings.HasPrefix(key, "xai-") {
 			return "xai"
