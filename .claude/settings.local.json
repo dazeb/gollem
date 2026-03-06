@@ -1,7 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(uv run harbor run -d terminal-bench@2.0 --list-tasks)",
+      "Bash(uv run harbor run -d terminal-bench@2.0 --help)",
+      "Bash(uv run harbor tasks -d terminal-bench@2.0)",
+      "Bash(uv run harbor tasks list -d terminal-bench@2.0)",
+      "Bash(uv run harbor tasks --help)",
+      "Bash(uv run harbor run -d terminal-bench@2.0 --n-tasks 0)",
+      "Bash(uv run python -c \":*)",
+      "Bash(uv run python -c \"import harbor.dataset; print\\(dir\\(harbor.dataset\\)\\)\")",
+      "Bash(/usr/bin/find ~/.harbor -type d)",
+      "Bash(python3 -c \":*)",
+      "Bash(tbview tasks)",
+      "Bash(python3 -m json.tool)"
     ]
+  },
+  "remote": {
+    "defaultEnvironmentId": "env_011CUKUTNMmYQ9ipkuJJZNyt"
   }
 }
