@@ -414,10 +414,20 @@ func runAgent() {
 	// This is separate from f.timeout (exec timeout) which may be shorter.
 	toolOpts = append(toolOpts, codetool.WithTimeout(budgetTimeout))
 
-	// Disable delegate tool if requested.
-	if isTruthyEnv("GOLLEM_DISABLE_DELEGATE") {
+	// Disable delegate tool if requested. Per-task override via
+	// GOLLEM_DELEGATE_BY_TASK (format: "task1=1,task2=0,*=0") takes precedence
+	// over the global GOLLEM_DISABLE_DELEGATE flag.
+	delegateDisabled := isTruthyEnv("GOLLEM_DISABLE_DELEGATE")
+	if os.Getenv("GOLLEM_DELEGATE_BY_TASK") != "" {
+		enabled, source := resolveBoolByTask("GOLLEM_DELEGATE_BY_TASK", f.workDir, !delegateDisabled)
+		delegateDisabled = !enabled
+		if source != "" {
+			fmt.Fprintf(os.Stderr, "gollem: delegate per-task: enabled=%v (%s)\n", enabled, source)
+		}
+	}
+	if delegateDisabled {
 		toolOpts = append(toolOpts, codetool.WithDisableDelegate())
-		fmt.Fprintln(os.Stderr, "gollem: delegate tool disabled (GOLLEM_DISABLE_DELEGATE)")
+		fmt.Fprintln(os.Stderr, "gollem: delegate tool disabled")
 	}
 
 	// LLM-routed team mode: classifier decides whether delegation overhead is worth it.
@@ -502,9 +512,17 @@ func runAgent() {
 	}
 
 	// Optional top-level dynamic personality generation.
-	// This mirrors teammate/subagent personality generation at the main agent
-	// entrypoint and is opt-in to avoid unexpected behavior changes.
-	if isTruthyEnv("GOLLEM_TOP_LEVEL_PERSONALITY") {
+	// Per-task override via GOLLEM_PERSONALITY_BY_TASK (format: "task1=1,*=0")
+	// takes precedence over the global GOLLEM_TOP_LEVEL_PERSONALITY flag.
+	personalityEnabled := isTruthyEnv("GOLLEM_TOP_LEVEL_PERSONALITY")
+	if os.Getenv("GOLLEM_PERSONALITY_BY_TASK") != "" {
+		enabled, source := resolveBoolByTask("GOLLEM_PERSONALITY_BY_TASK", f.workDir, personalityEnabled)
+		personalityEnabled = enabled
+		if source != "" {
+			fmt.Fprintf(os.Stderr, "gollem: personality per-task: enabled=%v (%s)\n", enabled, source)
+		}
+	}
+	if personalityEnabled {
 		personalityGen := modelutil.CachedPersonalityGenerator(modelutil.GeneratePersonality(model))
 		agentOpts = append(agentOpts, core.WithDynamicSystemPrompt[string](func(ctx context.Context, rc *core.RunContext) (string, error) {
 			req := modelutil.PersonalityRequest{
@@ -1208,6 +1226,46 @@ func shouldDisableReasoningSandwichByTask(workDir string) (bool, string) {
 		return true, "task:*"
 	}
 	return false, ""
+}
+
+// resolveBoolByTask looks up a per-task boolean from an env var with format
+// "task1=1,task2=0,*=0". Returns the resolved value and a source string for
+// logging. Falls back to defaultVal if env var is empty or task not matched.
+func resolveBoolByTask(envVar, workDir string, defaultVal bool) (bool, string) {
+	raw := strings.TrimSpace(os.Getenv(envVar))
+	if raw == "" {
+		return defaultVal, ""
+	}
+	raw = trimMatchingQuotes(raw)
+	m := make(map[string]string)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k != "" && v != "" {
+			m[k] = v
+		}
+	}
+	if len(m) == 0 {
+		return defaultVal, ""
+	}
+	taskName := resolveReasoningTaskName(workDir)
+	if taskName != "" {
+		if v, ok := m[taskName]; ok {
+			return v == "1" || strings.EqualFold(v, "true"), "task:" + taskName
+		}
+	}
+	if v, ok := m["*"]; ok {
+		return v == "1" || strings.EqualFold(v, "true"), "task:*"
+	}
+	return defaultVal, ""
 }
 
 func shouldDisableGreedyPressureByTask(workDir string) (bool, string) {

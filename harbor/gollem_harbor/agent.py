@@ -732,6 +732,8 @@ class GollemAgent(BaseInstalledAgent):
             "VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL",
             "GOLLEM_MODEL_REQUEST_TIMEOUT_SEC",
             "GOLLEM_TOP_LEVEL_PERSONALITY",
+            "GOLLEM_PERSONALITY_BY_TASK",
+            "GOLLEM_DELEGATE_BY_TASK",
             "GOLLEM_REQUIRE_INVARIANT_CHECKLIST",
             "GOOGLE_CLOUD_PROJECT",
             "LANGFUSE_SECRET_KEY",

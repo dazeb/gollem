@@ -112,6 +112,50 @@ fi
 : "${GOLLEM_MODEL_REQUEST_TIMEOUT_SEC:=360}"
 : "${GOLLEM_TOP_LEVEL_PERSONALITY:=0}"
 : "${GOLLEM_REQUIRE_INVARIANT_CHECKLIST:=1}"
+
+# Parse winning-configs.txt for per-task personality and delegate settings.
+# Format: "task-name xhigh personality=0|1 delegate=0|1"
+WINNING_CONFIGS="${REPO_ROOT}/winning-configs.txt"
+if [[ -f "$WINNING_CONFIGS" ]]; then
+  eval "$(WINNING_CONFIGS="$WINNING_CONFIGS" python3 - <<'PY'
+import os
+from pathlib import Path
+
+lines = Path(os.environ["WINNING_CONFIGS"]).read_text().splitlines()
+personality_parts = []
+delegate_parts = []
+reasoning_parts = []
+for line in lines:
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    tokens = line.split()
+    if len(tokens) < 2:
+        continue
+    task = tokens[0]
+    # Second token is reasoning effort (e.g. "xhigh")
+    reasoning_parts.append(f"{task}={tokens[1]}")
+    for t in tokens[2:]:
+        if t.startswith("personality="):
+            personality_parts.append(f"{task}={t.split('=',1)[1]}")
+        elif t.startswith("delegate="):
+            delegate_parts.append(f"{task}={t.split('=',1)[1]}")
+
+personality_parts.append("*=0")
+delegate_parts.append("*=0")
+reasoning_parts.append("*=xhigh")
+
+# Only emit if not already set by caller
+if not os.environ.get("GOLLEM_PERSONALITY_BY_TASK"):
+    print(f'GOLLEM_PERSONALITY_BY_TASK="{",".join(personality_parts)}"')
+if not os.environ.get("GOLLEM_DELEGATE_BY_TASK"):
+    print(f'GOLLEM_DELEGATE_BY_TASK="{",".join(delegate_parts)}"')
+if not os.environ.get("GOLLEM_REASONING_BY_TASK"):
+    print(f'GOLLEM_REASONING_BY_TASK="{",".join(reasoning_parts)}"')
+PY
+)"
+  echo "Per-task configs loaded from winning-configs.txt"
+fi
 : "${GOLLEM_XHIGH_TASKS:=model-extraction-relu-logits}"
 if [[ -z "${GOLLEM_REASONING_BY_TASK:-}" ]]; then
   GOLLEM_REASONING_BY_TASK="$(
@@ -145,6 +189,8 @@ export GOLLEM_SETUP_INSTALL_LSP
 export GOLLEM_TBENCH_COMPETITION_PROMPT
 export GOLLEM_MODEL_REQUEST_TIMEOUT_SEC
 export GOLLEM_TOP_LEVEL_PERSONALITY
+export GOLLEM_PERSONALITY_BY_TASK
+export GOLLEM_DELEGATE_BY_TASK
 export GOLLEM_REQUIRE_INVARIANT_CHECKLIST
 export GOLLEM_XHIGH_TASKS
 export GOLLEM_REASONING_BY_TASK
@@ -227,6 +273,8 @@ META_FILE="official-runs/${STAMP}.meta.txt"
   echo "openai_transport=${OPENAI_TRANSPORT}"
   echo "openai_websocket_http_fallback=${OPENAI_WEBSOCKET_HTTP_FALLBACK}"
   echo "top_level_personality=${GOLLEM_TOP_LEVEL_PERSONALITY}"
+  echo "personality_by_task=${GOLLEM_PERSONALITY_BY_TASK:-}"
+  echo "delegate_by_task=${GOLLEM_DELEGATE_BY_TASK:-}"
   echo "xhigh_tasks=${GOLLEM_XHIGH_TASKS}"
   echo "reasoning_by_task=${GOLLEM_REASONING_BY_TASK}"
   echo "reasoning_no_sandwich_by_task=${GOLLEM_REASONING_NO_SANDWICH_BY_TASK}"
