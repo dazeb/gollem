@@ -59,12 +59,14 @@ for trial_dir in sorted(job_dir.iterdir()):
     exc = r.get("exception_info")
     reward = (r.get("verifier_result") or {}).get("rewards", {}).get("reward", -1)
 
-    if exc:
-        tasks[task]["error"] += 1
-    elif reward == 1.0:
+    # Verifier reward takes precedence over agent exceptions (e.g. timeout
+    # after a service task where the server is still running and passes).
+    if reward == 1.0:
         tasks[task]["pass"] += 1
     elif reward == 0.0:
         tasks[task]["fail"] += 1
+    elif exc:
+        tasks[task]["error"] += 1
     else:
         tasks[task]["error"] += 1
 
