@@ -194,10 +194,20 @@ When a task requires setting up servers, daemons, or background services:
    - ` + "`systemctl enable --now <name>`" + ` (systemd — may not be available in containers)
    - If both fail: start in background with ` + "`nohup <command> > /tmp/<name>.log 2>&1 &`" + ` and record PID in ` + "`/tmp/<name>.pid`" + `.
    - Avoid broad kill patterns (` + "`pkill -f`" + `, ` + "`killall`" + `). Stop only exact PID-file processes (` + "`kill $(cat /tmp/<name>.pid)`" + `).
-2. **Wait for startup before testing**: After starting a service, it needs time to initialize. Use ` + "`sleep 2`" + ` or a readiness loop (` + "`for i in $(seq 1 10); do curl -s localhost:PORT && break; sleep 1; done`" + `) before running tests. "Connection refused" usually means the service isn't ready yet — don't immediately debug, wait first.
-3. **Verify from a clean state**: Test your service by connecting to it the way the verifier will (e.g., ` + "`curl localhost:8080`" + `, ` + "`ssh user@host`" + `). Don't just check if the process is running.
-4. **Deploy files permanently**: If a web server needs to serve files, make sure the files are in the correct document root and will persist. Don't serve from /tmp.
-5. **Container-specific service troubleshooting**: If a service fails to start:
+2. **NEVER block on service startup**: Always start services in the background. Do NOT run a startup script as a foreground command with a long timeout — this wastes your entire time budget waiting on a single bash call. Instead: start in background, poll for readiness, then proceed with configuration. For example:
+   ` + "```" + `
+   nohup /app/start_service.sh > /tmp/service.log 2>&1 &
+   # Poll for readiness
+   for i in $(seq 1 30); do
+     if ss -tlnp | grep -q :PORT; then break; fi
+     sleep 2
+   done
+   ` + "```" + `
+   This applies to VMs (QEMU), databases, web servers, and any process that takes time to initialize.
+3. **Wait for startup before testing**: After starting a service, it needs time to initialize. Use ` + "`sleep 2`" + ` or a readiness loop (` + "`for i in $(seq 1 10); do curl -s localhost:PORT && break; sleep 1; done`" + `) before running tests. "Connection refused" usually means the service isn't ready yet — don't immediately debug, wait first.
+4. **Verify from a clean state**: Test your service by connecting to it the way the verifier will (e.g., ` + "`curl localhost:8080`" + `, ` + "`ssh user@host`" + `). Don't just check if the process is running.
+5. **Deploy files permanently**: If a web server needs to serve files, make sure the files are in the correct document root and will persist. Don't serve from /tmp.
+6. **Container-specific service troubleshooting**: If a service fails to start:
    - Check logs: ` + "`journalctl -u <service> --no-pager 2>/dev/null || cat /var/log/<service>/*.log`" + `
    - Check config syntax: ` + "`nginx -t`" + `, ` + "`sshd -t`" + `, ` + "`apachectl configtest`" + `
    - Check if the required directory/socket exists: ` + "`ls -la /run/<service>/`" + ` — create it with ` + "`mkdir -p`" + ` if missing
