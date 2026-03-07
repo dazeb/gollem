@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1263,8 +1265,8 @@ func TestToolset_AllTools(t *testing.T) {
 	if ts.Name != "codetool" {
 		t.Errorf("expected toolset name 'codetool', got %q", ts.Name)
 	}
-	if len(ts.Tools) != 9 {
-		t.Errorf("expected 9 tools, got %d", len(ts.Tools))
+	if len(ts.Tools) != 10 {
+		t.Errorf("expected 10 tools, got %d", len(ts.Tools))
 	}
 
 	names := make(map[string]bool)
@@ -1272,7 +1274,7 @@ func TestToolset_AllTools(t *testing.T) {
 		names[tool.Definition.Name] = true
 	}
 
-	expected := []string{"bash", "view", "write", "edit", "multi_edit", "grep", "glob", "ls", "lsp"}
+	expected := []string{"bash", "bash_status", "view", "write", "edit", "multi_edit", "grep", "glob", "ls", "lsp"}
 	for _, name := range expected {
 		if !names[name] {
 			t.Errorf("missing tool: %s", name)
@@ -1282,8 +1284,149 @@ func TestToolset_AllTools(t *testing.T) {
 
 func TestAllTools_Count(t *testing.T) {
 	tools := AllTools()
-	if len(tools) != 9 {
-		t.Errorf("expected 9 tools, got %d", len(tools))
+	if len(tools) != 10 {
+		t.Errorf("expected 10 tools, got %d", len(tools))
+	}
+}
+
+func TestAllTools_BackgroundRequiresExplicitManager(t *testing.T) {
+	tools := AllTools()
+
+	var bashTool core.Tool
+	var bashStatusTool core.Tool
+	for _, tool := range tools {
+		switch tool.Definition.Name {
+		case "bash":
+			bashTool = tool
+		case "bash_status":
+			bashStatusTool = tool
+		}
+	}
+
+	if bashTool.Definition.Name == "" || bashStatusTool.Definition.Name == "" {
+		t.Fatal("expected bash and bash_status tools")
+	}
+
+	if err := callErr(t, bashTool, `{"command":"echo test","background":true}`); err == nil {
+		t.Fatal("expected background bash to require an explicit manager")
+	}
+	if err := callErr(t, bashStatusTool, `{"id":"all"}`); err == nil {
+		t.Fatal("expected bash_status to require an explicit manager")
+	}
+}
+
+func TestToolset_BackgroundRequiresExplicitManager(t *testing.T) {
+	// Toolset() without WithBackgroundProcessManager should degrade
+	// gracefully — same contract as AllTools().
+	ts := Toolset()
+
+	var bashTool core.Tool
+	var bashStatusTool core.Tool
+	for _, tool := range ts.Tools {
+		switch tool.Definition.Name {
+		case "bash":
+			bashTool = tool
+		case "bash_status":
+			bashStatusTool = tool
+		}
+	}
+
+	if err := callErr(t, bashTool, `{"command":"echo test","background":true}`); err == nil {
+		t.Fatal("expected background bash to require an explicit manager via Toolset()")
+	}
+	if err := callErr(t, bashStatusTool, `{"id":"all"}`); err == nil {
+		t.Fatal("expected bash_status to require an explicit manager via Toolset()")
+	}
+
+	// Foreground bash should still work without a manager.
+	result := call(t, bashTool, `{"command":"echo hello"}`)
+	if !strings.Contains(result, "hello") {
+		t.Errorf("expected foreground bash to work without manager, got: %s", result)
+	}
+}
+
+func TestSubAgentTool_BackgroundProcessIsolationAndCleanup(t *testing.T) {
+	dir := setupTestDir(t)
+	pidFile := filepath.Join(dir, "delegate-bg.pid")
+	parentMgr := NewBackgroundProcessManager()
+
+	background := true
+	bashArgs, err := json.Marshal(BashParams{
+		Command:    fmt.Sprintf("echo $$ > %q; sleep 60", pidFile),
+		Background: &background,
+	})
+	if err != nil {
+		t.Fatalf("marshal bash args: %v", err)
+	}
+
+	subagentModel := core.NewTestModel(
+		core.ToolCallResponse("bash", string(bashArgs)),
+		core.ToolCallResponse("bash", `{"command":"sleep 0.2"}`),
+		core.TextResponse("delegated background complete"),
+	)
+	tool := SubAgentTool(subagentModel, WithWorkDir(dir), WithBackgroundProcessManager(parentMgr))
+
+	taskArgs, err := json.Marshal(subagentParams{Task: "start a background task and finish"})
+	if err != nil {
+		t.Fatalf("marshal delegate args: %v", err)
+	}
+
+	result := call(t, tool, string(taskArgs))
+	if !strings.Contains(result, "delegated background complete") {
+		t.Fatalf("expected delegated subagent result, got: %s", result)
+	}
+
+	if got := parentMgr.FormatAll(); got != "No background processes." {
+		t.Fatalf("expected parent manager to stay empty, got: %s", got)
+	}
+
+	var pid int
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		data, readErr := os.ReadFile(pidFile)
+		if readErr == nil {
+			trimmed := strings.TrimSpace(string(data))
+			if trimmed != "" {
+				pid, err = strconv.Atoi(trimmed)
+				if err != nil {
+					t.Fatalf("parse delegated background pid %q: %v", trimmed, err)
+				}
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected delegated subagent to create %s", pidFile)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		alive, aliveErr := processExists(pid)
+		if aliveErr != nil {
+			t.Fatalf("check delegated background pid %d: %v", pid, aliveErr)
+		}
+		if !alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected delegated background process %d to be cleaned up", pid)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func processExists(pid int) (bool, error) {
+	err := syscall.Kill(pid, 0)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, syscall.EPERM):
+		return true, nil
+	case errors.Is(err, syscall.ESRCH):
+		return false, nil
+	default:
+		return false, err
 	}
 }
 

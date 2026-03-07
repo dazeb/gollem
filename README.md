@@ -225,6 +225,88 @@ result, err := agent.Run(ctx, "Analyze Q4 earnings report")
 // tracker.TotalCost() — cumulative cost across all runs
 ```
 
+### Coding Agent Background Processes
+
+The `ext/codetool` package can start long-running commands in the background, surface status through a companion tool, and adopt already-started processes into the same tracking pool.
+
+Use `codetool.AgentOptions(...)` for the recommended automatic lifecycle. It installs `bash` and `bash_status`, cleans up non-`keep_alive` processes at run end, injects completion notifications back into the agent loop, and in team mode creates isolated background-process managers for each worker and delegated subagent.
+
+```go
+import (
+    "context"
+
+    "github.com/fugue-labs/gollem"
+    "github.com/fugue-labs/gollem/ext/codetool"
+)
+
+agent := gollem.NewAgent[string](model,
+    codetool.AgentOptions("/repo")...,
+)
+
+// The model can now call:
+//   bash({"command":"npm run dev","background":true,"keep_alive":true})
+//   bash_status({"id":"all"})
+```
+
+`codetool.Toolset(...)` is now stateless. If you use `Toolset(...)` or `AllTools(...)` directly, pass an explicit `BackgroundProcessManager` and wire lifecycle manually:
+
+```go
+mgr := codetool.NewBackgroundProcessManager()
+ts := codetool.Toolset(
+    codetool.WithWorkDir("/repo"),
+    codetool.WithBackgroundProcessManager(mgr),
+)
+
+agent := gollem.NewAgent[string](model,
+    gollem.WithToolsets[string](ts),
+    gollem.WithHooks[string](gollem.Hook{
+        OnRunEnd: func(_ context.Context, _ *gollem.RunContext, _ []gollem.ModelMessage, _ error) {
+            mgr.Cleanup()
+        },
+    }),
+    gollem.WithDynamicSystemPrompt[string](mgr.CompletionPrompt),
+)
+```
+
+If you assemble individual tools manually, pass the same manager to both `bash` and `bash_status` so they share the same process pool:
+
+```go
+mgr := codetool.NewBackgroundProcessManager()
+
+agent := gollem.NewAgent[string](model,
+    gollem.WithTools[string](
+        codetool.Bash(
+            codetool.WithWorkDir("/repo"),
+            codetool.WithBackgroundProcessManager(mgr),
+        ),
+        codetool.BashStatus(
+            codetool.WithBackgroundProcessManager(mgr),
+        ),
+    ),
+)
+defer mgr.Cleanup()
+```
+
+`BackgroundProcessManager.Adopt(...)` and `AdoptWithWait(...)` are the lower-level APIs for callers that start a process themselves and then want gollem to track it:
+
+```go
+cmd := exec.CommandContext(ctx, "bash", "-c", "long-running-command")
+stdout, _ := cmd.StdoutPipe()
+stderr, _ := cmd.StderrPipe()
+if err := cmd.Start(); err != nil {
+    return err
+}
+
+id, err := mgr.Adopt(cmd, stdout, stderr, "long-running-command")
+if err != nil {
+    return err
+}
+
+fmt.Println("tracking process as", id)
+```
+
+Use `AdoptWithWait(...)` instead when your code already wraps `cmd.Wait()` behind a shared `waitFn` and you need the manager to reuse that function instead of calling `cmd.Wait()` directly.
+
 ### Multi-Agent Team Swarm
 
 Spawn concurrent teammates that coordinate through mailboxes and a shared task board. Each teammate gets a dynamically generated personality tailored to its specific task — the LLM itself writes the system prompt.
@@ -265,6 +347,8 @@ result, _ := leader.Run(ctx, "Coordinate the code review across all teammates")
 
 t.Shutdown(ctx)
 ```
+
+If your teammate toolset contains per-worker state, use `team.TeamConfig.ToolsetFactory` instead of sharing a single `Toolset`. This is the right pattern for stateful helpers such as background-process managers. `codetool.AgentOptions(...)` handles that automatically in team mode.
 
 ### Multi-Agent with Event Coordination
 

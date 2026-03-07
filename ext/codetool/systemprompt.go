@@ -93,7 +93,9 @@ Common pitfalls to avoid:
 
 - **multi_edit**: Batch multiple edits across one or more files in one call. More efficient than sequential edit calls when making related changes. Each edit needs a unique old_string within its file.
 
-- **bash**: Set appropriate timeouts for long-running commands. Check exit codes. Do NOT use bash (sed, awk, echo, printf) for file editing — use edit, multi_edit, or write instead.
+- **bash**: Set appropriate timeouts for long-running commands. Check exit codes. Do NOT use bash (sed, awk, echo, printf) for file editing — use edit, multi_edit, or write instead. Use ` + "`background: true`" + ` for long-running processes (builds, servers) — returns immediately with a process ID. Add ` + "`keep_alive: true`" + ` for services that must persist after agent exit.
+
+- **bash_status**: Check the status of background processes. Use ` + "`id: 'all'`" + ` to list all processes, or a specific ID like ` + "`id: 'bg-1'`" + ` to see output and exit code. Completed processes are also announced automatically between turns.
 
 - **grep**: Use specific patterns. Use include to filter by extension (supports {a,b} braces, e.g. '*.{ts,tsx}'). Use files_only to survey which files match.
 
@@ -181,10 +183,10 @@ Your code will often be tested against time limits. Write efficient solutions:
 ## Long-Running Processes
 
 When dealing with builds or processes that take more than a few minutes:
-1. **Don't sit idle monitoring**: If a build/compile will take > 5 minutes, run it in the background (` + "`nohup make > build.log 2>&1 &`" + `) and continue with other aspects of the task. Check back with ` + "`tail build.log`" + ` and ` + "`ps aux | grep make`" + `.
+1. **Use background execution**: Set ` + "`background: true`" + ` on the bash tool call to run processes in the background. This returns immediately with a process ID. Use ` + "`bash_status`" + ` to check progress. You will receive an automatic notification when the process completes or fails.
 2. **Set realistic timeouts**: Use the bash timeout parameter. Don't set a 2-hour timeout and wait — if a build takes that long, it may have failed silently.
-3. **Check for errors early**: After starting a long build, wait ~60 seconds and check the log for errors. Catching a compilation error in the first minute saves 30 minutes of waiting.
-4. **Abort stalled builds**: If a build shows no progress for 5+ minutes (no new output in the log), something is likely wrong. Kill it and investigate.
+3. **Check for errors early**: After starting a long build in the background, use ` + "`bash_status`" + ` after ~60 seconds to check for early errors. Catching a compilation error in the first minute saves 30 minutes of waiting.
+4. **Abort stalled builds**: If a build shows no progress for 5+ minutes (no new output in ` + "`bash_status`" + `), something is likely wrong. Kill it and investigate.
 
 ## Service Setup Tasks
 
@@ -192,12 +194,12 @@ When a task requires setting up servers, daemons, or background services:
 1. **Ensure services persist**: After configuration, the verifier will test your setup AFTER your session ends. Services must be running when the verifier checks. Try these in order:
    - ` + "`service <name> start`" + ` (SysV init — works in most containers)
    - ` + "`systemctl enable --now <name>`" + ` (systemd — may not be available in containers)
-   - If both fail: start in background with ` + "`nohup <command> > /tmp/<name>.log 2>&1 &`" + ` and record PID in ` + "`/tmp/<name>.pid`" + `.
+   - If both fail: start with ` + "`background: true, keep_alive: true`" + ` on the bash tool. The process manager tracks PID and output automatically.
    - Avoid broad kill patterns (` + "`pkill -f`" + `, ` + "`killall`" + `). Stop only exact PID-file processes (` + "`kill $(cat /tmp/<name>.pid)`" + `).
-2. **NEVER block on service startup**: Always start services in the background. Do NOT run a startup script as a foreground command with a long timeout — this wastes your entire time budget waiting on a single bash call. Instead: start in background, poll for readiness, then proceed with configuration. For example:
+2. **NEVER block on service startup**: Always start services with ` + "`background: true`" + ` and ` + "`keep_alive: true`" + ` (for services the verifier needs running after your session). Do NOT run a startup script as a foreground command with a long timeout — this wastes your entire time budget waiting on a single bash call. Instead: start in background, poll for readiness, then proceed with configuration. For example:
    ` + "```" + `
-   nohup /app/start_service.sh > /tmp/service.log 2>&1 &
-   # Poll for readiness
+   bash(command="/app/start_service.sh", background=true, keep_alive=true)
+   # Then poll for readiness in a separate bash call:
    for i in $(seq 1 30); do
      if ss -tlnp | grep -q :PORT; then break; fi
      sleep 2
