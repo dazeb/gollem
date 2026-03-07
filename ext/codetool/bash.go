@@ -228,6 +228,11 @@ func Bash(opts ...Option) core.Tool {
 				// Kill the entire process group (negative PID).
 				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
+			// Prevent cmd.Wait from blocking indefinitely when daemon
+			// children inherit our stdout/stderr pipe fds. After the
+			// shell exits, give a brief window for remaining output
+			// then return even if pipes are still held open.
+			cmd.WaitDelay = 5 * time.Second
 
 			// Execute the command with one auto-retry for transient failures
 			// (network errors, dpkg locks, etc.). This saves a full agent turn.
@@ -270,6 +275,7 @@ func Bash(opts ...Option) core.Tool {
 						}
 						return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 					}
+					cmd.WaitDelay = 5 * time.Second
 					cmd.Stdout = &stdout
 					cmd.Stderr = &stderr
 					fmt.Fprintf(os.Stderr, "[gollem] bash: auto-retrying transient failure\n")
