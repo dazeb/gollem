@@ -251,7 +251,9 @@ func (m *BackgroundProcessManager) Start(workDir, command string, keepAlive bool
 	}
 
 	// Timeout enforcement: kill the process group if it exceeds the deadline.
-	if timeout > 0 {
+	// Skip for keep_alive processes — they are meant to run indefinitely
+	// (servers, VMs, etc.) and survive beyond the agent's lifecycle.
+	if timeout > 0 && !keepAlive {
 		go func() {
 			select {
 			case <-done:
