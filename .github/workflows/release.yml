@@ -63,8 +63,11 @@ jobs:
           go-version: "1.25"
       - name: Install git-cliff
         run: |
-          curl -sSL https://github.com/orhun/git-cliff/releases/latest/download/git-cliff-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          sudo mv git-cliff /usr/local/bin/
+          VERSION=$(gh release view --repo orhun/git-cliff --json tagName -q .tagName | sed 's/^v//')
+          curl -sSL "https://github.com/orhun/git-cliff/releases/latest/download/git-cliff-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar xz
+          sudo mv git-cliff-${VERSION}/git-cliff /usr/local/bin/
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Generate changelog
         run: git-cliff --latest --strip header -o RELEASE_NOTES.md
       - name: Create GitHub Release
