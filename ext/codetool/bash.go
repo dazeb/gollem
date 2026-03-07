@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -139,19 +140,19 @@ func Bash(opts ...Option) core.Tool {
 				}
 			}
 
-			// Guard: reject foreground calls with timeout >= 100s when background
-			// execution is available. Models frequently ignore system prompt
-			// guidance to use background: true, wasting the entire time budget
-			// blocked on a single bash call. Build and training commands are
-			// exempt since they legitimately need long foreground execution.
+			// Guard: reject foreground calls with explicit timeout >= 100s when
+			// background execution is available. Models frequently ignore system
+			// prompt guidance to use background: true, wasting the entire time
+			// budget blocked on a single bash call. Any command needing 100+
+			// seconds should run in background so the agent can keep working.
+			// Only checks explicitly set timeouts — the default timeout (5m) is
+			// a safety net, not the model's stated intention.
 			if (params.Background == nil || !*params.Background) &&
 				cfg.BackgroundProcessManager != nil &&
-				params.Timeout != nil && *params.Timeout >= 100 &&
-				!isBuildCommand(params.Command) &&
-				!isTrainingCommand(params.Command) {
+				params.Timeout != nil && *params.Timeout >= 100 {
 				return "", &core.ModelRetryError{
 					Message: "BLOCKED: foreground bash call with " +
-						fmt.Sprintf("%d", *params.Timeout) + "s timeout. " +
+						strconv.Itoa(*params.Timeout) + "s timeout. " +
 						"Commands needing 100+ seconds MUST use background execution. " +
 						"Re-call with background: true. " +
 						"Also set keep_alive: true if the process must stay running after your session ends " +

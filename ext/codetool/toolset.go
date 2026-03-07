@@ -35,6 +35,7 @@ func Toolset(opts ...Option) *core.Toolset {
 		Tools: []core.Tool{
 			Bash(opts...),
 			BashStatus(opts...),
+			BashKill(opts...),
 			View(opts...),
 			Write(opts...),
 			Edit(opts...),
@@ -57,6 +58,7 @@ func AllTools(opts ...Option) []core.Tool {
 	return []core.Tool{
 		Bash(opts...),
 		BashStatus(opts...),
+		BashKill(opts...),
 		View(opts...),
 		Write(opts...),
 		Edit(opts...),

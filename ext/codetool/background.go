@@ -485,6 +485,29 @@ func (m *BackgroundProcessManager) FormatAll() string {
 	return strings.Join(parts, "\n\n")
 }
 
+// Kill terminates a specific background process by ID.
+func (m *BackgroundProcessManager) Kill(id string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	proc, ok := m.processes[id]
+	if !ok {
+		return "", fmt.Errorf("unknown background process: %s", id)
+	}
+	if proc.Status != processRunning {
+		status := "completed"
+		if proc.Status == processFailed {
+			status = "failed"
+		}
+		return fmt.Sprintf("Process %s already %s (exit code %d)",
+			id, status, proc.ExitCode), nil
+	}
+	if err := syscall.Kill(-proc.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		return "", fmt.Errorf("failed to kill %s (pid %d): %w", id, proc.PID, err)
+	}
+	return fmt.Sprintf("Killed %s (pid %d)", id, proc.PID), nil
+}
+
 // Cleanup kills all running background processes that are not marked KeepAlive.
 // Called when the agent run ends.
 func (m *BackgroundProcessManager) Cleanup() {

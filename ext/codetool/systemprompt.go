@@ -97,6 +97,8 @@ Common pitfalls to avoid:
 
 - **bash_status**: Check the status of background processes. Use ` + "`id: 'all'`" + ` to list all processes, or a specific ID like ` + "`id: 'bg-1'`" + ` to see output and exit code. Completed processes are also announced automatically between turns.
 
+- **bash_kill**: Kill a background process by ID (e.g. ` + "`id: 'bg-1'`" + `). Use when you need to stop and restart a process with different arguments.
+
 - **grep**: Use specific patterns. Use include to filter by extension (supports {a,b} braces, e.g. '*.{ts,tsx}'). Use files_only to survey which files match.
 
 - **glob**: Use ** for recursive matching and {a,b} for multiple extensions (e.g. '**/*.{ts,tsx}').
