@@ -139,6 +139,28 @@ func Bash(opts ...Option) core.Tool {
 				}
 			}
 
+			// Guard: reject foreground calls with timeout >= 100s when background
+			// execution is available. Models frequently ignore system prompt
+			// guidance to use background: true, wasting the entire time budget
+			// blocked on a single bash call. Build and training commands are
+			// exempt since they legitimately need long foreground execution.
+			if (params.Background == nil || !*params.Background) &&
+				cfg.BackgroundProcessManager != nil &&
+				params.Timeout != nil && *params.Timeout >= 100 &&
+				!isBuildCommand(params.Command) &&
+				!isTrainingCommand(params.Command) {
+				return "", &core.ModelRetryError{
+					Message: "BLOCKED: foreground bash call with " +
+						fmt.Sprintf("%d", *params.Timeout) + "s timeout. " +
+						"Commands needing 100+ seconds MUST use background execution. " +
+						"Re-call with background: true. " +
+						"Also set keep_alive: true if the process must stay running after your session ends " +
+						"(e.g. servers, VMs, daemons that a verifier will check). Example:\n" +
+						"  bash(command=\"your-command\", background=true, keep_alive=true)\n" +
+						"The tool will return a process ID (e.g. bg-1). Use bash_status with that ID to poll for output and readiness.",
+				}
+			}
+
 			// Background execution: start the process and return immediately.
 			if params.Background != nil && *params.Background {
 				if cfg.BackgroundProcessManager == nil {
