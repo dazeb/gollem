@@ -99,7 +99,7 @@ Common pitfalls to avoid:
 
 - **bash**: Set appropriate timeouts for long-running commands. Check exit codes. Do NOT use bash (sed, awk, echo, printf) for file editing — use edit, multi_edit, or write instead. Use ` + "`background: true`" + ` for long-running processes (builds, servers) — returns immediately with a process ID. Add ` + "`keep_alive: true`" + ` for services that must persist after agent exit.
 
-- **bash_status**: Check the status of background processes. Use ` + "`id: 'all'`" + ` to list all processes, or a specific ID like ` + "`id: 'bg-1'`" + ` to see output and exit code. Completed processes are also announced automatically between turns.
+- **bash_status**: Check the status of background processes. Use ` + "`id: 'all'`" + ` to list all processes, or a specific ID like ` + "`id: 'bg-1'`" + ` to see output and exit code. Use it sparingly when you need interim output or readiness; avoid rapid repeated polling because completed processes are announced automatically between turns.
 
 - **bash_kill**: Kill a background process by ID (e.g. ` + "`id: 'bg-1'`" + `). Use when you need to stop and restart a process with different arguments.
 
@@ -189,9 +189,9 @@ Your code will often be tested against time limits. Write efficient solutions:
 ## Long-Running Processes
 
 When dealing with builds or processes that take more than a few minutes:
-1. **Use background execution**: Set ` + "`background: true`" + ` on the bash tool call to run processes in the background. This returns immediately with a process ID. Use ` + "`bash_status`" + ` to check progress. You will receive an automatic notification when the process completes or fails.
+1. **Use background execution**: Set ` + "`background: true`" + ` on the bash tool call to run processes in the background. This returns immediately with a process ID. Use ` + "`bash_status`" + ` sparingly when you need readiness or interim output; otherwise wait for the automatic completion notification.
 2. **Set realistic timeouts**: Use the bash timeout parameter. Don't set a 2-hour timeout and wait — if a build takes that long, it may have failed silently.
-3. **Check for errors early**: After starting a long build in the background, use ` + "`bash_status`" + ` after ~60 seconds to check for early errors. Catching a compilation error in the first minute saves 30 minutes of waiting.
+3. **Check for errors early**: After starting a long build in the background, use ` + "`bash_status`" + ` once after ~60 seconds to check for early errors instead of polling every few seconds.
 4. **Abort stalled builds**: If a build shows no progress for 5+ minutes (no new output in ` + "`bash_status`" + `), something is likely wrong. Kill it and investigate.
 
 ## Service Setup Tasks

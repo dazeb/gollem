@@ -167,6 +167,9 @@ func TestBackgroundProcessManager_CompletionPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "completed") {
 		t.Errorf("expected 'completed' in prompt, got: %q", prompt)
 	}
+	if strings.Contains(prompt, "Last stdout:") || strings.Contains(prompt, "Last stderr:") || strings.Contains(prompt, "Last output:") {
+		t.Errorf("expected compact success notification without output tail, got: %q", prompt)
+	}
 
 	// Second call: should return empty (already notified).
 	prompt2, err := mgr.CompletionPrompt(context.Background(), &core.RunContext{})
@@ -175,6 +178,32 @@ func TestBackgroundProcessManager_CompletionPrompt(t *testing.T) {
 	}
 	if prompt2 != "" {
 		t.Errorf("expected empty on second call, got: %q", prompt2)
+	}
+}
+
+func TestBackgroundProcessManager_CompletionPromptIncludesFailureOutput(t *testing.T) {
+	mgr := NewBackgroundProcessManager()
+	defer mgr.Cleanup()
+
+	_, err := mgr.Start("", "echo nope >&2; exit 7", false, 0)
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	prompt, err := mgr.CompletionPrompt(context.Background(), &core.RunContext{})
+	if err != nil {
+		t.Fatalf("CompletionPrompt error: %v", err)
+	}
+	if !strings.Contains(prompt, "failed") {
+		t.Errorf("expected failed status in prompt, got: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Last stderr:") {
+		t.Errorf("expected stderr tail in failed prompt, got: %q", prompt)
+	}
+	if !strings.Contains(prompt, "nope") {
+		t.Errorf("expected failure output in prompt, got: %q", prompt)
 	}
 }
 

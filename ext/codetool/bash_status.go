@@ -19,6 +19,7 @@ func BashStatus(opts ...Option) core.Tool {
 		"bash_status",
 		"Check the status of background processes started with bash background=true. "+
 			"Returns process state (running/completed/failed), exit code, and recent output. "+
+			"Use it sparingly when you need interim output or readiness. "+
 			"Use id='all' to list all background processes or specify a process ID like 'bg-1'.",
 		func(ctx context.Context, params BashStatusParams) (string, error) {
 			if cfg.BackgroundProcessManager == nil {

@@ -159,7 +159,7 @@ func Bash(opts ...Option) core.Tool {
 						"Also set keep_alive: true if the process must stay running after your session ends " +
 						"(e.g. servers, VMs, daemons that a verifier will check). Example:\n" +
 						"  bash(command=\"your-command\", background=true, keep_alive=true)\n" +
-						"The tool will return a process ID (e.g. bg-1). Use bash_status with that ID to poll for output and readiness.",
+						"The tool will return a process ID (e.g. bg-1). Use bash_status with that ID only when you need interim output or readiness.",
 				}
 			}
 
@@ -814,8 +814,7 @@ func runWithDetach(
 		return detachRunResult{
 			detachedMessage: fmt.Sprintf(
 				"Process moved to background (id: %s, pid: %d).\n"+
-					"Use `bash_status` tool with id '%s' to check progress.\n"+
-					"You will receive a notification when the process completes.",
+					"Use `bash_status` with id '%s' only when you need interim output or readiness.",
 				id,
 				cmd.Process.Pid,
 				id,

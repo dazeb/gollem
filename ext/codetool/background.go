@@ -270,8 +270,7 @@ func (m *BackgroundProcessManager) Start(workDir, command string, keepAlive bool
 	}
 
 	return fmt.Sprintf("Background process started (id: %s, pid: %d).\n"+
-		"Use `bash_status` tool with id '%s' to check progress.\n"+
-		"You will receive a notification when the process completes.", id, proc.PID, id), nil
+		"Use `bash_status` with id '%s' only when you need interim output or readiness.", id, proc.PID, id), nil
 }
 
 // setExitStatus updates a process's status from cmd.Wait's error.
@@ -429,16 +428,18 @@ func (m *BackgroundProcessManager) CompletionPrompt(_ context.Context, _ *core.R
 			elapsed := time.Since(proc.StartedAt).Round(time.Second)
 			msg := fmt.Sprintf("[Background process %s %s (exit code %d) after %s]\nCommand: %s",
 				proc.ID, status, proc.ExitCode, elapsed, proc.Command)
-			if proc.LogPath != "" {
-				if out := tailFile(proc.LogPath, 20); out != "" {
-					msg += "\nLast output:\n" + out
-				}
-			} else {
-				if lastOut := proc.Stdout.LastN(20); lastOut != "" {
-					msg += "\nLast stdout:\n" + lastOut
-				}
-				if lastErr := proc.Stderr.LastN(20); lastErr != "" {
-					msg += "\nLast stderr:\n" + lastErr
+			if proc.Status == processFailed {
+				if proc.LogPath != "" {
+					if out := tailFile(proc.LogPath, 20); out != "" {
+						msg += "\nLast output:\n" + out
+					}
+				} else {
+					if lastOut := proc.Stdout.LastN(20); lastOut != "" {
+						msg += "\nLast stdout:\n" + lastOut
+					}
+					if lastErr := proc.Stderr.LastN(20); lastErr != "" {
+						msg += "\nLast stderr:\n" + lastErr
+					}
 				}
 			}
 			parts = append(parts, msg)
