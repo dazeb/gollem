@@ -49,6 +49,30 @@ type RunContext struct {
 	// Tools that support detach (e.g., bash) select on this channel alongside
 	// their blocking operation. Nil means detach is not supported.
 	Detach <-chan struct{}
+
+	toolStateGetter func() map[string]any
+}
+
+// ToolState returns a snapshot of all exported stateful-tool state currently
+// available for this run context. Nil is returned when no state is available.
+func (rc *RunContext) ToolState() map[string]any {
+	if rc == nil || rc.toolStateGetter == nil {
+		return nil
+	}
+	return rc.toolStateGetter()
+}
+
+// ToolStateByName returns exported state for a single stateful tool.
+func (rc *RunContext) ToolStateByName(name string) (any, bool) {
+	if rc == nil {
+		return nil, false
+	}
+	state := rc.ToolState()
+	if len(state) == 0 {
+		return nil, false
+	}
+	v, ok := state[name]
+	return v, ok
 }
 
 // ToolHandler is the function that executes a tool.

@@ -44,6 +44,9 @@ func (a *Agent[T]) Iter(ctx context.Context, prompt string, opts ...RunOption) *
 		state.messages = make([]ModelMessage, len(cfg.messages))
 		copy(state.messages, cfg.messages)
 	}
+	if len(cfg.toolState) > 0 {
+		a.restoreToolState(cfg.toolState)
+	}
 
 	settings := a.modelSettings
 	if cfg.modelSettings != nil {
@@ -239,16 +242,8 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 			}
 		}
 
-		turnRC := &RunContext{
-			Deps:         ar.deps,
-			Usage:        ar.state.usage,
-			Prompt:       ar.prompt,
-			Messages:     messages,
-			RunStep:      ar.state.runStep,
-			RunID:        ar.state.runID,
-			RunStartTime: ar.state.startTime,
-			EventBus:     ar.agent.eventBus,
-		}
+		turnRC := ar.agent.buildRunContext(ar.state, ar.deps, ar.prompt)
+		turnRC.Messages = messages
 		for _, g := range ar.agent.turnGuardrails {
 			if gErr := g.fn(ar.ctx, turnRC, messages); gErr != nil {
 				guardrailErr := &GuardrailError{
@@ -261,16 +256,8 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 			}
 		}
 
-		modelRC := &RunContext{
-			Deps:         ar.deps,
-			Usage:        ar.state.usage,
-			Prompt:       ar.prompt,
-			Messages:     messages,
-			RunStep:      ar.state.runStep,
-			RunID:        ar.state.runID,
-			RunStartTime: ar.state.startTime,
-			EventBus:     ar.agent.eventBus,
-		}
+		modelRC := ar.agent.buildRunContext(ar.state, ar.deps, ar.prompt)
+		modelRC.Messages = messages
 		ar.agent.fireHook(func(h Hook) {
 			if h.OnModelRequest != nil {
 				h.OnModelRequest(ar.ctx, modelRC, messages)
@@ -347,15 +334,7 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 		}
 
 		if len(ar.agent.runConditions) > 0 {
-			condRC := &RunContext{
-				Deps:         ar.deps,
-				Usage:        ar.state.usage,
-				Prompt:       ar.prompt,
-				Messages:     ar.state.messages,
-				RunStep:      ar.state.runStep,
-				RunID:        ar.state.runID,
-				RunStartTime: ar.state.startTime,
-			}
+			condRC := ar.agent.buildRunContext(ar.state, ar.deps, ar.prompt)
 			for _, cond := range ar.agent.runConditions {
 				if stop, reason := cond(ar.ctx, condRC, resp); stop {
 					if hasText := resp.TextContent() != ""; hasText && ar.agent.outputSchema.AllowsText {

@@ -10,6 +10,44 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
+const planningToolName = "planning"
+
+// PlanFromToolState decodes the exported planning tool state snapshot.
+func PlanFromToolState(state map[string]any) (Plan, bool) {
+	if len(state) == 0 {
+		return Plan{}, false
+	}
+	raw, ok := state[planningToolName]
+	if !ok {
+		return Plan{}, false
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return Plan{}, false
+	}
+	rawTasks, ok := m["tasks"]
+	if !ok {
+		return Plan{}, true
+	}
+	b, err := json.Marshal(rawTasks)
+	if err != nil {
+		return Plan{}, false
+	}
+	var tasks []PlanTask
+	if err := json.Unmarshal(b, &tasks); err != nil {
+		return Plan{}, false
+	}
+	return Plan{Tasks: tasks}, true
+}
+
+// CurrentPlan returns the currently exported planning state for this run context.
+func CurrentPlan(rc *core.RunContext) (Plan, bool) {
+	if rc == nil {
+		return Plan{}, false
+	}
+	return PlanFromToolState(rc.ToolState())
+}
+
 // Plan represents the agent's current plan.
 type Plan struct {
 	Tasks []PlanTask `json:"tasks"`

@@ -12,13 +12,21 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
-type invariantItem struct {
+type InvariantItem struct {
 	ID          string `json:"id" jsonschema:"description=Stable identifier (e.g., I1, I2)"`
 	Description string `json:"description" jsonschema:"description=Constraint text that must be satisfied"`
 	Kind        string `json:"kind,omitempty" jsonschema:"description=hard or soft"`
 	Status      string `json:"status,omitempty" jsonschema:"description=unknown, in_progress, pass, or fail"`
 	Evidence    string `json:"evidence,omitempty" jsonschema:"description=Concrete command/file evidence for status"`
 }
+
+// InvariantsState is the exported state snapshot for the invariants tool.
+type InvariantsState struct {
+	Items     []InvariantItem `json:"items"`
+	Extracted bool            `json:"extracted"`
+}
+
+type invariantItem = InvariantItem
 
 type invariantCommand struct {
 	Command     string          `json:"command" jsonschema:"description=extract|get|summary|update|add"`
@@ -36,6 +44,47 @@ type invariantExtractResponse struct {
 		Description string `json:"description"`
 		Kind        string `json:"kind"`
 	} `json:"items"`
+}
+
+const invariantsToolName = "invariants"
+
+// InvariantsFromToolState decodes the exported invariants tool state snapshot.
+func InvariantsFromToolState(state map[string]any) (InvariantsState, bool) {
+	if len(state) == 0 {
+		return InvariantsState{}, false
+	}
+	raw, ok := state[invariantsToolName]
+	if !ok {
+		return InvariantsState{}, false
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return InvariantsState{}, false
+	}
+
+	var snapshot InvariantsState
+	if extracted, ok := m["extracted"].(bool); ok {
+		snapshot.Extracted = extracted
+	}
+	if itemsRaw, ok := m["items"]; ok {
+		b, err := json.Marshal(itemsRaw)
+		if err != nil {
+			return InvariantsState{}, false
+		}
+		if err := json.Unmarshal(b, &snapshot.Items); err != nil {
+			return InvariantsState{}, false
+		}
+	}
+	snapshot.Items = normalizeInvariantItems(snapshot.Items)
+	return snapshot, true
+}
+
+// CurrentInvariants returns the currently exported invariants state for this run context.
+func CurrentInvariants(rc *core.RunContext) (InvariantsState, bool) {
+	if rc == nil {
+		return InvariantsState{}, false
+	}
+	return InvariantsFromToolState(rc.ToolState())
 }
 
 type invariantState struct {
