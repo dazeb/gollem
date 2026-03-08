@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -287,7 +288,7 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		return nil, fmt.Errorf("openai: SSE read error: %w", err)
 	}
 	if finalResp == nil {
-		return nil, fmt.Errorf("openai: no response.completed event in stream")
+		return nil, errors.New("openai: no response.completed event in stream")
 	}
 	return parseResponsesResponse(finalResp, p.model), nil
 }
