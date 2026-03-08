@@ -124,7 +124,7 @@ func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context) (*respons
 		return p.wsConn, nil
 	}
 
-	wsURL, err := responsesWebSocketURL(p.baseURL)
+	wsURL, err := responsesWebSocketURL(p.baseURL, p.responsesEP())
 	if err != nil {
 		return nil, err
 	}
@@ -137,8 +137,12 @@ func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context) (*respons
 	}
 	headers := make(http.Header)
 	headers.Set("Authorization", "Bearer "+token)
-	if p.chatgptAccountID != "" {
-		headers.Set("ChatGPT-Account-ID", p.chatgptAccountID)
+	if p.hasChatGPTAuth() {
+		if p.chatgptAccountID != "" {
+			headers.Set("ChatGPT-Account-ID", p.chatgptAccountID)
+		}
+		headers.Set("User-Agent", "codex-cli/0.1")
+		headers.Set("originator", "codex_cli_rs")
 	}
 
 	dialer := websocket.Dialer{

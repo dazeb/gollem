@@ -2670,8 +2670,12 @@ func TestChatGPTAuthMode_ForcesResponses(t *testing.T) {
 
 func TestChatGPTAuthMode_BaseURL(t *testing.T) {
 	p := New(WithChatGPTAuth("token", "acct"))
-	if p.baseURL != "https://api.openai.com" {
-		t.Errorf("expected base URL https://api.openai.com, got %q", p.baseURL)
+	if p.baseURL != chatgptBaseURL {
+		t.Errorf("expected base URL %s, got %q", chatgptBaseURL, p.baseURL)
+	}
+	// Should use /responses (not /v1/responses) for ChatGPT backend.
+	if ep := p.responsesEP(); ep != chatgptResponsesEP {
+		t.Errorf("expected responses endpoint %q, got %q", chatgptResponsesEP, ep)
 	}
 }
 

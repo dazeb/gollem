@@ -54,6 +54,10 @@ func TruncateToolOutput(content string, config TruncationConfig) string {
 	for tailStart < len(content) && !utf8.RuneStart(content[tailStart]) {
 		tailStart++
 	}
+	// Re-check for overlap after UTF-8 adjustment.
+	if tailStart <= headEnd {
+		return content
+	}
 
 	droppedTokens := (tailStart - headEnd) / bytesPerToken
 	marker := fmt.Sprintf("\n\n... [truncated %d tokens] ...\n\n", droppedTokens)

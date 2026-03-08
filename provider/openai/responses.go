@@ -1,9 +1,11 @@
 package openai
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -12,7 +14,9 @@ import (
 
 type responsesRequest struct {
 	Model                string              `json:"model"`
+	Instructions         string              `json:"instructions,omitempty"`
 	Store                *bool               `json:"store,omitempty"`
+	Stream               *bool               `json:"stream,omitempty"`
 	Input                []map[string]any    `json:"input"`
 	PreviousResponseID   string              `json:"previous_response_id,omitempty"`
 	Tools                []responsesToolDef  `json:"tools,omitempty"`
@@ -100,7 +104,11 @@ func (p *Provider) requestViaResponses(ctx context.Context, messages []core.Mode
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
 	}
-	if p.isOpenAIEndpoint() {
+	if p.isChatGPTEndpoint() {
+		// ChatGPT backend requires: instructions (top-level), store=false, stream=true.
+		// Extract system messages from input into the instructions field.
+		p.applyChatGPTRequirements(req)
+	} else if p.isOpenAIEndpoint() {
 		req.PromptCacheKey = p.promptCacheKey
 		req.PromptCacheRetention = p.promptCacheRetention
 		req.ServiceTier = p.serviceTier
@@ -122,6 +130,72 @@ func (p *Provider) requestViaResponses(ctx context.Context, messages []core.Mode
 		req.PromptCacheRetention = p.promptCacheRetention
 	}
 	return p.requestViaResponsesWithReq(ctx, req)
+}
+
+// applyChatGPTRequirements modifies a request for the ChatGPT backend:
+// extracts system messages into instructions, forces store=false, stream=true.
+func (p *Provider) applyChatGPTRequirements(req *responsesRequest) {
+	// Extract system messages into the top-level instructions field.
+	// Content can be a plain string or structured [{type, text}] array.
+	var instructions []string
+	var filtered []map[string]any
+	for _, item := range req.Input {
+		if role, _ := item["role"].(string); role == "system" {
+			if text := extractTextContent(item["content"]); text != "" {
+				instructions = append(instructions, text)
+				continue
+			}
+		}
+		filtered = append(filtered, item)
+	}
+	if len(instructions) > 0 {
+		req.Instructions = strings.Join(instructions, "\n\n")
+		req.Input = filtered
+	}
+
+	// ChatGPT backend requires store=false and stream=true.
+	storeFalse := false
+	req.Store = &storeFalse
+	streamTrue := true
+	req.Stream = &streamTrue
+
+	// Don't send fields unsupported by the ChatGPT backend.
+	req.PromptCacheKey = ""
+	req.PromptCacheRetention = ""
+	req.ServiceTier = ""
+	req.MaxOutputTokens = 0
+}
+
+// extractTextContent extracts text from a content field that may be a plain
+// string or a structured array like [{"type": "input_text", "text": "..."}].
+// Handles both []map[string]string (from responsesMessage) and []any (from JSON decode).
+func extractTextContent(content any) string {
+	if s, ok := content.(string); ok {
+		return s
+	}
+	// Handle []map[string]string (built by responsesMessage).
+	if arr, ok := content.([]map[string]string); ok {
+		var texts []string
+		for _, m := range arr {
+			if t := m["text"]; t != "" {
+				texts = append(texts, t)
+			}
+		}
+		return strings.Join(texts, "\n")
+	}
+	// Handle []any (from JSON-decoded content).
+	if arr, ok := content.([]any); ok {
+		var texts []string
+		for _, item := range arr {
+			if m, ok := item.(map[string]any); ok {
+				if t, ok := m["text"].(string); ok && t != "" {
+					texts = append(texts, t)
+				}
+			}
+		}
+		return strings.Join(texts, "\n")
+	}
+	return ""
 }
 
 func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *responsesRequest) (*core.ModelResponse, error) {
@@ -162,11 +236,17 @@ func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRe
 		return nil, fmt.Errorf("openai: failed to marshal responses request: %w", err)
 	}
 
-	resp, err := p.doRequest(ctx, responsesEndpoint, body)
+	resp, err := p.doRequest(ctx, p.responsesEP(), body)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// ChatGPT backend requires stream=true and returns SSE events.
+	// Parse the stream and extract the final response.completed event.
+	if req.Stream != nil && *req.Stream {
+		return p.parseSSEResponses(resp)
+	}
 
 	var apiResp responsesAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
@@ -174,6 +254,42 @@ func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRe
 	}
 
 	return parseResponsesResponse(&apiResp, p.model), nil
+}
+
+// parseSSEResponses reads an SSE stream and returns the final response.
+func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, error) {
+	scanner := bufio.NewScanner(resp.Body)
+	// Allow large lines (SSE events can be big).
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var finalResp *responsesAPIResponse
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var event struct {
+			Type     string               `json:"type"`
+			Response responsesAPIResponse `json:"response,omitempty"`
+		}
+		if json.Unmarshal([]byte(data), &event) != nil {
+			continue
+		}
+		if event.Type == "response.completed" {
+			finalResp = &event.Response
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("openai: SSE read error: %w", err)
+	}
+	if finalResp == nil {
+		return nil, fmt.Errorf("openai: no response.completed event in stream")
+	}
+	return parseResponsesResponse(finalResp, p.model), nil
 }
 
 func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, model string, defaultMaxTokens int) (*responsesRequest, error) {

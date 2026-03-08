@@ -34,10 +34,12 @@ const (
 
 const (
 	defaultBaseURL          = "https://api.openai.com"
+	chatgptBaseURL          = "https://chatgpt.com/backend-api/codex"
 	defaultModel            = GPT4o
 	defaultMaxTokens        = 4096
 	chatCompletionsEndpoint = "/v1/chat/completions"
 	responsesEndpoint       = "/v1/responses"
+	chatgptResponsesEP      = "/responses"
 )
 
 const (
@@ -172,14 +174,15 @@ func WithTextVerbosity(verbosity string) Option {
 
 // WithChatGPTAuth configures the provider for ChatGPT subscription access.
 // This sets the access token and account ID for subscription-based usage,
-// forces the Responses API (required for subscription access), and sets the
-// base URL to the ChatGPT API endpoint.
+// forces the Responses API (required for subscription access), and routes
+// requests to the ChatGPT backend endpoint (chatgpt.com/backend-api/codex)
+// instead of the standard API endpoint.
 func WithChatGPTAuth(accessToken, accountID string) Option {
 	return func(p *Provider) {
 		p.apiKey = accessToken
 		p.chatgptAccountID = accountID
 		p.useResponses = true
-		p.baseURL = "https://api.openai.com"
+		p.baseURL = chatgptBaseURL
 	}
 }
 
@@ -411,6 +414,16 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 	return newStreamedResponse(resp.Body, p.model), nil
 }
 
+// responsesEP returns the Responses API endpoint path. ChatGPT subscription
+// uses /responses (on the chatgpt.com backend), while the standard API uses
+// /v1/responses.
+func (p *Provider) responsesEP() string {
+	if p.hasChatGPTAuth() {
+		return chatgptResponsesEP
+	}
+	return responsesEndpoint
+}
+
 // doRequest sends a single HTTP request and returns the response or a typed
 // error. Retry logic is handled at the model level by modelutil.RetryModel,
 // which uses this error's RetryAfter field for backoff.
@@ -456,14 +469,24 @@ func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte) 
 func (p *Provider) setHeaders(req *http.Request) {
 	token := p.apiKey
 	if p.tokenRefresher != nil {
+		// On error, fall back to the current apiKey. The caller's refresher
+		// is expected to handle transient failures (e.g., return the existing
+		// token). We intentionally do not propagate errors here because
+		// setHeaders is called from many paths that cannot return errors.
 		if refreshed, err := p.tokenRefresher(); err == nil && refreshed != "" {
 			token = refreshed
 		}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	if p.chatgptAccountID != "" {
-		req.Header.Set("ChatGPT-Account-ID", p.chatgptAccountID)
+	if p.hasChatGPTAuth() {
+		if p.chatgptAccountID != "" {
+			req.Header.Set("ChatGPT-Account-ID", p.chatgptAccountID)
+		}
+		// The ChatGPT backend (chatgpt.com) requires a User-Agent and originator
+		// header to pass Cloudflare bot protection. Match the Codex CLI headers.
+		req.Header.Set("User-Agent", "codex-cli/0.1")
+		req.Header.Set("originator", "codex_cli_rs")
 	}
 }
 
@@ -495,7 +518,7 @@ func isTruthy(v string) bool {
 	}
 }
 
-func responsesWebSocketURL(baseURL string) (string, error) {
+func responsesWebSocketURL(baseURL, endpoint string) (string, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("openai: invalid base URL %q: %w", baseURL, err)
@@ -510,7 +533,7 @@ func responsesWebSocketURL(baseURL string) (string, error) {
 	default:
 		return "", fmt.Errorf("openai: unsupported base URL scheme %q for websocket mode", parsed.Scheme)
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + responsesEndpoint
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + endpoint
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String(), nil
@@ -542,6 +565,19 @@ func isChatCompletionsMismatch(err error) bool {
 // official OpenAI API (as opposed to a compatible third-party like xAI).
 func (p *Provider) isOpenAIEndpoint() bool {
 	return strings.Contains(p.baseURL, "openai.com")
+}
+
+// isChatGPTEndpoint reports whether the provider targets the ChatGPT
+// subscription backend (chatgpt.com), which has different request format
+// requirements (instructions, store=false, stream=true, SSE responses).
+func (p *Provider) isChatGPTEndpoint() bool {
+	return strings.Contains(p.baseURL, "chatgpt.com")
+}
+
+// hasChatGPTAuth reports whether ChatGPT subscription auth is configured.
+// Used for setting auth-related headers (Account-ID, User-Agent, originator).
+func (p *Provider) hasChatGPTAuth() bool {
+	return p.chatgptAccountID != "" || p.isChatGPTEndpoint()
 }
 
 // Profile returns the model's capability profile. Vision is supported by

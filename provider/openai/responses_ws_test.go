@@ -19,20 +19,22 @@ import (
 
 func TestResponsesWebSocketURL(t *testing.T) {
 	tests := []struct {
-		base string
-		want string
+		base     string
+		endpoint string
+		want     string
 	}{
-		{base: "https://api.openai.com", want: "wss://api.openai.com/v1/responses"},
-		{base: "http://localhost:8080", want: "ws://localhost:8080/v1/responses"},
-		{base: "https://proxy.example.com/root", want: "wss://proxy.example.com/root/v1/responses"},
+		{base: "https://api.openai.com", endpoint: "/v1/responses", want: "wss://api.openai.com/v1/responses"},
+		{base: "http://localhost:8080", endpoint: "/v1/responses", want: "ws://localhost:8080/v1/responses"},
+		{base: "https://proxy.example.com/root", endpoint: "/v1/responses", want: "wss://proxy.example.com/root/v1/responses"},
+		{base: "https://chatgpt.com/backend-api/codex", endpoint: "/responses", want: "wss://chatgpt.com/backend-api/codex/responses"},
 	}
 	for _, tt := range tests {
-		got, err := responsesWebSocketURL(tt.base)
+		got, err := responsesWebSocketURL(tt.base, tt.endpoint)
 		if err != nil {
-			t.Fatalf("responsesWebSocketURL(%q) failed: %v", tt.base, err)
+			t.Fatalf("responsesWebSocketURL(%q, %q) failed: %v", tt.base, tt.endpoint, err)
 		}
 		if got != tt.want {
-			t.Fatalf("responsesWebSocketURL(%q) = %q, want %q", tt.base, got, tt.want)
+			t.Fatalf("responsesWebSocketURL(%q, %q) = %q, want %q", tt.base, tt.endpoint, got, tt.want)
 		}
 	}
 }

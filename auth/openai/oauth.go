@@ -114,7 +114,7 @@ func loginBrowser(ctx context.Context, config LoginConfig) (*Credentials, error)
 	})
 
 	lc := net.ListenConfig{}
-	listener, err := lc.Listen(ctx, "tcp", ":"+strconv.Itoa(port))
+	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(port))
 	if err != nil {
 		return nil, fmt.Errorf("starting local server on port %d: %w", port, err)
 	}
@@ -342,8 +342,11 @@ func RefreshIfNeeded(creds *Credentials) (*Credentials, error) {
 		"client_id":     {ClientID},
 	}
 
-	// Use background context since RefreshIfNeeded has no ctx parameter.
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tokenEndpoint, strings.NewReader(data.Encode()))
+	// Use a background context with a 30-second timeout to avoid blocking
+	// indefinitely if the auth server is unresponsive.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("creating refresh request: %w", err)
 	}

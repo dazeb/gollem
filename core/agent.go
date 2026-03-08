@@ -1847,28 +1847,40 @@ func (a *Agent[T]) buildInitialRequestWithDynamic(ctx context.Context, prompt st
 	// returns the same content as the previous invocation, reuse the
 	// cached string. This ensures the serialized bytes are identical
 	// across turns, improving provider-level prompt cache hit rates.
-	a.dynamicPromptCacheMu.Lock()
-	if a.dynamicPromptCache == nil {
-		a.dynamicPromptCache = make(map[int]string)
+	//
+	// We call user-provided callbacks outside the mutex to avoid holding
+	// the lock during potentially slow I/O or deadlocking if the callback
+	// tries to access the agent.
+	type dynResult struct {
+		index   int
+		content string
 	}
+	var dynResults []dynResult
 	for i, fn := range a.dynamicSystemPrompts {
 		rc := a.buildRunContext(state, deps, prompt)
 		content, err := fn(ctx, rc)
 		if err != nil {
-			a.dynamicPromptCacheMu.Unlock()
 			return ModelRequest{}, fmt.Errorf("dynamic system prompt failed: %w", err)
 		}
 		if content != "" {
-			if cached, ok := a.dynamicPromptCache[i]; ok && cached == content {
-				content = cached
-			} else {
-				a.dynamicPromptCache[i] = content
-			}
-			parts = append(parts, SystemPromptPart{
-				Content:   content,
-				Timestamp: time.Now(),
-			})
+			dynResults = append(dynResults, dynResult{index: i, content: content})
 		}
+	}
+	a.dynamicPromptCacheMu.Lock()
+	if a.dynamicPromptCache == nil {
+		a.dynamicPromptCache = make(map[int]string)
+	}
+	for _, dr := range dynResults {
+		content := dr.content
+		if cached, ok := a.dynamicPromptCache[dr.index]; ok && cached == content {
+			content = cached
+		} else {
+			a.dynamicPromptCache[dr.index] = content
+		}
+		parts = append(parts, SystemPromptPart{
+			Content:   content,
+			Timestamp: time.Now(),
+		})
 	}
 	a.dynamicPromptCacheMu.Unlock()
 
