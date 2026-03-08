@@ -2,6 +2,7 @@ package deep
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -38,12 +39,42 @@ type planState struct {
 	plan Plan
 }
 
+func (s *planState) ExportState() (any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := make([]PlanTask, len(s.plan.Tasks))
+	copy(cp, s.plan.Tasks)
+	return map[string]any{"tasks": cp}, nil
+}
+
+func (s *planState) RestoreState(state any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	m, ok := state.(map[string]any)
+	if !ok {
+		return errors.New("invalid planning state")
+	}
+	if raw, ok := m["tasks"]; ok {
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return fmt.Errorf("marshal planning state tasks: %w", err)
+		}
+		var tasks []PlanTask
+		if err := json.Unmarshal(b, &tasks); err != nil {
+			return fmt.Errorf("unmarshal planning state tasks: %w", err)
+		}
+		s.plan.Tasks = tasks
+	}
+	return nil
+}
+
 // PlanningTool creates a tool that maintains a persistent todo list.
 // The model uses this tool to plan, track progress, and manage tasks.
 func PlanningTool() core.Tool {
 	state := &planState{}
 
-	return core.FuncTool[planCommand](
+	tool := core.FuncTool[planCommand](
 		"planning",
 		"Manage a persistent todo list. Commands: 'create' (create a new plan with tasks), "+
 			"'add' (add tasks to existing plan), 'update' (update a task's status or notes), "+
@@ -52,6 +83,8 @@ func PlanningTool() core.Tool {
 			return executePlanCommand(state, cmd)
 		},
 	)
+	tool.Stateful = state
+	return tool
 }
 
 func executePlanCommand(state *planState, cmd planCommand) (any, error) {

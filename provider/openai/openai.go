@@ -440,7 +440,7 @@ func responsesWebSocketURL(baseURL string) (string, error) {
 
 func modelNeedsResponsesAPI(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
-	return strings.Contains(m, "codex") || strings.Contains(m, "multi-agent")
+	return strings.Contains(m, "codex") || strings.Contains(m, "multi-agent") || strings.HasPrefix(m, "gpt-5")
 }
 
 func isChatCompletionsMismatch(err error) bool {
@@ -448,12 +448,16 @@ func isChatCompletionsMismatch(err error) bool {
 	if !errors.As(err, &httpErr) {
 		return false
 	}
-	if httpErr.StatusCode != http.StatusNotFound {
-		return false
-	}
 	body := strings.ToLower(httpErr.Body)
 	msg := strings.ToLower(httpErr.Message)
-	return strings.Contains(body, "not a chat model") || strings.Contains(msg, "not a chat model")
+	combined := body + " " + msg
+	if httpErr.StatusCode == http.StatusNotFound {
+		return strings.Contains(combined, "not a chat model")
+	}
+	if httpErr.StatusCode == http.StatusBadRequest {
+		return strings.Contains(combined, "please use /v1/responses")
+	}
+	return false
 }
 
 // isOpenAIEndpoint reports whether the provider is configured for the

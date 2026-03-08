@@ -1360,7 +1360,7 @@ func TestRequestRetriesOnChatMismatchThenPinsResponses(t *testing.T) {
 			responsesHits++
 			resp := responsesAPIResponse{
 				ID:    "resp_123",
-				Model: "gpt-5.2",
+				Model: "future-model",
 				Output: []responsesOutputItem{
 					{
 						Type: "message",
@@ -1386,7 +1386,7 @@ func TestRequestRetriesOnChatMismatchThenPinsResponses(t *testing.T) {
 	p := New(
 		WithAPIKey("test-key"),
 		WithBaseURL(server.URL),
-		WithModel("gpt-5.2"),
+		WithModel("future-model"),
 	)
 
 	for i := range 2 {

@@ -89,6 +89,10 @@ type RunResult[T any] struct {
 	Trace *RunTrace
 	// Cost is the estimated cost when a CostTracker is configured. Nil otherwise.
 	Cost *RunCost
+	// ToolState is the exported state of stateful tools at the end of this run.
+	// Pass this to WithToolState() on the next Run() to restore tool state
+	// across turns in a multi-turn conversation.
+	ToolState map[string]any
 }
 
 // AgentOption configures the agent via functional options.
@@ -295,6 +299,51 @@ func (a *Agent[T]) GetTools() []Tool {
 	return a.tools
 }
 
+// exportToolState collects state from all stateful tools on the agent.
+func (a *Agent[T]) exportToolState() map[string]any {
+	state := make(map[string]any)
+	for _, t := range a.tools {
+		if t.Stateful != nil {
+			if s, err := t.Stateful.ExportState(); err == nil {
+				state[t.Definition.Name] = s
+			}
+		}
+	}
+	for _, ts := range a.toolsets {
+		for _, t := range ts.Tools {
+			if t.Stateful != nil {
+				if s, err := t.Stateful.ExportState(); err == nil {
+					state[t.Definition.Name] = s
+				}
+			}
+		}
+	}
+	if len(state) == 0 {
+		return nil
+	}
+	return state
+}
+
+// restoreToolState restores state to stateful tools from a previous export.
+func (a *Agent[T]) restoreToolState(state map[string]any) {
+	for i := range a.tools {
+		if a.tools[i].Stateful != nil {
+			if s, ok := state[a.tools[i].Definition.Name]; ok {
+				_ = a.tools[i].Stateful.RestoreState(s)
+			}
+		}
+	}
+	for _, ts := range a.toolsets {
+		for i := range ts.Tools {
+			if ts.Tools[i].Stateful != nil {
+				if s, ok := state[ts.Tools[i].Definition.Name]; ok {
+					_ = ts.Tools[i].Stateful.RestoreState(s)
+				}
+			}
+		}
+	}
+}
+
 // RunOption configures a specific run invocation.
 type RunOption func(*runConfig)
 
@@ -307,6 +356,7 @@ type runConfig struct {
 	deferredResults     []DeferredToolResult
 	batchConcurrency    int
 	detach              <-chan struct{}
+	toolState           map[string]any
 }
 
 // WithRunDeps sets dependencies available to tools via RunContext.
@@ -348,6 +398,15 @@ func WithInitialRequestParts(parts ...ModelRequestPart) RunOption {
 		cp := make([]ModelRequestPart, len(parts))
 		copy(cp, parts)
 		c.initialRequestParts = append(c.initialRequestParts, cp...)
+	}
+}
+
+// WithToolState restores stateful tool state from a previous run.
+// Use this with WithMessages to continue multi-turn conversations where
+// tools like planning and invariants need to retain their state.
+func WithToolState(state map[string]any) RunOption {
+	return func(c *runConfig) {
+		c.toolState = state
 	}
 }
 
@@ -408,6 +467,11 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	if len(cfg.messages) > 0 {
 		state.messages = make([]ModelMessage, len(cfg.messages))
 		copy(state.messages, cfg.messages)
+	}
+
+	// Restore stateful tools from a previous run.
+	if len(cfg.toolState) > 0 {
+		a.restoreToolState(cfg.toolState)
 	}
 
 	// Resolve settings.
@@ -969,10 +1033,11 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 						}
 						if parseErr == nil {
 							return &RunResult[T]{
-								Output:   output,
-								Messages: state.messages,
-								Usage:    state.usage,
-								RunID:    state.runID,
+								Output:    output,
+								Messages:  state.messages,
+								Usage:     state.usage,
+								RunID:     state.runID,
+								ToolState: a.exportToolState(),
 							}, nil
 						}
 					}
@@ -1019,10 +1084,11 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 				}
 			}
 			return &RunResult[T]{
-				Output:   result.output,
-				Messages: state.messages,
-				Usage:    state.usage,
-				RunID:    state.runID,
+				Output:    result.output,
+				Messages:  state.messages,
+				Usage:     state.usage,
+				RunID:     state.runID,
+				ToolState: a.exportToolState(),
 			}, nil
 		}
 
