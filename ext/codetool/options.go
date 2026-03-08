@@ -78,6 +78,11 @@ type Config struct {
 	// skips team shutdown and background cleanup; the caller manages
 	// lifecycle via Session.Cleanup().
 	Session *Session
+
+	// BenchmarkMode enables benchmark/eval-specific guards: protected
+	// test file enforcement (/tests/), destructive-command blocking, risky
+	// process-kill blocking, and the benchmark system prompt. Off by default.
+	BenchmarkMode bool
 }
 
 // Option configures coding tools.
@@ -210,4 +215,13 @@ func (s *Session) Cleanup() {
 // for interactive TUIs where the agent is reused across multiple prompts.
 func WithPersistentSession(s *Session) Option {
 	return func(c *Config) { c.Session = s }
+}
+
+// WithBenchmarkMode enables benchmark/eval-specific guards and the benchmark
+// system prompt. When set, edit/write/bash tools block modifications to
+// /tests/ (verifier test directories), broad process-kill patterns are
+// rejected, and the full BenchmarkSystemPrompt is used instead of an empty
+// base prompt.
+func WithBenchmarkMode() Option {
+	return func(c *Config) { c.BenchmarkMode = true }
 }

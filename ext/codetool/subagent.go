@@ -172,12 +172,6 @@ Minimize text output. Every character costs tokens. Don't explain what you're ab
 ## Output First
 Create required output files EARLY — even rough drafts. A wrong answer that exists beats a perfect answer that doesn't. You can iterate.
 
-## NEVER Modify Test, Benchmark, or Verifier Files
-- DO NOT edit files in /tests/, test directories, benchmark scripts, or verifier scripts
-- DO NOT change test parameters, thresholds, data sizes, or expected values
-- If a benchmark times out, optimize YOUR code — not the test
-- The verifier runs the ORIGINAL test files. Any modifications are ignored during evaluation.
-
 ## Error Recovery
 When something fails:
 1. Read the FULL error output — don't skim
@@ -202,8 +196,7 @@ You can call MULTIPLE tools in a single turn. Batch independent operations: read
 
 ## Avoid These Failure Modes
 1. Don't spend 5+ turns exploring without writing any code
-2. Don't modify test files — they define success criteria
-3. Don't ignore error messages — they tell you exactly what's wrong
-4. Don't overthink — try the simple solution first
+2. Don't ignore error messages — they tell you exactly what's wrong
+3. Don't overthink — try the simple solution first
 
 Your response will be returned to the parent agent, so be concise but complete.`

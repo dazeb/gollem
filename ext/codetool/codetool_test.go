@@ -1529,10 +1529,36 @@ func TestIsVerificationCommand(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_RejectsWithoutVerification(t *testing.T) {
-	_, validator := VerificationCheckpoint("")
+	mw, validator := VerificationCheckpoint("")
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
+	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		return &core.ModelResponse{}, nil
+	}
+
+	// Agent edited a file but never ran verification.
+	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "edit",
+					ArgsJSON:   `{"path":"main.go","old_string":"foo","new_string":"bar"}`,
+					ToolCallID: "edit1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "edit",
+					Content:    "Applied edit to main.go",
+					ToolCallID: "edit1",
+				},
+			},
+		},
+	}
+	_, _ = mw(ctx, messages, nil, nil, next)
 
 	_, err := validator(ctx, rc, "I'm done with the task.")
 	if err == nil {
@@ -1544,6 +1570,20 @@ func TestVerificationCheckpoint_RejectsWithoutVerification(t *testing.T) {
 		t.Fatalf("expected ModelRetryError, got %T: %v", err, err)
 	}
 	assertContains(t, retryErr.Message, "verify")
+}
+
+func TestVerificationCheckpoint_AllowsCompletionWithNoMutations(t *testing.T) {
+	// When the agent only chats (no file edits), the validator should
+	// not require verification — there's nothing to verify.
+	_, validator := VerificationCheckpoint("")
+
+	ctx := context.Background()
+	rc := &core.RunContext{}
+
+	_, err := validator(ctx, rc, "Hi!")
+	if err != nil {
+		t.Fatalf("expected no error for chat-only interaction, got: %v", err)
+	}
 }
 
 func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
@@ -1762,6 +1802,20 @@ func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
 				},
 			},
 		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "edit",
+					Content:    "Applied edit to main.go",
+					ToolCallID: "call1",
+				},
+				core.ToolReturnPart{
+					ToolName:   "view",
+					Content:    "file contents...",
+					ToolCallID: "call2",
+				},
+			},
+		},
 	}
 
 	next := func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
@@ -1769,7 +1823,7 @@ func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
 	}
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	// Should still reject — no bash or verification execute_code.
+	// Should still reject — edit was made but no verification (bash/execute_code).
 	rc := &core.RunContext{}
 	_, err := validator(ctx, rc, "Done!")
 	if err == nil {
@@ -2294,7 +2348,7 @@ func TestIsTransientBashFailure(t *testing.T) {
 }
 
 func TestBash_BlocksDestructiveTestCommand(t *testing.T) {
-	tool := Bash()
+	tool := Bash(WithBenchmarkMode())
 	err := callErr(t, tool, `{"command":"echo pwned > /tests/test.sh"}`)
 	if err == nil {
 		t.Fatal("expected error for destructive test command")
@@ -2344,8 +2398,8 @@ func TestIsProtectedTestFile(t *testing.T) {
 }
 
 func TestEdit_ProtectedTestFile(t *testing.T) {
-	// Edit should block modifications to /tests/ files.
-	tool := Edit()
+	// Edit should block modifications to /tests/ files in benchmark mode.
+	tool := Edit(WithBenchmarkMode())
 	err := callErr(t, tool, `{"path":"/tests/test.sh","old_string":"echo hello","new_string":"echo bye"}`)
 	if err == nil {
 		t.Fatal("expected error for protected test file")
@@ -2360,8 +2414,8 @@ func TestEdit_ProtectedTestFile(t *testing.T) {
 }
 
 func TestWrite_ProtectedTestFile(t *testing.T) {
-	// Write should block creation/overwrite of /tests/ files.
-	tool := Write()
+	// Write should block creation/overwrite of /tests/ files in benchmark mode.
+	tool := Write(WithBenchmarkMode())
 	err := callErr(t, tool, `{"path":"/tests/test_new.py","content":"print('hello')"}`)
 	if err == nil {
 		t.Fatal("expected error for protected test file")
@@ -2377,8 +2431,8 @@ func TestWrite_ProtectedTestFile(t *testing.T) {
 
 func TestMultiEdit_ProtectedTestFile(t *testing.T) {
 	dir := setupTestDir(t)
-	// MultiEdit should block if any edit targets /tests/.
-	tool := MultiEdit(WithWorkDir(dir))
+	// MultiEdit should block if any edit targets /tests/ in benchmark mode.
+	tool := MultiEdit(WithWorkDir(dir), WithBenchmarkMode())
 	err := callErr(t, tool, `{"edits":[{"path":"/tests/test.sh","old_string":"echo hello","new_string":"echo bye"}]}`)
 	if err == nil {
 		t.Fatal("expected error for protected test file")
@@ -2397,8 +2451,26 @@ func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Bash calls that are NOT verification (e.g., ls, cat).
+	// Agent edited a file, then ran non-verification bash (ls, cat).
 	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "edit",
+					ArgsJSON:   `{"path":"main.go","old_string":"foo","new_string":"bar"}`,
+					ToolCallID: "edit1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "edit",
+					Content:    "Applied edit to main.go",
+					ToolCallID: "edit1",
+				},
+			},
+		},
 		core.ModelResponse{
 			Parts: []core.ModelResponsePart{
 				core.ToolCallPart{
@@ -2420,7 +2492,7 @@ func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
 	}
 	_, _ = mw(ctx, messages, nil, nil, next)
 
-	// Should reject — bash was used but not for verification.
+	// Should reject — edits were made but bash was not used for verification.
 	rc := &core.RunContext{}
 	_, err := validator(ctx, rc, "All done!")
 	if err == nil {
@@ -2714,9 +2786,27 @@ func TestVerificationCheckpoint_CommandNotFoundNoVerification(t *testing.T) {
 		return &core.ModelResponse{}, nil
 	}
 
-	// Agent tries pytest but it's not found — no prior successful verification.
-	// Should reject with "not verified" (not "last verify failed").
+	// Agent edited a file, then tries pytest but it's not found — no prior
+	// successful verification. Should reject with "not verified" (not "last verify failed").
 	messages := []core.ModelMessage{
+		core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.ToolCallPart{
+					ToolName:   "write",
+					ArgsJSON:   `{"path":"fix.py","content":"print('fix')"}`,
+					ToolCallID: "write1",
+				},
+			},
+		},
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolName:   "write",
+					Content:    "Wrote 12 bytes to fix.py",
+					ToolCallID: "write1",
+				},
+			},
+		},
 		core.ModelResponse{
 			Parts: []core.ModelResponsePart{
 				core.ToolCallPart{

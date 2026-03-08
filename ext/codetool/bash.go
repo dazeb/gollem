@@ -121,22 +121,23 @@ func Bash(opts ...Option) core.Tool {
 				return "", &core.ModelRetryError{Message: "command must not be empty"}
 			}
 
-			// Block bash commands that destructively modify verifier test files.
-			// The edit/write tools already block /tests/ modifications, but
-			// agents can bypass that via bash redirects, rm, sed -i, etc.
-			if isDestructiveTestCommand(params.Command) {
-				return "", &core.ModelRetryError{
-					Message: "BLOCKED: This command would modify files in /tests/ (verifier test directory). " +
-						"The verifier runs the ORIGINAL tests — your changes will be ignored. " +
-						"Fix YOUR code to pass the tests instead.",
+			// Benchmark-only guards: block destructive test-file modifications
+			// and risky process-kill patterns in eval/benchmark environments.
+			if cfg.BenchmarkMode {
+				if isDestructiveTestCommand(params.Command) {
+					return "", &core.ModelRetryError{
+						Message: "BLOCKED: This command would modify files in /tests/ (verifier test directory). " +
+							"The verifier runs the ORIGINAL tests — your changes will be ignored. " +
+							"Fix YOUR code to pass the tests instead.",
+					}
 				}
-			}
-			if isRiskyProcessKillCommand(params.Command) {
-				return "", &core.ModelRetryError{
-					Message: "BLOCKED: broad process-kill patterns are unsafe in benchmark containers " +
-						"(e.g., `pkill -f`, `killall`) and can terminate unrelated processes. " +
-						"Use PID-file lifecycle management instead: start with `nohup ... & echo $! > /tmp/<name>.pid` " +
-						"and stop with `kill $(cat /tmp/<name>.pid)`.",
+				if isRiskyProcessKillCommand(params.Command) {
+					return "", &core.ModelRetryError{
+						Message: "BLOCKED: broad process-kill patterns are unsafe in benchmark containers " +
+							"(e.g., `pkill -f`, `killall`) and can terminate unrelated processes. " +
+							"Use PID-file lifecycle management instead: start with `nohup ... & echo $! > /tmp/<name>.pid` " +
+							"and stop with `kill $(cat /tmp/<name>.pid)`.",
+					}
 				}
 			}
 

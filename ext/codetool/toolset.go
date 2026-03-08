@@ -109,7 +109,12 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	// Build system prompt and tool options.
 	// When code mode is enabled, the agent gets both individual tools AND
 	// an execute_code tool that batches N tool calls per API round-trip.
+	// In benchmark mode, use the full eval-optimized prompt; otherwise
+	// the base prompt is empty — the application provides its own.
 	systemPrompt := SystemPrompt
+	if cfg.BenchmarkMode {
+		systemPrompt = BenchmarkSystemPrompt
+	}
 	if cfg.DisableDelegate {
 		systemPrompt = stripDelegateFromPrompt(systemPrompt)
 	}
@@ -251,9 +256,13 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		reasoningCfg = *cfg.ReasoningSandwichConfig
 	}
 
-	opts := []core.AgentOption[string]{
-		// System prompt with coding agent instructions (+ code mode if enabled).
-		core.WithSystemPrompt[string](systemPrompt),
+	opts := []core.AgentOption[string]{}
+	// System prompt with coding agent instructions (+ code mode if enabled).
+	// Skip when empty — gollem's default SystemPrompt is "" so the application
+	// can provide its own. An empty WithSystemPrompt would create a wasteful
+	// empty system block in the API request.
+	if systemPrompt != "" {
+		opts = append(opts, core.WithSystemPrompt[string](systemPrompt))
 	}
 	opts = append(opts, toolOptions...)
 	opts = append(opts,

@@ -38,7 +38,7 @@ func Write(opts ...Option) core.Tool {
 				path = filepath.Join(cfg.WorkDir, path)
 			}
 
-			if isProtectedTestFile(path) {
+			if cfg.BenchmarkMode && isProtectedTestFile(path) {
 				return "", protectedFileError(params.Path)
 			}
 
@@ -152,10 +152,10 @@ func Write(opts ...Option) core.Tool {
 				for i, line := range lines {
 					if len(line) > 200 {
 						n := 200
-					for n > 0 && !utf8.RuneStart(line[n]) {
-						n--
-					}
-					line = line[:n] + "..."
+						for n > 0 && !utf8.RuneStart(line[n]) {
+							n--
+						}
+						line = line[:n] + "..."
 					}
 					fmt.Fprintf(&preview, "%6d\t%s\n", i+1, line)
 				}

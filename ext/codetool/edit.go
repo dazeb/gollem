@@ -73,7 +73,7 @@ func Edit(opts ...Option) core.Tool {
 				path = filepath.Join(cfg.WorkDir, path)
 			}
 
-			if isProtectedTestFile(path) {
+			if cfg.BenchmarkMode && isProtectedTestFile(path) {
 				return "", protectedFileError(params.Path)
 			}
 
@@ -566,7 +566,7 @@ func MultiEdit(opts ...Option) core.Tool {
 					path = filepath.Join(cfg.WorkDir, path)
 				}
 
-				if isProtectedTestFile(path) {
+				if cfg.BenchmarkMode && isProtectedTestFile(path) {
 					return "", protectedFileError(edit.Path)
 				}
 

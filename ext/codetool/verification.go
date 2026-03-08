@@ -51,9 +51,11 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 	serviceReadinessVerified := false
 	invariantToolAvailable := false
 	invariantToolSeen := false
-	invariantSummarySeen := false
+	invariantStateSeen := false
+	invariantItems := []invariantItem(nil)
 	invariantHardUnresolved := 0
 	invariantHardFail := 0
+	anyMutationMade := false // whether any file-editing tool call succeeded this run
 	stagnationWarned := 0    // consecutive fail level at which we last injected guidance
 	staleTestWarned := false // whether we've warned about not running tests after edits
 	rejectionCount := 0      // total validator rejections; capped to prevent infinite loops
@@ -83,7 +85,8 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		serviceCommandSeenNow := false
 		serviceReadinessVerifiedNow := false
 		invariantToolSeenNow := false
-		invariantSummarySeenNow := false
+		invariantStateSeenNow := false
+		invariantItemsNow := []invariantItem(nil)
 		invariantHardUnresolvedNow := 0
 		invariantHardFailNow := 0
 		invariantToolAvailableNow := hasTool(params, "invariants")
@@ -180,6 +183,7 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 							content := toolReturnContentString(tr.Content)
 							if mutationToolReturnSucceeded(tr.ToolName, content) {
 								editsAfterLastVerify++
+								anyMutationMade = true
 							}
 							delete(pendingMutationCallIDs, tr.ToolCallID)
 						}
@@ -192,10 +196,15 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 						}
 						if _, ok := pendingInvariantCallIDs[tr.ToolCallID]; ok {
 							content := toolReturnContentString(tr.Content)
-							if unresolved, fail, countsOK := extractInvariantGateCounts(content); countsOK {
-								invariantSummarySeenNow = true
-								invariantHardUnresolvedNow = unresolved
-								invariantHardFailNow = fail
+							if gateState, stateOK := extractInvariantGateState(content); stateOK {
+								invariantStateSeenNow = true
+								if gateState.hasItems {
+									invariantItemsNow = cloneInvariantItems(gateState.items)
+								}
+								if gateState.hasCounts {
+									invariantHardUnresolvedNow = gateState.hardUnresolved
+									invariantHardFailNow = gateState.hardFail
+								}
 							}
 							delete(pendingInvariantCallIDs, tr.ToolCallID)
 						}
@@ -214,7 +223,8 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		serviceReadinessVerified = serviceReadinessVerifiedNow
 		invariantToolAvailable = invariantToolAvailableNow
 		invariantToolSeen = invariantToolSeenNow
-		invariantSummarySeen = invariantSummarySeenNow
+		invariantStateSeen = invariantStateSeenNow
+		invariantItems = cloneInvariantItems(invariantItemsNow)
 		invariantHardUnresolved = invariantHardUnresolvedNow
 		invariantHardFail = invariantHardFailNow
 
@@ -326,6 +336,7 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 	validator := func(_ context.Context, _ *core.RunContext, output string) (string, error) {
 		mu.Lock()
 		v := verified
+		mutated := anyMutationMade
 		lvf := lastVerifyFailed
 		lvs := lastVerifySummary
 		eslv := editsSinceLastVerify
@@ -333,7 +344,8 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		svcReady := serviceReadinessVerified
 		invAvailable := invariantToolAvailable
 		invSeen := invariantToolSeen
-		invSummarySeen := invariantSummarySeen
+		invStateSeen := invariantStateSeen
+		invItems := cloneInvariantItems(invariantItems)
 		invHardUnresolved := invariantHardUnresolved
 		invHardFail := invariantHardFail
 		rc := rejectionCount
@@ -347,7 +359,7 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 			return output, nil
 		}
 
-		if !v {
+		if !v && mutated {
 			return reject(output, "not-verified",
 				"STOP. You MUST verify your changes before completing the task. "+
 					"Run the relevant test suite (e.g., `go test ./...`, `pytest`, `npm test`) "+
@@ -390,15 +402,20 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 					"STOP. You must run the `invariants` tool before completion. "+
 						"Run `invariants` command `extract`, then verify/update statuses with evidence.")
 			}
-			if !invSummarySeen {
-				return reject(output, "invariants-no-summary",
-					"STOP. Invariant summary is missing. Run `invariants` command `summary` after your latest verification run.")
+			if !invStateSeen {
+				return reject(output, "invariants-no-state",
+					"STOP. Invariant state is missing. Run the `invariants` tool (`get`, `summary`, or `update`) after your latest invariant changes so the checklist can be verified.")
 			}
 			if invHardFail > 0 || invHardUnresolved > 0 {
-				return reject(output, "invariants-failing", fmt.Sprintf(
+				msg := fmt.Sprintf(
 					"STOP. Hard invariants are not all PASS (hard_fail=%d, hard_unresolved=%d). "+
 						"Fix remaining violations, update invariant statuses with evidence, and re-run verification.",
-					invHardFail, invHardUnresolved))
+					invHardFail, invHardUnresolved,
+				)
+				if details := formatPendingHardInvariants(invItems, 4); details != "" {
+					msg += "\n" + details
+				}
+				return reject(output, "invariants-failing", msg)
 			}
 		}
 
@@ -593,26 +610,160 @@ func isMutatingLSPCall(argsJSON string) bool {
 	}
 }
 
+// invariantGateState captures the most recent checklist view parsed from an
+// invariants tool result. Some results include full items, while others may only
+// expose aggregate counts.
+type invariantGateState struct {
+	items          []invariantItem
+	hardUnresolved int
+	hardFail       int
+	hasItems       bool
+	hasCounts      bool
+}
+
+func cloneInvariantItems(items []invariantItem) []invariantItem {
+	if items == nil {
+		return nil
+	}
+	cp := make([]invariantItem, len(items))
+	copy(cp, items)
+	return cp
+}
+
 // extractInvariantGateCounts parses the JSON output of the invariants tool to
 // read hard_unresolved and hard_fail counts. Returns ok=false (silently) if the
-// content isn't the expected shape — this is intentional so non-summary tool
-// returns (e.g., "extract" or "add") don't trigger false gate checks.
+// content isn't the expected shape. Prefer extractInvariantGateState when item-
+// level detail is needed.
 func extractInvariantGateCounts(content string) (hardUnresolved int, hardFail int, ok bool) {
+	gateState, ok := extractInvariantGateState(content)
+	if !ok || !gateState.hasCounts {
+		return 0, 0, false
+	}
+	return gateState.hardUnresolved, gateState.hardFail, true
+}
+
+func extractInvariantGateState(content string) (invariantGateState, bool) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &payload); err != nil {
-		return 0, 0, false
+		return invariantGateState{}, false
 	}
+
+	state := invariantGateState{}
+	if rawItems, ok := payload["items"]; ok {
+		b, err := json.Marshal(rawItems)
+		if err == nil {
+			var items []invariantItem
+			if err := json.Unmarshal(b, &items); err == nil {
+				state.items = normalizeInvariantGateItems(items)
+				state.hasItems = true
+				state.hardUnresolved, state.hardFail = countPendingHardInvariants(state.items)
+				state.hasCounts = true
+			}
+		}
+	}
+
 	unresolvedAny, unresolvedOK := payload["hard_unresolved"]
 	failAny, failOK := payload["hard_fail"]
-	if !unresolvedOK || !failOK {
-		return 0, 0, false
+	if unresolvedOK && failOK {
+		unresolved, unresolvedConv := anyToInt(unresolvedAny)
+		fail, failConv := anyToInt(failAny)
+		if unresolvedConv && failConv {
+			state.hardUnresolved = unresolved
+			state.hardFail = fail
+			state.hasCounts = true
+		}
 	}
-	unresolved, unresolvedConv := anyToInt(unresolvedAny)
-	fail, failConv := anyToInt(failAny)
-	if !unresolvedConv || !failConv {
-		return 0, 0, false
+
+	if !state.hasItems && !state.hasCounts {
+		return invariantGateState{}, false
 	}
-	return unresolved, fail, true
+	return state, true
+}
+
+func normalizeInvariantGateItems(items []invariantItem) []invariantItem {
+	normalized := make([]invariantItem, 0, len(items))
+	for _, item := range items {
+		normalized = append(normalized, invariantItem{
+			ID:          strings.TrimSpace(item.ID),
+			Description: strings.TrimSpace(item.Description),
+			Kind:        normalizeInvariantKind(item.Kind),
+			Status:      normalizeInvariantStatusOrDefault(item.Status),
+			Evidence:    strings.TrimSpace(item.Evidence),
+		})
+	}
+	return normalized
+}
+
+func countPendingHardInvariants(items []invariantItem) (hardUnresolved int, hardFail int) {
+	for _, item := range items {
+		if normalizeInvariantKind(item.Kind) != "hard" {
+			continue
+		}
+		switch normalizeInvariantStatusOrDefault(item.Status) {
+		case "pass":
+			continue
+		case "fail":
+			hardFail++
+		default:
+			hardUnresolved++
+		}
+	}
+	return hardUnresolved, hardFail
+}
+
+func pendingHardInvariantItems(items []invariantItem) []invariantItem {
+	pending := make([]invariantItem, 0, len(items))
+	for _, item := range items {
+		if normalizeInvariantKind(item.Kind) != "hard" {
+			continue
+		}
+		if normalizeInvariantStatusOrDefault(item.Status) == "pass" {
+			continue
+		}
+		pending = append(pending, item)
+	}
+	return pending
+}
+
+func formatPendingHardInvariants(items []invariantItem, maxShow int) string {
+	pending := pendingHardInvariantItems(items)
+	if len(pending) == 0 {
+		return ""
+	}
+	if maxShow <= 0 {
+		maxShow = 3
+	}
+	if maxShow > len(pending) {
+		maxShow = len(pending)
+	}
+
+	var b strings.Builder
+	b.WriteString("Pending hard invariants:\n")
+	for i := 0; i < maxShow; i++ {
+		item := pending[i]
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			id = fmt.Sprintf("I%d", i+1)
+		}
+		status := normalizeInvariantStatusOrDefault(item.Status)
+		description := strings.TrimSpace(item.Description)
+		if description == "" {
+			description = "(missing description)"
+		}
+		fmt.Fprintf(&b, "- %s [hard/%s] %q", id, status, description)
+		if evidence := strings.TrimSpace(item.Evidence); evidence != "" {
+			fmt.Fprintf(&b, " — evidence: %s", evidence)
+		} else {
+			b.WriteString(" — no evidence")
+		}
+		b.WriteByte('\n')
+	}
+	if remaining := len(pending) - maxShow; remaining > 0 {
+		fmt.Fprintf(&b, "- +%d more pending hard invariants", remaining)
+	} else {
+		return strings.TrimRight(b.String(), "\n")
+	}
+	return b.String()
 }
 
 func anyToInt(v any) (int, bool) {

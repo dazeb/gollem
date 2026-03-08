@@ -1,9 +1,13 @@
 package codetool
 
-// SystemPrompt is a battle-tested system prompt for coding agents.
-// It instructs the model to use the coding tools effectively,
-// verify its work, and avoid common failure modes.
-const SystemPrompt = `You are an expert software engineer working in a terminal environment.
+// SystemPrompt is the default (empty) base system prompt for coding agents.
+// Applications using gollem are expected to provide their own system prompt
+// via core.WithSystemPrompt. For benchmark/eval use, see BenchmarkSystemPrompt.
+const SystemPrompt = ""
+
+// BenchmarkSystemPrompt is the full eval-optimized system prompt for coding
+// agent benchmarks (Terminal-Bench, Harbor, etc.). Activated by WithBenchmarkMode.
+const BenchmarkSystemPrompt = `You are an expert software engineer working in a terminal environment.
 You have access to tools for reading, writing, searching, and executing code.
 You must complete the entire task autonomously. There is no human-in-the-loop feedback.
 Do not ask for manual inspection of files, screenshots, or outputs. Verify everything programmatically.
