@@ -50,9 +50,8 @@ func TestTruncateToolOutput_Empty(t *testing.T) {
 func TestTruncateToolOutput_LineBreaks(t *testing.T) {
 	// Create content with clear line boundaries.
 	var lines []string
-	for i := range 200 {
+	for range 200 {
 		lines = append(lines, strings.Repeat("x", 20)+"\n")
-		_ = i
 	}
 	content := strings.Join(lines, "")
 	config := TruncationConfig{MaxTokens: 100} // 400 bytes budget
