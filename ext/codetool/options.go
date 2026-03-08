@@ -73,6 +73,11 @@ type Config struct {
 	// by Toolset/AgentOptions. Share a single manager across tools so that
 	// bash_status can query processes started by bash.
 	BackgroundProcessManager *BackgroundProcessManager
+
+	// Session, when non-nil, enables persistent session mode. OnRunEnd
+	// skips team shutdown and background cleanup; the caller manages
+	// lifecycle via Session.Cleanup().
+	Session *Session
 }
 
 // Option configures coding tools.
@@ -181,4 +186,28 @@ func WithDisableDelegate() Option {
 // set, Toolset and AgentOptions create one automatically.
 func WithBackgroundProcessManager(m *BackgroundProcessManager) Option {
 	return func(c *Config) { c.BackgroundProcessManager = m }
+}
+
+// Session tracks resources for a persistent interactive session where
+// multiple Run() calls share the same agent. Created by the caller and
+// passed via WithPersistentSession. AgentOptions populates its cleanup
+// function so the caller can trigger resource release (e.g., on /clear).
+type Session struct {
+	cleanup func()
+}
+
+// Cleanup releases session resources (team shutdown, background process
+// cleanup). Safe to call multiple times or on a nil receiver.
+func (s *Session) Cleanup() {
+	if s != nil && s.cleanup != nil {
+		s.cleanup()
+	}
+}
+
+// WithPersistentSession enables persistent session mode. When set,
+// AgentOptions skips team shutdown and background process cleanup in
+// OnRunEnd, deferring it to the caller via Session.Cleanup(). Use this
+// for interactive TUIs where the agent is reused across multiple prompts.
+func WithPersistentSession(s *Session) Option {
+	return func(c *Config) { c.Session = s }
 }

@@ -124,8 +124,14 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// the agent run ends, and inject completion notifications between turns.
 		// These are agent-level (not toolset-level) so they fire once for the
 		// top-level agent, not per-worker in team mode.
+		//
+		// In persistent session mode, cleanup is deferred to the caller via
+		// Session.Cleanup() so that resources survive across Run() calls.
 		core.WithHooks[string](core.Hook{
 			OnRunEnd: func(_ context.Context, _ *core.RunContext, _ []core.ModelMessage, _ error) {
+				if cfg.Session != nil {
+					return // persistent session — caller manages cleanup
+				}
 				// In team mode, shut down workers before cleaning up the
 				// leader's background processes. This ensures per-worker
 				// cleanup hooks fire first (each worker has its own
@@ -142,21 +148,6 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		}),
 		core.WithDynamicSystemPrompt[string](cfg.BackgroundProcessManager.CompletionPrompt),
 	}
-	if cfg.Runner != nil {
-		cm := monty.New(cfg.Runner, AllTools(toolOpts...))
-		toolOptions = append(toolOptions, core.WithTools[string](cm.Tool()))
-		systemPrompt += "\n\n" + cm.SystemPrompt()
-	}
-	toolOptions = append(toolOptions,
-		core.WithToolsPrepare[string](disableExecuteCodeOnImportFailuresPrepare()),
-	)
-
-	// Planning tool: persistent task list for tracking progress on multi-step work.
-	toolOptions = append(toolOptions, core.WithTools[string](deep.PlanningTool()))
-	if cfg.Model != nil {
-		toolOptions = append(toolOptions, core.WithTools[string](InvariantsTool(cfg.Model)))
-	}
-
 	// Default personality generation: when a model is available but no
 	// explicit generator was provided, auto-create a cached generator.
 	// Append to toolOpts so it flows through to SubAgentTool as well.
@@ -167,15 +158,24 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		toolOpts = append(toolOpts, WithPersonalityGenerator(cfg.PersonalityGenerator))
 	}
 
+	// Collect all extra tools (beyond the base toolset) so they can be
+	// registered with monty's execute_code as well as the agent.
+	var extraTools []core.Tool
+
+	// Planning tool: persistent task list for tracking progress on multi-step work.
+	extraTools = append(extraTools, deep.PlanningTool())
+	if cfg.Model != nil {
+		extraTools = append(extraTools, InvariantsTool(cfg.Model))
+	}
+
 	// SubAgent delegation: available unless explicitly disabled.
-	// Even in team mode, delegate is useful for one-shot focused work.
 	if cfg.Model != nil && !cfg.DisableDelegate {
-		toolOptions = append(toolOptions, core.WithTools[string](SubAgentTool(cfg.Model, toolOpts...)))
+		extraTools = append(extraTools, SubAgentTool(cfg.Model, toolOpts...))
 	}
 
 	// open_image: available when the model supports vision.
 	if cfg.Model != nil && modelutil.GetProfile(cfg.Model).SupportsVision {
-		toolOptions = append(toolOptions, core.WithTools[string](OpenImage(toolOpts...)))
+		extraTools = append(extraTools, OpenImage(toolOpts...))
 		systemPrompt += "\n\n" + openImageHint
 	}
 
@@ -209,10 +209,41 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		teamRef = t
 		// Register the leader so workers can send messages to it.
 		teamLeaderMW = t.RegisterLeader("leader")
-		toolOptions = append(toolOptions,
-			core.WithTools[string](team.LeaderTools(t)...),
-		)
+		extraTools = append(extraTools, team.LeaderTools(t)...)
 		systemPrompt += "\n\n" + team.LeaderSystemPrompt("coding-team")
+	}
+
+	// Register all extra tools with the agent.
+	if len(extraTools) > 0 {
+		toolOptions = append(toolOptions, core.WithTools[string](extraTools...))
+	}
+
+	// Code mode: execute_code batches N tool calls into one Python script.
+	// Created last so it sees ALL available tools (base toolset + extras).
+	if cfg.Runner != nil {
+		montyTools := append(AllTools(toolOpts...), extraTools...)
+		cm := monty.New(cfg.Runner, montyTools)
+		toolOptions = append(toolOptions, core.WithTools[string](cm.Tool()))
+		systemPrompt += "\n\n" + cm.SystemPrompt()
+	}
+	toolOptions = append(toolOptions,
+		core.WithToolsPrepare[string](disableExecuteCodeOnImportFailuresPrepare()),
+	)
+
+	// Populate session cleanup for persistent session mode.
+	if cfg.Session != nil {
+		bgm := cfg.BackgroundProcessManager
+		tr := teamRef
+		cfg.Session.cleanup = func() {
+			if tr != nil {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := tr.Shutdown(shutdownCtx); err != nil {
+					fmt.Fprintf(os.Stderr, "[gollem] session cleanup: team shutdown error: %v\n", err)
+				}
+			}
+			bgm.Cleanup()
+		}
 	}
 
 	reasoningCfg := DefaultReasoningSandwichConfig()
