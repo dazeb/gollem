@@ -74,6 +74,8 @@ type Agent[T any] struct {
 	toolChoice                 *ToolChoice
 	toolChoiceAutoReset        bool
 	truncationConfig           *TruncationConfig
+	dynamicPromptCache         map[int]string
+	dynamicPromptCacheMu       sync.Mutex
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -1841,20 +1843,34 @@ func (a *Agent[T]) buildInitialRequestWithDynamic(ctx context.Context, prompt st
 		})
 	}
 
-	// Add dynamic system prompts.
-	for _, fn := range a.dynamicSystemPrompts {
+	// Add dynamic system prompts with caching. When a dynamic prompt
+	// returns the same content as the previous invocation, reuse the
+	// cached string. This ensures the serialized bytes are identical
+	// across turns, improving provider-level prompt cache hit rates.
+	a.dynamicPromptCacheMu.Lock()
+	if a.dynamicPromptCache == nil {
+		a.dynamicPromptCache = make(map[int]string)
+	}
+	for i, fn := range a.dynamicSystemPrompts {
 		rc := a.buildRunContext(state, deps, prompt)
 		content, err := fn(ctx, rc)
 		if err != nil {
+			a.dynamicPromptCacheMu.Unlock()
 			return ModelRequest{}, fmt.Errorf("dynamic system prompt failed: %w", err)
 		}
 		if content != "" {
+			if cached, ok := a.dynamicPromptCache[i]; ok && cached == content {
+				content = cached
+			} else {
+				a.dynamicPromptCache[i] = content
+			}
 			parts = append(parts, SystemPromptPart{
 				Content:   content,
 				Timestamp: time.Now(),
 			})
 		}
 	}
+	a.dynamicPromptCacheMu.Unlock()
 
 	// Retrieve knowledge base context.
 	if a.knowledgeBase != nil {

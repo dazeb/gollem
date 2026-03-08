@@ -1299,3 +1299,134 @@ func TestToolOutputTruncation_StructuredContent(t *testing.T) {
 		}
 	}
 }
+
+func TestDynamicPromptCaching_Unchanged(t *testing.T) {
+	// Dynamic prompt returns the same value across two Run() calls.
+	model := NewTestModel(
+		TextResponse("first"),
+		TextResponse("second"),
+	)
+
+	callCount := 0
+	agent := NewAgent[string](model,
+		WithDynamicSystemPrompt[string](func(_ context.Context, _ *RunContext) (string, error) {
+			callCount++
+			return "static dynamic prompt", nil
+		}),
+	)
+
+	result1, err := agent.Run(context.Background(), "prompt 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result1.Output != "first" {
+		t.Errorf("expected 'first', got %q", result1.Output)
+	}
+
+	result2, err := agent.Run(context.Background(), "prompt 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result2.Output != "second" {
+		t.Errorf("expected 'second', got %q", result2.Output)
+	}
+
+	// The dynamic prompt func should have been called twice (once per Run).
+	if callCount != 2 {
+		t.Errorf("expected 2 calls to dynamic prompt func, got %d", callCount)
+	}
+
+	// Both runs should have the system prompt.
+	for i, msgs := range [][]ModelMessage{result1.Messages, result2.Messages} {
+		found := false
+		for _, msg := range msgs {
+			req, ok := msg.(ModelRequest)
+			if !ok {
+				continue
+			}
+			for _, part := range req.Parts {
+				if sp, ok := part.(SystemPromptPart); ok && sp.Content == "static dynamic prompt" {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Errorf("run %d: expected dynamic system prompt in messages", i+1)
+		}
+	}
+}
+
+func TestDynamicPromptCaching_Changed(t *testing.T) {
+	// Dynamic prompt returns different values across Run() calls.
+	model := NewTestModel(
+		TextResponse("first"),
+		TextResponse("second"),
+	)
+
+	counter := 0
+	agent := NewAgent[string](model,
+		WithDynamicSystemPrompt[string](func(_ context.Context, _ *RunContext) (string, error) {
+			counter++
+			return fmt.Sprintf("prompt version %d", counter), nil
+		}),
+	)
+
+	result1, err := agent.Run(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result2, err := agent.Run(context.Background(), "p2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify each run got the correct version.
+	getSystemPrompt := func(msgs []ModelMessage) string {
+		for _, msg := range msgs {
+			req, ok := msg.(ModelRequest)
+			if !ok {
+				continue
+			}
+			for _, part := range req.Parts {
+				if sp, ok := part.(SystemPromptPart); ok && strings.HasPrefix(sp.Content, "prompt version") {
+					return sp.Content
+				}
+			}
+		}
+		return ""
+	}
+
+	if sp := getSystemPrompt(result1.Messages); sp != "prompt version 1" {
+		t.Errorf("run 1: expected 'prompt version 1', got %q", sp)
+	}
+	if sp := getSystemPrompt(result2.Messages); sp != "prompt version 2" {
+		t.Errorf("run 2: expected 'prompt version 2', got %q", sp)
+	}
+}
+
+func TestDynamicPromptCaching_Multiple(t *testing.T) {
+	// Multiple dynamic prompts, each cached independently.
+	model := NewTestModel(TextResponse("done"))
+
+	callA, callB := 0, 0
+	agent := NewAgent[string](model,
+		WithDynamicSystemPrompt[string](func(_ context.Context, _ *RunContext) (string, error) {
+			callA++
+			return "prompt A", nil
+		}),
+		WithDynamicSystemPrompt[string](func(_ context.Context, _ *RunContext) (string, error) {
+			callB++
+			return "prompt B", nil
+		}),
+	)
+
+	_, err := agent.Run(context.Background(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if callA != 1 || callB != 1 {
+		t.Errorf("expected 1 call each, got callA=%d callB=%d", callA, callB)
+	}
+}
