@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,8 +44,8 @@ const (
 
 // Credentials stores OAuth tokens for ChatGPT subscription access.
 type Credentials struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
+	AccessToken  string    `json:"access_token"`  //nolint:gosec // Not a hardcoded credential.
+	RefreshToken string    `json:"refresh_token"` //nolint:gosec // Not a hardcoded credential.
 	IDToken      string    `json:"id_token"`
 	AccountID    string    `json:"account_id"`
 	AuthMode     string    `json:"auth_mode"` // "chatgpt" or "api"
@@ -90,7 +92,7 @@ func loginBrowser(ctx context.Context, config LoginConfig) (*Credentials, error)
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 
-	redirectURI := fmt.Sprintf("http://localhost:%d/auth/callback", port)
+	redirectURI := "http://localhost:" + strconv.Itoa(port) + "/auth/callback"
 
 	// Start local server to receive the callback.
 	mux := http.NewServeMux()
@@ -103,7 +105,7 @@ func loginBrowser(ctx context.Context, config LoginConfig) (*Credentials, error)
 		}
 		code := r.URL.Query().Get("code")
 		if code == "" {
-			errCh <- fmt.Errorf("no authorization code received")
+			errCh <- errors.New("no authorization code received")
 			http.Error(w, "No code", http.StatusBadRequest)
 			return
 		}
@@ -111,12 +113,16 @@ func loginBrowser(ctx context.Context, config LoginConfig) (*Credentials, error)
 		codeCh <- code
 	})
 
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(ctx, "tcp", ":"+strconv.Itoa(port))
 	if err != nil {
 		return nil, fmt.Errorf("starting local server on port %d: %w", port, err)
 	}
 
-	server := &http.Server{Handler: mux}
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	go func() {
 		_ = server.Serve(listener)
 	}()
@@ -161,10 +167,17 @@ func loginBrowser(ctx context.Context, config LoginConfig) (*Credentials, error)
 // loginDeviceCode performs the device code OAuth flow.
 func loginDeviceCode(ctx context.Context) (*Credentials, error) {
 	// Request a user code.
-	resp, err := http.PostForm(deviceUserCodeEndpoint, url.Values{
+	data := url.Values{
 		"client_id": {ClientID},
 		"scope":     {oauthScopes},
-	})
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, deviceUserCodeEndpoint, strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating device code request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("requesting device code: %w", err)
 	}
@@ -205,10 +218,17 @@ func loginDeviceCode(ctx context.Context) (*Credentials, error) {
 		case <-time.After(interval):
 		}
 
-		tokenResp, err := http.PostForm(deviceTokenEndpoint, url.Values{
+		pollData := url.Values{
 			"client_id":   {ClientID},
 			"device_code": {deviceResp.DeviceCode},
-		})
+		}
+		pollReq, err := http.NewRequestWithContext(ctx, http.MethodPost, deviceTokenEndpoint, strings.NewReader(pollData.Encode()))
+		if err != nil {
+			continue
+		}
+		pollReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		tokenResp, err := http.DefaultClient.Do(pollReq)
 		if err != nil {
 			continue
 		}
@@ -234,11 +254,11 @@ func loginDeviceCode(ctx context.Context) (*Credentials, error) {
 		}
 
 		if result.AuthorizationCode != "" {
-			return exchangeCode(ctx, result.AuthorizationCode, "http://localhost:"+fmt.Sprint(defaultPort)+"/auth/callback", result.CodeVerifier)
+			return exchangeCode(ctx, result.AuthorizationCode, "http://localhost:"+strconv.Itoa(defaultPort)+"/auth/callback", result.CodeVerifier)
 		}
 	}
 
-	return nil, fmt.Errorf("device authorization timed out")
+	return nil, errors.New("device authorization timed out")
 }
 
 // exchangeCode exchanges an authorization code for tokens.
@@ -251,7 +271,7 @@ func exchangeCode(ctx context.Context, code, redirectURI, codeVerifier string) (
 		"code_verifier": {codeVerifier},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", tokenEndpoint, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("creating token request: %w", err)
 	}
@@ -273,8 +293,8 @@ func exchangeCode(ctx context.Context, code, redirectURI, codeVerifier string) (
 	}
 
 	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
+		AccessToken  string `json:"access_token"`  //nolint:gosec // JSON field name, not a credential.
+		RefreshToken string `json:"refresh_token"` //nolint:gosec // JSON field name, not a credential.
 		IDToken      string `json:"id_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
@@ -313,7 +333,14 @@ func RefreshIfNeeded(creds *Credentials) (*Credentials, error) {
 		"client_id":     {ClientID},
 	}
 
-	resp, err := http.PostForm(tokenEndpoint, data)
+	// Use background context since RefreshIfNeeded has no ctx parameter.
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, tokenEndpoint, strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("refreshing token: %w", err)
 	}
@@ -329,8 +356,8 @@ func RefreshIfNeeded(creds *Credentials) (*Credentials, error) {
 	}
 
 	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
+		AccessToken  string `json:"access_token"`  //nolint:gosec // JSON field name, not a credential.
+		RefreshToken string `json:"refresh_token"` //nolint:gosec // JSON field name, not a credential.
 		IDToken      string `json:"id_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}

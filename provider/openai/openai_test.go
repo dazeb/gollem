@@ -2719,6 +2719,6 @@ func TestNewSession_PreservesChatGPTAuth(t *testing.T) {
 		t.Errorf("expected chatgptAccountID preserved, got %q", session.chatgptAccountID)
 	}
 	if session.tokenRefresher != nil {
-		// No refresher set, should be nil.
+		t.Error("expected nil tokenRefresher when none was set")
 	}
 }
