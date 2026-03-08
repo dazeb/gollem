@@ -28,11 +28,13 @@ type responsesRequest struct {
 }
 
 type responsesReasoning struct {
-	Effort string `json:"effort,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Summary string `json:"summary,omitempty"` // "auto", "concise", "detailed"
 }
 
 type responsesText struct {
-	Format *responsesTextFormat `json:"format,omitempty"`
+	Format    *responsesTextFormat `json:"format,omitempty"`
+	Verbosity string               `json:"verbosity,omitempty"` // "low", "medium", "high"
 }
 
 type responsesTextFormat struct {
@@ -102,6 +104,17 @@ func (p *Provider) requestViaResponses(ctx context.Context, messages []core.Mode
 		req.PromptCacheKey = p.promptCacheKey
 		req.PromptCacheRetention = p.promptCacheRetention
 		req.ServiceTier = p.serviceTier
+		// Apply reasoning summary if set and reasoning is present.
+		if p.reasoningSummary != "" && req.Reasoning != nil {
+			req.Reasoning.Summary = p.reasoningSummary
+		}
+		// Apply text verbosity if set.
+		if p.textVerbosity != "" {
+			if req.Text == nil {
+				req.Text = &responsesText{}
+			}
+			req.Text.Verbosity = p.textVerbosity
+		}
 	} else {
 		// Non-OpenAI endpoints (xAI, etc.) don't support reasoning effort
 		// or prompt_cache_key, but do support prompt_cache_retention.

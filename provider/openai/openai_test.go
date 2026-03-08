@@ -2529,6 +2529,70 @@ data: [DONE]
 	}
 }
 
+func TestResponsesReasoningSummary(t *testing.T) {
+	// Verify the reasoning summary field is serialized correctly.
+	req := &responsesRequest{
+		Model: "o3",
+		Reasoning: &responsesReasoning{
+			Effort:  "high",
+			Summary: "concise",
+		},
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	reasoning, ok := m["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatal("expected reasoning object")
+	}
+	if reasoning["summary"] != "concise" {
+		t.Errorf("reasoning.summary = %v, want 'concise'", reasoning["summary"])
+	}
+}
+
+func TestResponsesTextVerbosity(t *testing.T) {
+	// Verify the text verbosity field is serialized correctly.
+	req := &responsesRequest{
+		Model: "gpt-4o",
+		Text: &responsesText{
+			Verbosity: "low",
+		},
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	text, ok := m["text"].(map[string]any)
+	if !ok {
+		t.Fatal("expected text object")
+	}
+	if text["verbosity"] != "low" {
+		t.Errorf("text.verbosity = %v, want 'low'", text["verbosity"])
+	}
+}
+
+func TestResponsesVerbosityEnvVar(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_REASONING_SUMMARY", "auto")
+	t.Setenv("OPENAI_TEXT_VERBOSITY", "low")
+	p := New()
+	if p.reasoningSummary != "auto" {
+		t.Errorf("reasoningSummary = %q, want 'auto'", p.reasoningSummary)
+	}
+	if p.textVerbosity != "low" {
+		t.Errorf("textVerbosity = %q, want 'low'", p.textVerbosity)
+	}
+}
+
 func TestAutoPromptCacheKey(t *testing.T) {
 	p := New(WithAPIKey("test-key"))
 	if p.promptCacheKey == "" {

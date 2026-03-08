@@ -63,6 +63,8 @@ type Provider struct {
 	wsPrevResponseID     string
 	wsLastInputSigs      []string
 	wsMu                 sync.Mutex
+	reasoningSummary     string
+	textVerbosity        string
 }
 
 // Option configures the OpenAI provider.
@@ -144,6 +146,24 @@ func WithWebSocketHTTPFallback(enabled bool) Option {
 	}
 }
 
+// WithReasoningSummary sets the reasoning summary mode for the Responses API.
+// Supported values: "auto", "concise", "detailed". Only applies when the model
+// produces reasoning output.
+func WithReasoningSummary(summary string) Option {
+	return func(p *Provider) {
+		p.reasoningSummary = summary
+	}
+}
+
+// WithTextVerbosity sets the text output verbosity for the Responses API.
+// Supported values: "low", "medium", "high". Lower verbosity produces shorter
+// responses, directly reducing output tokens.
+func WithTextVerbosity(verbosity string) Option {
+	return func(p *Provider) {
+		p.textVerbosity = verbosity
+	}
+}
+
 // New creates a new OpenAI provider with the given options.
 // Supports OPENAI_API_KEY and OPENAI_BASE_URL environment variables
 // for compatibility with OpenAI-compatible APIs (xAI, Together, etc.).
@@ -183,6 +203,12 @@ func New(opts ...Option) *Provider {
 		if raw := strings.TrimSpace(os.Getenv("OPENAI_WEBSOCKET_HTTP_FALLBACK")); raw != "" {
 			p.wsHTTPFallback = isTruthy(raw)
 		}
+	}
+	if p.reasoningSummary == "" {
+		p.reasoningSummary = os.Getenv("OPENAI_REASONING_SUMMARY")
+	}
+	if p.textVerbosity == "" {
+		p.textVerbosity = os.Getenv("OPENAI_TEXT_VERBOSITY")
 	}
 	// Strip trailing /v1 or /v1/ from the base URL. Our endpoint path
 	// already includes /v1, so a base URL with /v1 (which is the convention
