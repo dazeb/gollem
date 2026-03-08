@@ -2627,3 +2627,98 @@ func TestAutoPromptCacheRetentionExplicit(t *testing.T) {
 		t.Errorf("expected explicit retention 'in_memory', got %q", p.promptCacheRetention)
 	}
 }
+
+func TestChatGPTAuthMode_Headers(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify ChatGPT-Account-ID header is set.
+		accountID := r.Header.Get("ChatGPT-Account-ID")
+		if accountID != "acct-test-123" {
+			t.Errorf("expected ChatGPT-Account-ID=acct-test-123, got %q", accountID)
+		}
+		// Verify bearer token.
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer chatgpt-access-token" {
+			t.Errorf("expected Bearer chatgpt-access-token, got %q", auth)
+		}
+		json.NewEncoder(w).Encode(responsesAPIResponse{
+			Output: []responsesOutputItem{
+				{Type: "message", Content: []responsesContentItem{{Type: "output_text", Text: "ok"}}},
+			},
+		})
+	}))
+	defer ts.Close()
+
+	p := New(
+		WithChatGPTAuth("chatgpt-access-token", "acct-test-123"),
+		WithBaseURL(ts.URL),
+	)
+
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+}
+
+func TestChatGPTAuthMode_ForcesResponses(t *testing.T) {
+	p := New(WithChatGPTAuth("token", "acct"))
+	if !p.useResponses {
+		t.Error("expected useResponses=true for ChatGPT auth mode")
+	}
+}
+
+func TestChatGPTAuthMode_BaseURL(t *testing.T) {
+	p := New(WithChatGPTAuth("token", "acct"))
+	if p.baseURL != "https://api.openai.com" {
+		t.Errorf("expected base URL https://api.openai.com, got %q", p.baseURL)
+	}
+}
+
+func TestTokenRefresher(t *testing.T) {
+	callCount := 0
+	refresher := func() (string, error) {
+		callCount++
+		return "refreshed-token-" + fmt.Sprint(callCount), nil
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer refreshed-token-1" {
+			t.Errorf("expected refreshed token in first request, got %q", auth)
+		}
+		json.NewEncoder(w).Encode(responsesAPIResponse{
+			Output: []responsesOutputItem{
+				{Type: "message", Content: []responsesContentItem{{Type: "output_text", Text: "ok"}}},
+			},
+		})
+	}))
+	defer ts.Close()
+
+	p := New(
+		WithChatGPTAuth("initial-token", "acct"),
+		WithBaseURL(ts.URL),
+		WithTokenRefresher(refresher),
+	)
+
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if callCount != 1 {
+		t.Errorf("expected refresher called once, got %d", callCount)
+	}
+}
+
+func TestNewSession_PreservesChatGPTAuth(t *testing.T) {
+	p := New(WithChatGPTAuth("token", "acct-123"))
+	session := p.NewSession().(*Provider)
+	if session.chatgptAccountID != "acct-123" {
+		t.Errorf("expected chatgptAccountID preserved, got %q", session.chatgptAccountID)
+	}
+	if session.tokenRefresher != nil {
+		// No refresher set, should be nil.
+	}
+}

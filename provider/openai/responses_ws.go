@@ -129,8 +129,16 @@ func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context) (*respons
 		return nil, err
 	}
 
+	if p.tokenRefresher != nil {
+		if token, err := p.tokenRefresher(); err == nil && token != "" {
+			p.apiKey = token
+		}
+	}
 	headers := make(http.Header)
 	headers.Set("Authorization", "Bearer "+p.apiKey)
+	if p.chatgptAccountID != "" {
+		headers.Set("ChatGPT-Account-ID", p.chatgptAccountID)
+	}
 
 	dialer := websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,

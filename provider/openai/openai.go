@@ -45,6 +45,10 @@ const (
 	transportWebSocket = "websocket"
 )
 
+// TokenRefresher is a function that returns a fresh access token.
+// It is called before each request when the provider is in ChatGPT auth mode.
+type TokenRefresher func() (accessToken string, err error)
+
 // Provider implements core.Model for OpenAI's Chat Completions API.
 type Provider struct {
 	apiKey               string
@@ -65,6 +69,8 @@ type Provider struct {
 	wsMu                 sync.Mutex
 	reasoningSummary     string
 	textVerbosity        string
+	chatgptAccountID     string
+	tokenRefresher       TokenRefresher
 }
 
 // Option configures the OpenAI provider.
@@ -161,6 +167,28 @@ func WithReasoningSummary(summary string) Option {
 func WithTextVerbosity(verbosity string) Option {
 	return func(p *Provider) {
 		p.textVerbosity = verbosity
+	}
+}
+
+// WithChatGPTAuth configures the provider for ChatGPT subscription access.
+// This sets the access token and account ID for subscription-based usage,
+// forces the Responses API (required for subscription access), and sets the
+// base URL to the ChatGPT API endpoint.
+func WithChatGPTAuth(accessToken, accountID string) Option {
+	return func(p *Provider) {
+		p.apiKey = accessToken
+		p.chatgptAccountID = accountID
+		p.useResponses = true
+		p.baseURL = "https://api.openai.com"
+	}
+}
+
+// WithTokenRefresher sets a function that is called before each request to
+// obtain a fresh access token. This is used with ChatGPT subscription auth
+// to automatically refresh expired OAuth tokens.
+func WithTokenRefresher(refresher TokenRefresher) Option {
+	return func(p *Provider) {
+		p.tokenRefresher = refresher
 	}
 }
 
@@ -283,6 +311,8 @@ func (p *Provider) NewSession() core.Model {
 		wsHTTPFallback:       p.wsHTTPFallback,
 		wsHTTPFallbackSet:    p.wsHTTPFallbackSet,
 		useResponses:         p.useResponses,
+		chatgptAccountID:     p.chatgptAccountID,
+		tokenRefresher:       p.tokenRefresher,
 	}
 }
 
@@ -421,8 +451,16 @@ func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte) 
 }
 
 func (p *Provider) setHeaders(req *http.Request) {
+	if p.tokenRefresher != nil {
+		if token, err := p.tokenRefresher(); err == nil && token != "" {
+			p.apiKey = token
+		}
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if p.chatgptAccountID != "" {
+		req.Header.Set("ChatGPT-Account-ID", p.chatgptAccountID)
+	}
 }
 
 func (p *Provider) shouldUseResponsesAPI() bool {
