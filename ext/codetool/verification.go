@@ -634,6 +634,8 @@ func cloneInvariantItems(items []invariantItem) []invariantItem {
 // read hard_unresolved and hard_fail counts. Returns ok=false (silently) if the
 // content isn't the expected shape. Prefer extractInvariantGateState when item-
 // level detail is needed.
+//
+//nolint:unused // Retained as a convenience wrapper; tests and external callers may use it.
 func extractInvariantGateCounts(content string) (hardUnresolved int, hardFail int, ok bool) {
 	gateState, ok := extractInvariantGateState(content)
 	if !ok || !gateState.hasCounts {
@@ -739,7 +741,7 @@ func formatPendingHardInvariants(items []invariantItem, maxShow int) string {
 
 	var b strings.Builder
 	b.WriteString("Pending hard invariants:\n")
-	for i := 0; i < maxShow; i++ {
+	for i := range maxShow {
 		item := pending[i]
 		id := strings.TrimSpace(item.ID)
 		if id == "" {
