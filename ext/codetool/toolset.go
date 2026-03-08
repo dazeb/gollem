@@ -169,6 +169,8 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 
 	// Planning tool: persistent task list for tracking progress on multi-step work.
 	extraTools = append(extraTools, deep.PlanningTool())
+	// Verification tool: tracks test/build outcomes with freshness.
+	extraTools = append(extraTools, VerificationTool())
 	if cfg.Model != nil {
 		extraTools = append(extraTools, InvariantsTool(cfg.Model))
 	}

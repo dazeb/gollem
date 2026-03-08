@@ -8950,6 +8950,7 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	var lspNavigations []string    // LSP lookups (definition, references, hover) already performed
 	var lastAssistantText string   // last assistant text block — captures current approach/thinking
 	hasPlan := false               // whether the agent created a plan via the planning tool
+	hasVerification := false       // whether the agent recorded verification results
 
 	seenRead := make(map[string]bool)
 	seenModified := make(map[string]bool)
@@ -9129,6 +9130,14 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 					if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil && args.Command == "create" {
 						hasPlan = true
 					}
+				case "verification":
+					// Track whether the agent recorded verification results.
+					var args struct {
+						Command string `json:"command"`
+					}
+					if json.Unmarshal([]byte(tc.ArgsJSON), &args) == nil && args.Command == "record" {
+						hasVerification = true
+					}
 				case "delegate":
 					var args struct {
 						Task string `json:"task"`
@@ -9292,6 +9301,12 @@ func buildContextRecoverySummary(dropped []core.ModelMessage) string {
 	if hasPlan {
 		b.WriteString("ACTIVE PLAN: You created a plan before context overflow. " +
 			"Call `planning get` to retrieve your task list and continue from where you left off.\n\n")
+	}
+
+	// Remind the agent to retrieve its verification state if results were recorded.
+	if hasVerification {
+		b.WriteString("ACTIVE VERIFICATION: You recorded test/build verification results before context overflow. " +
+			"Call `verification summary` to retrieve your verification state and check for stale or failed entries.\n\n")
 	}
 
 	// Include the agent's last approach/thinking to maintain continuity.

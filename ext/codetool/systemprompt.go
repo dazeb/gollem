@@ -45,6 +45,14 @@ When the "invariants" tool is available:
 3. Update statuses during verification ("update") and inspect unresolved items with "summary".
 4. Do not complete while any hard invariant is unresolved or failed.
 
+## Verification Tracking
+
+After running any build or test command (go test, npm test, cargo test, make test, etc.):
+1. Use the **verification** tool with command "record" to log the result (cmd, status, summary).
+2. After editing files, use "stale" to mark affected verifications as stale with the reason.
+3. Before completion, run "summary" to confirm no verification is stale or failed.
+4. Use "reset" to clear all entries when starting a completely unrelated task in the same session.
+
 ## Working Principles
 
 1. **Read, then act quickly**: Read README.md and any task description files first — they often contain critical requirements. Read relevant source files before modifying them, but don't over-research. Spend at most 3-5 turns understanding the problem before attempting a solution. When given a task with constraints, read the ENTIRE specification first and make a checklist of ALL constraints — especially global constraints that span multiple components, files, or subsystems.
