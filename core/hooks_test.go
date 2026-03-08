@@ -135,11 +135,11 @@ func TestHook_OnToolStartEnd(t *testing.T) {
 	var endErr error
 
 	hook := Hook{
-		OnToolStart: func(ctx context.Context, rc *RunContext, toolName string, argsJSON string) {
+		OnToolStart: func(ctx context.Context, rc *RunContext, toolCallID string, toolName string, argsJSON string) {
 			startName = toolName
 			startArgs = argsJSON
 		},
-		OnToolEnd: func(ctx context.Context, rc *RunContext, toolName string, result string, err error) {
+		OnToolEnd: func(ctx context.Context, rc *RunContext, toolCallID string, toolName string, result string, err error) {
 			endName = toolName
 			endResult = result
 			endErr = err

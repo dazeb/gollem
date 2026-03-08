@@ -14,9 +14,9 @@ type Hook struct {
 	// OnModelResponse fires after each model response.
 	OnModelResponse func(ctx context.Context, rc *RunContext, response *ModelResponse)
 	// OnToolStart fires before a tool executes.
-	OnToolStart func(ctx context.Context, rc *RunContext, toolName string, argsJSON string)
+	OnToolStart func(ctx context.Context, rc *RunContext, toolCallID string, toolName string, argsJSON string)
 	// OnToolEnd fires after a tool completes.
-	OnToolEnd func(ctx context.Context, rc *RunContext, toolName string, result string, err error)
+	OnToolEnd func(ctx context.Context, rc *RunContext, toolCallID string, toolName string, result string, err error)
 }
 
 // WithHooks adds lifecycle hooks to the agent. Multiple hooks can be added;

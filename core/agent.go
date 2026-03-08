@@ -1520,7 +1520,7 @@ func (a *Agent[T]) executeSingleTool(
 	// Fire OnToolStart hooks.
 	a.fireHook(func(h Hook) {
 		if h.OnToolStart != nil {
-			h.OnToolStart(ctx, rc, call.ToolName, call.ArgsJSON)
+			h.OnToolStart(ctx, rc, call.ToolCallID, call.ToolName, call.ArgsJSON)
 		}
 	})
 
@@ -1562,7 +1562,7 @@ func (a *Agent[T]) executeSingleTool(
 		}
 		a.fireHook(func(h Hook) {
 			if h.OnToolEnd != nil {
-				h.OnToolEnd(ctx, rc, call.ToolName, resultStr, err)
+				h.OnToolEnd(ctx, rc, call.ToolCallID, call.ToolName, resultStr, err)
 			}
 		})
 

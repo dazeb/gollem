@@ -164,12 +164,12 @@ func TestHookToolStartEnd(t *testing.T) {
 	var toolStarts, toolEnds []string
 
 	hook := core.Hook{
-		OnToolStart: func(ctx context.Context, rc *core.RunContext, toolName string, argsJSON string) {
+		OnToolStart: func(ctx context.Context, rc *core.RunContext, toolCallID string, toolName string, argsJSON string) {
 			mu.Lock()
 			toolStarts = append(toolStarts, toolName)
 			mu.Unlock()
 		},
-		OnToolEnd: func(ctx context.Context, rc *core.RunContext, toolName string, result string, err error) {
+		OnToolEnd: func(ctx context.Context, rc *core.RunContext, toolCallID string, toolName string, result string, err error) {
 			mu.Lock()
 			toolEnds = append(toolEnds, toolName)
 			mu.Unlock()

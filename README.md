@@ -206,7 +206,7 @@ agent := gollem.NewAgent[Analysis](model,
     gollem.WithTracing[Analysis](),
     gollem.WithTraceExporter[Analysis](gollem.NewJSONFileExporter("./traces")),
     gollem.WithHooks[Analysis](gollem.Hook{
-        OnToolStart: func(ctx context.Context, rc *gollem.RunContext, name, args string) {
+        OnToolStart: func(ctx context.Context, rc *gollem.RunContext, callID, name, args string) {
             log.Printf("tool: %s(%s)", name, args)
         },
     }),

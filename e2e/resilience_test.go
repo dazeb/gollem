@@ -270,12 +270,12 @@ func TestHooksReceiveAllLifecycleEvents(t *testing.T) {
 			events = append(events, "model_response")
 			mu.Unlock()
 		},
-		OnToolStart: func(ctx context.Context, rc *core.RunContext, toolName string, argsJSON string) {
+		OnToolStart: func(ctx context.Context, rc *core.RunContext, toolCallID string, toolName string, argsJSON string) {
 			mu.Lock()
 			events = append(events, "tool_start:"+toolName)
 			mu.Unlock()
 		},
-		OnToolEnd: func(ctx context.Context, rc *core.RunContext, toolName string, result string, err error) {
+		OnToolEnd: func(ctx context.Context, rc *core.RunContext, toolCallID string, toolName string, result string, err error) {
 			mu.Lock()
 			events = append(events, "tool_end:"+toolName)
 			mu.Unlock()

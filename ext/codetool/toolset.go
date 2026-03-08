@@ -333,7 +333,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 					fmt.Fprintf(os.Stderr, "[gollem] run completed successfully\n")
 				}
 			},
-			OnToolStart: func(_ context.Context, _ *core.RunContext, name string, argsJSON string) {
+			OnToolStart: func(_ context.Context, _ *core.RunContext, _ string, name string, argsJSON string) {
 				summary := argsJSON
 				if len(summary) > 200 {
 					n := 200
@@ -344,7 +344,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 				}
 				fmt.Fprintf(os.Stderr, "[gollem] tool:start %s %s\n", name, summary)
 			},
-			OnToolEnd: func(_ context.Context, _ *core.RunContext, name string, result string, err error) {
+			OnToolEnd: func(_ context.Context, _ *core.RunContext, _ string, name string, result string, err error) {
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[gollem] tool:end   %s ERROR: %v\n", name, err)
 				} else {
