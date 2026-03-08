@@ -26,7 +26,7 @@ func TestBuildRequestBasic(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestBuildRequestWithSettings(t *testing.T) {
 		MaxTokens:   &maxTokens,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestBuildRequestWithTools(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestBuildRequestToolReturn(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestBuildRequestRetryPrompt(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestBuildRequestRetryPromptWithoutToolID(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestBuildRequestAssistantMessage(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestBuildRequestAssistantMessage(t *testing.T) {
 }
 
 func TestBuildRequestStream(t *testing.T) {
-	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, true)
+	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, true, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -786,7 +786,7 @@ func TestBuildRequestWithThinkingBudget(t *testing.T) {
 		ThinkingBudget: &budget,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -810,7 +810,7 @@ func TestBuildRequestThinkingStripsTemperature(t *testing.T) {
 		Temperature:    &temp,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -833,7 +833,7 @@ func TestBuildRequestThinkingAutoAdjustsMaxTokens(t *testing.T) {
 	}
 
 	// Default max tokens is 4096, which is less than the budget (10000).
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -856,7 +856,7 @@ func TestBuildRequestThinkingKeepsExplicitMaxTokens(t *testing.T) {
 		MaxTokens:      &maxTokens,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -867,7 +867,7 @@ func TestBuildRequestThinkingKeepsExplicitMaxTokens(t *testing.T) {
 }
 
 func TestBuildRequestNoThinkingByDefault(t *testing.T) {
-	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -902,7 +902,7 @@ func TestBuildRequestEmptyResponseAlternation(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -932,7 +932,7 @@ func TestBuildRequestRejectsUnsupportedParts(t *testing.T) {
 					Timestamp: time.Now(),
 				},
 			}
-			_, err := buildRequest(messages, nil, &core.ModelRequestParameters{AllowTextOutput: true}, "claude-3", 1024, false)
+			_, err := buildRequest(messages, nil, &core.ModelRequestParameters{AllowTextOutput: true}, "claude-3", 1024, false, false)
 			if err == nil {
 				t.Errorf("expected error for unsupported %s, got nil", tt.name)
 			}
@@ -977,7 +977,7 @@ func TestBuildRequestSystemOnlyRequestAlternation(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -997,5 +997,135 @@ func TestBuildRequestSystemOnlyRequestAlternation(t *testing.T) {
 	// The system blocks should still be extracted.
 	if len(req.System) != 1 || req.System[0].Text != "New context injected mid-conversation" {
 		t.Errorf("expected system block with context, got %v", req.System)
+	}
+}
+
+func TestAnthropicCacheControl_SystemPrompt(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "System prompt 1"},
+				core.SystemPromptPart{Content: "System prompt 2"},
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+	}
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.System) != 2 {
+		t.Fatalf("expected 2 system blocks, got %d", len(req.System))
+	}
+	// First block should NOT have cache_control.
+	if req.System[0].CacheControl != nil {
+		t.Error("expected first system block without cache_control")
+	}
+	// Last block SHOULD have cache_control.
+	if req.System[1].CacheControl == nil {
+		t.Fatal("expected last system block with cache_control")
+	}
+	if req.System[1].CacheControl.Type != "ephemeral" {
+		t.Errorf("cache_control type = %q, want 'ephemeral'", req.System[1].CacheControl.Type)
+	}
+}
+
+func TestAnthropicCacheControl_Tools(t *testing.T) {
+	params := &core.ModelRequestParameters{
+		AllowTextOutput: true,
+		FunctionTools: []core.ToolDefinition{
+			{Name: "tool_a", Description: "A"},
+			{Name: "tool_b", Description: "B"},
+		},
+	}
+	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(req.Tools))
+	}
+	if req.Tools[0].CacheControl != nil {
+		t.Error("expected first tool without cache_control")
+	}
+	if req.Tools[1].CacheControl == nil {
+		t.Fatal("expected last tool with cache_control")
+	}
+	if req.Tools[1].CacheControl.Type != "ephemeral" {
+		t.Errorf("cache_control type = %q, want 'ephemeral'", req.Tools[1].CacheControl.Type)
+	}
+}
+
+func TestAnthropicCacheControl_NoSystem(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+	}
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.System) != 0 {
+		t.Errorf("expected no system blocks, got %d", len(req.System))
+	}
+}
+
+func TestAnthropicCacheControl_NoTools(t *testing.T) {
+	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 0 {
+		t.Errorf("expected no tools, got %d", len(req.Tools))
+	}
+}
+
+func TestAnthropicCacheControl_Disabled(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.SystemPromptPart{Content: "System prompt"},
+				core.UserPromptPart{Content: "Hello"},
+			},
+		},
+	}
+	params := &core.ModelRequestParameters{
+		AllowTextOutput: true,
+		FunctionTools: []core.ToolDefinition{
+			{Name: "tool_a", Description: "A"},
+		},
+	}
+	req, err := buildRequest(messages, nil, params, Claude4Sonnet, 4096, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Neither system nor tools should have cache_control when disabled.
+	if len(req.System) > 0 && req.System[0].CacheControl != nil {
+		t.Error("expected no cache_control on system when disabled")
+	}
+	if len(req.Tools) > 0 && req.Tools[0].CacheControl != nil {
+		t.Error("expected no cache_control on tools when disabled")
+	}
+}
+
+func TestAnthropicCacheControl_UsageTracking(t *testing.T) {
+	usage := apiUsage{
+		InputTokens:              100,
+		OutputTokens:             50,
+		CacheCreationInputTokens: 200,
+		CacheReadInputTokens:     300,
+	}
+	mapped := mapUsage(usage)
+	if mapped.CacheWriteTokens != 200 {
+		t.Errorf("CacheWriteTokens = %d, want 200", mapped.CacheWriteTokens)
+	}
+	if mapped.CacheReadTokens != 300 {
+		t.Errorf("CacheReadTokens = %d, want 300", mapped.CacheReadTokens)
+	}
+	if mapped.InputTokens != 600 {
+		t.Errorf("InputTokens = %d, want 600 (100+200+300)", mapped.InputTokens)
 	}
 }

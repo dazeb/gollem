@@ -34,11 +34,12 @@ const (
 
 // Provider implements core.Model for Anthropic's Messages API.
 type Provider struct {
-	apiKey     string
-	model      string
-	baseURL    string
-	httpClient *http.Client
-	maxTokens  int
+	apiKey             string
+	model              string
+	baseURL            string
+	httpClient         *http.Client
+	maxTokens          int
+	disablePromptCache bool
 }
 
 // Option configures the Anthropic provider.
@@ -79,6 +80,15 @@ func WithMaxTokens(n int) Option {
 	}
 }
 
+// WithPromptCacheDisabled disables automatic cache_control markers on system
+// prompts and tool definitions. Use this for Zero Data Retention compliance
+// or to opt out of prompt caching.
+func WithPromptCacheDisabled() Option {
+	return func(p *Provider) {
+		p.disablePromptCache = true
+	}
+}
+
 // New creates a new Anthropic provider with the given options.
 func New(opts ...Option) *Provider {
 	p := &Provider{
@@ -103,7 +113,7 @@ func (p *Provider) ModelName() string {
 
 // Request sends messages to Anthropic and returns a complete response.
 func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
-	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, false)
+	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, false, !p.disablePromptCache)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: failed to build request: %w", err)
 	}
@@ -129,7 +139,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 
 // RequestStream sends messages and returns a streaming response.
 func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
-	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, true)
+	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, true, !p.disablePromptCache)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: failed to build request: %w", err)
 	}

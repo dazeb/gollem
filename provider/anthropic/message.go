@@ -29,13 +29,18 @@ type apiToolChoice struct {
 }
 
 type apiThinking struct {
-	Type         string `json:"type"`           // "enabled" or "disabled"
-	BudgetTokens int    `json:"budget_tokens"`  // Max tokens for thinking
+	Type         string `json:"type"`          // "enabled" or "disabled"
+	BudgetTokens int    `json:"budget_tokens"` // Max tokens for thinking
+}
+
+type apiCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
 }
 
 type apiSystemBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type         string           `json:"type"`
+	Text         string           `json:"text"`
+	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
 }
 
 type apiMessage struct {
@@ -61,9 +66,10 @@ type apiContentBlock struct {
 }
 
 type apiTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description,omitempty"`
+	InputSchema  json.RawMessage  `json:"input_schema"`
+	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
 }
 
 // --- API response types ---
@@ -86,7 +92,9 @@ type apiUsage struct {
 }
 
 // buildRequest converts gollem messages into an Anthropic API request.
-func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, model string, defaultMaxTokens int, stream bool) (*apiRequest, error) {
+// If enableCache is true, cache_control markers are added to the last system
+// block and last tool definition to enable Anthropic's prompt caching.
+func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, model string, defaultMaxTokens int, stream bool, enableCache bool) (*apiRequest, error) {
 	req := &apiRequest{
 		Model:     model,
 		MaxTokens: defaultMaxTokens,
@@ -260,6 +268,20 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 
 	req.System = systemBlocks
 	req.Messages = apiMsgs
+
+	// Apply cache_control markers to the last system block and last tool.
+	// This enables Anthropic's prompt caching for the stable prefix (system
+	// instructions + tool definitions), which is identical across turns.
+	if enableCache {
+		ephemeral := &apiCacheControl{Type: "ephemeral"}
+		if len(req.System) > 0 {
+			req.System[len(req.System)-1].CacheControl = ephemeral
+		}
+		if len(req.Tools) > 0 {
+			req.Tools[len(req.Tools)-1].CacheControl = ephemeral
+		}
+	}
+
 	return req, nil
 }
 
