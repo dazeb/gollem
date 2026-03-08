@@ -183,6 +183,11 @@ func loginDeviceCode(ctx context.Context) (*Credentials, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("device code request failed (HTTP %d): %s", resp.StatusCode, body)
+	}
+
 	var deviceResp struct {
 		UserCode        string `json:"user_code"`
 		DeviceCode      string `json:"device_code"`
@@ -246,7 +251,11 @@ func loginDeviceCode(ctx context.Context) (*Credentials, error) {
 			continue
 		}
 
-		if result.Error == "authorization_pending" || result.Error == "slow_down" {
+		if result.Error == "authorization_pending" {
+			continue
+		}
+		if result.Error == "slow_down" {
+			interval += 5 * time.Second // RFC 8628: increase interval on slow_down
 			continue
 		}
 		if result.Error != "" {

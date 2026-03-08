@@ -209,7 +209,8 @@ func New(opts ...Option) *Provider {
 		p.apiKey = os.Getenv("OPENAI_API_KEY")
 	}
 	// Support OPENAI_BASE_URL env var (standard for OpenAI-compatible APIs).
-	if p.baseURL == defaultBaseURL {
+	// Skip when in ChatGPT auth mode to avoid overriding the subscription endpoint.
+	if p.baseURL == defaultBaseURL && p.chatgptAccountID == "" {
 		if envURL := os.Getenv("OPENAI_BASE_URL"); envURL != "" {
 			p.baseURL = envURL
 		}
@@ -311,6 +312,8 @@ func (p *Provider) NewSession() core.Model {
 		wsHTTPFallback:       p.wsHTTPFallback,
 		wsHTTPFallbackSet:    p.wsHTTPFallbackSet,
 		useResponses:         p.useResponses,
+		reasoningSummary:     p.reasoningSummary,
+		textVerbosity:        p.textVerbosity,
 		chatgptAccountID:     p.chatgptAccountID,
 		tokenRefresher:       p.tokenRefresher,
 	}
@@ -451,13 +454,14 @@ func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte) 
 }
 
 func (p *Provider) setHeaders(req *http.Request) {
+	token := p.apiKey
 	if p.tokenRefresher != nil {
-		if token, err := p.tokenRefresher(); err == nil && token != "" {
-			p.apiKey = token
+		if refreshed, err := p.tokenRefresher(); err == nil && refreshed != "" {
+			token = refreshed
 		}
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	req.Header.Set("Authorization", "Bearer "+token)
 	if p.chatgptAccountID != "" {
 		req.Header.Set("ChatGPT-Account-ID", p.chatgptAccountID)
 	}

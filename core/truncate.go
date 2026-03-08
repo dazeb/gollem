@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // bytesPerToken is the approximate bytes-per-token heuristic (same as Codex CLI).
@@ -44,6 +45,14 @@ func TruncateToolOutput(content string, config TruncationConfig) string {
 		// Overlap: fall back to raw byte offsets.
 		headEnd = headBytes
 		tailStart = len(content) - tailBytes
+	}
+
+	// Ensure we don't split multi-byte UTF-8 characters at the cut points.
+	for headEnd > 0 && !utf8.RuneStart(content[headEnd]) {
+		headEnd--
+	}
+	for tailStart < len(content) && !utf8.RuneStart(content[tailStart]) {
+		tailStart++
 	}
 
 	droppedTokens := (tailStart - headEnd) / bytesPerToken

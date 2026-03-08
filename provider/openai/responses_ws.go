@@ -129,13 +129,14 @@ func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context) (*respons
 		return nil, err
 	}
 
+	token := p.apiKey
 	if p.tokenRefresher != nil {
-		if token, err := p.tokenRefresher(); err == nil && token != "" {
-			p.apiKey = token
+		if refreshed, err := p.tokenRefresher(); err == nil && refreshed != "" {
+			token = refreshed
 		}
 	}
 	headers := make(http.Header)
-	headers.Set("Authorization", "Bearer "+p.apiKey)
+	headers.Set("Authorization", "Bearer "+token)
 	if p.chatgptAccountID != "" {
 		headers.Set("ChatGPT-Account-ID", p.chatgptAccountID)
 	}
