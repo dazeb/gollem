@@ -1157,3 +1157,145 @@ func TestAgentRunGlobalRetryResetsOnToolSuccess(t *testing.T) {
 		t.Errorf("output = %q, want 'All done.'", result.Output)
 	}
 }
+
+func TestToolOutputTruncation_LargeOutput(t *testing.T) {
+	// Tool returns a large string that should be truncated.
+	largeOutput := strings.Repeat("line of output\n", 5000) // ~75K bytes = ~18K tokens
+
+	model := NewTestModel(
+		ToolCallResponse("big_tool", `{}`),
+		TextResponse("done"),
+	)
+
+	tool := FuncTool[struct{}]("big_tool", "Returns large output",
+		func(_ context.Context, _ struct{}) (string, error) {
+			return largeOutput, nil
+		},
+	)
+
+	agent := NewAgent[string](model,
+		WithTools[string](tool),
+		WithToolOutputTruncation[string](TruncationConfig{MaxTokens: 1000}), // 4KB budget
+	)
+
+	result, err := agent.Run(context.Background(), "run it")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Output != "done" {
+		t.Errorf("output = %q", result.Output)
+	}
+
+	// Check that the tool result in history was truncated.
+	for _, msg := range result.Messages {
+		req, ok := msg.(ModelRequest)
+		if !ok {
+			continue
+		}
+		for _, part := range req.Parts {
+			tr, ok := part.(ToolReturnPart)
+			if !ok || tr.ToolName != "big_tool" {
+				continue
+			}
+			content, _ := tr.Content.(string)
+			if len(content) >= len(largeOutput) {
+				t.Errorf("expected truncated content, got full length %d", len(content))
+			}
+			if !strings.Contains(content, "truncated") {
+				t.Error("expected truncation marker in content")
+			}
+		}
+	}
+}
+
+func TestToolOutputTruncation_Disabled(t *testing.T) {
+	// Without truncation option, large output should be preserved.
+	largeOutput := strings.Repeat("x", 100000)
+
+	model := NewTestModel(
+		ToolCallResponse("big_tool", `{}`),
+		TextResponse("done"),
+	)
+
+	tool := FuncTool[struct{}]("big_tool", "Returns large output",
+		func(_ context.Context, _ struct{}) (string, error) {
+			return largeOutput, nil
+		},
+	)
+
+	agent := NewAgent[string](model, WithTools[string](tool))
+
+	result, err := agent.Run(context.Background(), "run it")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that the tool result is NOT truncated.
+	for _, msg := range result.Messages {
+		req, ok := msg.(ModelRequest)
+		if !ok {
+			continue
+		}
+		for _, part := range req.Parts {
+			tr, ok := part.(ToolReturnPart)
+			if !ok || tr.ToolName != "big_tool" {
+				continue
+			}
+			content, _ := tr.Content.(string)
+			if len(content) != len(largeOutput) {
+				t.Errorf("expected full content length %d, got %d", len(largeOutput), len(content))
+			}
+		}
+	}
+}
+
+func TestToolOutputTruncation_StructuredContent(t *testing.T) {
+	// Tool returns a struct; serialized JSON should be truncated.
+	type BigResult struct {
+		Data string `json:"data"`
+	}
+
+	model := NewTestModel(
+		ToolCallResponse("struct_tool", `{}`),
+		TextResponse("done"),
+	)
+
+	bigData := strings.Repeat("z", 100000)
+	tool := Tool{
+		Definition: ToolDefinition{
+			Name:        "struct_tool",
+			Description: "Returns structured output",
+		},
+		Handler: func(_ context.Context, _ *RunContext, _ string) (any, error) {
+			return BigResult{Data: bigData}, nil
+		},
+	}
+
+	agent := NewAgent[string](model,
+		WithTools[string](tool),
+		WithToolOutputTruncation[string](TruncationConfig{MaxTokens: 1000}),
+	)
+
+	result, err := agent.Run(context.Background(), "run it")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The serialized JSON should be truncated.
+	for _, msg := range result.Messages {
+		req, ok := msg.(ModelRequest)
+		if !ok {
+			continue
+		}
+		for _, part := range req.Parts {
+			tr, ok := part.(ToolReturnPart)
+			if !ok || tr.ToolName != "struct_tool" {
+				continue
+			}
+			content, _ := tr.Content.(string)
+			if len(content) >= len(bigData) {
+				t.Errorf("expected truncated structured content, got length %d", len(content))
+			}
+		}
+	}
+}

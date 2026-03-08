@@ -73,6 +73,7 @@ type Agent[T any] struct {
 	middleware                 []AgentMiddleware
 	toolChoice                 *ToolChoice
 	toolChoiceAutoReset        bool
+	truncationConfig           *TruncationConfig
 }
 
 // RunResult is the outcome of a successful agent run.
@@ -212,6 +213,16 @@ func WithDynamicSystemPrompt[T any](fn SystemPromptFunc) AgentOption[T] {
 func WithHistoryProcessor[T any](proc HistoryProcessor) AgentOption[T] {
 	return func(a *Agent[T]) {
 		a.historyProcessors = append(a.historyProcessors, proc)
+	}
+}
+
+// WithToolOutputTruncation enables head/tail truncation of tool outputs before
+// they are recorded into conversation history. This prevents large tool results
+// (e.g., a grep returning thousands of lines) from bloating context on every
+// subsequent model request. Off by default for backward compatibility.
+func WithToolOutputTruncation[T any](config TruncationConfig) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.truncationConfig = &config
 	}
 }
 
@@ -1776,6 +1787,12 @@ func (a *Agent[T]) executeSingleTool(
 	state.mu.Lock()
 	delete(state.toolRetries, call.ToolName)
 	state.mu.Unlock()
+
+	// Apply truncation if configured to prevent large tool outputs from
+	// bloating conversation history on every subsequent model request.
+	if a.truncationConfig != nil {
+		content = TruncateToolOutput(content, *a.truncationConfig)
+	}
 
 	return ToolReturnPart{
 		ToolName:   call.ToolName,
