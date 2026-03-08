@@ -2528,3 +2528,38 @@ data: [DONE]
 		t.Errorf("expected empty args to be '{}', got %q", tc.ArgsJSON)
 	}
 }
+
+func TestAutoPromptCacheKey(t *testing.T) {
+	p := New(WithAPIKey("test-key"))
+	if p.promptCacheKey == "" {
+		t.Error("expected auto-generated prompt cache key for OpenAI endpoint")
+	}
+}
+
+func TestAutoPromptCacheKeyNotOverridden(t *testing.T) {
+	p := New(WithAPIKey("test-key"), WithPromptCacheKey("my-key"))
+	if p.promptCacheKey != "my-key" {
+		t.Errorf("expected explicit key 'my-key', got %q", p.promptCacheKey)
+	}
+}
+
+func TestAutoPromptCacheKeySkippedForNonOpenAI(t *testing.T) {
+	p := New(WithAPIKey("test-key"), WithBaseURL("https://custom-api.example.com"))
+	if p.promptCacheKey != "" {
+		t.Errorf("expected empty cache key for non-OpenAI endpoint, got %q", p.promptCacheKey)
+	}
+}
+
+func TestAutoPromptCacheRetention(t *testing.T) {
+	p := New(WithAPIKey("test-key"))
+	if p.promptCacheRetention != "24h" {
+		t.Errorf("expected default retention '24h', got %q", p.promptCacheRetention)
+	}
+}
+
+func TestAutoPromptCacheRetentionExplicit(t *testing.T) {
+	p := New(WithAPIKey("test-key"), WithPromptCacheRetention("in_memory"))
+	if p.promptCacheRetention != "in_memory" {
+		t.Errorf("expected explicit retention 'in_memory', got %q", p.promptCacheRetention)
+	}
+}

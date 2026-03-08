@@ -20,6 +20,7 @@ import (
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/modelutil"
+	"github.com/google/uuid"
 )
 
 // Model constants for OpenAI models.
@@ -188,6 +189,15 @@ func New(opts ...Option) *Provider {
 	// in the OpenAI Python client) would produce /v1/v1/chat/completions.
 	p.baseURL = strings.TrimRight(p.baseURL, "/")
 	p.baseURL = strings.TrimSuffix(p.baseURL, "/v1")
+	// Auto-set prompt cache key and retention for OpenAI endpoints.
+	// This dramatically improves cache hit rates (60% → 87%+) and cached
+	// tokens get 75-90% discounts on modern models.
+	if p.promptCacheKey == "" && p.isOpenAIEndpoint() {
+		p.promptCacheKey = uuid.New().String()
+	}
+	if p.promptCacheRetention == "" && p.isOpenAIEndpoint() {
+		p.promptCacheRetention = "24h"
+	}
 	return p
 }
 
