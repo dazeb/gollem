@@ -200,39 +200,51 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	// Team mode: leader agent with tools to spawn teammates and coordinate work.
 	var teamLeaderMW core.AgentMiddleware
 	if cfg.TeamMode && cfg.Model != nil {
-		workerExtras := []core.Tool{SubAgentTool(cfg.Model, toolOpts...)}
-		if cfg.WebSearchFunc != nil {
-			workerExtras = append(workerExtras, WebSearch(cfg.WebSearchFunc))
+		// Reuse an existing team from the session so that spawned teammates
+		// survive across Run() calls and the leader can still receive their
+		// messages on subsequent turns.
+		var t *team.Team
+		if cfg.Session != nil && cfg.Session.Team != nil {
+			t = cfg.Session.Team
+		} else {
+			workerExtras := []core.Tool{SubAgentTool(cfg.Model, toolOpts...)}
+			if cfg.WebSearchFunc != nil {
+				workerExtras = append(workerExtras, WebSearch(cfg.WebSearchFunc))
+			}
+			if cfg.FetchURLFunc != nil {
+				workerExtras = append(workerExtras, FetchURL(cfg.FetchURLFunc))
+			}
+			t = team.NewTeam(team.TeamConfig{
+				Name:   "coding-team",
+				Leader: "leader",
+				Model:  cfg.Model,
+				// Each worker gets its own toolset with an isolated
+				// BackgroundProcessManager so bash_status, cleanup, and
+				// completion notifications are per-worker.
+				ToolsetFactory: func() *core.Toolset {
+					mgr := NewBackgroundProcessManager()
+					workerOpts := make([]Option, len(toolOpts))
+					copy(workerOpts, toolOpts)
+					workerOpts = append(workerOpts, WithBackgroundProcessManager(mgr))
+					ts := Toolset(workerOpts...)
+					ts.Hooks = []core.Hook{{
+						OnRunEnd: func(_ context.Context, _ *core.RunContext, _ []core.ModelMessage, _ error) {
+							mgr.Cleanup()
+						},
+					}}
+					ts.DynamicSystemPrompts = []core.SystemPromptFunc{mgr.CompletionPrompt}
+					return ts
+				},
+				WorkerExtraTools:     workerExtras,
+				PersonalityGenerator: cfg.PersonalityGenerator,
+			})
+			// Store on session for persistence across runs.
+			if cfg.Session != nil {
+				cfg.Session.Team = t
+			}
 		}
-		if cfg.FetchURLFunc != nil {
-			workerExtras = append(workerExtras, FetchURL(cfg.FetchURLFunc))
-		}
-		t := team.NewTeam(team.TeamConfig{
-			Name:   "coding-team",
-			Leader: "leader",
-			Model:  cfg.Model,
-			// Each worker gets its own toolset with an isolated
-			// BackgroundProcessManager so bash_status, cleanup, and
-			// completion notifications are per-worker.
-			ToolsetFactory: func() *core.Toolset {
-				mgr := NewBackgroundProcessManager()
-				workerOpts := make([]Option, len(toolOpts))
-				copy(workerOpts, toolOpts)
-				workerOpts = append(workerOpts, WithBackgroundProcessManager(mgr))
-				ts := Toolset(workerOpts...)
-				ts.Hooks = []core.Hook{{
-					OnRunEnd: func(_ context.Context, _ *core.RunContext, _ []core.ModelMessage, _ error) {
-						mgr.Cleanup()
-					},
-				}}
-				ts.DynamicSystemPrompts = []core.SystemPromptFunc{mgr.CompletionPrompt}
-				return ts
-			},
-			WorkerExtraTools:     workerExtras,
-			PersonalityGenerator: cfg.PersonalityGenerator,
-		})
 		teamRef = t
-		// Register the leader so workers can send messages to it.
+		// Register (or re-register) the leader so workers can send messages to it.
 		teamLeaderMW = t.RegisterLeader("leader")
 		extraTools = append(extraTools, team.LeaderTools(t)...)
 		systemPrompt += "\n\n" + team.LeaderSystemPrompt("coding-team")

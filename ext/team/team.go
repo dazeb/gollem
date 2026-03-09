@@ -150,8 +150,21 @@ func WithTeammateAgentOptions(opts ...core.AgentOption[string]) TeammateOption {
 // RegisterLeader registers the leader agent's mailbox in the team so that
 // workers can send messages to the leader. Returns a middleware that drains
 // the leader's mailbox between model turns (injecting messages as UserPromptParts).
+//
+// If the leader is already registered (e.g., across multiple Run() calls in a
+// persistent session), the existing mailbox is preserved so that pending
+// messages from teammates are not lost.
 func (t *Team) RegisterLeader(name string) core.AgentMiddleware {
+	t.mu.Lock()
+	existing := t.members[name]
+	t.mu.Unlock()
+
+	// Preserve the existing mailbox so pending messages survive re-registration.
 	mb := NewMailbox(t.mailboxSize)
+	if existing != nil && existing.mailbox != nil {
+		mb = existing.mailbox
+	}
+
 	tm := &Teammate{
 		name:    name,
 		state:   TeammateRunning,

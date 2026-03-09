@@ -6,6 +6,7 @@ import (
 	montygo "github.com/fugue-labs/monty-go"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/ext/team"
 	"github.com/fugue-labs/gollem/modelutil"
 )
 
@@ -223,14 +224,23 @@ func WithBackgroundProcessManager(m *BackgroundProcessManager) Option {
 // function so the caller can trigger resource release (e.g., on /clear).
 type Session struct {
 	cleanup func()
+
+	// Team holds the active team instance so it persists across multiple
+	// Run() calls. Spawned teammates survive between runs, and the leader
+	// can receive their messages on subsequent turns.
+	Team *team.Team
 }
 
 // Cleanup releases session resources (team shutdown, background process
 // cleanup). Safe to call multiple times or on a nil receiver.
 func (s *Session) Cleanup() {
-	if s != nil && s.cleanup != nil {
+	if s == nil {
+		return
+	}
+	if s.cleanup != nil {
 		s.cleanup()
 	}
+	s.Team = nil
 }
 
 // WithPersistentSession enables persistent session mode. When set,
