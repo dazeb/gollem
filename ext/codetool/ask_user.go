@@ -25,7 +25,7 @@ type AskUserFunc func(ctx context.Context, questions []AskUserQuestion) ([]AskUs
 
 // AskUserParams are the parameters for the ask_user tool.
 type AskUserParams struct {
-	Questions []AskUserQuestion `json:"questions" jsonschema:"description=1-4 questions to ask the user\, each with a question text and 2-4 answer options"`
+	Questions []AskUserQuestion `json:"questions" jsonschema:"description=1-4 questions to ask the user, each with a question text and 2-4 answer options"`
 }
 
 const (

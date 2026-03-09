@@ -3,6 +3,7 @@ package openai
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -152,10 +153,10 @@ func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []
 			if json.Unmarshal(event.Response, &failedResp) == nil && failedResp.Error.Message != "" {
 				s.streamErr = fmt.Errorf("openai: response failed (%s): %s", failedResp.Error.Code, failedResp.Error.Message)
 			} else {
-				s.streamErr = fmt.Errorf("openai: response failed")
+				s.streamErr = errors.New("openai: response failed")
 			}
 		} else {
-			s.streamErr = fmt.Errorf("openai: response failed")
+			s.streamErr = errors.New("openai: response failed")
 		}
 		return nil
 

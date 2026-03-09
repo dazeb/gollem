@@ -2,6 +2,7 @@ package codetool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -65,7 +66,7 @@ func validateURLSafety(rawURL string) error {
 	hostname := u.Hostname()
 	lower := strings.ToLower(hostname)
 	if lower == "" {
-		return fmt.Errorf("url must include a hostname")
+		return errors.New("url must include a hostname")
 	}
 	if lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") || lower == "metadata.google.internal" {
 		return fmt.Errorf("rejected local/private hostname: %s", hostname)
