@@ -77,6 +77,12 @@ type BashParams struct {
 	// agent run ends. Use for services that must persist after agent exit
 	// (e.g., servers the verifier needs to test). Only used with background=true.
 	KeepAlive *bool `json:"keep_alive,omitempty" jsonschema:"description=Keep process running after agent exit (for service tasks). Only used with background=true."`
+
+	// RiskLevel is an advisory classification of the command's risk.
+	RiskLevel string `json:"risk_level,omitempty" jsonschema:"enum=low,enum=medium,enum=high,description=Advisory risk level: low (read-only like ls\\, cat\\, git status)\\, medium (local modifications like mkdir\\, pip install)\\, high (irreversible or security-sensitive like rm -rf\\, git push\\, sudo)"`
+
+	// RiskReason is a one-sentence justification for the chosen risk level.
+	RiskReason string `json:"risk_reason,omitempty" jsonschema:"description=One-sentence justification for the chosen risk level"`
 }
 
 // BashResult is the result of a bash command execution (used in tests).
@@ -119,6 +125,12 @@ func Bash(opts ...Option) core.Tool {
 		func(ctx context.Context, rc *core.RunContext, params BashParams) (string, error) {
 			if strings.TrimSpace(params.Command) == "" {
 				return "", &core.ModelRetryError{Message: "command must not be empty"}
+			}
+			if params.RiskLevel != "" {
+				fmt.Fprintf(os.Stderr, "[gollem] bash risk=%s cmd=%q reason=%q\n",
+					params.RiskLevel,
+					truncateErrorLine(params.Command, 100),
+					params.RiskReason)
 			}
 
 			// Benchmark-only guards: block destructive test-file modifications

@@ -68,6 +68,15 @@ type Config struct {
 	// or constrained environments where single-agent execution is preferred.
 	DisableDelegate bool
 
+	// WebSearchFunc performs web searches. When nil, web_search is not registered.
+	WebSearchFunc WebSearchFunc
+
+	// FetchURLFunc fetches URL content. When nil, fetch_url is not registered.
+	FetchURLFunc FetchURLFunc
+
+	// AskUserFunc presents structured questions to the user. When nil, ask_user is not registered.
+	AskUserFunc AskUserFunc
+
 	// BackgroundProcessManager manages background processes started by the
 	// bash tool with background=true. When nil, one is created automatically
 	// by Toolset/AgentOptions. Share a single manager across tools so that
@@ -184,6 +193,21 @@ func WithDisableGreedyThinkingPressure() Option {
 // operates strictly in single-agent mode without any delegation capability.
 func WithDisableDelegate() Option {
 	return func(c *Config) { c.DisableDelegate = true }
+}
+
+// WithWebSearch sets the web search callback.
+func WithWebSearch(fn WebSearchFunc) Option {
+	return func(c *Config) { c.WebSearchFunc = fn }
+}
+
+// WithFetchURL sets the fetch_url callback.
+func WithFetchURL(fn FetchURLFunc) Option {
+	return func(c *Config) { c.FetchURLFunc = fn }
+}
+
+// WithAskUser sets the ask_user callback.
+func WithAskUser(fn AskUserFunc) Option {
+	return func(c *Config) { c.AskUserFunc = fn }
 }
 
 // WithBackgroundProcessManager sets a shared background process manager.

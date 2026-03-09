@@ -247,10 +247,11 @@ func New(opts ...Option) *Provider {
 	// in the OpenAI Python client) would produce /v1/v1/chat/completions.
 	p.baseURL = strings.TrimRight(p.baseURL, "/")
 	p.baseURL = strings.TrimSuffix(p.baseURL, "/v1")
-	// Auto-set prompt cache key and retention for OpenAI endpoints.
+	// Auto-set prompt cache key for OpenAI and ChatGPT endpoints.
 	// This dramatically improves cache hit rates (60% → 87%+) and cached
-	// tokens get 75-90% discounts on modern models.
-	if p.promptCacheKey == "" && p.isOpenAIEndpoint() {
+	// tokens get 75-90% discounts on modern models. The ChatGPT backend
+	// supports the same prefix-based caching via prompt_cache_key.
+	if p.promptCacheKey == "" && (p.isOpenAIEndpoint() || p.isChatGPTEndpoint()) {
 		p.promptCacheKey = uuid.New().String()
 	}
 	if p.promptCacheRetention == "" && p.isOpenAIEndpoint() {
@@ -386,7 +387,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 // RequestStream sends messages and returns a streaming response.
 func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
 	if p.shouldUseResponsesAPI() {
-		return nil, fmt.Errorf("openai: streaming is not supported for model %q via the responses API", p.model)
+		return p.requestStreamViaResponses(ctx, messages, settings, params)
 	}
 
 	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, true)
@@ -406,7 +407,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 	if err != nil {
 		if isChatCompletionsMismatch(err) {
 			p.useResponses = true
-			return nil, fmt.Errorf("openai: model %q requires the responses API; streaming is currently unavailable", p.model)
+			return p.requestStreamViaResponses(ctx, messages, settings, params)
 		}
 		return nil, err
 	}

@@ -168,6 +168,7 @@ Minimize text output. Every character costs tokens. Don't explain what you're ab
 7. Clean up any temporary/build artifacts you create
 8. Report what you did and the outcome clearly in your final response
 9. If the task is impossible or blocked, explain why immediately — don't waste turns
+10. Never commit, push, or modify git config. Leave git operations to the parent agent.
 
 ## Output First
 Create required output files EARLY — even rough drafts. A wrong answer that exists beats a perfect answer that doesn't. You can iterate.

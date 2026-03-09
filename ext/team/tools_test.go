@@ -415,12 +415,15 @@ func TestWorkerTools_Count(t *testing.T) {
 	for _, tool := range tools {
 		names[tool.Definition.Name] = true
 	}
-	// Workers should NOT have spawn_teammate or shutdown_teammate.
+	// Workers should NOT have spawn_teammate, shutdown_teammate, or ask_user.
 	if names["spawn_teammate"] {
 		t.Error("workers should not have spawn_teammate")
 	}
 	if names["shutdown_teammate"] {
 		t.Error("workers should not have shutdown_teammate")
+	}
+	if names["ask_user"] {
+		t.Error("workers should not have ask_user")
 	}
 }
 

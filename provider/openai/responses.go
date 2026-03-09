@@ -105,19 +105,25 @@ func (p *Provider) requestViaResponses(ctx context.Context, messages []core.Mode
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
 	}
+	p.applyResponsesEndpointSettings(req)
+	return p.requestViaResponsesWithReq(ctx, req)
+}
+
+// applyResponsesEndpointSettings configures endpoint-specific fields on the
+// request (caching, service tier, reasoning, verbosity). Shared by both the
+// synchronous and streaming request paths.
+func (p *Provider) applyResponsesEndpointSettings(req *responsesRequest) {
 	if p.isChatGPTEndpoint() {
-		// ChatGPT backend requires: instructions (top-level), store=false, stream=true.
-		// Extract system messages from input into the instructions field.
+		// ChatGPT backend supports prefix-based caching via prompt_cache_key.
+		req.PromptCacheKey = p.promptCacheKey
 		p.applyChatGPTRequirements(req)
 	} else if p.isOpenAIEndpoint() {
 		req.PromptCacheKey = p.promptCacheKey
 		req.PromptCacheRetention = p.promptCacheRetention
 		req.ServiceTier = p.serviceTier
-		// Apply reasoning summary if set and reasoning is present.
 		if p.reasoningSummary != "" && req.Reasoning != nil {
 			req.Reasoning.Summary = p.reasoningSummary
 		}
-		// Apply text verbosity if set.
 		if p.textVerbosity != "" {
 			if req.Text == nil {
 				req.Text = &responsesText{}
@@ -127,10 +133,61 @@ func (p *Provider) requestViaResponses(ctx context.Context, messages []core.Mode
 	} else {
 		// Non-OpenAI endpoints (xAI, etc.) don't support reasoning effort
 		// or prompt_cache_key, but do support prompt_cache_retention.
+		//
+		// Exception: ChatGPT auth with a custom/proxy URL still gets caching
+		// since the backend supports it regardless of proxy routing.
+		if p.hasChatGPTAuth() {
+			req.PromptCacheKey = p.promptCacheKey
+		}
 		req.Reasoning = nil
 		req.PromptCacheRetention = p.promptCacheRetention
 	}
-	return p.requestViaResponsesWithReq(ctx, req)
+}
+
+// requestStreamViaResponses builds a Responses API request with streaming
+// enabled and returns a StreamedResponse that yields events as they arrive.
+//
+// This always uses HTTP (not WebSocket) because the WebSocket transport
+// doesn't expose a streaming interface — it buffers the full response
+// internally. The non-streaming Request() path continues to use WebSocket
+// when configured; RequestStream() falls back to HTTP SSE which provides
+// true incremental event delivery.
+func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens)
+	if err != nil {
+		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
+	}
+
+	// Force streaming.
+	streamTrue := true
+	req.Stream = &streamTrue
+
+	p.applyResponsesEndpointSettings(req)
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("openai: failed to marshal responses request: %w", err)
+	}
+
+	resp, err := p.doRequest(ctx, p.responsesEP(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	// If the server returned JSON instead of SSE (e.g., it doesn't support
+	// streaming or ignored the stream=true flag), parse as a complete
+	// response and wrap it so callers always get a valid StreamedResponse.
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "text/event-stream") {
+		defer resp.Body.Close()
+		var apiResp responsesAPIResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+			return nil, fmt.Errorf("openai: failed to decode responses API response: %w", err)
+		}
+		return newPrebuiltResponsesStream(parseResponsesResponse(&apiResp, p.model)), nil
+	}
+
+	return newResponsesStreamedResponse(resp.Body, p.model), nil
 }
 
 // applyChatGPTRequirements modifies a request for the ChatGPT backend:
@@ -161,7 +218,7 @@ func (p *Provider) applyChatGPTRequirements(req *responsesRequest) {
 	req.Stream = &streamTrue
 
 	// Don't send fields unsupported by the ChatGPT backend.
-	req.PromptCacheKey = ""
+	// PromptCacheKey is kept — ChatGPT backend supports prefix-based caching.
 	req.PromptCacheRetention = ""
 	req.ServiceTier = ""
 	req.MaxOutputTokens = 0

@@ -174,6 +174,17 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	if cfg.Model != nil {
 		extraTools = append(extraTools, InvariantsTool(cfg.Model))
 	}
+	if !cfg.BenchmarkMode {
+		if cfg.WebSearchFunc != nil {
+			extraTools = append(extraTools, WebSearch(cfg.WebSearchFunc))
+		}
+		if cfg.FetchURLFunc != nil {
+			extraTools = append(extraTools, FetchURL(cfg.FetchURLFunc))
+		}
+		if cfg.AskUserFunc != nil {
+			extraTools = append(extraTools, AskUser(cfg.AskUserFunc))
+		}
+	}
 
 	// SubAgent delegation: available unless explicitly disabled.
 	if cfg.Model != nil && !cfg.DisableDelegate {
@@ -189,6 +200,13 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	// Team mode: leader agent with tools to spawn teammates and coordinate work.
 	var teamLeaderMW core.AgentMiddleware
 	if cfg.TeamMode && cfg.Model != nil {
+		workerExtras := []core.Tool{SubAgentTool(cfg.Model, toolOpts...)}
+		if cfg.WebSearchFunc != nil {
+			workerExtras = append(workerExtras, WebSearch(cfg.WebSearchFunc))
+		}
+		if cfg.FetchURLFunc != nil {
+			workerExtras = append(workerExtras, FetchURL(cfg.FetchURLFunc))
+		}
 		t := team.NewTeam(team.TeamConfig{
 			Name:   "coding-team",
 			Leader: "leader",
@@ -210,7 +228,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 				ts.DynamicSystemPrompts = []core.SystemPromptFunc{mgr.CompletionPrompt}
 				return ts
 			},
-			WorkerExtraTools:     []core.Tool{SubAgentTool(cfg.Model, toolOpts...)},
+			WorkerExtraTools:     workerExtras,
 			PersonalityGenerator: cfg.PersonalityGenerator,
 		})
 		teamRef = t

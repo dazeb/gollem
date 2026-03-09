@@ -25,8 +25,13 @@ func TestTeam_NewTeam(t *testing.T) {
 }
 
 func TestTeam_NewTeam_WorkerExtraToolsConfigured(t *testing.T) {
-	extra := core.FuncTool[struct{}](
+	extraA := core.FuncTool[struct{}](
 		"dummy_extra_tool",
+		"dummy",
+		func(context.Context, struct{}) (any, error) { return "ok", nil },
+	)
+	extraB := core.FuncTool[struct{}](
+		"dummy_extra_tool_2",
 		"dummy",
 		func(context.Context, struct{}) (any, error) { return "ok", nil },
 	)
@@ -35,14 +40,17 @@ func TestTeam_NewTeam_WorkerExtraToolsConfigured(t *testing.T) {
 		Name:             "test-team",
 		Leader:           "leader",
 		Model:            core.NewTestModel(core.TextResponse("done")),
-		WorkerExtraTools: []core.Tool{extra},
+		WorkerExtraTools: []core.Tool{extraA, extraB},
 	})
 
-	if len(tm.workerTools) != 1 {
-		t.Fatalf("expected 1 worker extra tool, got %d", len(tm.workerTools))
+	if len(tm.workerTools) != 2 {
+		t.Fatalf("expected 2 worker extra tools, got %d", len(tm.workerTools))
 	}
 	if tm.workerTools[0].Definition.Name != "dummy_extra_tool" {
 		t.Fatalf("unexpected worker extra tool %q", tm.workerTools[0].Definition.Name)
+	}
+	if tm.workerTools[1].Definition.Name != "dummy_extra_tool_2" {
+		t.Fatalf("unexpected second worker extra tool %q", tm.workerTools[1].Definition.Name)
 	}
 }
 

@@ -60,6 +60,7 @@ You have access to coding tools (bash, view, edit, write, grep, glob, ls), team 
 5. Only edit files assigned to you — avoid conflicts with other teammates
 6. If the task is impossible or blocked, explain why via send_message
 7. If delegate is available and a subtask is isolated, use it for quick one-shot acceleration
+8. Never commit, push, or modify git config. Leave git operations to the leader.
 
 ## Communication
 
