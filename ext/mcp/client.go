@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -55,9 +57,65 @@ func (e *jsonRPCError) Error() string {
 	return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message)
 }
 
+// StdioClientOption configures stdio MCP client startup.
+type StdioClientOption func(*stdioClientConfig)
+
+type stdioClientConfig struct {
+	args []string
+	env  map[string]string
+}
+
+// WithStdioArgs sets process arguments for the MCP server command.
+func WithStdioArgs(args ...string) StdioClientOption {
+	copied := append([]string(nil), args...)
+	return func(cfg *stdioClientConfig) {
+		cfg.args = append([]string(nil), copied...)
+	}
+}
+
+// WithStdioEnv adds environment variables for the MCP server process.
+func WithStdioEnv(env map[string]string) StdioClientOption {
+	cloned := make(map[string]string, len(env))
+	for k, v := range env {
+		cloned[k] = v
+	}
+	return func(cfg *stdioClientConfig) {
+		if cfg.env == nil {
+			cfg.env = make(map[string]string, len(cloned))
+		}
+		for k, v := range cloned {
+			cfg.env[k] = v
+		}
+	}
+}
+
 // NewStdioClient spawns an MCP server process and connects via stdio.
 func NewStdioClient(ctx context.Context, command string, args ...string) (*Client, error) {
-	cmd := exec.CommandContext(ctx, command, args...)
+	return NewStdioClientWithOptions(ctx, command, WithStdioArgs(args...))
+}
+
+// NewStdioClientWithOptions spawns an MCP server process and connects via stdio.
+func NewStdioClientWithOptions(ctx context.Context, command string, opts ...StdioClientOption) (*Client, error) {
+	cfg := stdioClientConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, command, cfg.args...)
+	if len(cfg.env) > 0 {
+		env := append([]string(nil), os.Environ()...)
+		keys := make([]string, 0, len(cfg.env))
+		for k := range cfg.env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			env = append(env, k+"="+cfg.env[k])
+		}
+		cmd.Env = env
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

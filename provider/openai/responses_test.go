@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fugue-labs/gollem/core"
@@ -83,6 +84,26 @@ func TestChatGPTAuth_PromptCacheKeyInRequest(t *testing.T) {
 
 	if receivedCacheKey != "test-cache-key" {
 		t.Errorf("expected prompt_cache_key='test-cache-key' in request body, got %q", receivedCacheKey)
+	}
+}
+
+func TestParseSSEResponsesAcceptsResponseDone(t *testing.T) {
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader(`data: {"type":"response.done","response":{"id":"resp_done","model":"gpt-5","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done-ok"}]}],"usage":{"input_tokens":4,"output_tokens":2}}}
+
+
+data: [DONE]
+`))}
+	p := New(WithModel("gpt-5"))
+
+	got, err := p.parseSSEResponses(resp)
+	if err != nil {
+		t.Fatalf("parseSSEResponses: %v", err)
+	}
+	if text := got.TextContent(); text != "done-ok" {
+		t.Fatalf("response text = %q, want done-ok", text)
+	}
+	if got.Usage.InputTokens != 4 || got.Usage.OutputTokens != 2 {
+		t.Fatalf("unexpected usage: %+v", got.Usage)
 	}
 }
 

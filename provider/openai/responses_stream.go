@@ -25,7 +25,7 @@ type responsesStreamEvent struct {
 
 // responsesStreamedResponse implements core.StreamedResponse for Responses API
 // SSE streams. It parses events like response.output_text.delta,
-// response.output_item.done, and response.completed, yielding PartStartEvent
+// response.output_item.done, and terminal response events, yielding PartStartEvent
 // and PartDeltaEvent as they arrive.
 type responsesStreamedResponse struct {
 	scanner *bufio.Scanner
@@ -88,7 +88,7 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 			if err := s.scanner.Err(); err != nil {
 				return nil, fmt.Errorf("openai: SSE read error: %w", err)
 			}
-			// Scanner exhausted without response.completed.
+			// Scanner exhausted without a terminal response event.
 			s.done = true
 			s.finalize()
 			return nil, io.EOF
@@ -135,7 +135,7 @@ func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []
 	case "response.output_item.done":
 		return s.handleOutputItemDone(event.Item, event.OutputIndex)
 
-	case "response.completed":
+	case "response.completed", "response.done":
 		s.handleCompleted(event.Response)
 		return nil
 

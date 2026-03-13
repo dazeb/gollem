@@ -30,6 +30,33 @@ data: [DONE]
 	body := io.NopCloser(strings.NewReader(sse))
 	s := newResponsesStreamedResponse(body, "gpt-5")
 
+	assertResponsesStreamTextOnly(t, s)
+}
+
+func TestResponsesStreamedResponse_TextOnlyAcceptsResponseDone(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"resp-1"}}
+
+data: {"type":"response.output_item.added","item":{"type":"message","role":"assistant"}}
+
+data: {"type":"response.output_text.delta","delta":"Hello "}
+
+data: {"type":"response.output_text.delta","delta":"world!"}
+
+data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello world!"}]}}
+
+data: {"type":"response.done","response":{"id":"resp-1","output":[],"usage":{"input_tokens":10,"output_tokens":5}}}
+
+data: [DONE]
+`
+	body := io.NopCloser(strings.NewReader(sse))
+	s := newResponsesStreamedResponse(body, "gpt-5")
+
+	assertResponsesStreamTextOnly(t, s)
+}
+
+func assertResponsesStreamTextOnly(t *testing.T, s *responsesStreamedResponse) {
+	t.Helper()
+
 	// First event: PartStartEvent with first delta.
 	ev1, err := s.Next()
 	if err != nil {
@@ -57,7 +84,7 @@ data: [DONE]
 	}
 
 	// No more events (output_item.done for message is suppressed since text
-	// was already streamed, and response.completed triggers finalization).
+	// was already streamed, and the terminal response event triggers finalization).
 	_, err = s.Next()
 	if err != io.EOF {
 		t.Fatalf("expected io.EOF, got %v", err)

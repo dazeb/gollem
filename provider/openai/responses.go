@@ -301,7 +301,7 @@ func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRe
 	defer resp.Body.Close()
 
 	// ChatGPT backend requires stream=true and returns SSE events.
-	// Parse the stream and extract the final response.completed event.
+	// Parse the stream and extract the final terminal response event.
 	if req.Stream != nil && *req.Stream {
 		return p.parseSSEResponses(resp)
 	}
@@ -337,7 +337,8 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		if json.Unmarshal([]byte(data), &event) != nil {
 			continue
 		}
-		if event.Type == "response.completed" {
+		switch event.Type {
+		case "response.completed", "response.done":
 			finalResp = &event.Response
 		}
 	}
@@ -345,7 +346,7 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		return nil, fmt.Errorf("openai: SSE read error: %w", err)
 	}
 	if finalResp == nil {
-		return nil, errors.New("openai: no response.completed event in stream")
+		return nil, errors.New("openai: no terminal response event in stream")
 	}
 	return parseResponsesResponse(finalResp, p.model), nil
 }
