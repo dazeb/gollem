@@ -518,9 +518,10 @@ func TestReadLoopSkipsNotifications(t *testing.T) {
 func TestCallTimeout(t *testing.T) {
 	// Test that call() properly times out when the server doesn't respond.
 	clientRead, serverWrite, _ := os.Pipe() // server never writes — but keep write end open
-	_, clientWrite, _ := os.Pipe()
+	serverRead, clientWrite, _ := os.Pipe()
 	defer clientRead.Close()
 	defer serverWrite.Close() // must stay open so readLoop blocks on read, not EOF
+	defer serverRead.Close()  // must stay open so writes don't fail with EPIPE
 	defer clientWrite.Close()
 
 	srv := &lspServer{
