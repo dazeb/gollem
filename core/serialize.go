@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -11,6 +12,9 @@ type messageEnvelope struct {
 	Kind string          `json:"kind"` // "request" or "response"
 	Data json.RawMessage `json:"data"`
 }
+
+// SerializedMessage is the JSON-safe envelope form of a ModelMessage.
+type SerializedMessage = messageEnvelope
 
 // requestJSON is the JSON-safe form of ModelRequest.
 type requestJSON struct {
@@ -32,6 +36,9 @@ type partEnvelope struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
 }
+
+// SerializedPart is the JSON-safe envelope form of a request or response part.
+type SerializedPart = partEnvelope
 
 // --- Request part JSON types ---
 
@@ -102,8 +109,16 @@ type thinkingPartJSON struct {
 
 // MarshalMessages serializes a conversation ([]ModelMessage) to JSON.
 func MarshalMessages(messages []ModelMessage) ([]byte, error) {
-	envelopes := make([]messageEnvelope, 0, len(messages))
+	envelopes, err := EncodeMessages(messages)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(envelopes)
+}
 
+// EncodeMessages converts model messages into their structured serialized form.
+func EncodeMessages(messages []ModelMessage) ([]SerializedMessage, error) {
+	envelopes := make([]SerializedMessage, 0, len(messages))
 	for _, msg := range messages {
 		env, err := encodeMessage(msg)
 		if err != nil {
@@ -111,8 +126,7 @@ func MarshalMessages(messages []ModelMessage) ([]byte, error) {
 		}
 		envelopes = append(envelopes, env)
 	}
-
-	return json.Marshal(envelopes)
+	return envelopes, nil
 }
 
 // UnmarshalMessages deserializes JSON back into []ModelMessage.
@@ -121,7 +135,11 @@ func UnmarshalMessages(data []byte) ([]ModelMessage, error) {
 	if err := json.Unmarshal(data, &envelopes); err != nil {
 		return nil, fmt.Errorf("unmarshaling message envelopes: %w", err)
 	}
+	return DecodeMessages(envelopes)
+}
 
+// DecodeMessages converts structured serialized messages back into model messages.
+func DecodeMessages(envelopes []SerializedMessage) ([]ModelMessage, error) {
 	messages := make([]ModelMessage, 0, len(envelopes))
 	for _, env := range envelopes {
 		msg, err := decodeMessage(env)
@@ -132,6 +150,44 @@ func UnmarshalMessages(data []byte) ([]ModelMessage, error) {
 	}
 
 	return messages, nil
+}
+
+// EncodeRequestParts converts request parts into their structured serialized form.
+func EncodeRequestParts(parts []ModelRequestPart) ([]SerializedPart, error) {
+	return encodeRequestParts(parts)
+}
+
+// DecodeRequestParts converts structured serialized request parts back into request parts.
+func DecodeRequestParts(parts []SerializedPart) ([]ModelRequestPart, error) {
+	return decodeRequestParts(parts)
+}
+
+// EncodeModelResponse converts a model response into its serialized envelope form.
+func EncodeModelResponse(resp *ModelResponse) (*SerializedMessage, error) {
+	if resp == nil {
+		return nil, errors.New("nil model response")
+	}
+	env, err := encodeMessage(*resp)
+	if err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// DecodeModelResponse converts a serialized response envelope back into a model response.
+func DecodeModelResponse(env *SerializedMessage) (*ModelResponse, error) {
+	if env == nil {
+		return nil, errors.New("nil serialized response")
+	}
+	msg, err := decodeMessage(*env)
+	if err != nil {
+		return nil, err
+	}
+	resp, ok := msg.(ModelResponse)
+	if !ok {
+		return nil, fmt.Errorf("expected response envelope, got %T", msg)
+	}
+	return &resp, nil
 }
 
 // encodeMessage converts a single ModelMessage to a messageEnvelope.
