@@ -741,6 +741,176 @@ func TestAgentRunStreamText(t *testing.T) {
 	}
 }
 
+func TestAgentRunStreamExecutesTools(t *testing.T) {
+	type AddParams struct {
+		A int `json:"a"`
+		B int `json:"b"`
+	}
+
+	var toolCalls int
+	addTool := FuncTool[AddParams]("add", "Add two numbers", func(_ context.Context, p AddParams) (int, error) {
+		toolCalls++
+		return p.A + p.B, nil
+	})
+
+	model := NewTestModel(
+		ToolCallResponse("add", `{"a":1,"b":2}`),
+		TextResponse("done"),
+	)
+	agent := NewAgent[string](model, WithTools[string](addTool))
+
+	stream, err := agent.RunStream(context.Background(), "Use the add tool")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer stream.Close()
+
+	resp, err := stream.GetOutput()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := resp.TextContent(); got != "done" {
+		t.Fatalf("text = %q, want %q", got, "done")
+	}
+	if toolCalls != 1 {
+		t.Fatalf("toolCalls = %d, want 1", toolCalls)
+	}
+
+	calls := model.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(calls))
+	}
+
+	lastReq, ok := calls[1].Messages[len(calls[1].Messages)-1].(ModelRequest)
+	if !ok {
+		t.Fatalf("last message type = %T, want ModelRequest", calls[1].Messages[len(calls[1].Messages)-1])
+	}
+	if len(lastReq.Parts) != 1 {
+		t.Fatalf("tool result parts = %d, want 1", len(lastReq.Parts))
+	}
+
+	toolReturn, ok := lastReq.Parts[0].(ToolReturnPart)
+	if !ok {
+		t.Fatalf("tool result part type = %T, want ToolReturnPart", lastReq.Parts[0])
+	}
+	if toolReturn.ToolName != "add" {
+		t.Fatalf("tool return tool = %q, want %q", toolReturn.ToolName, "add")
+	}
+	if toolReturn.Content != "3" {
+		t.Fatalf("tool return content = %q, want %q", toolReturn.Content, "3")
+	}
+}
+
+func TestAgentRunStreamResult(t *testing.T) {
+	type Answer struct {
+		Answer string `json:"answer"`
+	}
+
+	model := NewTestModel(
+		ToolCallResponse("final_result", `{"answer":"42"}`),
+	)
+	agent := NewAgent[Answer](model)
+
+	stream, err := agent.RunStream(context.Background(), "What is the answer?")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer stream.Close()
+
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Output.Answer != "42" {
+		t.Fatalf("output = %q, want %q", result.Output.Answer, "42")
+	}
+
+	resp, err := stream.GetOutput()
+	if err != nil {
+		t.Fatalf("unexpected error after Result: %v", err)
+	}
+	if len(resp.ToolCalls()) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(resp.ToolCalls()))
+	}
+}
+
+func TestAgentRunStreamHooks(t *testing.T) {
+	type AddParams struct {
+		A int `json:"a"`
+		B int `json:"b"`
+	}
+
+	var runStartCount int
+	var runEndCount int
+	var turnStartCount int
+	var turnEndCount int
+	var modelRequestCount int
+	var modelResponseCount int
+
+	hook := Hook{
+		OnRunStart: func(context.Context, *RunContext, string) {
+			runStartCount++
+		},
+		OnRunEnd: func(context.Context, *RunContext, []ModelMessage, error) {
+			runEndCount++
+		},
+		OnTurnStart: func(context.Context, *RunContext, int) {
+			turnStartCount++
+		},
+		OnTurnEnd: func(context.Context, *RunContext, int, *ModelResponse) {
+			turnEndCount++
+		},
+		OnModelRequest: func(context.Context, *RunContext, []ModelMessage) {
+			modelRequestCount++
+		},
+		OnModelResponse: func(context.Context, *RunContext, *ModelResponse) {
+			modelResponseCount++
+		},
+	}
+
+	addTool := FuncTool[AddParams]("add", "Add two numbers", func(_ context.Context, p AddParams) (int, error) {
+		return p.A + p.B, nil
+	})
+
+	model := NewTestModel(
+		ToolCallResponse("add", `{"a":1,"b":2}`),
+		TextResponse("done"),
+	)
+	agent := NewAgent[string](model,
+		WithTools[string](addTool),
+		WithHooks[string](hook),
+	)
+
+	stream, err := agent.RunStream(context.Background(), "Use the add tool")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer stream.Close()
+
+	if _, err := stream.GetOutput(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if runStartCount != 1 {
+		t.Fatalf("runStartCount = %d, want 1", runStartCount)
+	}
+	if runEndCount != 1 {
+		t.Fatalf("runEndCount = %d, want 1", runEndCount)
+	}
+	if turnStartCount != 2 {
+		t.Fatalf("turnStartCount = %d, want 2", turnStartCount)
+	}
+	if turnEndCount != 2 {
+		t.Fatalf("turnEndCount = %d, want 2", turnEndCount)
+	}
+	if modelRequestCount != 2 {
+		t.Fatalf("modelRequestCount = %d, want 2", modelRequestCount)
+	}
+	if modelResponseCount != 2 {
+		t.Fatalf("modelResponseCount = %d, want 2", modelResponseCount)
+	}
+}
+
 // --- Test: Non-object output type (outer key wrapping) ---
 
 func TestAgentRunSliceOutput(t *testing.T) {

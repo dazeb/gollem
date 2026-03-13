@@ -13,7 +13,7 @@ import (
 // request and injects pending messages as a UserPromptPart. This ensures
 // the agent sees messages from other teammates between turns.
 func TeamAwarenessMiddleware(tm *Teammate) core.AgentMiddleware {
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -87,5 +87,5 @@ func TeamAwarenessMiddleware(tm *Teammate) core.AgentMiddleware {
 		}
 
 		return next(ctx, newMessages, settings, params)
-	}
+	})
 }

@@ -14,7 +14,7 @@ func TestAgentMiddleware_Called(t *testing.T) {
 	}
 
 	model := NewTestModel(TextResponse("result"))
-	agent := NewAgent[string](model, WithAgentMiddleware[string](mw))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](RequestOnlyMiddleware(mw)))
 
 	_, err := agent.Run(context.Background(), "test")
 	if err != nil {
@@ -38,7 +38,7 @@ func TestAgentMiddleware_ModifyRequest(t *testing.T) {
 	}
 
 	model := NewTestModel(TextResponse("ok"))
-	agent := NewAgent[string](model, WithAgentMiddleware[string](mw))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](RequestOnlyMiddleware(mw)))
 
 	_, err := agent.Run(context.Background(), "test")
 	if err != nil {
@@ -75,8 +75,8 @@ func TestAgentMiddleware_Chain(t *testing.T) {
 
 	model := NewTestModel(TextResponse("done"))
 	agent := NewAgent[string](model,
-		WithAgentMiddleware[string](mw1),
-		WithAgentMiddleware[string](mw2),
+		WithAgentMiddleware[string](RequestOnlyMiddleware(mw1)),
+		WithAgentMiddleware[string](RequestOnlyMiddleware(mw2)),
 	)
 
 	_, err := agent.Run(context.Background(), "test")
@@ -144,7 +144,7 @@ func TestAgentMiddleware_SkipCall(t *testing.T) {
 	}
 
 	model := NewTestModel(TextResponse("should not be called"))
-	agent := NewAgent[string](model, WithAgentMiddleware[string](mw))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](RequestOnlyMiddleware(mw)))
 
 	result, err := agent.Run(context.Background(), "test skip")
 	if err != nil {
@@ -157,5 +157,221 @@ func TestAgentMiddleware_SkipCall(t *testing.T) {
 	// Model should not have been called.
 	if len(model.Calls()) != 0 {
 		t.Errorf("expected 0 model calls, got %d", len(model.Calls()))
+	}
+}
+
+func TestAgentStreamMiddleware_Called(t *testing.T) {
+	var called bool
+	mw := func(ctx context.Context, messages []ModelMessage, settings *ModelSettings, params *ModelRequestParameters, next AgentStreamFunc) (StreamedResponse, error) {
+		called = true
+		return next(ctx, messages, settings, params)
+	}
+
+	model := NewTestModel(TextResponse("stream"))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](StreamOnlyMiddleware(mw)))
+
+	stream, err := agent.RunStream(context.Background(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if _, err := stream.GetOutput(); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Error("expected stream middleware to be called")
+	}
+}
+
+func TestAgentStreamMiddleware_ModifyRequest(t *testing.T) {
+	mw := func(ctx context.Context, messages []ModelMessage, settings *ModelSettings, params *ModelRequestParameters, next AgentStreamFunc) (StreamedResponse, error) {
+		modified := make([]ModelMessage, 0, len(messages)+1)
+		modified = append(modified, ModelRequest{
+			Parts:     []ModelRequestPart{SystemPromptPart{Content: "injected by stream middleware"}},
+			Timestamp: time.Now(),
+		})
+		modified = append(modified, messages...)
+		return next(ctx, modified, settings, params)
+	}
+
+	model := NewTestModel(TextResponse("ok"))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](StreamOnlyMiddleware(mw)))
+
+	stream, err := agent.RunStream(context.Background(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if _, err := stream.GetOutput(); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := model.Calls()
+	if len(calls) < 1 {
+		t.Fatal("expected at least 1 model call")
+	}
+	if len(calls[0].Messages) < 2 {
+		t.Errorf("expected at least 2 messages (injected + original), got %d", len(calls[0].Messages))
+	}
+}
+
+func TestAgentStreamMiddleware_Chain(t *testing.T) {
+	var order []string
+
+	mw1 := func(ctx context.Context, messages []ModelMessage, settings *ModelSettings, params *ModelRequestParameters, next AgentStreamFunc) (StreamedResponse, error) {
+		order = append(order, "mw1-before")
+		stream, err := next(ctx, messages, settings, params)
+		if err != nil {
+			return nil, err
+		}
+		return &streamFinalizeWrapper{
+			inner: stream,
+			onDone: func(_ *ModelResponse, _ error) {
+				order = append(order, "mw1-after")
+			},
+		}, nil
+	}
+
+	mw2 := func(ctx context.Context, messages []ModelMessage, settings *ModelSettings, params *ModelRequestParameters, next AgentStreamFunc) (StreamedResponse, error) {
+		order = append(order, "mw2-before")
+		stream, err := next(ctx, messages, settings, params)
+		if err != nil {
+			return nil, err
+		}
+		return &streamFinalizeWrapper{
+			inner: stream,
+			onDone: func(_ *ModelResponse, _ error) {
+				order = append(order, "mw2-after")
+			},
+		}, nil
+	}
+
+	model := NewTestModel(TextResponse("done"))
+	agent := NewAgent[string](model,
+		WithAgentMiddleware[string](StreamOnlyMiddleware(mw1)),
+		WithAgentMiddleware[string](StreamOnlyMiddleware(mw2)),
+	)
+
+	stream, err := agent.RunStream(context.Background(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if _, err := stream.GetOutput(); err != nil {
+		t.Fatal(err)
+	}
+
+	expected := []string{"mw1-before", "mw2-before", "mw2-after", "mw1-after"}
+	if len(order) != len(expected) {
+		t.Fatalf("expected %d entries, got %d: %v", len(expected), len(order), order)
+	}
+	for i, e := range expected {
+		if order[i] != e {
+			t.Errorf("order[%d]: expected %q, got %q", i, e, order[i])
+		}
+	}
+}
+
+func TestLoggingStreamMiddleware(t *testing.T) {
+	var logs []string
+	logger := func(msg string) {
+		logs = append(logs, msg)
+	}
+
+	model := NewTestModel(TextResponse("logged"))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](LoggingMiddleware(logger)))
+
+	stream, err := agent.RunStream(context.Background(), "test logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if _, err := stream.GetOutput(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(logs) < 2 {
+		t.Errorf("expected at least 2 log entries (request + response), got %d", len(logs))
+	}
+}
+
+func TestTimingStreamMiddleware(t *testing.T) {
+	var durations []time.Duration
+	callback := func(d time.Duration) {
+		durations = append(durations, d)
+	}
+
+	model := NewTestModel(TextResponse("timed"))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](TimingMiddleware(callback)))
+
+	stream, err := agent.RunStream(context.Background(), "test timing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if _, err := stream.GetOutput(); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(durations) < 1 {
+		t.Fatal("expected at least 1 duration recorded")
+	}
+	if durations[0] <= 0 {
+		t.Error("expected positive duration")
+	}
+}
+
+func TestMaxTokensStreamMiddleware(t *testing.T) {
+	model := NewTestModel(TextResponse("timed"))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](MaxTokensMiddleware(50)))
+
+	stream, err := agent.RunStream(context.Background(), "test max tokens")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if _, err := stream.GetOutput(); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least 1 model call")
+	}
+	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil {
+		t.Fatal("expected MaxTokens to be set")
+	}
+	if got := *calls[0].Settings.MaxTokens; got != 50 {
+		t.Fatalf("MaxTokens = %d, want 50", got)
+	}
+}
+
+func TestWithAgentStreamMiddleware_Compatibility(t *testing.T) {
+	var called bool
+	mw := func(ctx context.Context, messages []ModelMessage, settings *ModelSettings, params *ModelRequestParameters, next AgentStreamFunc) (StreamedResponse, error) {
+		called = true
+		return next(ctx, messages, settings, params)
+	}
+
+	model := NewTestModel(TextResponse("stream"))
+	agent := NewAgent[string](model, WithAgentStreamMiddleware[string](mw))
+
+	stream, err := agent.RunStream(context.Background(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	if _, err := stream.GetOutput(); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("expected compatibility stream middleware to be called")
 	}
 }

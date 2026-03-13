@@ -8,7 +8,7 @@ import (
 )
 
 func TestEarlyTeamKickoffMiddleware_NudgeThenForce(t *testing.T) {
-	mw := EarlyTeamKickoffMiddleware()
+	mw := requireRequestMiddleware(t, EarlyTeamKickoffMiddleware())
 	ctx := context.Background()
 
 	params := &core.ModelRequestParameters{
@@ -73,7 +73,7 @@ func TestEarlyTeamKickoffMiddleware_NudgeThenForce(t *testing.T) {
 }
 
 func TestEarlyTeamKickoffMiddleware_DisablesAfterSpawn(t *testing.T) {
-	mw := EarlyTeamKickoffMiddleware()
+	mw := requireRequestMiddleware(t, EarlyTeamKickoffMiddleware())
 	ctx := context.Background()
 
 	params := &core.ModelRequestParameters{
@@ -111,7 +111,7 @@ func TestEarlyTeamKickoffMiddleware_DisablesAfterSpawn(t *testing.T) {
 }
 
 func TestEarlyDelegateKickoffMiddleware_NudgeThenForceForComplexTask(t *testing.T) {
-	mw := EarlyDelegateKickoffMiddleware()
+	mw := requireRequestMiddleware(t, EarlyDelegateKickoffMiddleware())
 	ctx := context.Background()
 
 	params := &core.ModelRequestParameters{
@@ -175,7 +175,7 @@ func TestEarlyDelegateKickoffMiddleware_NudgeThenForceForComplexTask(t *testing.
 }
 
 func TestEarlyDelegateKickoffMiddleware_SkipsSimpleTask(t *testing.T) {
-	mw := EarlyDelegateKickoffMiddleware()
+	mw := requireRequestMiddleware(t, EarlyDelegateKickoffMiddleware())
 	ctx := context.Background()
 
 	params := &core.ModelRequestParameters{
@@ -212,7 +212,7 @@ func TestEarlyDelegateKickoffMiddleware_SkipsSimpleTask(t *testing.T) {
 }
 
 func TestEarlyDelegateKickoffMiddleware_DisablesAfterDelegate(t *testing.T) {
-	mw := EarlyDelegateKickoffMiddleware()
+	mw := requireRequestMiddleware(t, EarlyDelegateKickoffMiddleware())
 	ctx := context.Background()
 
 	params := &core.ModelRequestParameters{

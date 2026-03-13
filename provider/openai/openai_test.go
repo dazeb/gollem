@@ -433,6 +433,14 @@ func TestBuildRequestWithResponseFormat(t *testing.T) {
 	if !req.ResponseFormat.JSONSchema.Strict {
 		t.Error("expected strict=true by default")
 	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(req.ResponseFormat.JSONSchema.Schema, &schema); err != nil {
+		t.Fatalf("unmarshal output schema: %v", err)
+	}
+	if got, ok := schema["additionalProperties"].(bool); !ok || got {
+		t.Fatalf("expected additionalProperties=false in output schema, got %#v", schema["additionalProperties"])
+	}
 }
 
 func TestBuildRequestNormalizesObjectOutputSchema(t *testing.T) {
@@ -462,6 +470,9 @@ func TestBuildRequestNormalizesObjectOutputSchema(t *testing.T) {
 	}
 	if len(props) != 0 {
 		t.Fatalf("expected empty properties object, got %v", props)
+	}
+	if got, ok := schema["additionalProperties"].(bool); !ok || got {
+		t.Fatalf("expected additionalProperties=false in normalized output schema, got %#v", schema["additionalProperties"])
 	}
 }
 

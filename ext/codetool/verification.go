@@ -61,7 +61,7 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 	rejectionCount := 0      // total validator rejections; capped to prevent infinite loops
 	requireInvariantChecklist := envEnabled("GOLLEM_REQUIRE_INVARIANT_CHECKLIST")
 
-	mw := func(
+	mw := core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -319,7 +319,7 @@ func VerificationCheckpoint(_ string, _ ...time.Duration) (core.AgentMiddleware,
 		}
 
 		return next(ctx, messages, settings, params)
-	}
+	})
 
 	const maxRejections = 3
 

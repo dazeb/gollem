@@ -13,7 +13,7 @@ func TestTeamAwarenessMiddleware_NoMessages(t *testing.T) {
 	mb := NewMailbox(10)
 	tm := &Teammate{name: "worker", mailbox: mb}
 
-	mw := TeamAwarenessMiddleware(tm)
+	mw := requireRequestMiddleware(t, TeamAwarenessMiddleware(tm))
 	called := false
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
 		called = true
@@ -44,7 +44,7 @@ func TestTeamAwarenessMiddleware_InjectsMessages(t *testing.T) {
 	mb.Send(Message{From: "leader", Content: "do X", Type: MessageText, Timestamp: time.Now()})
 	mb.Send(Message{From: "alice", Content: "found bug in Y", Type: MessageText, Timestamp: time.Now()})
 
-	mw := TeamAwarenessMiddleware(tm)
+	mw := requireRequestMiddleware(t, TeamAwarenessMiddleware(tm))
 	var injectedMessages []core.ModelMessage
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
 		injectedMessages = msgs
@@ -103,7 +103,7 @@ func TestTeamAwarenessMiddleware_ShutdownMessage(t *testing.T) {
 
 	mb.Send(Message{From: "leader", Content: "wrapping up", Type: MessageShutdownRequest, Timestamp: time.Now()})
 
-	mw := TeamAwarenessMiddleware(tm)
+	mw := requireRequestMiddleware(t, TeamAwarenessMiddleware(tm))
 	var injectedMessages []core.ModelMessage
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
 		injectedMessages = msgs
@@ -135,7 +135,7 @@ func TestTeamAwarenessMiddleware_DrainsOnce(t *testing.T) {
 
 	mb.Send(Message{From: "leader", Content: "task", Type: MessageText})
 
-	mw := TeamAwarenessMiddleware(tm)
+	mw := requireRequestMiddleware(t, TeamAwarenessMiddleware(tm))
 	callCount := 0
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
 		callCount++
@@ -147,7 +147,7 @@ func TestTeamAwarenessMiddleware_DrainsOnce(t *testing.T) {
 	}
 
 	// First call should inject.
-	mw(context.Background(), original, nil, nil, next)
+	_, _ = mw(context.Background(), original, nil, nil, next)
 
 	// Second call should pass through without injection (mailbox drained).
 	var secondMsgs []core.ModelMessage
@@ -155,7 +155,7 @@ func TestTeamAwarenessMiddleware_DrainsOnce(t *testing.T) {
 		secondMsgs = msgs
 		return core.TextResponse("ok"), nil
 	}
-	mw(context.Background(), original, nil, nil, next2)
+	_, _ = mw(context.Background(), original, nil, nil, next2)
 
 	if len(secondMsgs) != 1 {
 		t.Errorf("second call should not inject messages, got %d", len(secondMsgs))
@@ -168,7 +168,7 @@ func TestTeamAwarenessMiddleware_NoConsecutiveUserMessages(t *testing.T) {
 
 	mb.Send(Message{From: "leader", Content: "new task", Type: MessageText, Timestamp: time.Now()})
 
-	mw := TeamAwarenessMiddleware(tm)
+	mw := requireRequestMiddleware(t, TeamAwarenessMiddleware(tm))
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
 		// Verify no consecutive ModelRequest messages (would cause Anthropic 400).
 		for i := 1; i < len(msgs); i++ {

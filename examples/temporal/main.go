@@ -1,10 +1,11 @@
-// Example temporal demonstrates how to wrap a gollem agent for Temporal durable
-// execution. Model requests and tool calls are wrapped as Temporal activities,
-// providing automatic checkpointing and fault tolerance.
+// Example temporal demonstrates the current Temporal integration surface:
+// model requests and tool calls are exported as Temporal activities that you
+// can register with a worker and call from your own workflow.
 //
 // This example uses TestModel so it compiles and runs without a real Temporal
 // server or LLM provider. In production, you would replace TestModel with a
-// real provider and register the activities with a Temporal worker.
+// real provider, register the activities with a Temporal worker, and invoke
+// them from a workflow. Calling ta.Run directly still executes in-process.
 package main
 
 import (
@@ -71,8 +72,7 @@ func main() {
 		core.WithTools[TaskResult](lookupTool),
 	)
 
-	// Wrap the agent for Temporal durable execution.
-	// In production, this would enable automatic checkpointing and retry.
+	// Wrap the agent and export Temporal activities for a custom workflow.
 	ta := temporal.NewTemporalAgent(agent,
 		temporal.WithName("project-assistant"),
 		temporal.WithActivityConfig(temporal.ActivityConfig{

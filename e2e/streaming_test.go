@@ -53,10 +53,9 @@ func TestAgentStreamText(t *testing.T) {
 	}
 }
 
-// TestAgentStreamWithTools verifies that streaming produces tool call events.
-// Note: RunStream is single-turn — it streams the first model response which
-// may contain tool call events rather than text. We verify tool call events
-// are properly streamed.
+// TestAgentStreamWithTools verifies that streaming surfaces tool-call events
+// during the run. The full agent path may continue into later turns after the
+// first streamed tool call.
 func TestAgentStreamWithTools(t *testing.T) {
 	addTool := core.FuncTool[CalcParams]("add", "Add two numbers", func(ctx context.Context, rc *core.RunContext, p CalcParams) (string, error) {
 		return fmt.Sprintf("%d", p.A+p.B), nil

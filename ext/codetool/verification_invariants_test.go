@@ -10,7 +10,8 @@ import (
 
 func TestVerificationCheckpoint_RequiresInvariantsToolWhenEnabled(t *testing.T) {
 	t.Setenv("GOLLEM_REQUIRE_INVARIANT_CHECKLIST", "1")
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	msgs := []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "task"}}},
@@ -47,7 +48,8 @@ func TestVerificationCheckpoint_RequiresInvariantsToolWhenEnabled(t *testing.T) 
 
 func TestVerificationCheckpoint_RejectsUnresolvedHardInvariants(t *testing.T) {
 	t.Setenv("GOLLEM_REQUIRE_INVARIANT_CHECKLIST", "1")
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	msgs := []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "task"}}},
@@ -87,7 +89,8 @@ func TestVerificationCheckpoint_RejectsUnresolvedHardInvariants(t *testing.T) {
 
 func TestVerificationCheckpoint_AcceptsWhenHardInvariantsPass(t *testing.T) {
 	t.Setenv("GOLLEM_REQUIRE_INVARIANT_CHECKLIST", "1")
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	msgs := []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "task"}}},

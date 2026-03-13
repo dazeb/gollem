@@ -504,7 +504,7 @@ func TestAgentIter_AppliesMiddleware(t *testing.T) {
 		return next(ctx, messages, settings, params)
 	}
 
-	agent := NewAgent[string](model, WithAgentMiddleware[string](mw))
+	agent := NewAgent[string](model, WithAgentMiddleware[string](RequestOnlyMiddleware(mw)))
 	run := agent.Iter(context.Background(), "Hi")
 
 	resp, err := run.Next()

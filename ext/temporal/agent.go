@@ -10,9 +10,9 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
-// TemporalAgent wraps a core.Agent for durable execution via Temporal.
-// Model requests and tool calls are executed as Temporal activities,
-// providing automatic checkpointing and fault tolerance.
+// TemporalAgent wraps a core.Agent with named Temporal model/tool activities.
+// Use Activities and RegisterActivities to build a Temporal workflow around the
+// wrapped agent. Run itself delegates to the wrapped agent directly.
 type TemporalAgent[T any] struct {
 	wrapped      *core.Agent[T]
 	name         string
@@ -26,12 +26,12 @@ type TemporalAgent[T any] struct {
 type Option func(*agentConfig)
 
 type agentConfig struct {
-	name                string
-	defaultConfig       ActivityConfig
-	modelConfig         *ActivityConfig
-	toolConfigs         map[string]ActivityConfig
-	passthroughTools    map[string]bool
-	eventHandler        EventHandler
+	name             string
+	defaultConfig    ActivityConfig
+	modelConfig      *ActivityConfig
+	toolConfigs      map[string]ActivityConfig
+	passthroughTools map[string]bool
+	eventHandler     EventHandler
 }
 
 // WithName sets the agent name (REQUIRED — used for stable activity names).
@@ -74,14 +74,15 @@ func WithToolPassthrough(toolNames ...string) Option {
 	}
 }
 
-// WithEventHandler sets a handler that receives streaming events.
+// WithEventHandler stores a handler for custom workflow integrations that
+// want to forward streaming events. TemporalAgent.Run does not invoke it.
 func WithEventHandler(handler EventHandler) Option {
 	return func(c *agentConfig) {
 		c.eventHandler = handler
 	}
 }
 
-// NewTemporalAgent wraps a core.Agent for Temporal durable execution.
+// NewTemporalAgent wraps a core.Agent and exports Temporal activity helpers.
 func NewTemporalAgent[T any](agent *core.Agent[T], opts ...Option) *TemporalAgent[T] {
 	cfg := &agentConfig{
 		defaultConfig: DefaultActivityConfig(),
@@ -126,7 +127,8 @@ func NewTemporalAgent[T any](agent *core.Agent[T], opts ...Option) *TemporalAgen
 	}
 }
 
-// Run executes the agent. Outside a Temporal workflow, runs normally.
+// Run executes the wrapped agent directly.
+// Use the exported activities from a custom Temporal workflow for durable execution.
 func (ta *TemporalAgent[T]) Run(ctx context.Context, prompt string, opts ...core.RunOption) (*core.RunResult[T], error) {
 	return ta.wrapped.Run(ctx, prompt, opts...)
 }

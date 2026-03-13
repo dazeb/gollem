@@ -150,7 +150,7 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddlewa
 	turn := 0
 	verificationCooldown := 0 // turns remaining in verification mode after detection
 
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -214,7 +214,7 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddlewa
 			currentTurn, phase, level.ThinkingBudget, level.ReasoningEffort)
 
 		return next(ctx, messages, &s, params)
-	}
+	})
 }
 
 // detectVerificationPhase checks if recent messages contain verification commands.
@@ -387,7 +387,7 @@ func timeBudgetMiddleware(timeout time.Duration, disableGreedyPressure bool) cor
 	warned95 := false
 	lastGreedyStage := ""
 
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -471,7 +471,7 @@ func timeBudgetMiddleware(timeout time.Duration, disableGreedyPressure bool) cor
 		}
 
 		return next(ctx, messages, adjustedSettings, params)
-	}
+	})
 }
 
 func timeBudgetGuidance(pct float64) string {

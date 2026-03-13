@@ -70,7 +70,8 @@ type Agent[T any] struct {
 	responseInterceptors       []ResponseInterceptor
 	costTracker                *CostTracker
 	autoContext                *AutoContextConfig
-	middleware                 []AgentMiddleware
+	middleware                 []RequestMiddlewareFunc
+	streamMiddleware           []AgentStreamMiddleware
 	toolChoice                 *ToolChoice
 	toolChoiceAutoReset        bool
 	truncationConfig           *TruncationConfig
@@ -629,7 +630,7 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 	}
 
 	// Build output schema.
-	outputSchema := a.ensureOutputSchema()
+	a.ensureOutputSchema()
 
 	// Initialize state.
 	state := &agentRunState{
@@ -642,10 +643,24 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 		state.messages = make([]ModelMessage, len(cfg.messages))
 		copy(state.messages, cfg.messages)
 	}
+	if len(cfg.toolState) > 0 {
+		a.restoreToolState(cfg.toolState)
+	}
 
 	settings := a.modelSettings
 	if cfg.modelSettings != nil {
 		settings = cfg.modelSettings
+	}
+	limits := a.usageLimits
+	if cfg.usageLimits != nil {
+		limits = *cfg.usageLimits
+	}
+	state.limits = limits
+
+	// Resolve deps: run-level deps override agent-level deps.
+	deps := a.deps
+	if cfg.deps != nil {
+		deps = cfg.deps
 	}
 
 	// Run input guardrails (must apply to streaming too).
@@ -656,6 +671,8 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 		a.fireHook(func(h Hook) {
 			if h.OnGuardrailEvaluated != nil {
 				h.OnGuardrailEvaluated(ctx, &RunContext{
+					Deps:         deps,
+					Usage:        state.usage,
 					Prompt:       prompt,
 					RunID:        state.runID,
 					RunStartTime: state.startTime,
@@ -670,42 +687,86 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 		}
 	}
 
-	// Resolve deps: run-level deps override agent-level deps.
-	deps := a.deps
-	if cfg.deps != nil {
-		deps = cfg.deps
+	// Fire OnRunStart hooks before injecting this run's RunID into context.
+	rc := a.buildRunContext(state, deps, prompt)
+	if a.eventBus != nil {
+		Publish(a.eventBus, RunStartedEvent{RunID: state.runID, Prompt: prompt})
 	}
+	a.fireHook(func(h Hook) {
+		if h.OnRunStart != nil {
+			h.OnRunStart(ctx, rc, prompt)
+		}
+	})
 
-	// Build the initial request with dynamic system prompts.
-	req, err := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps, cfg.initialRequestParts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build initial request: %w", err)
-	}
-	state.messages = append(state.messages, req)
+	ctx = ContextWithRunID(ctx, state.runID)
 
-	// Gather all tools (direct + toolsets).
+	// Gather all tools and build lookup maps.
 	allTools := a.allTools()
-
-	// Build model request parameters with all tools.
-	params := buildModelRequestParams(allTools, outputSchema)
-
-	// Apply tool choice to settings.
-	if a.toolChoice != nil {
-		if settings == nil {
-			settings = &ModelSettings{}
-		}
-		if settings.ToolChoice == nil {
-			settings.ToolChoice = a.toolChoice
-		}
+	toolMap := make(map[string]*Tool)
+	for i := range allTools {
+		toolMap[allTools[i].Definition.Name] = &allTools[i]
+	}
+	outputToolNames := make(map[string]bool)
+	for _, ot := range a.outputSchema.OutputTools {
+		outputToolNames[ot.Name] = true
 	}
 
-	// Make streaming request.
-	stream, err := a.model.RequestStream(ctx, state.messages, settings, params)
-	if err != nil {
-		return nil, fmt.Errorf("model stream request failed: %w", err)
+	stream := newAgentStream(a, ctx, state, settings, limits, deps, prompt, allTools, toolMap, outputToolNames)
+
+	// Handle deferred results resume before the first model call.
+	if len(cfg.deferredResults) > 0 && len(state.messages) > 0 {
+		var deferredParts []ModelRequestPart
+		for _, dr := range cfg.deferredResults {
+			if dr.IsError {
+				deferredParts = append(deferredParts, RetryPromptPart{
+					Content:    dr.Content,
+					ToolName:   dr.ToolName,
+					ToolCallID: dr.ToolCallID,
+					Timestamp:  time.Now(),
+				})
+			} else {
+				deferredParts = append(deferredParts, ToolReturnPart{
+					ToolName:   dr.ToolName,
+					Content:    dr.Content,
+					ToolCallID: dr.ToolCallID,
+					Timestamp:  time.Now(),
+				})
+			}
+		}
+
+		merged := false
+		if lastIdx := len(state.messages) - 1; lastIdx >= 0 {
+			if lastReq, ok := state.messages[lastIdx].(ModelRequest); ok {
+				lastReq.Parts = append(lastReq.Parts, deferredParts...)
+				state.messages[lastIdx] = lastReq
+				merged = true
+			}
+		}
+		if !merged {
+			state.messages = append(state.messages, ModelRequest{
+				Parts:     deferredParts,
+				Timestamp: time.Now(),
+			})
+		}
+	} else {
+		req, err := a.buildInitialRequestWithDynamic(ctx, prompt, state, deps, cfg.initialRequestParts)
+		if err != nil {
+			runErr := fmt.Errorf("failed to build initial request: %w", err)
+			stream.finish(nil, runErr)
+			return nil, runErr
+		}
+		state.messages = append(state.messages, req)
 	}
 
-	return newStreamResult(stream, outputSchema, a.outputValidators, state.messages), nil
+	initialMessages := make([]ModelMessage, len(state.messages))
+	copy(initialMessages, state.messages)
+
+	if err := stream.startTurn(); err != nil {
+		stream.finish(nil, err)
+		return nil, err
+	}
+
+	return newStreamResult(stream, initialMessages, stream.Result), nil
 }
 
 // allTools returns all tools from both direct tools and toolsets.

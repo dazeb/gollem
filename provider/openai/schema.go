@@ -7,7 +7,8 @@ import (
 )
 
 // marshalOpenAISchema normalizes JSON schema to satisfy OpenAI validators.
-// OpenAI requires object schemas to include a "properties" object.
+// OpenAI requires object schemas to include a "properties" object, and
+// strict schemas expect "additionalProperties": false to be explicit.
 func marshalOpenAISchema(schema core.Schema) (json.RawMessage, error) {
 	normalized := normalizeOpenAISchemaAny(schema)
 	data, err := json.Marshal(normalized)
@@ -41,6 +42,9 @@ func normalizeOpenAISchemaMap(in map[string]any) map[string]any {
 	if typ, ok := out["type"].(string); ok && typ == "object" {
 		if _, exists := out["properties"]; !exists {
 			out["properties"] = map[string]any{}
+		}
+		if _, exists := out["additionalProperties"]; !exists {
+			out["additionalProperties"] = false
 		}
 	}
 

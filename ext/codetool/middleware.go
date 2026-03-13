@@ -36,7 +36,7 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 	searchCounts := make(map[string]int) // grep pattern -> search count
 	lspCounts := make(map[string]int)    // lsp method+file+line -> call count
 
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -211,7 +211,7 @@ func LoopDetectionMiddleware(threshold int) core.AgentMiddleware {
 		}
 
 		return next(ctx, messages, settings, params)
-	}
+	})
 }
 
 // extractPathFromArgs extracts a file path from a tool call's ArgsJSON.
@@ -380,7 +380,7 @@ func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.A
 	var once sync.Once
 	var envContext string
 
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -428,7 +428,7 @@ func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.A
 		}
 
 		return next(ctx, messages, settings, params)
-	}
+	})
 }
 
 // discoverEnvironment maps the workspace by inspecting files and running
@@ -8289,7 +8289,7 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 		}
 	}
 
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -8413,7 +8413,7 @@ func ProgressTrackingMiddleware(workDir string, timeout ...time.Duration) core.A
 		}
 
 		return next(ctx, messages, settings, params)
-	}
+	})
 }
 
 // EarlyTeamKickoffMiddleware pushes team-enabled runs to spawn teammates early.
@@ -8425,7 +8425,7 @@ func EarlyTeamKickoffMiddleware() core.AgentMiddleware {
 	turn := 0
 	hasSpawned := false
 
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -8486,7 +8486,7 @@ func EarlyTeamKickoffMiddleware() core.AgentMiddleware {
 		}
 
 		return next(ctx, messages, settings, params)
-	}
+	})
 }
 
 // EarlyDelegateKickoffMiddleware pushes non-team runs to delegate early when
@@ -8497,7 +8497,7 @@ func EarlyDelegateKickoffMiddleware() core.AgentMiddleware {
 	turn := 0
 	hasDelegated := false
 
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -8561,7 +8561,7 @@ func EarlyDelegateKickoffMiddleware() core.AgentMiddleware {
 		}
 
 		return next(ctx, messages, settings, params)
-	}
+	})
 }
 
 func isLikelyComplexTask(messages []core.ModelMessage) bool {
@@ -8668,7 +8668,7 @@ func progressDelegationHint(params *core.ModelRequestParameters) string {
 // underestimates and the actual payload exceeds the provider's limit.
 // Retries up to 2 times with progressively more aggressive truncation.
 func ContextOverflowMiddleware() core.AgentMiddleware {
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -8738,7 +8738,7 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 		}
 
 		return nil, err
-	}
+	})
 }
 
 // isContextOverflowError checks if an error represents a context overflow.

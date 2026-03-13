@@ -331,7 +331,7 @@ func TestCachedModelWithAgent(t *testing.T) {
 
 	// Use middleware to count model requests.
 	agent := core.NewAgent[string](cached,
-		core.WithAgentMiddleware[string](func(
+		core.WithAgentMiddleware[string](core.RequestOnlyMiddleware(func(
 			ctx context.Context,
 			messages []core.ModelMessage,
 			settings *core.ModelSettings,
@@ -340,7 +340,7 @@ func TestCachedModelWithAgent(t *testing.T) {
 		) (*core.ModelResponse, error) {
 			atomic.AddInt32(&requestCount, 1)
 			return next(ctx, messages, settings, params)
-		}),
+		})),
 	)
 
 	// First run.

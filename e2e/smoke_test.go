@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -126,6 +127,101 @@ func TestSmokeStream(t *testing.T) {
 			usage := stream.Usage()
 			t.Logf("Provider=%s Text=%q PartStarts=%d PartDeltas=%d InputTokens=%d OutputTokens=%d",
 				p.name, text, partStarts, partDeltas, usage.InputTokens, usage.OutputTokens)
+		})
+	}
+}
+
+// TestSmokeAgentRunStream verifies the full public streaming agent path:
+// partial event consumption, tool execution, structured output, and final response access.
+func TestSmokeAgentRunStream(t *testing.T) {
+	addTool := core.FuncTool[CalcParams]("add", "Add two numbers together", func(ctx context.Context, rc *core.RunContext, p CalcParams) (string, error) {
+		return fmt.Sprintf("%d", p.A+p.B), nil
+	})
+
+	for _, p := range allProviders() {
+		t.Run(p.name, func(t *testing.T) {
+			skipIfNoCredentials(t, p.credEnvVar)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+
+			agent := core.NewAgent[MathAnswer](p.newFn(),
+				core.WithTools[MathAnswer](addTool),
+				core.WithMaxTokens[MathAnswer](250),
+			)
+
+			stream, err := agent.RunStream(ctx, "Use the add tool exactly once to add 20 and 22. Then return structured output with answer=42 and a brief explanation.")
+			if err != nil {
+				skipOnAccountError(t, err)
+				t.Fatalf("agent.RunStream failed: %v", err)
+			}
+			defer stream.Close()
+
+			var (
+				eventCount   int
+				sawToolCall  bool
+				sawTextStart bool
+			)
+
+			// Consume only part of the stream first, then switch to Result().
+			for event, err := range stream.StreamEvents() {
+				if err != nil {
+					t.Fatalf("StreamEvents error: %v", err)
+				}
+				eventCount++
+				switch e := event.(type) {
+				case core.PartStartEvent:
+					switch e.Part.(type) {
+					case core.ToolCallPart:
+						sawToolCall = true
+					case core.TextPart:
+						sawTextStart = true
+					}
+				case core.PartDeltaEvent:
+					if _, ok := e.Delta.(core.TextPartDelta); ok {
+						sawTextStart = true
+					}
+				}
+				if eventCount >= 3 {
+					break
+				}
+			}
+
+			result, err := stream.Result()
+			if err != nil {
+				skipOnAccountError(t, err)
+				t.Fatalf("stream.Result failed: %v", err)
+			}
+			if result == nil {
+				t.Fatal("stream.Result returned nil result")
+			}
+			if result.Output.Answer != 42 {
+				t.Errorf("expected answer=42, got %d", result.Output.Answer)
+			}
+			if result.Output.Explanation == "" {
+				t.Error("expected non-empty explanation")
+			}
+
+			resp, err := stream.GetOutput()
+			if err != nil {
+				t.Fatalf("stream.GetOutput failed after Result: %v", err)
+			}
+			if resp == nil {
+				t.Fatal("stream.GetOutput returned nil response")
+			}
+			if resp.ModelName == "" {
+				t.Error("final streamed response has empty model name")
+			}
+			if len(resp.ToolCalls()) == 0 && resp.TextContent() == "" {
+				t.Error("expected final streamed response to contain tool calls or text")
+			}
+
+			if !sawToolCall && !sawTextStart {
+				t.Error("expected partial stream consumption to observe tool or text events")
+			}
+
+			t.Logf("Provider=%s PartialEvents=%d SawToolCall=%v Answer=%d Explanation=%q",
+				p.name, eventCount, sawToolCall, result.Output.Answer, result.Output.Explanation)
 		})
 	}
 }

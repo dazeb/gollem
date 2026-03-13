@@ -394,14 +394,14 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		}),
 	)
 
-	if kickoffMW != nil {
+	if !kickoffMW.IsZero() {
 		// Keep kickoff outside the fixed append block so middleware state
 		// persists for the whole run (turn counters, spawn tracking).
 		opts = append(opts, core.WithAgentMiddleware[string](kickoffMW))
 	}
 
 	// Team leader middleware: drain incoming messages from workers between turns.
-	if teamLeaderMW != nil {
+	if !teamLeaderMW.IsZero() {
 		opts = append(opts, core.WithAgentMiddleware[string](teamLeaderMW))
 	}
 
@@ -454,7 +454,7 @@ func subagentAutoContextConfig(cfg *Config) core.AutoContextConfig {
 // stderrLoggingMiddleware logs each model turn to stderr with timing.
 func stderrLoggingMiddleware() core.AgentMiddleware {
 	turn := 0
-	return func(
+	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
 		messages []core.ModelMessage,
 		settings *core.ModelSettings,
@@ -494,7 +494,7 @@ func stderrLoggingMiddleware() core.AgentMiddleware {
 			)
 		}
 		return resp, err
-	}
+	})
 }
 
 // stripDelegateFromPrompt removes the "- **delegate**: ..." paragraph from

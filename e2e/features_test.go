@@ -115,8 +115,8 @@ func TestCostTracking(t *testing.T) {
 
 	tracker := core.NewCostTracker(map[string]core.ModelPricing{
 		"claude-haiku-4-5-20251001": {
-			InputTokenCost:  0.0000008,  // $0.80 per 1M input tokens
-			OutputTokenCost: 0.000004,   // $4.00 per 1M output tokens
+			InputTokenCost:  0.0000008, // $0.80 per 1M input tokens
+			OutputTokenCost: 0.000004,  // $4.00 per 1M output tokens
 		},
 	})
 
@@ -255,7 +255,7 @@ func TestAgentMiddleware(t *testing.T) {
 	}
 
 	agent := core.NewAgent[string](newAnthropicProvider(),
-		core.WithAgentMiddleware[string](mw),
+		core.WithAgentMiddleware[string](core.RequestOnlyMiddleware(mw)),
 	)
 
 	_, err := agent.Run(ctx, "Say hello")

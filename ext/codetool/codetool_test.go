@@ -1529,7 +1529,8 @@ func TestIsVerificationCommand(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_RejectsWithoutVerification(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -1587,7 +1588,8 @@ func TestVerificationCheckpoint_AllowsCompletionWithNoMutations(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 
@@ -1646,7 +1648,8 @@ func TestVerificationCheckpoint_AcceptsAfterVerification(t *testing.T) {
 // TestVerificationCheckpoint_MiddlewareRescanStillAccepts verifies that
 // rescanning the same verification history does not regress completion gating.
 func TestVerificationCheckpoint_MiddlewareRescanStillAccepts(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 
@@ -1712,7 +1715,8 @@ func TestVerificationCheckpoint_MiddlewareRescanStillAccepts(t *testing.T) {
 // TestVerificationCheckpoint_NewVerificationStillAccepts verifies that
 // a new verification run keeps completion admissible (no forced extra turn).
 func TestVerificationCheckpoint_NewVerificationStillAccepts(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 
@@ -1782,7 +1786,8 @@ func TestVerificationCheckpoint_NewVerificationStillAccepts(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 
@@ -1832,7 +1837,8 @@ func TestVerificationCheckpoint_IgnoresNonBashTools(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_AcceptsExecuteCode(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 
@@ -1890,7 +1896,8 @@ func TestIsVerificationCode(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_ServiceTaskRequiresReadinessProof(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 	ctx := context.Background()
 
 	messages := []core.ModelMessage{
@@ -1951,7 +1958,8 @@ func TestVerificationCheckpoint_ServiceTaskRequiresReadinessProof(t *testing.T) 
 }
 
 func TestVerificationCheckpoint_ServiceTaskAcceptsAfterReadinessProof(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 	ctx := context.Background()
 
 	messages := []core.ModelMessage{
@@ -2447,7 +2455,8 @@ func TestMultiEdit_ProtectedTestFile(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 
@@ -2501,7 +2510,8 @@ func TestVerificationCheckpoint_IgnoresNonVerificationBash(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_RejectsOnTestFailure(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 
@@ -2548,7 +2558,8 @@ func TestVerificationCheckpoint_RejectsOnTestFailure(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_AcceptsAfterFailureThenPass(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -2619,7 +2630,8 @@ func TestVerificationCheckpoint_AcceptsAfterFailureThenPass(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_RejectsRepeatedlyOnFailure(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -2666,7 +2678,8 @@ func TestVerificationCheckpoint_RejectsRepeatedlyOnFailure(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_RejectionCap(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -2717,7 +2730,8 @@ func TestVerificationCheckpoint_RejectionCap(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_CommandNotFoundNotCountedAsFailure(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -2778,7 +2792,8 @@ func TestVerificationCheckpoint_CommandNotFoundNotCountedAsFailure(t *testing.T)
 }
 
 func TestVerificationCheckpoint_CommandNotFoundNoVerification(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -2847,7 +2862,8 @@ func TestVerificationCheckpoint_CommandNotFoundNoVerification(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_RejectsWhenEditsAfterLastVerification(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -2910,7 +2926,8 @@ func TestVerificationCheckpoint_RejectsWhenEditsAfterLastVerification(t *testing
 }
 
 func TestVerificationCheckpoint_RejectsWhenLSPRenameAfterLastVerification(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -2972,7 +2989,8 @@ func TestVerificationCheckpoint_RejectsWhenLSPRenameAfterLastVerification(t *tes
 }
 
 func TestVerificationCheckpoint_RejectsWhenBashMutationAfterLastVerification(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -3034,7 +3052,8 @@ func TestVerificationCheckpoint_RejectsWhenBashMutationAfterLastVerification(t *
 }
 
 func TestVerificationCheckpoint_DoesNotRejectWhenPostVerifyMutationFails(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -3091,7 +3110,8 @@ func TestVerificationCheckpoint_DoesNotRejectWhenPostVerifyMutationFails(t *test
 }
 
 func TestVerificationCheckpoint_VerificationWithRedirectDoesNotTriggerStaleReject(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	rc := &core.RunContext{}
@@ -3286,7 +3306,8 @@ func TestMutationToolReturnSucceeded(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_StagnationDetection(t *testing.T) {
-	mw, _ := VerificationCheckpoint("")
+	middleware, _ := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
@@ -3349,7 +3370,8 @@ func TestVerificationCheckpoint_StagnationDetection(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_NoStagnationWhenImproving(t *testing.T) {
-	mw, _ := VerificationCheckpoint("")
+	middleware, _ := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	stagnationInjected := false
@@ -3407,7 +3429,8 @@ func TestVerificationCheckpoint_NoStagnationWhenImproving(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_RegressionDetection(t *testing.T) {
-	mw, _ := VerificationCheckpoint("")
+	middleware, _ := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	regressionInjected := false
@@ -3465,7 +3488,8 @@ func TestVerificationCheckpoint_RegressionDetection(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_NoRegressionWhenImproving(t *testing.T) {
-	mw, _ := VerificationCheckpoint("")
+	middleware, _ := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	regressionInjected := false
@@ -3523,7 +3547,8 @@ func TestVerificationCheckpoint_NoRegressionWhenImproving(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_NoRegressionOnUnknownPassCount(t *testing.T) {
-	mw, _ := VerificationCheckpoint("")
+	middleware, _ := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	regressionInjected := false
@@ -3574,7 +3599,8 @@ func TestVerificationCheckpoint_NoRegressionOnUnknownPassCount(t *testing.T) {
 }
 
 func TestVerificationCheckpoint_IgnoresPytestHelpCommand(t *testing.T) {
-	mw, validator := VerificationCheckpoint("")
+	middleware, validator := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	ctx := context.Background()
 	messages := []core.ModelMessage{
@@ -3827,7 +3853,7 @@ func TestOutputMismatchHint(t *testing.T) {
 func TestLoopDetectionMiddleware_PersistentLoop(t *testing.T) {
 	// Test that halving (instead of full reset) causes persistent loops
 	// to trigger warnings more frequently on recurrence.
-	mw := LoopDetectionMiddleware(4)
+	mw := requireRequestMiddleware(t, LoopDetectionMiddleware(4))
 	ctx := context.Background()
 	loopWarnings := 0
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
@@ -7875,7 +7901,7 @@ func TestReasoningSandwich_Bidirectional(t *testing.T) {
 		PlanningTurns:  2,
 	}
 
-	mw := ReasoningSandwichMiddleware(cfg)
+	mw := requireRequestMiddleware(t, ReasoningSandwichMiddleware(cfg))
 
 	budget := 10000
 	effort := "medium"
@@ -9401,7 +9427,8 @@ func TestVerificationCheckpoint_StaleTestWarning(t *testing.T) {
 	// When the agent runs a verification command and then makes 6+ edits
 	// without running tests again, the middleware should inject a "stale test"
 	// reminder.
-	mw, _ := VerificationCheckpoint("/app")
+	middleware, _ := VerificationCheckpoint("/app")
+	mw := requireRequestMiddleware(t, middleware)
 
 	// Build messages: one verification command + result, then 7 edit calls.
 	var messages []core.ModelMessage
@@ -9480,7 +9507,8 @@ func TestVerificationCheckpoint_StaleTestWarning(t *testing.T) {
 func TestVerificationCheckpoint_NoStaleTestWithFewEdits(t *testing.T) {
 	// When the agent makes fewer than 6 edits after verification,
 	// no stale test warning should appear.
-	mw, _ := VerificationCheckpoint("/app")
+	middleware, _ := VerificationCheckpoint("/app")
+	mw := requireRequestMiddleware(t, middleware)
 
 	var messages []core.ModelMessage
 	// Verification run.
@@ -9547,7 +9575,8 @@ func TestVerificationCheckpoint_NoConsecutiveUserMessages(t *testing.T) {
 	// Verification warnings must be merged into the last ModelRequest, not
 	// appended as new ModelRequests. Consecutive user-role messages cause a
 	// 400 error from Anthropic's API.
-	mw, _ := VerificationCheckpoint("")
+	middleware, _ := VerificationCheckpoint("")
+	mw := requireRequestMiddleware(t, middleware)
 
 	// Build a message history that triggers a regression warning:
 	// two test runs where pass count decreases.
@@ -11538,7 +11567,7 @@ func TestShortOutputTracking(t *testing.T) {
 func TestLoopDetectionMiddleware_ReadLoop(t *testing.T) {
 	// Test that reading the same file many times without editing triggers
 	// an analysis paralysis warning.
-	mw := LoopDetectionMiddleware(3) // threshold=3, read threshold=6
+	mw := requireRequestMiddleware(t, LoopDetectionMiddleware(3)) // threshold=3, read threshold=6
 	ctx := context.Background()
 	readWarnings := 0
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
@@ -11579,7 +11608,7 @@ func TestLoopDetectionMiddleware_ReadLoop(t *testing.T) {
 func TestLoopDetectionMiddleware_ReadThenEdit(t *testing.T) {
 	// Test that reading a file many times does NOT trigger a warning if
 	// the agent also edits the file (normal iterative development).
-	mw := LoopDetectionMiddleware(3)
+	mw := requireRequestMiddleware(t, LoopDetectionMiddleware(3))
 	ctx := context.Background()
 	readWarnings := 0
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
@@ -11632,7 +11661,7 @@ func TestLoopDetectionMiddleware_BashLoopPersistent(t *testing.T) {
 	// matching the edit loop behavior. Before the fix, delete(bashCounts, cmd)
 	// at detection time zeroed the counter before the halving code could operate,
 	// making every recurrence require the full threshold+2 count.
-	mw := LoopDetectionMiddleware(3) // threshold=3, bash threshold=5
+	mw := requireRequestMiddleware(t, LoopDetectionMiddleware(3)) // threshold=3, bash threshold=5
 	ctx := context.Background()
 	bashWarnings := 0
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
@@ -11693,7 +11722,7 @@ func TestLoopDetectionMiddleware_LSPLoopCounterResets(t *testing.T) {
 	// on every subsequent turn. Before the fix, the reset code wrote to
 	// searchCounts instead of lspCounts, so the LSP counter never decreased
 	// and the warning fired on every turn after the first detection.
-	mw := LoopDetectionMiddleware(3) // threshold=3, searchLoopThreshold=4
+	mw := requireRequestMiddleware(t, LoopDetectionMiddleware(3)) // threshold=3, searchLoopThreshold=4
 	ctx := context.Background()
 	warnings := 0
 	next := func(_ context.Context, msgs []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
@@ -13018,7 +13047,7 @@ func TestContextOverflowMiddleware_ShortHistoryNoPanic(t *testing.T) {
 	// Now test through the actual ContextOverflowMiddleware to confirm the
 	// comparison doesn't panic. Use a model that always returns 413.
 	callCount := 0
-	mw := ContextOverflowMiddleware()
+	mw := requireRequestMiddleware(t, ContextOverflowMiddleware())
 	_, err := mw(
 		context.Background(),
 		messages,
@@ -14036,7 +14065,7 @@ func TestContextInjectionMiddleware_DoesNotMutateInput(t *testing.T) {
 	// array with the agent's persistent message history.
 
 	dir := t.TempDir()
-	mw := ContextInjectionMiddleware(dir)
+	mw := requireRequestMiddleware(t, ContextInjectionMiddleware(dir))
 	ctx := context.Background()
 
 	originalPart := core.UserPromptPart{Content: "Hello"}
@@ -14112,7 +14141,7 @@ func TestProgressTrackingMiddleware_CompoundBashCommands(t *testing.T) {
 	for _, cmd := range compoundCommands {
 		t.Run(cmd, func(t *testing.T) {
 			dir := t.TempDir()
-			mw := ProgressTrackingMiddleware(dir)
+			mw := requireRequestMiddleware(t, ProgressTrackingMiddleware(dir))
 			ctx := context.Background()
 
 			argsJSON, _ := json.Marshal(map[string]string{"command": cmd})
@@ -14179,7 +14208,7 @@ func TestProgressTrackingMiddleware_SimpleCommandsStillDetected(t *testing.T) {
 	for _, cmd := range simpleCommands {
 		t.Run(cmd, func(t *testing.T) {
 			dir := t.TempDir()
-			mw := ProgressTrackingMiddleware(dir)
+			mw := requireRequestMiddleware(t, ProgressTrackingMiddleware(dir))
 			ctx := context.Background()
 
 			argsJSON, _ := json.Marshal(map[string]string{"command": cmd})

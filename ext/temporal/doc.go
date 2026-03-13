@@ -1,17 +1,20 @@
-// Package temporal provides Temporal durable execution for gollem agents.
-// It wraps standard core.Agent runs as Temporal workflows, with model requests
-// and tool calls executed as Temporal activities for automatic checkpointing,
-// fault tolerance, and replay.
+// Package temporal provides Temporal activity scaffolding for gollem agents.
+// It exports named model and tool activities plus worker registration helpers
+// so callers can build Temporal workflows around standard core.Agent runs.
+//
+// TemporalAgent.Run itself delegates to the wrapped agent directly. Durable
+// execution happens when you call the exported activities from your own
+// Temporal workflow.
 //
 // Usage:
 //
 //	agent := core.NewAgent[string](model, core.WithTools(myTool))
 //	temporalAgent := temporal.NewTemporalAgent(agent, temporal.WithName("my-agent"))
 //
-//	// In a Temporal workflow:
+//	// Outside a workflow, Run delegates to the wrapped agent:
 //	result, err := temporalAgent.Run(ctx, "Hello")
 //
-//	// Worker setup:
+//	// Worker setup for custom workflows:
 //	w := worker.New(client, "my-queue", worker.Options{})
 //	w.RegisterWorkflow(MyWorkflow)
 //	temporal.RegisterActivities(w, temporalAgent)

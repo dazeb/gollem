@@ -94,8 +94,12 @@ func (a *Agent[T]) Clone(opts ...AgentOption[T]) *Agent[T] {
 		copy(clone.responseInterceptors, a.responseInterceptors)
 	}
 	if len(a.middleware) > 0 {
-		clone.middleware = make([]AgentMiddleware, len(a.middleware))
+		clone.middleware = make([]RequestMiddlewareFunc, len(a.middleware))
 		copy(clone.middleware, a.middleware)
+	}
+	if len(a.streamMiddleware) > 0 {
+		clone.streamMiddleware = make([]AgentStreamMiddleware, len(a.streamMiddleware))
+		copy(clone.streamMiddleware, a.streamMiddleware)
 	}
 
 	// Apply new options.
@@ -105,4 +109,3 @@ func (a *Agent[T]) Clone(opts ...AgentOption[T]) *Agent[T] {
 
 	return clone
 }
-

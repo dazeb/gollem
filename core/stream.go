@@ -1,30 +1,31 @@
 package core
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"sync"
+	"time"
 )
 
 // StreamResult wraps a streaming model response and provides methods to
 // consume the stream as text, events, or structured output.
 type StreamResult[T any] struct {
-	stream       StreamedResponse
-	outputSchema *OutputSchema
-	validators   []OutputValidatorFunc[T]
-	messages     []ModelMessage
+	stream   StreamedResponse
+	messages []ModelMessage
+	resultFn func() (*RunResult[T], error)
 
 	mu sync.Mutex
 }
 
 // newStreamResult creates a new StreamResult.
-func newStreamResult[T any](stream StreamedResponse, schema *OutputSchema, validators []OutputValidatorFunc[T], messages []ModelMessage) *StreamResult[T] {
+func newStreamResult[T any](stream StreamedResponse, messages []ModelMessage, resultFn func() (*RunResult[T], error)) *StreamResult[T] {
 	return &StreamResult[T]{
-		stream:       stream,
-		outputSchema: schema,
-		validators:   validators,
-		messages:     messages,
+		stream:   stream,
+		messages: messages,
+		resultFn: resultFn,
 	}
 }
 
@@ -101,17 +102,31 @@ func (s *StreamResult[T]) StreamEvents() iter.Seq2[ModelResponseStreamEvent, err
 
 // GetOutput consumes the entire stream and returns the final response.
 func (s *StreamResult[T]) GetOutput() (*ModelResponse, error) {
-	// Drain the stream.
-	for {
-		_, err := s.stream.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
+	if _, err := s.Result(); err != nil {
+		return nil, err
 	}
-	return s.stream.Response(), nil
+	resp := s.stream.Response()
+	if resp == nil {
+		return nil, errors.New("stream completed without a response")
+	}
+	return resp, nil
+}
+
+// Result consumes the entire stream and returns the final typed run result.
+func (s *StreamResult[T]) Result() (*RunResult[T], error) {
+	if s.resultFn == nil {
+		for {
+			_, err := s.stream.Next()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+		return nil, errors.New("stream does not expose a typed result")
+	}
+	return s.resultFn()
 }
 
 // Response returns the ModelResponse built from data received so far.
@@ -131,4 +146,520 @@ func (s *StreamResult[T]) Messages() []ModelMessage {
 // Close releases streaming resources.
 func (s *StreamResult[T]) Close() error {
 	return s.stream.Close()
+}
+
+var errStreamClosed = errors.New("stream closed before completion")
+
+type agentStream[T any] struct {
+	agent    *Agent[T]
+	ctx      context.Context
+	state    *agentRunState
+	settings *ModelSettings
+	limits   UsageLimits
+	deps     any
+	prompt   string
+	allTools []Tool
+	toolMap  map[string]*Tool
+	outNames map[string]bool
+
+	current         StreamedResponse
+	currentTurnRC   *RunContext
+	currentModelRC  *RunContext
+	currentReqStart time.Time
+	finalResponse   *ModelResponse
+
+	done   bool
+	result *RunResult[T]
+	err    error
+
+	endOnce sync.Once
+}
+
+func newAgentStream[T any](
+	agent *Agent[T],
+	ctx context.Context,
+	state *agentRunState,
+	settings *ModelSettings,
+	limits UsageLimits,
+	deps any,
+	prompt string,
+	allTools []Tool,
+	toolMap map[string]*Tool,
+	outNames map[string]bool,
+) *agentStream[T] {
+	return &agentStream[T]{
+		agent:    agent,
+		ctx:      ctx,
+		state:    state,
+		settings: settings,
+		limits:   limits,
+		deps:     deps,
+		prompt:   prompt,
+		allTools: allTools,
+		toolMap:  toolMap,
+		outNames: outNames,
+	}
+}
+
+func (s *agentStream[T]) Next() (ModelResponseStreamEvent, error) {
+	if s.done {
+		if s.err != nil {
+			return nil, s.err
+		}
+		return nil, io.EOF
+	}
+
+	for {
+		if s.current == nil {
+			if err := s.startTurn(); err != nil {
+				s.finish(nil, err)
+				return nil, err
+			}
+		}
+
+		event, err := s.current.Next()
+		if err == nil {
+			return event, nil
+		}
+		if !errors.Is(err, io.EOF) {
+			s.finish(nil, fmt.Errorf("model stream failed: %w", err))
+			return nil, s.err
+		}
+
+		if err := s.completeTurn(); err != nil {
+			s.finish(nil, err)
+			return nil, err
+		}
+		if s.done {
+			return nil, io.EOF
+		}
+	}
+}
+
+func (s *agentStream[T]) Response() *ModelResponse {
+	if s.current != nil {
+		if resp := s.current.Response(); resp != nil {
+			return resp
+		}
+	}
+	return s.finalResponse
+}
+
+func (s *agentStream[T]) Usage() Usage {
+	usage := s.state.usage.Usage
+	if s.current != nil {
+		usage.Incr(s.current.Usage())
+	}
+	return usage
+}
+
+func (s *agentStream[T]) Close() error {
+	if s.current != nil {
+		current := s.current
+		s.current = nil
+		err := current.Close()
+		if !s.done {
+			s.finish(nil, errStreamClosed)
+		}
+		return err
+	}
+	if !s.done {
+		s.finish(nil, errStreamClosed)
+	}
+	return nil
+}
+
+func (s *agentStream[T]) Result() (*RunResult[T], error) {
+	for {
+		_, err := s.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.result == nil {
+		return nil, errors.New("stream completed without a result")
+	}
+	return s.result, nil
+}
+
+func (s *agentStream[T]) startTurn() error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.limits.CheckBeforeRequest(s.state.usage); err != nil {
+		return err
+	}
+	if s.limits.ToolCallsLimit != nil {
+		if err := s.limits.CheckToolCalls(s.state.usage); err != nil {
+			return err
+		}
+	}
+	if err := checkQuota(s.agent.usageQuota, s.state.usage); err != nil {
+		return err
+	}
+
+	s.state.runStep++
+
+	turnRC := &RunContext{
+		Deps:         s.deps,
+		Usage:        s.state.usage,
+		Prompt:       s.prompt,
+		RunStep:      s.state.runStep,
+		RunID:        s.state.runID,
+		RunStartTime: s.state.startTime,
+		EventBus:     s.agent.eventBus,
+	}
+	s.agent.fireHook(func(h Hook) {
+		if h.OnTurnStart != nil {
+			h.OnTurnStart(s.ctx, turnRC, s.state.runStep)
+		}
+	})
+
+	preparedTools := s.agent.prepareTools(s.ctx, s.state, s.allTools, s.deps, s.prompt)
+	params := buildModelRequestParams(preparedTools, s.agent.outputSchema)
+
+	settings := s.settings
+	if s.agent.toolChoice != nil {
+		if settings == nil {
+			settings = &ModelSettings{}
+		}
+		if settings.ToolChoice == nil {
+			settings.ToolChoice = s.agent.toolChoice
+		}
+	}
+
+	if s.agent.autoContext != nil {
+		beforeCount := len(s.state.messages)
+		beforeTokens := currentContextTokenCount(s.state.messages, s.state.lastInputTokens)
+		compressed, compErr := autoCompressMessages(s.ctx, s.state.messages, s.agent.autoContext, s.agent.model, beforeTokens)
+		if compErr == nil && len(compressed) < beforeCount {
+			s.state.messages = compressed
+			afterTokens := estimateTokens(compressed)
+			s.agent.fireHook(func(h Hook) {
+				if h.OnContextCompaction != nil {
+					h.OnContextCompaction(s.ctx, turnRC, ContextCompactionStats{
+						Strategy:              CompactionStrategyAutoSummary,
+						MessagesBefore:        beforeCount,
+						MessagesAfter:         len(compressed),
+						EstimatedTokensBefore: beforeTokens,
+						EstimatedTokensAfter:  afterTokens,
+					})
+				}
+			})
+		}
+	}
+
+	messages := s.state.messages
+	for _, proc := range s.agent.historyProcessors {
+		beforeCount := len(messages)
+		beforeTokens := estimateTokens(messages)
+		processed, procErr := proc(s.ctx, messages)
+		if procErr != nil {
+			return fmt.Errorf("history processor failed: %w", procErr)
+		}
+		afterCount := len(processed)
+		afterTokens := estimateTokens(processed)
+		tokenDelta := beforeTokens - afterTokens
+		meaningfulChange := afterCount < beforeCount ||
+			(beforeTokens > 0 && tokenDelta > 0 && float64(tokenDelta)/float64(beforeTokens) > 0.05)
+		if meaningfulChange {
+			s.agent.fireHook(func(h Hook) {
+				if h.OnContextCompaction != nil {
+					h.OnContextCompaction(s.ctx, turnRC, ContextCompactionStats{
+						Strategy:              CompactionStrategyHistoryProcessor,
+						MessagesBefore:        beforeCount,
+						MessagesAfter:         len(processed),
+						EstimatedTokensBefore: beforeTokens,
+						EstimatedTokensAfter:  afterTokens,
+					})
+				}
+			})
+		}
+		messages = processed
+	}
+
+	if len(s.agent.messageInterceptors) > 0 {
+		var dropped bool
+		messages, dropped = runMessageInterceptors(s.ctx, s.agent.messageInterceptors, messages)
+		if dropped {
+			return errors.New("message interceptor dropped the request")
+		}
+	}
+
+	turnGuardRC := s.agent.buildRunContext(s.state, s.deps, s.prompt)
+	turnGuardRC.Messages = messages
+	for _, g := range s.agent.turnGuardrails {
+		gErr := g.fn(s.ctx, turnGuardRC, messages)
+		passed := gErr == nil
+		s.agent.fireHook(func(h Hook) {
+			if h.OnGuardrailEvaluated != nil {
+				h.OnGuardrailEvaluated(s.ctx, turnGuardRC, g.name, passed, gErr)
+			}
+		})
+		if gErr != nil {
+			return &GuardrailError{
+				GuardrailName: g.name,
+				Message:       gErr.Error(),
+			}
+		}
+	}
+
+	modelRC := s.agent.buildRunContext(s.state, s.deps, s.prompt)
+	modelRC.Messages = messages
+	s.agent.fireHook(func(h Hook) {
+		if h.OnModelRequest != nil {
+			h.OnModelRequest(s.ctx, modelRC, messages)
+		}
+	})
+
+	modelReqStart := time.Now()
+	if s.agent.tracingEnabled {
+		s.state.traceSteps = append(s.state.traceSteps, TraceStep{
+			Kind:      TraceModelRequest,
+			Timestamp: modelReqStart,
+			Data:      map[string]any{"message_count": len(messages)},
+		})
+	}
+
+	var (
+		stream StreamedResponse
+		err    error
+	)
+	if len(s.agent.streamMiddleware) > 0 {
+		mwCtx := ContextWithCompactionCallback(s.ctx, func(stats ContextCompactionStats) {
+			s.agent.fireHook(func(h Hook) {
+				if h.OnContextCompaction != nil {
+					h.OnContextCompaction(s.ctx, turnRC, stats)
+				}
+			})
+		})
+		chain := buildStreamMiddlewareChain(s.agent.streamMiddleware, s.agent.model)
+		stream, err = chain(mwCtx, messages, settings, params)
+	} else {
+		stream, err = s.agent.model.RequestStream(s.ctx, messages, settings, params)
+	}
+	if err != nil {
+		return fmt.Errorf("model stream request failed: %w", err)
+	}
+
+	s.settings = settings
+	s.current = stream
+	s.currentTurnRC = turnRC
+	s.currentModelRC = modelRC
+	s.currentReqStart = modelReqStart
+	return nil
+}
+
+func (s *agentStream[T]) completeTurn() error {
+	resp := s.current.Response()
+	if resp == nil {
+		_ = s.current.Close()
+		s.current = nil
+		return errors.New("stream completed without a response")
+	}
+	s.finalResponse = resp
+
+	usage := resp.Usage
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 &&
+		usage.CacheWriteTokens == 0 && usage.CacheReadTokens == 0 && len(usage.Details) == 0 {
+		usage = s.current.Usage()
+		resp.Usage = usage
+	}
+
+	_ = s.current.Close()
+	s.current = nil
+
+	s.state.usage.IncrRequest(usage)
+	if usage.InputTokens > 0 {
+		s.state.lastInputTokens = usage.InputTokens
+	}
+	if s.agent.costTracker != nil {
+		singleUsage := RunUsage{}
+		singleUsage.Incr(usage)
+		s.agent.costTracker.Record(s.agent.model.ModelName(), singleUsage)
+	}
+
+	if len(s.agent.responseInterceptors) > 0 {
+		if runResponseInterceptors(s.ctx, s.agent.responseInterceptors, resp) {
+			return nil
+		}
+	}
+
+	if s.agent.toolChoiceAutoReset && len(resp.ToolCalls()) > 0 && s.settings != nil && s.settings.ToolChoice != nil {
+		nextSettings := *s.settings
+		nextSettings.ToolChoice = ToolChoiceAuto()
+		s.settings = &nextSettings
+	}
+
+	s.state.messages = append(s.state.messages, *resp)
+	s.agent.fireHook(func(h Hook) {
+		if h.OnModelResponse != nil {
+			h.OnModelResponse(s.ctx, s.currentModelRC, resp)
+		}
+	})
+
+	if s.agent.tracingEnabled {
+		s.state.traceSteps = append(s.state.traceSteps, TraceStep{
+			Kind:      TraceModelResponse,
+			Timestamp: time.Now(),
+			Duration:  time.Since(s.currentReqStart),
+			Data:      map[string]any{"text": resp.TextContent(), "tool_calls": len(resp.ToolCalls())},
+		})
+	}
+
+	if s.limits.HasTokenLimits() {
+		if err := s.limits.CheckTokens(s.state.usage); err != nil {
+			return err
+		}
+	}
+
+	if len(s.agent.runConditions) > 0 {
+		condRC := s.agent.buildRunContext(s.state, s.deps, s.prompt)
+		for _, cond := range s.agent.runConditions {
+			if stop, reason := cond(s.ctx, condRC, resp); stop {
+				s.agent.fireHook(func(h Hook) {
+					if h.OnRunConditionChecked != nil {
+						h.OnRunConditionChecked(s.ctx, condRC, true, reason)
+					}
+				})
+				if hasText := resp.TextContent() != ""; hasText && s.agent.outputSchema.AllowsText {
+					text := resp.TextContent()
+					output, parseErr := deserializeOutput[T](text, s.agent.outputSchema.OuterTypedDictKey)
+					if parseErr != nil && s.agent.outputSchema.Mode == OutputModeText {
+						if textOutput, ok := any(text).(T); ok {
+							output = textOutput
+							parseErr = nil
+						}
+					}
+					if parseErr == nil {
+						s.finish(&RunResult[T]{
+							Output:    output,
+							Messages:  s.state.messages,
+							Usage:     s.state.usage,
+							RunID:     s.state.runID,
+							ToolState: s.agent.exportToolState(),
+						}, nil)
+						return nil
+					}
+				}
+				return &RunConditionError{Reason: reason}
+			}
+		}
+	}
+
+	result, nextParts, deferredReqs, err := s.agent.processResponse(s.ctx, s.state, resp, s.toolMap, s.outNames, s.deps, s.prompt)
+
+	s.agent.fireHook(func(h Hook) {
+		if h.OnTurnEnd != nil {
+			h.OnTurnEnd(s.ctx, s.currentTurnRC, s.state.runStep, resp)
+		}
+	})
+
+	if err != nil {
+		return err
+	}
+	if len(deferredReqs) > 0 {
+		if len(nextParts) > 0 {
+			s.state.messages = append(s.state.messages, ModelRequest{
+				Parts:     nextParts,
+				Timestamp: time.Now(),
+			})
+		}
+		return &ErrDeferred[T]{
+			Result: RunResultDeferred[T]{
+				DeferredRequests: deferredReqs,
+				Messages:         s.state.messages,
+				Usage:            s.state.usage,
+			},
+		}
+	}
+	if result != nil {
+		if s.agent.kbAutoStore && s.agent.knowledgeBase != nil {
+			responseText := resp.TextContent()
+			if responseText != "" {
+				if storeErr := s.agent.knowledgeBase.Store(s.ctx, responseText); storeErr != nil {
+					return fmt.Errorf("knowledge base store failed: %w", storeErr)
+				}
+			}
+		}
+		s.finish(&RunResult[T]{
+			Output:    result.output,
+			Messages:  s.state.messages,
+			Usage:     s.state.usage,
+			RunID:     s.state.runID,
+			ToolState: s.agent.exportToolState(),
+		}, nil)
+		return nil
+	}
+
+	if len(nextParts) > 0 {
+		s.state.messages = append(s.state.messages, ModelRequest{
+			Parts:     nextParts,
+			Timestamp: time.Now(),
+		})
+	}
+
+	s.currentTurnRC = nil
+	s.currentModelRC = nil
+	return nil
+}
+
+func (s *agentStream[T]) finish(result *RunResult[T], runErr error) {
+	if s.current != nil {
+		_ = s.current.Close()
+		s.current = nil
+	}
+	s.done = true
+	s.result = result
+	s.err = runErr
+
+	s.endOnce.Do(func() {
+		endRC := s.agent.buildRunContext(s.state, s.deps, s.prompt)
+
+		if s.agent.eventBus != nil {
+			evt := RunCompletedEvent{RunID: s.state.runID, Success: runErr == nil}
+			if runErr != nil {
+				evt.Error = runErr.Error()
+			}
+			Publish(s.agent.eventBus, evt)
+		}
+		s.agent.fireHook(func(h Hook) {
+			if h.OnRunEnd != nil {
+				h.OnRunEnd(s.ctx, endRC, s.state.messages, runErr)
+			}
+		})
+
+		if s.agent.tracingEnabled {
+			endTime := time.Now()
+			trace := &RunTrace{
+				RunID:     s.state.runID,
+				Prompt:    s.prompt,
+				StartTime: s.state.startTime,
+				EndTime:   endTime,
+				Duration:  endTime.Sub(s.state.startTime),
+				Steps:     s.state.traceSteps,
+				Usage:     s.state.usage,
+				Success:   runErr == nil,
+			}
+			if runErr != nil {
+				trace.Error = runErr.Error()
+			}
+			if s.result != nil {
+				s.result.Trace = trace
+			}
+			for _, exporter := range s.agent.traceExporters {
+				_ = exporter.Export(s.ctx, trace)
+			}
+		}
+
+		if s.result != nil && s.agent.costTracker != nil {
+			s.result.Cost = s.agent.costTracker.buildRunCost()
+		}
+	})
 }

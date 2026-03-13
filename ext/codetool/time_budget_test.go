@@ -16,7 +16,7 @@ func TestTimeBudgetMiddleware_GreedyScalingCapsSettings(t *testing.T) {
 	timeBudgetNow = func() time.Time { return now }
 	defer func() { timeBudgetNow = oldNow }()
 
-	mw := TimeBudgetMiddleware(100 * time.Second)
+	mw := requireRequestMiddleware(t, TimeBudgetMiddleware(100*time.Second))
 	now = base.Add(92 * time.Second)
 
 	maxTokens := 50000
@@ -78,7 +78,7 @@ func TestTimeBudgetMiddleware_DoesNotForceToolChoiceAtSeventyPercent(t *testing.
 	timeBudgetNow = func() time.Time { return now }
 	defer func() { timeBudgetNow = oldNow }()
 
-	mw := TimeBudgetMiddleware(200 * time.Second)
+	mw := requireRequestMiddleware(t, TimeBudgetMiddleware(200*time.Second))
 	now = base.Add(140 * time.Second)
 
 	maxTokens := 50000
@@ -137,7 +137,7 @@ func TestTimeBudgetMiddleware_DoesNotForceParallelAfterPriorDelegation(t *testin
 	timeBudgetNow = func() time.Time { return now }
 	defer func() { timeBudgetNow = oldNow }()
 
-	mw := TimeBudgetMiddleware(200 * time.Second)
+	mw := requireRequestMiddleware(t, TimeBudgetMiddleware(200*time.Second))
 	now = base.Add(140 * time.Second)
 
 	maxTokens := 50000
@@ -183,7 +183,7 @@ func TestTimeBudgetMiddleware_InjectsGuidanceAtHalfway(t *testing.T) {
 	timeBudgetNow = func() time.Time { return now }
 	defer func() { timeBudgetNow = oldNow }()
 
-	mw := TimeBudgetMiddleware(200 * time.Second)
+	mw := requireRequestMiddleware(t, TimeBudgetMiddleware(200*time.Second))
 	now = base.Add(120 * time.Second)
 
 	var capturedMsgs []core.ModelMessage
