@@ -90,10 +90,23 @@ func estimateStringTokens(s string) int {
 	return int(float64(words) * 1.3)
 }
 
-// autoCompressMessages summarizes old messages to fit within the token budget.
-func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *AutoContextConfig, fallbackModel Model) ([]ModelMessage, error) {
+// currentContextTokenCount returns the best available size for the current
+// message history. Provider-reported input tokens are more accurate for the
+// last request, but state.messages may have grown since then, so we never let
+// the current history estimate fall below the actual in-memory messages.
+func currentContextTokenCount(messages []ModelMessage, lastInputTokens int) int {
 	estimated := estimateTokens(messages)
-	if estimated <= config.MaxTokens {
+	if lastInputTokens > estimated {
+		return lastInputTokens
+	}
+	return estimated
+}
+
+// autoCompressMessages summarizes old messages to fit within the token budget.
+// tokenCount is the current context size — either a real provider count from
+// the last model response or a heuristic estimate on the first turn.
+func autoCompressMessages(ctx context.Context, messages []ModelMessage, config *AutoContextConfig, fallbackModel Model, tokenCount int) ([]ModelMessage, error) {
+	if tokenCount <= config.MaxTokens {
 		return messages, nil
 	}
 

@@ -79,7 +79,7 @@ func TestAutoContext_SummaryIncludesInstructionPin(t *testing.T) {
 		SummaryModel: NewTestModel(TextResponse("summary body")),
 	}
 
-	compressed, err := autoCompressMessages(context.Background(), messages, config, nil)
+	compressed, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}

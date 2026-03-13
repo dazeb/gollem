@@ -18,7 +18,7 @@ func TestAutoContext_NoCompression(t *testing.T) {
 		KeepLastN: 4,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestAutoContext_CompressesOld(t *testing.T) {
 		SummaryModel: summaryModel,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestAutoContext_KeepsRecent(t *testing.T) {
 		SummaryModel: summaryModel,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestAutoContext_CustomModel(t *testing.T) {
 		SummaryModel: customModel,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestAutoContext_MessageAlternation(t *testing.T) {
 		SummaryModel: summaryModel,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestAutoContext_MessageAlternationOddKeepN(t *testing.T) {
 		SummaryModel: summaryModel,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestAutoContext_EmptySummaryFallback(t *testing.T) {
 		SummaryModel: summaryModel,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestAutoContext_CJKContent_UTF8Safety(t *testing.T) {
 		SummaryModel: summaryModel,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestAutoContext_ToolCallPairIntegrity(t *testing.T) {
 		SummaryModel: summaryModel,
 	}
 
-	result, err := autoCompressMessages(context.Background(), messages, config, nil)
+	result, err := autoCompressMessages(context.Background(), messages, config, nil, estimateTokens(messages))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,6 +657,46 @@ func TestAutoContext_PersistentCompression(t *testing.T) {
 		if prevResp && currResp {
 			t.Errorf("adjacent ModelResponses at %d and %d", i-1, i)
 		}
+	}
+}
+
+func TestAutoContext_UsesCurrentHistoryWhenProviderCountIsStale(t *testing.T) {
+	resp1 := ToolCallResponseWithID("test_tool", `{"input":"step1"}`, "call_1")
+	resp1.Usage = Usage{InputTokens: 5}
+	resp2 := ToolCallResponseWithID("test_tool", `{"input":"step2"}`, "call_2")
+	resp2.Usage = Usage{InputTokens: 5}
+	resp3 := TextResponse("Done")
+	resp3.Usage = Usage{InputTokens: 5}
+
+	mainModel := NewTestModel(resp1, resp2, resp3)
+	summaryModel := NewTestModel(TextResponse("Summary of prior work"))
+
+	type testInput struct {
+		Input string `json:"input"`
+	}
+
+	testTool := FuncTool[testInput]("test_tool", "A test tool", func(ctx context.Context, params testInput) (string, error) {
+		return "result: " + params.Input + strings.Repeat(" padding words to inflate token count", 50), nil
+	})
+
+	agent := NewAgent[string](mainModel,
+		WithAutoContext[string](AutoContextConfig{
+			MaxTokens:    50,
+			KeepLastN:    2,
+			SummaryModel: summaryModel,
+		}),
+		WithTools[string](testTool),
+	)
+
+	result, err := agent.Run(context.Background(), "Run all steps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "Done" {
+		t.Errorf("expected 'Done', got %q", result.Output)
+	}
+	if got := len(summaryModel.Calls()); got == 0 {
+		t.Fatal("expected summary model to run once history exceeded the budget")
 	}
 }
 
@@ -899,5 +939,47 @@ func TestAutoContext_IterPersistence(t *testing.T) {
 	}
 	if result.Output != "done" {
 		t.Errorf("expected output 'done', got %q", result.Output)
+	}
+}
+
+func TestAutoContext_IterUsesCurrentHistoryWhenProviderCountIsStale(t *testing.T) {
+	resp1 := ToolCallResponseWithID("echo", `{"text":"message 1"}`, "call_1")
+	resp1.Usage = Usage{InputTokens: 5}
+	resp2 := ToolCallResponseWithID("echo", `{"text":"message 2"}`, "call_2")
+	resp2.Usage = Usage{InputTokens: 5}
+	resp3 := TextResponse("done")
+	resp3.Usage = Usage{InputTokens: 5}
+
+	mainModel := NewTestModel(resp1, resp2, resp3)
+	summaryModel := NewTestModel(TextResponse("Summary: several echo tool calls were made."))
+
+	echoTool := FuncTool[struct {
+		Text string `json:"text"`
+	}]("echo", "Echo text", func(_ context.Context, _ *RunContext, p struct {
+		Text string `json:"text"`
+	}) (string, error) {
+		return "Echo: " + p.Text + strings.Repeat(" padding words to inflate token count", 50), nil
+	})
+
+	agent := NewAgent[string](mainModel,
+		WithTools[string](echoTool),
+		WithAutoContext[string](AutoContextConfig{
+			MaxTokens:    50,
+			KeepLastN:    2,
+			SummaryModel: summaryModel,
+		}),
+	)
+
+	iter := agent.Iter(context.Background(), "Run echo tool twice")
+	for !iter.Done() {
+		if _, err := iter.Next(); err != nil {
+			break
+		}
+	}
+	if got := len(summaryModel.Calls()); got == 0 {
+		t.Fatal("expected summary model to run once iter history exceeded the budget")
+	}
+	if _, err := iter.Result(); err != nil {
+		t.Fatal(err)
 	}
 }

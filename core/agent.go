@@ -453,17 +453,18 @@ func WithDetach(ch <-chan struct{}) RunOption {
 
 // agentRunState tracks mutable state across the agent loop.
 type agentRunState struct {
-	messages    []ModelMessage
-	usage       RunUsage
-	retries     int
-	toolRetries map[string]int
-	runStep     int
-	runID       string
-	startTime   time.Time
-	limits      UsageLimits
-	detach      <-chan struct{} // UI detach signal; nil if not configured
-	mu          sync.Mutex      // protects usage, toolRetries, and traceSteps during concurrent tool execution
-	traceSteps  []TraceStep
+	messages        []ModelMessage
+	usage           RunUsage
+	lastInputTokens int // input tokens from the most recent model response (0 on first turn)
+	retries         int
+	toolRetries     map[string]int
+	runStep         int
+	runID           string
+	startTime       time.Time
+	limits          UsageLimits
+	detach          <-chan struct{} // UI detach signal; nil if not configured
+	mu              sync.Mutex      // protects usage, toolRetries, and traceSteps during concurrent tool execution
+	traceSteps      []TraceStep
 }
 
 func (a *Agent[T]) ensureOutputSchema() *OutputSchema {
@@ -922,10 +923,11 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 		// leading to silent failure → main model 413 → emergency truncation.
 		if a.autoContext != nil {
 			beforeCount := len(state.messages)
-			beforeTokens := estimateTokens(state.messages)
-			compressed, compErr := autoCompressMessages(ctx, state.messages, a.autoContext, a.model)
+			beforeTokens := currentContextTokenCount(state.messages, state.lastInputTokens)
+			compressed, compErr := autoCompressMessages(ctx, state.messages, a.autoContext, a.model, beforeTokens)
 			if compErr == nil && len(compressed) < beforeCount {
 				state.messages = compressed
+				afterTokens := estimateTokens(compressed)
 				a.fireHook(func(h Hook) {
 					if h.OnContextCompaction != nil {
 						h.OnContextCompaction(ctx, turnRC, ContextCompactionStats{
@@ -933,7 +935,7 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 							MessagesBefore:        beforeCount,
 							MessagesAfter:         len(compressed),
 							EstimatedTokensBefore: beforeTokens,
-							EstimatedTokensAfter:  estimateTokens(compressed),
+							EstimatedTokensAfter:  afterTokens,
 						})
 					}
 				})
@@ -949,9 +951,16 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			if procErr != nil {
 				return nil, fmt.Errorf("history processor failed: %w", procErr)
 			}
-			// Fire compaction hook if the processor changed token count.
+			// Fire compaction hook if the processor made a meaningful change.
+			// Minor token fluctuations from normalization (e.g., stripping
+			// images, rewriting parts) are not worth reporting — they spam
+			// the UI with "Auto-compact" messages on every turn.
+			afterCount := len(processed)
 			afterTokens := estimateTokens(processed)
-			if afterTokens != beforeTokens {
+			tokenDelta := beforeTokens - afterTokens
+			meaningfulChange := afterCount < beforeCount ||
+				(beforeTokens > 0 && tokenDelta > 0 && float64(tokenDelta)/float64(beforeTokens) > 0.05)
+			if meaningfulChange {
 				a.fireHook(func(h Hook) {
 					if h.OnContextCompaction != nil {
 						h.OnContextCompaction(ctx, turnRC, ContextCompactionStats{
@@ -1037,8 +1046,13 @@ func (a *Agent[T]) runLoop(ctx context.Context, state *agentRunState, prompt str
 			return nil, fmt.Errorf("model request failed: %w", err)
 		}
 
-		// Track usage.
+		// Track usage. Record the last request's input tokens so the
+		// auto-context compaction can use real provider counts instead
+		// of heuristic estimates.
 		state.usage.IncrRequest(resp.Usage)
+		if resp.Usage.InputTokens > 0 {
+			state.lastInputTokens = resp.Usage.InputTokens
+		}
 
 		// Track cost.
 		if a.costTracker != nil {

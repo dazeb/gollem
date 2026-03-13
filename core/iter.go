@@ -215,7 +215,8 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 		// Persist into state.messages to prevent unbounded growth
 		// (same fix as in runLoop — see agent.go).
 		if ar.agent.autoContext != nil {
-			compressed, compErr := autoCompressMessages(ar.ctx, ar.state.messages, ar.agent.autoContext, ar.agent.model)
+			tokenCount := currentContextTokenCount(ar.state.messages, ar.state.lastInputTokens)
+			compressed, compErr := autoCompressMessages(ar.ctx, ar.state.messages, ar.agent.autoContext, ar.agent.model, tokenCount)
 			if compErr == nil && len(compressed) < len(ar.state.messages) {
 				ar.state.messages = compressed
 			}
@@ -290,6 +291,9 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 		}
 
 		ar.state.usage.IncrRequest(resp.Usage)
+		if resp.Usage.InputTokens > 0 {
+			ar.state.lastInputTokens = resp.Usage.InputTokens
+		}
 		if ar.agent.costTracker != nil {
 			singleUsage := RunUsage{}
 			singleUsage.Incr(resp.Usage)
