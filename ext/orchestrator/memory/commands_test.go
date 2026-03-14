@@ -397,6 +397,79 @@ func TestStore_RecoverClaimedCommandsReturnsStaleClaimToPending(t *testing.T) {
 	}
 }
 
+func TestStore_RecoverClaimedCommandTargetsSingleCommand(t *testing.T) {
+	store := NewStore()
+	taskA, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "recover command a",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskA failed: %v", err)
+	}
+	taskB, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "recover command b",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskB failed: %v", err)
+	}
+
+	commandA, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskA.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand commandA failed: %v", err)
+	}
+	commandB, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskB.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand commandB failed: %v", err)
+	}
+
+	if _, err := store.ClaimCommand(context.Background(), commandA.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      time.Unix(1, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("ClaimCommand commandA failed: %v", err)
+	}
+	if _, err := store.ClaimCommand(context.Background(), commandB.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-b",
+		Now:      time.Unix(1, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("ClaimCommand commandB failed: %v", err)
+	}
+
+	recovery, err := store.RecoverClaimedCommand(context.Background(), commandA.ID, time.Unix(2, 0).UTC(), time.Unix(3, 0).UTC())
+	if err != nil {
+		t.Fatalf("RecoverClaimedCommand failed: %v", err)
+	}
+	if recovery == nil || recovery.Command == nil || recovery.Command.ID != commandA.ID {
+		t.Fatalf("expected recovery for commandA, got %+v", recovery)
+	}
+	if recovery.Command.Status != orchestrator.CommandPending {
+		t.Fatalf("expected commandA pending after recovery, got %+v", recovery.Command)
+	}
+
+	persistedA, err := store.GetCommand(context.Background(), commandA.ID)
+	if err != nil {
+		t.Fatalf("GetCommand commandA failed: %v", err)
+	}
+	if persistedA.Status != orchestrator.CommandPending {
+		t.Fatalf("expected commandA pending in store, got %s", persistedA.Status)
+	}
+
+	persistedB, err := store.GetCommand(context.Background(), commandB.ID)
+	if err != nil {
+		t.Fatalf("GetCommand commandB failed: %v", err)
+	}
+	if persistedB.Status != orchestrator.CommandClaimed {
+		t.Fatalf("expected commandB to remain claimed, got %s", persistedB.Status)
+	}
+}
+
 func TestStore_ClaimPendingCommandRetargetsRunningCancelToCurrentWorker(t *testing.T) {
 	store := NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{

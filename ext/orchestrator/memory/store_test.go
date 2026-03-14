@@ -163,6 +163,69 @@ func TestStore_RecoverExpiredLeasesFailsExhaustedTask(t *testing.T) {
 	}
 }
 
+func TestStore_RecoverExpiredLeaseTargetsSingleTask(t *testing.T) {
+	store := NewStore()
+	taskA, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "recover a",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskA failed: %v", err)
+	}
+	taskB, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "recover b",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskB failed: %v", err)
+	}
+
+	base := time.Unix(1, 0).UTC()
+	if _, err := store.ClaimTask(context.Background(), taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base,
+	}); err != nil {
+		t.Fatalf("ClaimTask taskA failed: %v", err)
+	}
+	if _, err := store.ClaimTask(context.Background(), taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base,
+	}); err != nil {
+		t.Fatalf("ClaimTask taskB failed: %v", err)
+	}
+
+	recovery, err := store.RecoverExpiredLease(context.Background(), taskA.ID, base.Add(25*time.Millisecond))
+	if err != nil {
+		t.Fatalf("RecoverExpiredLease failed: %v", err)
+	}
+	if recovery == nil || recovery.Task == nil || recovery.Task.ID != taskA.ID {
+		t.Fatalf("expected recovery for taskA, got %+v", recovery)
+	}
+	if !recovery.Requeued || recovery.ResultStatus != orchestrator.TaskPending {
+		t.Fatalf("expected targeted recovery to requeue taskA, got %+v", recovery)
+	}
+
+	persistedA, err := store.GetTask(context.Background(), taskA.ID)
+	if err != nil {
+		t.Fatalf("GetTask taskA failed: %v", err)
+	}
+	if persistedA.Status != orchestrator.TaskPending {
+		t.Fatalf("expected taskA pending after targeted recovery, got %s", persistedA.Status)
+	}
+
+	persistedB, err := store.GetTask(context.Background(), taskB.ID)
+	if err != nil {
+		t.Fatalf("GetTask taskB failed: %v", err)
+	}
+	if persistedB.Status != orchestrator.TaskRunning {
+		t.Fatalf("expected taskB to remain running, got %s", persistedB.Status)
+	}
+}
+
 func TestStore_CompleteTaskRequiresActiveLease(t *testing.T) {
 	store := NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
