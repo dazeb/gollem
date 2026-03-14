@@ -19,6 +19,13 @@ type Runner interface {
 	RunTask(ctx context.Context, claim *ClaimedTask) (*TaskOutcome, error)
 }
 
+// RunController optionally provides out-of-band control over an active run.
+// This lets durable runners react to orchestration commands after a worker restart,
+// when there is no longer a local goroutine to cancel directly.
+type RunController interface {
+	CancelRun(ctx context.Context, task *Task, run *RunRef, cause error) error
+}
+
 // RunnerFunc adapts a function into a Runner.
 type RunnerFunc func(ctx context.Context, claim *ClaimedTask) (*TaskOutcome, error)
 

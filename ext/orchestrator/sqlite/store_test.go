@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -168,6 +169,61 @@ func TestStore_PendingCancelCommandSurvivesReopenAndSchedulerHandlesIt(t *testin
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
+func TestStore_AbortRunCommandValidatesCurrentRun(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "abort this run",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+	if _, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+	}); !errors.Is(err, orchestrator.ErrRunNotFound) {
+		t.Fatalf("expected ErrRunNotFound for pending task, got %v", err)
+	}
+
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand abort_run failed: %v", err)
+	}
+	if command.RunID != claim.Run.ID {
+		t.Fatalf("expected abort_run command run id %q, got %q", claim.Run.ID, command.RunID)
+	}
+	if command.TargetWorkerID != "worker-a" {
+		t.Fatalf("expected abort_run target worker %q, got %q", "worker-a", command.TargetWorkerID)
+	}
+	if _, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+		RunID:  "run-mismatch",
+	}); !errors.Is(err, orchestrator.ErrRunNotFound) {
+		t.Fatalf("expected ErrRunNotFound for mismatched run id, got %v", err)
 	}
 }
 
@@ -357,6 +413,9 @@ func TestStore_PersistsDurableHistoryAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimTask failed: %v", err)
 	}
+	if _, err := store.RenewLease(context.Background(), task.ID, claim.Lease.Token, time.Minute, base.Add(500*time.Millisecond)); err != nil {
+		t.Fatalf("RenewLease failed: %v", err)
+	}
 	_, err = store.CompleteTask(context.Background(), task.ID, claim.Lease.Token, &orchestrator.TaskOutcome{
 		Result: &orchestrator.TaskResult{Output: "done"},
 		Artifacts: []orchestrator.ArtifactSpec{{
@@ -384,13 +443,14 @@ func TestStore_PersistsDurableHistoryAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEvents failed: %v", err)
 	}
-	if len(events) != 4 {
-		t.Fatalf("expected 4 persisted events, got %d", len(events))
+	if len(events) != 5 {
+		t.Fatalf("expected 5 persisted events, got %d", len(events))
 	}
 
 	wantKinds := []orchestrator.EventKind{
 		orchestrator.EventTaskCreated,
 		orchestrator.EventTaskClaimed,
+		orchestrator.EventLeaseRenewed,
 		orchestrator.EventTaskCompleted,
 		orchestrator.EventArtifactCreated,
 	}
@@ -401,6 +461,38 @@ func TestStore_PersistsDurableHistoryAcrossReopen(t *testing.T) {
 		if events[i].Sequence != int64(i+1) {
 			t.Fatalf("expected event[%d] sequence %d, got %d", i, i+1, events[i].Sequence)
 		}
+	}
+
+	incremental, err := store.ListEvents(context.Background(), orchestrator.EventFilter{
+		TaskID:        task.ID,
+		AfterSequence: 2,
+		Limit:         2,
+	})
+	if err != nil {
+		t.Fatalf("incremental ListEvents failed: %v", err)
+	}
+	if len(incremental) != 2 {
+		t.Fatalf("expected 2 incremental persisted events, got %d", len(incremental))
+	}
+	if incremental[0].Sequence != 3 || incremental[1].Sequence != 4 {
+		t.Fatalf("unexpected incremental persisted event sequences: %+v", incremental)
+	}
+
+	replayPage, replayCursor, err := orchestrator.ReplayEvents(context.Background(), store, orchestrator.EventFilter{
+		TaskID: task.ID,
+		Limit:  3,
+	}, orchestrator.ReplayCursor{})
+	if err != nil {
+		t.Fatalf("ReplayEvents failed: %v", err)
+	}
+	if len(replayPage) != 3 {
+		t.Fatalf("expected 3 replayed persisted events, got %d", len(replayPage))
+	}
+	if replayCursor.AfterSequence != 3 {
+		t.Fatalf("expected replay cursor 3, got %d", replayCursor.AfterSequence)
+	}
+	if replayPage[0].Record.Kind != orchestrator.EventTaskCreated || replayPage[2].Record.Kind != orchestrator.EventLeaseRenewed {
+		t.Fatalf("unexpected replay page kinds: %+v", replayPage)
 	}
 
 	loaded, err := store.GetEvent(context.Background(), events[1].ID)
@@ -424,6 +516,80 @@ func TestStore_PersistsDurableHistoryAcrossReopen(t *testing.T) {
 	}
 	if timeline.Latest == nil || timeline.Latest.Kind != orchestrator.EventArtifactCreated {
 		t.Fatalf("unexpected task timeline latest event: %+v", timeline.Latest)
+	}
+
+	runTimeline, err := orchestrator.LoadRunTimeline(context.Background(), store, claim.Run.ID)
+	if err != nil {
+		t.Fatalf("LoadRunTimeline failed: %v", err)
+	}
+	if len(runTimeline.Events) != 4 {
+		t.Fatalf("expected run timeline len 4, got %d", len(runTimeline.Events))
+	}
+	if runTimeline.TaskID != task.ID {
+		t.Fatalf("expected run timeline task %q, got %q", task.ID, runTimeline.TaskID)
+	}
+	if runTimeline.WorkerID != "worker-a" {
+		t.Fatalf("expected run timeline worker %q, got %q", "worker-a", runTimeline.WorkerID)
+	}
+	if runTimeline.Attempt != 1 {
+		t.Fatalf("expected run timeline attempt 1, got %d", runTimeline.Attempt)
+	}
+	if runTimeline.Terminal == nil || runTimeline.Terminal.Kind != orchestrator.EventTaskCompleted {
+		t.Fatalf("unexpected run timeline terminal event: %+v", runTimeline.Terminal)
+	}
+	if runTimeline.Latest == nil || runTimeline.Latest.Kind != orchestrator.EventArtifactCreated {
+		t.Fatalf("unexpected run timeline latest event: %+v", runTimeline.Latest)
+	}
+
+	runSummary, err := orchestrator.GetRun(context.Background(), store, claim.Run.ID)
+	if err != nil {
+		t.Fatalf("GetRun failed: %v", err)
+	}
+	if runSummary.Status != orchestrator.RunCompleted {
+		t.Fatalf("expected run summary status %s, got %s", orchestrator.RunCompleted, runSummary.Status)
+	}
+	if runSummary.TerminalKind != orchestrator.EventTaskCompleted {
+		t.Fatalf("expected run summary terminal kind %s, got %s", orchestrator.EventTaskCompleted, runSummary.TerminalKind)
+	}
+
+	runs, err := orchestrator.ListRuns(context.Background(), store, orchestrator.RunFilter{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("ListRuns failed: %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != claim.Run.ID {
+		t.Fatalf("expected persisted run summary for %q, got %+v", claim.Run.ID, runs)
+	}
+
+	workerTimeline, err := orchestrator.LoadWorkerTimeline(context.Background(), store, "worker-a")
+	if err != nil {
+		t.Fatalf("LoadWorkerTimeline failed: %v", err)
+	}
+	if len(workerTimeline.Runs) != 1 || workerTimeline.Runs[0].ID != claim.Run.ID {
+		t.Fatalf("unexpected persisted worker runs: %+v", workerTimeline.Runs)
+	}
+	if len(workerTimeline.Events) != 4 {
+		t.Fatalf("expected persisted worker timeline len 4, got %d", len(workerTimeline.Events))
+	}
+	if workerTimeline.Latest == nil || workerTimeline.Latest.Kind != orchestrator.EventArtifactCreated {
+		t.Fatalf("unexpected persisted worker latest event: %+v", workerTimeline.Latest)
+	}
+
+	workerSummary, err := orchestrator.GetWorker(context.Background(), store, "worker-a")
+	if err != nil {
+		t.Fatalf("GetWorker failed: %v", err)
+	}
+	if workerSummary.CompletedRuns != 1 || workerSummary.LatestRunID != claim.Run.ID {
+		t.Fatalf("unexpected persisted worker summary: %+v", workerSummary)
+	}
+
+	workers, err := orchestrator.ListWorkers(context.Background(), store, orchestrator.WorkerFilter{
+		IDs: []string{"worker-a"},
+	})
+	if err != nil {
+		t.Fatalf("ListWorkers failed: %v", err)
+	}
+	if len(workers) != 1 || workers[0].ID != "worker-a" {
+		t.Fatalf("unexpected persisted worker list: %+v", workers)
 	}
 }
 

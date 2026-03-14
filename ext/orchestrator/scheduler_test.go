@@ -3,6 +3,7 @@ package orchestrator_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -497,6 +498,239 @@ func TestScheduler_HandlesRunningCancelCommand(t *testing.T) {
 	}
 }
 
+func TestScheduler_HandlesAbortRunCommandAsTaskFailure(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "abort only the active run",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	started := make(chan struct{})
+	runner := orchestrator.RunnerFunc(func(ctx context.Context, _ *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithWorkerID("worker-1"),
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithLeaseTTL(50*time.Millisecond),
+		orchestrator.WithLeaseRenewInterval(10*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runner start")
+	}
+
+	running := waitForTaskStatus(t, store, task.ID, orchestrator.TaskRunning)
+	if running.Run == nil {
+		t.Fatalf("expected running task run ref, got %+v", running.Run)
+	}
+
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+		RunID:  running.Run.ID,
+		Reason: "abort just this run",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand abort_run failed: %v", err)
+	}
+
+	failed := waitForTaskStatus(t, store, task.ID, orchestrator.TaskFailed)
+	if failed.LastError != "orchestrator run aborted: abort just this run" {
+		t.Fatalf("expected abort failure reason %q, got %q", "orchestrator run aborted: abort just this run", failed.LastError)
+	}
+	if failed.Run == nil || failed.Run.ID != running.Run.ID {
+		t.Fatalf("expected failed task to preserve aborted run %q, got %+v", running.Run.ID, failed.Run)
+	}
+	handled := waitForCommandStatus(t, store, command.ID, orchestrator.CommandHandled)
+	if handled.HandledBy != "worker-1" {
+		t.Fatalf("expected abort_run handled by worker-1, got %q", handled.HandledBy)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
+func TestScheduler_HandlesRunningCancelCommandViaRunnerControl(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "cancel remotely",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-1",
+		LeaseTTL: time.Minute,
+		Now:      time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: task.ID,
+		Reason: "remote stop",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+
+	runner := &controlledRunner{}
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithWorkerID("worker-1"),
+		orchestrator.WithPollInterval(5*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	canceled := waitForTaskStatus(t, store, task.ID, orchestrator.TaskCanceled)
+	if canceled.LastError != "remote stop" {
+		t.Fatalf("expected cancel reason %q, got %q", "remote stop", canceled.LastError)
+	}
+	if canceled.Run == nil || canceled.Run.ID != claim.Run.ID {
+		t.Fatalf("expected canceled task run %q, got %+v", claim.Run.ID, canceled.Run)
+	}
+	if _, err := store.GetLease(context.Background(), task.ID); !errors.Is(err, orchestrator.ErrLeaseNotFound) {
+		t.Fatalf("expected canceled task lease to be removed, got %v", err)
+	}
+	handled := waitForCommandStatus(t, store, command.ID, orchestrator.CommandHandled)
+	if handled.HandledBy != "worker-1" {
+		t.Fatalf("expected command handled by worker-1, got %q", handled.HandledBy)
+	}
+
+	calls := runner.calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 remote control call, got %d", len(calls))
+	}
+	if calls[0].runID != claim.Run.ID {
+		t.Fatalf("expected remote control run %q, got %q", claim.Run.ID, calls[0].runID)
+	}
+	var cancelCause *orchestrator.TaskCancelCause
+	if !errors.As(calls[0].cause, &cancelCause) || cancelCause.Reason != "remote stop" {
+		t.Fatalf("expected TaskCancelCause(remote stop), got %v", calls[0].cause)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
+func TestScheduler_AbortRunWithoutControllerReportsErrorAndLeavesCommandPending(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "abort remotely",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-1",
+		LeaseTTL: time.Minute,
+		Now:      time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+		RunID:  claim.Run.ID,
+		Reason: "fatal invariant",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	scheduler := orchestrator.NewScheduler(store, store, orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+		t.Fatal("runner should not be called for already-running task")
+		return nil, nil
+	}),
+		orchestrator.WithWorkerID("worker-1"),
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithSchedulerErrorHandler(func(err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		}),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, orchestrator.ErrRunControlUnavailable) {
+			t.Fatalf("expected ErrRunControlUnavailable, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler error callback")
+	}
+
+	pending := waitForCommandStatus(t, store, command.ID, orchestrator.CommandPending)
+	if pending.ClaimToken != "" || pending.ClaimedBy != "" {
+		t.Fatalf("expected command to be released back to pending, got %+v", pending)
+	}
+	running := waitForTaskStatus(t, store, task.ID, orchestrator.TaskRunning)
+	if running.Run == nil || running.Run.ID != claim.Run.ID {
+		t.Fatalf("expected task to remain on original running attempt %q, got %+v", claim.Run.ID, running.Run)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
 func TestScheduler_ReportsRunnerErrorAfterCancelWhenTaskAlreadyCanceled(t *testing.T) {
 	store := memstore.NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
@@ -687,6 +921,43 @@ func TestScheduler_IgnoresContextCancellationFromContextAwareStore(t *testing.T)
 
 type cancelAwareStore struct {
 	*memstore.Store
+}
+
+type controlledRunner struct {
+	mu        sync.Mutex
+	cancelled []controlledRunCall
+}
+
+type controlledRunCall struct {
+	taskID string
+	runID  string
+	cause  error
+}
+
+func (r *controlledRunner) RunTask(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+	return nil, errors.New("controlled runner should not execute tasks in this test")
+}
+
+func (r *controlledRunner) CancelRun(_ context.Context, task *orchestrator.Task, run *orchestrator.RunRef, cause error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	call := controlledRunCall{cause: cause}
+	if task != nil {
+		call.taskID = task.ID
+	}
+	if run != nil {
+		call.runID = run.ID
+	}
+	r.cancelled = append(r.cancelled, call)
+	return nil
+}
+
+func (r *controlledRunner) calls() []controlledRunCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]controlledRunCall, len(r.cancelled))
+	copy(out, r.cancelled)
+	return out
 }
 
 func (s *cancelAwareStore) ClaimReadyTask(ctx context.Context, req orchestrator.ClaimTaskRequest) (*orchestrator.ClaimedTask, error) {

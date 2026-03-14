@@ -34,6 +34,8 @@ var (
 	ErrNoPendingCommand       = errors.New("orchestrator: no pending command")
 	ErrCommandClaimMismatch   = errors.New("orchestrator: command claim mismatch")
 	ErrEventNotFound          = errors.New("orchestrator: event not found")
+	ErrRunNotFound            = errors.New("orchestrator: run not found")
+	ErrRunControlUnavailable  = errors.New("orchestrator: run control unavailable")
 	ErrInvalidCommand         = errors.New("orchestrator: invalid command")
 )
 

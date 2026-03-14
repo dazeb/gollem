@@ -175,6 +175,14 @@ func (s *Store) validateCommandTargetLocked(task *orchestrator.Task, req orchest
 		default:
 			return "", "", orchestrator.ErrTaskNotCancelable
 		}
+	case orchestrator.CommandAbortRun:
+		if task.Status != orchestrator.TaskRunning || task.Run == nil || task.Run.WorkerID == "" {
+			return "", "", orchestrator.ErrRunNotFound
+		}
+		if req.RunID != "" && task.Run.ID != req.RunID {
+			return "", "", orchestrator.ErrRunNotFound
+		}
+		return task.Run.ID, task.Run.WorkerID, nil
 	case orchestrator.CommandRetryTask:
 		switch task.Status {
 		case orchestrator.TaskFailed, orchestrator.TaskCanceled:
@@ -212,6 +220,18 @@ func (s *Store) refreshCommandTargetLocked(command *orchestrator.Command) {
 			command.TargetWorkerID = ""
 			return
 		}
+	case orchestrator.CommandAbortRun:
+		if task.Status == orchestrator.TaskRunning && task.Run != nil && task.Run.WorkerID != "" {
+			if command.RunID == "" {
+				command.RunID = task.Run.ID
+			}
+			if task.Run.ID == command.RunID {
+				command.TargetWorkerID = task.Run.WorkerID
+				return
+			}
+		}
+		command.TargetWorkerID = ""
+		return
 	case orchestrator.CommandRetryTask:
 		command.TargetWorkerID = ""
 		if task.Run == nil {

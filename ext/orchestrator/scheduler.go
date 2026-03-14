@@ -233,6 +233,11 @@ func (s *Scheduler) runClaim(ctx context.Context, claim *ClaimedTask) {
 	if runErr == nil && renewErr != nil {
 		runErr = renewErr
 	}
+	if runErr != nil && errors.Is(runErr, context.Canceled) {
+		if cause := context.Cause(runCtx); cause != nil && !errors.Is(cause, context.Canceled) {
+			runErr = cause
+		}
+	}
 
 	now := s.cfg.Now()
 	if runErr != nil {
@@ -340,8 +345,10 @@ func (s *Scheduler) processCommands(ctx context.Context) error {
 		if err := s.handleCommand(updateCtx, command); err != nil {
 			if releaseErr := s.commands.ReleaseCommand(updateCtx, command.ID, command.ClaimToken); releaseErr != nil && !errors.Is(releaseErr, ErrCommandClaimMismatch) {
 				s.cfg.OnError(releaseErr)
+				return releaseErr
 			}
-			return err
+			s.cfg.OnError(err)
+			return nil
 		}
 	}
 }
@@ -354,6 +361,10 @@ func (s *Scheduler) handleCommand(ctx context.Context, command *Command) error {
 	switch command.Kind {
 	case CommandCancelTask:
 		if err := s.applyCancelTask(ctx, command, now); err != nil {
+			return err
+		}
+	case CommandAbortRun:
+		if err := s.applyAbortRun(ctx, command); err != nil {
 			return err
 		}
 	case CommandRetryTask:
@@ -385,16 +396,21 @@ func (s *Scheduler) applyCancelTask(ctx context.Context, command *Command, now t
 	case TaskRunning:
 		lease, err := s.leases.GetLease(ctx, task.ID)
 		if err != nil {
-			if errors.Is(err, ErrLeaseNotFound) || errors.Is(err, ErrLeaseExpired) {
-				return nil
+			return err
+		}
+		cause := &TaskCancelCause{Reason: command.Reason}
+		if active, ok := s.localActiveRun(task); ok {
+			if _, err := s.tasks.CancelTask(ctx, task.ID, lease.Token, command.Reason, now); err != nil && !errors.Is(err, ErrTaskNotCancelable) {
+				return err
 			}
+			active.cancel(cause)
+			return nil
+		}
+		if err := s.cancelRemoteRun(ctx, task, cause); err != nil {
 			return err
 		}
 		if _, err := s.tasks.CancelTask(ctx, task.ID, lease.Token, command.Reason, now); err != nil && !errors.Is(err, ErrTaskNotCancelable) {
 			return err
-		}
-		if active, ok := s.activeRun(task.ID); ok {
-			active.cancel(&TaskCancelCause{Reason: command.Reason})
 		}
 		return nil
 	case TaskCompleted, TaskFailed, TaskCanceled:
@@ -402,6 +418,39 @@ func (s *Scheduler) applyCancelTask(ctx context.Context, command *Command, now t
 	default:
 		return nil
 	}
+}
+
+func (s *Scheduler) applyAbortRun(ctx context.Context, command *Command) error {
+	task, err := s.tasks.GetTask(ctx, command.TaskID)
+	if err != nil {
+		if errors.Is(err, ErrTaskNotFound) {
+			return nil
+		}
+		return err
+	}
+	if task.Status != TaskRunning || task.Run == nil {
+		return nil
+	}
+	if command.RunID != "" && task.Run.ID != command.RunID {
+		return nil
+	}
+	cause := &RunAbortCause{Reason: command.Reason}
+	if active, ok := s.localActiveRun(task); ok {
+		active.cancel(cause)
+		return nil
+	}
+	lease, err := s.leases.GetLease(ctx, task.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.cancelRemoteRun(ctx, task, cause); err != nil {
+		return err
+	}
+	_, err = s.tasks.FailTask(ctx, task.ID, lease.Token, cause, s.cfg.Now())
+	if isLeaseLoss(err) {
+		return nil
+	}
+	return err
 }
 
 func (s *Scheduler) applyRetryTask(ctx context.Context, command *Command, now time.Time) error {
@@ -449,6 +498,31 @@ func (s *Scheduler) activeRun(taskID string) (activeTaskRun, bool) {
 	defer s.activeMu.Unlock()
 	active, ok := s.active[taskID]
 	return active, ok
+}
+
+func (s *Scheduler) localActiveRun(task *Task) (activeTaskRun, bool) {
+	if task == nil || task.Run == nil {
+		return activeTaskRun{}, false
+	}
+	active, ok := s.activeRun(task.ID)
+	if !ok || active.claim == nil || active.claim.Run == nil {
+		return activeTaskRun{}, false
+	}
+	if active.claim.Run.ID != task.Run.ID {
+		return activeTaskRun{}, false
+	}
+	return active, true
+}
+
+func (s *Scheduler) cancelRemoteRun(ctx context.Context, task *Task, cause error) error {
+	if task == nil || task.Run == nil {
+		return ErrRunNotFound
+	}
+	controller, ok := s.runner.(RunController)
+	if !ok {
+		return ErrRunControlUnavailable
+	}
+	return controller.CancelRun(ctx, task, task.Run, cause)
 }
 
 func inferCommandStore(tasks TaskStore) CommandStore {

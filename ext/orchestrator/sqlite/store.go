@@ -712,6 +712,7 @@ func (s *Store) RenewLease(ctx context.Context, taskID, leaseToken string, ttl t
 
 	var (
 		lease  *orchestrator.Lease
+		runID  string
 		record *orchestrator.EventRecord
 	)
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -729,8 +730,15 @@ func (s *Store) RenewLease(ctx context.Context, taskID, leaseToken string, ttl t
 		if err := s.saveLeaseTx(ctx, tx, loadedLease); err != nil {
 			return err
 		}
+		task, err := s.tryLoadTaskTx(ctx, tx, taskID)
+		if err != nil {
+			return err
+		}
+		if task != nil && task.Run != nil {
+			runID = task.Run.ID
+		}
 		lease = loadedLease
-		record, err = leaseRenewedRecord(lease)
+		record, err = leaseRenewedRecord(lease, runID)
 		if err != nil {
 			return err
 		}
@@ -739,7 +747,7 @@ func (s *Store) RenewLease(ctx context.Context, taskID, leaseToken string, ttl t
 		return nil, err
 	}
 
-	s.publishLeaseRenewed(lease)
+	s.publishLeaseRenewed(lease, runID)
 	return cloneLease(lease), nil
 }
 
@@ -752,6 +760,7 @@ func (s *Store) ReleaseLease(ctx context.Context, taskID, leaseToken string) err
 	var (
 		released    *orchestrator.Lease
 		requeued    bool
+		runID       string
 		task        *orchestrator.Task
 		lastRunID   string
 		lastAttempt int
@@ -775,14 +784,17 @@ func (s *Store) ReleaseLease(ctx context.Context, taskID, leaseToken string) err
 		if task != nil && task.Status == orchestrator.TaskRunning {
 			requeued = true
 			lastRunID, lastAttempt = requeueTask(task, time.Now().UTC(), true)
+			runID = lastRunID
 			if err := s.saveTaskTx(ctx, tx, task); err != nil {
 				return err
 			}
+		} else if task != nil && task.Run != nil {
+			runID = task.Run.ID
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
 			return fmt.Errorf("delete released lease: %w", err)
 		}
-		record, err := leaseReleasedRecord(released, requeued, releasedAt)
+		record, err := leaseReleasedRecord(released, runID, requeued, releasedAt)
 		if err != nil {
 			return err
 		}
@@ -799,7 +811,7 @@ func (s *Store) ReleaseLease(ctx context.Context, taskID, leaseToken string) err
 		return err
 	}
 
-	s.publishLeaseReleased(released, requeued)
+	s.publishLeaseReleased(released, runID, requeued)
 	if requeued && task != nil {
 		s.publishTaskRequeued(task, lastRunID, lastAttempt, "lease released")
 	}
@@ -1448,6 +1460,25 @@ func (s *Store) refreshCommandTargetTx(ctx context.Context, tx *sql.Tx, command 
 				changed = true
 			}
 		}
+	case orchestrator.CommandAbortRun:
+		if task.Status == orchestrator.TaskRunning && task.Run != nil && task.Run.WorkerID != "" {
+			if command.RunID == "" {
+				command.RunID = task.Run.ID
+				changed = true
+			}
+			if task.Run.ID == command.RunID {
+				if command.TargetWorkerID != task.Run.WorkerID {
+					command.TargetWorkerID = task.Run.WorkerID
+					changed = true
+				}
+			} else if command.TargetWorkerID != "" {
+				command.TargetWorkerID = ""
+				changed = true
+			}
+		} else if command.TargetWorkerID != "" {
+			command.TargetWorkerID = ""
+			changed = true
+		}
 	case orchestrator.CommandRetryTask:
 		if command.TargetWorkerID != "" {
 			command.TargetWorkerID = ""
@@ -1486,6 +1517,14 @@ func validateCommandTarget(task *orchestrator.Task, req orchestrator.CreateComma
 		default:
 			return "", "", orchestrator.ErrTaskNotCancelable
 		}
+	case orchestrator.CommandAbortRun:
+		if task.Status != orchestrator.TaskRunning || task.Run == nil || task.Run.WorkerID == "" {
+			return "", "", orchestrator.ErrRunNotFound
+		}
+		if req.RunID != "" && task.Run.ID != req.RunID {
+			return "", "", orchestrator.ErrRunNotFound
+		}
+		return task.Run.ID, task.Run.WorkerID, nil
 	case orchestrator.CommandRetryTask:
 		switch task.Status {
 		case orchestrator.TaskFailed, orchestrator.TaskCanceled:
@@ -2187,24 +2226,26 @@ func (s *Store) publishTaskClaimed(task *orchestrator.Task, lease *orchestrator.
 	})
 }
 
-func (s *Store) publishLeaseRenewed(lease *orchestrator.Lease) {
+func (s *Store) publishLeaseRenewed(lease *orchestrator.Lease, runID string) {
 	if s.eventBus == nil || lease == nil {
 		return
 	}
 	core.PublishAsync(s.eventBus, orchestrator.LeaseRenewedEvent{
 		TaskID:    lease.TaskID,
+		RunID:     runID,
 		LeaseID:   lease.ID,
 		WorkerID:  lease.WorkerID,
 		ExpiresAt: lease.ExpiresAt,
 	})
 }
 
-func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, requeued bool) {
+func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, runID string, requeued bool) {
 	if s.eventBus == nil || lease == nil {
 		return
 	}
 	core.PublishAsync(s.eventBus, orchestrator.LeaseReleasedEvent{
 		TaskID:     lease.TaskID,
+		RunID:      runID,
 		LeaseID:    lease.ID,
 		WorkerID:   lease.WorkerID,
 		ReleasedAt: time.Now().UTC(),

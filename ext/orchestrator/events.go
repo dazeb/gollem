@@ -40,6 +40,7 @@ type TaskClaimedEvent struct {
 // LeaseRenewedEvent is published when an active task lease is renewed.
 type LeaseRenewedEvent struct {
 	TaskID    string
+	RunID     string
 	LeaseID   string
 	WorkerID  string
 	ExpiresAt time.Time
@@ -48,6 +49,7 @@ type LeaseRenewedEvent struct {
 // LeaseReleasedEvent is published when a task lease is released manually.
 type LeaseReleasedEvent struct {
 	TaskID     string
+	RunID      string
 	LeaseID    string
 	WorkerID   string
 	ReleasedAt time.Time

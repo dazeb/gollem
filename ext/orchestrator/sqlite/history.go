@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fugue-labs/gollem/ext/orchestrator"
@@ -28,17 +29,11 @@ func (s *Store) ListEvents(ctx context.Context, filter orchestrator.EventFilter)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	events, err := s.listEvents(ctx, s.db)
+	events, err := s.listEvents(ctx, s.db, filter)
 	if err != nil {
 		return nil, err
 	}
-	var out []*orchestrator.EventRecord
-	for _, event := range events {
-		if matchesEventFilter(event, filter) {
-			out = append(out, cloneEventRecord(event))
-		}
-	}
-	return out, nil
+	return cloneEventRecords(events), nil
 }
 
 func (s *Store) ensureEventSchema(ctx context.Context) error {
@@ -300,8 +295,52 @@ func (s *Store) loadEvent(ctx context.Context, db queryer, id string) (*orchestr
 	return event, nil
 }
 
-func (s *Store) listEvents(ctx context.Context, db queryer) ([]*orchestrator.EventRecord, error) {
-	rows, err := db.QueryContext(ctx, `SELECT sequence, payload FROM events ORDER BY sequence ASC`)
+func (s *Store) listEvents(ctx context.Context, db queryer, filter orchestrator.EventFilter) ([]*orchestrator.EventRecord, error) {
+	query := `SELECT sequence, payload FROM events`
+	var (
+		where []string
+		args  []any
+	)
+	if filter.AfterSequence > 0 {
+		where = append(where, `sequence > ?`)
+		args = append(args, filter.AfterSequence)
+	}
+	if filter.TaskID != "" {
+		where = append(where, `task_id = ?`)
+		args = append(args, filter.TaskID)
+	}
+	if filter.RunID != "" {
+		where = append(where, `run_id = ?`)
+		args = append(args, filter.RunID)
+	}
+	if filter.LeaseID != "" {
+		where = append(where, `lease_id = ?`)
+		args = append(args, filter.LeaseID)
+	}
+	if filter.CommandID != "" {
+		where = append(where, `command_id = ?`)
+		args = append(args, filter.CommandID)
+	}
+	if filter.ArtifactID != "" {
+		where = append(where, `artifact_id = ?`)
+		args = append(args, filter.ArtifactID)
+	}
+	if len(filter.Kinds) > 0 {
+		where = append(where, fmt.Sprintf(`kind IN (%s)`, placeholders(len(filter.Kinds))))
+		for _, kind := range filter.Kinds {
+			args = append(args, string(kind))
+		}
+	}
+	if len(where) > 0 {
+		query += ` WHERE ` + strings.Join(where, ` AND `)
+	}
+	query += ` ORDER BY sequence ASC`
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
 	}
@@ -319,6 +358,17 @@ func (s *Store) listEvents(ctx context.Context, db queryer) ([]*orchestrator.Eve
 		return nil, fmt.Errorf("iterate events: %w", err)
 	}
 	return events, nil
+}
+
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	parts := make([]string, n)
+	for i := range n {
+		parts[i] = "?"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func scanEventRecord(row interface{ Scan(dest ...any) error }) (*orchestrator.EventRecord, error) {
@@ -413,31 +463,33 @@ func taskClaimedRecord(task *orchestrator.Task, lease *orchestrator.Lease) (*orc
 	return newEventRecord(orchestrator.EventTaskClaimed, payload.AcquiredAt, payload, task.ID, runID, lease.ID, "", "")
 }
 
-func leaseRenewedRecord(lease *orchestrator.Lease) (*orchestrator.EventRecord, error) {
+func leaseRenewedRecord(lease *orchestrator.Lease, runID string) (*orchestrator.EventRecord, error) {
 	if lease == nil {
 		return nil, nil
 	}
 	payload := orchestrator.LeaseRenewedEvent{
 		TaskID:    lease.TaskID,
+		RunID:     runID,
 		LeaseID:   lease.ID,
 		WorkerID:  lease.WorkerID,
 		ExpiresAt: lease.ExpiresAt,
 	}
-	return newEventRecord(orchestrator.EventLeaseRenewed, payload.ExpiresAt, payload, lease.TaskID, "", lease.ID, "", "")
+	return newEventRecord(orchestrator.EventLeaseRenewed, payload.ExpiresAt, payload, lease.TaskID, runID, lease.ID, "", "")
 }
 
-func leaseReleasedRecord(lease *orchestrator.Lease, requeued bool, releasedAt time.Time) (*orchestrator.EventRecord, error) {
+func leaseReleasedRecord(lease *orchestrator.Lease, runID string, requeued bool, releasedAt time.Time) (*orchestrator.EventRecord, error) {
 	if lease == nil {
 		return nil, nil
 	}
 	payload := orchestrator.LeaseReleasedEvent{
 		TaskID:     lease.TaskID,
+		RunID:      runID,
 		LeaseID:    lease.ID,
 		WorkerID:   lease.WorkerID,
 		ReleasedAt: releasedAt,
 		Requeued:   requeued,
 	}
-	return newEventRecord(orchestrator.EventLeaseReleased, payload.ReleasedAt, payload, lease.TaskID, "", lease.ID, "", "")
+	return newEventRecord(orchestrator.EventLeaseReleased, payload.ReleasedAt, payload, lease.TaskID, runID, lease.ID, "", "")
 }
 
 func taskRequeuedRecord(task *orchestrator.Task, lastRunID string, lastAttempt int, reason string) (*orchestrator.EventRecord, error) {
@@ -584,34 +636,15 @@ func commandHandledRecord(command *orchestrator.Command) (*orchestrator.EventRec
 	return newEventRecord(orchestrator.EventCommandHandled, payload.HandledAt, payload, command.TaskID, command.RunID, "", command.ID, "")
 }
 
-func matchesEventFilter(event *orchestrator.EventRecord, filter orchestrator.EventFilter) bool {
-	if event == nil {
-		return false
+func cloneEventRecords(src []*orchestrator.EventRecord) []*orchestrator.EventRecord {
+	if len(src) == 0 {
+		return nil
 	}
-	if filter.TaskID != "" && event.TaskID != filter.TaskID {
-		return false
+	out := make([]*orchestrator.EventRecord, 0, len(src))
+	for _, record := range src {
+		out = append(out, cloneEventRecord(record))
 	}
-	if filter.RunID != "" && event.RunID != filter.RunID {
-		return false
-	}
-	if filter.LeaseID != "" && event.LeaseID != filter.LeaseID {
-		return false
-	}
-	if filter.CommandID != "" && event.CommandID != filter.CommandID {
-		return false
-	}
-	if filter.ArtifactID != "" && event.ArtifactID != filter.ArtifactID {
-		return false
-	}
-	if len(filter.Kinds) == 0 {
-		return true
-	}
-	for _, kind := range filter.Kinds {
-		if event.Kind == kind {
-			return true
-		}
-	}
-	return false
+	return out
 }
 
 func cloneEventRecord(src *orchestrator.EventRecord) *orchestrator.EventRecord {

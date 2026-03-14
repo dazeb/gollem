@@ -11,6 +11,7 @@ type CommandKind string
 
 const (
 	CommandCancelTask CommandKind = "cancel_task"
+	CommandAbortRun   CommandKind = "abort_run"
 	CommandRetryTask  CommandKind = "retry_task"
 )
 
@@ -82,11 +83,46 @@ type TaskCancelCause struct {
 
 // Error implements error.
 func (c *TaskCancelCause) Error() string {
+	return formatCommandCause("orchestrator task canceled", c)
+}
+
+// RunAbortCause marks a run cancellation that aborts only the targeted run attempt.
+type RunAbortCause struct {
+	Reason string
+}
+
+// Error implements error.
+func (c *RunAbortCause) Error() string {
+	return formatCommandCause("orchestrator run aborted", c)
+}
+
+type commandCause interface {
+	reason() string
+}
+
+func (c *TaskCancelCause) reason() string {
 	if c == nil {
-		return "orchestrator task canceled"
+		return ""
 	}
-	if trimmed := strings.TrimSpace(c.Reason); trimmed != "" {
-		return "orchestrator task canceled: " + trimmed
+	return c.Reason
+}
+
+func (c *RunAbortCause) reason() string {
+	if c == nil {
+		return ""
 	}
-	return "orchestrator task canceled"
+	return c.Reason
+}
+
+func formatCommandCause(prefix string, cause commandCause) string {
+	if strings.TrimSpace(prefix) == "" {
+		prefix = "orchestrator command"
+	}
+	if cause == nil {
+		return prefix
+	}
+	if trimmed := strings.TrimSpace(cause.reason()); trimmed != "" {
+		return prefix + ": " + trimmed
+	}
+	return prefix
 }

@@ -449,6 +449,9 @@ func TestStore_PublishesLifecycleEvents(t *testing.T) {
 	if renewed[0].LeaseID != claim.Lease.ID {
 		t.Fatalf("expected renewed lease %q, got %+v", claim.Lease.ID, renewed[0])
 	}
+	if renewed[0].RunID != claim.Run.ID {
+		t.Fatalf("expected renewed run %q, got %+v", claim.Run.ID, renewed[0])
+	}
 	if completed[0].TaskID != task.ID {
 		t.Fatalf("expected completed event for %q, got %+v", task.ID, completed[0])
 	}

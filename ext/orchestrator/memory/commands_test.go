@@ -70,6 +70,55 @@ func TestStore_CreateCommandTargetsRunningTaskOwner(t *testing.T) {
 	}
 }
 
+func TestStore_CreateAbortRunCommandRejectsMissingOrMismatchedRun(t *testing.T) {
+	store := NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "abort me",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	if _, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+	}); !errors.Is(err, orchestrator.ErrRunNotFound) {
+		t.Fatalf("expected ErrRunNotFound for pending task, got %v", err)
+	}
+
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand abort_run failed: %v", err)
+	}
+	if command.RunID != claim.Run.ID {
+		t.Fatalf("expected abort_run command run id %q, got %q", claim.Run.ID, command.RunID)
+	}
+	if command.TargetWorkerID != "worker-a" {
+		t.Fatalf("expected abort_run target worker %q, got %q", "worker-a", command.TargetWorkerID)
+	}
+
+	if _, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+		RunID:  "run-mismatch",
+	}); !errors.Is(err, orchestrator.ErrRunNotFound) {
+		t.Fatalf("expected ErrRunNotFound for mismatched run id, got %v", err)
+	}
+}
+
 func TestStore_CommandLifecyclePublishesEvents(t *testing.T) {
 	bus := core.NewEventBus()
 	store := NewStore(WithEventBus(bus))
@@ -344,5 +393,63 @@ func TestStore_ClaimPendingCommandRetargetsRunningCancelToCurrentWorker(t *testi
 	}
 	if claimed.RunID == firstClaim.Run.ID {
 		t.Fatalf("expected command run id to refresh after reclaim, still got %q", claimed.RunID)
+	}
+}
+
+func TestStore_ClaimPendingCommandDoesNotRetargetAbortRunToNewWorker(t *testing.T) {
+	store := NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "abort only this run",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	base := time.Unix(1, 0).UTC()
+	firstClaim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask first failed: %v", err)
+	}
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: task.ID,
+		RunID:  firstClaim.Run.ID,
+		Reason: "stop the original run only",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand abort_run failed: %v", err)
+	}
+	if command.TargetWorkerID != "worker-a" {
+		t.Fatalf("expected initial abort_run target %q, got %q", "worker-a", command.TargetWorkerID)
+	}
+
+	if _, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      base.Add(30 * time.Millisecond),
+	}); err != nil {
+		t.Fatalf("ClaimTask second failed: %v", err)
+	}
+
+	claimed, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-b",
+		Now:      base.Add(40 * time.Millisecond),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand failed: %v", err)
+	}
+	if claimed.ID != command.ID {
+		t.Fatalf("expected claimed command %q, got %q", command.ID, claimed.ID)
+	}
+	if claimed.RunID != firstClaim.Run.ID {
+		t.Fatalf("expected abort_run to stay pinned to run %q, got %q", firstClaim.Run.ID, claimed.RunID)
+	}
+	if claimed.TargetWorkerID != "" {
+		t.Fatalf("expected stale abort_run to clear target worker, got %q", claimed.TargetWorkerID)
 	}
 }

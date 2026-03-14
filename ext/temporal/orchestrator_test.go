@@ -400,6 +400,87 @@ func TestWorkflowRunner_PropagatesTaskCancelCauseToTemporalWorkflow(t *testing.T
 	}
 }
 
+func TestWorkflowRunner_PropagatesRunAbortCauseToTemporalWorkflow(t *testing.T) {
+	ta := NewTemporalAgent(core.NewAgent[string](core.NewTestModel(core.TextResponse("unused"))), WithName("workflow-runner-abort"))
+	run := &fakeWorkflowRun{
+		id:     "orch-run-abort",
+		runID:  "temporal-run-abort",
+		waitCh: make(chan struct{}),
+	}
+	wfClient := &fakeWorkflowClient{run: run}
+	runner := NewWorkflowRunner(wfClient, ta, "gollem")
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := runner.RunTask(ctx, &orchestrator.ClaimedTask{
+			Task: &orchestrator.Task{ID: "task-abort", Input: "abort"},
+			Run:  &orchestrator.RunRef{ID: "orch-run-abort"},
+		})
+		errCh <- err
+	}()
+
+	<-run.waitCh
+	cancel(&orchestrator.RunAbortCause{Reason: "fatal invariant"})
+
+	err := <-errCh
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if len(wfClient.signalCalls) != 1 {
+		t.Fatalf("expected 1 signal call, got %d", len(wfClient.signalCalls))
+	}
+	if len(wfClient.cancelCalls) != 1 {
+		t.Fatalf("expected 1 cancel call, got %d", len(wfClient.cancelCalls))
+	}
+	abortSignal, ok := wfClient.signalCalls[0].arg.(AbortSignal)
+	if !ok {
+		t.Fatalf("expected AbortSignal payload, got %T", wfClient.signalCalls[0].arg)
+	}
+	if abortSignal.Reason != "fatal invariant" {
+		t.Fatalf("expected abort reason %q, got %q", "fatal invariant", abortSignal.Reason)
+	}
+}
+
+func TestWorkflowRunner_CancelRunControlsRemoteWorkflowWithoutLocalRun(t *testing.T) {
+	ta := NewTemporalAgent(core.NewAgent[string](core.NewTestModel(core.TextResponse("unused"))), WithName("workflow-runner-control"))
+	wfClient := &fakeWorkflowClient{}
+	runner := NewWorkflowRunner(wfClient, ta, "gollem",
+		WithWorkflowStartOptionsBuilder[string](func(_ *orchestrator.ClaimedTask, options client.StartWorkflowOptions) (client.StartWorkflowOptions, error) {
+			options.ID = "derived-workflow-id"
+			return options, nil
+		}),
+	)
+
+	err := runner.CancelRun(context.Background(),
+		&orchestrator.Task{ID: "task-control", Input: "control"},
+		&orchestrator.RunRef{ID: "run-control", TaskID: "task-control", WorkerID: "worker-1"},
+		&orchestrator.RunAbortCause{Reason: "fatal invariant"},
+	)
+	if err != nil {
+		t.Fatalf("CancelRun failed: %v", err)
+	}
+	if len(wfClient.signalCalls) != 1 {
+		t.Fatalf("expected 1 signal call, got %d", len(wfClient.signalCalls))
+	}
+	if len(wfClient.cancelCalls) != 1 {
+		t.Fatalf("expected 1 cancel call, got %d", len(wfClient.cancelCalls))
+	}
+	if wfClient.signalCalls[0].workflowID != "derived-workflow-id" || wfClient.signalCalls[0].runID != "" {
+		t.Fatalf("unexpected signal target %+v", wfClient.signalCalls[0])
+	}
+	if wfClient.cancelCalls[0].workflowID != "derived-workflow-id" || wfClient.cancelCalls[0].runID != "" {
+		t.Fatalf("unexpected cancel target %+v", wfClient.cancelCalls[0])
+	}
+	abortSignal, ok := wfClient.signalCalls[0].arg.(AbortSignal)
+	if !ok {
+		t.Fatalf("expected AbortSignal payload, got %T", wfClient.signalCalls[0].arg)
+	}
+	if abortSignal.Reason != "fatal invariant" {
+		t.Fatalf("expected abort reason %q, got %q", "fatal invariant", abortSignal.Reason)
+	}
+}
+
 func TestWorkflowRunner_PlainContextCancelDoesNotPropagateRemoteAbort(t *testing.T) {
 	ta := NewTemporalAgent(core.NewAgent[string](core.NewTestModel(core.TextResponse("unused"))), WithName("workflow-runner-local-cancel"))
 	run := &fakeWorkflowRun{

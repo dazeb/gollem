@@ -25,13 +25,22 @@ func (s fakeEventStore) GetEvent(_ context.Context, id string) (*orchestrator.Ev
 func (s fakeEventStore) ListEvents(_ context.Context, filter orchestrator.EventFilter) ([]*orchestrator.EventRecord, error) {
 	var out []*orchestrator.EventRecord
 	for _, event := range s.events {
+		if filter.AfterSequence > 0 && event.Sequence <= filter.AfterSequence {
+			continue
+		}
 		if filter.TaskID != "" && event.TaskID != filter.TaskID {
+			continue
+		}
+		if filter.RunID != "" && event.RunID != filter.RunID {
 			continue
 		}
 		if filter.CommandID != "" && event.CommandID != filter.CommandID {
 			continue
 		}
 		out = append(out, cloneRecord(event))
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
 	}
 	return out, nil
 }
@@ -49,45 +58,95 @@ func TestDecodeEventAndTimelineHelpers(t *testing.T) {
 		Kind:      "analysis",
 		CreatedAt: base,
 	})
-	taskCompleted := mustRecord(t, &orchestrator.EventRecord{
+	leaseRenewed := mustRecord(t, &orchestrator.EventRecord{
 		Sequence:  2,
 		ID:        "event-2",
+		Kind:      orchestrator.EventLeaseRenewed,
+		TaskID:    "task-1",
+		RunID:     "run-1",
+		LeaseID:   "lease-1",
+		CreatedAt: base.Add(time.Second),
+	}, orchestrator.LeaseRenewedEvent{
+		TaskID:    "task-1",
+		RunID:     "run-1",
+		LeaseID:   "lease-1",
+		WorkerID:  "worker-a",
+		ExpiresAt: base.Add(2 * time.Second),
+	})
+	taskCompleted := mustRecord(t, &orchestrator.EventRecord{
+		Sequence:  3,
+		ID:        "event-3",
 		Kind:      orchestrator.EventTaskCompleted,
 		TaskID:    "task-1",
 		RunID:     "run-1",
-		CreatedAt: base.Add(time.Second),
+		CreatedAt: base.Add(2 * time.Second),
 	}, orchestrator.TaskCompletedEvent{
 		TaskID:      "task-1",
 		RunID:       "run-1",
 		Attempt:     1,
-		CompletedAt: base.Add(time.Second),
+		CompletedAt: base.Add(2 * time.Second),
 	})
 	commandCreated := mustRecord(t, &orchestrator.EventRecord{
-		Sequence:  3,
-		ID:        "event-3",
+		Sequence:  4,
+		ID:        "event-4",
 		Kind:      orchestrator.EventCommandCreated,
 		TaskID:    "task-1",
+		RunID:     "run-1",
 		CommandID: "command-1",
-		CreatedAt: base.Add(2 * time.Second),
+		CreatedAt: base.Add(3 * time.Second),
 	}, orchestrator.CommandCreatedEvent{
 		CommandID: "command-1",
 		Kind:      orchestrator.CommandCancelTask,
 		TaskID:    "task-1",
-		CreatedAt: base.Add(2 * time.Second),
+		RunID:     "run-1",
+		CreatedAt: base.Add(3 * time.Second),
 	})
 	commandReleased := mustRecord(t, &orchestrator.EventRecord{
-		Sequence:  4,
-		ID:        "event-4",
+		Sequence:  5,
+		ID:        "event-5",
 		Kind:      orchestrator.EventCommandReleased,
 		TaskID:    "task-1",
+		RunID:     "run-1",
 		CommandID: "command-1",
-		CreatedAt: base.Add(3 * time.Second),
+		CreatedAt: base.Add(4 * time.Second),
 	}, orchestrator.CommandReleasedEvent{
 		CommandID:  "command-1",
 		Kind:       orchestrator.CommandCancelTask,
 		TaskID:     "task-1",
+		RunID:      "run-1",
 		ReleasedBy: "worker-a",
-		ReleasedAt: base.Add(3 * time.Second),
+		ReleasedAt: base.Add(4 * time.Second),
+	})
+	secondRunClaimed := mustRecord(t, &orchestrator.EventRecord{
+		Sequence:  6,
+		ID:        "event-6",
+		Kind:      orchestrator.EventTaskClaimed,
+		TaskID:    "task-2",
+		RunID:     "run-2",
+		LeaseID:   "lease-2",
+		CreatedAt: base.Add(5 * time.Second),
+	}, orchestrator.TaskClaimedEvent{
+		TaskID:     "task-2",
+		RunID:      "run-2",
+		LeaseID:    "lease-2",
+		WorkerID:   "worker-b",
+		Attempt:    1,
+		AcquiredAt: base.Add(5 * time.Second),
+		ExpiresAt:  base.Add(6 * time.Second),
+	})
+	secondRunFailed := mustRecord(t, &orchestrator.EventRecord{
+		Sequence:  7,
+		ID:        "event-7",
+		Kind:      orchestrator.EventTaskFailed,
+		TaskID:    "task-2",
+		RunID:     "run-2",
+		CreatedAt: base.Add(6 * time.Second),
+	}, orchestrator.TaskFailedEvent{
+		TaskID:   "task-2",
+		RunID:    "run-2",
+		Attempt:  1,
+		Error:    "boom",
+		FailedAt: base.Add(6 * time.Second),
 	})
 
 	decoded, err := orchestrator.DecodeEvent(taskCompleted)
@@ -104,17 +163,20 @@ func TestDecodeEventAndTimelineHelpers(t *testing.T) {
 
 	store := fakeEventStore{events: []*orchestrator.EventRecord{
 		taskCreated,
+		leaseRenewed,
 		taskCompleted,
 		commandCreated,
 		commandReleased,
+		secondRunClaimed,
+		secondRunFailed,
 	}}
 
 	taskTimeline, err := orchestrator.LoadTaskTimeline(context.Background(), store, "task-1")
 	if err != nil {
 		t.Fatalf("LoadTaskTimeline failed: %v", err)
 	}
-	if len(taskTimeline.Events) != 4 {
-		t.Fatalf("expected 4 task timeline events, got %d", len(taskTimeline.Events))
+	if len(taskTimeline.Events) != 5 {
+		t.Fatalf("expected 5 task timeline events, got %d", len(taskTimeline.Events))
 	}
 	if taskTimeline.Latest == nil || taskTimeline.Latest.Kind != orchestrator.EventCommandReleased {
 		t.Fatalf("unexpected task timeline latest event: %+v", taskTimeline.Latest)
@@ -136,6 +198,165 @@ func TestDecodeEventAndTimelineHelpers(t *testing.T) {
 	}
 	if releasedPayload.ReleasedBy != "worker-a" {
 		t.Fatalf("expected released by %q, got %q", "worker-a", releasedPayload.ReleasedBy)
+	}
+
+	runTimeline, err := orchestrator.LoadRunTimeline(context.Background(), store, "run-1")
+	if err != nil {
+		t.Fatalf("LoadRunTimeline failed: %v", err)
+	}
+	if len(runTimeline.Events) != 4 {
+		t.Fatalf("expected 4 run timeline events, got %d", len(runTimeline.Events))
+	}
+	if runTimeline.TaskID != "task-1" {
+		t.Fatalf("expected run task id %q, got %q", "task-1", runTimeline.TaskID)
+	}
+	if runTimeline.WorkerID != "worker-a" {
+		t.Fatalf("expected run worker id %q, got %q", "worker-a", runTimeline.WorkerID)
+	}
+	if runTimeline.Attempt != 1 {
+		t.Fatalf("expected run attempt 1, got %d", runTimeline.Attempt)
+	}
+	if runTimeline.Terminal == nil || runTimeline.Terminal.Kind != orchestrator.EventTaskCompleted {
+		t.Fatalf("unexpected run terminal event: %+v", runTimeline.Terminal)
+	}
+	if !runTimeline.CompletedAt.Equal(base.Add(2 * time.Second)) {
+		t.Fatalf("expected run completed at %s, got %s", base.Add(2*time.Second), runTimeline.CompletedAt)
+	}
+
+	runSummary, err := orchestrator.GetRun(context.Background(), store, "run-1")
+	if err != nil {
+		t.Fatalf("GetRun failed: %v", err)
+	}
+	if runSummary.Status != orchestrator.RunCompleted {
+		t.Fatalf("expected run summary status %s, got %s", orchestrator.RunCompleted, runSummary.Status)
+	}
+	if runSummary.TerminalKind != orchestrator.EventTaskCompleted {
+		t.Fatalf("expected run summary terminal kind %s, got %s", orchestrator.EventTaskCompleted, runSummary.TerminalKind)
+	}
+	if runSummary.LatestKind != orchestrator.EventCommandReleased {
+		t.Fatalf("expected run summary latest kind %s, got %s", orchestrator.EventCommandReleased, runSummary.LatestKind)
+	}
+
+	runs, err := orchestrator.ListRuns(context.Background(), store, orchestrator.RunFilter{})
+	if err != nil {
+		t.Fatalf("ListRuns failed: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 projected runs, got %d", len(runs))
+	}
+	if runs[0].ID != "run-1" || runs[1].ID != "run-2" {
+		t.Fatalf("unexpected run order: %+v", runs)
+	}
+
+	failedRuns, err := orchestrator.ListRuns(context.Background(), store, orchestrator.RunFilter{
+		Statuses: []orchestrator.RunStatus{orchestrator.RunFailed},
+	})
+	if err != nil {
+		t.Fatalf("ListRuns with filter failed: %v", err)
+	}
+	if len(failedRuns) != 1 || failedRuns[0].ID != "run-2" {
+		t.Fatalf("expected failed run filter to return run-2, got %+v", failedRuns)
+	}
+
+	incremental, err := store.ListEvents(context.Background(), orchestrator.EventFilter{
+		AfterSequence: 3,
+		Limit:         2,
+	})
+	if err != nil {
+		t.Fatalf("incremental ListEvents failed: %v", err)
+	}
+	if len(incremental) != 2 {
+		t.Fatalf("expected 2 incremental events, got %d", len(incremental))
+	}
+	if incremental[0].Sequence != 4 || incremental[1].Sequence != 5 {
+		t.Fatalf("unexpected incremental event sequences: %+v", incremental)
+	}
+
+	cursor := orchestrator.ReplayCursor{}
+	page1, cursor, err := orchestrator.ReplayEvents(context.Background(), store, orchestrator.EventFilter{
+		Limit: 2,
+	}, cursor)
+	if err != nil {
+		t.Fatalf("ReplayEvents page1 failed: %v", err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("expected 2 replay events in page1, got %d", len(page1))
+	}
+	if cursor.AfterSequence != 2 {
+		t.Fatalf("expected replay cursor after page1 to be 2, got %d", cursor.AfterSequence)
+	}
+
+	page2, cursor, err := orchestrator.ReplayEvents(context.Background(), store, orchestrator.EventFilter{
+		Limit: 3,
+	}, cursor)
+	if err != nil {
+		t.Fatalf("ReplayEvents page2 failed: %v", err)
+	}
+	if len(page2) != 3 {
+		t.Fatalf("expected 3 replay events in page2, got %d", len(page2))
+	}
+	if cursor.AfterSequence != 5 {
+		t.Fatalf("expected replay cursor after page2 to be 5, got %d", cursor.AfterSequence)
+	}
+
+	filteredPage, filteredCursor, err := orchestrator.ReplayEvents(context.Background(), store, orchestrator.EventFilter{
+		TaskID: "task-2",
+		Limit:  1,
+	}, orchestrator.ReplayCursor{})
+	if err != nil {
+		t.Fatalf("ReplayEvents filtered page failed: %v", err)
+	}
+	if len(filteredPage) != 1 || filteredPage[0].Record.RunID != "run-2" {
+		t.Fatalf("unexpected filtered replay page: %+v", filteredPage)
+	}
+	if filteredCursor.AfterSequence != 6 {
+		t.Fatalf("expected filtered replay cursor 6, got %d", filteredCursor.AfterSequence)
+	}
+
+	workerTimeline, err := orchestrator.LoadWorkerTimeline(context.Background(), store, "worker-a")
+	if err != nil {
+		t.Fatalf("LoadWorkerTimeline failed: %v", err)
+	}
+	if len(workerTimeline.Runs) != 1 || workerTimeline.Runs[0].ID != "run-1" {
+		t.Fatalf("unexpected worker timeline runs: %+v", workerTimeline.Runs)
+	}
+	if len(workerTimeline.Events) != 4 {
+		t.Fatalf("expected 4 worker timeline events, got %d", len(workerTimeline.Events))
+	}
+	if workerTimeline.Latest == nil || workerTimeline.Latest.Kind != orchestrator.EventCommandReleased {
+		t.Fatalf("unexpected worker timeline latest event: %+v", workerTimeline.Latest)
+	}
+
+	workerSummary, err := orchestrator.GetWorker(context.Background(), store, "worker-a")
+	if err != nil {
+		t.Fatalf("GetWorker failed: %v", err)
+	}
+	if workerSummary.CompletedRuns != 1 || workerSummary.ActiveRuns != 0 {
+		t.Fatalf("unexpected worker summary: %+v", workerSummary)
+	}
+	if workerSummary.LatestRunID != "run-1" || workerSummary.LatestTaskID != "task-1" {
+		t.Fatalf("unexpected worker latest attribution: %+v", workerSummary)
+	}
+
+	workers, err := orchestrator.ListWorkers(context.Background(), store, orchestrator.WorkerFilter{})
+	if err != nil {
+		t.Fatalf("ListWorkers failed: %v", err)
+	}
+	if len(workers) != 2 {
+		t.Fatalf("expected 2 workers, got %d", len(workers))
+	}
+	if workers[0].ID != "worker-a" || workers[1].ID != "worker-b" {
+		t.Fatalf("unexpected worker order: %+v", workers)
+	}
+
+	filteredWorkers, err := orchestrator.ListWorkers(context.Background(), store, orchestrator.WorkerFilter{
+		IDs: []string{"worker-b"},
+	})
+	if err != nil {
+		t.Fatalf("ListWorkers filtered failed: %v", err)
+	}
+	if len(filteredWorkers) != 1 || filteredWorkers[0].ID != "worker-b" {
+		t.Fatalf("expected filtered workers to return worker-b, got %+v", filteredWorkers)
 	}
 }
 

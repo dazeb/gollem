@@ -841,6 +841,8 @@ For persistent orchestration state across process restarts, use the SQLite-backe
 
 ```go
 import (
+    "time"
+
     "github.com/fugue-labs/gollem/ext/orchestrator"
     orchestratorsqlite "github.com/fugue-labs/gollem/ext/orchestrator/sqlite"
 )
@@ -851,12 +853,25 @@ task, _ := store.CreateTask(ctx, orchestrator.CreateTaskRequest{
     Kind:  "analysis",
     Input: "Review the scheduler path and persist durable history.",
 })
+claim, _ := store.ClaimTask(ctx, task.ID, orchestrator.ClaimTaskRequest{
+    WorkerID: "worker-1",
+    LeaseTTL: time.Minute,
+})
 
 events, _ := store.ListEvents(ctx, orchestrator.EventFilter{TaskID: task.ID})
 _ = events // append-ordered durable history with monotonically increasing Sequence
 
 timeline, _ := orchestrator.LoadTaskTimeline(ctx, store, task.ID)
 _ = timeline // decoded task lifecycle projection over durable history
+
+runTimeline, _ := orchestrator.LoadRunTimeline(ctx, store, claim.Run.ID)
+_ = runTimeline // decoded per-run lifecycle projection over durable history
+
+runSummary, _ := orchestrator.GetRun(ctx, store, claim.Run.ID)
+_ = runSummary // projected run status, worker, attempt, and terminal kind
+
+runs, _ := orchestrator.ListRuns(ctx, store, orchestrator.RunFilter{TaskID: task.ID})
+_ = runs // projected run summaries for this task
 ```
 
 See [`examples/orchestrator_sqlite/main.go`](examples/orchestrator_sqlite/main.go) for a full runnable SQLite example that reopens the store and inspects durable event history after task completion.

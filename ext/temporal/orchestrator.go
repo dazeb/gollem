@@ -155,6 +155,25 @@ func (r *WorkflowRunner[T]) RunTask(ctx context.Context, claim *orchestrator.Cla
 	return &orchestrator.TaskOutcome{Result: taskResult}, nil
 }
 
+// CancelRun implements orchestrator.RunController.
+func (r *WorkflowRunner[T]) CancelRun(ctx context.Context, task *orchestrator.Task, run *orchestrator.RunRef, cause error) error {
+	if run == nil {
+		return orchestrator.ErrRunNotFound
+	}
+	controller, ok := r.client.(workflowControlClient)
+	if !ok {
+		return orchestrator.ErrRunControlUnavailable
+	}
+
+	workflowID, err := r.workflowIDFor(task, run)
+	if err != nil {
+		return err
+	}
+	controlCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return r.cancelWorkflow(controlCtx, controller, workflowID, "", cause)
+}
+
 func (r *WorkflowRunner[T]) propagateTaskCancel(ctx context.Context, run client.WorkflowRun) error {
 	if ctx == nil || run == nil {
 		return nil
@@ -170,15 +189,48 @@ func (r *WorkflowRunner[T]) propagateTaskCancel(ctx context.Context, run client.
 
 	controlCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	return r.cancelWorkflow(controlCtx, controller, run.GetID(), run.GetRunID(), cause)
+}
 
+func (r *WorkflowRunner[T]) workflowIDFor(task *orchestrator.Task, run *orchestrator.RunRef) (string, error) {
+	claim := &orchestrator.ClaimedTask{Task: task, Run: run}
+	startOptions := r.startOptions
+	var err error
+	if r.optionsBuilder != nil {
+		startOptions, err = r.optionsBuilder(claim, startOptions)
+		if err != nil {
+			return "", err
+		}
+	}
+	if startOptions.ID == "" {
+		return "", orchestrator.ErrRunControlUnavailable
+	}
+	return startOptions.ID, nil
+}
+
+func (r *WorkflowRunner[T]) cancelWorkflow(ctx context.Context, controller workflowControlClient, workflowID, runID string, cause error) error {
+	if controller == nil {
+		return orchestrator.ErrRunControlUnavailable
+	}
+	if workflowID == "" {
+		return orchestrator.ErrRunControlUnavailable
+	}
 	var signalErr error
+	var cancelReason string
 	var cancelCause *orchestrator.TaskCancelCause
 	if errors.As(cause, &cancelCause) {
-		signalErr = controller.SignalWorkflow(controlCtx, run.GetID(), run.GetRunID(), r.agent.AbortSignalName(), AbortSignal{
-			Reason: cancelCause.Reason,
+		cancelReason = cancelCause.Reason
+	}
+	var abortCause *orchestrator.RunAbortCause
+	if errors.As(cause, &abortCause) {
+		cancelReason = abortCause.Reason
+	}
+	if cancelReason != "" || cancelCause != nil || abortCause != nil {
+		signalErr = controller.SignalWorkflow(ctx, workflowID, runID, r.agent.AbortSignalName(), AbortSignal{
+			Reason: cancelReason,
 		})
 	}
-	cancelErr := controller.CancelWorkflow(controlCtx, run.GetID(), run.GetRunID())
+	cancelErr := controller.CancelWorkflow(ctx, workflowID, runID)
 	if cancelErr != nil {
 		return errors.Join(cancelErr, signalErr)
 	}

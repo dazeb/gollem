@@ -437,7 +437,11 @@ func (s *Store) RenewLease(_ context.Context, taskID, leaseToken string, ttl tim
 	}
 
 	lease.ExpiresAt = now.Add(ttl)
-	s.publishLeaseRenewed(lease)
+	runID := ""
+	if task, ok := s.tasks[taskID]; ok && task.Run != nil {
+		runID = task.Run.ID
+	}
+	s.publishLeaseRenewed(lease, runID)
 	return cloneLease(lease), nil
 }
 
@@ -456,12 +460,16 @@ func (s *Store) ReleaseLease(_ context.Context, taskID, leaseToken string) error
 	if task, ok := s.tasks[taskID]; ok && task.Status == orchestrator.TaskRunning {
 		released := cloneLease(lease)
 		lastRunID, lastAttempt := s.requeueTaskLocked(task, taskID, time.Now(), true)
-		s.publishLeaseReleased(released, true)
+		s.publishLeaseReleased(released, lastRunID, true)
 		s.publishTaskRequeued(task, lastRunID, lastAttempt, "lease released")
 		return nil
 	}
 	delete(s.leases, taskID)
-	s.publishLeaseReleased(cloneLease(lease), false)
+	runID := ""
+	if task, ok := s.tasks[taskID]; ok && task.Run != nil {
+		runID = task.Run.ID
+	}
+	s.publishLeaseReleased(cloneLease(lease), runID, false)
 	return nil
 }
 
@@ -724,24 +732,26 @@ func (s *Store) publishTaskClaimed(task *orchestrator.Task, lease *orchestrator.
 	})
 }
 
-func (s *Store) publishLeaseRenewed(lease *orchestrator.Lease) {
+func (s *Store) publishLeaseRenewed(lease *orchestrator.Lease, runID string) {
 	if s.eventBus == nil || lease == nil {
 		return
 	}
 	core.PublishAsync(s.eventBus, orchestrator.LeaseRenewedEvent{
 		TaskID:    lease.TaskID,
+		RunID:     runID,
 		LeaseID:   lease.ID,
 		WorkerID:  lease.WorkerID,
 		ExpiresAt: lease.ExpiresAt,
 	})
 }
 
-func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, requeued bool) {
+func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, runID string, requeued bool) {
 	if s.eventBus == nil || lease == nil {
 		return
 	}
 	core.PublishAsync(s.eventBus, orchestrator.LeaseReleasedEvent{
 		TaskID:     lease.TaskID,
+		RunID:      runID,
 		LeaseID:    lease.ID,
 		WorkerID:   lease.WorkerID,
 		ReleasedAt: time.Now(),

@@ -111,11 +111,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("ListEvents failed: %v", err)
 	}
+	runTimeline, err := orchestrator.LoadRunTimeline(ctx, store, persisted.Run.ID)
+	if err != nil {
+		log.Fatalf("LoadRunTimeline failed: %v", err)
+	}
+	terminalKind := "<none>"
+	if runTimeline.Terminal != nil {
+		terminalKind = string(runTimeline.Terminal.Kind)
+	}
 
 	fmt.Printf("Task: %s (%s)\n", persisted.ID, persisted.Status)
 	fmt.Printf("Run: %s via %s\n", persisted.Run.ID, persisted.Run.WorkerID)
 	fmt.Printf("Summary: %s\n", summary.Summary)
 	fmt.Printf("Artifacts stored for task: %d\n", len(artifacts))
+	fmt.Printf("Run timeline events: %d (terminal: %s)\n", len(runTimeline.Events), terminalKind)
 	fmt.Printf("Durable history events: %d\n", len(events))
 	for _, event := range events {
 		fmt.Printf("- #%d %s at %s\n", event.Sequence, event.Kind, event.CreatedAt.Format(time.RFC3339Nano))
