@@ -221,6 +221,77 @@ func TestScheduler_RetryableErrorStopsAtMaxAttempts(t *testing.T) {
 	}
 }
 
+func TestScheduler_CancelRequeuesRunningTaskWithoutBurningAttempt(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "cancel me",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	started := make(chan struct{})
+	runner := orchestrator.RunnerFunc(func(ctx context.Context, _ *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithLeaseTTL(50*time.Millisecond),
+		orchestrator.WithLeaseRenewInterval(10*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runner start")
+	}
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+
+	requeued := waitForTaskStatus(t, store, task.ID, orchestrator.TaskPending)
+	if requeued.Attempt != 0 {
+		t.Fatalf("expected canceled task attempt to roll back to 0, got %d", requeued.Attempt)
+	}
+	if requeued.Run != nil {
+		t.Fatalf("expected canceled task run to be cleared, got %+v", requeued.Run)
+	}
+	if _, err := store.GetLease(context.Background(), task.ID); !errors.Is(err, orchestrator.ErrLeaseNotFound) {
+		t.Fatalf("expected canceled task lease to be removed, got %v", err)
+	}
+
+	reclaimed, err := store.ClaimReadyTask(context.Background(), orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("expected canceled task to be reclaimable, got %v", err)
+	}
+	if reclaimed.Task.Attempt != 1 {
+		t.Fatalf("expected reclaimed task attempt 1, got %d", reclaimed.Task.Attempt)
+	}
+}
+
 func waitForTaskStatus(t *testing.T, store orchestrator.TaskStore, taskID string, status orchestrator.TaskStatus) *orchestrator.Task {
 	t.Helper()
 

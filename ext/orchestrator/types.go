@@ -18,11 +18,12 @@ const (
 )
 
 var (
-	ErrTaskNotFound  = errors.New("orchestrator: task not found")
-	ErrNoReadyTask   = errors.New("orchestrator: no ready task")
-	ErrLeaseNotFound = errors.New("orchestrator: lease not found")
-	ErrLeaseExpired  = errors.New("orchestrator: lease expired")
-	ErrLeaseMismatch = errors.New("orchestrator: lease token mismatch")
+	ErrTaskNotFound           = errors.New("orchestrator: task not found")
+	ErrTaskDependencyNotFound = errors.New("orchestrator: task dependency not found")
+	ErrNoReadyTask            = errors.New("orchestrator: no ready task")
+	ErrLeaseNotFound          = errors.New("orchestrator: lease not found")
+	ErrLeaseExpired           = errors.New("orchestrator: lease expired")
+	ErrLeaseMismatch          = errors.New("orchestrator: lease token mismatch")
 )
 
 // RetryableError marks a task failure that should be requeued while attempts remain.

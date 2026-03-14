@@ -39,6 +39,10 @@ func (s *Store) CreateTask(_ context.Context, req orchestrator.CreateTaskRequest
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := s.validateTaskDependencies(req.Blocks, req.BlockedBy); err != nil {
+		return nil, err
+	}
+
 	s.nextTask++
 	now := time.Now()
 	task := &orchestrator.Task{
@@ -124,6 +128,7 @@ func (s *Store) ClaimReadyTask(_ context.Context, req orchestrator.ClaimTaskRequ
 				task.LastError = "task exhausted max attempts"
 				task.CompletedAt = now
 				task.UpdatedAt = now
+				delete(s.leases, task.ID)
 			}
 			continue
 		}
@@ -214,12 +219,8 @@ func (s *Store) FailTask(_ context.Context, taskID, leaseToken string, runErr er
 		retryable = isRetryable(runErr)
 	}
 	if retryable && !s.exhaustedAttempts(task) {
-		task.Status = orchestrator.TaskPending
-		task.Result = nil
+		s.requeueTaskLocked(task, lease.TaskID, now, false)
 		task.LastError = runErr.Error()
-		task.CompletedAt = time.Time{}
-		task.UpdatedAt = normalizeNow(now)
-		delete(s.leases, lease.TaskID)
 		return cloneTask(task), nil
 	}
 
@@ -285,11 +286,11 @@ func (s *Store) ReleaseLease(_ context.Context, taskID, leaseToken string) error
 	if lease.Token != leaseToken {
 		return orchestrator.ErrLeaseMismatch
 	}
-	delete(s.leases, taskID)
 	if task, ok := s.tasks[taskID]; ok && task.Status == orchestrator.TaskRunning {
-		task.Status = orchestrator.TaskPending
-		task.UpdatedAt = time.Now()
+		s.requeueTaskLocked(task, taskID, time.Now(), true)
+		return nil
 	}
+	delete(s.leases, taskID)
 	return nil
 }
 
@@ -351,6 +352,33 @@ func (s *Store) linkTaskDependencies(task *orchestrator.Task) {
 			blocker.Blocks = appendUniqueStrings(blocker.Blocks, task.ID)
 		}
 	}
+}
+
+func (s *Store) requeueTaskLocked(task *orchestrator.Task, taskID string, now time.Time, rollbackAttempt bool) {
+	delete(s.leases, taskID)
+	task.Status = orchestrator.TaskPending
+	task.Result = nil
+	task.Run = nil
+	task.StartedAt = time.Time{}
+	task.CompletedAt = time.Time{}
+	task.UpdatedAt = normalizeNow(now)
+	if rollbackAttempt && task.Attempt > 0 {
+		task.Attempt--
+	}
+}
+
+func (s *Store) validateTaskDependencies(blocks, blockedBy []string) error {
+	for _, taskID := range blocks {
+		if _, ok := s.tasks[taskID]; !ok {
+			return fmt.Errorf("%w: blocks %q", orchestrator.ErrTaskDependencyNotFound, taskID)
+		}
+	}
+	for _, taskID := range blockedBy {
+		if _, ok := s.tasks[taskID]; !ok {
+			return fmt.Errorf("%w: blocked_by %q", orchestrator.ErrTaskDependencyNotFound, taskID)
+		}
+	}
+	return nil
 }
 
 func matchesKinds(task *orchestrator.Task, kinds []string) bool {

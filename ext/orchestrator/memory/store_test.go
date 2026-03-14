@@ -148,6 +148,34 @@ func TestStore_ClaimReadyTaskSkipsBlockedTasksUntilBlockerCompletes(t *testing.T
 	}
 }
 
+func TestStore_CreateTaskRejectsUnknownDependencyIDs(t *testing.T) {
+	store := NewStore()
+
+	if _, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:      "prompt",
+		Input:     "bad blocked_by",
+		BlockedBy: []string{"task-does-not-exist"},
+	}); !errors.Is(err, orchestrator.ErrTaskDependencyNotFound) {
+		t.Fatalf("expected ErrTaskDependencyNotFound for BlockedBy, got %v", err)
+	}
+
+	if _, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:   "prompt",
+		Input:  "bad blocks",
+		Blocks: []string{"task-does-not-exist"},
+	}); !errors.Is(err, orchestrator.ErrTaskDependencyNotFound) {
+		t.Fatalf("expected ErrTaskDependencyNotFound for Blocks, got %v", err)
+	}
+
+	tasks, err := store.ListTasks(context.Background(), orchestrator.TaskFilter{})
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("expected invalid tasks to be rejected, got %d stored tasks", len(tasks))
+	}
+}
+
 func TestStore_FailTaskRetryableRequeuesUntilAttemptsExhausted(t *testing.T) {
 	store := NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
@@ -202,5 +230,107 @@ func TestStore_FailTaskRetryableRequeuesUntilAttemptsExhausted(t *testing.T) {
 	}
 	if failed.LastError != "still broken" {
 		t.Fatalf("expected final error %q, got %q", "still broken", failed.LastError)
+	}
+}
+
+func TestStore_ClaimReadyTaskExhaustionClearsExpiredLease(t *testing.T) {
+	store := NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "one shot",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	base := time.Unix(1, 0).UTC()
+	claim, err := store.ClaimReadyTask(context.Background(), orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("claim failed: %v", err)
+	}
+
+	if _, err := store.ClaimReadyTask(context.Background(), orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base.Add(25 * time.Millisecond),
+	}); !errors.Is(err, orchestrator.ErrNoReadyTask) {
+		t.Fatalf("expected no ready task after exhausted attempt, got %v", err)
+	}
+
+	failed, err := store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if failed.Status != orchestrator.TaskFailed {
+		t.Fatalf("expected exhausted task to fail, got %s", failed.Status)
+	}
+	if failed.LastError != "task exhausted max attempts" {
+		t.Fatalf("expected exhausted task error, got %q", failed.LastError)
+	}
+	if _, err := store.GetLease(context.Background(), task.ID); !errors.Is(err, orchestrator.ErrLeaseNotFound) {
+		t.Fatalf("expected exhausted task lease to be removed, got %v", err)
+	}
+	if failed.Run == nil || failed.Run.ID != claim.Run.ID {
+		t.Fatalf("expected failed task to retain last run reference, got %+v", failed.Run)
+	}
+}
+
+func TestStore_ReleaseLeaseRequeuesWithoutBurningAttempt(t *testing.T) {
+	store := NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "release me",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	base := time.Unix(1, 0).UTC()
+	claim, err := store.ClaimReadyTask(context.Background(), orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("claim failed: %v", err)
+	}
+
+	if err := store.ReleaseLease(context.Background(), task.ID, claim.Lease.Token); err != nil {
+		t.Fatalf("ReleaseLease failed: %v", err)
+	}
+
+	requeued, err := store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if requeued.Status != orchestrator.TaskPending {
+		t.Fatalf("expected pending task after release, got %s", requeued.Status)
+	}
+	if requeued.Attempt != 0 {
+		t.Fatalf("expected released task attempt to roll back to 0, got %d", requeued.Attempt)
+	}
+	if requeued.Run != nil {
+		t.Fatalf("expected released task run to be cleared, got %+v", requeued.Run)
+	}
+	if _, err := store.GetLease(context.Background(), task.ID); !errors.Is(err, orchestrator.ErrLeaseNotFound) {
+		t.Fatalf("expected released task lease to be removed, got %v", err)
+	}
+
+	reclaimed, err := store.ClaimReadyTask(context.Background(), orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      base.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("reclaim failed: %v", err)
+	}
+	if reclaimed.Task.Attempt != 1 {
+		t.Fatalf("expected reclaimed task attempt 1, got %d", reclaimed.Task.Attempt)
 	}
 }
