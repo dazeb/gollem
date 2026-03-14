@@ -7,16 +7,23 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
-// Runner executes a claimed task run and returns its terminal result.
+// TaskOutcome is the terminal payload a runner returns for a claimed task.
+// The store persists the result and any emitted artifacts atomically.
+type TaskOutcome struct {
+	Result    *TaskResult
+	Artifacts []ArtifactSpec
+}
+
+// Runner executes a claimed task run and returns its terminal outcome.
 type Runner interface {
-	RunTask(ctx context.Context, claim *ClaimedTask) (*TaskResult, error)
+	RunTask(ctx context.Context, claim *ClaimedTask) (*TaskOutcome, error)
 }
 
 // RunnerFunc adapts a function into a Runner.
-type RunnerFunc func(ctx context.Context, claim *ClaimedTask) (*TaskResult, error)
+type RunnerFunc func(ctx context.Context, claim *ClaimedTask) (*TaskOutcome, error)
 
 // RunTask implements Runner.
-func (fn RunnerFunc) RunTask(ctx context.Context, claim *ClaimedTask) (*TaskResult, error) {
+func (fn RunnerFunc) RunTask(ctx context.Context, claim *ClaimedTask) (*TaskOutcome, error) {
 	return fn(ctx, claim)
 }
 
@@ -29,6 +36,7 @@ type AgentRunner[T any] struct {
 	promptFn   func(*Task) (string, error)
 	runOptsFn  func(*Task, RunRef) []core.RunOption
 	resultMeta func(*core.RunResult[T]) map[string]any
+	artifacts  func(*Task, *core.RunResult[T]) []ArtifactSpec
 }
 
 // NewAgentRunner wraps a core.Agent with the Runner interface.
@@ -72,8 +80,15 @@ func WithTaskResultMetadata[T any](fn func(*core.RunResult[T]) map[string]any) A
 	}
 }
 
+// WithTaskArtifacts derives task-scoped artifacts from a completed run.
+func WithTaskArtifacts[T any](fn func(*Task, *core.RunResult[T]) []ArtifactSpec) AgentRunnerOption[T] {
+	return func(r *AgentRunner[T]) {
+		r.artifacts = fn
+	}
+}
+
 // RunTask implements Runner.
-func (r *AgentRunner[T]) RunTask(ctx context.Context, claim *ClaimedTask) (*TaskResult, error) {
+func (r *AgentRunner[T]) RunTask(ctx context.Context, claim *ClaimedTask) (*TaskOutcome, error) {
 	task := (*Task)(nil)
 	run := RunRef{}
 	if claim != nil {
@@ -111,5 +126,9 @@ func (r *AgentRunner[T]) RunTask(ctx context.Context, claim *ClaimedTask) (*Task
 	if r.resultMeta != nil {
 		taskResult.Metadata = cloneAnyMap(r.resultMeta(result))
 	}
-	return taskResult, nil
+	outcome := &TaskOutcome{Result: taskResult}
+	if r.artifacts != nil {
+		outcome.Artifacts = cloneArtifactSpecs(r.artifacts(task, result))
+	}
+	return outcome, nil
 }

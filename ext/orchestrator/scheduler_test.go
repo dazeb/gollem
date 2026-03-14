@@ -21,8 +21,8 @@ func TestScheduler_CompletesTask(t *testing.T) {
 		t.Fatalf("CreateTask failed: %v", err)
 	}
 
-	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
-		return &orchestrator.TaskResult{Output: "done"}, nil
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+		return &orchestrator.TaskOutcome{Result: &orchestrator.TaskResult{Output: "done"}}, nil
 	})
 
 	scheduler := orchestrator.NewScheduler(store, store, runner,
@@ -62,6 +62,73 @@ func TestScheduler_CompletesTask(t *testing.T) {
 	}
 }
 
+func TestScheduler_PersistsOutcomeArtifactsOnCompletion(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "hello",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+		return &orchestrator.TaskOutcome{
+			Result: &orchestrator.TaskResult{Output: "done"},
+			Artifacts: []orchestrator.ArtifactSpec{{
+				Kind:        "report",
+				Name:        "handoff.md",
+				ContentType: "text/markdown",
+				Body:        []byte("# done"),
+			}},
+		}, nil
+	})
+
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithWorkerID("worker-1"),
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithLeaseTTL(50*time.Millisecond),
+		orchestrator.WithLeaseRenewInterval(10*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	completed := waitForTaskStatus(t, store, task.ID, orchestrator.TaskCompleted)
+	if completed.Run == nil {
+		t.Fatalf("expected completed run ref, got %+v", completed.Run)
+	}
+
+	artifacts, err := store.ListArtifacts(context.Background(), orchestrator.ArtifactFilter{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("ListArtifacts failed: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected 1 persisted artifact, got %d", len(artifacts))
+	}
+	if artifacts[0].RunID != completed.Run.ID {
+		t.Fatalf("expected artifact run ID %q, got %q", completed.Run.ID, artifacts[0].RunID)
+	}
+	if string(artifacts[0].Body) != "# done" {
+		t.Fatalf("unexpected artifact body %q", string(artifacts[0].Body))
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
 func TestScheduler_FailsTask(t *testing.T) {
 	store := memstore.NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
@@ -72,7 +139,7 @@ func TestScheduler_FailsTask(t *testing.T) {
 		t.Fatalf("CreateTask failed: %v", err)
 	}
 
-	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
 		return nil, errors.New("boom")
 	})
 
@@ -121,12 +188,12 @@ func TestScheduler_RetryableErrorRequeuesAndCompletesOnLaterAttempt(t *testing.T
 	}
 
 	var attempts atomic.Int32
-	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
 		attempt := attempts.Add(1)
 		if attempt == 1 {
 			return nil, orchestrator.Retryable(errors.New("temporary"))
 		}
-		return &orchestrator.TaskResult{Output: "done"}, nil
+		return &orchestrator.TaskOutcome{Result: &orchestrator.TaskResult{Output: "done"}}, nil
 	})
 
 	scheduler := orchestrator.NewScheduler(store, store, runner,
@@ -180,7 +247,7 @@ func TestScheduler_RetryableErrorStopsAtMaxAttempts(t *testing.T) {
 	}
 
 	var attempts atomic.Int32
-	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
 		attempts.Add(1)
 		return nil, orchestrator.Retryable(errors.New("temporary"))
 	})
@@ -233,7 +300,7 @@ func TestScheduler_CancelRequeuesRunningTaskWithoutBurningAttempt(t *testing.T) 
 	}
 
 	started := make(chan struct{})
-	runner := orchestrator.RunnerFunc(func(ctx context.Context, _ *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
+	runner := orchestrator.RunnerFunc(func(ctx context.Context, _ *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
 		close(started)
 		<-ctx.Done()
 		return nil, ctx.Err()

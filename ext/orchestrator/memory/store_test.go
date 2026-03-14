@@ -83,7 +83,7 @@ func TestStore_CompleteTaskRequiresActiveLease(t *testing.T) {
 		t.Fatalf("claim failed: %v", err)
 	}
 
-	if _, err := store.CompleteTask(context.Background(), task.ID, claim.Lease.Token, &orchestrator.TaskResult{Output: "done"}, base.Add(25*time.Millisecond)); !errors.Is(err, orchestrator.ErrLeaseExpired) {
+	if _, err := store.CompleteTask(context.Background(), task.ID, claim.Lease.Token, &orchestrator.TaskOutcome{Result: &orchestrator.TaskResult{Output: "done"}}, base.Add(25*time.Millisecond)); !errors.Is(err, orchestrator.ErrLeaseExpired) {
 		t.Fatalf("expected ErrLeaseExpired, got %v", err)
 	}
 }
@@ -134,7 +134,7 @@ func TestStore_ClaimReadyTaskSkipsBlockedTasksUntilBlockerCompletes(t *testing.T
 		t.Fatalf("expected blocked task to stay unavailable, got %v", err)
 	}
 
-	if _, err := store.CompleteTask(context.Background(), blocker.ID, firstClaim.Lease.Token, &orchestrator.TaskResult{Output: "done"}, base.Add(2*time.Second)); err != nil {
+	if _, err := store.CompleteTask(context.Background(), blocker.ID, firstClaim.Lease.Token, &orchestrator.TaskOutcome{Result: &orchestrator.TaskResult{Output: "done"}}, base.Add(2*time.Second)); err != nil {
 		t.Fatalf("CompleteTask blocker failed: %v", err)
 	}
 	secondClaim, err := store.ClaimReadyTask(context.Background(), orchestrator.ClaimTaskRequest{
@@ -410,7 +410,7 @@ func TestStore_PublishesLifecycleEvents(t *testing.T) {
 	if _, err := store.RenewLease(context.Background(), task.ID, claim.Lease.Token, time.Minute, base.Add(10*time.Second)); err != nil {
 		t.Fatalf("RenewLease failed: %v", err)
 	}
-	if _, err := store.CompleteTask(context.Background(), task.ID, claim.Lease.Token, &orchestrator.TaskResult{Output: "done"}, base.Add(20*time.Second)); err != nil {
+	if _, err := store.CompleteTask(context.Background(), task.ID, claim.Lease.Token, &orchestrator.TaskOutcome{Result: &orchestrator.TaskResult{Output: "done"}}, base.Add(20*time.Second)); err != nil {
 		t.Fatalf("CompleteTask failed: %v", err)
 	}
 

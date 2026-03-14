@@ -31,7 +31,23 @@ func main() {
 	)
 
 	store := memstore.NewStore()
-	runner := orchestrator.NewAgentRunner(agent)
+	runner := orchestrator.NewAgentRunner(agent, orchestrator.WithTaskArtifacts(
+		func(task *orchestrator.Task, result *core.RunResult[taskSummary]) []orchestrator.ArtifactSpec {
+			return []orchestrator.ArtifactSpec{{
+				Kind:        "report",
+				Name:        "handoff.md",
+				ContentType: "text/markdown",
+				Body: []byte(fmt.Sprintf(
+					"# Task Handoff\n\nTask: %s\n\nSummary: %s\n",
+					task.Subject,
+					result.Output.Summary,
+				)),
+				Metadata: map[string]any{
+					"worker_output": result.Output.Summary,
+				},
+			}}
+		},
+	))
 	scheduler := orchestrator.NewScheduler(store, store, runner,
 		orchestrator.WithWorkerID("demo-worker"),
 		orchestrator.WithPollInterval(25*time.Millisecond),
@@ -62,29 +78,14 @@ func main() {
 	}
 
 	summary := completed.Result.Output.(taskSummary)
-	artifact, err := store.CreateArtifact(ctx, orchestrator.CreateArtifactRequest{
-		TaskID:      completed.ID,
-		RunID:       completed.Run.ID,
-		Kind:        "report",
-		Name:        "handoff.md",
-		ContentType: "text/markdown",
-		Body: []byte(fmt.Sprintf(
-			"# Task Handoff\n\nTask: %s\n\nSummary: %s\n",
-			completed.Subject,
-			summary.Summary,
-		)),
-		Metadata: map[string]any{
-			"worker_id": completed.Run.WorkerID,
-		},
-	})
-	if err != nil {
-		log.Fatalf("CreateArtifact failed: %v", err)
-	}
-
 	artifacts, err := store.ListArtifacts(ctx, orchestrator.ArtifactFilter{TaskID: completed.ID})
 	if err != nil {
 		log.Fatalf("ListArtifacts failed: %v", err)
 	}
+	if len(artifacts) != 1 {
+		log.Fatalf("expected exactly 1 persisted artifact, got %d", len(artifacts))
+	}
+	artifact := artifacts[0]
 
 	fmt.Printf("Task: %s (%s)\n", completed.ID, completed.Status)
 	fmt.Printf("Run: %s via %s\n", completed.Run.ID, completed.Run.WorkerID)

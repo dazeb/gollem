@@ -199,7 +199,7 @@ func (s *Scheduler) runClaim(ctx context.Context, claim *ClaimedTask) {
 		s.renewLoop(runCtx, claim, done, cancel, renewErrCh)
 	}()
 
-	result, runErr := s.runner.RunTask(runCtx, claim)
+	outcome, runErr := s.runner.RunTask(runCtx, claim)
 	close(done)
 	<-renewDone
 
@@ -232,10 +232,10 @@ func (s *Scheduler) runClaim(ctx context.Context, claim *ClaimedTask) {
 		return
 	}
 
-	if result != nil && result.CompletedAt.IsZero() {
-		result.CompletedAt = now
+	if outcome != nil && outcome.Result != nil && outcome.Result.CompletedAt.IsZero() {
+		outcome.Result.CompletedAt = now
 	}
-	if _, err := s.tasks.CompleteTask(updateCtx, claim.Task.ID, claim.Lease.Token, result, now); err != nil && !isLeaseLoss(err) {
+	if _, err := s.tasks.CompleteTask(updateCtx, claim.Task.ID, claim.Lease.Token, outcome, now); err != nil && !isLeaseLoss(err) {
 		s.cfg.OnError(err)
 	}
 }

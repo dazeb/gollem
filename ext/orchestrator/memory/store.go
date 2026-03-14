@@ -256,7 +256,7 @@ func (s *Store) deleteTaskArtifactsLocked(taskID string) {
 }
 
 // CompleteTask implements orchestrator.TaskStore.
-func (s *Store) CompleteTask(_ context.Context, taskID, leaseToken string, result *orchestrator.TaskResult, now time.Time) (*orchestrator.Task, error) {
+func (s *Store) CompleteTask(_ context.Context, taskID, leaseToken string, outcome *orchestrator.TaskOutcome, now time.Time) (*orchestrator.Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -265,6 +265,10 @@ func (s *Store) CompleteTask(_ context.Context, taskID, leaseToken string, resul
 		return nil, err
 	}
 
+	result := (*orchestrator.TaskResult)(nil)
+	if outcome != nil {
+		result = outcome.Result
+	}
 	if result != nil && result.CompletedAt.IsZero() {
 		result = cloneTaskResult(result)
 		result.CompletedAt = normalizeNow(now)
@@ -275,6 +279,9 @@ func (s *Store) CompleteTask(_ context.Context, taskID, leaseToken string, resul
 	task.CompletedAt = normalizeNow(now)
 	task.UpdatedAt = task.CompletedAt
 	delete(s.leases, lease.TaskID)
+	if outcome != nil {
+		s.createOutcomeArtifactsLocked(task, outcome.Artifacts, task.CompletedAt)
+	}
 	s.publishTaskCompleted(task)
 	return cloneTask(task), nil
 }
@@ -549,6 +556,33 @@ func (s *Store) requeueTaskLocked(task *orchestrator.Task, taskID string, now ti
 		task.Attempt--
 	}
 	return lastRunID, lastAttempt
+}
+
+func (s *Store) createOutcomeArtifactsLocked(task *orchestrator.Task, artifacts []orchestrator.ArtifactSpec, createdAt time.Time) {
+	if task == nil || len(artifacts) == 0 {
+		return
+	}
+	runID := ""
+	if task.Run != nil {
+		runID = task.Run.ID
+	}
+	for _, spec := range artifacts {
+		s.nextArtifact++
+		artifact := &orchestrator.Artifact{
+			ID:          fmt.Sprintf("artifact-%d", s.nextArtifact),
+			TaskID:      task.ID,
+			RunID:       runID,
+			Kind:        spec.Kind,
+			Name:        spec.Name,
+			ContentType: spec.ContentType,
+			Body:        cloneBytes(spec.Body),
+			Metadata:    cloneAnyMap(spec.Metadata),
+			CreatedAt:   createdAt,
+		}
+		s.artifacts[artifact.ID] = artifact
+		s.artifactOrder = append(s.artifactOrder, artifact.ID)
+		s.publishArtifactCreated(artifact)
+	}
 }
 
 func (s *Store) publishTaskCreated(task *orchestrator.Task) {

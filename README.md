@@ -804,12 +804,22 @@ Use `ext/orchestrator` directly when the source of truth should be durable tasks
 
 ```go
 import (
+    "github.com/fugue-labs/gollem/core"
     "github.com/fugue-labs/gollem/ext/orchestrator"
     memstore "github.com/fugue-labs/gollem/ext/orchestrator/memory"
 )
 
 store := memstore.NewStore()
-runner := orchestrator.NewAgentRunner(workerAgent)
+runner := orchestrator.NewAgentRunner(workerAgent,
+    orchestrator.WithTaskArtifacts(func(task *orchestrator.Task, result *core.RunResult[WorkerOutput]) []orchestrator.ArtifactSpec {
+        return []orchestrator.ArtifactSpec{{
+            Kind:        "report",
+            Name:        "handoff.md",
+            ContentType: "text/markdown",
+            Body:        []byte("# Handoff\n\nScheduler path reviewed."),
+        }}
+    }),
+)
 scheduler := orchestrator.NewScheduler(store, store, runner,
     orchestrator.WithWorkerID("worker-1"),
 )
@@ -822,17 +832,10 @@ task, _ := store.CreateTask(ctx, orchestrator.CreateTaskRequest{
 
 go scheduler.Run(ctx)
 
-// After the task completes, persist a task-scoped artifact for downstream workers.
-store.CreateArtifact(ctx, orchestrator.CreateArtifactRequest{
-    TaskID:      task.ID,
-    Kind:        "report",
-    Name:        "handoff.md",
-    ContentType: "text/markdown",
-    Body:        []byte("# Handoff\n\nScheduler path reviewed."),
-})
+// The scheduler/store persists the task result and emitted artifacts together.
 ```
 
-See [`examples/orchestrator/main.go`](examples/orchestrator/main.go) for a full runnable example that drives a task through the scheduler and stores an artifact from the completed run.
+See [`examples/orchestrator/main.go`](examples/orchestrator/main.go) for a full runnable example that drives a task through the scheduler and persists an artifact as part of task completion.
 
 ### Multi-Agent Team Swarms
 

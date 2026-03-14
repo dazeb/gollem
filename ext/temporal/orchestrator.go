@@ -102,7 +102,7 @@ func WithWorkflowResultMetadata[T any](fn func(client.WorkflowRun, *WorkflowOutp
 }
 
 // RunTask implements orchestrator.Runner.
-func (r *WorkflowRunner[T]) RunTask(ctx context.Context, claim *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
+func (r *WorkflowRunner[T]) RunTask(ctx context.Context, claim *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
 	input, err := r.inputBuilder(claim)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func (r *WorkflowRunner[T]) RunTask(ctx context.Context, claim *orchestrator.Cla
 	if r.metadataFn != nil {
 		taskResult.Metadata = cloneAnyMap(r.metadataFn(run, &output, result))
 	}
-	return taskResult, nil
+	return &orchestrator.TaskOutcome{Result: taskResult}, nil
 }
 
 func defaultWorkflowRunnerMetadata[T any](run client.WorkflowRun, output *WorkflowOutput, result *core.RunResult[T]) map[string]any {

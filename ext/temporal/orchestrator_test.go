@@ -96,7 +96,7 @@ func TestWorkflowRunner_RunTaskStartsWorkflowAndDecodesOutput(t *testing.T) {
 	client := &fakeWorkflowClient{run: run}
 	runner := NewWorkflowRunner(client, ta, "gollem")
 
-	result, err := runner.RunTask(context.Background(), &orchestrator.ClaimedTask{
+	outcome, err := runner.RunTask(context.Background(), &orchestrator.ClaimedTask{
 		Task: &orchestrator.Task{
 			ID:    "task-1",
 			Input: "hello temporal",
@@ -110,6 +110,10 @@ func TestWorkflowRunner_RunTaskStartsWorkflowAndDecodesOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunTask failed: %v", err)
 	}
+	if outcome == nil || outcome.Result == nil {
+		t.Fatal("expected non-nil task outcome")
+	}
+	result := outcome.Result
 
 	if got := client.workflow; got != ta.WorkflowName() {
 		t.Fatalf("expected workflow name %q, got %v", ta.WorkflowName(), got)
@@ -285,13 +289,17 @@ func TestWorkflowRunner_CompletedAtUsesLegacySnapshotJSON(t *testing.T) {
 	}
 	runner := NewWorkflowRunner(wfClient, ta, "gollem")
 
-	result, err := runner.RunTask(context.Background(), &orchestrator.ClaimedTask{
+	outcome, err := runner.RunTask(context.Background(), &orchestrator.ClaimedTask{
 		Task: &orchestrator.Task{ID: "task-legacy", Input: "legacy"},
 		Run:  &orchestrator.RunRef{ID: "orch-run-legacy"},
 	})
 	if err != nil {
 		t.Fatalf("RunTask failed: %v", err)
 	}
+	if outcome == nil || outcome.Result == nil {
+		t.Fatal("expected non-nil task outcome")
+	}
+	result := outcome.Result
 	if result.CompletedAt != completedAt {
 		t.Fatalf("expected CompletedAt %v from legacy snapshot JSON, got %v", completedAt, result.CompletedAt)
 	}

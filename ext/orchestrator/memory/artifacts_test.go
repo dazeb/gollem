@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/orchestrator"
@@ -227,5 +228,56 @@ func TestStore_DeleteTaskRemovesArtifacts(t *testing.T) {
 	}
 	if artifacts[0].ID != keptArtifact.ID {
 		t.Fatalf("expected kept artifact %q, got %q", keptArtifact.ID, artifacts[0].ID)
+	}
+}
+
+func TestStore_CompleteTaskPersistsOutcomeArtifactsAtomically(t *testing.T) {
+	store := NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "complete with artifact",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	completedAt := time.Unix(2, 0).UTC()
+	completed, err := store.CompleteTask(context.Background(), task.ID, claim.Lease.Token, &orchestrator.TaskOutcome{
+		Result: &orchestrator.TaskResult{Output: "done"},
+		Artifacts: []orchestrator.ArtifactSpec{{
+			Kind:        "report",
+			Name:        "handoff.md",
+			ContentType: "text/markdown",
+			Body:        []byte("# done"),
+		}},
+	}, completedAt)
+	if err != nil {
+		t.Fatalf("CompleteTask failed: %v", err)
+	}
+	if completed.Status != orchestrator.TaskCompleted {
+		t.Fatalf("expected completed status, got %s", completed.Status)
+	}
+
+	artifacts, err := store.ListArtifacts(context.Background(), orchestrator.ArtifactFilter{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("ListArtifacts failed: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(artifacts))
+	}
+	if artifacts[0].RunID != claim.Run.ID {
+		t.Fatalf("expected artifact run ID %q, got %q", claim.Run.ID, artifacts[0].RunID)
+	}
+	if artifacts[0].CreatedAt != completedAt {
+		t.Fatalf("expected artifact CreatedAt %v, got %v", completedAt, artifacts[0].CreatedAt)
 	}
 }
