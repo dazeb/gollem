@@ -14,6 +14,10 @@ type teamWorkerStore struct {
 	workerID string
 }
 
+type commandByIDClaimer interface {
+	ClaimCommand(ctx context.Context, id string, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error)
+}
+
 var (
 	_ orchestrator.TaskStore            = (*teamWorkerStore)(nil)
 	_ orchestrator.LeaseStore           = (*teamWorkerStore)(nil)
@@ -183,22 +187,67 @@ func (s *teamWorkerStore) CreateCommand(ctx context.Context, req orchestrator.Cr
 }
 
 func (s *teamWorkerStore) GetCommand(ctx context.Context, id string) (*orchestrator.Command, error) {
-	return s.team.store.GetCommand(ctx, id)
+	command, err := s.team.store.GetCommand(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !s.commandVisible(ctx, command) {
+		return nil, orchestrator.ErrCommandNotFound
+	}
+	return command, nil
 }
 
 func (s *teamWorkerStore) ListCommands(ctx context.Context, filter orchestrator.CommandFilter) ([]*orchestrator.Command, error) {
-	return s.team.store.ListCommands(ctx, filter)
+	commands, err := s.team.store.ListCommands(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]*orchestrator.Command, 0, len(commands))
+	for _, command := range commands {
+		if s.commandVisible(ctx, command) {
+			filtered = append(filtered, command)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *teamWorkerStore) ClaimPendingCommand(ctx context.Context, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error) {
-	return s.team.store.ClaimPendingCommand(ctx, req)
+	commands, err := orchestrator.ListPendingCommandsForWorker(ctx, s.team.store, req.WorkerID)
+	if err != nil {
+		return nil, err
+	}
+	for _, command := range commands {
+		if !s.commandVisible(ctx, command) {
+			continue
+		}
+		claimer, ok := s.team.store.(commandByIDClaimer)
+		if !ok {
+			return nil, errors.New("team worker store requires command-by-id claim support")
+		}
+		claimed, claimErr := claimer.ClaimCommand(ctx, command.ID, req)
+		if claimErr == nil {
+			return claimed, nil
+		}
+		if errors.Is(claimErr, orchestrator.ErrNoPendingCommand) ||
+			errors.Is(claimErr, orchestrator.ErrCommandNotFound) {
+			continue
+		}
+		return nil, claimErr
+	}
+	return nil, orchestrator.ErrNoPendingCommand
 }
 
 func (s *teamWorkerStore) HandleCommand(ctx context.Context, id, claimToken, handledBy string, now time.Time) (*orchestrator.Command, error) {
+	if _, err := s.GetCommand(ctx, id); err != nil {
+		return nil, err
+	}
 	return s.team.store.HandleCommand(ctx, id, claimToken, handledBy, now)
 }
 
 func (s *teamWorkerStore) ReleaseCommand(ctx context.Context, id, claimToken string) error {
+	if _, err := s.GetCommand(ctx, id); err != nil {
+		return err
+	}
 	return s.team.store.ReleaseCommand(ctx, id, claimToken)
 }
 
@@ -240,4 +289,12 @@ func (s *teamWorkerStore) markTaskSettled(taskID string) {
 		return
 	}
 	tm.markTaskSettled(taskID)
+}
+
+func (s *teamWorkerStore) commandVisible(ctx context.Context, command *orchestrator.Command) bool {
+	if command == nil || command.TaskID == "" {
+		return false
+	}
+	_, err := s.team.getTeamTask(ctx, command.TaskID)
+	return err == nil
 }

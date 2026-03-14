@@ -1458,6 +1458,56 @@ func (s *Store) ClaimPendingCommand(ctx context.Context, req orchestrator.ClaimC
 	return cloneCommand(command), nil
 }
 
+// ClaimCommand claims one specific pending command by ID.
+func (s *Store) ClaimCommand(ctx context.Context, id string, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error) {
+	if req.WorkerID == "" {
+		return nil, errors.New("gollem/orchestrator/sqlite: command claim worker id must not be empty")
+	}
+	ctx = normalizeContext(ctx)
+	now := normalizeNow(req.Now)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var command *orchestrator.Command
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		loaded, err := s.loadCommandTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if loaded.Status != orchestrator.CommandPending {
+			return orchestrator.ErrNoPendingCommand
+		}
+		if err := s.refreshCommandTargetTx(ctx, tx, loaded); err != nil {
+			return err
+		}
+		if loaded.TargetWorkerID != "" && loaded.TargetWorkerID != req.WorkerID {
+			return orchestrator.ErrNoPendingCommand
+		}
+		loaded.Status = orchestrator.CommandClaimed
+		loaded.ClaimedBy = req.WorkerID
+		loaded.ClaimToken = fmt.Sprintf("%s-claim-%d", loaded.ID, now.UnixNano())
+		loaded.ClaimedAt = now
+		if err := s.saveCommandTx(ctx, tx, loaded); err != nil {
+			return err
+		}
+		record, err := commandClaimedRecord(loaded)
+		if err != nil {
+			return err
+		}
+		if err := s.saveEventsTx(ctx, tx, record); err != nil {
+			return err
+		}
+		command = loaded
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	s.publishCommandClaimed(command)
+	return cloneCommand(command), nil
+}
+
 // HandleCommand implements orchestrator.CommandStore.
 func (s *Store) HandleCommand(ctx context.Context, id, claimToken, handledBy string, now time.Time) (*orchestrator.Command, error) {
 	now = normalizeNow(now)

@@ -150,6 +150,112 @@ func TestTeam_SpawnDuplicate(t *testing.T) {
 	_ = tm.Shutdown(shutdownCtx)
 }
 
+func TestTeam_SpawnTeammate_AfterShutdownRejected(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("done"))
+	tm := NewTeam(TeamConfig{
+		Name:   "test-team",
+		Leader: "leader",
+		Model:  model,
+	})
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	if err := tm.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := tm.SpawnTeammate(ctx, "worker", "task"); err == nil {
+		t.Fatal("expected spawn after shutdown to fail")
+	}
+}
+
+func TestTeamWorkerStore_ClaimPendingCommand_ScopesToVisibleTeamTasks(t *testing.T) {
+	ctx := context.Background()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker",
+		LeaseTTL: time.Minute,
+		Now:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker",
+		LeaseTTL: time.Minute,
+		Now:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commandB, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskB.ID,
+		Reason: "cancel team b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandA, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskA.ID,
+		Reason: "cancel team a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker")
+	claimed, err := workerStore.ClaimPendingCommand(ctx, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker",
+		Now:      time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != commandA.ID {
+		t.Fatalf("expected to claim team-a command %q, got %q", commandA.ID, claimed.ID)
+	}
+
+	persistedA, err := shared.GetCommand(ctx, commandA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedA.Status != orchestrator.CommandClaimed {
+		t.Fatalf("expected team-a command to be claimed, got %s", persistedA.Status)
+	}
+
+	persistedB, err := shared.GetCommand(ctx, commandB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedB.Status != orchestrator.CommandPending {
+		t.Fatalf("expected foreign team command to remain pending, got %s", persistedB.Status)
+	}
+}
+
 func TestTeam_RemoveTeammate_ReleasesAssignedPendingTasks(t *testing.T) {
 	model := core.NewTestModel(
 		core.TextResponse("worker-1 initial complete"),

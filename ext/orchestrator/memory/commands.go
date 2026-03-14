@@ -109,6 +109,38 @@ func (s *Store) ClaimPendingCommand(_ context.Context, req orchestrator.ClaimCom
 	return nil, orchestrator.ErrNoPendingCommand
 }
 
+// ClaimCommand claims one specific pending command by ID.
+func (s *Store) ClaimCommand(_ context.Context, id string, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error) {
+	if req.WorkerID == "" {
+		return nil, errors.New("orchestrator/memory: command claim worker id must not be empty")
+	}
+	now := req.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	command, ok := s.commands[id]
+	if !ok {
+		return nil, orchestrator.ErrCommandNotFound
+	}
+	if command.Status != orchestrator.CommandPending {
+		return nil, orchestrator.ErrNoPendingCommand
+	}
+	s.refreshCommandTargetLocked(command)
+	if command.TargetWorkerID != "" && command.TargetWorkerID != req.WorkerID {
+		return nil, orchestrator.ErrNoPendingCommand
+	}
+	command.Status = orchestrator.CommandClaimed
+	command.ClaimedBy = req.WorkerID
+	command.ClaimToken = fmt.Sprintf("%s-claim-%d", command.ID, now.UnixNano())
+	command.ClaimedAt = now
+	s.publishCommandClaimed(command)
+	return cloneCommand(command), nil
+}
+
 // HandleCommand implements orchestrator.CommandStore.
 func (s *Store) HandleCommand(_ context.Context, id, claimToken, handledBy string, now time.Time) (*orchestrator.Command, error) {
 	s.mu.Lock()

@@ -80,6 +80,7 @@ type Team struct {
 	name            string
 	leader          string
 	members         map[string]*Teammate
+	closing         bool
 	store           OrchestratorStore
 	eventBus        *core.EventBus
 	model           core.Model
@@ -89,8 +90,6 @@ type Team struct {
 	workerMaxTokens int
 	workerHooks     []core.Hook
 	personalityGen  modelutil.PersonalityGeneratorFunc
-	done            chan struct{}
-	closeOnce       sync.Once
 	wg              sync.WaitGroup
 }
 
@@ -113,7 +112,6 @@ func NewTeam(cfg TeamConfig) *Team {
 		workerMaxTokens: cfg.WorkerMaxTokens,
 		workerHooks:     cfg.WorkerHooks,
 		personalityGen:  cfg.PersonalityGenerator,
-		done:            make(chan struct{}),
 	}
 }
 
@@ -191,11 +189,16 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 	}
 
 	t.mu.Lock()
+	if t.closing {
+		t.mu.Unlock()
+		return nil, errors.New("team is shutting down")
+	}
 	if _, exists := t.members[name]; exists {
 		t.mu.Unlock()
 		return nil, fmt.Errorf("teammate %q already exists", name)
 	}
 	t.members[name] = tm
+	t.wg.Add(1)
 	t.mu.Unlock()
 
 	endStrategy := core.EndStrategyExhaustive
@@ -242,6 +245,7 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 		t.mu.Lock()
 		delete(t.members, name)
 		t.mu.Unlock()
+		t.wg.Done()
 		return nil, fmt.Errorf("create initial team task: %w", err)
 	}
 
@@ -249,7 +253,6 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 	tm.cancel = cancel
 	startCh := make(chan struct{})
 
-	t.wg.Add(1)
 	go tm.run(tmCtx, startCh)
 
 	if t.eventBus != nil {
@@ -388,13 +391,17 @@ func (t *Team) requestShutdown(name, from, reason, correlationID string) (shutdo
 func (t *Team) Shutdown(ctx context.Context) error {
 	fmt.Fprintf(os.Stderr, "[gollem] team:%s shutting down\n", t.name)
 
-	t.mu.RLock()
+	t.mu.Lock()
+	t.closing = true
+	members := make([]*Teammate, 0, len(t.members))
 	for _, tm := range t.members {
+		members = append(members, tm)
+	}
+	t.mu.Unlock()
+
+	for _, tm := range members {
 		tm.requestShutdown("team", "team shutdown", "")
 	}
-	t.mu.RUnlock()
-
-	t.closeOnce.Do(func() { close(t.done) })
 
 	doneCh := make(chan struct{})
 	go func() {
