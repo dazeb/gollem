@@ -19,6 +19,7 @@ type ToolActivityInput struct {
 	DepsJSON        []byte                   `json:"deps_json,omitempty"`
 	RunStep         int                      `json:"run_step"`
 	RunID           string                   `json:"run_id"`
+	ParentRunID     string                   `json:"parent_run_id,omitempty"`
 	RunStartTime    time.Time                `json:"run_start_time"`
 	Usage           core.RunUsage            `json:"usage"`
 	LastInputTokens int                      `json:"last_input_tokens,omitempty"`
@@ -83,6 +84,7 @@ func temporalizeTool(
 			Messages:     messages,
 			RunStep:      input.RunStep,
 			RunID:        input.RunID,
+			ParentRunID:  input.ParentRunID,
 			RunStartTime: input.RunStartTime,
 			EventBus:     eventBus,
 		}, func() map[string]any {
@@ -96,6 +98,7 @@ func temporalizeTool(
 				input.Retries,
 				input.ToolRetries,
 				input.RunID,
+				input.ParentRunID,
 				input.RunStep,
 				input.RunStartTime,
 				input.ToolState,

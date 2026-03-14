@@ -23,6 +23,7 @@ type callbackRunInput struct {
 	ToolRetries     map[string]int           `json:"tool_retries,omitempty"`
 	RunStep         int                      `json:"run_step"`
 	RunID           string                   `json:"run_id"`
+	ParentRunID     string                   `json:"parent_run_id,omitempty"`
 	RunStartTime    time.Time                `json:"run_start_time"`
 	ToolState       map[string]any           `json:"tool_state,omitempty"`
 	ToolName        string                   `json:"tool_name,omitempty"`
@@ -157,13 +158,17 @@ type knowledgeStoreActivityInput struct {
 }
 
 type eventBusActivityInput struct {
-	EventType string `json:"event_type"`
-	RunID     string `json:"run_id"`
-	Prompt    string `json:"prompt,omitempty"`
-	ToolName  string `json:"tool_name,omitempty"`
-	ArgsJSON  string `json:"args_json,omitempty"`
-	Success   bool   `json:"success,omitempty"`
-	Error     string `json:"error,omitempty"`
+	EventType    string    `json:"event_type"`
+	RunID        string    `json:"run_id"`
+	ParentRunID  string    `json:"parent_run_id,omitempty"`
+	Prompt       string    `json:"prompt,omitempty"`
+	ToolCallID   string    `json:"tool_call_id,omitempty"`
+	ToolName     string    `json:"tool_name,omitempty"`
+	ArgsJSON     string    `json:"args_json,omitempty"`
+	RunStartTime time.Time `json:"run_start_time,omitempty"`
+	OccurredAt   time.Time `json:"occurred_at,omitempty"`
+	Success      bool      `json:"success,omitempty"`
+	Error        string    `json:"error,omitempty"`
 }
 
 type traceExportActivityInput struct {
@@ -338,6 +343,7 @@ func (ta *TemporalAgent[T]) buildCallbackRunContext(input callbackRunInput) (*co
 		Messages:     messages,
 		RunStep:      input.RunStep,
 		RunID:        input.RunID,
+		ParentRunID:  input.ParentRunID,
 		RunStartTime: input.RunStartTime,
 		EventBus:     ta.runtime.EventBus,
 		ToolName:     input.ToolName,
@@ -355,6 +361,7 @@ func (ta *TemporalAgent[T]) buildCallbackRunContext(input callbackRunInput) (*co
 			input.Retries,
 			input.ToolRetries,
 			input.RunID,
+			input.ParentRunID,
 			input.RunStep,
 			input.RunStartTime,
 			input.ToolState,
@@ -455,26 +462,40 @@ func (ta *TemporalAgent[T]) eventBusActivity(ctx context.Context, input eventBus
 	}
 	switch input.EventType {
 	case hookEventRunStart:
-		core.Publish(ta.runtime.EventBus, core.RunStartedEvent{
-			RunID:  input.RunID,
-			Prompt: input.Prompt,
-		})
+		core.Publish(ta.runtime.EventBus, core.NewRunStartedEvent(
+			input.RunID,
+			input.ParentRunID,
+			input.Prompt,
+			input.RunStartTime,
+		))
 	case hookEventRunEnd:
-		core.Publish(ta.runtime.EventBus, core.RunCompletedEvent{
-			RunID:   input.RunID,
-			Success: input.Success,
-			Error:   input.Error,
-		})
+		core.Publish(ta.runtime.EventBus, core.NewRunCompletedEvent(
+			input.RunID,
+			input.ParentRunID,
+			input.RunStartTime,
+			input.OccurredAt,
+			errorStringToErr(input.Error),
+		))
 	case hookEventToolStart:
-		core.Publish(ta.runtime.EventBus, core.ToolCalledEvent{
-			RunID:    input.RunID,
-			ToolName: input.ToolName,
-			ArgsJSON: input.ArgsJSON,
-		})
+		core.Publish(ta.runtime.EventBus, core.NewToolCalledEvent(
+			input.RunID,
+			input.ParentRunID,
+			input.ToolCallID,
+			input.ToolName,
+			input.ArgsJSON,
+			input.OccurredAt,
+		))
 	default:
 		return fmt.Errorf("unknown event bus activity type %q", input.EventType)
 	}
 	return nil
+}
+
+func errorStringToErr(text string) error {
+	if text == "" {
+		return nil
+	}
+	return errors.New(text)
 }
 
 func (ta *TemporalAgent[T]) traceExportActivity(ctx context.Context, input traceExportActivityInput) error {

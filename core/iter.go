@@ -8,10 +8,16 @@ import (
 
 // AgentRun represents an in-progress agent execution that can be iterated step-by-step.
 type AgentRun[T any] struct {
+	agent  *Agent[T]
+	ctx    context.Context
+	state  *RunState
+	deps   any
+	prompt string
 	engine *turnEngine[T]
 	done   bool
 	result *RunResult[T]
 	err    error
+	ended  bool
 }
 
 // Iter starts an agent run that can be iterated step-by-step.
@@ -23,7 +29,7 @@ func (a *Agent[T]) Iter(ctx context.Context, prompt string, opts ...RunOption) *
 
 	a.ensureOutputSchema()
 
-	exec := a.initializeRunExecution(cfg)
+	exec := a.initializeRunExecution(ctx, cfg)
 	state := exec.state
 	settings := exec.settings
 	limits := exec.limits
@@ -45,9 +51,24 @@ func (a *Agent[T]) Iter(ctx context.Context, prompt string, opts ...RunOption) *
 		}
 	}
 
+	ctx = a.beginRun(ctx, state, deps, prompt)
+
 	return &AgentRun[T]{
+		agent:  a,
+		ctx:    ctx,
+		state:  state,
+		deps:   deps,
+		prompt: prompt,
 		engine: a.newTurnEngine(ctx, state, prompt, settings, limits, deps),
 	}
+}
+
+func (ar *AgentRun[T]) finish(runErr error) {
+	if ar == nil || ar.ended || ar.agent == nil || ar.state == nil {
+		return
+	}
+	ar.ended = true
+	ar.agent.endRun(ar.ctx, ar.state, ar.deps, ar.prompt, runErr)
 }
 
 // Next executes one iteration of the agent loop (one model call + tool execution).
@@ -64,11 +85,13 @@ func (ar *AgentRun[T]) Next() (*ModelResponse, error) {
 	if err != nil {
 		ar.done = true
 		ar.err = err
+		ar.finish(err)
 		return resp, err
 	}
 	if result != nil {
 		ar.done = true
 		ar.result = result
+		ar.finish(nil)
 	}
 	return resp, nil
 }

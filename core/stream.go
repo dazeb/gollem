@@ -620,20 +620,7 @@ func (s *agentStream[T]) finish(result *RunResult[T], runErr error) {
 	s.err = runErr
 
 	s.endOnce.Do(func() {
-		endRC := s.agent.buildRunContext(s.state, s.deps, s.prompt)
-
-		if s.agent.eventBus != nil {
-			evt := RunCompletedEvent{RunID: s.state.runID, Success: runErr == nil}
-			if runErr != nil {
-				evt.Error = runErr.Error()
-			}
-			Publish(s.agent.eventBus, evt)
-		}
-		s.agent.fireHook(func(h Hook) {
-			if h.OnRunEnd != nil {
-				h.OnRunEnd(s.ctx, endRC, s.state.messages, runErr)
-			}
-		})
+		s.agent.endRun(s.ctx, s.state, s.deps, s.prompt, runErr)
 
 		if s.agent.tracingEnabled {
 			endTime := time.Now()

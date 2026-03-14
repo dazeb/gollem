@@ -25,6 +25,7 @@ type workflowRunState struct {
 	ToolRetries                   map[string]int
 	RunStep                       int
 	RunID                         string
+	ParentRunID                   string
 	RunStartTime                  time.Time
 	ToolState                     map[string]any
 	ContinueAsNewCount            int
@@ -37,6 +38,7 @@ func newWorkflowRunState(ctx workflow.Context, input WorkflowInput) (*workflowRu
 	state := &workflowRunState{
 		ToolRetries:                   make(map[string]int),
 		RunID:                         workflow.GetInfo(ctx).WorkflowExecution.ID,
+		ParentRunID:                   input.ParentRunID,
 		RunStartTime:                  workflow.Now(ctx),
 		DepsJSON:                      append([]byte(nil), input.DepsJSON...),
 		ContinueAsNewCount:            input.ContinueAsNewCount,
@@ -69,6 +71,7 @@ func newWorkflowRunState(ctx workflow.Context, input WorkflowInput) (*workflowRu
 	if snap.RunID != "" {
 		state.RunID = snap.RunID
 	}
+	state.ParentRunID = snap.ParentRunID
 	if !snap.RunStartTime.IsZero() {
 		state.RunStartTime = snap.RunStartTime
 	}
@@ -85,6 +88,7 @@ func (s *workflowRunState) snapshotJSON(prompt string, now time.Time) ([]byte, e
 		Retries:         s.Retries,
 		ToolRetries:     cloneIntMap(s.ToolRetries),
 		RunID:           s.RunID,
+		ParentRunID:     s.ParentRunID,
 		RunStep:         s.RunStep,
 		RunStartTime:    s.RunStartTime,
 		Prompt:          prompt,

@@ -90,25 +90,3 @@ func WithEventBus[T any](bus *EventBus) AgentOption[T] {
 		a.eventBus = bus
 	}
 }
-
-// --- Built-in Event Types ---
-
-// RunStartedEvent is published when an agent run starts.
-type RunStartedEvent struct {
-	RunID  string
-	Prompt string
-}
-
-// RunCompletedEvent is published when an agent run completes.
-type RunCompletedEvent struct {
-	RunID   string
-	Success bool
-	Error   string
-}
-
-// ToolCalledEvent is published when a tool is called.
-type ToolCalledEvent struct {
-	RunID    string
-	ToolName string
-	ArgsJSON string
-}

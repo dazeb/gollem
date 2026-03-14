@@ -346,6 +346,7 @@ func (a *Agent[T]) buildRunContext(state *agentRunState, deps any, prompt string
 		Messages:     state.messages,
 		RunStep:      state.runStep,
 		RunID:        state.runID,
+		ParentRunID:  state.parentRunID,
 		RunStartTime: state.startTime,
 		EventBus:     a.eventBus,
 		Detach:       state.detach,
@@ -356,6 +357,37 @@ func (a *Agent[T]) buildRunContext(state *agentRunState, deps any, prompt string
 			return state.snapshot(prompt, a.exportToolState())
 		},
 	}
+}
+
+func (a *Agent[T]) beginRun(ctx context.Context, state *agentRunState, deps any, prompt string) context.Context {
+	rc := a.buildRunContext(state, deps, prompt)
+	if a.eventBus != nil {
+		Publish(a.eventBus, NewRunStartedEvent(state.runID, state.parentRunID, prompt, state.startTime))
+	}
+	a.fireHook(func(h Hook) {
+		if h.OnRunStart != nil {
+			h.OnRunStart(ctx, rc, prompt)
+		}
+	})
+	return ContextWithRunID(ctx, state.runID)
+}
+
+func (a *Agent[T]) endRun(ctx context.Context, state *agentRunState, deps any, prompt string, runErr error) {
+	endRC := a.buildRunContext(state, deps, prompt)
+	if a.eventBus != nil {
+		Publish(a.eventBus, NewRunCompletedEvent(
+			state.runID,
+			state.parentRunID,
+			state.startTime,
+			time.Now(),
+			runErr,
+		))
+	}
+	a.fireHook(func(h Hook) {
+		if h.OnRunEnd != nil {
+			h.OnRunEnd(ctx, endRC, state.messages, runErr)
+		}
+	})
 }
 
 // restoreToolState restores state to stateful tools from a previous export.
@@ -475,7 +507,7 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	// Build output schema.
 	a.ensureOutputSchema()
 
-	exec := a.initializeRunExecution(cfg)
+	exec := a.initializeRunExecution(ctx, cfg)
 	state := exec.state
 	settings := exec.settings
 	limits := exec.limits
@@ -492,44 +524,13 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	}
 
 	// Fire OnRunStart hooks BEFORE injecting this run's RunID into context.
-	// This ordering is critical: hooks need to see the PARENT's RunID in
-	// context (if any) to establish parent-child span relationships. After
-	// hooks fire, we inject this run's RunID so that tool handlers (which
-	// may spawn child agents) propagate the correct parent identity.
-	rc := a.buildRunContext(state, deps, prompt)
-
-	// Publish RunStartedEvent.
-	if a.eventBus != nil {
-		Publish(a.eventBus, RunStartedEvent{RunID: state.runID, Prompt: prompt})
-	}
-	a.fireHook(func(h Hook) {
-		if h.OnRunStart != nil {
-			h.OnRunStart(ctx, rc, prompt)
-		}
-	})
-
-	// Inject this run's RunID into context so child agents (subagents,
-	// teammates, AgentTool) can discover their parent agent's tracing state.
-	// Must come AFTER OnRunStart so hooks see the parent's RunID.
-	ctx = ContextWithRunID(ctx, state.runID)
+	// This ordering is critical: hooks need to see the parent's RunID in
+	// context (if any) to establish parent-child relationships. After hooks
+	// fire, inject this run's RunID so child work propagates the correct lineage.
+	ctx = a.beginRun(ctx, state, deps, prompt)
 
 	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, deps)
-
-	endRC := a.buildRunContext(state, deps, prompt)
-
-	// Publish RunCompletedEvent.
-	if a.eventBus != nil {
-		evt := RunCompletedEvent{RunID: state.runID, Success: runErr == nil}
-		if runErr != nil {
-			evt.Error = runErr.Error()
-		}
-		Publish(a.eventBus, evt)
-	}
-	a.fireHook(func(h Hook) {
-		if h.OnRunEnd != nil {
-			h.OnRunEnd(ctx, endRC, state.messages, runErr)
-		}
-	})
+	a.endRun(ctx, state, deps, prompt, runErr)
 
 	// Build trace if enabled.
 	if a.tracingEnabled {
@@ -576,7 +577,7 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 	// Build output schema.
 	a.ensureOutputSchema()
 
-	exec := a.initializeRunExecution(cfg)
+	exec := a.initializeRunExecution(ctx, cfg)
 	state := exec.state
 	settings := exec.settings
 	limits := exec.limits
@@ -588,18 +589,11 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 		return nil, err
 	}
 
-	// Fire OnRunStart hooks before injecting this run's RunID into context.
-	rc := a.buildRunContext(state, deps, prompt)
-	if a.eventBus != nil {
-		Publish(a.eventBus, RunStartedEvent{RunID: state.runID, Prompt: prompt})
+	if err := a.bootstrapRunMessages(ctx, state, prompt, deps, cfg.deferredResults, cfg.initialRequestParts); err != nil {
+		return nil, err
 	}
-	a.fireHook(func(h Hook) {
-		if h.OnRunStart != nil {
-			h.OnRunStart(ctx, rc, prompt)
-		}
-	})
 
-	ctx = ContextWithRunID(ctx, state.runID)
+	ctx = a.beginRun(ctx, state, deps, prompt)
 
 	// Gather all tools and build lookup maps.
 	allTools := a.allTools()
@@ -613,11 +607,6 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 	}
 
 	stream := newAgentStream(a, ctx, state, settings, limits, deps, prompt, allTools, toolMap, outputToolNames)
-
-	if err := a.bootstrapRunMessages(ctx, state, prompt, deps, cfg.deferredResults, cfg.initialRequestParts); err != nil {
-		stream.finish(nil, err)
-		return nil, err
-	}
 
 	initialMessages := make([]ModelMessage, len(state.messages))
 	copy(initialMessages, state.messages)
@@ -1111,7 +1100,14 @@ func (a *Agent[T]) executeSingleTool(
 
 	// Publish ToolCalledEvent.
 	if a.eventBus != nil {
-		Publish(a.eventBus, ToolCalledEvent{RunID: state.runID, ToolName: call.ToolName, ArgsJSON: call.ArgsJSON})
+		Publish(a.eventBus, NewToolCalledEvent(
+			state.runID,
+			state.parentRunID,
+			call.ToolCallID,
+			call.ToolName,
+			call.ArgsJSON,
+			time.Now(),
+		))
 	}
 
 	// Check tool approval if required.

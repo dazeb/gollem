@@ -14,13 +14,14 @@ type runExecution[T any] struct {
 	deps     any
 }
 
-func (a *Agent[T]) initializeRunExecution(cfg *runConfig) *runExecution[T] {
+func (a *Agent[T]) initializeRunExecution(ctx context.Context, cfg *runConfig) *runExecution[T] {
 	limits := a.usageLimits
 	if cfg.usageLimits != nil {
 		limits = *cfg.usageLimits
 	}
 
 	state := newRunState(cfg.detach, limits)
+	state.parentRunID = RunIDFromContext(ctx)
 	if cfg.snapshot != nil {
 		state.applySnapshot(cfg.snapshot)
 	}

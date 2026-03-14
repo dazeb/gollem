@@ -91,7 +91,7 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **`AgentTool` delegation** — One agent calls another as a tool (`core/orchestration`)
 - **`Handoff` pipelines** — Sequential agent chains with context filters at boundaries (`core/orchestration`)
 - **Handoff context filters** — `StripSystemPrompts`, `KeepLastN`, `SummarizeHistory`, composable with `ChainFilters` (`core/orchestration`)
-- **Typed event bus** — Publish-subscribe coordination with `Subscribe[E]`, `Publish[E]`, and async variants
+- **Typed event bus** — Publish-subscribe coordination with `Subscribe[E]`, `Publish[E]`, and async variants; built-in runtime events carry run IDs, parent run IDs, and timestamps
 
 ### Intelligence & Routing
 - **Model router** — Route prompts to different models based on content, length, or custom logic
@@ -382,6 +382,8 @@ orchestrator := gollem.NewAgent[FinalReport](model,
 
 result, _ := orchestrator.Run(ctx, "Research and summarize recent advances in robotics")
 ```
+
+Agents attached to an event bus also publish built-in runtime lifecycle events: `RunStartedEvent`, `ToolCalledEvent`, and `RunCompletedEvent`. Those events include `RunID`, `ParentRunID` for nested runs, and timestamps so local orchestration and adapters can trace lineage without scraping transcripts.
 
 ### Composable Pipelines
 

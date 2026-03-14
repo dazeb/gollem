@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -190,13 +191,152 @@ func TestEventBus_AgentIntegration(t *testing.T) {
 	if startEvent.Prompt != "test event bus" {
 		t.Errorf("expected RunStartedEvent with prompt 'test event bus', got %q", startEvent.Prompt)
 	}
+	if startEvent.RunID == "" {
+		t.Error("expected RunStartedEvent to include RunID")
+	}
+	if startEvent.ParentRunID != "" {
+		t.Errorf("expected top-level run to have empty ParentRunID, got %q", startEvent.ParentRunID)
+	}
+	if startEvent.StartedAt.IsZero() {
+		t.Error("expected RunStartedEvent to include StartedAt")
+	}
 	if toolEvent.ToolName != "echo" {
 		t.Errorf("expected ToolCalledEvent with tool 'echo', got %q", toolEvent.ToolName)
+	}
+	if toolEvent.ToolCallID == "" {
+		t.Error("expected ToolCalledEvent to include ToolCallID")
+	}
+	if toolEvent.RunID != startEvent.RunID {
+		t.Errorf("expected tool event RunID %q, got %q", startEvent.RunID, toolEvent.RunID)
+	}
+	if toolEvent.CalledAt.IsZero() {
+		t.Error("expected ToolCalledEvent to include CalledAt")
 	}
 	if !completeEvent.Success {
 		t.Error("expected RunCompletedEvent with Success=true")
 	}
+	if completeEvent.RunID != startEvent.RunID {
+		t.Errorf("expected completion RunID %q, got %q", startEvent.RunID, completeEvent.RunID)
+	}
+	if !completeEvent.StartedAt.Equal(startEvent.StartedAt) {
+		t.Errorf("expected completion StartedAt %v, got %v", startEvent.StartedAt, completeEvent.StartedAt)
+	}
+	if completeEvent.CompletedAt.IsZero() {
+		t.Error("expected RunCompletedEvent to include CompletedAt")
+	}
 	if busFromTool != bus {
 		t.Error("expected EventBus to be accessible via RunContext in tool")
+	}
+}
+
+func TestEventBus_ChildRunCarriesParentRunID(t *testing.T) {
+	bus := NewEventBus()
+
+	var (
+		mu          sync.Mutex
+		startEvents []RunStartedEvent
+	)
+	Subscribe(bus, func(e RunStartedEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		startEvents = append(startEvents, e)
+	})
+
+	child := NewAgent[string](
+		NewTestModel(TextResponse("child complete")),
+		WithEventBus[string](bus),
+	)
+	delegate := FuncTool[struct{}]("delegate", "delegate to child", func(ctx context.Context, _ *RunContext, _ struct{}) (string, error) {
+		result, err := child.Run(ctx, "child task")
+		if err != nil {
+			return "", err
+		}
+		return result.Output, nil
+	})
+	parent := NewAgent[string](
+		NewTestModel(
+			ToolCallResponse("delegate", `{}`),
+			TextResponse("parent complete"),
+		),
+		WithTools[string](delegate),
+		WithEventBus[string](bus),
+	)
+
+	if _, err := parent.Run(context.Background(), "parent task"); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(startEvents) != 2 {
+		t.Fatalf("expected 2 RunStartedEvents, got %d", len(startEvents))
+	}
+	parentStart := startEvents[0]
+	childStart := startEvents[1]
+	if parentStart.ParentRunID != "" {
+		t.Fatalf("expected top-level run ParentRunID to be empty, got %q", parentStart.ParentRunID)
+	}
+	if childStart.ParentRunID != parentStart.RunID {
+		t.Fatalf("expected child ParentRunID %q, got %q", parentStart.RunID, childStart.ParentRunID)
+	}
+}
+
+func TestEventBus_IterPublishesLifecycleEvents(t *testing.T) {
+	bus := NewEventBus()
+
+	var (
+		startCount    atomic.Int32
+		completeCount atomic.Int32
+	)
+	Subscribe(bus, func(RunStartedEvent) {
+		startCount.Add(1)
+	})
+	Subscribe(bus, func(RunCompletedEvent) {
+		completeCount.Add(1)
+	})
+
+	agent := NewAgent[string](
+		NewTestModel(TextResponse("iter complete")),
+		WithEventBus[string](bus),
+	)
+	iter := agent.Iter(context.Background(), "iter task")
+	for !iter.Done() {
+		if _, err := iter.Next(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := iter.Result(); err != nil {
+		t.Fatal(err)
+	}
+
+	if startCount.Load() != 1 {
+		t.Fatalf("expected 1 RunStartedEvent, got %d", startCount.Load())
+	}
+	if completeCount.Load() != 1 {
+		t.Fatalf("expected 1 RunCompletedEvent, got %d", completeCount.Load())
+	}
+}
+
+func TestEventBus_RunStreamDoesNotPublishStartOnBootstrapFailure(t *testing.T) {
+	bus := NewEventBus()
+
+	var startCount atomic.Int32
+	Subscribe(bus, func(RunStartedEvent) {
+		startCount.Add(1)
+	})
+
+	agent := NewAgent[string](
+		NewTestModel(TextResponse("unused")),
+		WithEventBus[string](bus),
+		WithDynamicSystemPrompt[string](func(context.Context, *RunContext) (string, error) {
+			return "", errors.New("dynamic prompt failed")
+		}),
+	)
+
+	if _, err := agent.RunStream(context.Background(), "broken"); err == nil {
+		t.Fatal("expected RunStream to fail during bootstrap")
+	}
+	if startCount.Load() != 0 {
+		t.Fatalf("expected no RunStartedEvent on bootstrap failure, got %d", startCount.Load())
 	}
 }

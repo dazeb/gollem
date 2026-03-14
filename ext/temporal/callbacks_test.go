@@ -35,6 +35,7 @@ func TestTemporalAgent_BuildCallbackRunContext_PreservesRunStateSnapshot(t *test
 		ToolRetries:     map[string]int{"validator": 2},
 		RunStep:         8,
 		RunID:           "run-callback",
+		ParentRunID:     "parent-callback",
 		RunStartTime:    start,
 		ToolState:       map[string]any{"validator": map[string]any{"count": 4}},
 		ToolName:        "validator",
@@ -55,6 +56,9 @@ func TestTemporalAgent_BuildCallbackRunContext_PreservesRunStateSnapshot(t *test
 	}
 	if snap.RunID != "run-callback" {
 		t.Fatalf("unexpected run id %q", snap.RunID)
+	}
+	if snap.ParentRunID != "parent-callback" {
+		t.Fatalf("unexpected parent run id %q", snap.ParentRunID)
 	}
 	if snap.RunStep != 8 {
 		t.Fatalf("unexpected run step %d", snap.RunStep)
@@ -640,7 +644,7 @@ func TestTemporalAgent_RunWorkflow_EventBus(t *testing.T) {
 	)
 	ta := NewTemporalAgent(agent, WithName("workflow-event-bus"))
 
-	runWorkflowTest(t, ta, WorkflowInput{Prompt: "test event bus"}, func(output WorkflowOutput) {
+	runWorkflowTest(t, ta, WorkflowInput{Prompt: "test event bus", ParentRunID: "parent-workflow"}, func(output WorkflowOutput) {
 		result, err := ta.DecodeWorkflowOutput(&output)
 		if err != nil {
 			t.Fatalf("decode workflow output: %v", err)
@@ -651,11 +655,35 @@ func TestTemporalAgent_RunWorkflow_EventBus(t *testing.T) {
 		if startEvent.Prompt != "test event bus" {
 			t.Fatalf("expected run start event prompt %q, got %q", "test event bus", startEvent.Prompt)
 		}
+		if startEvent.ParentRunID != "parent-workflow" {
+			t.Fatalf("expected start ParentRunID %q, got %q", "parent-workflow", startEvent.ParentRunID)
+		}
+		if startEvent.StartedAt.IsZero() {
+			t.Fatal("expected start event StartedAt")
+		}
 		if toolEvent.ToolName != "echo" {
 			t.Fatalf("expected tool event for %q, got %q", "echo", toolEvent.ToolName)
 		}
+		if toolEvent.ParentRunID != "parent-workflow" {
+			t.Fatalf("expected tool ParentRunID %q, got %q", "parent-workflow", toolEvent.ParentRunID)
+		}
+		if toolEvent.ToolCallID == "" {
+			t.Fatal("expected tool event ToolCallID")
+		}
+		if toolEvent.CalledAt.IsZero() {
+			t.Fatal("expected tool event CalledAt")
+		}
 		if !completeEvent.Success {
 			t.Fatal("expected successful run completed event")
+		}
+		if completeEvent.ParentRunID != "parent-workflow" {
+			t.Fatalf("expected completion ParentRunID %q, got %q", "parent-workflow", completeEvent.ParentRunID)
+		}
+		if !completeEvent.StartedAt.Equal(startEvent.StartedAt) {
+			t.Fatalf("expected completion StartedAt %v, got %v", startEvent.StartedAt, completeEvent.StartedAt)
+		}
+		if completeEvent.CompletedAt.IsZero() {
+			t.Fatal("expected completion event CompletedAt")
 		}
 		if custom.Value != "from-tool" {
 			t.Fatalf("expected custom tool-published event, got %+v", custom)
