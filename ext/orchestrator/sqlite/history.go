@@ -41,35 +41,246 @@ func (s *Store) ListEvents(ctx context.Context, filter orchestrator.EventFilter)
 	return out, nil
 }
 
+func (s *Store) ensureEventSchema(ctx context.Context) error {
+	columns, err := s.eventTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if len(columns) == 0 {
+		return s.createEventSchema(ctx)
+	}
+	for _, column := range columns {
+		if column == "sequence" {
+			return s.createEventIndexes(ctx)
+		}
+	}
+	return s.migrateLegacyEventsTable(ctx)
+}
+
+func (s *Store) eventTableColumns(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(events)`)
+	if err != nil {
+		return nil, fmt.Errorf("inspect events schema: %w", err)
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			typ        string
+			notNull    int
+			defaultVal any
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); err != nil {
+			return nil, fmt.Errorf("scan events schema: %w", err)
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate events schema: %w", err)
+	}
+	return columns, nil
+}
+
+func (s *Store) createEventSchema(ctx context.Context) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS events (
+			sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+			id TEXT NOT NULL UNIQUE,
+			created_at TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			lease_id TEXT NOT NULL,
+			command_id TEXT NOT NULL,
+			artifact_id TEXT NOT NULL,
+			payload BLOB NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_command_id ON events(command_id, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_artifact_id ON events(artifact_id, sequence)`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("initialize event history schema: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) createEventIndexes(ctx context.Context) error {
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_command_id ON events(command_id, sequence)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_artifact_id ON events(artifact_id, sequence)`,
+	}
+	for _, stmt := range statements {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create event history indexes: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) migrateLegacyEventsTable(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin events migration: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	for _, indexName := range []string{
+		"idx_events_created_at",
+		"idx_events_task_id",
+		"idx_events_run_id",
+		"idx_events_command_id",
+		"idx_events_artifact_id",
+	} {
+		if _, err = tx.ExecContext(ctx, `DROP INDEX IF EXISTS `+indexName); err != nil {
+			return fmt.Errorf("drop legacy event index %s: %w", indexName, err)
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `ALTER TABLE events RENAME TO events_legacy`); err != nil {
+		return fmt.Errorf("rename legacy events table: %w", err)
+	}
+	if err = createEventSchemaTx(ctx, tx); err != nil {
+		return err
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, created_at, kind, task_id, run_id, lease_id, command_id, artifact_id, payload
+		FROM events_legacy
+		ORDER BY rowid ASC
+	`)
+	if err != nil {
+		return fmt.Errorf("read legacy events: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			id         string
+			createdAt  string
+			kind       string
+			taskID     string
+			runID      string
+			leaseID    string
+			commandID  string
+			artifactID string
+			payload    []byte
+		)
+		if err = rows.Scan(&id, &createdAt, &kind, &taskID, &runID, &leaseID, &commandID, &artifactID, &payload); err != nil {
+			return fmt.Errorf("scan legacy event: %w", err)
+		}
+		record := &orchestrator.EventRecord{
+			ID:         id,
+			Kind:       orchestrator.EventKind(kind),
+			TaskID:     taskID,
+			RunID:      runID,
+			LeaseID:    leaseID,
+			CommandID:  commandID,
+			ArtifactID: artifactID,
+			CreatedAt:  parseLegacyEventTime(createdAt),
+		}
+		var legacy orchestrator.EventRecord
+		if err := json.Unmarshal(payload, &legacy); err == nil && legacy.Kind != "" {
+			record.Kind = legacy.Kind
+			record.TaskID = coalesceString(record.TaskID, legacy.TaskID)
+			record.RunID = coalesceString(record.RunID, legacy.RunID)
+			record.LeaseID = coalesceString(record.LeaseID, legacy.LeaseID)
+			record.CommandID = coalesceString(record.CommandID, legacy.CommandID)
+			record.ArtifactID = coalesceString(record.ArtifactID, legacy.ArtifactID)
+			if !legacy.CreatedAt.IsZero() {
+				record.CreatedAt = legacy.CreatedAt
+			}
+			record.Payload = cloneBytes(legacy.Payload)
+		} else {
+			record.Payload = cloneBytes(payload)
+		}
+		if err := s.saveEventTx(ctx, tx, record); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate legacy events: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `DROP TABLE events_legacy`); err != nil {
+		return fmt.Errorf("drop legacy events table: %w", err)
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit events migration: %w", err)
+	}
+	return nil
+}
+
+func createEventSchemaTx(ctx context.Context, tx *sql.Tx) error {
+	statements := []string{
+		`CREATE TABLE events (
+			sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+			id TEXT NOT NULL UNIQUE,
+			created_at TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			lease_id TEXT NOT NULL,
+			command_id TEXT NOT NULL,
+			artifact_id TEXT NOT NULL,
+			payload BLOB NOT NULL
+		)`,
+		`CREATE INDEX idx_events_created_at ON events(created_at, sequence)`,
+		`CREATE INDEX idx_events_task_id ON events(task_id, sequence)`,
+		`CREATE INDEX idx_events_run_id ON events(run_id, sequence)`,
+		`CREATE INDEX idx_events_command_id ON events(command_id, sequence)`,
+		`CREATE INDEX idx_events_artifact_id ON events(artifact_id, sequence)`,
+	}
+	for _, stmt := range statements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create migrated event schema: %w", err)
+		}
+	}
+	return nil
+}
+
 func (s *Store) saveEventTx(ctx context.Context, tx *sql.Tx, event *orchestrator.EventRecord) error {
+	if event == nil {
+		return nil
+	}
+	event.CreatedAt = normalizeNow(event.CreatedAt)
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO events (id, created_at, kind, task_id, run_id, lease_id, command_id, artifact_id, payload)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, event.ID, formatTime(event.CreatedAt), string(event.Kind), event.TaskID, event.RunID, event.LeaseID, event.CommandID, event.ArtifactID, []byte("{}"))
+	if err != nil {
+		return fmt.Errorf("insert event %q: %w", event.ID, err)
+	}
+	sequence, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("fetch event sequence for %q: %w", event.ID, err)
+	}
+	event.Sequence = sequence
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal event %q: %w", event.ID, err)
 	}
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO events (id, created_at, kind, task_id, run_id, lease_id, command_id, artifact_id, payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			created_at = excluded.created_at,
-			kind = excluded.kind,
-			task_id = excluded.task_id,
-			run_id = excluded.run_id,
-			lease_id = excluded.lease_id,
-			command_id = excluded.command_id,
-			artifact_id = excluded.artifact_id,
-			payload = excluded.payload
-	`, event.ID, formatTime(event.CreatedAt), string(event.Kind), event.TaskID, event.RunID, event.LeaseID, event.CommandID, event.ArtifactID, payload)
-	if err != nil {
-		return fmt.Errorf("save event %q: %w", event.ID, err)
+	if _, err := tx.ExecContext(ctx, `UPDATE events SET payload = ? WHERE sequence = ?`, payload, sequence); err != nil {
+		return fmt.Errorf("update event payload %q: %w", event.ID, err)
 	}
 	return nil
 }
 
 func (s *Store) saveEventsTx(ctx context.Context, tx *sql.Tx, events ...*orchestrator.EventRecord) error {
 	for _, event := range events {
-		if event == nil {
-			continue
-		}
 		if err := s.saveEventTx(ctx, tx, event); err != nil {
 			return err
 		}
@@ -78,7 +289,7 @@ func (s *Store) saveEventsTx(ctx context.Context, tx *sql.Tx, events ...*orchest
 }
 
 func (s *Store) loadEvent(ctx context.Context, db queryer, id string) (*orchestrator.EventRecord, error) {
-	row := db.QueryRowContext(ctx, `SELECT payload FROM events WHERE id = ?`, id)
+	row := db.QueryRowContext(ctx, `SELECT sequence, payload FROM events WHERE id = ?`, id)
 	event, err := scanEventRecord(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -90,7 +301,7 @@ func (s *Store) loadEvent(ctx context.Context, db queryer, id string) (*orchestr
 }
 
 func (s *Store) listEvents(ctx context.Context, db queryer) ([]*orchestrator.EventRecord, error) {
-	rows, err := db.QueryContext(ctx, `SELECT payload FROM events ORDER BY rowid ASC`)
+	rows, err := db.QueryContext(ctx, `SELECT sequence, payload FROM events ORDER BY sequence ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
 	}
@@ -111,13 +322,19 @@ func (s *Store) listEvents(ctx context.Context, db queryer) ([]*orchestrator.Eve
 }
 
 func scanEventRecord(row interface{ Scan(dest ...any) error }) (*orchestrator.EventRecord, error) {
-	var payload []byte
-	if err := row.Scan(&payload); err != nil {
+	var (
+		sequence int64
+		payload  []byte
+	)
+	if err := row.Scan(&sequence, &payload); err != nil {
 		return nil, err
 	}
 	var event orchestrator.EventRecord
 	if err := json.Unmarshal(payload, &event); err != nil {
 		return nil, fmt.Errorf("unmarshal event payload: %w", err)
+	}
+	if event.Sequence == 0 {
+		event.Sequence = sequence
 	}
 	return &event, nil
 }
@@ -322,6 +539,36 @@ func commandCreatedRecord(command *orchestrator.Command) (*orchestrator.EventRec
 	return newEventRecord(orchestrator.EventCommandCreated, payload.CreatedAt, payload, command.TaskID, command.RunID, "", command.ID, "")
 }
 
+func commandClaimedRecord(command *orchestrator.Command) (*orchestrator.EventRecord, error) {
+	if command == nil {
+		return nil, nil
+	}
+	payload := orchestrator.CommandClaimedEvent{
+		CommandID: command.ID,
+		Kind:      command.Kind,
+		TaskID:    command.TaskID,
+		RunID:     command.RunID,
+		ClaimedBy: command.ClaimedBy,
+		ClaimedAt: command.ClaimedAt,
+	}
+	return newEventRecord(orchestrator.EventCommandClaimed, payload.ClaimedAt, payload, command.TaskID, command.RunID, "", command.ID, "")
+}
+
+func commandReleasedRecord(command *orchestrator.Command, releasedBy string, releasedAt time.Time) (*orchestrator.EventRecord, error) {
+	if command == nil {
+		return nil, nil
+	}
+	payload := orchestrator.CommandReleasedEvent{
+		CommandID:  command.ID,
+		Kind:       command.Kind,
+		TaskID:     command.TaskID,
+		RunID:      command.RunID,
+		ReleasedBy: releasedBy,
+		ReleasedAt: releasedAt,
+	}
+	return newEventRecord(orchestrator.EventCommandReleased, payload.ReleasedAt, payload, command.TaskID, command.RunID, "", command.ID, "")
+}
+
 func commandHandledRecord(command *orchestrator.Command) (*orchestrator.EventRecord, error) {
 	if command == nil {
 		return nil, nil
@@ -372,6 +619,7 @@ func cloneEventRecord(src *orchestrator.EventRecord) *orchestrator.EventRecord {
 		return nil
 	}
 	return &orchestrator.EventRecord{
+		Sequence:   src.Sequence,
 		ID:         src.ID,
 		Kind:       src.Kind,
 		TaskID:     src.TaskID,
@@ -382,4 +630,22 @@ func cloneEventRecord(src *orchestrator.EventRecord) *orchestrator.EventRecord {
 		CreatedAt:  src.CreatedAt,
 		Payload:    cloneBytes(src.Payload),
 	}
+}
+
+func parseLegacyEventTime(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(timeFormat, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+func coalesceString(primary, fallback string) string {
+	if primary != "" {
+		return primary
+	}
+	return fallback
 }

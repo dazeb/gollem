@@ -145,6 +145,67 @@ func TestStore_CommandLifecyclePublishesEvents(t *testing.T) {
 	}
 }
 
+func TestStore_CommandClaimAndReleasePublishEvents(t *testing.T) {
+	bus := core.NewEventBus()
+	store := NewStore(WithEventBus(bus))
+
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "cancel me later",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	var mu sync.Mutex
+	var claimed []orchestrator.CommandClaimedEvent
+	var released []orchestrator.CommandReleasedEvent
+	core.Subscribe(bus, func(event orchestrator.CommandClaimedEvent) {
+		mu.Lock()
+		claimed = append(claimed, event)
+		mu.Unlock()
+	})
+	core.Subscribe(bus, func(event orchestrator.CommandReleasedEvent) {
+		mu.Lock()
+		released = append(released, event)
+		mu.Unlock()
+	})
+
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: task.ID,
+		Reason: "not yet",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+	firstClaim, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand failed: %v", err)
+	}
+	if err := store.ReleaseCommand(context.Background(), firstClaim.ID, firstClaim.ClaimToken); err != nil {
+		t.Fatalf("ReleaseCommand failed: %v", err)
+	}
+
+	waitForAsync(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(claimed) == 1 && len(released) == 1
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if claimed[0].CommandID != command.ID || claimed[0].ClaimedBy != "worker-a" {
+		t.Fatalf("unexpected claimed command event: %+v", claimed[0])
+	}
+	if released[0].CommandID != command.ID || released[0].ReleasedBy != "worker-a" {
+		t.Fatalf("unexpected released command event: %+v", released[0])
+	}
+}
+
 func TestStore_CreateCommandRejectsInvalidTaskStates(t *testing.T) {
 	store := NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{

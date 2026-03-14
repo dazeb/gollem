@@ -853,7 +853,10 @@ task, _ := store.CreateTask(ctx, orchestrator.CreateTaskRequest{
 })
 
 events, _ := store.ListEvents(ctx, orchestrator.EventFilter{TaskID: task.ID})
-_ = events // durable history for task/lease/command/artifact lifecycle
+_ = events // append-ordered durable history with monotonically increasing Sequence
+
+timeline, _ := orchestrator.LoadTaskTimeline(ctx, store, task.ID)
+_ = timeline // decoded task lifecycle projection over durable history
 ```
 
 See [`examples/orchestrator_sqlite/main.go`](examples/orchestrator_sqlite/main.go) for a full runnable SQLite example that reopens the store and inspects durable event history after task completion.

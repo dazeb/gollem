@@ -398,6 +398,9 @@ func TestStore_PersistsDurableHistoryAcrossReopen(t *testing.T) {
 		if events[i].Kind != want {
 			t.Fatalf("expected event[%d] kind %s, got %s", i, want, events[i].Kind)
 		}
+		if events[i].Sequence != int64(i+1) {
+			t.Fatalf("expected event[%d] sequence %d, got %d", i, i+1, events[i].Sequence)
+		}
 	}
 
 	loaded, err := store.GetEvent(context.Background(), events[1].ID)
@@ -410,6 +413,90 @@ func TestStore_PersistsDurableHistoryAcrossReopen(t *testing.T) {
 	}
 	if claimed.TaskID != task.ID || claimed.WorkerID != "worker-a" {
 		t.Fatalf("unexpected claimed payload: %+v", claimed)
+	}
+
+	timeline, err := orchestrator.LoadTaskTimeline(context.Background(), store, task.ID)
+	if err != nil {
+		t.Fatalf("LoadTaskTimeline failed: %v", err)
+	}
+	if len(timeline.Events) != len(events) {
+		t.Fatalf("expected task timeline len %d, got %d", len(events), len(timeline.Events))
+	}
+	if timeline.Latest == nil || timeline.Latest.Kind != orchestrator.EventArtifactCreated {
+		t.Fatalf("unexpected task timeline latest event: %+v", timeline.Latest)
+	}
+}
+
+func TestStore_PersistsCommandLifecycleHistoryAcrossReopen(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "command history",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: task.ID,
+		Reason: "wait for me",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+	claimed, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand failed: %v", err)
+	}
+	if err := store.ReleaseCommand(context.Background(), claimed.ID, claimed.ClaimToken); err != nil {
+		t.Fatalf("ReleaseCommand failed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	store = newTestStore(t, dbPath)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("final Close failed: %v", err)
+		}
+	}()
+
+	events, err := store.ListEvents(context.Background(), orchestrator.EventFilter{CommandID: command.ID})
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 command events, got %d", len(events))
+	}
+	wantKinds := []orchestrator.EventKind{
+		orchestrator.EventCommandCreated,
+		orchestrator.EventCommandClaimed,
+		orchestrator.EventCommandReleased,
+	}
+	for i, want := range wantKinds {
+		if events[i].Kind != want {
+			t.Fatalf("expected command event[%d] kind %s, got %s", i, want, events[i].Kind)
+		}
+		if i > 0 && events[i].Sequence <= events[i-1].Sequence {
+			t.Fatalf("expected strictly increasing event sequence, got %d then %d", events[i-1].Sequence, events[i].Sequence)
+		}
+	}
+
+	timeline, err := orchestrator.LoadCommandTimeline(context.Background(), store, command.ID)
+	if err != nil {
+		t.Fatalf("LoadCommandTimeline failed: %v", err)
+	}
+	if len(timeline.Events) != len(events) {
+		t.Fatalf("expected command timeline len %d, got %d", len(events), len(timeline.Events))
+	}
+	if timeline.Latest == nil || timeline.Latest.Kind != orchestrator.EventCommandReleased {
+		t.Fatalf("unexpected command timeline latest event: %+v", timeline.Latest)
 	}
 }
 

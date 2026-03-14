@@ -102,6 +102,7 @@ func (s *Store) ClaimPendingCommand(_ context.Context, req orchestrator.ClaimCom
 		command.ClaimedBy = req.WorkerID
 		command.ClaimToken = fmt.Sprintf("%s-claim-%d", command.ID, now.UnixNano())
 		command.ClaimedAt = now
+		s.publishCommandClaimed(command)
 		return cloneCommand(command), nil
 	}
 	return nil, orchestrator.ErrNoPendingCommand
@@ -142,10 +143,13 @@ func (s *Store) ReleaseCommand(_ context.Context, id, claimToken string) error {
 	if command.Status != orchestrator.CommandClaimed || command.ClaimToken != claimToken {
 		return orchestrator.ErrCommandClaimMismatch
 	}
+	releasedBy := command.ClaimedBy
+	releasedAt := time.Now().UTC()
 	command.Status = orchestrator.CommandPending
 	command.ClaimedBy = ""
 	command.ClaimToken = ""
 	command.ClaimedAt = time.Time{}
+	s.publishCommandReleased(command, releasedBy, releasedAt)
 	return nil
 }
 
@@ -290,6 +294,34 @@ func (s *Store) publishCommandCreated(command *orchestrator.Command) {
 		RunID:          command.RunID,
 		TargetWorkerID: command.TargetWorkerID,
 		CreatedAt:      command.CreatedAt,
+	})
+}
+
+func (s *Store) publishCommandClaimed(command *orchestrator.Command) {
+	if s.eventBus == nil || command == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.CommandClaimedEvent{
+		CommandID: command.ID,
+		Kind:      command.Kind,
+		TaskID:    command.TaskID,
+		RunID:     command.RunID,
+		ClaimedBy: command.ClaimedBy,
+		ClaimedAt: command.ClaimedAt,
+	})
+}
+
+func (s *Store) publishCommandReleased(command *orchestrator.Command, releasedBy string, releasedAt time.Time) {
+	if s.eventBus == nil || command == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.CommandReleasedEvent{
+		CommandID:  command.ID,
+		Kind:       command.Kind,
+		TaskID:     command.TaskID,
+		RunID:      command.RunID,
+		ReleasedBy: releasedBy,
+		ReleasedAt: releasedAt,
 	})
 }
 

@@ -111,6 +111,26 @@ type CommandCreatedEvent struct {
 	CreatedAt      time.Time
 }
 
+// CommandClaimedEvent is published when a durable command is claimed by a worker.
+type CommandClaimedEvent struct {
+	CommandID string
+	Kind      CommandKind
+	TaskID    string
+	RunID     string
+	ClaimedBy string
+	ClaimedAt time.Time
+}
+
+// CommandReleasedEvent is published when a claimed command is returned to pending.
+type CommandReleasedEvent struct {
+	CommandID  string
+	Kind       CommandKind
+	TaskID     string
+	RunID      string
+	ReleasedBy string
+	ReleasedAt time.Time
+}
+
 // CommandHandledEvent is published when a durable command is handled.
 type CommandHandledEvent struct {
 	CommandID string

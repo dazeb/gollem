@@ -990,6 +990,7 @@ func (s *Store) ClaimPendingCommand(ctx context.Context, req orchestrator.ClaimC
 	defer s.mu.Unlock()
 
 	var command *orchestrator.Command
+	var record *orchestrator.EventRecord
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT payload FROM commands ORDER BY created_at ASC, id ASC`)
 		if err != nil {
@@ -1019,6 +1020,13 @@ func (s *Store) ClaimPendingCommand(ctx context.Context, req orchestrator.ClaimC
 			if err := s.saveCommandTx(ctx, tx, loaded); err != nil {
 				return err
 			}
+			record, err = commandClaimedRecord(loaded)
+			if err != nil {
+				return err
+			}
+			if err := s.saveEventsTx(ctx, tx, record); err != nil {
+				return err
+			}
 			command = loaded
 			return nil
 		}
@@ -1030,6 +1038,7 @@ func (s *Store) ClaimPendingCommand(ctx context.Context, req orchestrator.ClaimC
 		return nil, err
 	}
 
+	s.publishCommandClaimed(command)
 	return cloneCommand(command), nil
 }
 
@@ -1077,20 +1086,42 @@ func (s *Store) ReleaseCommand(ctx context.Context, id, claimToken string) error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.withTx(ctx, func(tx *sql.Tx) error {
-		command, err := s.loadCommandTx(ctx, tx, id)
+	var (
+		command    *orchestrator.Command
+		releasedBy string
+		releasedAt time.Time
+	)
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		loaded, err := s.loadCommandTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		if command.Status != orchestrator.CommandClaimed || command.ClaimToken != claimToken {
+		if loaded.Status != orchestrator.CommandClaimed || loaded.ClaimToken != claimToken {
 			return orchestrator.ErrCommandClaimMismatch
 		}
-		command.Status = orchestrator.CommandPending
-		command.ClaimedBy = ""
-		command.ClaimToken = ""
-		command.ClaimedAt = time.Time{}
-		return s.saveCommandTx(ctx, tx, command)
-	})
+		releasedBy = loaded.ClaimedBy
+		releasedAt = time.Now().UTC()
+		loaded.Status = orchestrator.CommandPending
+		loaded.ClaimedBy = ""
+		loaded.ClaimToken = ""
+		loaded.ClaimedAt = time.Time{}
+		if err := s.saveCommandTx(ctx, tx, loaded); err != nil {
+			return err
+		}
+		record, err := commandReleasedRecord(loaded, releasedBy, releasedAt)
+		if err != nil {
+			return err
+		}
+		if err := s.saveEventsTx(ctx, tx, record); err != nil {
+			return err
+		}
+		command = loaded
+		return nil
+	}); err != nil {
+		return err
+	}
+	s.publishCommandReleased(command, releasedBy, releasedAt)
+	return nil
 }
 
 func (s *Store) init() error {
@@ -1139,29 +1170,13 @@ func (s *Store) init() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_artifacts_task_id ON artifacts(task_id)`,
-		`CREATE TABLE IF NOT EXISTS events (
-			id TEXT PRIMARY KEY,
-			created_at TEXT NOT NULL,
-			kind TEXT NOT NULL,
-			task_id TEXT NOT NULL,
-			run_id TEXT NOT NULL,
-			lease_id TEXT NOT NULL,
-			command_id TEXT NOT NULL,
-			artifact_id TEXT NOT NULL,
-			payload BLOB NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at, id)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, created_at, id)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id, created_at, id)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_command_id ON events(command_id, created_at, id)`,
-		`CREATE INDEX IF NOT EXISTS idx_events_artifact_id ON events(artifact_id, created_at, id)`,
 	}
 	for _, stmt := range schema {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("initialize sqlite schema: %w", err)
 		}
 	}
-	return nil
+	return s.ensureEventSchema(ctx)
 }
 
 func (s *Store) withTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
@@ -2287,6 +2302,34 @@ func (s *Store) publishCommandCreated(command *orchestrator.Command) {
 		RunID:          command.RunID,
 		TargetWorkerID: command.TargetWorkerID,
 		CreatedAt:      command.CreatedAt,
+	})
+}
+
+func (s *Store) publishCommandClaimed(command *orchestrator.Command) {
+	if s.eventBus == nil || command == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.CommandClaimedEvent{
+		CommandID: command.ID,
+		Kind:      command.Kind,
+		TaskID:    command.TaskID,
+		RunID:     command.RunID,
+		ClaimedBy: command.ClaimedBy,
+		ClaimedAt: command.ClaimedAt,
+	})
+}
+
+func (s *Store) publishCommandReleased(command *orchestrator.Command, releasedBy string, releasedAt time.Time) {
+	if s.eventBus == nil || command == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.CommandReleasedEvent{
+		CommandID:  command.ID,
+		Kind:       command.Kind,
+		TaskID:     command.TaskID,
+		RunID:      command.RunID,
+		ReleasedBy: releasedBy,
+		ReleasedAt: releasedAt,
 	})
 }
 

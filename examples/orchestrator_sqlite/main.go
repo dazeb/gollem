@@ -118,7 +118,7 @@ func main() {
 	fmt.Printf("Artifacts stored for task: %d\n", len(artifacts))
 	fmt.Printf("Durable history events: %d\n", len(events))
 	for _, event := range events {
-		fmt.Printf("- %s at %s\n", event.Kind, event.CreatedAt.Format(time.RFC3339Nano))
+		fmt.Printf("- #%d %s at %s\n", event.Sequence, event.Kind, event.CreatedAt.Format(time.RFC3339Nano))
 	}
 }
 
