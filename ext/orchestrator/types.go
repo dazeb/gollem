@@ -149,10 +149,11 @@ type TaskFilter struct {
 
 // ClaimTaskRequest describes a scheduler claim attempt.
 type ClaimTaskRequest struct {
-	WorkerID string
-	LeaseTTL time.Duration
-	Now      time.Time
-	Kinds    []string
+	WorkerID       string
+	LeaseTTL       time.Duration
+	Now            time.Time
+	Kinds          []string
+	ExcludeTaskIDs []string
 }
 
 // ClaimedTask is the atomic result of selecting a ready task and acquiring its lease.

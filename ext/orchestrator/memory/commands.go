@@ -153,6 +153,41 @@ func (s *Store) ReleaseCommand(_ context.Context, id, claimToken string) error {
 	return nil
 }
 
+// RecoverClaimedCommands implements orchestrator.CommandRecoveryStore.
+func (s *Store) RecoverClaimedCommands(_ context.Context, claimedBefore, now time.Time) ([]*orchestrator.CommandRecovery, error) {
+	now = normalizeNow(now)
+	if claimedBefore.IsZero() {
+		claimedBefore = now
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var recovered []*orchestrator.CommandRecovery
+	for _, id := range s.commandOrder {
+		command, ok := s.commands[id]
+		if !ok || command.Status != orchestrator.CommandClaimed {
+			continue
+		}
+		if command.ClaimedAt.IsZero() || command.ClaimedAt.After(claimedBefore) {
+			continue
+		}
+
+		releasedBy := command.ClaimedBy
+		command.Status = orchestrator.CommandPending
+		command.ClaimedBy = ""
+		command.ClaimToken = ""
+		command.ClaimedAt = time.Time{}
+		s.publishCommandReleased(command, releasedBy, now)
+		recovered = append(recovered, &orchestrator.CommandRecovery{
+			Command:     cloneCommand(command),
+			RecoveredAt: now,
+			ReleasedBy:  releasedBy,
+		})
+	}
+	return recovered, nil
+}
+
 func (s *Store) validateCommandTargetLocked(task *orchestrator.Task, req orchestrator.CreateCommandRequest) (runID, targetWorkerID string, err error) {
 	if task == nil {
 		return "", "", orchestrator.ErrTaskNotFound

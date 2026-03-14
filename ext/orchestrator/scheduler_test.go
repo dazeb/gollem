@@ -651,6 +651,134 @@ func TestScheduler_HandlesRunningCancelCommandViaRunnerControl(t *testing.T) {
 	}
 }
 
+func TestScheduler_RecoversStaleClaimedCommandAndHandlesIt(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "recover claimed command",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: task.ID,
+		Reason: "recover and cancel",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+	if _, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "dead-worker",
+		Now:      time.Unix(1, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("ClaimPendingCommand failed: %v", err)
+	}
+
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+		t.Fatal("runner should not execute recovered pending cancel task")
+		return nil, nil
+	})
+
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithWorkerID("worker-1"),
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithRecoveryInterval(5*time.Millisecond),
+		orchestrator.WithCommandClaimTimeout(5*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	canceled := waitForTaskStatus(t, store, task.ID, orchestrator.TaskCanceled)
+	if canceled.LastError != "recover and cancel" {
+		t.Fatalf("expected recovered cancel reason %q, got %q", "recover and cancel", canceled.LastError)
+	}
+	handled := waitForCommandStatus(t, store, command.ID, orchestrator.CommandHandled)
+	if handled.HandledBy != "worker-1" {
+		t.Fatalf("expected recovered command handled by worker-1, got %q", handled.HandledBy)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
+func TestScheduler_RecoveryCancelsExpiredRemoteRun(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "expired remote run",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	base := time.Unix(1, 0).UTC()
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	runner := &controlledRunner{}
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithWorkerID("worker-b"),
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithRecoveryInterval(5*time.Millisecond),
+		// Use the real clock so the old lease is already expired on startup.
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	failed := waitForTaskStatus(t, store, task.ID, orchestrator.TaskFailed)
+	if failed.LastError != "lease expired" {
+		t.Fatalf("expected recovered lease failure reason %q, got %q", "lease expired", failed.LastError)
+	}
+
+	calls := runner.calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 remote recovery cancel call, got %d", len(calls))
+	}
+	if calls[0].runID != claim.Run.ID {
+		t.Fatalf("expected recovered run id %q, got %q", claim.Run.ID, calls[0].runID)
+	}
+	if !errors.Is(calls[0].cause, orchestrator.ErrLeaseExpired) {
+		t.Fatalf("expected ErrLeaseExpired recovery cause, got %v", calls[0].cause)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
 func TestScheduler_AbortRunWithoutControllerReportsErrorAndLeavesCommandPending(t *testing.T) {
 	store := memstore.NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{

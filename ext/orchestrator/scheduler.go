@@ -13,13 +13,15 @@ type SchedulerOption func(*SchedulerConfig)
 
 // SchedulerConfig controls polling, lease, and worker behavior.
 type SchedulerConfig struct {
-	WorkerID           string
-	PollInterval       time.Duration
-	LeaseTTL           time.Duration
-	LeaseRenewInterval time.Duration
-	MaxConcurrentRuns  int
-	Now                func() time.Time
-	OnError            func(error)
+	WorkerID            string
+	PollInterval        time.Duration
+	LeaseTTL            time.Duration
+	LeaseRenewInterval  time.Duration
+	RecoveryInterval    time.Duration
+	CommandClaimTimeout time.Duration
+	MaxConcurrentRuns   int
+	Now                 func() time.Time
+	OnError             func(error)
 }
 
 type activeTaskRun struct {
@@ -31,13 +33,15 @@ type activeTaskRun struct {
 func DefaultSchedulerConfig() SchedulerConfig {
 	leaseTTL := 30 * time.Second
 	return SchedulerConfig{
-		WorkerID:           fmt.Sprintf("worker-%d", time.Now().UnixNano()),
-		PollInterval:       100 * time.Millisecond,
-		LeaseTTL:           leaseTTL,
-		LeaseRenewInterval: leaseTTL / 2,
-		MaxConcurrentRuns:  1,
-		Now:                time.Now,
-		OnError:            func(error) {},
+		WorkerID:            fmt.Sprintf("worker-%d", time.Now().UnixNano()),
+		PollInterval:        100 * time.Millisecond,
+		LeaseTTL:            leaseTTL,
+		LeaseRenewInterval:  leaseTTL / 2,
+		RecoveryInterval:    leaseTTL / 2,
+		CommandClaimTimeout: leaseTTL,
+		MaxConcurrentRuns:   1,
+		Now:                 time.Now,
+		OnError:             func(error) {},
 	}
 }
 
@@ -66,6 +70,20 @@ func WithLeaseTTL(ttl time.Duration) SchedulerOption {
 func WithLeaseRenewInterval(interval time.Duration) SchedulerOption {
 	return func(cfg *SchedulerConfig) {
 		cfg.LeaseRenewInterval = interval
+	}
+}
+
+// WithRecoveryInterval sets how often the scheduler reclaims expired leases and stale commands.
+func WithRecoveryInterval(interval time.Duration) SchedulerOption {
+	return func(cfg *SchedulerConfig) {
+		cfg.RecoveryInterval = interval
+	}
+}
+
+// WithCommandClaimTimeout sets how old a claimed command can be before recovery returns it to pending.
+func WithCommandClaimTimeout(timeout time.Duration) SchedulerOption {
+	return func(cfg *SchedulerConfig) {
+		cfg.CommandClaimTimeout = timeout
 	}
 }
 
@@ -132,6 +150,12 @@ func NewScheduler(tasks TaskStore, leases LeaseStore, runner Runner, opts ...Sch
 	if cfg.LeaseRenewInterval <= 0 {
 		cfg.LeaseRenewInterval = cfg.LeaseTTL / 2
 	}
+	if cfg.RecoveryInterval <= 0 {
+		cfg.RecoveryInterval = cfg.LeaseTTL / 2
+	}
+	if cfg.CommandClaimTimeout <= 0 {
+		cfg.CommandClaimTimeout = cfg.LeaseTTL
+	}
 	if cfg.MaxConcurrentRuns <= 0 {
 		cfg.MaxConcurrentRuns = 1
 	}
@@ -159,7 +183,20 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	defer ticker.Stop()
 	defer s.wg.Wait()
 
+	var nextRecovery time.Time
 	for {
+		if s.recoveryEnabled() {
+			now := s.cfg.Now()
+			if nextRecovery.IsZero() || !now.Before(nextRecovery) {
+				if err := s.recover(context.WithoutCancel(ctx), now); err != nil {
+					if shouldStopScheduler(ctx, err) {
+						return nil
+					}
+					return err
+				}
+				nextRecovery = now.Add(s.cfg.RecoveryInterval)
+			}
+		}
 		if err := s.processCommands(ctx); err != nil {
 			if shouldStopScheduler(ctx, err) {
 				return nil
@@ -184,9 +221,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 func (s *Scheduler) dispatch(ctx context.Context) error {
 	for s.tryAcquireSlot() {
 		claim, err := s.tasks.ClaimReadyTask(ctx, ClaimTaskRequest{
-			WorkerID: s.cfg.WorkerID,
-			LeaseTTL: s.cfg.LeaseTTL,
-			Now:      s.cfg.Now(),
+			WorkerID:       s.cfg.WorkerID,
+			LeaseTTL:       s.cfg.LeaseTTL,
+			Now:            s.cfg.Now(),
+			ExcludeTaskIDs: s.activeTaskIDs(),
 		})
 		if err != nil {
 			s.releaseSlot()
@@ -194,6 +232,14 @@ func (s *Scheduler) dispatch(ctx context.Context) error {
 				return nil
 			}
 			return err
+		}
+		if s.hasConflictingLocalRun(claim) {
+			if err := s.leases.ReleaseLease(context.WithoutCancel(ctx), claim.Task.ID, claim.Lease.Token); err != nil && !isLeaseLoss(err) {
+				s.releaseSlot()
+				return err
+			}
+			s.releaseSlot()
+			continue
 		}
 
 		s.wg.Add(1)
@@ -319,6 +365,21 @@ func isLeaseLoss(err error) bool {
 	return errors.Is(err, ErrLeaseNotFound) || errors.Is(err, ErrLeaseExpired) || errors.Is(err, ErrLeaseMismatch)
 }
 
+func (s *Scheduler) recoveryEnabled() bool {
+	if s.cfg.RecoveryInterval <= 0 {
+		return false
+	}
+	if _, ok := s.tasks.(LeaseRecoveryStore); ok {
+		return true
+	}
+	if s.cfg.CommandClaimTimeout > 0 {
+		if _, ok := s.commands.(CommandRecoveryStore); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func shouldStopScheduler(ctx context.Context, err error) bool {
 	if ctx == nil || ctx.Err() == nil || err == nil {
 		return false
@@ -351,6 +412,37 @@ func (s *Scheduler) processCommands(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func (s *Scheduler) recover(ctx context.Context, now time.Time) error {
+	if recoverer, ok := s.tasks.(LeaseRecoveryStore); ok {
+		recovered, err := recoverer.RecoverExpiredLeases(ctx, now)
+		if err != nil {
+			return err
+		}
+		for _, leaseRecovery := range recovered {
+			if leaseRecovery == nil || leaseRecovery.Task == nil || leaseRecovery.Task.Run == nil {
+				continue
+			}
+			if active, ok := s.localActiveRun(leaseRecovery.Task); ok {
+				active.cancel(ErrLeaseExpired)
+				continue
+			}
+			if err := s.cancelRemoteRun(ctx, leaseRecovery.Task, leaseRecovery.Task.Run, ErrLeaseExpired); err != nil &&
+				!errors.Is(err, ErrRunControlUnavailable) &&
+				!errors.Is(err, ErrRunNotFound) {
+				s.cfg.OnError(err)
+			}
+		}
+	}
+	if s.cfg.CommandClaimTimeout > 0 {
+		if recoverer, ok := s.commands.(CommandRecoveryStore); ok {
+			if _, err := recoverer.RecoverClaimedCommands(ctx, now.Add(-s.cfg.CommandClaimTimeout), now); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Scheduler) handleCommand(ctx context.Context, command *Command) error {
@@ -406,7 +498,7 @@ func (s *Scheduler) applyCancelTask(ctx context.Context, command *Command, now t
 			active.cancel(cause)
 			return nil
 		}
-		if err := s.cancelRemoteRun(ctx, task, cause); err != nil {
+		if err := s.cancelRemoteRun(ctx, task, task.Run, cause); err != nil {
 			return err
 		}
 		if _, err := s.tasks.CancelTask(ctx, task.ID, lease.Token, command.Reason, now); err != nil && !errors.Is(err, ErrTaskNotCancelable) {
@@ -443,7 +535,7 @@ func (s *Scheduler) applyAbortRun(ctx context.Context, command *Command) error {
 	if err != nil {
 		return err
 	}
-	if err := s.cancelRemoteRun(ctx, task, cause); err != nil {
+	if err := s.cancelRemoteRun(ctx, task, task.Run, cause); err != nil {
 		return err
 	}
 	_, err = s.tasks.FailTask(ctx, task.ID, lease.Token, cause, s.cfg.Now())
@@ -500,6 +592,19 @@ func (s *Scheduler) activeRun(taskID string) (activeTaskRun, bool) {
 	return active, ok
 }
 
+func (s *Scheduler) activeTaskIDs() []string {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if len(s.active) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(s.active))
+	for taskID := range s.active {
+		ids = append(ids, taskID)
+	}
+	return ids
+}
+
 func (s *Scheduler) localActiveRun(task *Task) (activeTaskRun, bool) {
 	if task == nil || task.Run == nil {
 		return activeTaskRun{}, false
@@ -514,15 +619,26 @@ func (s *Scheduler) localActiveRun(task *Task) (activeTaskRun, bool) {
 	return active, true
 }
 
-func (s *Scheduler) cancelRemoteRun(ctx context.Context, task *Task, cause error) error {
-	if task == nil || task.Run == nil {
+func (s *Scheduler) hasConflictingLocalRun(claim *ClaimedTask) bool {
+	if claim == nil || claim.Task == nil || claim.Run == nil {
+		return false
+	}
+	active, ok := s.activeRun(claim.Task.ID)
+	if !ok || active.claim == nil || active.claim.Run == nil {
+		return false
+	}
+	return active.claim.Run.ID != "" && active.claim.Run.ID != claim.Run.ID
+}
+
+func (s *Scheduler) cancelRemoteRun(ctx context.Context, task *Task, run *RunRef, cause error) error {
+	if run == nil {
 		return ErrRunNotFound
 	}
 	controller, ok := s.runner.(RunController)
 	if !ok {
 		return ErrRunControlUnavailable
 	}
-	return controller.CancelRun(ctx, task, task.Run, cause)
+	return controller.CancelRun(ctx, task, run, cause)
 }
 
 func inferCommandStore(tasks TaskStore) CommandStore {

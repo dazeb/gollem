@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,10 +32,12 @@ type Store struct {
 }
 
 var (
-	_ orchestrator.TaskStore     = (*Store)(nil)
-	_ orchestrator.LeaseStore    = (*Store)(nil)
-	_ orchestrator.CommandStore  = (*Store)(nil)
-	_ orchestrator.ArtifactStore = (*Store)(nil)
+	_ orchestrator.TaskStore            = (*Store)(nil)
+	_ orchestrator.LeaseStore           = (*Store)(nil)
+	_ orchestrator.LeaseRecoveryStore   = (*Store)(nil)
+	_ orchestrator.CommandStore         = (*Store)(nil)
+	_ orchestrator.CommandRecoveryStore = (*Store)(nil)
+	_ orchestrator.ArtifactStore        = (*Store)(nil)
 )
 
 // Option configures a Store.
@@ -473,6 +476,66 @@ func (s *Store) ReleaseLease(_ context.Context, taskID, leaseToken string) error
 	return nil
 }
 
+// RecoverExpiredLeases implements orchestrator.LeaseRecoveryStore.
+func (s *Store) RecoverExpiredLeases(_ context.Context, now time.Time) ([]*orchestrator.LeaseRecovery, error) {
+	now = normalizeNow(now)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	taskIDs := make([]string, 0, len(s.leases))
+	for taskID := range s.leases {
+		taskIDs = append(taskIDs, taskID)
+	}
+	sort.Strings(taskIDs)
+
+	var recovered []*orchestrator.LeaseRecovery
+	for _, taskID := range taskIDs {
+		lease, ok := s.leases[taskID]
+		if !ok || lease.ExpiresAt.After(now) {
+			continue
+		}
+		task, ok := s.tasks[taskID]
+		if !ok {
+			delete(s.leases, taskID)
+			continue
+		}
+
+		taskSnapshot := cloneTask(task)
+		leaseSnapshot := cloneLease(lease)
+		recovery := &orchestrator.LeaseRecovery{
+			Task:        taskSnapshot,
+			Lease:       leaseSnapshot,
+			RecoveredAt: now,
+			Reason:      "lease expired",
+		}
+
+		switch {
+		case task.Status == orchestrator.TaskRunning && s.exhaustedAttempts(task):
+			task.Status = orchestrator.TaskFailed
+			task.Result = nil
+			task.LastError = "lease expired"
+			task.CompletedAt = now
+			task.UpdatedAt = now
+			delete(s.leases, taskID)
+			recovery.ResultStatus = orchestrator.TaskFailed
+			s.publishTaskFailed(task)
+		case task.Status == orchestrator.TaskRunning:
+			lastRunID, lastAttempt := s.requeueTaskLocked(task, taskID, now, false)
+			task.LastError = "lease expired"
+			recovery.ResultStatus = orchestrator.TaskPending
+			recovery.Requeued = true
+			s.publishLeaseReleased(leaseSnapshot, lastRunID, true)
+			s.publishTaskRequeued(task, lastRunID, lastAttempt, "lease expired")
+		default:
+			delete(s.leases, taskID)
+			recovery.ResultStatus = task.Status
+		}
+		recovered = append(recovered, recovery)
+	}
+	return recovered, nil
+}
+
 func (s *Store) validateLeaseLocked(taskID, leaseToken string, now time.Time) (*orchestrator.Task, *orchestrator.Lease, error) {
 	task, ok := s.tasks[taskID]
 	if !ok {
@@ -556,6 +619,9 @@ func (s *Store) claimTaskLocked(taskID string, req orchestrator.ClaimTaskRequest
 	task, ok := s.tasks[taskID]
 	if !ok {
 		return nil, orchestrator.ErrTaskNotFound
+	}
+	if containsString(req.ExcludeTaskIDs, taskID) {
+		return nil, orchestrator.ErrNoReadyTask
 	}
 	if !matchesKinds(task, req.Kinds) {
 		return nil, orchestrator.ErrNoReadyTask
@@ -951,6 +1017,15 @@ func removeString(slice []string, target string) []string {
 		}
 	}
 	return result
+}
+
+func containsString(slice []string, target string) bool {
+	for _, item := range slice {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func isRetryable(err error) bool {

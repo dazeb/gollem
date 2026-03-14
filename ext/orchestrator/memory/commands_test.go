@@ -339,6 +339,58 @@ func TestStore_ReleaseCommandReturnsItToPending(t *testing.T) {
 	}
 }
 
+func TestStore_RecoverClaimedCommandsReturnsStaleClaimToPending(t *testing.T) {
+	store := NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "recover command",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: task.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+
+	claimed, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand failed: %v", err)
+	}
+
+	recovered, err := store.RecoverClaimedCommands(context.Background(), time.Unix(2, 0).UTC(), time.Unix(3, 0).UTC())
+	if err != nil {
+		t.Fatalf("RecoverClaimedCommands failed: %v", err)
+	}
+	if len(recovered) != 1 {
+		t.Fatalf("expected 1 recovered command, got %d", len(recovered))
+	}
+	if recovered[0].ReleasedBy != "worker-a" {
+		t.Fatalf("expected released by %q, got %q", "worker-a", recovered[0].ReleasedBy)
+	}
+	if recovered[0].Command == nil || recovered[0].Command.ID != command.ID || recovered[0].Command.Status != orchestrator.CommandPending {
+		t.Fatalf("expected pending recovered command %q, got %+v", command.ID, recovered[0].Command)
+	}
+
+	reclaimed, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-b",
+		Now:      time.Unix(4, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand after recovery failed: %v", err)
+	}
+	if reclaimed.ID != claimed.ID || reclaimed.ClaimedBy != "worker-b" {
+		t.Fatalf("unexpected reclaimed command after recovery: %+v", reclaimed)
+	}
+}
+
 func TestStore_ClaimPendingCommandRetargetsRunningCancelToCurrentWorker(t *testing.T) {
 	store := NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{

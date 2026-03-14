@@ -713,6 +713,152 @@ func TestStore_CurrentStateQueriesUsePersistedIndexes(t *testing.T) {
 	}
 }
 
+func TestStore_RecoverExpiredLeasesRequeuesAndFailsPersistedTasks(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	base := time.Unix(30, 0).UTC()
+	requeueTask, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "analysis",
+		Input:       "recover me",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask requeueTask failed: %v", err)
+	}
+	requeueClaim, err := store.ClaimTask(context.Background(), requeueTask.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask requeueTask failed: %v", err)
+	}
+
+	failTask, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "analysis",
+		Input:       "one shot",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failTask failed: %v", err)
+	}
+	failClaim, err := store.ClaimTask(context.Background(), failTask.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failTask failed: %v", err)
+	}
+
+	recovered, err := store.RecoverExpiredLeases(context.Background(), base.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("RecoverExpiredLeases failed: %v", err)
+	}
+	if len(recovered) != 2 {
+		t.Fatalf("expected 2 recovered leases, got %d", len(recovered))
+	}
+
+	requeued, err := store.GetTask(context.Background(), requeueTask.ID)
+	if err != nil {
+		t.Fatalf("GetTask requeueTask failed: %v", err)
+	}
+	if requeued.Status != orchestrator.TaskPending || requeued.LastError != "lease expired" {
+		t.Fatalf("expected requeued task pending with lease-expired marker, got %+v", requeued)
+	}
+	if _, err := store.GetLease(context.Background(), requeueTask.ID); !errors.Is(err, orchestrator.ErrLeaseNotFound) {
+		t.Fatalf("expected requeued task lease removed, got %v", err)
+	}
+	if recovered[0].Task == nil || recovered[0].Task.Run == nil || (recovered[0].Task.Run.ID != requeueClaim.Run.ID && recovered[1].Task.Run.ID != requeueClaim.Run.ID) {
+		t.Fatalf("expected recovered snapshot for run %q, got %+v", requeueClaim.Run.ID, recovered)
+	}
+
+	failed, err := store.GetTask(context.Background(), failTask.ID)
+	if err != nil {
+		t.Fatalf("GetTask failTask failed: %v", err)
+	}
+	if failed.Status != orchestrator.TaskFailed || failed.LastError != "lease expired" {
+		t.Fatalf("expected failed task after exhausted recovery, got %+v", failed)
+	}
+	if _, err := store.GetLease(context.Background(), failTask.ID); !errors.Is(err, orchestrator.ErrLeaseNotFound) {
+		t.Fatalf("expected failed task lease removed, got %v", err)
+	}
+	foundFailedRun := false
+	for _, recovery := range recovered {
+		if recovery != nil && recovery.Task != nil && recovery.Task.Run != nil && recovery.Task.Run.ID == failClaim.Run.ID {
+			foundFailedRun = recovery.ResultStatus == orchestrator.TaskFailed
+		}
+	}
+	if !foundFailedRun {
+		t.Fatalf("expected failed recovery record for run %q, got %+v", failClaim.Run.ID, recovered)
+	}
+}
+
+func TestStore_RecoverClaimedCommandsReturnsPersistedCommandToPending(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "recover command",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: task.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+	claimed, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "dead-worker",
+		Now:      time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand failed: %v", err)
+	}
+
+	recovered, err := store.RecoverClaimedCommands(context.Background(), time.Unix(2, 0).UTC(), time.Unix(3, 0).UTC())
+	if err != nil {
+		t.Fatalf("RecoverClaimedCommands failed: %v", err)
+	}
+	if len(recovered) != 1 {
+		t.Fatalf("expected 1 recovered command, got %d", len(recovered))
+	}
+	if recovered[0].ReleasedBy != "dead-worker" {
+		t.Fatalf("expected released by %q, got %q", "dead-worker", recovered[0].ReleasedBy)
+	}
+	if recovered[0].Command == nil || recovered[0].Command.ID != command.ID || recovered[0].Command.Status != orchestrator.CommandPending {
+		t.Fatalf("expected pending recovered command %q, got %+v", command.ID, recovered[0].Command)
+	}
+
+	reclaimed, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      time.Unix(4, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand after recovery failed: %v", err)
+	}
+	if reclaimed.ID != claimed.ID || reclaimed.ClaimedBy != "worker-a" {
+		t.Fatalf("unexpected reclaimed command after recovery: %+v", reclaimed)
+	}
+}
+
 func TestStore_PersistsCommandLifecycleHistoryAcrossReopen(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
 

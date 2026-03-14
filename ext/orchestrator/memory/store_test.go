@@ -63,6 +63,106 @@ func TestStore_ClaimReadyTaskReclaimsExpiredLease(t *testing.T) {
 	}
 }
 
+func TestStore_RecoverExpiredLeasesRequeuesRunningTask(t *testing.T) {
+	store := NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "recover me",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	base := time.Unix(1, 0).UTC()
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	recovered, err := store.RecoverExpiredLeases(context.Background(), base.Add(25*time.Millisecond))
+	if err != nil {
+		t.Fatalf("RecoverExpiredLeases failed: %v", err)
+	}
+	if len(recovered) != 1 {
+		t.Fatalf("expected 1 recovered lease, got %d", len(recovered))
+	}
+	if recovered[0].Task == nil || recovered[0].Task.Run == nil || recovered[0].Task.Run.ID != claim.Run.ID {
+		t.Fatalf("expected recovered run snapshot %q, got %+v", claim.Run.ID, recovered[0].Task)
+	}
+	if !recovered[0].Requeued || recovered[0].ResultStatus != orchestrator.TaskPending {
+		t.Fatalf("expected pending requeue recovery, got %+v", recovered[0])
+	}
+
+	requeued, err := store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if requeued.Status != orchestrator.TaskPending {
+		t.Fatalf("expected pending task after recovery, got %s", requeued.Status)
+	}
+	if requeued.Attempt != 1 {
+		t.Fatalf("expected attempt to stay at 1 after recovery, got %d", requeued.Attempt)
+	}
+	if requeued.LastError != "lease expired" {
+		t.Fatalf("expected lease expiration marker, got %q", requeued.LastError)
+	}
+	if _, err := store.GetLease(context.Background(), task.ID); !errors.Is(err, orchestrator.ErrLeaseNotFound) {
+		t.Fatalf("expected recovered lease removed, got %v", err)
+	}
+}
+
+func TestStore_RecoverExpiredLeasesFailsExhaustedTask(t *testing.T) {
+	store := NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "one shot",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	base := time.Unix(1, 0).UTC()
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: 20 * time.Millisecond,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	recovered, err := store.RecoverExpiredLeases(context.Background(), base.Add(25*time.Millisecond))
+	if err != nil {
+		t.Fatalf("RecoverExpiredLeases failed: %v", err)
+	}
+	if len(recovered) != 1 {
+		t.Fatalf("expected 1 recovered lease, got %d", len(recovered))
+	}
+	if recovered[0].Task == nil || recovered[0].Task.Run == nil || recovered[0].Task.Run.ID != claim.Run.ID {
+		t.Fatalf("expected recovered exhausted run snapshot %q, got %+v", claim.Run.ID, recovered[0].Task)
+	}
+	if recovered[0].Requeued || recovered[0].ResultStatus != orchestrator.TaskFailed {
+		t.Fatalf("expected failed recovery result, got %+v", recovered[0])
+	}
+
+	failed, err := store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if failed.Status != orchestrator.TaskFailed {
+		t.Fatalf("expected failed task after exhausted recovery, got %s", failed.Status)
+	}
+	if failed.LastError != "lease expired" {
+		t.Fatalf("expected lease-expired terminal error, got %q", failed.LastError)
+	}
+}
+
 func TestStore_CompleteTaskRequiresActiveLease(t *testing.T) {
 	store := NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
