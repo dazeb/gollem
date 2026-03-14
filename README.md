@@ -76,7 +76,7 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **Batch execution** — `RunBatch` for concurrent multi-prompt runs with ordered results
 
 ### Multi-Agent Team Swarms
-- **Durable task orchestration** — Task stores, lease-based claiming, schedulers, runner adapters, and task-scoped artifacts for durable work coordination (`ext/orchestrator`)
+- **Durable task orchestration** — Task stores, lease-based claiming, schedulers, runner adapters, task-scoped artifacts, and durable event history for work coordination (`ext/orchestrator`)
 - **Team orchestration** — Spawn concurrent teammate agents as goroutines with orchestrator-backed shared tasks, best-effort mailbox messaging, out-of-band shutdown control, and automatic lifecycle management (`ext/team`)
 - **Dynamic personality generation** — LLM generates task-specific system prompts for each subagent and teammate before they start, dramatically improving agent effectiveness (`modelutil`)
 - **Cached personality generation** — SHA256-keyed cache prevents redundant LLM calls when identical tasks are delegated multiple times
@@ -312,7 +312,7 @@ Use `AdoptWithWait(...)` instead when your code already wraps `cmd.Wait()` behin
 
 Spawn concurrent teammates that coordinate through best-effort mailbox notes and orchestrator-backed shared tasks. Each teammate gets a dynamically generated personality tailored to its specific task — the LLM itself writes the system prompt.
 
-For durable worker coordination without the mailbox/team layer, use `ext/orchestrator` directly. It owns tasks, leases, schedulers, runner adapters, and task-scoped artifacts.
+For durable worker coordination without the mailbox/team layer, use `ext/orchestrator` directly. It owns tasks, leases, schedulers, runner adapters, task-scoped artifacts, and durable history.
 
 ```go
 import (
@@ -800,7 +800,7 @@ summary, _ := orchestration.ChainRun(ctx, researcher, writer, "Topic: AI safety"
 
 ### Task Orchestration
 
-Use `ext/orchestrator` directly when the source of truth should be durable tasks, leases, runs, and artifacts instead of freeform teammate notes.
+Use `ext/orchestrator` directly when the source of truth should be durable tasks, leases, runs, artifacts, and control/history instead of freeform teammate notes.
 
 ```go
 import (
@@ -835,7 +835,28 @@ go scheduler.Run(ctx)
 // The scheduler/store persists the task result and emitted artifacts together.
 ```
 
-See [`examples/orchestrator/main.go`](examples/orchestrator/main.go) for a full runnable example that drives a task through the scheduler and persists an artifact as part of task completion.
+See [`examples/orchestrator/main.go`](examples/orchestrator/main.go) for a full runnable in-memory example that drives a task through the scheduler and persists an artifact as part of task completion.
+
+For persistent orchestration state across process restarts, use the SQLite-backed store:
+
+```go
+import (
+    "github.com/fugue-labs/gollem/ext/orchestrator"
+    orchestratorsqlite "github.com/fugue-labs/gollem/ext/orchestrator/sqlite"
+)
+
+store, _ := orchestratorsqlite.NewStore("orchestrator.db")
+
+task, _ := store.CreateTask(ctx, orchestrator.CreateTaskRequest{
+    Kind:  "analysis",
+    Input: "Review the scheduler path and persist durable history.",
+})
+
+events, _ := store.ListEvents(ctx, orchestrator.EventFilter{TaskID: task.ID})
+_ = events // durable history for task/lease/command/artifact lifecycle
+```
+
+See [`examples/orchestrator_sqlite/main.go`](examples/orchestrator_sqlite/main.go) for a full runnable SQLite example that reopens the store and inspects durable event history after task completion.
 
 ### Multi-Agent Team Swarms
 

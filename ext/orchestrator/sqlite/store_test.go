@@ -288,6 +288,131 @@ func TestStore_RetryTaskClearsTerminalErrorAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestStore_ClaimReadyTaskCommitsExhaustedFailureWhenNoTaskClaimed(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "one shot",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	base := time.Unix(1, 0).UTC()
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Second,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+	if claim.Task.Attempt != 1 {
+		t.Fatalf("expected first attempt 1, got %d", claim.Task.Attempt)
+	}
+
+	if _, err := store.ClaimReadyTask(context.Background(), orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Second,
+		Now:      base.Add(2 * time.Second),
+	}); err != orchestrator.ErrNoReadyTask {
+		t.Fatalf("expected no ready task after exhaustion, got %v", err)
+	}
+
+	persisted, err := store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if persisted.Status != orchestrator.TaskFailed {
+		t.Fatalf("expected exhausted task failed, got %s", persisted.Status)
+	}
+	if persisted.LastError != "task exhausted max attempts" {
+		t.Fatalf("expected exhausted task error, got %q", persisted.LastError)
+	}
+}
+
+func TestStore_PersistsDurableHistoryAcrossReopen(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "analysis",
+		Subject:     "history",
+		Description: "persist event history",
+		Input:       "record the lifecycle",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	base := task.CreatedAt.Add(time.Second)
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+	_, err = store.CompleteTask(context.Background(), task.ID, claim.Lease.Token, &orchestrator.TaskOutcome{
+		Result: &orchestrator.TaskResult{Output: "done"},
+		Artifacts: []orchestrator.ArtifactSpec{{
+			Kind:        "report",
+			Name:        "handoff.md",
+			ContentType: "text/markdown",
+			Body:        []byte("# history"),
+		}},
+	}, base.Add(time.Second))
+	if err != nil {
+		t.Fatalf("CompleteTask failed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	store = newTestStore(t, dbPath)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("final Close failed: %v", err)
+		}
+	}()
+
+	events, err := store.ListEvents(context.Background(), orchestrator.EventFilter{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("expected 4 persisted events, got %d", len(events))
+	}
+
+	wantKinds := []orchestrator.EventKind{
+		orchestrator.EventTaskCreated,
+		orchestrator.EventTaskClaimed,
+		orchestrator.EventTaskCompleted,
+		orchestrator.EventArtifactCreated,
+	}
+	for i, want := range wantKinds {
+		if events[i].Kind != want {
+			t.Fatalf("expected event[%d] kind %s, got %s", i, want, events[i].Kind)
+		}
+	}
+
+	loaded, err := store.GetEvent(context.Background(), events[1].ID)
+	if err != nil {
+		t.Fatalf("GetEvent failed: %v", err)
+	}
+	var claimed orchestrator.TaskClaimedEvent
+	if err := loaded.DecodePayload(&claimed); err != nil {
+		t.Fatalf("DecodePayload failed: %v", err)
+	}
+	if claimed.TaskID != task.ID || claimed.WorkerID != "worker-a" {
+		t.Fatalf("unexpected claimed payload: %+v", claimed)
+	}
+}
+
 func newTestStore(t *testing.T, dbPath string) *Store {
 	t.Helper()
 	store, err := NewStore(dbPath)

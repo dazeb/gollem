@@ -30,6 +30,7 @@ var (
 	_ orchestrator.LeaseStore    = (*Store)(nil)
 	_ orchestrator.CommandStore  = (*Store)(nil)
 	_ orchestrator.ArtifactStore = (*Store)(nil)
+	_ orchestrator.EventStore    = (*Store)(nil)
 )
 
 // Option configures a SQLite store.
@@ -82,6 +83,7 @@ func (s *Store) CreateTask(ctx context.Context, req orchestrator.CreateTaskReque
 	var (
 		task        *orchestrator.Task
 		peerUpdates []*orchestrator.Task
+		records     []*orchestrator.EventRecord
 	)
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if err := s.validateTaskDependenciesTx(ctx, tx, req.Blocks, req.BlockedBy); err != nil {
@@ -109,7 +111,22 @@ func (s *Store) CreateTask(ctx context.Context, req orchestrator.CreateTaskReque
 		if err != nil {
 			return err
 		}
-		return s.saveTaskTx(ctx, tx, task)
+		if err := s.saveTaskTx(ctx, tx, task); err != nil {
+			return err
+		}
+		record, err := taskCreatedRecord(task)
+		if err != nil {
+			return err
+		}
+		records = append(records, record)
+		for _, peer := range peerUpdates {
+			record, err := taskUpdatedRecord(peer)
+			if err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+		return s.saveEventsTx(ctx, tx, records...)
 	}); err != nil {
 		return nil, err
 	}
@@ -165,6 +182,8 @@ func (s *Store) ClaimReadyTask(ctx context.Context, req orchestrator.ClaimTaskRe
 	var (
 		claim       *orchestrator.ClaimedTask
 		failedTasks []*orchestrator.Task
+		records     []*orchestrator.EventRecord
+		resultErr   error
 	)
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		ids, err := s.listTaskIDsTx(ctx, tx)
@@ -176,22 +195,39 @@ func (s *Store) ClaimReadyTask(ctx context.Context, req orchestrator.ClaimTaskRe
 			claim, exhausted, err = s.claimTaskTx(ctx, tx, id, req, now)
 			if exhausted != nil {
 				failedTasks = append(failedTasks, exhausted)
+				record, recordErr := taskFailedRecord(exhausted)
+				if recordErr != nil {
+					return recordErr
+				}
+				records = append(records, record)
 			}
 			if err == nil {
-				return nil
+				record, recordErr := taskClaimedRecord(claim.Task, claim.Lease)
+				if recordErr != nil {
+					return recordErr
+				}
+				records = append(records, record)
+				return s.saveEventsTx(ctx, tx, records...)
 			}
 			if errors.Is(err, orchestrator.ErrNoReadyTask) || errors.Is(err, orchestrator.ErrTaskBlocked) {
 				continue
 			}
 			return err
 		}
-		return orchestrator.ErrNoReadyTask
+		if err := s.saveEventsTx(ctx, tx, records...); err != nil {
+			return err
+		}
+		resultErr = orchestrator.ErrNoReadyTask
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 	for _, task := range failedTasks {
 		s.publishTaskFailed(task)
 	}
-	if err != nil {
-		return nil, err
+	if resultErr != nil {
+		return nil, resultErr
 	}
 	if claim != nil {
 		s.publishTaskClaimed(claim.Task, claim.Lease)
@@ -213,17 +249,41 @@ func (s *Store) ClaimTask(ctx context.Context, taskID string, req orchestrator.C
 	var (
 		claim     *orchestrator.ClaimedTask
 		exhausted *orchestrator.Task
+		resultErr error
 	)
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		claim, exhausted, err = s.claimTaskTx(ctx, tx, taskID, req, now)
-		return err
+		var claimErr error
+		claim, exhausted, claimErr = s.claimTaskTx(ctx, tx, taskID, req, now)
+		if exhausted != nil {
+			record, err := taskFailedRecord(exhausted)
+			if err != nil {
+				return err
+			}
+			if err := s.saveEventsTx(ctx, tx, record); err != nil {
+				return err
+			}
+			if errors.Is(claimErr, orchestrator.ErrNoReadyTask) {
+				resultErr = orchestrator.ErrNoReadyTask
+				return nil
+			}
+		}
+		if claimErr != nil {
+			return claimErr
+		}
+		record, err := taskClaimedRecord(claim.Task, claim.Lease)
+		if err != nil {
+			return err
+		}
+		return s.saveEventsTx(ctx, tx, record)
 	})
+	if err != nil {
+		return nil, err
+	}
 	if exhausted != nil {
 		s.publishTaskFailed(exhausted)
 	}
-	if err != nil {
-		return nil, err
+	if resultErr != nil {
+		return nil, resultErr
 	}
 	s.publishTaskClaimed(claim.Task, claim.Lease)
 	return cloneClaimedTask(claim), nil
@@ -242,6 +302,7 @@ func (s *Store) UpdateTask(ctx context.Context, req orchestrator.UpdateTaskReque
 	var (
 		task        *orchestrator.Task
 		peerUpdates []*orchestrator.Task
+		records     []*orchestrator.EventRecord
 	)
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		loaded, err := s.loadTaskTx(ctx, tx, req.ID)
@@ -284,7 +345,22 @@ func (s *Store) UpdateTask(ctx context.Context, req orchestrator.UpdateTaskReque
 		if err != nil {
 			return err
 		}
-		return s.saveTaskTx(ctx, tx, task)
+		if err := s.saveTaskTx(ctx, tx, task); err != nil {
+			return err
+		}
+		record, err := taskUpdatedRecord(task)
+		if err != nil {
+			return err
+		}
+		records = append(records, record)
+		for _, peer := range peerUpdates {
+			record, err := taskUpdatedRecord(peer)
+			if err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+		return s.saveEventsTx(ctx, tx, records...)
 	}); err != nil {
 		return nil, err
 	}
@@ -300,7 +376,10 @@ func (s *Store) DeleteTask(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var peerUpdates []*orchestrator.Task
+	var (
+		peerUpdates []*orchestrator.Task
+		records     []*orchestrator.EventRecord
+	)
 	now := time.Now().UTC()
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := s.loadTaskTx(ctx, tx, id); err != nil {
@@ -335,7 +414,19 @@ func (s *Store) DeleteTask(ctx context.Context, id string) error {
 			}
 			peerUpdates = append(peerUpdates, task)
 		}
-		return nil
+		record, err := taskDeletedRecord(id, now)
+		if err != nil {
+			return err
+		}
+		records = append(records, record)
+		for _, peer := range peerUpdates {
+			record, err := taskUpdatedRecord(peer)
+			if err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+		return s.saveEventsTx(ctx, tx, records...)
 	}); err != nil {
 		return err
 	}
@@ -355,6 +446,7 @@ func (s *Store) CompleteTask(ctx context.Context, taskID, leaseToken string, out
 	var (
 		task      *orchestrator.Task
 		artifacts []*orchestrator.Artifact
+		records   []*orchestrator.EventRecord
 	)
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		loadedTask, lease, err := s.validateLeaseTx(ctx, tx, taskID, leaseToken, now)
@@ -391,7 +483,19 @@ func (s *Store) CompleteTask(ctx context.Context, taskID, leaseToken string, out
 				return err
 			}
 		}
-		return nil
+		record, err := taskCompletedRecord(task)
+		if err != nil {
+			return err
+		}
+		records = append(records, record)
+		for _, artifact := range artifacts {
+			record, err := artifactCreatedRecord(artifact)
+			if err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+		return s.saveEventsTx(ctx, tx, records...)
 	}); err != nil {
 		return nil, err
 	}
@@ -415,6 +519,7 @@ func (s *Store) FailTask(ctx context.Context, taskID, leaseToken string, runErr 
 		requeued    bool
 		lastRunID   string
 		lastAttempt int
+		record      *orchestrator.EventRecord
 	)
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		loadedTask, lease, err := s.validateLeaseTx(ctx, tx, taskID, leaseToken, now)
@@ -432,6 +537,13 @@ func (s *Store) FailTask(ctx context.Context, taskID, leaseToken string, runErr 
 			if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, lease.TaskID); err != nil {
 				return fmt.Errorf("delete requeued lease: %w", err)
 			}
+			record, err = taskRequeuedRecord(task, lastRunID, lastAttempt, "retryable failure")
+			if err != nil {
+				return err
+			}
+			if err := s.saveEventsTx(ctx, tx, record); err != nil {
+				return err
+			}
 			requeued = true
 			return nil
 		}
@@ -447,7 +559,11 @@ func (s *Store) FailTask(ctx context.Context, taskID, leaseToken string, runErr 
 		if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, lease.TaskID); err != nil {
 			return fmt.Errorf("delete failed lease: %w", err)
 		}
-		return nil
+		record, err = taskFailedRecord(task)
+		if err != nil {
+			return err
+		}
+		return s.saveEventsTx(ctx, tx, record)
 	}); err != nil {
 		return nil, err
 	}
@@ -470,7 +586,10 @@ func (s *Store) CancelTask(ctx context.Context, taskID, leaseToken, reason strin
 	defer s.mu.Unlock()
 
 	now = normalizeNow(now)
-	var task *orchestrator.Task
+	var (
+		task   *orchestrator.Task
+		record *orchestrator.EventRecord
+	)
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		loadedTask, err := s.loadTaskTx(ctx, tx, taskID)
 		if err != nil {
@@ -509,7 +628,11 @@ func (s *Store) CancelTask(ctx context.Context, taskID, leaseToken, reason strin
 		if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
 			return fmt.Errorf("delete canceled lease: %w", err)
 		}
-		return nil
+		record, err = taskCanceledRecord(task)
+		if err != nil {
+			return err
+		}
+		return s.saveEventsTx(ctx, tx, record)
 	}); err != nil {
 		return nil, err
 	}
@@ -529,6 +652,7 @@ func (s *Store) RetryTask(ctx context.Context, taskID, reason string, now time.T
 		task        *orchestrator.Task
 		lastRunID   string
 		lastAttempt int
+		record      *orchestrator.EventRecord
 	)
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		loadedTask, err := s.loadTaskTx(ctx, tx, taskID)
@@ -549,7 +673,11 @@ func (s *Store) RetryTask(ctx context.Context, taskID, reason string, now time.T
 		if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
 			return fmt.Errorf("delete retried lease: %w", err)
 		}
-		return nil
+		record, err = taskRequeuedRecord(task, lastRunID, lastAttempt, retryReason(reason))
+		if err != nil {
+			return err
+		}
+		return s.saveEventsTx(ctx, tx, record)
 	}); err != nil {
 		return nil, err
 	}
@@ -582,7 +710,10 @@ func (s *Store) RenewLease(ctx context.Context, taskID, leaseToken string, ttl t
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var lease *orchestrator.Lease
+	var (
+		lease  *orchestrator.Lease
+		record *orchestrator.EventRecord
+	)
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		loadedLease, err := s.loadLeaseTx(ctx, tx, taskID)
 		if err != nil {
@@ -599,7 +730,11 @@ func (s *Store) RenewLease(ctx context.Context, taskID, leaseToken string, ttl t
 			return err
 		}
 		lease = loadedLease
-		return nil
+		record, err = leaseRenewedRecord(lease)
+		if err != nil {
+			return err
+		}
+		return s.saveEventsTx(ctx, tx, record)
 	}); err != nil {
 		return nil, err
 	}
@@ -620,7 +755,9 @@ func (s *Store) ReleaseLease(ctx context.Context, taskID, leaseToken string) err
 		task        *orchestrator.Task
 		lastRunID   string
 		lastAttempt int
+		records     []*orchestrator.EventRecord
 	)
+	releasedAt := time.Now().UTC()
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
 		lease, err := s.loadLeaseTx(ctx, tx, taskID)
 		if err != nil {
@@ -645,7 +782,19 @@ func (s *Store) ReleaseLease(ctx context.Context, taskID, leaseToken string) err
 		if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
 			return fmt.Errorf("delete released lease: %w", err)
 		}
-		return nil
+		record, err := leaseReleasedRecord(released, requeued, releasedAt)
+		if err != nil {
+			return err
+		}
+		records = append(records, record)
+		if requeued && task != nil {
+			record, err := taskRequeuedRecord(task, lastRunID, lastAttempt, "lease released")
+			if err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+		return s.saveEventsTx(ctx, tx, records...)
 	}); err != nil {
 		return err
 	}
@@ -683,7 +832,14 @@ func (s *Store) CreateArtifact(ctx context.Context, req orchestrator.CreateArtif
 			Metadata:    cloneAnyMap(req.Metadata),
 			CreatedAt:   time.Now().UTC(),
 		}
-		return s.saveArtifactTx(ctx, tx, artifact)
+		if err := s.saveArtifactTx(ctx, tx, artifact); err != nil {
+			return err
+		}
+		record, err := artifactCreatedRecord(artifact)
+		if err != nil {
+			return err
+		}
+		return s.saveEventsTx(ctx, tx, record)
 	}); err != nil {
 		return nil, err
 	}
@@ -765,7 +921,14 @@ func (s *Store) CreateCommand(ctx context.Context, req orchestrator.CreateComman
 			Status:         orchestrator.CommandPending,
 			CreatedAt:      time.Now().UTC(),
 		}
-		return s.saveCommandTx(ctx, tx, command)
+		if err := s.saveCommandTx(ctx, tx, command); err != nil {
+			return err
+		}
+		record, err := commandCreatedRecord(command)
+		if err != nil {
+			return err
+		}
+		return s.saveEventsTx(ctx, tx, record)
 	}); err != nil {
 		return nil, err
 	}
@@ -892,7 +1055,14 @@ func (s *Store) HandleCommand(ctx context.Context, id, claimToken, handledBy str
 		loaded.HandledAt = now
 		loaded.ClaimToken = ""
 		command = loaded
-		return s.saveCommandTx(ctx, tx, loaded)
+		if err := s.saveCommandTx(ctx, tx, loaded); err != nil {
+			return err
+		}
+		record, err := commandHandledRecord(command)
+		if err != nil {
+			return err
+		}
+		return s.saveEventsTx(ctx, tx, record)
 	}); err != nil {
 		return nil, err
 	}
@@ -969,6 +1139,22 @@ func (s *Store) init() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_artifacts_created_at ON artifacts(created_at, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_artifacts_task_id ON artifacts(task_id)`,
+		`CREATE TABLE IF NOT EXISTS events (
+			id TEXT PRIMARY KEY,
+			created_at TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			lease_id TEXT NOT NULL,
+			command_id TEXT NOT NULL,
+			artifact_id TEXT NOT NULL,
+			payload BLOB NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, created_at, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id, created_at, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_command_id ON events(command_id, created_at, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_artifact_id ON events(artifact_id, created_at, id)`,
 	}
 	for _, stmt := range schema {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
