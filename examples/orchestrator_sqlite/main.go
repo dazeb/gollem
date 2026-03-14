@@ -131,6 +131,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("ListPendingCommandsForWorker failed: %v", err)
 	}
+	expiredLeases, err := orchestrator.ListExpiredLeases(ctx, store, time.Now())
+	if err != nil {
+		log.Fatalf("ListExpiredLeases failed: %v", err)
+	}
+	staleCommands, err := orchestrator.ListStaleClaimedCommands(ctx, store, time.Now().Add(-time.Minute))
+	if err != nil {
+		log.Fatalf("ListStaleClaimedCommands failed: %v", err)
+	}
 	terminalKind := "<none>"
 	if runTimeline.Terminal != nil {
 		terminalKind = string(runTimeline.Terminal.Kind)
@@ -151,6 +159,8 @@ func main() {
 	fmt.Printf("Projected workers: %d\n", len(workers))
 	fmt.Printf("Current active runs: %d\n", len(activeRuns))
 	fmt.Printf("Pending commands for %s: %d\n", persisted.Run.WorkerID, len(pendingCommands))
+	fmt.Printf("Expired leases eligible for recovery: %d\n", len(expiredLeases))
+	fmt.Printf("Stale claimed commands eligible for recovery: %d\n", len(staleCommands))
 	for _, event := range events {
 		fmt.Printf("- #%d %s at %s\n", event.Sequence, event.Kind, event.CreatedAt.Format(time.RFC3339Nano))
 	}

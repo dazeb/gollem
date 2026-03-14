@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
@@ -186,6 +187,59 @@ func (s *Store) RecoverClaimedCommands(_ context.Context, claimedBefore, now tim
 		})
 	}
 	return recovered, nil
+}
+
+// ListStaleClaimedCommands implements orchestrator.RecoveryQueryStore.
+func (s *Store) ListStaleClaimedCommands(_ context.Context, claimedBefore time.Time) ([]*orchestrator.StaleClaimedCommandSummary, error) {
+	if claimedBefore.IsZero() {
+		claimedBefore = time.Now().UTC()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	type staleCommand struct {
+		id      string
+		command *orchestrator.Command
+	}
+	claimed := make([]staleCommand, 0, len(s.commandOrder))
+	for _, id := range s.commandOrder {
+		command, ok := s.commands[id]
+		if !ok {
+			continue
+		}
+		claimed = append(claimed, staleCommand{id: id, command: command})
+	}
+	sort.Slice(claimed, func(i, j int) bool {
+		left := claimed[i]
+		right := claimed[j]
+		if !left.command.ClaimedAt.Equal(right.command.ClaimedAt) {
+			return left.command.ClaimedAt.Before(right.command.ClaimedAt)
+		}
+		return left.id < right.id
+	})
+
+	var stale []*orchestrator.StaleClaimedCommandSummary
+	for _, item := range claimed {
+		command := item.command
+		if command == nil || command.Status != orchestrator.CommandClaimed {
+			continue
+		}
+		if command.ClaimedAt.IsZero() || command.ClaimedAt.After(claimedBefore) {
+			continue
+		}
+		stale = append(stale, &orchestrator.StaleClaimedCommandSummary{
+			CommandID:      command.ID,
+			Kind:           command.Kind,
+			TaskID:         command.TaskID,
+			RunID:          command.RunID,
+			TargetWorkerID: command.TargetWorkerID,
+			ClaimedBy:      command.ClaimedBy,
+			ClaimedAt:      command.ClaimedAt,
+			Reason:         command.Reason,
+		})
+	}
+	return stale, nil
 }
 
 func (s *Store) validateCommandTargetLocked(task *orchestrator.Task, req orchestrator.CreateCommandRequest) (runID, targetWorkerID string, err error) {

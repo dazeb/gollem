@@ -37,6 +37,7 @@ var (
 	_ orchestrator.LeaseRecoveryStore   = (*Store)(nil)
 	_ orchestrator.CommandStore         = (*Store)(nil)
 	_ orchestrator.CommandRecoveryStore = (*Store)(nil)
+	_ orchestrator.RecoveryQueryStore   = (*Store)(nil)
 	_ orchestrator.ArtifactStore        = (*Store)(nil)
 )
 
@@ -534,6 +535,53 @@ func (s *Store) RecoverExpiredLeases(_ context.Context, now time.Time) ([]*orche
 		recovered = append(recovered, recovery)
 	}
 	return recovered, nil
+}
+
+// ListExpiredLeases implements orchestrator.RecoveryQueryStore.
+func (s *Store) ListExpiredLeases(_ context.Context, now time.Time) ([]*orchestrator.ExpiredLeaseSummary, error) {
+	now = normalizeNow(now)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	type expiredLease struct {
+		taskID string
+		lease  *orchestrator.Lease
+	}
+	expiredLeases := make([]expiredLease, 0, len(s.leases))
+	for taskID, lease := range s.leases {
+		expiredLeases = append(expiredLeases, expiredLease{
+			taskID: taskID,
+			lease:  lease,
+		})
+	}
+	sort.Slice(expiredLeases, func(i, j int) bool {
+		left := expiredLeases[i]
+		right := expiredLeases[j]
+		if !left.lease.ExpiresAt.Equal(right.lease.ExpiresAt) {
+			return left.lease.ExpiresAt.Before(right.lease.ExpiresAt)
+		}
+		return left.taskID < right.taskID
+	})
+
+	var expired []*orchestrator.ExpiredLeaseSummary
+	for _, item := range expiredLeases {
+		if item.lease == nil || item.lease.ExpiresAt.After(now) {
+			continue
+		}
+		summary := &orchestrator.ExpiredLeaseSummary{
+			LeaseID:   item.lease.ID,
+			TaskID:    item.lease.TaskID,
+			WorkerID:  item.lease.WorkerID,
+			ExpiresAt: item.lease.ExpiresAt,
+		}
+		if task, ok := s.tasks[item.taskID]; ok && task.Run != nil {
+			summary.RunID = task.Run.ID
+			summary.Attempt = task.Run.Attempt
+		}
+		expired = append(expired, summary)
+	}
+	return expired, nil
 }
 
 func (s *Store) validateLeaseLocked(taskID, leaseToken string, now time.Time) (*orchestrator.Task, *orchestrator.Lease, error) {

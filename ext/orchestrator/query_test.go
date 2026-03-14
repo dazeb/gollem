@@ -248,6 +248,156 @@ func TestListPendingCommandsForWorkerUsesNativeQueryStore(t *testing.T) {
 	}
 }
 
+func TestRecoveryInspectionQueries(t *testing.T) {
+	store := memstore.NewStore()
+	base := time.Unix(300, 0).UTC()
+
+	taskA, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "analysis",
+		Input: "lease a",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskA failed: %v", err)
+	}
+	claimA, err := store.ClaimTask(context.Background(), taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Second,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask taskA failed: %v", err)
+	}
+
+	taskB, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "analysis",
+		Input: "lease b",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskB failed: %v", err)
+	}
+	claimB, err := store.ClaimTask(context.Background(), taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: 2 * time.Second,
+		Now:      base.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask taskB failed: %v", err)
+	}
+
+	expired, err := orchestrator.ListExpiredLeases(context.Background(), store, base.Add(5*time.Second))
+	if err != nil {
+		t.Fatalf("ListExpiredLeases failed: %v", err)
+	}
+	if len(expired) != 2 {
+		t.Fatalf("expected 2 expired leases, got %d", len(expired))
+	}
+	if expired[0].LeaseID != claimA.Lease.ID || expired[1].LeaseID != claimB.Lease.ID {
+		t.Fatalf("unexpected expired lease order: %+v", expired)
+	}
+	if expired[0].RunID != claimA.Run.ID || expired[1].RunID != claimB.Run.ID {
+		t.Fatalf("unexpected expired lease run IDs: %+v", expired)
+	}
+
+	commandA, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: taskA.ID,
+		RunID:  claimA.Run.ID,
+		Reason: "stop a",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand commandA failed: %v", err)
+	}
+	claimedA, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base.Add(10 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand claimedA failed: %v", err)
+	}
+	if claimedA.ID != commandA.ID {
+		t.Fatalf("expected to claim command %q, got %q", commandA.ID, claimedA.ID)
+	}
+
+	commandB, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: taskB.ID,
+		RunID:  claimB.Run.ID,
+		Reason: "stop b",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand commandB failed: %v", err)
+	}
+	claimedB, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-b",
+		Now:      base.Add(11 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand claimedB failed: %v", err)
+	}
+	if claimedB.ID != commandB.ID {
+		t.Fatalf("expected to claim command %q, got %q", commandB.ID, claimedB.ID)
+	}
+
+	stale, err := orchestrator.ListStaleClaimedCommands(context.Background(), store, base.Add(20*time.Second))
+	if err != nil {
+		t.Fatalf("ListStaleClaimedCommands failed: %v", err)
+	}
+	if len(stale) != 2 {
+		t.Fatalf("expected 2 stale claimed commands, got %d", len(stale))
+	}
+	if stale[0].CommandID != claimedA.ID || stale[1].CommandID != claimedB.ID {
+		t.Fatalf("unexpected stale claimed command order: %+v", stale)
+	}
+	if stale[0].ClaimedBy != "worker-a" || stale[1].ClaimedBy != "worker-b" {
+		t.Fatalf("unexpected stale claimed command workers: %+v", stale)
+	}
+}
+
+func TestRecoveryInspectionQueriesUseNativeQueryStore(t *testing.T) {
+	store := &recoveryQueryStoreStub{
+		expired: []*orchestrator.ExpiredLeaseSummary{{
+			LeaseID:   "lease-native",
+			TaskID:    "task-native",
+			RunID:     "run-native",
+			WorkerID:  "worker-native",
+			Attempt:   2,
+			ExpiresAt: time.Unix(1, 0).UTC(),
+		}},
+		stale: []*orchestrator.StaleClaimedCommandSummary{{
+			CommandID:      "cmd-native",
+			Kind:           orchestrator.CommandAbortRun,
+			TaskID:         "task-native",
+			RunID:          "run-native",
+			TargetWorkerID: "worker-native",
+			ClaimedBy:      "worker-native",
+			ClaimedAt:      time.Unix(2, 0).UTC(),
+			Reason:         "native path",
+		}},
+	}
+
+	expired, err := orchestrator.ListExpiredLeases(context.Background(), store, time.Unix(3, 0).UTC())
+	if err != nil {
+		t.Fatalf("ListExpiredLeases failed: %v", err)
+	}
+	if len(expired) != 1 || expired[0].LeaseID != "lease-native" {
+		t.Fatalf("expected native expired lease, got %+v", expired)
+	}
+	if !store.listExpiredCalled {
+		t.Fatal("expected helper to use RecoveryQueryStore.ListExpiredLeases")
+	}
+
+	stale, err := orchestrator.ListStaleClaimedCommands(context.Background(), store, time.Unix(4, 0).UTC())
+	if err != nil {
+		t.Fatalf("ListStaleClaimedCommands failed: %v", err)
+	}
+	if len(stale) != 1 || stale[0].CommandID != "cmd-native" {
+		t.Fatalf("expected native stale command, got %+v", stale)
+	}
+	if !store.listStaleCalled {
+		t.Fatal("expected helper to use RecoveryQueryStore.ListStaleClaimedCommands")
+	}
+}
+
 type assertedError string
 
 func (e assertedError) Error() string { return string(e) }
@@ -315,4 +465,37 @@ func (s *commandQueryStoreStub) ListPendingCommandsForWorker(_ context.Context, 
 func (s *commandQueryStoreStub) ListCommands(context.Context, orchestrator.CommandFilter) ([]*orchestrator.Command, error) {
 	s.fallbackUsed = true
 	return nil, errors.New("fallback ListCommands should not be used")
+}
+
+type recoveryQueryStoreStub struct {
+	expired           []*orchestrator.ExpiredLeaseSummary
+	stale             []*orchestrator.StaleClaimedCommandSummary
+	listExpiredCalled bool
+	listStaleCalled   bool
+}
+
+func (s *recoveryQueryStoreStub) ListExpiredLeases(_ context.Context, _ time.Time) ([]*orchestrator.ExpiredLeaseSummary, error) {
+	s.listExpiredCalled = true
+	out := make([]*orchestrator.ExpiredLeaseSummary, len(s.expired))
+	for i, summary := range s.expired {
+		if summary == nil {
+			continue
+		}
+		cp := *summary
+		out[i] = &cp
+	}
+	return out, nil
+}
+
+func (s *recoveryQueryStoreStub) ListStaleClaimedCommands(_ context.Context, _ time.Time) ([]*orchestrator.StaleClaimedCommandSummary, error) {
+	s.listStaleCalled = true
+	out := make([]*orchestrator.StaleClaimedCommandSummary, len(s.stale))
+	for i, summary := range s.stale {
+		if summary == nil {
+			continue
+		}
+		cp := *summary
+		out[i] = &cp
+	}
+	return out, nil
 }

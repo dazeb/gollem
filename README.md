@@ -884,9 +884,15 @@ _ = activeRuns // current running tasks for this worker from task store state
 
 pendingCommands, _ := orchestrator.ListPendingCommandsForWorker(ctx, store, "worker-1")
 _ = pendingCommands // currently claimable durable commands for this worker
+
+expiredLeases, _ := orchestrator.ListExpiredLeases(ctx, store, time.Now())
+_ = expiredLeases // currently expired leases that recovery would reclaim, oldest first
+
+staleCommands, _ := orchestrator.ListStaleClaimedCommands(ctx, store, time.Now().Add(-time.Minute))
+_ = staleCommands // currently claimed commands old enough to release back to pending
 ```
 
-When you pass a SQLite-backed store to helpers like `ListActiveRuns`, `GetActiveRun`, or `ListPendingCommandsForWorker`, they use store-native indexed queries instead of scanning the full task or command set.
+When you pass a SQLite-backed store to helpers like `ListActiveRuns`, `GetActiveRun`, `ListPendingCommandsForWorker`, or `ListStaleClaimedCommands`, they use store-native indexed queries instead of scanning the full task or command set.
 
 See [`examples/orchestrator_sqlite/main.go`](examples/orchestrator_sqlite/main.go) for a full runnable SQLite example that reopens the store, inspects durable history, and queries worker/current-state projections.
 

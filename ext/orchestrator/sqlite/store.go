@@ -53,6 +53,7 @@ var (
 	_ orchestrator.CommandRecoveryStore = (*Store)(nil)
 	_ orchestrator.RunQueryStore        = (*Store)(nil)
 	_ orchestrator.CommandQueryStore    = (*Store)(nil)
+	_ orchestrator.RecoveryQueryStore   = (*Store)(nil)
 	_ orchestrator.ArtifactStore        = (*Store)(nil)
 	_ orchestrator.EventStore           = (*Store)(nil)
 )
@@ -1242,6 +1243,109 @@ func (s *Store) ListPendingCommandsForWorker(ctx context.Context, workerID strin
 	return out, nil
 }
 
+// ListExpiredLeases implements orchestrator.RecoveryQueryStore.
+func (s *Store) ListExpiredLeases(ctx context.Context, now time.Time) ([]*orchestrator.ExpiredLeaseSummary, error) {
+	ctx = normalizeContext(ctx)
+	now = normalizeNow(now)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT l.payload, t.payload
+		FROM leases l
+		LEFT JOIN tasks t ON t.id = l.task_id
+		WHERE l.expires_at <= ?
+		ORDER BY l.expires_at ASC, l.task_id ASC
+	`, formatTime(now))
+	if err != nil {
+		return nil, fmt.Errorf("list expired leases: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*orchestrator.ExpiredLeaseSummary, 0)
+	for rows.Next() {
+		var (
+			leasePayload []byte
+			taskPayload  []byte
+		)
+		if err := rows.Scan(&leasePayload, &taskPayload); err != nil {
+			return nil, fmt.Errorf("scan expired lease: %w", err)
+		}
+
+		var lease orchestrator.Lease
+		if err := json.Unmarshal(leasePayload, &lease); err != nil {
+			return nil, fmt.Errorf("unmarshal expired lease payload: %w", err)
+		}
+
+		summary := &orchestrator.ExpiredLeaseSummary{
+			LeaseID:   lease.ID,
+			TaskID:    lease.TaskID,
+			WorkerID:  lease.WorkerID,
+			ExpiresAt: lease.ExpiresAt,
+		}
+		if len(taskPayload) > 0 {
+			var task orchestrator.Task
+			if err := json.Unmarshal(taskPayload, &task); err != nil {
+				return nil, fmt.Errorf("unmarshal expired lease task payload: %w", err)
+			}
+			if task.Run != nil {
+				summary.RunID = task.Run.ID
+				summary.Attempt = task.Run.Attempt
+			}
+		}
+		out = append(out, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate expired leases: %w", err)
+	}
+	return out, nil
+}
+
+// ListStaleClaimedCommands implements orchestrator.RecoveryQueryStore.
+func (s *Store) ListStaleClaimedCommands(ctx context.Context, claimedBefore time.Time) ([]*orchestrator.StaleClaimedCommandSummary, error) {
+	ctx = normalizeContext(ctx)
+	claimedBefore = normalizeNow(claimedBefore)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT payload
+		FROM commands
+		WHERE status = ?
+			AND json_extract(payload, '$.ClaimedAt') != ''
+			AND json_extract(payload, '$.ClaimedAt') <= ?
+		ORDER BY json_extract(payload, '$.ClaimedAt') ASC, id ASC
+	`, string(orchestrator.CommandClaimed), formatTime(claimedBefore))
+	if err != nil {
+		return nil, fmt.Errorf("list stale claimed commands: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*orchestrator.StaleClaimedCommandSummary, 0)
+	for rows.Next() {
+		command, err := scanCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, &orchestrator.StaleClaimedCommandSummary{
+			CommandID:      command.ID,
+			Kind:           command.Kind,
+			TaskID:         command.TaskID,
+			RunID:          command.RunID,
+			TargetWorkerID: command.TargetWorkerID,
+			ClaimedBy:      command.ClaimedBy,
+			ClaimedAt:      command.ClaimedAt,
+			Reason:         command.Reason,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate stale claimed commands: %w", err)
+	}
+	return out, nil
+}
+
 // ClaimPendingCommand implements orchestrator.CommandStore.
 func (s *Store) ClaimPendingCommand(ctx context.Context, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error) {
 	if req.WorkerID == "" {
@@ -1506,6 +1610,7 @@ func (s *Store) init() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_commands_created_at ON commands(created_at, id)`,
 		`CREATE INDEX IF NOT EXISTS idx_commands_status_target_created ON commands(status, target_worker_id, created_at, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_commands_status_claimed_at_id ON commands(status, json_extract(payload, '$.ClaimedAt'), id)`,
 		`CREATE TABLE IF NOT EXISTS artifacts (
 			id TEXT PRIMARY KEY,
 			created_at TEXT NOT NULL,

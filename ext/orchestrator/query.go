@@ -17,6 +17,12 @@ type CommandQueryStore interface {
 	ListPendingCommandsForWorker(ctx context.Context, workerID string) ([]*Command, error)
 }
 
+// RecoveryQueryStore exposes optimized recovery inspection queries.
+type RecoveryQueryStore interface {
+	ListExpiredLeases(ctx context.Context, now time.Time) ([]*ExpiredLeaseSummary, error)
+	ListStaleClaimedCommands(ctx context.Context, claimedBefore time.Time) ([]*StaleClaimedCommandSummary, error)
+}
+
 // ActiveRunSummary is the current-state view of a running task attempt.
 type ActiveRunSummary struct {
 	RunID       string
@@ -27,6 +33,28 @@ type ActiveRunSummary struct {
 	Attempt     int
 	StartedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// ExpiredLeaseSummary is the current-state view of a lease eligible for recovery.
+type ExpiredLeaseSummary struct {
+	LeaseID   string
+	TaskID    string
+	RunID     string
+	WorkerID  string
+	Attempt   int
+	ExpiresAt time.Time
+}
+
+// StaleClaimedCommandSummary is the current-state view of a claimed command eligible for recovery.
+type StaleClaimedCommandSummary struct {
+	CommandID      string
+	Kind           CommandKind
+	TaskID         string
+	RunID          string
+	TargetWorkerID string
+	ClaimedBy      string
+	ClaimedAt      time.Time
+	Reason         string
 }
 
 // ActiveRunFilter narrows current active-run queries.
@@ -121,6 +149,24 @@ func ListPendingCommandsForWorker(ctx context.Context, commands CommandStore, wo
 		out = append(out, cloneCommandView(command))
 	}
 	return out, nil
+}
+
+// ListExpiredLeases returns expired task leases that are eligible for recovery.
+func ListExpiredLeases(ctx context.Context, store any, now time.Time) ([]*ExpiredLeaseSummary, error) {
+	queryStore, ok := store.(RecoveryQueryStore)
+	if !ok {
+		return nil, errors.New("orchestrator: recovery query store not available")
+	}
+	return queryStore.ListExpiredLeases(ctx, now)
+}
+
+// ListStaleClaimedCommands returns claimed commands old enough to be released back to pending.
+func ListStaleClaimedCommands(ctx context.Context, store any, claimedBefore time.Time) ([]*StaleClaimedCommandSummary, error) {
+	queryStore, ok := store.(RecoveryQueryStore)
+	if !ok {
+		return nil, errors.New("orchestrator: recovery query store not available")
+	}
+	return queryStore.ListStaleClaimedCommands(ctx, claimedBefore)
 }
 
 func cloneCommandView(src *Command) *Command {

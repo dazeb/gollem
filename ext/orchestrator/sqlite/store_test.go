@@ -859,6 +859,118 @@ func TestStore_RecoverClaimedCommandsReturnsPersistedCommandToPending(t *testing
 	}
 }
 
+func TestStore_RecoveryInspectionQueries(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	base := time.Unix(60, 0).UTC()
+	taskA, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "analysis",
+		Input: "lease a",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskA failed: %v", err)
+	}
+	claimA, err := store.ClaimTask(context.Background(), taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Second,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask taskA failed: %v", err)
+	}
+
+	taskB, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "analysis",
+		Input: "lease b",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskB failed: %v", err)
+	}
+	claimB, err := store.ClaimTask(context.Background(), taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: 2 * time.Second,
+		Now:      base.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask taskB failed: %v", err)
+	}
+
+	expired, err := orchestrator.ListExpiredLeases(context.Background(), store, base.Add(5*time.Second))
+	if err != nil {
+		t.Fatalf("ListExpiredLeases failed: %v", err)
+	}
+	if len(expired) != 2 {
+		t.Fatalf("expected 2 expired leases, got %d", len(expired))
+	}
+	if expired[0].LeaseID != claimA.Lease.ID || expired[1].LeaseID != claimB.Lease.ID {
+		t.Fatalf("unexpected expired lease order: %+v", expired)
+	}
+	if expired[0].RunID != claimA.Run.ID || expired[1].RunID != claimB.Run.ID {
+		t.Fatalf("unexpected expired lease runs: %+v", expired)
+	}
+
+	commandA, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: taskA.ID,
+		RunID:  claimA.Run.ID,
+		Reason: "stop a",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand commandA failed: %v", err)
+	}
+	claimedA, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base.Add(10 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand claimedA failed: %v", err)
+	}
+	if claimedA.ID != commandA.ID {
+		t.Fatalf("expected claimed command %q, got %q", commandA.ID, claimedA.ID)
+	}
+
+	commandB, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: taskB.ID,
+		RunID:  claimB.Run.ID,
+		Reason: "stop b",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand commandB failed: %v", err)
+	}
+	claimedB, err := store.ClaimPendingCommand(context.Background(), orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-b",
+		Now:      base.Add(11 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("ClaimPendingCommand claimedB failed: %v", err)
+	}
+	if claimedB.ID != commandB.ID {
+		t.Fatalf("expected claimed command %q, got %q", commandB.ID, claimedB.ID)
+	}
+
+	stale, err := orchestrator.ListStaleClaimedCommands(context.Background(), store, base.Add(20*time.Second))
+	if err != nil {
+		t.Fatalf("ListStaleClaimedCommands failed: %v", err)
+	}
+	if len(stale) != 2 {
+		t.Fatalf("expected 2 stale claimed commands, got %d", len(stale))
+	}
+	if stale[0].CommandID != claimedA.ID || stale[1].CommandID != claimedB.ID {
+		t.Fatalf("unexpected stale claimed command order: %+v", stale)
+	}
+	if stale[0].ClaimedBy != "worker-a" || stale[1].ClaimedBy != "worker-b" {
+		t.Fatalf("unexpected stale claimed command workers: %+v", stale)
+	}
+}
+
 func TestStore_PersistsCommandLifecycleHistoryAcrossReopen(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
 
