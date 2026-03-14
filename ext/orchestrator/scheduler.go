@@ -415,34 +415,22 @@ func (s *Scheduler) processCommands(ctx context.Context) error {
 }
 
 func (s *Scheduler) recover(ctx context.Context, now time.Time) error {
-	if recoverer, ok := s.tasks.(LeaseRecoveryStore); ok {
-		recovered, err := recoverer.RecoverExpiredLeases(ctx, now)
-		if err != nil {
-			return err
-		}
-		for _, leaseRecovery := range recovered {
-			if leaseRecovery == nil || leaseRecovery.Task == nil || leaseRecovery.Task.Run == nil {
-				continue
+	controller, _ := s.runner.(RunController)
+	manager := NewRecoveryManager(s.tasks, s.commands,
+		WithRecoveryController(controller),
+		WithRecoveryCommandClaimTimeout(s.cfg.CommandClaimTimeout),
+		WithRecoveryErrorHandler(s.cfg.OnError),
+		WithRecoveryLocalCanceler(func(task *Task, cause error) bool {
+			active, ok := s.localActiveRun(task)
+			if !ok {
+				return false
 			}
-			if active, ok := s.localActiveRun(leaseRecovery.Task); ok {
-				active.cancel(ErrLeaseExpired)
-				continue
-			}
-			if err := s.cancelRemoteRun(ctx, leaseRecovery.Task, leaseRecovery.Task.Run, ErrLeaseExpired); err != nil &&
-				!errors.Is(err, ErrRunControlUnavailable) &&
-				!errors.Is(err, ErrRunNotFound) {
-				s.cfg.OnError(err)
-			}
-		}
-	}
-	if s.cfg.CommandClaimTimeout > 0 {
-		if recoverer, ok := s.commands.(CommandRecoveryStore); ok {
-			if _, err := recoverer.RecoverClaimedCommands(ctx, now.Add(-s.cfg.CommandClaimTimeout), now); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+			active.cancel(cause)
+			return true
+		}),
+	)
+	_, err := manager.Sweep(ctx, now)
+	return err
 }
 
 func (s *Scheduler) handleCommand(ctx context.Context, command *Command) error {
