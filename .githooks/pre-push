@@ -11,8 +11,30 @@ run_check() {
 	"$@"
 }
 
+run_race_tests() {
+	local skip_monty
+	skip_monty="$(git config --bool --get hooks.skipMontyRace || true)"
+
+	local -a packages=()
+	while IFS= read -r pkg; do
+		if [[ -z "$pkg" ]]; then
+			continue
+		fi
+		if [[ "$skip_monty" == "true" && "$pkg" == "github.com/fugue-labs/gollem/ext/monty" ]]; then
+			continue
+		fi
+		packages+=("$pkg")
+	done < <(go list ./...)
+
+	if [[ "$skip_monty" == "true" ]]; then
+		echo "pre-push: skipping race tests for github.com/fugue-labs/gollem/ext/monty (hooks.skipMontyRace=true)"
+	fi
+
+	go test -race "${packages[@]}"
+}
+
 run_check "golangci-lint" golangci-lint run ./...
-run_check "go test -race" go test -race ./...
+run_check "go test -race" run_race_tests
 run_check "go vet" go vet ./...
 
 echo "pre-push: verifying go.mod/go.sum are tidy..."
@@ -24,4 +46,3 @@ git diff --exit-code go.mod go.sum >/dev/null || {
 }
 
 echo "pre-push: all checks passed."
-
