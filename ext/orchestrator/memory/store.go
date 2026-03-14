@@ -13,19 +13,23 @@ import (
 
 // Store is an in-memory TaskStore and LeaseStore implementation.
 type Store struct {
-	mu        sync.Mutex
-	tasks     map[string]*orchestrator.Task
-	taskOrder []string
-	leases    map[string]*orchestrator.Lease
-	nextTask  int
-	nextLease int
-	nextRun   int
-	eventBus  *core.EventBus
+	mu            sync.Mutex
+	tasks         map[string]*orchestrator.Task
+	taskOrder     []string
+	leases        map[string]*orchestrator.Lease
+	artifacts     map[string]*orchestrator.Artifact
+	artifactOrder []string
+	nextTask      int
+	nextLease     int
+	nextRun       int
+	nextArtifact  int
+	eventBus      *core.EventBus
 }
 
 var (
-	_ orchestrator.TaskStore  = (*Store)(nil)
-	_ orchestrator.LeaseStore = (*Store)(nil)
+	_ orchestrator.TaskStore     = (*Store)(nil)
+	_ orchestrator.LeaseStore    = (*Store)(nil)
+	_ orchestrator.ArtifactStore = (*Store)(nil)
 )
 
 // Option configures a Store.
@@ -41,8 +45,9 @@ func WithEventBus(bus *core.EventBus) Option {
 // NewStore creates an empty in-memory orchestration store.
 func NewStore(opts ...Option) *Store {
 	store := &Store{
-		tasks:  make(map[string]*orchestrator.Task),
-		leases: make(map[string]*orchestrator.Lease),
+		tasks:     make(map[string]*orchestrator.Task),
+		leases:    make(map[string]*orchestrator.Lease),
+		artifacts: make(map[string]*orchestrator.Artifact),
 	}
 	for _, opt := range opts {
 		opt(store)
@@ -217,6 +222,7 @@ func (s *Store) DeleteTask(_ context.Context, id string) error {
 	delete(s.tasks, id)
 	delete(s.leases, id)
 	s.taskOrder = removeString(s.taskOrder, id)
+	s.deleteTaskArtifactsLocked(id)
 	var peerUpdates []*orchestrator.Task
 	for _, task := range s.tasks {
 		blocksBefore := len(task.Blocks)
@@ -231,6 +237,22 @@ func (s *Store) DeleteTask(_ context.Context, id string) error {
 	s.publishTaskDeleted(id)
 	s.publishTaskUpdates(peerUpdates...)
 	return nil
+}
+
+func (s *Store) deleteTaskArtifactsLocked(taskID string) {
+	if len(s.artifactOrder) == 0 {
+		return
+	}
+	filtered := s.artifactOrder[:0]
+	for _, artifactID := range s.artifactOrder {
+		artifact, ok := s.artifacts[artifactID]
+		if ok && artifact.TaskID == taskID {
+			delete(s.artifacts, artifactID)
+			continue
+		}
+		filtered = append(filtered, artifactID)
+	}
+	s.artifactOrder = filtered
 }
 
 // CompleteTask implements orchestrator.TaskStore.

@@ -22,6 +22,8 @@ var (
 	ErrTaskDependencyNotFound = errors.New("orchestrator: task dependency not found")
 	ErrTaskBlocked            = errors.New("orchestrator: task blocked")
 	ErrNoReadyTask            = errors.New("orchestrator: no ready task")
+	ErrArtifactNotFound       = errors.New("orchestrator: artifact not found")
+	ErrArtifactTaskRequired   = errors.New("orchestrator: artifact task id required")
 	ErrLeaseNotFound          = errors.New("orchestrator: lease not found")
 	ErrLeaseExpired           = errors.New("orchestrator: lease expired")
 	ErrLeaseMismatch          = errors.New("orchestrator: lease token mismatch")

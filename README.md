@@ -76,6 +76,7 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **Batch execution** — `RunBatch` for concurrent multi-prompt runs with ordered results
 
 ### Multi-Agent Team Swarms
+- **Durable task orchestration** — Task stores, lease-based claiming, schedulers, runner adapters, and task-scoped artifacts for durable work coordination (`ext/orchestrator`)
 - **Team orchestration** — Spawn concurrent teammate agents as goroutines with orchestrator-backed shared tasks, best-effort mailbox messaging, out-of-band shutdown control, and automatic lifecycle management (`ext/team`)
 - **Dynamic personality generation** — LLM generates task-specific system prompts for each subagent and teammate before they start, dramatically improving agent effectiveness (`modelutil`)
 - **Cached personality generation** — SHA256-keyed cache prevents redundant LLM calls when identical tasks are delegated multiple times
@@ -310,6 +311,8 @@ Use `AdoptWithWait(...)` instead when your code already wraps `cmd.Wait()` behin
 ### Multi-Agent Team Swarm
 
 Spawn concurrent teammates that coordinate through best-effort mailbox notes and orchestrator-backed shared tasks. Each teammate gets a dynamically generated personality tailored to its specific task — the LLM itself writes the system prompt.
+
+For durable worker coordination without the mailbox/team layer, use `ext/orchestrator` directly. It owns tasks, leases, schedulers, runner adapters, and task-scoped artifacts.
 
 ```go
 import (
@@ -795,9 +798,47 @@ summary, _ := orchestration.ChainRun(ctx, researcher, writer, "Topic: AI safety"
 )
 ```
 
+### Task Orchestration
+
+Use `ext/orchestrator` directly when the source of truth should be durable tasks, leases, runs, and artifacts instead of freeform teammate notes.
+
+```go
+import (
+    "github.com/fugue-labs/gollem/ext/orchestrator"
+    memstore "github.com/fugue-labs/gollem/ext/orchestrator/memory"
+)
+
+store := memstore.NewStore()
+runner := orchestrator.NewAgentRunner(workerAgent)
+scheduler := orchestrator.NewScheduler(store, store, runner,
+    orchestrator.WithWorkerID("worker-1"),
+)
+
+task, _ := store.CreateTask(ctx, orchestrator.CreateTaskRequest{
+    Kind:    "analysis",
+    Subject: "Review scheduler path",
+    Input:   "Summarize the scheduler path and capture a handoff artifact.",
+})
+
+go scheduler.Run(ctx)
+
+// After the task completes, persist a task-scoped artifact for downstream workers.
+store.CreateArtifact(ctx, orchestrator.CreateArtifactRequest{
+    TaskID:      task.ID,
+    Kind:        "report",
+    Name:        "handoff.md",
+    ContentType: "text/markdown",
+    Body:        []byte("# Handoff\n\nScheduler path reviewed."),
+})
+```
+
+See [`examples/orchestrator/main.go`](examples/orchestrator/main.go) for a full runnable example that drives a task through the scheduler and stores an artifact from the completed run.
+
 ### Multi-Agent Team Swarms
 
 Spawn teams of concurrent agents that coordinate through best-effort mailbox messaging and orchestrator-backed shared tasks. Each teammate runs as a goroutine with its own context window and tools.
+
+If you want durable work coordination without teammate mailboxes, use `ext/orchestrator` directly and treat `ext/team` as convenience sugar.
 
 ```go
 import "github.com/fugue-labs/gollem/ext/team"
@@ -833,6 +874,7 @@ t.Shutdown(ctx)
 
 ```go
 // Team.TaskBoard() is a legacy compatibility adapter over orchestrator-backed tasks.
+// TaskBoard.Update and the With* option helpers are deprecated compatibility.
 board := t.TaskBoard()
 
 // Create tasks with blocking dependencies.
@@ -842,7 +884,7 @@ board.Update(id2, team.WithAddBlockedBy(id1)) // tests wait for migration
 
 // Claim and complete tasks.
 board.Claim(id1, "migrator")
-board.Update(id1, team.WithStatus(team.TaskCompleted)) // unblocks id2
+board.Complete(id1, "migrator") // unblocks id2
 ```
 
 ### Dynamic Personality Generation

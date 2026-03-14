@@ -87,6 +87,43 @@ func TestTaskBoard_Claim(t *testing.T) {
 	}
 }
 
+func TestTaskBoard_Release(t *testing.T) {
+	tb := NewTaskBoard()
+	id := tb.Create("Task", "Desc")
+
+	if err := tb.Claim(id, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tb.Release(id); err != nil {
+		t.Fatal(err)
+	}
+
+	task, _ := tb.Get(id)
+	if task.Status != TaskPending {
+		t.Errorf("expected pending, got %q", task.Status)
+	}
+	if task.Owner != "" {
+		t.Errorf("expected cleared owner, got %q", task.Owner)
+	}
+}
+
+func TestTaskBoard_Complete(t *testing.T) {
+	tb := NewTaskBoard()
+	id := tb.Create("Task", "Desc")
+
+	if err := tb.Complete(id, "bob"); err != nil {
+		t.Fatal(err)
+	}
+
+	task, _ := tb.Get(id)
+	if task.Status != TaskCompleted {
+		t.Errorf("expected completed, got %q", task.Status)
+	}
+	if task.Owner != "bob" {
+		t.Errorf("expected owner 'bob', got %q", task.Owner)
+	}
+}
+
 func TestTaskBoard_ClaimBlocked(t *testing.T) {
 	tb := NewTaskBoard()
 	id1 := tb.Create("Blocker", "")

@@ -354,52 +354,6 @@ func TestTaskCreateTool_EmptySubject(t *testing.T) {
 	}
 }
 
-func TestTaskUpdateTool(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tb := tm.TaskBoard()
-	id := tb.Create("Task", "Desc")
-
-	tool := taskUpdateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","subject":"Renamed","description":"Updated","metadata":{"priority":"high"}}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	task, _ := tb.Get(id)
-	if task.Subject != "Renamed" {
-		t.Errorf("expected subject %q, got %q", "Renamed", task.Subject)
-	}
-	if task.Description != "Updated" {
-		t.Errorf("expected description %q, got %q", "Updated", task.Description)
-	}
-	if task.Metadata["priority"] != "high" {
-		t.Errorf("expected metadata priority=high, got %v", task.Metadata["priority"])
-	}
-}
-
-func TestTaskUpdateTool_NotFound(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tool := taskUpdateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"999","subject":"nope"}`)
-	if err == nil {
-		t.Error("expected error for missing task")
-	}
-}
-
-func TestTaskUpdateTool_RejectsStatusAndOwnerChanges(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tb := tm.TaskBoard()
-	id := tb.Create("Task", "Desc")
-
-	tool := taskUpdateTool(tm)
-	if _, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","status":"completed"}`); err == nil {
-		t.Fatal("expected status change rejection")
-	}
-	if _, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","owner":"worker-1"}`); err == nil {
-		t.Fatal("expected owner change rejection")
-	}
-}
-
 func TestTaskClaimTool(t *testing.T) {
 	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
 	id := tm.TaskBoard().Create("Task", "Desc")
@@ -452,6 +406,28 @@ func TestTaskReleaseTool(t *testing.T) {
 	}
 	if task.Owner != "" {
 		t.Fatalf("expected no owner after release, got %q", task.Owner)
+	}
+}
+
+func TestTaskReleaseTool_RejectsCompletedTask(t *testing.T) {
+	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
+	tb := tm.TaskBoard()
+	id := tb.Create("Task", "Desc")
+	if err := tb.Complete(id, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := taskReleaseTool(tm, "worker-1")
+	if _, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`"}`); err == nil {
+		t.Fatal("expected release of completed task to fail")
+	}
+
+	task, err := tb.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != TaskCompleted {
+		t.Fatalf("expected completed task to remain completed, got %v", task.Status)
 	}
 }
 

@@ -113,40 +113,56 @@ func (tb *TaskBoard) List() []*Task {
 	return result
 }
 
-// TaskUpdateOption is a functional option for updating a task.
+// TaskUpdateOption is a functional option for updating a legacy compatibility task.
+//
+// Deprecated: prefer explicit Claim, Release, Complete, and ext/orchestrator APIs.
 type TaskUpdateOption func(*Task)
 
 // WithStatus sets the task status.
+//
+// Deprecated: prefer explicit Claim, Release, Complete, and ext/orchestrator APIs.
 func WithStatus(s TaskStatus) TaskUpdateOption {
 	return func(t *Task) { t.Status = s }
 }
 
 // WithOwner sets the task owner.
+//
+// Deprecated: prefer Claim or Complete with an explicit owner.
 func WithOwner(owner string) TaskUpdateOption {
 	return func(t *Task) { t.Owner = owner }
 }
 
 // WithSubject sets the task subject.
+//
+// Deprecated: prefer ext/orchestrator task metadata for new code.
 func WithSubject(subject string) TaskUpdateOption {
 	return func(t *Task) { t.Subject = subject }
 }
 
 // WithDescription sets the task description.
+//
+// Deprecated: prefer ext/orchestrator task metadata for new code.
 func WithDescription(desc string) TaskUpdateOption {
 	return func(t *Task) { t.Description = desc }
 }
 
 // WithAddBlocks adds task IDs that this task blocks.
+//
+// Deprecated: prefer ext/orchestrator task creation/update APIs for dependencies.
 func WithAddBlocks(ids ...string) TaskUpdateOption {
 	return func(t *Task) { t.Blocks = appendUnique(t.Blocks, ids...) }
 }
 
 // WithAddBlockedBy adds task IDs that block this task.
+//
+// Deprecated: prefer ext/orchestrator task creation/update APIs for dependencies.
 func WithAddBlockedBy(ids ...string) TaskUpdateOption {
 	return func(t *Task) { t.BlockedBy = appendUnique(t.BlockedBy, ids...) }
 }
 
 // WithMetadata merges metadata into the task. Nil values delete keys.
+//
+// Deprecated: prefer ext/orchestrator task metadata for new code.
 func WithMetadata(meta map[string]any) TaskUpdateOption {
 	return func(t *Task) {
 		if t.Metadata == nil {
@@ -164,6 +180,8 @@ func WithMetadata(meta map[string]any) TaskUpdateOption {
 
 // Update applies options to an existing task and maintains reciprocal
 // Blocks/BlockedBy relationships.
+//
+// Deprecated: prefer explicit Claim, Release, Complete, and ext/orchestrator APIs.
 func (tb *TaskBoard) Update(id string, opts ...TaskUpdateOption) error {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
@@ -306,6 +324,47 @@ func (tb *TaskBoard) Claim(id, owner string) error {
 	}
 	_, err := tb.claimLocked(id, owner)
 	return err
+}
+
+// Release clears the current owner and returns the task to pending.
+func (tb *TaskBoard) Release(id string) error {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
+	current, err := tb.getLocked(id)
+	if err != nil {
+		return err
+	}
+	raw, err := tb.tasks.GetTask(context.Background(), id)
+	if err != nil {
+		return tb.translateTaskError(id, err)
+	}
+	switch raw.Status {
+	case orchestrator.TaskCompleted:
+		return fmt.Errorf("task %q is already completed", id)
+	case orchestrator.TaskFailed:
+		return fmt.Errorf("task %q is already failed", id)
+	}
+
+	activeLease, _ := tb.activeLeaseLocked(id)
+	if activeLease == nil && current.Owner == "" && !tb.blockedOverrides[id] {
+		return fmt.Errorf("task %q is not currently claimed", id)
+	}
+
+	delete(tb.ownerOverrides, id)
+	delete(tb.blockedOverrides, id)
+	if activeLease != nil {
+		return tb.releaseLeaseLocked(id, activeLease.Token)
+	}
+	return nil
+}
+
+// Complete marks a task completed for the supplied owner.
+func (tb *TaskBoard) Complete(id, owner string) error {
+	if owner == "" {
+		return errors.New("owner must not be empty")
+	}
+	return tb.Update(id, WithStatus(TaskCompleted), WithOwner(owner))
 }
 
 // Available returns all tasks that are pending, unowned, and unblocked.

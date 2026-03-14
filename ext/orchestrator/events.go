@@ -79,3 +79,15 @@ type TaskFailedEvent struct {
 	Error    string
 	FailedAt time.Time
 }
+
+// ArtifactCreatedEvent is published when an artifact is persisted.
+type ArtifactCreatedEvent struct {
+	ArtifactID  string
+	TaskID      string
+	RunID       string
+	Kind        string
+	Name        string
+	ContentType string
+	SizeBytes   int
+	CreatedAt   time.Time
+}

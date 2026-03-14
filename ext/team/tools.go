@@ -31,17 +31,6 @@ type taskCreateParams struct {
 	Description string `json:"description" jsonschema:"description=Detailed description of what needs to be done"`
 }
 
-type taskUpdateParams struct {
-	ID           string         `json:"id" jsonschema:"description=Task ID to update"`
-	Status       string         `json:"status,omitempty" jsonschema:"description=Deprecated: use task_claim, task_release, or task_complete instead"`
-	Owner        string         `json:"owner,omitempty" jsonschema:"description=Deprecated: use task_claim instead"`
-	Subject      string         `json:"subject,omitempty" jsonschema:"description=New subject"`
-	Description  string         `json:"description,omitempty" jsonschema:"description=New description"`
-	AddBlocks    []string       `json:"add_blocks,omitempty" jsonschema:"description=Task IDs that this task blocks"`
-	AddBlockedBy []string       `json:"add_blocked_by,omitempty" jsonschema:"description=Task IDs that block this task"`
-	Metadata     map[string]any `json:"metadata,omitempty" jsonschema:"description=Key-value metadata to merge"`
-}
-
 type taskClaimParams struct {
 	ID string `json:"id" jsonschema:"description=Task ID to claim for yourself"`
 }
@@ -235,54 +224,6 @@ func taskCreateTool(t *Team) core.Tool {
 	)
 }
 
-func taskUpdateTool(t *Team) core.Tool {
-	return core.FuncTool[taskUpdateParams](
-		"task_update",
-		"Update a task's subject, description, dependency links, or metadata. "+
-			"Use task_claim, task_release, and task_complete for task state transitions.",
-		func(_ context.Context, params taskUpdateParams) (any, error) {
-			if params.ID == "" {
-				return nil, &core.ModelRetryError{Message: "task ID must not be empty"}
-			}
-			if params.Status != "" {
-				return nil, &core.ModelRetryError{Message: "task_update cannot change status; use task_claim, task_release, or task_complete"}
-			}
-			if params.Owner != "" {
-				return nil, &core.ModelRetryError{Message: "task_update cannot change owner; use task_claim"}
-			}
-
-			var opts []TaskUpdateOption
-			if params.Subject != "" {
-				opts = append(opts, WithSubject(params.Subject))
-			}
-			if params.Description != "" {
-				opts = append(opts, WithDescription(params.Description))
-			}
-			if len(params.AddBlocks) > 0 {
-				opts = append(opts, WithAddBlocks(params.AddBlocks...))
-			}
-			if len(params.AddBlockedBy) > 0 {
-				opts = append(opts, WithAddBlockedBy(params.AddBlockedBy...))
-			}
-			if len(params.Metadata) > 0 {
-				opts = append(opts, WithMetadata(params.Metadata))
-			}
-			if len(opts) == 0 {
-				return nil, &core.ModelRetryError{Message: "task_update requires subject, description, dependency, or metadata changes"}
-			}
-
-			if err := t.taskBoard.Update(params.ID, opts...); err != nil {
-				return nil, err
-			}
-
-			return map[string]any{
-				"status":  "updated",
-				"task_id": params.ID,
-			}, nil
-		},
-	)
-}
-
 func taskClaimTool(t *Team, selfName string) core.Tool {
 	return core.FuncTool[taskClaimParams](
 		"task_claim",
@@ -321,7 +262,7 @@ func taskReleaseTool(t *Team, selfName string) core.Tool {
 			if task.Owner != selfName && selfName != t.leaderSenderName() {
 				return nil, fmt.Errorf("task %q is owned by %q", params.ID, task.Owner)
 			}
-			if err := t.taskBoard.Update(params.ID, WithStatus(TaskPending)); err != nil {
+			if err := t.taskBoard.Release(params.ID); err != nil {
 				return nil, err
 			}
 			return map[string]any{
@@ -348,11 +289,7 @@ func taskCompleteTool(t *Team, selfName string) core.Tool {
 			if owner != "" && owner != selfName && selfName != t.leaderSenderName() {
 				return nil, fmt.Errorf("task %q is owned by %q", params.ID, owner)
 			}
-			opts := []TaskUpdateOption{WithStatus(TaskCompleted)}
-			if owner == "" {
-				opts = append(opts, WithOwner(selfName))
-			}
-			if err := t.taskBoard.Update(params.ID, opts...); err != nil {
+			if err := t.taskBoard.Complete(params.ID, ownerOrSelf(owner, selfName)); err != nil {
 				return nil, err
 			}
 			publishTaskCompleted(t, params.ID, ownerOrSelf(owner, selfName))
