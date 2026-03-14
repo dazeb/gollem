@@ -497,6 +497,85 @@ func TestScheduler_HandlesRunningCancelCommand(t *testing.T) {
 	}
 }
 
+func TestScheduler_ReportsRunnerErrorAfterCancelWhenTaskAlreadyCanceled(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "prompt",
+		Input: "cancel while reporting error",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	started := make(chan struct{})
+	propagationErr := errors.New("remote cancel failed")
+	runner := orchestrator.RunnerFunc(func(ctx context.Context, _ *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, propagationErr
+	})
+
+	errCh := make(chan error, 1)
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithWorkerID("worker-1"),
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithLeaseTTL(50*time.Millisecond),
+		orchestrator.WithLeaseRenewInterval(10*time.Millisecond),
+		orchestrator.WithSchedulerErrorHandler(func(err error) {
+			select {
+			case errCh <- err:
+			default:
+			}
+		}),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runner start")
+	}
+
+	if _, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: task.ID,
+		Reason: "abort run",
+	}); err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+
+	canceled := waitForTaskStatus(t, store, task.ID, orchestrator.TaskCanceled)
+	if canceled.LastError != "abort run" {
+		t.Fatalf("expected cancel reason %q, got %q", "abort run", canceled.LastError)
+	}
+
+	select {
+	case got := <-errCh:
+		if !errors.Is(got, propagationErr) {
+			t.Fatalf("expected scheduler error %v, got %v", propagationErr, got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler error callback")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
 func TestScheduler_HandlesRetryCommandAndRunsTaskAgain(t *testing.T) {
 	store := memstore.NewStore()
 	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{

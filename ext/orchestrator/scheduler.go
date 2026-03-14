@@ -24,7 +24,7 @@ type SchedulerConfig struct {
 
 type activeTaskRun struct {
 	claim  *ClaimedTask
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 }
 
 // DefaultSchedulerConfig returns sane defaults for in-process orchestration.
@@ -200,8 +200,8 @@ func (s *Scheduler) runClaim(ctx context.Context, claim *ClaimedTask) {
 	defer s.wg.Done()
 	defer s.releaseSlot()
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	s.registerActiveClaim(claim, cancel)
 	defer s.unregisterActiveClaim(claim)
 
@@ -237,7 +237,13 @@ func (s *Scheduler) runClaim(ctx context.Context, claim *ClaimedTask) {
 			return
 		}
 		task, err := s.tasks.FailTask(updateCtx, claim.Task.ID, claim.Lease.Token, runErr, now)
-		if err != nil && !isLeaseLoss(err) {
+		if err != nil {
+			if isLeaseLoss(err) {
+				if runErr != nil && !errors.Is(runErr, context.Canceled) {
+					s.cfg.OnError(runErr)
+				}
+				return
+			}
 			s.cfg.OnError(err)
 			return
 		}
@@ -255,7 +261,7 @@ func (s *Scheduler) runClaim(ctx context.Context, claim *ClaimedTask) {
 	}
 }
 
-func (s *Scheduler) renewLoop(ctx context.Context, claim *ClaimedTask, done <-chan struct{}, cancel context.CancelFunc, renewErrCh chan<- error) {
+func (s *Scheduler) renewLoop(ctx context.Context, claim *ClaimedTask, done <-chan struct{}, cancel context.CancelCauseFunc, renewErrCh chan<- error) {
 	if claim == nil || claim.Task == nil || claim.Lease == nil {
 		return
 	}
@@ -275,7 +281,7 @@ func (s *Scheduler) renewLoop(ctx context.Context, claim *ClaimedTask, done <-ch
 				case renewErrCh <- err:
 				default:
 				}
-				cancel()
+				cancel(err)
 				return
 			}
 		}
@@ -375,7 +381,7 @@ func (s *Scheduler) applyCancelTask(ctx context.Context, command *Command, now t
 			return err
 		}
 		if active, ok := s.activeRun(task.ID); ok {
-			active.cancel()
+			active.cancel(&TaskCancelCause{Reason: command.Reason})
 		}
 		return nil
 	case TaskCompleted, TaskFailed, TaskCanceled:
@@ -407,7 +413,7 @@ func (s *Scheduler) applyRetryTask(ctx context.Context, command *Command, now ti
 	}
 }
 
-func (s *Scheduler) registerActiveClaim(claim *ClaimedTask, cancel context.CancelFunc) {
+func (s *Scheduler) registerActiveClaim(claim *ClaimedTask, cancel context.CancelCauseFunc) {
 	if claim == nil || claim.Task == nil || cancel == nil {
 		return
 	}

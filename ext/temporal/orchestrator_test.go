@@ -19,6 +19,10 @@ type fakeWorkflowClient struct {
 	startOptions client.StartWorkflowOptions
 	workflow     interface{}
 	args         []interface{}
+	signalCalls  []fakeSignalCall
+	cancelCalls  []fakeCancelCall
+	signalErr    error
+	cancelErr    error
 }
 
 func (c *fakeWorkflowClient) ExecuteWorkflow(_ context.Context, options client.StartWorkflowOptions, workflow interface{}, args ...interface{}) (client.WorkflowRun, error) {
@@ -31,11 +35,42 @@ func (c *fakeWorkflowClient) ExecuteWorkflow(_ context.Context, options client.S
 	return c.run, nil
 }
 
+func (c *fakeWorkflowClient) SignalWorkflow(_ context.Context, workflowID, runID, signalName string, arg interface{}) error {
+	c.signalCalls = append(c.signalCalls, fakeSignalCall{
+		workflowID: workflowID,
+		runID:      runID,
+		signalName: signalName,
+		arg:        arg,
+	})
+	return c.signalErr
+}
+
+func (c *fakeWorkflowClient) CancelWorkflow(_ context.Context, workflowID, runID string) error {
+	c.cancelCalls = append(c.cancelCalls, fakeCancelCall{
+		workflowID: workflowID,
+		runID:      runID,
+	})
+	return c.cancelErr
+}
+
+type fakeSignalCall struct {
+	workflowID string
+	runID      string
+	signalName string
+	arg        interface{}
+}
+
+type fakeCancelCall struct {
+	workflowID string
+	runID      string
+}
+
 type fakeWorkflowRun struct {
 	id     string
 	runID  string
 	output WorkflowOutput
 	err    error
+	waitCh chan struct{}
 }
 
 func (r *fakeWorkflowRun) GetID() string {
@@ -46,7 +81,16 @@ func (r *fakeWorkflowRun) GetRunID() string {
 	return r.runID
 }
 
-func (r *fakeWorkflowRun) Get(_ context.Context, valuePtr interface{}) error {
+func (r *fakeWorkflowRun) Get(ctx context.Context, valuePtr interface{}) error {
+	return r.getWithContext(ctx, valuePtr)
+}
+
+func (r *fakeWorkflowRun) getWithContext(ctx context.Context, valuePtr interface{}) error {
+	if r.waitCh != nil {
+		close(r.waitCh)
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	if r.err != nil {
 		return r.err
 	}
@@ -62,7 +106,7 @@ func (r *fakeWorkflowRun) Get(_ context.Context, valuePtr interface{}) error {
 }
 
 func (r *fakeWorkflowRun) GetWithOptions(ctx context.Context, valuePtr interface{}, _ client.WorkflowRunGetOptions) error {
-	return r.Get(ctx, valuePtr)
+	return r.getWithContext(ctx, valuePtr)
 }
 
 func TestWorkflowRunner_RunTaskStartsWorkflowAndDecodesOutput(t *testing.T) {
@@ -302,5 +346,165 @@ func TestWorkflowRunner_CompletedAtUsesLegacySnapshotJSON(t *testing.T) {
 	result := outcome.Result
 	if result.CompletedAt != completedAt {
 		t.Fatalf("expected CompletedAt %v from legacy snapshot JSON, got %v", completedAt, result.CompletedAt)
+	}
+}
+
+func TestWorkflowRunner_PropagatesTaskCancelCauseToTemporalWorkflow(t *testing.T) {
+	ta := NewTemporalAgent(core.NewAgent[string](core.NewTestModel(core.TextResponse("unused"))), WithName("workflow-runner-cancel"))
+	run := &fakeWorkflowRun{
+		id:     "orch-run-cancel",
+		runID:  "temporal-run-cancel",
+		waitCh: make(chan struct{}),
+	}
+	wfClient := &fakeWorkflowClient{run: run}
+	runner := NewWorkflowRunner(wfClient, ta, "gollem")
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := runner.RunTask(ctx, &orchestrator.ClaimedTask{
+			Task: &orchestrator.Task{ID: "task-cancel", Input: "cancel"},
+			Run:  &orchestrator.RunRef{ID: "orch-run-cancel"},
+		})
+		errCh <- err
+	}()
+
+	<-run.waitCh
+	cancel(&orchestrator.TaskCancelCause{Reason: "stop now"})
+
+	err := <-errCh
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if len(wfClient.signalCalls) != 1 {
+		t.Fatalf("expected 1 signal call, got %d", len(wfClient.signalCalls))
+	}
+	if len(wfClient.cancelCalls) != 1 {
+		t.Fatalf("expected 1 cancel call, got %d", len(wfClient.cancelCalls))
+	}
+	if wfClient.signalCalls[0].workflowID != "orch-run-cancel" || wfClient.signalCalls[0].runID != "temporal-run-cancel" {
+		t.Fatalf("unexpected signal target %+v", wfClient.signalCalls[0])
+	}
+	if wfClient.signalCalls[0].signalName != ta.AbortSignalName() {
+		t.Fatalf("expected abort signal name %q, got %q", ta.AbortSignalName(), wfClient.signalCalls[0].signalName)
+	}
+	abortSignal, ok := wfClient.signalCalls[0].arg.(AbortSignal)
+	if !ok {
+		t.Fatalf("expected AbortSignal payload, got %T", wfClient.signalCalls[0].arg)
+	}
+	if abortSignal.Reason != "stop now" {
+		t.Fatalf("expected abort reason %q, got %q", "stop now", abortSignal.Reason)
+	}
+	if wfClient.cancelCalls[0].workflowID != "orch-run-cancel" || wfClient.cancelCalls[0].runID != "temporal-run-cancel" {
+		t.Fatalf("unexpected cancel target %+v", wfClient.cancelCalls[0])
+	}
+}
+
+func TestWorkflowRunner_PlainContextCancelDoesNotPropagateRemoteAbort(t *testing.T) {
+	ta := NewTemporalAgent(core.NewAgent[string](core.NewTestModel(core.TextResponse("unused"))), WithName("workflow-runner-local-cancel"))
+	run := &fakeWorkflowRun{
+		id:     "orch-run-local-cancel",
+		runID:  "temporal-run-local-cancel",
+		waitCh: make(chan struct{}),
+	}
+	wfClient := &fakeWorkflowClient{run: run}
+	runner := NewWorkflowRunner(wfClient, ta, "gollem")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := runner.RunTask(ctx, &orchestrator.ClaimedTask{
+			Task: &orchestrator.Task{ID: "task-local-cancel", Input: "cancel"},
+			Run:  &orchestrator.RunRef{ID: "orch-run-local-cancel"},
+		})
+		errCh <- err
+	}()
+
+	<-run.waitCh
+	cancel()
+
+	err := <-errCh
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if len(wfClient.signalCalls) != 0 {
+		t.Fatalf("expected no signal calls, got %d", len(wfClient.signalCalls))
+	}
+	if len(wfClient.cancelCalls) != 0 {
+		t.Fatalf("expected no cancel calls, got %d", len(wfClient.cancelCalls))
+	}
+}
+
+func TestWorkflowRunner_NonCommandCancelCauseCancelsRemoteWorkflowWithoutAbortSignal(t *testing.T) {
+	ta := NewTemporalAgent(core.NewAgent[string](core.NewTestModel(core.TextResponse("unused"))), WithName("workflow-runner-lease-loss"))
+	run := &fakeWorkflowRun{
+		id:     "orch-run-lease-loss",
+		runID:  "temporal-run-lease-loss",
+		waitCh: make(chan struct{}),
+	}
+	wfClient := &fakeWorkflowClient{run: run}
+	runner := NewWorkflowRunner(wfClient, ta, "gollem")
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := runner.RunTask(ctx, &orchestrator.ClaimedTask{
+			Task: &orchestrator.Task{ID: "task-lease-loss", Input: "lease loss"},
+			Run:  &orchestrator.RunRef{ID: "orch-run-lease-loss"},
+		})
+		errCh <- err
+	}()
+
+	<-run.waitCh
+	cancel(errors.New("lease expired"))
+
+	err := <-errCh
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if len(wfClient.signalCalls) != 0 {
+		t.Fatalf("expected no abort signal calls, got %d", len(wfClient.signalCalls))
+	}
+	if len(wfClient.cancelCalls) != 1 {
+		t.Fatalf("expected 1 cancel call, got %d", len(wfClient.cancelCalls))
+	}
+	if wfClient.cancelCalls[0].workflowID != "orch-run-lease-loss" || wfClient.cancelCalls[0].runID != "temporal-run-lease-loss" {
+		t.Fatalf("unexpected cancel target %+v", wfClient.cancelCalls[0])
+	}
+}
+
+func TestWorkflowRunner_CancelPropagationReturnsCancelErrorWhenRemoteCancelFails(t *testing.T) {
+	ta := NewTemporalAgent(core.NewAgent[string](core.NewTestModel(core.TextResponse("unused"))), WithName("workflow-runner-cancel-error"))
+	run := &fakeWorkflowRun{
+		id:     "orch-run-cancel-error",
+		runID:  "temporal-run-cancel-error",
+		waitCh: make(chan struct{}),
+	}
+	cancelErr := errors.New("temporal cancel failed")
+	wfClient := &fakeWorkflowClient{
+		run:       run,
+		cancelErr: cancelErr,
+	}
+	runner := NewWorkflowRunner(wfClient, ta, "gollem")
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := runner.RunTask(ctx, &orchestrator.ClaimedTask{
+			Task: &orchestrator.Task{ID: "task-cancel-error", Input: "cancel"},
+			Run:  &orchestrator.RunRef{ID: "orch-run-cancel-error"},
+		})
+		errCh <- err
+	}()
+
+	<-run.waitCh
+	cancel(&orchestrator.TaskCancelCause{Reason: "stop now"})
+
+	err := <-errCh
+	if !errors.Is(err, cancelErr) {
+		t.Fatalf("expected cancel propagation error %v, got %v", cancelErr, err)
+	}
+	if len(wfClient.cancelCalls) != 1 {
+		t.Fatalf("expected 1 cancel call, got %d", len(wfClient.cancelCalls))
 	}
 }

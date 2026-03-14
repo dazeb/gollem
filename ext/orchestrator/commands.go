@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -72,4 +73,20 @@ type CommandStore interface {
 	ClaimPendingCommand(ctx context.Context, req ClaimCommandRequest) (*Command, error)
 	HandleCommand(ctx context.Context, id, claimToken, handledBy string, now time.Time) (*Command, error)
 	ReleaseCommand(ctx context.Context, id, claimToken string) error
+}
+
+// TaskCancelCause marks a run cancellation that came from an orchestrator command.
+type TaskCancelCause struct {
+	Reason string
+}
+
+// Error implements error.
+func (c *TaskCancelCause) Error() string {
+	if c == nil {
+		return "orchestrator task canceled"
+	}
+	if trimmed := strings.TrimSpace(c.Reason); trimmed != "" {
+		return "orchestrator task canceled: " + trimmed
+	}
+	return "orchestrator task canceled"
 }

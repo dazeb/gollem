@@ -17,6 +17,11 @@ type WorkflowClient interface {
 	ExecuteWorkflow(ctx context.Context, options client.StartWorkflowOptions, workflow interface{}, args ...interface{}) (client.WorkflowRun, error)
 }
 
+type workflowControlClient interface {
+	SignalWorkflow(ctx context.Context, workflowID, runID, signalName string, arg interface{}) error
+	CancelWorkflow(ctx context.Context, workflowID, runID string) error
+}
+
 // WorkflowRunnerOption customizes a Temporal workflow runner.
 type WorkflowRunnerOption[T any] func(*WorkflowRunner[T])
 
@@ -126,6 +131,9 @@ func (r *WorkflowRunner[T]) RunTask(ctx context.Context, claim *orchestrator.Cla
 
 	var output WorkflowOutput
 	if err := run.Get(ctx, &output); err != nil {
+		if propagationErr := r.propagateTaskCancel(ctx, run); propagationErr != nil {
+			return nil, propagationErr
+		}
 		return nil, err
 	}
 
@@ -145,6 +153,36 @@ func (r *WorkflowRunner[T]) RunTask(ctx context.Context, claim *orchestrator.Cla
 		taskResult.Metadata = cloneAnyMap(r.metadataFn(run, &output, result))
 	}
 	return &orchestrator.TaskOutcome{Result: taskResult}, nil
+}
+
+func (r *WorkflowRunner[T]) propagateTaskCancel(ctx context.Context, run client.WorkflowRun) error {
+	if ctx == nil || run == nil {
+		return nil
+	}
+	cause := context.Cause(ctx)
+	if cause == nil || errors.Is(cause, context.Canceled) {
+		return nil
+	}
+	controller, ok := r.client.(workflowControlClient)
+	if !ok {
+		return nil
+	}
+
+	controlCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var signalErr error
+	var cancelCause *orchestrator.TaskCancelCause
+	if errors.As(cause, &cancelCause) {
+		signalErr = controller.SignalWorkflow(controlCtx, run.GetID(), run.GetRunID(), r.agent.AbortSignalName(), AbortSignal{
+			Reason: cancelCause.Reason,
+		})
+	}
+	cancelErr := controller.CancelWorkflow(controlCtx, run.GetID(), run.GetRunID())
+	if cancelErr != nil {
+		return errors.Join(cancelErr, signalErr)
+	}
+	return nil
 }
 
 func defaultWorkflowRunnerMetadata[T any](run client.WorkflowRun, output *WorkflowOutput, result *core.RunResult[T]) map[string]any {
