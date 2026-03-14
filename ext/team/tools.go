@@ -3,6 +3,7 @@ package team
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -183,14 +184,14 @@ func taskFailCurrentTool(t *Team, tm *Teammate) core.Tool {
 			}
 			active, ok := tm.activeClaim()
 			if !ok {
-				return nil, fmt.Errorf("no active claimed task")
+				return nil, errors.New("no active claimed task")
 			}
 			task, err := t.getTeamTask(ctx, active.TaskID)
 			if err != nil {
 				return nil, err
 			}
 			if task.Status != orchestrator.TaskRunning || task.Run == nil || task.Run.ID != active.RunID {
-				return nil, fmt.Errorf("current task is no longer active")
+				return nil, errors.New("current task is no longer active")
 			}
 			persistCtx := context.WithoutCancel(ctx)
 			if _, err := t.store.FailTask(persistCtx, active.TaskID, active.LeaseToken, fmt.Errorf("%s", params.Reason), time.Now()); err != nil {
@@ -198,7 +199,7 @@ func taskFailCurrentTool(t *Team, tm *Teammate) core.Tool {
 			}
 			tm.markTaskSettled(active.TaskID)
 			if !tm.abortCurrentRun(&failedCurrentTaskError{Reason: params.Reason}) {
-				return nil, fmt.Errorf("current run is not active")
+				return nil, errors.New("current run is not active")
 			}
 			return map[string]any{
 				"status":  "failed",

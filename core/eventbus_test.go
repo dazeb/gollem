@@ -119,6 +119,119 @@ func TestEventBus_Async(t *testing.T) {
 	}
 }
 
+func TestEventBus_AsyncPreservesOrder(t *testing.T) {
+	bus := NewEventBus()
+
+	var (
+		mu       sync.Mutex
+		received []string
+		wg       sync.WaitGroup
+	)
+	wg.Add(2)
+	Subscribe(bus, func(e testEvent) {
+		mu.Lock()
+		received = append(received, e.Value)
+		mu.Unlock()
+		wg.Done()
+	})
+
+	PublishAsync(bus, testEvent{Value: "async-first"})
+	PublishAsync(bus, testEvent{Value: "async-second"})
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async events")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) != 2 {
+		t.Fatalf("expected 2 ordered events, got %d", len(received))
+	}
+	if received[0] != "async-first" || received[1] != "async-second" {
+		t.Fatalf("expected async-first before async-second, got %#v", received)
+	}
+}
+
+func TestEventBus_ReentrantPublishDoesNotDeadlock(t *testing.T) {
+	bus := NewEventBus()
+
+	done := make(chan struct{})
+	Subscribe(bus, func(e testEvent) {
+		if e.Value == "outer" {
+			Publish(bus, otherEvent{Count: 1})
+		}
+	})
+	Subscribe(bus, func(e otherEvent) {
+		if e.Count == 1 {
+			close(done)
+		}
+	})
+
+	Publish(bus, testEvent{Value: "outer"})
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for nested publish")
+	}
+}
+
+func TestEventBus_SyncPublishIsNotBlockedByAsyncQueue(t *testing.T) {
+	bus := NewEventBus()
+
+	blockAsync := make(chan struct{})
+	released := make(chan struct{})
+	Subscribe(bus, func(e testEvent) {
+		if e.Value != "slow" {
+			return
+		}
+		close(blockAsync)
+		<-released
+	})
+
+	syncDone := make(chan struct{})
+	Subscribe(bus, func(e otherEvent) {
+		if e.Count == 1 {
+			close(syncDone)
+		}
+	})
+
+	PublishAsync(bus, testEvent{Value: "slow"})
+	select {
+	case <-blockAsync:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async subscriber to start")
+	}
+
+	publishReturned := make(chan struct{})
+	go func() {
+		Publish(bus, otherEvent{Count: 1})
+		close(publishReturned)
+	}()
+
+	select {
+	case <-publishReturned:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("sync Publish should not wait for queued async subscriber")
+	}
+
+	select {
+	case <-syncDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for sync publish delivery")
+	}
+
+	close(released)
+}
+
 func TestEventBus_ConcurrentSafe(t *testing.T) {
 	bus := NewEventBus()
 

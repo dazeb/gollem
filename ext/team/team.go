@@ -2,6 +2,7 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -155,10 +156,10 @@ func WithTeammateAgentOptions(opts ...core.AgentOption[string]) TeammateOption {
 // SpawnTeammate creates a new teammate agent and assigns its initial task via the orchestrator store.
 func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...TeammateOption) (*Teammate, error) {
 	if name == "" {
-		return nil, fmt.Errorf("teammate name must not be empty")
+		return nil, errors.New("teammate name must not be empty")
 	}
 	if task == "" {
-		return nil, fmt.Errorf("initial task must not be empty")
+		return nil, errors.New("initial task must not be empty")
 	}
 
 	cfg := &teammateConfig{}
@@ -246,9 +247,10 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 
 	tmCtx, cancel := context.WithCancel(ctx)
 	tm.cancel = cancel
+	startCh := make(chan struct{})
 
 	t.wg.Add(1)
-	go tm.run(tmCtx)
+	go tm.run(tmCtx, startCh)
 
 	if t.eventBus != nil {
 		core.PublishAsync(t.eventBus, TeammateSpawnedEvent{
@@ -257,6 +259,7 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 			Task:         task,
 		})
 	}
+	close(startCh)
 
 	fmt.Fprintf(os.Stderr, "[gollem] team:%s spawned teammate:%s\n", t.name, name)
 	return tm, nil
@@ -287,7 +290,7 @@ func (t *Team) leaderSenderName() string {
 
 func (t *Team) createTeamTask(ctx context.Context, subject, description, assignee, createdBy string) (*orchestrator.Task, error) {
 	if subject == "" {
-		return nil, fmt.Errorf("team task subject must not be empty")
+		return nil, errors.New("team task subject must not be empty")
 	}
 	if assignee != "" && t.GetTeammate(assignee) == nil {
 		return nil, fmt.Errorf("teammate %q not found", assignee)

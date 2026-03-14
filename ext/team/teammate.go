@@ -162,12 +162,6 @@ func (tm *Teammate) setActiveClaim(claim *orchestrator.ClaimedTask) {
 	}
 }
 
-func (tm *Teammate) clearActiveClaim() {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
-	tm.active = nil
-}
-
 func (tm *Teammate) activeClaim() (activeTask, bool) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -198,16 +192,6 @@ func (tm *Teammate) abortCurrentRun(cause error) bool {
 	}
 	cancel(cause)
 	return true
-}
-
-func (tm *Teammate) enterIdle() {
-	tm.setState(TeammateIdle)
-	if tm.team.eventBus != nil {
-		core.PublishAsync(tm.team.eventBus, TeammateIdleEvent{
-			TeamName:     tm.team.name,
-			TeammateName: tm.name,
-		})
-	}
 }
 
 func (tm *Teammate) markRunEnded(taskID string) {
@@ -265,7 +249,7 @@ func (tm *Teammate) cancelScheduler() {
 }
 
 // run is the main goroutine loop for a teammate.
-func (tm *Teammate) run(ctx context.Context) {
+func (tm *Teammate) run(ctx context.Context, start <-chan struct{}) {
 	defer func() {
 		tm.setState(TeammateStopped)
 		reason := "stopped"
@@ -287,6 +271,14 @@ func (tm *Teammate) run(ctx context.Context) {
 		tm.team.removeTeammate(tm.name)
 		tm.team.wg.Done()
 	}()
+
+	if start != nil {
+		select {
+		case <-start:
+		case <-ctx.Done():
+			return
+		}
+	}
 
 	store := newTeamWorkerStore(tm.team, tm.name)
 	runner := &teammateRunner{tm: tm}

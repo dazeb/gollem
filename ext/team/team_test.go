@@ -215,15 +215,18 @@ func TestTeam_Events(t *testing.T) {
 	var mu sync.Mutex
 	var spawned []TeammateSpawnedEvent
 	var idle []TeammateIdleEvent
+	var sequence []string
 	core.Subscribe(bus, func(e TeammateSpawnedEvent) {
 		mu.Lock()
 		defer mu.Unlock()
 		spawned = append(spawned, e)
+		sequence = append(sequence, "spawned:"+e.TeammateName)
 	})
 	core.Subscribe(bus, func(e TeammateIdleEvent) {
 		mu.Lock()
 		defer mu.Unlock()
 		idle = append(idle, e)
+		sequence = append(sequence, "idle:"+e.TeammateName)
 	})
 
 	tm := NewTeam(TeamConfig{
@@ -250,6 +253,9 @@ func TestTeam_Events(t *testing.T) {
 	}
 	if len(idle) < 1 {
 		t.Fatalf("expected at least 1 idle event, got %d", len(idle))
+	}
+	if len(sequence) == 0 || sequence[0] != "spawned:worker" {
+		t.Fatalf("expected spawned event before any idle event, got %#v", sequence)
 	}
 }
 
