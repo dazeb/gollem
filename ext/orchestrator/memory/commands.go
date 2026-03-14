@@ -198,27 +198,25 @@ func (s *Store) RecoverClaimedCommands(_ context.Context, claimedBefore, now tim
 
 	var recovered []*orchestrator.CommandRecovery
 	for _, id := range s.commandOrder {
-		command, ok := s.commands[id]
-		if !ok || command.Status != orchestrator.CommandClaimed {
-			continue
+		recovery := s.recoverClaimedCommandLocked(id, claimedBefore, now)
+		if recovery != nil {
+			recovered = append(recovered, recovery)
 		}
-		if command.ClaimedAt.IsZero() || command.ClaimedAt.After(claimedBefore) {
-			continue
-		}
-
-		releasedBy := command.ClaimedBy
-		command.Status = orchestrator.CommandPending
-		command.ClaimedBy = ""
-		command.ClaimToken = ""
-		command.ClaimedAt = time.Time{}
-		s.publishCommandReleased(command, releasedBy, now, "claim expired", true)
-		recovered = append(recovered, &orchestrator.CommandRecovery{
-			Command:     cloneCommand(command),
-			RecoveredAt: now,
-			ReleasedBy:  releasedBy,
-		})
 	}
 	return recovered, nil
+}
+
+// RecoverClaimedCommand implements orchestrator.CommandRecoveryStore.
+func (s *Store) RecoverClaimedCommand(_ context.Context, id string, claimedBefore, now time.Time) (*orchestrator.CommandRecovery, error) {
+	now = normalizeNow(now)
+	if claimedBefore.IsZero() {
+		claimedBefore = now
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.recoverClaimedCommandLocked(id, claimedBefore, now), nil
 }
 
 // ListStaleClaimedCommands implements orchestrator.RecoveryQueryStore.
@@ -272,6 +270,28 @@ func (s *Store) ListStaleClaimedCommands(_ context.Context, claimedBefore time.T
 		})
 	}
 	return stale, nil
+}
+
+func (s *Store) recoverClaimedCommandLocked(id string, claimedBefore, now time.Time) *orchestrator.CommandRecovery {
+	command, ok := s.commands[id]
+	if !ok || command.Status != orchestrator.CommandClaimed {
+		return nil
+	}
+	if command.ClaimedAt.IsZero() || command.ClaimedAt.After(claimedBefore) {
+		return nil
+	}
+
+	releasedBy := command.ClaimedBy
+	command.Status = orchestrator.CommandPending
+	command.ClaimedBy = ""
+	command.ClaimToken = ""
+	command.ClaimedAt = time.Time{}
+	s.publishCommandReleased(command, releasedBy, now, "claim expired", true)
+	return &orchestrator.CommandRecovery{
+		Command:     cloneCommand(command),
+		RecoveredAt: now,
+		ReleasedBy:  releasedBy,
+	}
 }
 
 func (s *Store) validateCommandTargetLocked(task *orchestrator.Task, req orchestrator.CreateCommandRequest) (runID, targetWorkerID string, err error) {

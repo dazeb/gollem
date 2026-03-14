@@ -1088,6 +1088,157 @@ func (s *Store) RecoverExpiredLeases(ctx context.Context, now time.Time) ([]*orc
 	return recovered, nil
 }
 
+// RecoverExpiredLease implements orchestrator.LeaseRecoveryStore.
+func (s *Store) RecoverExpiredLease(ctx context.Context, taskID string, now time.Time) (*orchestrator.LeaseRecovery, error) {
+	ctx = normalizeContext(ctx)
+	now = normalizeNow(now)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var (
+		recovery    *orchestrator.LeaseRecovery
+		publishFail *orchestrator.Task
+		publishRel  *leaseReleasePublication
+		publishReq  *taskRequeuePublication
+	)
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		lease, err := s.tryLoadLeaseTx(ctx, tx, taskID)
+		if err != nil {
+			return err
+		}
+		if lease == nil || lease.ExpiresAt.After(now) {
+			return nil
+		}
+
+		task, err := s.tryLoadTaskTx(ctx, tx, taskID)
+		if err != nil {
+			return err
+		}
+		if task == nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
+				return fmt.Errorf("delete orphaned expired lease: %w", err)
+			}
+			return nil
+		}
+
+		taskSnapshot := cloneTask(task)
+		leaseSnapshot := cloneLease(lease)
+		recovery = &orchestrator.LeaseRecovery{
+			Task:         taskSnapshot,
+			Lease:        leaseSnapshot,
+			RecoveredAt:  now,
+			ResultStatus: task.Status,
+			Reason:       "lease expired",
+		}
+
+		switch {
+		case task.Status == orchestrator.TaskRunning && exhaustedAttempts(task):
+			task.Status = orchestrator.TaskFailed
+			task.Result = nil
+			task.LastError = "lease expired"
+			task.CompletedAt = now
+			task.UpdatedAt = now
+			if err := s.saveTaskTx(ctx, tx, task); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
+				return fmt.Errorf("delete recovered expired lease: %w", err)
+			}
+			releaseRecord, err := leaseReleasedRecord(leaseSnapshot, taskSnapshotRunID(taskSnapshot), false, orchestrator.TaskFailed, "lease expired", true, now)
+			if err != nil {
+				return err
+			}
+			record, err := taskFailedRecord(task)
+			if err != nil {
+				return err
+			}
+			if err := s.saveEventsTx(ctx, tx, releaseRecord, record); err != nil {
+				return err
+			}
+			recovery.ResultStatus = orchestrator.TaskFailed
+			taskClone := cloneTask(task)
+			publishFail = taskClone
+			publishRel = &leaseReleasePublication{
+				lease:        leaseSnapshot,
+				runID:        taskSnapshotRunID(taskSnapshot),
+				requeued:     false,
+				resultStatus: orchestrator.TaskFailed,
+				reason:       "lease expired",
+				recovered:    true,
+				releasedAt:   now,
+			}
+		case task.Status == orchestrator.TaskRunning:
+			lastRunID, lastAttempt := requeueTask(task, now, false)
+			task.LastError = "lease expired"
+			if err := s.saveTaskTx(ctx, tx, task); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
+				return fmt.Errorf("delete recovered expired lease: %w", err)
+			}
+			leaseRecord, err := leaseReleasedRecord(leaseSnapshot, lastRunID, true, orchestrator.TaskPending, "lease expired", true, now)
+			if err != nil {
+				return err
+			}
+			requeueRecord, err := taskRequeuedRecord(task, lastRunID, lastAttempt, "lease expired")
+			if err != nil {
+				return err
+			}
+			if err := s.saveEventsTx(ctx, tx, leaseRecord, requeueRecord); err != nil {
+				return err
+			}
+			recovery.ResultStatus = orchestrator.TaskPending
+			recovery.Requeued = true
+			publishRel = &leaseReleasePublication{
+				lease:        leaseSnapshot,
+				runID:        lastRunID,
+				requeued:     true,
+				resultStatus: orchestrator.TaskPending,
+				reason:       "lease expired",
+				recovered:    true,
+				releasedAt:   now,
+			}
+			taskClone := cloneTask(task)
+			publishReq = &taskRequeuePublication{task: taskClone, lastRunID: lastRunID, lastAttempt: lastAttempt, reason: "lease expired"}
+		default:
+			if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
+				return fmt.Errorf("delete stale expired lease: %w", err)
+			}
+			releaseRecord, err := leaseReleasedRecord(leaseSnapshot, taskSnapshotRunID(taskSnapshot), false, task.Status, "lease expired", true, now)
+			if err != nil {
+				return err
+			}
+			if err := s.saveEventsTx(ctx, tx, releaseRecord); err != nil {
+				return err
+			}
+			publishRel = &leaseReleasePublication{
+				lease:        leaseSnapshot,
+				runID:        taskSnapshotRunID(taskSnapshot),
+				requeued:     false,
+				resultStatus: task.Status,
+				reason:       "lease expired",
+				recovered:    true,
+				releasedAt:   now,
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	if publishRel != nil {
+		s.publishLeaseReleased(publishRel.lease, publishRel.runID, publishRel.requeued, publishRel.resultStatus, publishRel.reason, publishRel.recovered, publishRel.releasedAt)
+	}
+	if publishFail != nil {
+		s.publishTaskFailed(publishFail)
+	}
+	if publishReq != nil {
+		s.publishTaskRequeued(publishReq.task, publishReq.lastRunID, publishReq.lastAttempt, publishReq.reason)
+	}
+	return recovery, nil
+}
+
 // CreateArtifact implements orchestrator.ArtifactStore.
 func (s *Store) CreateArtifact(ctx context.Context, req orchestrator.CreateArtifactRequest) (*orchestrator.Artifact, error) {
 	if req.TaskID == "" {
@@ -1669,6 +1820,69 @@ func (s *Store) RecoverClaimedCommands(ctx context.Context, claimedBefore, now t
 		s.publishCommandReleased(event.command, event.releasedBy, event.releasedAt, event.reason, event.recovered)
 	}
 	return recovered, nil
+}
+
+// RecoverClaimedCommand implements orchestrator.CommandRecoveryStore.
+func (s *Store) RecoverClaimedCommand(ctx context.Context, id string, claimedBefore, now time.Time) (*orchestrator.CommandRecovery, error) {
+	ctx = normalizeContext(ctx)
+	now = normalizeNow(now)
+	if claimedBefore.IsZero() {
+		claimedBefore = now
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var (
+		recovery *orchestrator.CommandRecovery
+		release  *commandReleasePublication
+	)
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		command, err := s.loadCommandTx(ctx, tx, id)
+		if err != nil {
+			if errors.Is(err, orchestrator.ErrCommandNotFound) {
+				return nil
+			}
+			return err
+		}
+		if command.Status != orchestrator.CommandClaimed || command.ClaimedAt.IsZero() || command.ClaimedAt.After(claimedBefore) {
+			return nil
+		}
+		releasedBy := command.ClaimedBy
+		command.Status = orchestrator.CommandPending
+		command.ClaimedBy = ""
+		command.ClaimToken = ""
+		command.ClaimedAt = time.Time{}
+		if err := s.saveCommandTx(ctx, tx, command); err != nil {
+			return err
+		}
+		record, err := commandReleasedRecord(command, releasedBy, "claim expired", true, now)
+		if err != nil {
+			return err
+		}
+		if err := s.saveEventsTx(ctx, tx, record); err != nil {
+			return err
+		}
+		recovery = &orchestrator.CommandRecovery{
+			Command:     cloneCommand(command),
+			RecoveredAt: now,
+			ReleasedBy:  releasedBy,
+		}
+		release = &commandReleasePublication{
+			command:    cloneCommand(command),
+			releasedBy: releasedBy,
+			releasedAt: now,
+			reason:     "claim expired",
+			recovered:  true,
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if release != nil {
+		s.publishCommandReleased(release.command, release.releasedBy, release.releasedAt, release.reason, release.recovered)
+	}
+	return recovery, nil
 }
 
 func (s *Store) init() error {

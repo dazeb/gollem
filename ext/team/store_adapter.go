@@ -14,10 +14,6 @@ type teamWorkerStore struct {
 	workerID string
 }
 
-type commandByIDClaimer interface {
-	ClaimCommand(ctx context.Context, id string, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error)
-}
-
 var (
 	_ orchestrator.TaskStore            = (*teamWorkerStore)(nil)
 	_ orchestrator.LeaseStore           = (*teamWorkerStore)(nil)
@@ -220,11 +216,7 @@ func (s *teamWorkerStore) ClaimPendingCommand(ctx context.Context, req orchestra
 		if !s.commandVisible(ctx, command) {
 			continue
 		}
-		claimer, ok := s.team.store.(commandByIDClaimer)
-		if !ok {
-			return nil, errors.New("team worker store requires command-by-id claim support")
-		}
-		claimed, claimErr := claimer.ClaimCommand(ctx, command.ID, req)
+		claimed, claimErr := s.team.store.ClaimCommand(ctx, command.ID, req)
 		if claimErr == nil {
 			return claimed, nil
 		}
@@ -235,6 +227,13 @@ func (s *teamWorkerStore) ClaimPendingCommand(ctx context.Context, req orchestra
 		return nil, claimErr
 	}
 	return nil, orchestrator.ErrNoPendingCommand
+}
+
+func (s *teamWorkerStore) ClaimCommand(ctx context.Context, id string, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error) {
+	if _, err := s.GetCommand(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.team.store.ClaimCommand(ctx, id, req)
 }
 
 func (s *teamWorkerStore) HandleCommand(ctx context.Context, id, claimToken, handledBy string, now time.Time) (*orchestrator.Command, error) {
@@ -252,11 +251,70 @@ func (s *teamWorkerStore) ReleaseCommand(ctx context.Context, id, claimToken str
 }
 
 func (s *teamWorkerStore) RecoverExpiredLeases(ctx context.Context, now time.Time) ([]*orchestrator.LeaseRecovery, error) {
-	return s.team.store.RecoverExpiredLeases(ctx, now)
+	now = normalizeRecoveryTime(now)
+	tasks, err := s.team.listTeamTasks(ctx, orchestrator.TaskFilter{})
+	if err != nil {
+		return nil, err
+	}
+	recovered := make([]*orchestrator.LeaseRecovery, 0)
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		lease, leaseErr := s.team.store.GetLease(ctx, task.ID)
+		if leaseErr != nil {
+			if errors.Is(leaseErr, orchestrator.ErrLeaseNotFound) {
+				continue
+			}
+			return nil, leaseErr
+		}
+		if lease.ExpiresAt.After(now) {
+			continue
+		}
+		recovery, recoveryErr := s.team.store.RecoverExpiredLease(ctx, task.ID, now)
+		if recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		if recovery != nil {
+			recovered = append(recovered, recovery)
+		}
+	}
+	return recovered, nil
+}
+
+func (s *teamWorkerStore) RecoverExpiredLease(ctx context.Context, taskID string, now time.Time) (*orchestrator.LeaseRecovery, error) {
+	return s.recoverExpiredLease(ctx, taskID, now)
 }
 
 func (s *teamWorkerStore) RecoverClaimedCommands(ctx context.Context, claimedBefore, now time.Time) ([]*orchestrator.CommandRecovery, error) {
-	return s.team.store.RecoverClaimedCommands(ctx, claimedBefore, now)
+	now = normalizeRecoveryTime(now)
+	if claimedBefore.IsZero() {
+		claimedBefore = now
+	}
+	commands, err := s.ListCommands(ctx, orchestrator.CommandFilter{
+		Statuses: []orchestrator.CommandStatus{orchestrator.CommandClaimed},
+	})
+	if err != nil {
+		return nil, err
+	}
+	recovered := make([]*orchestrator.CommandRecovery, 0)
+	for _, command := range commands {
+		if command == nil || command.ClaimedAt.IsZero() || command.ClaimedAt.After(claimedBefore) {
+			continue
+		}
+		recovery, recoveryErr := s.team.store.RecoverClaimedCommand(ctx, command.ID, claimedBefore, now)
+		if recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		if recovery != nil {
+			recovered = append(recovered, recovery)
+		}
+	}
+	return recovered, nil
+}
+
+func (s *teamWorkerStore) RecoverClaimedCommand(ctx context.Context, id string, claimedBefore, now time.Time) (*orchestrator.CommandRecovery, error) {
+	return s.recoverClaimedCommand(ctx, id, claimedBefore, now)
 }
 
 func (s *teamWorkerStore) CreateArtifact(ctx context.Context, req orchestrator.CreateArtifactRequest) (*orchestrator.Artifact, error) {
@@ -297,4 +355,25 @@ func (s *teamWorkerStore) commandVisible(ctx context.Context, command *orchestra
 	}
 	_, err := s.team.getTeamTask(ctx, command.TaskID)
 	return err == nil
+}
+
+func (s *teamWorkerStore) recoverExpiredLease(ctx context.Context, taskID string, now time.Time) (*orchestrator.LeaseRecovery, error) {
+	if _, err := s.team.getTeamTask(ctx, taskID); err != nil {
+		return nil, err
+	}
+	return s.team.store.RecoverExpiredLease(ctx, taskID, now)
+}
+
+func (s *teamWorkerStore) recoverClaimedCommand(ctx context.Context, id string, claimedBefore, now time.Time) (*orchestrator.CommandRecovery, error) {
+	if _, err := s.GetCommand(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.team.store.RecoverClaimedCommand(ctx, id, claimedBefore, now)
+}
+
+func normalizeRecoveryTime(now time.Time) time.Time {
+	if now.IsZero() {
+		return time.Now().UTC()
+	}
+	return now.UTC()
 }

@@ -72,6 +72,7 @@ type CommandStore interface {
 	GetCommand(ctx context.Context, id string) (*Command, error)
 	ListCommands(ctx context.Context, filter CommandFilter) ([]*Command, error)
 	ClaimPendingCommand(ctx context.Context, req ClaimCommandRequest) (*Command, error)
+	ClaimCommand(ctx context.Context, id string, req ClaimCommandRequest) (*Command, error)
 	HandleCommand(ctx context.Context, id, claimToken, handledBy string, now time.Time) (*Command, error)
 	ReleaseCommand(ctx context.Context, id, claimToken string) error
 }

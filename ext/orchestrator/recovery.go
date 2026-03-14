@@ -26,9 +26,11 @@ type CommandRecovery struct {
 // LeaseRecoveryStore reclaims expired task leases after worker loss or restart.
 type LeaseRecoveryStore interface {
 	RecoverExpiredLeases(ctx context.Context, now time.Time) ([]*LeaseRecovery, error)
+	RecoverExpiredLease(ctx context.Context, taskID string, now time.Time) (*LeaseRecovery, error)
 }
 
 // CommandRecoveryStore reclaims stranded claimed commands after worker loss or restart.
 type CommandRecoveryStore interface {
 	RecoverClaimedCommands(ctx context.Context, claimedBefore, now time.Time) ([]*CommandRecovery, error)
+	RecoverClaimedCommand(ctx context.Context, id string, claimedBefore, now time.Time) (*CommandRecovery, error)
 }
