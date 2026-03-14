@@ -248,11 +248,9 @@ func (tb *TaskBoard) Update(id string, opts ...TaskUpdateOption) error {
 			return fmt.Errorf("task %q requires an owner", id)
 		}
 		if activeLease == nil {
-			claim, err := tb.claimLocked(id, owner)
-			if err != nil {
+			if _, err := tb.claimLocked(id, owner); err != nil {
 				return err
 			}
-			activeLease = claim.Lease
 		} else if activeLease.WorkerID != owner {
 			return fmt.Errorf("task %q already owned by %q", id, activeLease.WorkerID)
 		}
@@ -291,7 +289,7 @@ func (tb *TaskBoard) Claim(id, owner string) error {
 	defer tb.mu.Unlock()
 
 	if owner == "" {
-		return fmt.Errorf("owner must not be empty")
+		return errors.New("owner must not be empty")
 	}
 	if tb.blockedOverrides[id] {
 		return fmt.Errorf("task %q is blocked", id)
