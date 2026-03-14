@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,11 +27,13 @@ type Store struct {
 }
 
 var (
-	_ orchestrator.TaskStore     = (*Store)(nil)
-	_ orchestrator.LeaseStore    = (*Store)(nil)
-	_ orchestrator.CommandStore  = (*Store)(nil)
-	_ orchestrator.ArtifactStore = (*Store)(nil)
-	_ orchestrator.EventStore    = (*Store)(nil)
+	_ orchestrator.TaskStore         = (*Store)(nil)
+	_ orchestrator.LeaseStore        = (*Store)(nil)
+	_ orchestrator.CommandStore      = (*Store)(nil)
+	_ orchestrator.RunQueryStore     = (*Store)(nil)
+	_ orchestrator.CommandQueryStore = (*Store)(nil)
+	_ orchestrator.ArtifactStore     = (*Store)(nil)
+	_ orchestrator.EventStore        = (*Store)(nil)
 )
 
 // Option configures a SQLite store.
@@ -166,6 +169,65 @@ func (s *Store) ListTasks(ctx context.Context, filter orchestrator.TaskFilter) (
 		}
 	}
 	return out, nil
+}
+
+// ListActiveRuns implements orchestrator.RunQueryStore.
+func (s *Store) ListActiveRuns(ctx context.Context, filter orchestrator.ActiveRunFilter) ([]*orchestrator.ActiveRunSummary, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.queryActiveRunTasks(ctx, s.db, filter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]*orchestrator.ActiveRunSummary, 0)
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		if task == nil || task.Run == nil || task.Run.ID == "" {
+			continue
+		}
+		out = append(out, activeRunSummaryFromTask(task))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active runs: %w", err)
+	}
+	return out, nil
+}
+
+// GetActiveRun implements orchestrator.RunQueryStore.
+func (s *Store) GetActiveRun(ctx context.Context, runID string) (*orchestrator.ActiveRunSummary, error) {
+	ctx = normalizeContext(ctx)
+	if runID == "" {
+		return nil, orchestrator.ErrRunNotFound
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	row := s.db.QueryRowContext(ctx, `
+		SELECT payload
+		FROM tasks
+		WHERE status = ? AND json_extract(payload, '$.Run.ID') = ?
+		ORDER BY created_at ASC, id ASC
+		LIMIT 1
+	`, string(orchestrator.TaskRunning), runID)
+	task, err := scanTask(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, orchestrator.ErrRunNotFound
+		}
+		return nil, err
+	}
+	if task == nil || task.Run == nil || task.Run.ID == "" {
+		return nil, orchestrator.ErrRunNotFound
+	}
+	return activeRunSummaryFromTask(task), nil
 }
 
 // ClaimReadyTask implements orchestrator.TaskStore.
@@ -990,6 +1052,37 @@ func (s *Store) ListCommands(ctx context.Context, filter orchestrator.CommandFil
 	return commands, nil
 }
 
+// ListPendingCommandsForWorker implements orchestrator.CommandQueryStore.
+func (s *Store) ListPendingCommandsForWorker(ctx context.Context, workerID string) ([]*orchestrator.Command, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT payload
+		FROM commands
+		WHERE status = ? AND (target_worker_id = '' OR target_worker_id = ?)
+		ORDER BY created_at ASC, id ASC
+	`, string(orchestrator.CommandPending), workerID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending commands for worker: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*orchestrator.Command, 0)
+	for rows.Next() {
+		command, err := scanCommand(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cloneCommand(command))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending commands for worker: %w", err)
+	}
+	return out, nil
+}
+
 // ClaimPendingCommand implements orchestrator.CommandStore.
 func (s *Store) ClaimPendingCommand(ctx context.Context, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error) {
 	if req.WorkerID == "" {
@@ -1154,6 +1247,9 @@ func (s *Store) init() error {
 			payload BLOB NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_status_kind_created ON tasks(status, kind, created_at, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_run_id_status ON tasks(json_extract(payload, '$.Run.ID'), status)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_run_worker_status_created ON tasks(json_extract(payload, '$.Run.WorkerID'), status, created_at, id)`,
 		`CREATE TABLE IF NOT EXISTS leases (
 			task_id TEXT PRIMARY KEY,
 			expires_at TEXT NOT NULL,
@@ -1171,6 +1267,7 @@ func (s *Store) init() error {
 			payload BLOB NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_commands_created_at ON commands(created_at, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_commands_status_target_created ON commands(status, target_worker_id, created_at, id)`,
 		`CREATE TABLE IF NOT EXISTS artifacts (
 			id TEXT PRIMARY KEY,
 			created_at TEXT NOT NULL,
@@ -1590,6 +1687,36 @@ func (s *Store) listTasksTx(ctx context.Context, tx *sql.Tx) ([]*orchestrator.Ta
 	return scanTasks(rows)
 }
 
+func (s *Store) queryActiveRunTasks(ctx context.Context, db queryer, filter orchestrator.ActiveRunFilter) (*sql.Rows, error) {
+	var (
+		where []string
+		args  []any
+	)
+
+	where = append(where, `status = ?`)
+	args = append(args, string(orchestrator.TaskRunning))
+
+	if len(filter.Kinds) > 0 {
+		placeholders := make([]string, len(filter.Kinds))
+		for i, kind := range filter.Kinds {
+			placeholders[i] = "?"
+			args = append(args, kind)
+		}
+		where = append(where, `kind IN (`+strings.Join(placeholders, ", ")+`)`)
+	}
+	if filter.WorkerID != "" {
+		where = append(where, `json_extract(payload, '$.Run.WorkerID') = ?`)
+		args = append(args, filter.WorkerID)
+	}
+
+	query := `SELECT payload FROM tasks WHERE ` + strings.Join(where, ` AND `) + ` ORDER BY created_at ASC, id ASC`
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query active runs: %w", err)
+	}
+	return rows, nil
+}
+
 func (s *Store) listTaskIDsTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM tasks ORDER BY created_at ASC, id ASC`)
 	if err != nil {
@@ -1857,6 +1984,22 @@ func newID(prefix string) string {
 
 func matchesTaskFilter(task *orchestrator.Task, filter orchestrator.TaskFilter) bool {
 	return matchesKinds(task, filter.Kinds) && matchesStatuses(task, filter.Statuses)
+}
+
+func activeRunSummaryFromTask(task *orchestrator.Task) *orchestrator.ActiveRunSummary {
+	if task == nil || task.Run == nil {
+		return nil
+	}
+	return &orchestrator.ActiveRunSummary{
+		RunID:       task.Run.ID,
+		TaskID:      task.ID,
+		TaskKind:    task.Kind,
+		TaskSubject: task.Subject,
+		WorkerID:    task.Run.WorkerID,
+		Attempt:     task.Run.Attempt,
+		StartedAt:   task.Run.StartedAt,
+		UpdatedAt:   task.UpdatedAt,
+	}
 }
 
 func matchesKinds(task *orchestrator.Task, kinds []string) bool {

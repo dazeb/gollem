@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+// RunQueryStore exposes optimized current-state run queries.
+type RunQueryStore interface {
+	ListActiveRuns(ctx context.Context, filter ActiveRunFilter) ([]*ActiveRunSummary, error)
+	GetActiveRun(ctx context.Context, runID string) (*ActiveRunSummary, error)
+}
+
+// CommandQueryStore exposes optimized current-state command queries.
+type CommandQueryStore interface {
+	ListPendingCommandsForWorker(ctx context.Context, workerID string) ([]*Command, error)
+}
+
 // ActiveRunSummary is the current-state view of a running task attempt.
 type ActiveRunSummary struct {
 	RunID       string
@@ -28,6 +39,9 @@ type ActiveRunFilter struct {
 func ListActiveRuns(ctx context.Context, tasks TaskStore, filter ActiveRunFilter) ([]*ActiveRunSummary, error) {
 	if tasks == nil {
 		return nil, errors.New("orchestrator: task store must not be nil")
+	}
+	if queryStore, ok := tasks.(RunQueryStore); ok {
+		return queryStore.ListActiveRuns(ctx, filter)
 	}
 	kinds := make([]string, len(filter.Kinds))
 	copy(kinds, filter.Kinds)
@@ -66,6 +80,9 @@ func GetActiveRun(ctx context.Context, tasks TaskStore, runID string) (*ActiveRu
 	if runID == "" {
 		return nil, ErrRunNotFound
 	}
+	if queryStore, ok := tasks.(RunQueryStore); ok {
+		return queryStore.GetActiveRun(ctx, runID)
+	}
 	runs, err := ListActiveRuns(ctx, tasks, ActiveRunFilter{})
 	if err != nil {
 		return nil, err
@@ -83,6 +100,9 @@ func GetActiveRun(ctx context.Context, tasks TaskStore, runID string) (*ActiveRu
 func ListPendingCommandsForWorker(ctx context.Context, commands CommandStore, workerID string) ([]*Command, error) {
 	if commands == nil {
 		return nil, errors.New("orchestrator: command store must not be nil")
+	}
+	if queryStore, ok := commands.(CommandQueryStore); ok {
+		return queryStore.ListPendingCommandsForWorker(ctx, workerID)
 	}
 	all, err := commands.ListCommands(ctx, CommandFilter{
 		Statuses: []CommandStatus{CommandPending},

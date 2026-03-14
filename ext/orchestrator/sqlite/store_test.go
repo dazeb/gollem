@@ -593,6 +593,126 @@ func TestStore_PersistsDurableHistoryAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestStore_CurrentStateQueriesUsePersistedIndexes(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	base := time.Unix(20, 0).UTC()
+	taskA, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:    "analysis",
+		Subject: "task a",
+		Input:   "run a",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskA failed: %v", err)
+	}
+	claimA, err := store.ClaimTask(context.Background(), taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask taskA failed: %v", err)
+	}
+
+	taskB, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:    "review",
+		Subject: "task b",
+		Input:   "run b",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskB failed: %v", err)
+	}
+	if _, err := store.ClaimTask(context.Background(), taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      base.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("ClaimTask taskB failed: %v", err)
+	}
+
+	taskC, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:  "analysis",
+		Input: "retry me",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask taskC failed: %v", err)
+	}
+	claimC, err := store.ClaimTask(context.Background(), taskC.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-c",
+		LeaseTTL: time.Minute,
+		Now:      base.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask taskC failed: %v", err)
+	}
+	if _, err := store.FailTask(context.Background(), taskC.ID, claimC.Lease.Token, errors.New("boom"), base.Add(3*time.Second)); err != nil {
+		t.Fatalf("FailTask taskC failed: %v", err)
+	}
+	commandC, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandRetryTask,
+		TaskID: taskC.ID,
+		Reason: "retry me",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand retry failed: %v", err)
+	}
+	if _, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandAbortRun,
+		TaskID: taskA.ID,
+		RunID:  claimA.Run.ID,
+		Reason: "worker a only",
+	}); err != nil {
+		t.Fatalf("CreateCommand abort failed: %v", err)
+	}
+
+	active, err := orchestrator.ListActiveRuns(context.Background(), store, orchestrator.ActiveRunFilter{
+		WorkerID: "worker-a",
+		Kinds:    []string{"analysis"},
+	})
+	if err != nil {
+		t.Fatalf("ListActiveRuns failed: %v", err)
+	}
+	if len(active) != 1 || active[0].RunID != claimA.Run.ID {
+		t.Fatalf("unexpected active runs: %+v", active)
+	}
+
+	run, err := orchestrator.GetActiveRun(context.Background(), store, claimA.Run.ID)
+	if err != nil {
+		t.Fatalf("GetActiveRun failed: %v", err)
+	}
+	if run.WorkerID != "worker-a" || run.TaskID != taskA.ID {
+		t.Fatalf("unexpected active run summary: %+v", run)
+	}
+
+	pending, err := orchestrator.ListPendingCommandsForWorker(context.Background(), store, "worker-a")
+	if err != nil {
+		t.Fatalf("ListPendingCommandsForWorker failed: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("expected 2 pending commands for worker-a, got %d", len(pending))
+	}
+	got := map[string]string{
+		pending[0].ID: pending[0].TargetWorkerID,
+		pending[1].ID: pending[1].TargetWorkerID,
+	}
+	if got[commandC.ID] != "" {
+		t.Fatalf("expected retry command %q to be untargeted, got %+v", commandC.ID, pending)
+	}
+	delete(got, commandC.ID)
+	for id, target := range got {
+		if target != "worker-a" {
+			t.Fatalf("expected targeted pending command for worker-a, got id=%q target=%q full=%+v", id, target, pending)
+		}
+	}
+}
+
 func TestStore_PersistsCommandLifecycleHistoryAcrossReopen(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
 

@@ -886,6 +886,8 @@ pendingCommands, _ := orchestrator.ListPendingCommandsForWorker(ctx, store, "wor
 _ = pendingCommands // currently claimable durable commands for this worker
 ```
 
+When you pass a SQLite-backed store to helpers like `ListActiveRuns`, `GetActiveRun`, or `ListPendingCommandsForWorker`, they use store-native indexed queries instead of scanning the full task or command set.
+
 See [`examples/orchestrator_sqlite/main.go`](examples/orchestrator_sqlite/main.go) for a full runnable SQLite example that reopens the store, inspects durable history, and queries worker/current-state projections.
 
 ### Multi-Agent Team Swarms
