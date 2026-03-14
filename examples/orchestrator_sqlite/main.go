@@ -115,6 +115,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("LoadRunTimeline failed: %v", err)
 	}
+	workerSummary, err := orchestrator.GetWorker(ctx, store, persisted.Run.WorkerID)
+	if err != nil {
+		log.Fatalf("GetWorker failed: %v", err)
+	}
+	workers, err := orchestrator.ListWorkers(ctx, store, orchestrator.WorkerFilter{})
+	if err != nil {
+		log.Fatalf("ListWorkers failed: %v", err)
+	}
+	activeRuns, err := orchestrator.ListActiveRuns(ctx, store, orchestrator.ActiveRunFilter{})
+	if err != nil {
+		log.Fatalf("ListActiveRuns failed: %v", err)
+	}
+	pendingCommands, err := orchestrator.ListPendingCommandsForWorker(ctx, store, persisted.Run.WorkerID)
+	if err != nil {
+		log.Fatalf("ListPendingCommandsForWorker failed: %v", err)
+	}
 	terminalKind := "<none>"
 	if runTimeline.Terminal != nil {
 		terminalKind = string(runTimeline.Terminal.Kind)
@@ -126,6 +142,15 @@ func main() {
 	fmt.Printf("Artifacts stored for task: %d\n", len(artifacts))
 	fmt.Printf("Run timeline events: %d (terminal: %s)\n", len(runTimeline.Events), terminalKind)
 	fmt.Printf("Durable history events: %d\n", len(events))
+	fmt.Printf("Worker summary: active=%d completed=%d failed=%d latest_run=%s\n",
+		workerSummary.ActiveRuns,
+		workerSummary.CompletedRuns,
+		workerSummary.FailedRuns,
+		workerSummary.LatestRunID,
+	)
+	fmt.Printf("Projected workers: %d\n", len(workers))
+	fmt.Printf("Current active runs: %d\n", len(activeRuns))
+	fmt.Printf("Pending commands for %s: %d\n", persisted.Run.WorkerID, len(pendingCommands))
 	for _, event := range events {
 		fmt.Printf("- #%d %s at %s\n", event.Sequence, event.Kind, event.CreatedAt.Format(time.RFC3339Nano))
 	}

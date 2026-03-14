@@ -872,9 +872,21 @@ _ = runSummary // projected run status, worker, attempt, and terminal kind
 
 runs, _ := orchestrator.ListRuns(ctx, store, orchestrator.RunFilter{TaskID: task.ID})
 _ = runs // projected run summaries for this task
+
+workerSummary, _ := orchestrator.GetWorker(ctx, store, "worker-1")
+_ = workerSummary // projected worker totals and latest durable run attribution
+
+workers, _ := orchestrator.ListWorkers(ctx, store, orchestrator.WorkerFilter{})
+_ = workers // projected worker summaries across the durable store
+
+activeRuns, _ := orchestrator.ListActiveRuns(ctx, store, orchestrator.ActiveRunFilter{WorkerID: "worker-1"})
+_ = activeRuns // current running tasks for this worker from task store state
+
+pendingCommands, _ := orchestrator.ListPendingCommandsForWorker(ctx, store, "worker-1")
+_ = pendingCommands // currently claimable durable commands for this worker
 ```
 
-See [`examples/orchestrator_sqlite/main.go`](examples/orchestrator_sqlite/main.go) for a full runnable SQLite example that reopens the store and inspects durable event history after task completion.
+See [`examples/orchestrator_sqlite/main.go`](examples/orchestrator_sqlite/main.go) for a full runnable SQLite example that reopens the store, inspects durable history, and queries worker/current-state projections.
 
 ### Multi-Agent Team Swarms
 
