@@ -362,3 +362,50 @@ func TestNewWorkflowRunStateDecodesSnapshotAndTraceSteps(t *testing.T) {
 		t.Fatalf("unexpected deps json %q", got.DepsJSON)
 	}
 }
+
+func TestNewWorkflowRunState_PreservesInputParentRunIDWhenSnapshotOmitsIt(t *testing.T) {
+	snapshot, err := core.EncodeRunSnapshot(&core.RunSnapshot{
+		RunID:   "legacy-run",
+		Prompt:  "resume",
+		RunStep: 2,
+	})
+	if err != nil {
+		t.Fatalf("encode snapshot: %v", err)
+	}
+
+	type summary struct {
+		RunID       string
+		ParentRunID string
+	}
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.ExecuteWorkflow(func(ctx workflow.Context) (summary, error) {
+		state, err := newWorkflowRunState(ctx, WorkflowInput{
+			Prompt:      "resume",
+			ParentRunID: "parent-run",
+			Snapshot:    snapshot,
+		})
+		if err != nil {
+			return summary{}, err
+		}
+		return summary{
+			RunID:       state.RunID,
+			ParentRunID: state.ParentRunID,
+		}, nil
+	})
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+
+	var got summary
+	if err := env.GetWorkflowResult(&got); err != nil {
+		t.Fatalf("get workflow result: %v", err)
+	}
+	if got.RunID != "legacy-run" {
+		t.Fatalf("expected restored RunID %q, got %q", "legacy-run", got.RunID)
+	}
+	if got.ParentRunID != "parent-run" {
+		t.Fatalf("expected ParentRunID %q, got %q", "parent-run", got.ParentRunID)
+	}
+}

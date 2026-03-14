@@ -71,7 +71,9 @@ func newWorkflowRunState(ctx workflow.Context, input WorkflowInput) (*workflowRu
 	if snap.RunID != "" {
 		state.RunID = snap.RunID
 	}
-	state.ParentRunID = snap.ParentRunID
+	if snap.ParentRunID != "" {
+		state.ParentRunID = snap.ParentRunID
+	}
 	if !snap.RunStartTime.IsZero() {
 		state.RunStartTime = snap.RunStartTime
 	}

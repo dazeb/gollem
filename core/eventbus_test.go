@@ -300,6 +300,9 @@ func TestEventBus_IterPublishesLifecycleEvents(t *testing.T) {
 		WithEventBus[string](bus),
 	)
 	iter := agent.Iter(context.Background(), "iter task")
+	if startCount.Load() != 0 {
+		t.Fatalf("expected no RunStartedEvent before first Next, got %d", startCount.Load())
+	}
 	for !iter.Done() {
 		if _, err := iter.Next(); err != nil {
 			t.Fatal(err)
@@ -314,6 +317,63 @@ func TestEventBus_IterPublishesLifecycleEvents(t *testing.T) {
 	}
 	if completeCount.Load() != 1 {
 		t.Fatalf("expected 1 RunCompletedEvent, got %d", completeCount.Load())
+	}
+}
+
+func TestEventBus_IterClosePublishesCompletionForStartedRun(t *testing.T) {
+	bus := NewEventBus()
+	type params struct {
+		N int `json:"n"`
+	}
+
+	var (
+		startEvent    RunStartedEvent
+		completeEvent RunCompletedEvent
+		startCount    atomic.Int32
+		completeCount atomic.Int32
+	)
+	Subscribe(bus, func(e RunStartedEvent) {
+		startEvent = e
+		startCount.Add(1)
+	})
+	Subscribe(bus, func(e RunCompletedEvent) {
+		completeEvent = e
+		completeCount.Add(1)
+	})
+
+	agent := NewAgent[string](
+		NewTestModel(
+			ToolCallResponse("echo", `{"n":1}`),
+			TextResponse("unused"),
+		),
+		WithTools[string](FuncTool[params]("echo", "echo", func(context.Context, params) (string, error) {
+			return "echoed", nil
+		})),
+		WithEventBus[string](bus),
+	)
+
+	iter := agent.Iter(context.Background(), "iter task")
+	if _, err := iter.Next(); err != nil {
+		t.Fatal(err)
+	}
+	if err := iter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if startCount.Load() != 1 {
+		t.Fatalf("expected 1 RunStartedEvent, got %d", startCount.Load())
+	}
+	if completeCount.Load() != 1 {
+		t.Fatalf("expected 1 RunCompletedEvent, got %d", completeCount.Load())
+	}
+	if completeEvent.RunID != startEvent.RunID {
+		t.Fatalf("expected completion RunID %q, got %q", startEvent.RunID, completeEvent.RunID)
+	}
+	if completeEvent.Success {
+		t.Fatal("expected closed iterator to publish unsuccessful completion")
+	}
+	if completeEvent.Error != ErrAgentRunClosed.Error() {
+		t.Fatalf("expected completion error %q, got %q", ErrAgentRunClosed.Error(), completeEvent.Error)
 	}
 }
 
@@ -338,5 +398,31 @@ func TestEventBus_RunStreamDoesNotPublishStartOnBootstrapFailure(t *testing.T) {
 	}
 	if startCount.Load() != 0 {
 		t.Fatalf("expected no RunStartedEvent on bootstrap failure, got %d", startCount.Load())
+	}
+}
+
+func TestEventBus_WithSnapshotPreservesAmbientParentRunIDWhenSnapshotOmitsIt(t *testing.T) {
+	bus := NewEventBus()
+
+	var startEvent RunStartedEvent
+	Subscribe(bus, func(e RunStartedEvent) {
+		startEvent = e
+	})
+
+	agent := NewAgent[string](
+		NewTestModel(TextResponse("resumed")),
+		WithEventBus[string](bus),
+	)
+	snap := &RunSnapshot{
+		RunID:  "legacy-snapshot",
+		Prompt: "before",
+	}
+
+	parentCtx := ContextWithRunID(context.Background(), "parent-run")
+	if _, err := agent.Run(parentCtx, "resume", WithSnapshot(snap)); err != nil {
+		t.Fatal(err)
+	}
+	if startEvent.ParentRunID != "parent-run" {
+		t.Fatalf("expected ambient ParentRunID %q, got %q", "parent-run", startEvent.ParentRunID)
 	}
 }

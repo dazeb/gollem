@@ -37,7 +37,7 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **`FuncTool[P]` with reflection-based JSON Schema** — Create tools from typed Go functions; parameter schemas generated from struct tags
 - **Structured output via "final_result" tool pattern** — Reliable typed extraction across all providers
 - **Streaming with `iter.Seq2`** — Go 1.23+ range-over-function iterators for real-time token streaming
-- **Node-by-node iteration** — Step through the agent loop one model call at a time with `Agent.Iter`
+- **Node-by-node iteration** — Step through the agent loop one model call at a time with `Agent.Iter`; call `Close()` if you stop iterating early
 
 ### Guardrails & Validation
 - **Input guardrails** — Validate or transform prompts before the agent loop begins; built-in `MaxPromptLength`, `ContentFilter`

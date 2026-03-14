@@ -68,7 +68,9 @@ func (s *RunState) applySnapshot(snap *RunStateSnapshot) {
 	if snap.RunID != "" {
 		s.runID = snap.RunID
 	}
-	s.parentRunID = snap.ParentRunID
+	if snap.ParentRunID != "" {
+		s.parentRunID = snap.ParentRunID
+	}
 	if !snap.RunStartTime.IsZero() {
 		s.startTime = snap.RunStartTime
 	}
