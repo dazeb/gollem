@@ -80,6 +80,15 @@ type TaskFailedEvent struct {
 	FailedAt time.Time
 }
 
+// TaskCanceledEvent is published when a task is canceled.
+type TaskCanceledEvent struct {
+	TaskID     string
+	RunID      string
+	Attempt    int
+	Reason     string
+	CanceledAt time.Time
+}
+
 // ArtifactCreatedEvent is published when an artifact is persisted.
 type ArtifactCreatedEvent struct {
 	ArtifactID  string
@@ -90,4 +99,24 @@ type ArtifactCreatedEvent struct {
 	ContentType string
 	SizeBytes   int
 	CreatedAt   time.Time
+}
+
+// CommandCreatedEvent is published when a durable command is created.
+type CommandCreatedEvent struct {
+	CommandID      string
+	Kind           CommandKind
+	TaskID         string
+	RunID          string
+	TargetWorkerID string
+	CreatedAt      time.Time
+}
+
+// CommandHandledEvent is published when a durable command is handled.
+type CommandHandledEvent struct {
+	CommandID string
+	Kind      CommandKind
+	TaskID    string
+	RunID     string
+	HandledBy string
+	HandledAt time.Time
 }

@@ -16,6 +16,8 @@ type TaskStore interface {
 	DeleteTask(ctx context.Context, id string) error
 	CompleteTask(ctx context.Context, taskID, leaseToken string, outcome *TaskOutcome, now time.Time) (*Task, error)
 	FailTask(ctx context.Context, taskID, leaseToken string, runErr error, now time.Time) (*Task, error)
+	CancelTask(ctx context.Context, taskID, leaseToken, reason string, now time.Time) (*Task, error)
+	RetryTask(ctx context.Context, taskID, reason string, now time.Time) (*Task, error)
 }
 
 // LeaseStore manages task lease inspection and renewal.

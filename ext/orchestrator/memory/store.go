@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,11 +18,14 @@ type Store struct {
 	tasks         map[string]*orchestrator.Task
 	taskOrder     []string
 	leases        map[string]*orchestrator.Lease
+	commands      map[string]*orchestrator.Command
+	commandOrder  []string
 	artifacts     map[string]*orchestrator.Artifact
 	artifactOrder []string
 	nextTask      int
 	nextLease     int
 	nextRun       int
+	nextCommand   int
 	nextArtifact  int
 	eventBus      *core.EventBus
 }
@@ -29,6 +33,7 @@ type Store struct {
 var (
 	_ orchestrator.TaskStore     = (*Store)(nil)
 	_ orchestrator.LeaseStore    = (*Store)(nil)
+	_ orchestrator.CommandStore  = (*Store)(nil)
 	_ orchestrator.ArtifactStore = (*Store)(nil)
 )
 
@@ -47,6 +52,7 @@ func NewStore(opts ...Option) *Store {
 	store := &Store{
 		tasks:     make(map[string]*orchestrator.Task),
 		leases:    make(map[string]*orchestrator.Lease),
+		commands:  make(map[string]*orchestrator.Command),
 		artifacts: make(map[string]*orchestrator.Artifact),
 	}
 	for _, opt := range opts {
@@ -318,6 +324,82 @@ func (s *Store) FailTask(_ context.Context, taskID, leaseToken string, runErr er
 	task.UpdatedAt = task.CompletedAt
 	delete(s.leases, lease.TaskID)
 	s.publishTaskFailed(task)
+	return cloneTask(task), nil
+}
+
+// CancelTask implements orchestrator.TaskStore.
+func (s *Store) CancelTask(_ context.Context, taskID, leaseToken, reason string, now time.Time) (*orchestrator.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, orchestrator.ErrTaskNotFound
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	switch task.Status {
+	case orchestrator.TaskPending:
+		if leaseToken != "" {
+			return nil, orchestrator.ErrLeaseMismatch
+		}
+	case orchestrator.TaskRunning:
+		lease, ok := s.leases[taskID]
+		if !ok {
+			return nil, orchestrator.ErrLeaseNotFound
+		}
+		if !lease.ExpiresAt.After(now) {
+			return nil, orchestrator.ErrLeaseExpired
+		}
+		if leaseToken == "" || lease.Token != leaseToken {
+			return nil, orchestrator.ErrLeaseMismatch
+		}
+	default:
+		return nil, orchestrator.ErrTaskNotCancelable
+	}
+
+	task.Status = orchestrator.TaskCanceled
+	task.Result = nil
+	task.LastError = cancelReason(reason)
+	task.CompletedAt = normalizeNow(now)
+	task.UpdatedAt = task.CompletedAt
+	delete(s.leases, taskID)
+	s.publishTaskCanceled(task)
+	return cloneTask(task), nil
+}
+
+// RetryTask implements orchestrator.TaskStore.
+func (s *Store) RetryTask(_ context.Context, taskID, reason string, now time.Time) (*orchestrator.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, orchestrator.ErrTaskNotFound
+	}
+	if task.Status != orchestrator.TaskFailed && task.Status != orchestrator.TaskCanceled {
+		return nil, orchestrator.ErrTaskNotRetryable
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	lastRunID := ""
+	lastAttempt := task.Attempt
+	if task.Run != nil {
+		lastRunID = task.Run.ID
+	}
+	task.Status = orchestrator.TaskPending
+	task.Result = nil
+	task.LastError = ""
+	task.Run = nil
+	task.StartedAt = time.Time{}
+	task.CompletedAt = time.Time{}
+	task.UpdatedAt = now
+	task.Attempt = 0
+	delete(s.leases, taskID)
+	s.publishTaskRequeued(task, lastRunID, lastAttempt, retryReason(reason))
 	return cloneTask(task), nil
 }
 
@@ -713,6 +795,23 @@ func (s *Store) publishTaskFailed(task *orchestrator.Task) {
 	})
 }
 
+func (s *Store) publishTaskCanceled(task *orchestrator.Task) {
+	if s.eventBus == nil || task == nil {
+		return
+	}
+	runID := ""
+	if task.Run != nil {
+		runID = task.Run.ID
+	}
+	core.PublishAsync(s.eventBus, orchestrator.TaskCanceledEvent{
+		TaskID:     task.ID,
+		RunID:      runID,
+		Attempt:    task.Attempt,
+		Reason:     task.LastError,
+		CanceledAt: task.CompletedAt,
+	})
+}
+
 func (s *Store) validateTaskDependencies(blocks, blockedBy []string) error {
 	for _, taskID := range blocks {
 		if _, ok := s.tasks[taskID]; !ok {
@@ -847,4 +946,18 @@ func removeString(slice []string, target string) []string {
 func isRetryable(err error) bool {
 	var retryable *orchestrator.RetryableError
 	return errors.As(err, &retryable)
+}
+
+func cancelReason(reason string) string {
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		return trimmed
+	}
+	return "task canceled"
+}
+
+func retryReason(reason string) string {
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		return "command retry: " + trimmed
+	}
+	return "command retry"
 }

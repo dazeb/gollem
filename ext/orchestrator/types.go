@@ -15,6 +15,7 @@ const (
 	TaskRunning   TaskStatus = "running"
 	TaskCompleted TaskStatus = "completed"
 	TaskFailed    TaskStatus = "failed"
+	TaskCanceled  TaskStatus = "canceled"
 )
 
 var (
@@ -22,11 +23,17 @@ var (
 	ErrTaskDependencyNotFound = errors.New("orchestrator: task dependency not found")
 	ErrTaskBlocked            = errors.New("orchestrator: task blocked")
 	ErrNoReadyTask            = errors.New("orchestrator: no ready task")
+	ErrTaskNotCancelable      = errors.New("orchestrator: task not cancelable")
+	ErrTaskNotRetryable       = errors.New("orchestrator: task not retryable")
 	ErrArtifactNotFound       = errors.New("orchestrator: artifact not found")
 	ErrArtifactTaskRequired   = errors.New("orchestrator: artifact task id required")
 	ErrLeaseNotFound          = errors.New("orchestrator: lease not found")
 	ErrLeaseExpired           = errors.New("orchestrator: lease expired")
 	ErrLeaseMismatch          = errors.New("orchestrator: lease token mismatch")
+	ErrCommandNotFound        = errors.New("orchestrator: command not found")
+	ErrNoPendingCommand       = errors.New("orchestrator: no pending command")
+	ErrCommandClaimMismatch   = errors.New("orchestrator: command claim mismatch")
+	ErrInvalidCommand         = errors.New("orchestrator: invalid command")
 )
 
 // RetryableError marks a task failure that should be requeued while attempts remain.

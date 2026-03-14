@@ -22,6 +22,11 @@ type SchedulerConfig struct {
 	OnError            func(error)
 }
 
+type activeTaskRun struct {
+	claim  *ClaimedTask
+	cancel context.CancelFunc
+}
+
 // DefaultSchedulerConfig returns sane defaults for in-process orchestration.
 func DefaultSchedulerConfig() SchedulerConfig {
 	leaseTTL := 30 * time.Second
@@ -87,13 +92,16 @@ func WithSchedulerErrorHandler(fn func(error)) SchedulerOption {
 
 // Scheduler polls for ready tasks, acquires leases, and runs them through a Runner.
 type Scheduler struct {
-	tasks  TaskStore
-	leases LeaseStore
-	runner Runner
-	cfg    SchedulerConfig
+	tasks    TaskStore
+	leases   LeaseStore
+	commands CommandStore
+	runner   Runner
+	cfg      SchedulerConfig
 
-	slots chan struct{}
-	wg    sync.WaitGroup
+	slots    chan struct{}
+	wg       sync.WaitGroup
+	activeMu sync.Mutex
+	active   map[string]activeTaskRun
 }
 
 // NewScheduler constructs a scheduler over a task store, lease store, and runner.
@@ -135,11 +143,13 @@ func NewScheduler(tasks TaskStore, leases LeaseStore, runner Runner, opts ...Sch
 	}
 
 	return &Scheduler{
-		tasks:  tasks,
-		leases: leases,
-		runner: runner,
-		cfg:    cfg,
-		slots:  make(chan struct{}, cfg.MaxConcurrentRuns),
+		tasks:    tasks,
+		leases:   leases,
+		commands: inferCommandStore(tasks),
+		runner:   runner,
+		cfg:      cfg,
+		slots:    make(chan struct{}, cfg.MaxConcurrentRuns),
+		active:   make(map[string]activeTaskRun),
 	}
 }
 
@@ -150,6 +160,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	defer s.wg.Wait()
 
 	for {
+		if err := s.processCommands(ctx); err != nil {
+			return err
+		}
 		if err := s.dispatch(ctx); err != nil {
 			return err
 		}
@@ -189,6 +202,8 @@ func (s *Scheduler) runClaim(ctx context.Context, claim *ClaimedTask) {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	s.registerActiveClaim(claim, cancel)
+	defer s.unregisterActiveClaim(claim)
 
 	updateCtx := context.WithoutCancel(runCtx)
 	done := make(chan struct{})
@@ -285,4 +300,141 @@ func (s *Scheduler) releaseSlot() {
 
 func isLeaseLoss(err error) bool {
 	return errors.Is(err, ErrLeaseNotFound) || errors.Is(err, ErrLeaseExpired) || errors.Is(err, ErrLeaseMismatch)
+}
+
+func (s *Scheduler) processCommands(ctx context.Context) error {
+	if s.commands == nil {
+		return nil
+	}
+	updateCtx := context.WithoutCancel(ctx)
+	for {
+		command, err := s.commands.ClaimPendingCommand(ctx, ClaimCommandRequest{
+			WorkerID: s.cfg.WorkerID,
+			Now:      s.cfg.Now(),
+		})
+		if err != nil {
+			if errors.Is(err, ErrNoPendingCommand) {
+				return nil
+			}
+			return err
+		}
+		if err := s.handleCommand(updateCtx, command); err != nil {
+			if releaseErr := s.commands.ReleaseCommand(updateCtx, command.ID, command.ClaimToken); releaseErr != nil && !errors.Is(releaseErr, ErrCommandClaimMismatch) {
+				s.cfg.OnError(releaseErr)
+			}
+			return err
+		}
+	}
+}
+
+func (s *Scheduler) handleCommand(ctx context.Context, command *Command) error {
+	if command == nil {
+		return nil
+	}
+	now := s.cfg.Now()
+	switch command.Kind {
+	case CommandCancelTask:
+		if err := s.applyCancelTask(ctx, command, now); err != nil {
+			return err
+		}
+	case CommandRetryTask:
+		if err := s.applyRetryTask(ctx, command, now); err != nil {
+			return err
+		}
+	default:
+		return ErrInvalidCommand
+	}
+	_, err := s.commands.HandleCommand(ctx, command.ID, command.ClaimToken, s.cfg.WorkerID, now)
+	return err
+}
+
+func (s *Scheduler) applyCancelTask(ctx context.Context, command *Command, now time.Time) error {
+	task, err := s.tasks.GetTask(ctx, command.TaskID)
+	if err != nil {
+		if errors.Is(err, ErrTaskNotFound) {
+			return nil
+		}
+		return err
+	}
+	switch task.Status {
+	case TaskPending:
+		_, err = s.tasks.CancelTask(ctx, task.ID, "", command.Reason, now)
+		if errors.Is(err, ErrTaskNotCancelable) {
+			return nil
+		}
+		return err
+	case TaskRunning:
+		lease, err := s.leases.GetLease(ctx, task.ID)
+		if err != nil {
+			if errors.Is(err, ErrLeaseNotFound) || errors.Is(err, ErrLeaseExpired) {
+				return nil
+			}
+			return err
+		}
+		if _, err := s.tasks.CancelTask(ctx, task.ID, lease.Token, command.Reason, now); err != nil && !errors.Is(err, ErrTaskNotCancelable) {
+			return err
+		}
+		if active, ok := s.activeRun(task.ID); ok {
+			active.cancel()
+		}
+		return nil
+	case TaskCompleted, TaskFailed, TaskCanceled:
+		return nil
+	default:
+		return nil
+	}
+}
+
+func (s *Scheduler) applyRetryTask(ctx context.Context, command *Command, now time.Time) error {
+	task, err := s.tasks.GetTask(ctx, command.TaskID)
+	if err != nil {
+		if errors.Is(err, ErrTaskNotFound) {
+			return nil
+		}
+		return err
+	}
+	switch task.Status {
+	case TaskFailed, TaskCanceled:
+		_, err = s.tasks.RetryTask(ctx, task.ID, command.Reason, now)
+		if errors.Is(err, ErrTaskNotRetryable) {
+			return nil
+		}
+		return err
+	case TaskPending, TaskRunning, TaskCompleted:
+		return nil
+	default:
+		return nil
+	}
+}
+
+func (s *Scheduler) registerActiveClaim(claim *ClaimedTask, cancel context.CancelFunc) {
+	if claim == nil || claim.Task == nil || cancel == nil {
+		return
+	}
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	s.active[claim.Task.ID] = activeTaskRun{claim: claim, cancel: cancel}
+}
+
+func (s *Scheduler) unregisterActiveClaim(claim *ClaimedTask) {
+	if claim == nil || claim.Task == nil {
+		return
+	}
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	delete(s.active, claim.Task.ID)
+}
+
+func (s *Scheduler) activeRun(taskID string) (activeTaskRun, bool) {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	active, ok := s.active[taskID]
+	return active, ok
+}
+
+func inferCommandStore(tasks TaskStore) CommandStore {
+	if commands, ok := tasks.(CommandStore); ok {
+		return commands
+	}
+	return nil
 }
