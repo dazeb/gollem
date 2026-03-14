@@ -654,6 +654,55 @@ func TestScheduler_HandlesRetryCommandAndRunsTaskAgain(t *testing.T) {
 	}
 }
 
+func TestScheduler_IgnoresContextCancellationFromContextAwareStore(t *testing.T) {
+	store := &cancelAwareStore{Store: memstore.NewStore()}
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+		t.Fatal("runner should not be called")
+		return nil, nil
+	})
+
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithLeaseTTL(50*time.Millisecond),
+		orchestrator.WithLeaseRenewInterval(10*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error after context-aware cancel: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
+type cancelAwareStore struct {
+	*memstore.Store
+}
+
+func (s *cancelAwareStore) ClaimReadyTask(ctx context.Context, req orchestrator.ClaimTaskRequest) (*orchestrator.ClaimedTask, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.Store.ClaimReadyTask(ctx, req)
+}
+
+func (s *cancelAwareStore) ClaimPendingCommand(ctx context.Context, req orchestrator.ClaimCommandRequest) (*orchestrator.Command, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.Store.ClaimPendingCommand(ctx, req)
+}
+
 func waitForTaskStatus(t *testing.T, store orchestrator.TaskStore, taskID string, status orchestrator.TaskStatus) *orchestrator.Task {
 	t.Helper()
 

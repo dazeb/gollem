@@ -161,9 +161,15 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	for {
 		if err := s.processCommands(ctx); err != nil {
+			if shouldStopScheduler(ctx, err) {
+				return nil
+			}
 			return err
 		}
 		if err := s.dispatch(ctx); err != nil {
+			if shouldStopScheduler(ctx, err) {
+				return nil
+			}
 			return err
 		}
 
@@ -306,6 +312,13 @@ func (s *Scheduler) releaseSlot() {
 
 func isLeaseLoss(err error) bool {
 	return errors.Is(err, ErrLeaseNotFound) || errors.Is(err, ErrLeaseExpired) || errors.Is(err, ErrLeaseMismatch)
+}
+
+func shouldStopScheduler(ctx context.Context, err error) bool {
+	if ctx == nil || ctx.Err() == nil || err == nil {
+		return false
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (s *Scheduler) processCommands(ctx context.Context) error {
