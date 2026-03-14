@@ -198,11 +198,10 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	}
 
 	// Team mode: leader agent with tools to spawn teammates and coordinate work.
-	var teamLeaderMW core.AgentMiddleware
 	if cfg.TeamMode && cfg.Model != nil {
 		// Reuse an existing team from the session so that spawned teammates
-		// survive across Run() calls and the leader can still receive their
-		// messages on subsequent turns.
+		// survive across Run() calls and continue claiming orchestrator-backed
+		// team tasks across turns.
 		var t *team.Team
 		if cfg.Session != nil && cfg.Session.Team != nil {
 			t = cfg.Session.Team
@@ -244,8 +243,6 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 			}
 		}
 		teamRef = t
-		// Register (or re-register) the leader so workers can send messages to it.
-		teamLeaderMW = t.RegisterLeader("leader")
 		extraTools = append(extraTools, team.LeaderTools(t)...)
 		systemPrompt += "\n\n" + team.LeaderSystemPrompt("coding-team")
 	}
@@ -398,11 +395,6 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// Keep kickoff outside the fixed append block so middleware state
 		// persists for the whole run (turn counters, spawn tracking).
 		opts = append(opts, core.WithAgentMiddleware[string](kickoffMW))
-	}
-
-	// Team leader middleware: drain incoming messages from workers between turns.
-	if !teamLeaderMW.IsZero() {
-		opts = append(opts, core.WithAgentMiddleware[string](teamLeaderMW))
 	}
 
 	// Time budget awareness: warn the agent when approaching timeout.

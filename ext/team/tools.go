@@ -192,8 +192,13 @@ func taskFailCurrentTool(t *Team, tm *Teammate) core.Tool {
 			if task.Status != orchestrator.TaskRunning || task.Run == nil || task.Run.ID != active.RunID {
 				return nil, fmt.Errorf("current task is no longer active")
 			}
-			if _, err := t.store.FailTask(ctx, active.TaskID, active.LeaseToken, fmt.Errorf("%s", params.Reason), time.Now()); err != nil {
+			persistCtx := context.WithoutCancel(ctx)
+			if _, err := t.store.FailTask(persistCtx, active.TaskID, active.LeaseToken, fmt.Errorf("%s", params.Reason), time.Now()); err != nil {
 				return nil, err
+			}
+			tm.markTaskSettled(active.TaskID)
+			if !tm.abortCurrentRun(&failedCurrentTaskError{Reason: params.Reason}) {
+				return nil, fmt.Errorf("current run is not active")
 			}
 			return map[string]any{
 				"status":  "failed",

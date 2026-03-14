@@ -77,13 +77,12 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 
 ### Multi-Agent Team Swarms
 - **Durable task orchestration** — Task stores, lease-based claiming, schedulers, runner adapters, task-scoped artifacts, and durable event history for work coordination (`ext/orchestrator`)
-- **Team orchestration** — Spawn concurrent teammate agents as goroutines with orchestrator-backed shared tasks, best-effort mailbox messaging, out-of-band shutdown control, and automatic lifecycle management (`ext/team`)
+- **Team orchestration** — Spawn concurrent teammate agents as goroutines with orchestrator-backed task claiming, teammate lifecycle control, and automatic task execution (`ext/team`)
 - **Dynamic personality generation** — LLM generates task-specific system prompts for each subagent and teammate before they start, dramatically improving agent effectiveness (`modelutil`)
 - **Cached personality generation** — SHA256-keyed cache prevents redundant LLM calls when identical tasks are delegated multiple times
-- **Mailbox messaging** — Best-effort buffered note delivery with automatic draining via agent middleware; `send_message` returns an error if the recipient mailbox is full
-- **Shared team tasks** — Orchestrator-backed task tracking with claims, completions, blocking dependencies, and metadata
-- **Teammate lifecycle** — Starting, running, idle, shutting down, stopped states with automatic error recovery and leader notification
-- **Team-aware agent middleware** — Injects pending teammate notes as `UserPromptPart` between model calls while team control signals remain out-of-band
+- **Shared team tasks** — Team tasks live in the orchestrator store with assignees, lease-backed claiming, results, and artifacts
+- **Teammate lifecycle** — Starting, running, idle, shutting down, and stopped states over orchestrator-backed task execution
+- **Thin team sugar** — `ext/team` is a convenience layer over orchestrator primitives, not a second coordination model
 
 ### Composition & Multi-Agent
 - **Agent cloning** — `Clone()` creates independent copies with additional options
@@ -110,7 +109,7 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **Unified `StreamText`** — Single function with `StreamTextOptions` for all modes
 
 ### Extensions
-- **Multi-agent team swarms** — Concurrent teammate agents with best-effort mailbox messaging, orchestrator-backed shared tasks, dynamic personality generation, and automatic lifecycle management (`ext/team`)
+- **Multi-agent team swarms** — Concurrent teammate agents with orchestrator-backed task claiming, dynamic personality generation, and automatic lifecycle management (`ext/team`)
 - **Dynamic personality generation** — LLM-generated task-specific system prompts for subagents and teammates with SHA256-keyed caching (`modelutil`)
 - **Code mode (monty)** — LLM writes a single Python script that calls N tools as functions; executes in a WASM sandbox via [monty-go](https://github.com/fugue-labs/monty-go) — N tool calls in 1 model round-trip
 - **Graph workflow engine** — Typed state machines with conditional branching, fan-out/map-reduce, cycle detection, and Mermaid export
@@ -310,9 +309,13 @@ Use `AdoptWithWait(...)` instead when your code already wraps `cmd.Wait()` behin
 
 ### Multi-Agent Team Swarm
 
-Spawn concurrent teammates that coordinate through best-effort mailbox notes and orchestrator-backed shared tasks. Each teammate gets a dynamically generated personality tailored to its specific task — the LLM itself writes the system prompt.
+Spawn concurrent teammates that coordinate through orchestrator-backed team tasks. Each teammate gets a dynamically generated personality tailored to its specific task — the LLM itself writes the system prompt.
 
-For durable worker coordination without the mailbox/team layer, use `ext/orchestrator` directly. It owns tasks, leases, schedulers, runner adapters, task-scoped artifacts, and durable history.
+For durable worker coordination without the team sugar layer, use `ext/orchestrator` directly. It owns tasks, leases, schedulers, runner adapters, task-scoped artifacts, and durable history.
+
+`ext/team` is intentionally thin: teammates claim tasks from an orchestrator-backed store, successful runs complete the claimed task automatically, and blocked work is reported by failing the current task. There is no `TaskBoard` API or mailbox-style note channel in the current model.
+
+If you want durable team state across restarts, pass a dedicated orchestrator backend in `team.TeamConfig.Store` such as `ext/orchestrator/sqlite`. The store should back one team instance so its tasks, commands, recovery sweeps, and history stay scoped together.
 
 ```go
 import (
@@ -331,29 +334,23 @@ t := team.NewTeam(team.TeamConfig{
     ),
 })
 
-// Register the leader — returns middleware that auto-injects teammate notes.
-middleware := t.RegisterLeader("lead")
 leader := gollem.NewAgent[string](model,
-    gollem.WithAgentMiddleware[string](middleware),
     gollem.WithTools[string](team.LeaderTools(t)...),
 )
 
-// Teammates run as goroutines with fresh context windows.
-// Each gets a unique, LLM-generated system prompt matching its task.
+// Teammates run as goroutines with fresh context windows and claim
+// orchestrator-backed team tasks assigned to them.
 t.SpawnTeammate(ctx, "reviewer", "Review auth module for security vulnerabilities")
 t.SpawnTeammate(ctx, "tester", "Write comprehensive tests for the payment flow")
 t.SpawnTeammate(ctx, "docs", "Update API documentation for the new endpoints")
 
-// The leader coordinates — teammate notes arrive automatically between
-// model turns via the team-awareness middleware.
+// The leader coordinates by creating and inspecting tasks.
 result, _ := leader.Run(ctx, "Coordinate the code review across all teammates")
 
 t.Shutdown(ctx)
 ```
 
 If your teammate toolset contains per-worker state, use `team.TeamConfig.ToolsetFactory` instead of sharing a single `Toolset`. This is the right pattern for stateful helpers such as background-process managers. `codetool.AgentOptions(...)` handles that automatically in team mode.
-
-Mailbox delivery is best-effort: `send_message` fails if the recipient mailbox is full. Shutdown is handled separately from mailbox note delivery so an in-flight worker cannot lose the request when its mailbox is drained for prompt injection.
 
 ### Multi-Agent with Event Coordination
 
@@ -910,55 +907,56 @@ See [`examples/orchestrator_sqlite/main.go`](examples/orchestrator_sqlite/main.g
 
 ### Multi-Agent Team Swarms
 
-Spawn teams of concurrent agents that coordinate through best-effort mailbox messaging and orchestrator-backed shared tasks. Each teammate runs as a goroutine with its own context window and tools.
+Spawn teams of concurrent agents that coordinate through orchestrator-backed shared tasks. Each teammate runs as a goroutine with its own context window and tools.
 
-If you want durable work coordination without teammate mailboxes, use `ext/orchestrator` directly and treat `ext/team` as convenience sugar.
+If you want durable work coordination without the team sugar layer, use `ext/orchestrator` directly and treat `ext/team` as convenience sugar.
+
+The source of truth is the underlying orchestrator store. `ext/team` adds teammate lifecycle helpers and task-oriented prompts on top of that store; it does not maintain a parallel task board or note-delivery subsystem.
 
 ```go
 import "github.com/fugue-labs/gollem/ext/team"
 
-// Create a team. Teammates get coding tools + team coordination tools.
+// Create a team. Teammates get coding tools plus thin task-oriented team tools.
 t := team.NewTeam(team.TeamConfig{
     Name:    "refactor",
     Leader:  "lead",
     Model:   model,
     Toolset: codingTools,
+    // Optional: inject a dedicated durable backend for this team.
+    // Store: orchestratorsqlite.NewStore("refactor-team.db"),
 })
-
-// Leader's middleware auto-injects teammate notes between turns.
-middleware := t.RegisterLeader("lead")
 
 // Spawn teammates — each runs concurrently in its own goroutine.
 t.SpawnTeammate(ctx, "analyzer", "Analyze the codebase for dead code and unused imports")
 t.SpawnTeammate(ctx, "migrator", "Migrate database queries from raw SQL to the ORM")
 
-// Teammates can send notes, create/claim/complete tasks, and coordinate.
-// The leader sees pending notes via the team-awareness middleware.
+// The leader coordinates through orchestrator-backed tasks.
 leader := gollem.NewAgent[string](model,
-    gollem.WithAgentMiddleware[string](middleware),
     gollem.WithTools[string](team.LeaderTools(t)...),
 )
 result, _ := leader.Run(ctx, "Coordinate the refactoring effort")
 
-// Graceful shutdown — requests out-of-band shutdown, then waits for completion.
+// Graceful shutdown — asks teammates to stop after their current task.
 t.Shutdown(ctx)
 ```
 
-**Legacy task board compatibility view:**
+**Direct orchestrator access:**
 
 ```go
-// Team.TaskBoard() is a legacy compatibility adapter over orchestrator-backed tasks.
-// TaskBoard.Update and the With* option helpers are deprecated compatibility.
-board := t.TaskBoard()
+import "github.com/fugue-labs/gollem/ext/orchestrator"
 
-// Create tasks with blocking dependencies.
-id1 := board.Create("Write migration", "Migrate user table to new schema")
-id2 := board.Create("Update tests", "Update test fixtures for new schema")
-board.Update(id2, team.WithAddBlockedBy(id1)) // tests wait for migration
+// ext/team is thin sugar over the orchestrator store it owns.
+store := t.Store()
 
-// Claim and complete tasks.
-board.Claim(id1, "migrator")
-board.Complete(id1, "migrator") // unblocks id2
+// Inspect all current team tasks directly via the orchestrator API.
+tasks, _ := store.ListTasks(ctx, orchestrator.TaskFilter{
+    Kinds: []string{"team"},
+})
+
+// Read artifacts emitted by completed tasks.
+artifacts, _ := store.ListArtifacts(ctx, orchestrator.ArtifactFilter{
+    TaskID: tasks[0].ID,
+})
 ```
 
 ### Dynamic Personality Generation
@@ -1245,7 +1243,7 @@ agent := gollem.NewAgent[string](wrapped)
 | [`examples/multi-agent/delegation`](examples/multi-agent/delegation) | Agent-as-tool delegation |
 | [`examples/deep/context_management`](examples/deep/context_management) | Three-tier context compression |
 | [`examples/graph`](examples/graph) | Graph workflow state machine |
-| [`ext/team`](ext/team) | Multi-agent team swarms with task boards and messaging |
+| [`ext/team`](ext/team) | Multi-agent team swarms as thin sugar over orchestrator tasks |
 
 ## Testing
 
