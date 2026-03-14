@@ -3,6 +3,7 @@ package orchestrator_test
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -95,6 +96,118 @@ func TestScheduler_FailsTask(t *testing.T) {
 	}
 	if failed.Result != nil {
 		t.Fatalf("expected failed task to have nil result, got %+v", failed.Result)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
+func TestScheduler_RetryableErrorRequeuesAndCompletesOnLaterAttempt(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "retry",
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	var attempts atomic.Int32
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
+		attempt := attempts.Add(1)
+		if attempt == 1 {
+			return nil, orchestrator.Retryable(errors.New("temporary"))
+		}
+		return &orchestrator.TaskResult{Output: "done"}, nil
+	})
+
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithLeaseTTL(50*time.Millisecond),
+		orchestrator.WithLeaseRenewInterval(10*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	completed := waitForTaskStatus(t, store, task.ID, orchestrator.TaskCompleted)
+	if attempts.Load() != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts.Load())
+	}
+	if completed.Attempt != 2 {
+		t.Fatalf("expected stored attempt count 2, got %d", completed.Attempt)
+	}
+	if completed.Result == nil || completed.Result.Output != "done" {
+		t.Fatalf("expected completed result after retry, got %+v", completed.Result)
+	}
+	if completed.LastError != "" {
+		t.Fatalf("expected successful retry to clear LastError, got %q", completed.LastError)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("scheduler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scheduler shutdown")
+	}
+}
+
+func TestScheduler_RetryableErrorStopsAtMaxAttempts(t *testing.T) {
+	store := memstore.NewStore()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "prompt",
+		Input:       "retry",
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	var attempts atomic.Int32
+	runner := orchestrator.RunnerFunc(func(context.Context, *orchestrator.ClaimedTask) (*orchestrator.TaskResult, error) {
+		attempts.Add(1)
+		return nil, orchestrator.Retryable(errors.New("temporary"))
+	})
+
+	scheduler := orchestrator.NewScheduler(store, store, runner,
+		orchestrator.WithPollInterval(5*time.Millisecond),
+		orchestrator.WithLeaseTTL(50*time.Millisecond),
+		orchestrator.WithLeaseRenewInterval(10*time.Millisecond),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- scheduler.Run(ctx)
+	}()
+
+	failed := waitForTaskStatus(t, store, task.ID, orchestrator.TaskFailed)
+	if attempts.Load() != 2 {
+		t.Fatalf("expected 2 attempts before exhaustion, got %d", attempts.Load())
+	}
+	if failed.Attempt != 2 {
+		t.Fatalf("expected stored attempt count 2, got %d", failed.Attempt)
+	}
+	if failed.LastError != "temporary" {
+		t.Fatalf("expected terminal error %q, got %q", "temporary", failed.LastError)
 	}
 
 	cancel()

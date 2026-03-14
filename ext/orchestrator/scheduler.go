@@ -215,8 +215,13 @@ func (s *Scheduler) runClaim(ctx context.Context, claim *ClaimedTask) {
 
 	now := s.cfg.Now()
 	if runErr != nil {
-		if _, err := s.tasks.FailTask(updateCtx, claim.Task.ID, claim.Lease.Token, runErr, now); err != nil && !isLeaseLoss(err) {
+		task, err := s.tasks.FailTask(updateCtx, claim.Task.ID, claim.Lease.Token, runErr, now)
+		if err != nil && !isLeaseLoss(err) {
 			s.cfg.OnError(err)
+			return
+		}
+		if err == nil && task != nil && task.Status == TaskPending {
+			return
 		}
 		return
 	}

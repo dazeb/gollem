@@ -44,13 +44,18 @@ func (s *Store) CreateTask(_ context.Context, req orchestrator.CreateTaskRequest
 	task := &orchestrator.Task{
 		ID:          fmt.Sprintf("task-%d", s.nextTask),
 		Kind:        req.Kind,
+		Subject:     req.Subject,
+		Description: req.Description,
 		Input:       req.Input,
 		Status:      orchestrator.TaskPending,
+		Blocks:      cloneStrings(req.Blocks),
+		BlockedBy:   cloneStrings(req.BlockedBy),
 		MaxAttempts: req.MaxAttempts,
 		Metadata:    cloneAnyMap(req.Metadata),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	s.linkTaskDependencies(task)
 	s.tasks[task.ID] = task
 	s.taskOrder = append(s.taskOrder, task.ID)
 	return cloneTask(task), nil
@@ -100,6 +105,9 @@ func (s *Store) ClaimReadyTask(_ context.Context, req orchestrator.ClaimTaskRequ
 	for _, id := range s.taskOrder {
 		task, ok := s.tasks[id]
 		if !ok || !matchesKinds(task, req.Kinds) {
+			continue
+		}
+		if s.isBlocked(task) {
 			continue
 		}
 
@@ -199,6 +207,20 @@ func (s *Store) FailTask(_ context.Context, taskID, leaseToken string, runErr er
 	task, lease, err := s.validateLeaseLocked(taskID, leaseToken, now)
 	if err != nil {
 		return nil, err
+	}
+
+	retryable := false
+	if runErr != nil {
+		retryable = isRetryable(runErr)
+	}
+	if retryable && !s.exhaustedAttempts(task) {
+		task.Status = orchestrator.TaskPending
+		task.Result = nil
+		task.LastError = runErr.Error()
+		task.CompletedAt = time.Time{}
+		task.UpdatedAt = normalizeNow(now)
+		delete(s.leases, lease.TaskID)
+		return cloneTask(task), nil
 	}
 
 	task.Status = orchestrator.TaskFailed
@@ -301,6 +323,36 @@ func matchesFilter(task *orchestrator.Task, filter orchestrator.TaskFilter) bool
 	return matchesKinds(task, filter.Kinds) && matchesStatuses(task, filter.Statuses)
 }
 
+func (s *Store) isBlocked(task *orchestrator.Task) bool {
+	for _, blockerID := range task.BlockedBy {
+		blocker, ok := s.tasks[blockerID]
+		if !ok {
+			continue
+		}
+		if blocker.Status != orchestrator.TaskCompleted {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) exhaustedAttempts(task *orchestrator.Task) bool {
+	return task.MaxAttempts > 0 && task.Attempt >= task.MaxAttempts
+}
+
+func (s *Store) linkTaskDependencies(task *orchestrator.Task) {
+	for _, blockedID := range task.Blocks {
+		if blocked, ok := s.tasks[blockedID]; ok {
+			blocked.BlockedBy = appendUniqueStrings(blocked.BlockedBy, task.ID)
+		}
+	}
+	for _, blockerID := range task.BlockedBy {
+		if blocker, ok := s.tasks[blockerID]; ok {
+			blocker.Blocks = appendUniqueStrings(blocker.Blocks, task.ID)
+		}
+	}
+}
+
 func matchesKinds(task *orchestrator.Task, kinds []string) bool {
 	if len(kinds) == 0 {
 		return true
@@ -367,8 +419,45 @@ func cloneTask(task *orchestrator.Task) *orchestrator.Task {
 		return nil
 	}
 	cp := *task
+	cp.Blocks = cloneStrings(task.Blocks)
+	cp.BlockedBy = cloneStrings(task.BlockedBy)
 	cp.Metadata = cloneAnyMap(task.Metadata)
 	cp.Run = cloneRunRef(task.Run)
 	cp.Result = cloneTaskResult(task.Result)
 	return &cp
+}
+
+func cloneStrings(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make([]string, len(src))
+	copy(cloned, src)
+	return cloned
+}
+
+func appendUniqueStrings(dst []string, values ...string) []string {
+	if len(values) == 0 {
+		return dst
+	}
+	seen := make(map[string]struct{}, len(dst))
+	for _, v := range dst {
+		seen[v] = struct{}{}
+	}
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		dst = append(dst, v)
+	}
+	return dst
+}
+
+func isRetryable(err error) bool {
+	var retryable *orchestrator.RetryableError
+	return errors.As(err, &retryable)
 }

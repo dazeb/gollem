@@ -25,14 +25,47 @@ var (
 	ErrLeaseMismatch = errors.New("orchestrator: lease token mismatch")
 )
 
+// RetryableError marks a task failure that should be requeued while attempts remain.
+type RetryableError struct {
+	Err error
+}
+
+// Error implements error.
+func (e *RetryableError) Error() string {
+	if e == nil || e.Err == nil {
+		return "retryable task failure"
+	}
+	return e.Err.Error()
+}
+
+// Unwrap implements errors.Wrapper.
+func (e *RetryableError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// Retryable wraps err so the scheduler treats the failure as requeueable.
+func Retryable(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &RetryableError{Err: err}
+}
+
 // Task is the durable unit of work managed by the orchestrator.
 type Task struct {
 	ID          string
 	Kind        string
+	Subject     string
+	Description string
 	Input       string
 	Status      TaskStatus
 	Attempt     int
 	MaxAttempts int
+	Blocks      []string
+	BlockedBy   []string
 	Metadata    map[string]any
 	Run         *RunRef
 	Result      *TaskResult
@@ -75,7 +108,11 @@ type TaskResult struct {
 // CreateTaskRequest describes a new task to persist.
 type CreateTaskRequest struct {
 	Kind        string
+	Subject     string
+	Description string
 	Input       string
+	Blocks      []string
+	BlockedBy   []string
 	MaxAttempts int
 	Metadata    map[string]any
 }
