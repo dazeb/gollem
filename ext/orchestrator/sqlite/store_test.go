@@ -799,6 +799,20 @@ func TestStore_RecoverExpiredLeasesRequeuesAndFailsPersistedTasks(t *testing.T) 
 	if !foundFailedRun {
 		t.Fatalf("expected failed recovery record for run %q, got %+v", failClaim.Run.ID, recovered)
 	}
+
+	recoveryEvents, err := orchestrator.ListLeaseRecoveries(context.Background(), store, orchestrator.RecoveryHistoryFilter{})
+	if err != nil {
+		t.Fatalf("ListLeaseRecoveries failed: %v", err)
+	}
+	if len(recoveryEvents) != 2 {
+		t.Fatalf("expected 2 lease recovery events, got %d", len(recoveryEvents))
+	}
+	if recoveryEvents[0].LeaseID != requeueClaim.Lease.ID || !recoveryEvents[0].Requeued || recoveryEvents[0].ResultStatus != orchestrator.TaskPending {
+		t.Fatalf("unexpected first lease recovery event: %+v", recoveryEvents[0])
+	}
+	if recoveryEvents[1].LeaseID != failClaim.Lease.ID || recoveryEvents[1].Requeued || recoveryEvents[1].ResultStatus != orchestrator.TaskFailed {
+		t.Fatalf("unexpected second lease recovery event: %+v", recoveryEvents[1])
+	}
 }
 
 func TestStore_RecoverClaimedCommandsReturnsPersistedCommandToPending(t *testing.T) {
@@ -856,6 +870,17 @@ func TestStore_RecoverClaimedCommandsReturnsPersistedCommandToPending(t *testing
 	}
 	if reclaimed.ID != claimed.ID || reclaimed.ClaimedBy != "worker-a" {
 		t.Fatalf("unexpected reclaimed command after recovery: %+v", reclaimed)
+	}
+
+	recoveryEvents, err := orchestrator.ListCommandRecoveries(context.Background(), store, orchestrator.RecoveryHistoryFilter{})
+	if err != nil {
+		t.Fatalf("ListCommandRecoveries failed: %v", err)
+	}
+	if len(recoveryEvents) != 1 {
+		t.Fatalf("expected 1 command recovery event, got %d", len(recoveryEvents))
+	}
+	if recoveryEvents[0].CommandID != command.ID || recoveryEvents[0].ReleasedBy != "dead-worker" || recoveryEvents[0].Reason != "claim expired" {
+		t.Fatalf("unexpected command recovery event: %+v", recoveryEvents[0])
 	}
 }
 
@@ -1041,6 +1066,17 @@ func TestStore_PersistsCommandLifecycleHistoryAcrossReopen(t *testing.T) {
 	}
 	if timeline.Latest == nil || timeline.Latest.Kind != orchestrator.EventCommandReleased {
 		t.Fatalf("unexpected command timeline latest event: %+v", timeline.Latest)
+	}
+	released, err := orchestrator.DecodeEvent(events[2])
+	if err != nil {
+		t.Fatalf("DecodeEvent released failed: %v", err)
+	}
+	releasedPayload, ok := released.Payload.(*orchestrator.CommandReleasedEvent)
+	if !ok {
+		t.Fatalf("expected CommandReleasedEvent payload, got %T", released.Payload)
+	}
+	if releasedPayload.Recovered || releasedPayload.Reason != "command released" {
+		t.Fatalf("unexpected persisted command release payload: %+v", releasedPayload)
 	}
 }
 

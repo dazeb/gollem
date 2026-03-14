@@ -28,13 +28,31 @@ func (s fakeEventStore) ListEvents(_ context.Context, filter orchestrator.EventF
 		if filter.AfterSequence > 0 && event.Sequence <= filter.AfterSequence {
 			continue
 		}
+		if len(filter.Kinds) > 0 {
+			match := false
+			for _, kind := range filter.Kinds {
+				if event.Kind == kind {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
 		if filter.TaskID != "" && event.TaskID != filter.TaskID {
 			continue
 		}
 		if filter.RunID != "" && event.RunID != filter.RunID {
 			continue
 		}
+		if filter.LeaseID != "" && event.LeaseID != filter.LeaseID {
+			continue
+		}
 		if filter.CommandID != "" && event.CommandID != filter.CommandID {
+			continue
+		}
+		if filter.ArtifactID != "" && event.ArtifactID != filter.ArtifactID {
 			continue
 		}
 		out = append(out, cloneRecord(event))
@@ -357,6 +375,124 @@ func TestDecodeEventAndTimelineHelpers(t *testing.T) {
 	}
 	if len(filteredWorkers) != 1 || filteredWorkers[0].ID != "worker-b" {
 		t.Fatalf("expected filtered workers to return worker-b, got %+v", filteredWorkers)
+	}
+}
+
+func TestRecoveryHistoryHelpers(t *testing.T) {
+	base := time.Unix(20, 0).UTC()
+	manualLeaseRelease := mustRecord(t, &orchestrator.EventRecord{
+		Sequence:  1,
+		ID:        "event-lease-manual",
+		Kind:      orchestrator.EventLeaseReleased,
+		TaskID:    "task-1",
+		RunID:     "run-1",
+		LeaseID:   "lease-1",
+		CreatedAt: base,
+	}, orchestrator.LeaseReleasedEvent{
+		TaskID:       "task-1",
+		RunID:        "run-1",
+		LeaseID:      "lease-1",
+		WorkerID:     "worker-a",
+		ReleasedAt:   base,
+		Requeued:     true,
+		ResultStatus: orchestrator.TaskPending,
+		Reason:       "lease released",
+		Recovered:    false,
+	})
+	recoveredLeaseRelease := mustRecord(t, &orchestrator.EventRecord{
+		Sequence:  2,
+		ID:        "event-lease-recovered",
+		Kind:      orchestrator.EventLeaseReleased,
+		TaskID:    "task-2",
+		RunID:     "run-2",
+		LeaseID:   "lease-2",
+		CreatedAt: base.Add(time.Second),
+	}, orchestrator.LeaseReleasedEvent{
+		TaskID:       "task-2",
+		RunID:        "run-2",
+		LeaseID:      "lease-2",
+		WorkerID:     "worker-b",
+		ReleasedAt:   base.Add(time.Second),
+		Requeued:     false,
+		ResultStatus: orchestrator.TaskFailed,
+		Reason:       "lease expired",
+		Recovered:    true,
+	})
+	manualCommandRelease := mustRecord(t, &orchestrator.EventRecord{
+		Sequence:  3,
+		ID:        "event-command-manual",
+		Kind:      orchestrator.EventCommandReleased,
+		TaskID:    "task-1",
+		RunID:     "run-1",
+		CommandID: "command-1",
+		CreatedAt: base.Add(2 * time.Second),
+	}, orchestrator.CommandReleasedEvent{
+		CommandID:  "command-1",
+		Kind:       orchestrator.CommandCancelTask,
+		TaskID:     "task-1",
+		RunID:      "run-1",
+		ReleasedBy: "worker-a",
+		ReleasedAt: base.Add(2 * time.Second),
+		Reason:     "command released",
+		Recovered:  false,
+	})
+	recoveredCommandRelease := mustRecord(t, &orchestrator.EventRecord{
+		Sequence:  4,
+		ID:        "event-command-recovered",
+		Kind:      orchestrator.EventCommandReleased,
+		TaskID:    "task-2",
+		RunID:     "run-2",
+		CommandID: "command-2",
+		CreatedAt: base.Add(3 * time.Second),
+	}, orchestrator.CommandReleasedEvent{
+		CommandID:  "command-2",
+		Kind:       orchestrator.CommandAbortRun,
+		TaskID:     "task-2",
+		RunID:      "run-2",
+		ReleasedBy: "worker-b",
+		ReleasedAt: base.Add(3 * time.Second),
+		Reason:     "claim expired",
+		Recovered:  true,
+	})
+
+	store := fakeEventStore{events: []*orchestrator.EventRecord{
+		manualLeaseRelease,
+		recoveredLeaseRelease,
+		manualCommandRelease,
+		recoveredCommandRelease,
+	}}
+
+	leaseRecoveries, err := orchestrator.ListLeaseRecoveries(context.Background(), store, orchestrator.RecoveryHistoryFilter{})
+	if err != nil {
+		t.Fatalf("ListLeaseRecoveries failed: %v", err)
+	}
+	if len(leaseRecoveries) != 1 {
+		t.Fatalf("expected 1 recovered lease event, got %d", len(leaseRecoveries))
+	}
+	if leaseRecoveries[0].LeaseID != "lease-2" || leaseRecoveries[0].ResultStatus != orchestrator.TaskFailed {
+		t.Fatalf("unexpected recovered lease summary: %+v", leaseRecoveries[0])
+	}
+
+	commandRecoveries, err := orchestrator.ListCommandRecoveries(context.Background(), store, orchestrator.RecoveryHistoryFilter{})
+	if err != nil {
+		t.Fatalf("ListCommandRecoveries failed: %v", err)
+	}
+	if len(commandRecoveries) != 1 {
+		t.Fatalf("expected 1 recovered command event, got %d", len(commandRecoveries))
+	}
+	if commandRecoveries[0].CommandID != "command-2" || commandRecoveries[0].Reason != "claim expired" {
+		t.Fatalf("unexpected recovered command summary: %+v", commandRecoveries[0])
+	}
+
+	filtered, err := orchestrator.ListCommandRecoveries(context.Background(), store, orchestrator.RecoveryHistoryFilter{
+		AfterSequence: 3,
+		Limit:         1,
+	})
+	if err != nil {
+		t.Fatalf("ListCommandRecoveries filtered failed: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].Sequence != 4 {
+		t.Fatalf("unexpected filtered recovered commands: %+v", filtered)
 	}
 }
 

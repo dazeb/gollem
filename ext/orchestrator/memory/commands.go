@@ -150,7 +150,7 @@ func (s *Store) ReleaseCommand(_ context.Context, id, claimToken string) error {
 	command.ClaimedBy = ""
 	command.ClaimToken = ""
 	command.ClaimedAt = time.Time{}
-	s.publishCommandReleased(command, releasedBy, releasedAt)
+	s.publishCommandReleased(command, releasedBy, releasedAt, "command released", false)
 	return nil
 }
 
@@ -179,7 +179,7 @@ func (s *Store) RecoverClaimedCommands(_ context.Context, claimedBefore, now tim
 		command.ClaimedBy = ""
 		command.ClaimToken = ""
 		command.ClaimedAt = time.Time{}
-		s.publishCommandReleased(command, releasedBy, now)
+		s.publishCommandReleased(command, releasedBy, now, "claim expired", true)
 		recovered = append(recovered, &orchestrator.CommandRecovery{
 			Command:     cloneCommand(command),
 			RecoveredAt: now,
@@ -420,7 +420,7 @@ func (s *Store) publishCommandClaimed(command *orchestrator.Command) {
 	})
 }
 
-func (s *Store) publishCommandReleased(command *orchestrator.Command, releasedBy string, releasedAt time.Time) {
+func (s *Store) publishCommandReleased(command *orchestrator.Command, releasedBy string, releasedAt time.Time, reason string, recovered bool) {
 	if s.eventBus == nil || command == nil {
 		return
 	}
@@ -431,6 +431,8 @@ func (s *Store) publishCommandReleased(command *orchestrator.Command, releasedBy
 		RunID:      command.RunID,
 		ReleasedBy: releasedBy,
 		ReleasedAt: releasedAt,
+		Reason:     reason,
+		Recovered:  recovered,
 	})
 }
 

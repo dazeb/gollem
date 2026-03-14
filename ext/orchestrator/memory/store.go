@@ -461,19 +461,22 @@ func (s *Store) ReleaseLease(_ context.Context, taskID, leaseToken string) error
 	if lease.Token != leaseToken {
 		return orchestrator.ErrLeaseMismatch
 	}
+	releasedAt := time.Now().UTC()
 	if task, ok := s.tasks[taskID]; ok && task.Status == orchestrator.TaskRunning {
 		released := cloneLease(lease)
 		lastRunID, lastAttempt := s.requeueTaskLocked(task, taskID, time.Now(), true)
-		s.publishLeaseReleased(released, lastRunID, true)
+		s.publishLeaseReleased(released, lastRunID, true, orchestrator.TaskPending, "lease released", false, releasedAt)
 		s.publishTaskRequeued(task, lastRunID, lastAttempt, "lease released")
 		return nil
 	}
 	delete(s.leases, taskID)
 	runID := ""
+	resultStatus := orchestrator.TaskStatus("")
 	if task, ok := s.tasks[taskID]; ok && task.Run != nil {
 		runID = task.Run.ID
+		resultStatus = task.Status
 	}
-	s.publishLeaseReleased(cloneLease(lease), runID, false)
+	s.publishLeaseReleased(cloneLease(lease), runID, false, resultStatus, "lease released", false, releasedAt)
 	return nil
 }
 
@@ -513,6 +516,10 @@ func (s *Store) RecoverExpiredLeases(_ context.Context, now time.Time) ([]*orche
 
 		switch {
 		case task.Status == orchestrator.TaskRunning && s.exhaustedAttempts(task):
+			runID := ""
+			if taskSnapshot != nil && taskSnapshot.Run != nil {
+				runID = taskSnapshot.Run.ID
+			}
 			task.Status = orchestrator.TaskFailed
 			task.Result = nil
 			task.LastError = "lease expired"
@@ -520,17 +527,23 @@ func (s *Store) RecoverExpiredLeases(_ context.Context, now time.Time) ([]*orche
 			task.UpdatedAt = now
 			delete(s.leases, taskID)
 			recovery.ResultStatus = orchestrator.TaskFailed
+			s.publishLeaseReleased(leaseSnapshot, runID, false, orchestrator.TaskFailed, "lease expired", true, now)
 			s.publishTaskFailed(task)
 		case task.Status == orchestrator.TaskRunning:
 			lastRunID, lastAttempt := s.requeueTaskLocked(task, taskID, now, false)
 			task.LastError = "lease expired"
 			recovery.ResultStatus = orchestrator.TaskPending
 			recovery.Requeued = true
-			s.publishLeaseReleased(leaseSnapshot, lastRunID, true)
+			s.publishLeaseReleased(leaseSnapshot, lastRunID, true, orchestrator.TaskPending, "lease expired", true, now)
 			s.publishTaskRequeued(task, lastRunID, lastAttempt, "lease expired")
 		default:
 			delete(s.leases, taskID)
 			recovery.ResultStatus = task.Status
+			runID := ""
+			if task.Run != nil {
+				runID = task.Run.ID
+			}
+			s.publishLeaseReleased(leaseSnapshot, runID, false, task.Status, "lease expired", true, now)
 		}
 		recovered = append(recovered, recovery)
 	}
@@ -859,17 +872,20 @@ func (s *Store) publishLeaseRenewed(lease *orchestrator.Lease, runID string) {
 	})
 }
 
-func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, runID string, requeued bool) {
+func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, runID string, requeued bool, resultStatus orchestrator.TaskStatus, reason string, recovered bool, releasedAt time.Time) {
 	if s.eventBus == nil || lease == nil {
 		return
 	}
 	core.PublishAsync(s.eventBus, orchestrator.LeaseReleasedEvent{
-		TaskID:     lease.TaskID,
-		RunID:      runID,
-		LeaseID:    lease.ID,
-		WorkerID:   lease.WorkerID,
-		ReleasedAt: time.Now(),
-		Requeued:   requeued,
+		TaskID:       lease.TaskID,
+		RunID:        runID,
+		LeaseID:      lease.ID,
+		WorkerID:     lease.WorkerID,
+		ReleasedAt:   releasedAt,
+		Requeued:     requeued,
+		ResultStatus: resultStatus,
+		Reason:       reason,
+		Recovered:    recovered,
 	})
 }
 

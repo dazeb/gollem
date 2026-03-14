@@ -27,9 +27,13 @@ type Store struct {
 }
 
 type leaseReleasePublication struct {
-	lease    *orchestrator.Lease
-	runID    string
-	requeued bool
+	lease        *orchestrator.Lease
+	runID        string
+	requeued     bool
+	resultStatus orchestrator.TaskStatus
+	reason       string
+	recovered    bool
+	releasedAt   time.Time
 }
 
 type taskRequeuePublication struct {
@@ -43,6 +47,8 @@ type commandReleasePublication struct {
 	command    *orchestrator.Command
 	releasedBy string
 	releasedAt time.Time
+	reason     string
+	recovered  bool
 }
 
 var (
@@ -842,13 +848,14 @@ func (s *Store) ReleaseLease(ctx context.Context, taskID, leaseToken string) err
 	defer s.mu.Unlock()
 
 	var (
-		released    *orchestrator.Lease
-		requeued    bool
-		runID       string
-		task        *orchestrator.Task
-		lastRunID   string
-		lastAttempt int
-		records     []*orchestrator.EventRecord
+		released     *orchestrator.Lease
+		requeued     bool
+		runID        string
+		resultStatus orchestrator.TaskStatus
+		task         *orchestrator.Task
+		lastRunID    string
+		lastAttempt  int
+		records      []*orchestrator.EventRecord
 	)
 	releasedAt := time.Now().UTC()
 	if err := s.withTx(ctx, func(tx *sql.Tx) error {
@@ -869,16 +876,20 @@ func (s *Store) ReleaseLease(ctx context.Context, taskID, leaseToken string) err
 			requeued = true
 			lastRunID, lastAttempt = requeueTask(task, time.Now().UTC(), true)
 			runID = lastRunID
+			resultStatus = orchestrator.TaskPending
 			if err := s.saveTaskTx(ctx, tx, task); err != nil {
 				return err
 			}
-		} else if task != nil && task.Run != nil {
-			runID = task.Run.ID
+		} else if task != nil {
+			resultStatus = task.Status
+			if task.Run != nil {
+				runID = task.Run.ID
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
 			return fmt.Errorf("delete released lease: %w", err)
 		}
-		record, err := leaseReleasedRecord(released, runID, requeued, releasedAt)
+		record, err := leaseReleasedRecord(released, runID, requeued, resultStatus, "lease released", false, releasedAt)
 		if err != nil {
 			return err
 		}
@@ -895,7 +906,7 @@ func (s *Store) ReleaseLease(ctx context.Context, taskID, leaseToken string) err
 		return err
 	}
 
-	s.publishLeaseReleased(released, runID, requeued)
+	s.publishLeaseReleased(released, runID, requeued, resultStatus, "lease released", false, releasedAt)
 	if requeued && task != nil {
 		s.publishTaskRequeued(task, lastRunID, lastAttempt, "lease released")
 	}
@@ -983,15 +994,28 @@ func (s *Store) RecoverExpiredLeases(ctx context.Context, now time.Time) ([]*orc
 				if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
 					return fmt.Errorf("delete recovered expired lease: %w", err)
 				}
+				releaseRecord, err := leaseReleasedRecord(leaseSnapshot, taskSnapshotRunID(taskSnapshot), false, orchestrator.TaskFailed, "lease expired", true, now)
+				if err != nil {
+					return err
+				}
 				record, err := taskFailedRecord(task)
 				if err != nil {
 					return err
 				}
-				if err := s.saveEventsTx(ctx, tx, record); err != nil {
+				if err := s.saveEventsTx(ctx, tx, releaseRecord, record); err != nil {
 					return err
 				}
 				recovery.ResultStatus = orchestrator.TaskFailed
 				publishFail = append(publishFail, cloneTask(task))
+				publishRel = append(publishRel, leaseReleasePublication{
+					lease:        leaseSnapshot,
+					runID:        taskSnapshotRunID(taskSnapshot),
+					requeued:     false,
+					resultStatus: orchestrator.TaskFailed,
+					reason:       "lease expired",
+					recovered:    true,
+					releasedAt:   now,
+				})
 			case task.Status == orchestrator.TaskRunning:
 				lastRunID, lastAttempt := requeueTask(task, now, false)
 				task.LastError = "lease expired"
@@ -1001,7 +1025,7 @@ func (s *Store) RecoverExpiredLeases(ctx context.Context, now time.Time) ([]*orc
 				if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
 					return fmt.Errorf("delete recovered expired lease: %w", err)
 				}
-				leaseRecord, err := leaseReleasedRecord(leaseSnapshot, lastRunID, true, now)
+				leaseRecord, err := leaseReleasedRecord(leaseSnapshot, lastRunID, true, orchestrator.TaskPending, "lease expired", true, now)
 				if err != nil {
 					return err
 				}
@@ -1014,12 +1038,36 @@ func (s *Store) RecoverExpiredLeases(ctx context.Context, now time.Time) ([]*orc
 				}
 				recovery.ResultStatus = orchestrator.TaskPending
 				recovery.Requeued = true
-				publishRel = append(publishRel, leaseReleasePublication{lease: leaseSnapshot, runID: lastRunID, requeued: true})
+				publishRel = append(publishRel, leaseReleasePublication{
+					lease:        leaseSnapshot,
+					runID:        lastRunID,
+					requeued:     true,
+					resultStatus: orchestrator.TaskPending,
+					reason:       "lease expired",
+					recovered:    true,
+					releasedAt:   now,
+				})
 				publishReq = append(publishReq, taskRequeuePublication{task: cloneTask(task), lastRunID: lastRunID, lastAttempt: lastAttempt, reason: "lease expired"})
 			default:
 				if _, err := tx.ExecContext(ctx, `DELETE FROM leases WHERE task_id = ?`, taskID); err != nil {
 					return fmt.Errorf("delete stale expired lease: %w", err)
 				}
+				releaseRecord, err := leaseReleasedRecord(leaseSnapshot, taskSnapshotRunID(taskSnapshot), false, task.Status, "lease expired", true, now)
+				if err != nil {
+					return err
+				}
+				if err := s.saveEventsTx(ctx, tx, releaseRecord); err != nil {
+					return err
+				}
+				publishRel = append(publishRel, leaseReleasePublication{
+					lease:        leaseSnapshot,
+					runID:        taskSnapshotRunID(taskSnapshot),
+					requeued:     false,
+					resultStatus: task.Status,
+					reason:       "lease expired",
+					recovered:    true,
+					releasedAt:   now,
+				})
 			}
 			recovered = append(recovered, recovery)
 		}
@@ -1028,11 +1076,11 @@ func (s *Store) RecoverExpiredLeases(ctx context.Context, now time.Time) ([]*orc
 		return nil, err
 	}
 
+	for _, release := range publishRel {
+		s.publishLeaseReleased(release.lease, release.runID, release.requeued, release.resultStatus, release.reason, release.recovered, release.releasedAt)
+	}
 	for _, task := range publishFail {
 		s.publishTaskFailed(task)
-	}
-	for _, release := range publishRel {
-		s.publishLeaseReleased(release.lease, release.runID, release.requeued)
 	}
 	for _, requeue := range publishReq {
 		s.publishTaskRequeued(requeue.task, requeue.lastRunID, requeue.lastAttempt, requeue.reason)
@@ -1476,7 +1524,7 @@ func (s *Store) ReleaseCommand(ctx context.Context, id, claimToken string) error
 		if err := s.saveCommandTx(ctx, tx, loaded); err != nil {
 			return err
 		}
-		record, err := commandReleasedRecord(loaded, releasedBy, releasedAt)
+		record, err := commandReleasedRecord(loaded, releasedBy, "command released", false, releasedAt)
 		if err != nil {
 			return err
 		}
@@ -1488,7 +1536,7 @@ func (s *Store) ReleaseCommand(ctx context.Context, id, claimToken string) error
 	}); err != nil {
 		return err
 	}
-	s.publishCommandReleased(command, releasedBy, releasedAt)
+	s.publishCommandReleased(command, releasedBy, releasedAt, "command released", false)
 	return nil
 }
 
@@ -1542,7 +1590,7 @@ func (s *Store) RecoverClaimedCommands(ctx context.Context, claimedBefore, now t
 			if err := s.saveCommandTx(ctx, tx, command); err != nil {
 				return err
 			}
-			record, err := commandReleasedRecord(command, releasedBy, now)
+			record, err := commandReleasedRecord(command, releasedBy, "claim expired", true, now)
 			if err != nil {
 				return err
 			}
@@ -1558,6 +1606,8 @@ func (s *Store) RecoverClaimedCommands(ctx context.Context, claimedBefore, now t
 				command:    cloneCommand(command),
 				releasedBy: releasedBy,
 				releasedAt: now,
+				reason:     "claim expired",
+				recovered:  true,
 			})
 		}
 		return nil
@@ -1566,7 +1616,7 @@ func (s *Store) RecoverClaimedCommands(ctx context.Context, claimedBefore, now t
 	}
 
 	for _, event := range released {
-		s.publishCommandReleased(event.command, event.releasedBy, event.releasedAt)
+		s.publishCommandReleased(event.command, event.releasedBy, event.releasedAt, event.reason, event.recovered)
 	}
 	return recovered, nil
 }
@@ -2605,6 +2655,13 @@ func cloneTask(src *orchestrator.Task) *orchestrator.Task {
 	}
 }
 
+func taskSnapshotRunID(task *orchestrator.Task) string {
+	if task == nil || task.Run == nil {
+		return ""
+	}
+	return task.Run.ID
+}
+
 func cloneLease(src *orchestrator.Lease) *orchestrator.Lease {
 	if src == nil {
 		return nil
@@ -2737,17 +2794,20 @@ func (s *Store) publishLeaseRenewed(lease *orchestrator.Lease, runID string) {
 	})
 }
 
-func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, runID string, requeued bool) {
+func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, runID string, requeued bool, resultStatus orchestrator.TaskStatus, reason string, recovered bool, releasedAt time.Time) {
 	if s.eventBus == nil || lease == nil {
 		return
 	}
 	core.PublishAsync(s.eventBus, orchestrator.LeaseReleasedEvent{
-		TaskID:     lease.TaskID,
-		RunID:      runID,
-		LeaseID:    lease.ID,
-		WorkerID:   lease.WorkerID,
-		ReleasedAt: time.Now().UTC(),
-		Requeued:   requeued,
+		TaskID:       lease.TaskID,
+		RunID:        runID,
+		LeaseID:      lease.ID,
+		WorkerID:     lease.WorkerID,
+		ReleasedAt:   releasedAt,
+		Requeued:     requeued,
+		ResultStatus: resultStatus,
+		Reason:       reason,
+		Recovered:    recovered,
 	})
 }
 
@@ -2858,7 +2918,7 @@ func (s *Store) publishCommandClaimed(command *orchestrator.Command) {
 	})
 }
 
-func (s *Store) publishCommandReleased(command *orchestrator.Command, releasedBy string, releasedAt time.Time) {
+func (s *Store) publishCommandReleased(command *orchestrator.Command, releasedBy string, releasedAt time.Time, reason string, recovered bool) {
 	if s.eventBus == nil || command == nil {
 		return
 	}
@@ -2869,6 +2929,8 @@ func (s *Store) publishCommandReleased(command *orchestrator.Command, releasedBy
 		RunID:      command.RunID,
 		ReleasedBy: releasedBy,
 		ReleasedAt: releasedAt,
+		Reason:     reason,
+		Recovered:  recovered,
 	})
 }
 

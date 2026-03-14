@@ -46,14 +46,17 @@ type LeaseRenewedEvent struct {
 	ExpiresAt time.Time
 }
 
-// LeaseReleasedEvent is published when a task lease is released manually.
+// LeaseReleasedEvent is published when a task lease is released or reclaimed.
 type LeaseReleasedEvent struct {
-	TaskID     string
-	RunID      string
-	LeaseID    string
-	WorkerID   string
-	ReleasedAt time.Time
-	Requeued   bool
+	TaskID       string
+	RunID        string
+	LeaseID      string
+	WorkerID     string
+	ReleasedAt   time.Time
+	Requeued     bool
+	ResultStatus TaskStatus
+	Reason       string
+	Recovered    bool
 }
 
 // TaskRequeuedEvent is published when a running task returns to pending.
@@ -131,6 +134,8 @@ type CommandReleasedEvent struct {
 	RunID      string
 	ReleasedBy string
 	ReleasedAt time.Time
+	Reason     string
+	Recovered  bool
 }
 
 // CommandHandledEvent is published when a durable command is handled.

@@ -139,6 +139,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("ListStaleClaimedCommands failed: %v", err)
 	}
+	leaseRecoveries, err := orchestrator.ListLeaseRecoveries(ctx, store, orchestrator.RecoveryHistoryFilter{Limit: 20})
+	if err != nil {
+		log.Fatalf("ListLeaseRecoveries failed: %v", err)
+	}
+	commandRecoveries, err := orchestrator.ListCommandRecoveries(ctx, store, orchestrator.RecoveryHistoryFilter{Limit: 20})
+	if err != nil {
+		log.Fatalf("ListCommandRecoveries failed: %v", err)
+	}
 	terminalKind := "<none>"
 	if runTimeline.Terminal != nil {
 		terminalKind = string(runTimeline.Terminal.Kind)
@@ -161,6 +169,8 @@ func main() {
 	fmt.Printf("Pending commands for %s: %d\n", persisted.Run.WorkerID, len(pendingCommands))
 	fmt.Printf("Expired leases eligible for recovery: %d\n", len(expiredLeases))
 	fmt.Printf("Stale claimed commands eligible for recovery: %d\n", len(staleCommands))
+	fmt.Printf("Durable lease recovery records: %d\n", len(leaseRecoveries))
+	fmt.Printf("Durable command recovery records: %d\n", len(commandRecoveries))
 	for _, event := range events {
 		fmt.Printf("- #%d %s at %s\n", event.Sequence, event.Kind, event.CreatedAt.Format(time.RFC3339Nano))
 	}

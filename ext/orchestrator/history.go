@@ -185,6 +185,41 @@ type WorkerFilter struct {
 	ActiveOnly bool
 }
 
+// RecoveryHistoryFilter narrows durable recovery-outcome queries.
+type RecoveryHistoryFilter struct {
+	TaskID        string
+	RunID         string
+	LeaseID       string
+	CommandID     string
+	AfterSequence int64
+	Limit         int
+}
+
+// LeaseRecoverySummary is a durable projection of a recovered task lease release.
+type LeaseRecoverySummary struct {
+	Sequence     int64
+	TaskID       string
+	RunID        string
+	LeaseID      string
+	WorkerID     string
+	ReleasedAt   time.Time
+	ResultStatus TaskStatus
+	Requeued     bool
+	Reason       string
+}
+
+// CommandRecoverySummary is a durable projection of a recovered claimed command release.
+type CommandRecoverySummary struct {
+	Sequence   int64
+	CommandID  string
+	Kind       CommandKind
+	TaskID     string
+	RunID      string
+	ReleasedBy string
+	ReleasedAt time.Time
+	Reason     string
+}
+
 // DecodeEvent returns the concrete payload struct for a durable event record.
 func DecodeEvent(record *EventRecord) (DecodedEvent, error) {
 	if record == nil {
@@ -253,6 +288,91 @@ func LoadTaskTimeline(ctx context.Context, store EventStore, taskID string) (*Ta
 		timeline.LatestAt = decoded.Record.CreatedAt
 	}
 	return timeline, nil
+}
+
+// ListLeaseRecoveries returns durable lease recovery outcomes, oldest first.
+func ListLeaseRecoveries(ctx context.Context, store EventStore, filter RecoveryHistoryFilter) ([]*LeaseRecoverySummary, error) {
+	if store == nil {
+		return nil, errors.New("orchestrator: event store must not be nil")
+	}
+	records, err := store.ListEvents(ctx, EventFilter{
+		Kinds:         []EventKind{EventLeaseReleased},
+		TaskID:        filter.TaskID,
+		RunID:         filter.RunID,
+		LeaseID:       filter.LeaseID,
+		AfterSequence: filter.AfterSequence,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*LeaseRecoverySummary, 0)
+	for _, record := range records {
+		decoded, err := DecodeEvent(record)
+		if err != nil {
+			return nil, err
+		}
+		payload, ok := decoded.Payload.(*LeaseReleasedEvent)
+		if !ok || !payload.Recovered {
+			continue
+		}
+		out = append(out, &LeaseRecoverySummary{
+			Sequence:     record.Sequence,
+			TaskID:       payload.TaskID,
+			RunID:        payload.RunID,
+			LeaseID:      payload.LeaseID,
+			WorkerID:     payload.WorkerID,
+			ReleasedAt:   payload.ReleasedAt,
+			ResultStatus: payload.ResultStatus,
+			Requeued:     payload.Requeued,
+			Reason:       payload.Reason,
+		})
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ListCommandRecoveries returns durable claimed-command recovery outcomes, oldest first.
+func ListCommandRecoveries(ctx context.Context, store EventStore, filter RecoveryHistoryFilter) ([]*CommandRecoverySummary, error) {
+	if store == nil {
+		return nil, errors.New("orchestrator: event store must not be nil")
+	}
+	records, err := store.ListEvents(ctx, EventFilter{
+		Kinds:         []EventKind{EventCommandReleased},
+		TaskID:        filter.TaskID,
+		RunID:         filter.RunID,
+		CommandID:     filter.CommandID,
+		AfterSequence: filter.AfterSequence,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*CommandRecoverySummary, 0)
+	for _, record := range records {
+		decoded, err := DecodeEvent(record)
+		if err != nil {
+			return nil, err
+		}
+		payload, ok := decoded.Payload.(*CommandReleasedEvent)
+		if !ok || !payload.Recovered {
+			continue
+		}
+		out = append(out, &CommandRecoverySummary{
+			Sequence:   record.Sequence,
+			CommandID:  payload.CommandID,
+			Kind:       payload.Kind,
+			TaskID:     payload.TaskID,
+			RunID:      payload.RunID,
+			ReleasedBy: payload.ReleasedBy,
+			ReleasedAt: payload.ReleasedAt,
+			Reason:     payload.Reason,
+		})
+		if filter.Limit > 0 && len(out) >= filter.Limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // LoadCommandTimeline decodes the durable history for a single command.

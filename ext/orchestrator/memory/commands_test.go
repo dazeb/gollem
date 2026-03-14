@@ -253,6 +253,12 @@ func TestStore_CommandClaimAndReleasePublishEvents(t *testing.T) {
 	if released[0].CommandID != command.ID || released[0].ReleasedBy != "worker-a" {
 		t.Fatalf("unexpected released command event: %+v", released[0])
 	}
+	if released[0].Recovered {
+		t.Fatalf("expected manual release event to stay non-recovered, got %+v", released[0])
+	}
+	if released[0].Reason != "command released" {
+		t.Fatalf("expected manual release reason %q, got %+v", "command released", released[0])
+	}
 }
 
 func TestStore_CreateCommandRejectsInvalidTaskStates(t *testing.T) {

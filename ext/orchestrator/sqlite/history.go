@@ -477,17 +477,20 @@ func leaseRenewedRecord(lease *orchestrator.Lease, runID string) (*orchestrator.
 	return newEventRecord(orchestrator.EventLeaseRenewed, payload.ExpiresAt, payload, lease.TaskID, runID, lease.ID, "", "")
 }
 
-func leaseReleasedRecord(lease *orchestrator.Lease, runID string, requeued bool, releasedAt time.Time) (*orchestrator.EventRecord, error) {
+func leaseReleasedRecord(lease *orchestrator.Lease, runID string, requeued bool, resultStatus orchestrator.TaskStatus, reason string, recovered bool, releasedAt time.Time) (*orchestrator.EventRecord, error) {
 	if lease == nil {
 		return nil, nil
 	}
 	payload := orchestrator.LeaseReleasedEvent{
-		TaskID:     lease.TaskID,
-		RunID:      runID,
-		LeaseID:    lease.ID,
-		WorkerID:   lease.WorkerID,
-		ReleasedAt: releasedAt,
-		Requeued:   requeued,
+		TaskID:       lease.TaskID,
+		RunID:        runID,
+		LeaseID:      lease.ID,
+		WorkerID:     lease.WorkerID,
+		ReleasedAt:   releasedAt,
+		Requeued:     requeued,
+		ResultStatus: resultStatus,
+		Reason:       reason,
+		Recovered:    recovered,
 	}
 	return newEventRecord(orchestrator.EventLeaseReleased, payload.ReleasedAt, payload, lease.TaskID, runID, lease.ID, "", "")
 }
@@ -606,7 +609,7 @@ func commandClaimedRecord(command *orchestrator.Command) (*orchestrator.EventRec
 	return newEventRecord(orchestrator.EventCommandClaimed, payload.ClaimedAt, payload, command.TaskID, command.RunID, "", command.ID, "")
 }
 
-func commandReleasedRecord(command *orchestrator.Command, releasedBy string, releasedAt time.Time) (*orchestrator.EventRecord, error) {
+func commandReleasedRecord(command *orchestrator.Command, releasedBy string, reason string, recovered bool, releasedAt time.Time) (*orchestrator.EventRecord, error) {
 	if command == nil {
 		return nil, nil
 	}
@@ -617,6 +620,8 @@ func commandReleasedRecord(command *orchestrator.Command, releasedBy string, rel
 		RunID:      command.RunID,
 		ReleasedBy: releasedBy,
 		ReleasedAt: releasedAt,
+		Reason:     reason,
+		Recovered:  recovered,
 	}
 	return newEventRecord(orchestrator.EventCommandReleased, payload.ReleasedAt, payload, command.TaskID, command.RunID, "", command.ID, "")
 }

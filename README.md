@@ -890,6 +890,12 @@ _ = expiredLeases // currently expired leases that recovery would reclaim, oldes
 
 staleCommands, _ := orchestrator.ListStaleClaimedCommands(ctx, store, time.Now().Add(-time.Minute))
 _ = staleCommands // currently claimed commands old enough to release back to pending
+
+leaseRecoveries, _ := orchestrator.ListLeaseRecoveries(ctx, store, orchestrator.RecoveryHistoryFilter{Limit: 20})
+_ = leaseRecoveries // durable record of recovered leases and their outcomes
+
+commandRecoveries, _ := orchestrator.ListCommandRecoveries(ctx, store, orchestrator.RecoveryHistoryFilter{Limit: 20})
+_ = commandRecoveries // durable record of recovered claimed commands
 ```
 
 When you pass a SQLite-backed store to helpers like `ListActiveRuns`, `GetActiveRun`, `ListPendingCommandsForWorker`, or `ListStaleClaimedCommands`, they use store-native indexed queries instead of scanning the full task or command set.
