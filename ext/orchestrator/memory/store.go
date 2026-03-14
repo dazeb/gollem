@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/orchestrator"
 )
 
@@ -19,6 +20,7 @@ type Store struct {
 	nextTask  int
 	nextLease int
 	nextRun   int
+	eventBus  *core.EventBus
 }
 
 var (
@@ -26,12 +28,26 @@ var (
 	_ orchestrator.LeaseStore = (*Store)(nil)
 )
 
+// Option configures a Store.
+type Option func(*Store)
+
+// WithEventBus publishes concrete orchestrator lifecycle events to the supplied bus.
+func WithEventBus(bus *core.EventBus) Option {
+	return func(s *Store) {
+		s.eventBus = bus
+	}
+}
+
 // NewStore creates an empty in-memory orchestration store.
-func NewStore() *Store {
-	return &Store{
+func NewStore(opts ...Option) *Store {
+	store := &Store{
 		tasks:  make(map[string]*orchestrator.Task),
 		leases: make(map[string]*orchestrator.Lease),
 	}
+	for _, opt := range opts {
+		opt(store)
+	}
+	return store
 }
 
 // CreateTask implements orchestrator.TaskStore.
@@ -59,9 +75,11 @@ func (s *Store) CreateTask(_ context.Context, req orchestrator.CreateTaskRequest
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	s.linkTaskDependencies(task)
+	peerUpdates := s.linkTaskDependencies(task, now)
 	s.tasks[task.ID] = task
 	s.taskOrder = append(s.taskOrder, task.ID)
+	s.publishTaskCreated(task)
+	s.publishTaskUpdates(peerUpdates...)
 	return cloneTask(task), nil
 }
 
@@ -107,78 +125,112 @@ func (s *Store) ClaimReadyTask(_ context.Context, req orchestrator.ClaimTaskRequ
 	defer s.mu.Unlock()
 
 	for _, id := range s.taskOrder {
-		task, ok := s.tasks[id]
-		if !ok || !matchesKinds(task, req.Kinds) {
+		claim, err := s.claimTaskLocked(id, req, now)
+		if err == nil {
+			return claim, nil
+		}
+		if errors.Is(err, orchestrator.ErrNoReadyTask) || errors.Is(err, orchestrator.ErrTaskBlocked) {
 			continue
 		}
-		if s.isBlocked(task) {
-			continue
-		}
-
-		lease := s.leases[id]
-		leaseExpired := lease != nil && !lease.ExpiresAt.After(now)
-		hasActiveLease := lease != nil && !leaseExpired
-		if hasActiveLease {
-			continue
-		}
-
-		if task.MaxAttempts > 0 && task.Attempt >= task.MaxAttempts {
-			if task.Status != orchestrator.TaskCompleted && task.Status != orchestrator.TaskFailed {
-				task.Status = orchestrator.TaskFailed
-				task.LastError = "task exhausted max attempts"
-				task.CompletedAt = now
-				task.UpdatedAt = now
-				delete(s.leases, task.ID)
-			}
-			continue
-		}
-
-		switch task.Status {
-		case orchestrator.TaskPending:
-		case orchestrator.TaskRunning:
-			if !leaseExpired && lease != nil {
-				continue
-			}
-		default:
-			continue
-		}
-
-		s.nextRun++
-		task.Attempt++
-		task.Status = orchestrator.TaskRunning
-		task.Run = &orchestrator.RunRef{
-			ID:        fmt.Sprintf("run-%d", s.nextRun),
-			TaskID:    task.ID,
-			WorkerID:  req.WorkerID,
-			Attempt:   task.Attempt,
-			StartedAt: now,
-		}
-		task.Result = nil
-		task.LastError = ""
-		task.StartedAt = now
-		task.CompletedAt = time.Time{}
-		task.UpdatedAt = now
-
-		s.nextLease++
-		leaseID := fmt.Sprintf("lease-%d", s.nextLease)
-		taskLease := &orchestrator.Lease{
-			ID:         leaseID,
-			TaskID:     task.ID,
-			WorkerID:   req.WorkerID,
-			Token:      leaseID,
-			AcquiredAt: now,
-			ExpiresAt:  now.Add(req.LeaseTTL),
-		}
-		s.leases[task.ID] = taskLease
-
-		return &orchestrator.ClaimedTask{
-			Task:  cloneTask(task),
-			Lease: cloneLease(taskLease),
-			Run:   cloneRunRef(task.Run),
-		}, nil
+		return nil, err
 	}
 
 	return nil, orchestrator.ErrNoReadyTask
+}
+
+// ClaimTask implements orchestrator.TaskStore.
+func (s *Store) ClaimTask(_ context.Context, taskID string, req orchestrator.ClaimTaskRequest) (*orchestrator.ClaimedTask, error) {
+	if req.LeaseTTL <= 0 {
+		return nil, errors.New("orchestrator/memory: lease ttl must be positive")
+	}
+	now := req.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.claimTaskLocked(taskID, req, now)
+}
+
+// UpdateTask implements orchestrator.TaskStore.
+func (s *Store) UpdateTask(_ context.Context, req orchestrator.UpdateTaskRequest) (*orchestrator.Task, error) {
+	if req.ID == "" {
+		return nil, errors.New("orchestrator/memory: task id must not be empty")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[req.ID]
+	if !ok {
+		return nil, orchestrator.ErrTaskNotFound
+	}
+
+	if err := s.validateTaskDependencies(req.AddBlocks, req.AddBlockedBy); err != nil {
+		return nil, err
+	}
+
+	if req.Subject != nil {
+		task.Subject = *req.Subject
+	}
+	if req.Description != nil {
+		task.Description = *req.Description
+	}
+	if len(req.AddBlocks) > 0 {
+		task.Blocks = appendUniqueStrings(task.Blocks, req.AddBlocks...)
+	}
+	if len(req.AddBlockedBy) > 0 {
+		task.BlockedBy = appendUniqueStrings(task.BlockedBy, req.AddBlockedBy...)
+	}
+	if len(req.Metadata) > 0 {
+		if task.Metadata == nil {
+			task.Metadata = make(map[string]any)
+		}
+		for key, value := range req.Metadata {
+			if value == nil {
+				delete(task.Metadata, key)
+				continue
+			}
+			task.Metadata[key] = value
+		}
+	}
+
+	now := time.Now()
+	peerUpdates := s.linkTaskDependencies(task, now)
+	task.UpdatedAt = now
+	s.publishTaskUpdated(task)
+	s.publishTaskUpdates(peerUpdates...)
+	return cloneTask(task), nil
+}
+
+// DeleteTask implements orchestrator.TaskStore.
+func (s *Store) DeleteTask(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.tasks[id]; !ok {
+		return orchestrator.ErrTaskNotFound
+	}
+	now := time.Now()
+	delete(s.tasks, id)
+	delete(s.leases, id)
+	s.taskOrder = removeString(s.taskOrder, id)
+	var peerUpdates []*orchestrator.Task
+	for _, task := range s.tasks {
+		blocksBefore := len(task.Blocks)
+		blockedByBefore := len(task.BlockedBy)
+		task.Blocks = removeString(task.Blocks, id)
+		task.BlockedBy = removeString(task.BlockedBy, id)
+		if len(task.Blocks) != blocksBefore || len(task.BlockedBy) != blockedByBefore {
+			task.UpdatedAt = now
+			peerUpdates = append(peerUpdates, task)
+		}
+	}
+	s.publishTaskDeleted(id)
+	s.publishTaskUpdates(peerUpdates...)
+	return nil
 }
 
 // CompleteTask implements orchestrator.TaskStore.
@@ -201,6 +253,7 @@ func (s *Store) CompleteTask(_ context.Context, taskID, leaseToken string, resul
 	task.CompletedAt = normalizeNow(now)
 	task.UpdatedAt = task.CompletedAt
 	delete(s.leases, lease.TaskID)
+	s.publishTaskCompleted(task)
 	return cloneTask(task), nil
 }
 
@@ -219,8 +272,9 @@ func (s *Store) FailTask(_ context.Context, taskID, leaseToken string, runErr er
 		retryable = isRetryable(runErr)
 	}
 	if retryable && !s.exhaustedAttempts(task) {
-		s.requeueTaskLocked(task, lease.TaskID, now, false)
+		lastRunID, lastAttempt := s.requeueTaskLocked(task, lease.TaskID, now, false)
 		task.LastError = runErr.Error()
+		s.publishTaskRequeued(task, lastRunID, lastAttempt, "retryable failure")
 		return cloneTask(task), nil
 	}
 
@@ -234,6 +288,7 @@ func (s *Store) FailTask(_ context.Context, taskID, leaseToken string, runErr er
 	task.CompletedAt = normalizeNow(now)
 	task.UpdatedAt = task.CompletedAt
 	delete(s.leases, lease.TaskID)
+	s.publishTaskFailed(task)
 	return cloneTask(task), nil
 }
 
@@ -271,6 +326,7 @@ func (s *Store) RenewLease(_ context.Context, taskID, leaseToken string, ttl tim
 	}
 
 	lease.ExpiresAt = now.Add(ttl)
+	s.publishLeaseRenewed(lease)
 	return cloneLease(lease), nil
 }
 
@@ -287,10 +343,14 @@ func (s *Store) ReleaseLease(_ context.Context, taskID, leaseToken string) error
 		return orchestrator.ErrLeaseMismatch
 	}
 	if task, ok := s.tasks[taskID]; ok && task.Status == orchestrator.TaskRunning {
-		s.requeueTaskLocked(task, taskID, time.Now(), true)
+		released := cloneLease(lease)
+		lastRunID, lastAttempt := s.requeueTaskLocked(task, taskID, time.Now(), true)
+		s.publishLeaseReleased(released, true)
+		s.publishTaskRequeued(task, lastRunID, lastAttempt, "lease released")
 		return nil
 	}
 	delete(s.leases, taskID)
+	s.publishLeaseReleased(cloneLease(lease), false)
 	return nil
 }
 
@@ -341,20 +401,121 @@ func (s *Store) exhaustedAttempts(task *orchestrator.Task) bool {
 	return task.MaxAttempts > 0 && task.Attempt >= task.MaxAttempts
 }
 
-func (s *Store) linkTaskDependencies(task *orchestrator.Task) {
+func (s *Store) linkTaskDependencies(task *orchestrator.Task, now time.Time) []*orchestrator.Task {
+	updated := map[string]*orchestrator.Task{}
 	for _, blockedID := range task.Blocks {
 		if blocked, ok := s.tasks[blockedID]; ok {
+			before := len(blocked.BlockedBy)
 			blocked.BlockedBy = appendUniqueStrings(blocked.BlockedBy, task.ID)
+			if len(blocked.BlockedBy) != before {
+				blocked.UpdatedAt = now
+				updated[blocked.ID] = blocked
+			}
 		}
 	}
 	for _, blockerID := range task.BlockedBy {
 		if blocker, ok := s.tasks[blockerID]; ok {
+			before := len(blocker.Blocks)
 			blocker.Blocks = appendUniqueStrings(blocker.Blocks, task.ID)
+			if len(blocker.Blocks) != before {
+				blocker.UpdatedAt = now
+				updated[blocker.ID] = blocker
+			}
 		}
 	}
+	if len(updated) == 0 {
+		return nil
+	}
+	peers := make([]*orchestrator.Task, 0, len(updated))
+	for _, task := range updated {
+		peers = append(peers, task)
+	}
+	return peers
 }
 
-func (s *Store) requeueTaskLocked(task *orchestrator.Task, taskID string, now time.Time, rollbackAttempt bool) {
+func (s *Store) claimTaskLocked(taskID string, req orchestrator.ClaimTaskRequest, now time.Time) (*orchestrator.ClaimedTask, error) {
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, orchestrator.ErrTaskNotFound
+	}
+	if !matchesKinds(task, req.Kinds) {
+		return nil, orchestrator.ErrNoReadyTask
+	}
+	if s.isBlocked(task) {
+		return nil, orchestrator.ErrTaskBlocked
+	}
+
+	lease := s.leases[taskID]
+	leaseExpired := lease != nil && !lease.ExpiresAt.After(now)
+	hasActiveLease := lease != nil && !leaseExpired
+	if hasActiveLease {
+		return nil, orchestrator.ErrNoReadyTask
+	}
+
+	if task.MaxAttempts > 0 && task.Attempt >= task.MaxAttempts {
+		if task.Status != orchestrator.TaskCompleted && task.Status != orchestrator.TaskFailed {
+			task.Status = orchestrator.TaskFailed
+			task.LastError = "task exhausted max attempts"
+			task.CompletedAt = now
+			task.UpdatedAt = now
+			delete(s.leases, task.ID)
+			s.publishTaskFailed(task)
+		}
+		return nil, orchestrator.ErrNoReadyTask
+	}
+
+	switch task.Status {
+	case orchestrator.TaskPending:
+	case orchestrator.TaskRunning:
+		if !leaseExpired && lease != nil {
+			return nil, orchestrator.ErrNoReadyTask
+		}
+	default:
+		return nil, orchestrator.ErrNoReadyTask
+	}
+
+	s.nextRun++
+	task.Attempt++
+	task.Status = orchestrator.TaskRunning
+	task.Run = &orchestrator.RunRef{
+		ID:        fmt.Sprintf("run-%d", s.nextRun),
+		TaskID:    task.ID,
+		WorkerID:  req.WorkerID,
+		Attempt:   task.Attempt,
+		StartedAt: now,
+	}
+	task.Result = nil
+	task.LastError = ""
+	task.StartedAt = now
+	task.CompletedAt = time.Time{}
+	task.UpdatedAt = now
+
+	s.nextLease++
+	leaseID := fmt.Sprintf("lease-%d", s.nextLease)
+	taskLease := &orchestrator.Lease{
+		ID:         leaseID,
+		TaskID:     task.ID,
+		WorkerID:   req.WorkerID,
+		Token:      leaseID,
+		AcquiredAt: now,
+		ExpiresAt:  now.Add(req.LeaseTTL),
+	}
+	s.leases[task.ID] = taskLease
+	s.publishTaskClaimed(task, taskLease)
+
+	return &orchestrator.ClaimedTask{
+		Task:  cloneTask(task),
+		Lease: cloneLease(taskLease),
+		Run:   cloneRunRef(task.Run),
+	}, nil
+}
+
+func (s *Store) requeueTaskLocked(task *orchestrator.Task, taskID string, now time.Time, rollbackAttempt bool) (string, int) {
+	lastRunID := ""
+	lastAttempt := task.Attempt
+	if task.Run != nil {
+		lastRunID = task.Run.ID
+	}
 	delete(s.leases, taskID)
 	task.Status = orchestrator.TaskPending
 	task.Result = nil
@@ -365,6 +526,135 @@ func (s *Store) requeueTaskLocked(task *orchestrator.Task, taskID string, now ti
 	if rollbackAttempt && task.Attempt > 0 {
 		task.Attempt--
 	}
+	return lastRunID, lastAttempt
+}
+
+func (s *Store) publishTaskCreated(task *orchestrator.Task) {
+	if s.eventBus == nil || task == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.TaskCreatedEvent{
+		TaskID:      task.ID,
+		Kind:        task.Kind,
+		Subject:     task.Subject,
+		Description: task.Description,
+		CreatedAt:   task.CreatedAt,
+	})
+}
+
+func (s *Store) publishTaskUpdated(task *orchestrator.Task) {
+	if s.eventBus == nil || task == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.TaskUpdatedEvent{
+		TaskID:    task.ID,
+		Subject:   task.Subject,
+		Blocks:    cloneStrings(task.Blocks),
+		BlockedBy: cloneStrings(task.BlockedBy),
+		UpdatedAt: task.UpdatedAt,
+	})
+}
+
+func (s *Store) publishTaskUpdates(tasks ...*orchestrator.Task) {
+	for _, task := range tasks {
+		s.publishTaskUpdated(task)
+	}
+}
+
+func (s *Store) publishTaskDeleted(taskID string) {
+	if s.eventBus == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.TaskDeletedEvent{
+		TaskID:    taskID,
+		DeletedAt: time.Now(),
+	})
+}
+
+func (s *Store) publishTaskClaimed(task *orchestrator.Task, lease *orchestrator.Lease) {
+	if s.eventBus == nil || task == nil || lease == nil || task.Run == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.TaskClaimedEvent{
+		TaskID:     task.ID,
+		RunID:      task.Run.ID,
+		LeaseID:    lease.ID,
+		WorkerID:   lease.WorkerID,
+		Attempt:    task.Attempt,
+		AcquiredAt: lease.AcquiredAt,
+		ExpiresAt:  lease.ExpiresAt,
+	})
+}
+
+func (s *Store) publishLeaseRenewed(lease *orchestrator.Lease) {
+	if s.eventBus == nil || lease == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.LeaseRenewedEvent{
+		TaskID:    lease.TaskID,
+		LeaseID:   lease.ID,
+		WorkerID:  lease.WorkerID,
+		ExpiresAt: lease.ExpiresAt,
+	})
+}
+
+func (s *Store) publishLeaseReleased(lease *orchestrator.Lease, requeued bool) {
+	if s.eventBus == nil || lease == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.LeaseReleasedEvent{
+		TaskID:     lease.TaskID,
+		LeaseID:    lease.ID,
+		WorkerID:   lease.WorkerID,
+		ReleasedAt: time.Now(),
+		Requeued:   requeued,
+	})
+}
+
+func (s *Store) publishTaskRequeued(task *orchestrator.Task, lastRunID string, lastAttempt int, reason string) {
+	if s.eventBus == nil || task == nil {
+		return
+	}
+	core.PublishAsync(s.eventBus, orchestrator.TaskRequeuedEvent{
+		TaskID:      task.ID,
+		LastRunID:   lastRunID,
+		LastAttempt: lastAttempt,
+		Reason:      reason,
+		RequeuedAt:  task.UpdatedAt,
+	})
+}
+
+func (s *Store) publishTaskCompleted(task *orchestrator.Task) {
+	if s.eventBus == nil || task == nil {
+		return
+	}
+	runID := ""
+	if task.Run != nil {
+		runID = task.Run.ID
+	}
+	core.PublishAsync(s.eventBus, orchestrator.TaskCompletedEvent{
+		TaskID:      task.ID,
+		RunID:       runID,
+		Attempt:     task.Attempt,
+		CompletedAt: task.CompletedAt,
+	})
+}
+
+func (s *Store) publishTaskFailed(task *orchestrator.Task) {
+	if s.eventBus == nil || task == nil {
+		return
+	}
+	runID := ""
+	if task.Run != nil {
+		runID = task.Run.ID
+	}
+	core.PublishAsync(s.eventBus, orchestrator.TaskFailedEvent{
+		TaskID:   task.ID,
+		RunID:    runID,
+		Attempt:  task.Attempt,
+		Error:    task.LastError,
+		FailedAt: task.CompletedAt,
+	})
 }
 
 func (s *Store) validateTaskDependencies(blocks, blockedBy []string) error {
@@ -483,6 +773,19 @@ func appendUniqueStrings(dst []string, values ...string) []string {
 		dst = append(dst, v)
 	}
 	return dst
+}
+
+func removeString(slice []string, target string) []string {
+	if len(slice) == 0 {
+		return slice
+	}
+	result := slice[:0]
+	for _, item := range slice {
+		if item != target {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 func isRetryable(err error) bool {

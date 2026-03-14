@@ -76,11 +76,11 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **Batch execution** — `RunBatch` for concurrent multi-prompt runs with ordered results
 
 ### Multi-Agent Team Swarms
-- **Team orchestration** — Spawn concurrent teammate agents as goroutines with shared task boards, best-effort mailbox messaging, out-of-band shutdown control, and automatic lifecycle management (`ext/team`)
+- **Team orchestration** — Spawn concurrent teammate agents as goroutines with orchestrator-backed shared tasks, best-effort mailbox messaging, out-of-band shutdown control, and automatic lifecycle management (`ext/team`)
 - **Dynamic personality generation** — LLM generates task-specific system prompts for each subagent and teammate before they start, dramatically improving agent effectiveness (`modelutil`)
 - **Cached personality generation** — SHA256-keyed cache prevents redundant LLM calls when identical tasks are delegated multiple times
 - **Mailbox messaging** — Best-effort buffered note delivery with automatic draining via agent middleware; `send_message` returns an error if the recipient mailbox is full
-- **Shared task board** — Concurrency-safe task tracking with status, ownership, blocking dependencies, and metadata
+- **Shared team tasks** — Orchestrator-backed task tracking with claims, completions, blocking dependencies, and metadata
 - **Teammate lifecycle** — Starting, running, idle, shutting down, stopped states with automatic error recovery and leader notification
 - **Team-aware agent middleware** — Injects pending teammate notes as `UserPromptPart` between model calls while team control signals remain out-of-band
 
@@ -109,7 +109,7 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 - **Unified `StreamText`** — Single function with `StreamTextOptions` for all modes
 
 ### Extensions
-- **Multi-agent team swarms** — Concurrent teammate agents with best-effort mailbox messaging, shared task boards, dynamic personality generation, and automatic lifecycle management (`ext/team`)
+- **Multi-agent team swarms** — Concurrent teammate agents with best-effort mailbox messaging, orchestrator-backed shared tasks, dynamic personality generation, and automatic lifecycle management (`ext/team`)
 - **Dynamic personality generation** — LLM-generated task-specific system prompts for subagents and teammates with SHA256-keyed caching (`modelutil`)
 - **Code mode (monty)** — LLM writes a single Python script that calls N tools as functions; executes in a WASM sandbox via [monty-go](https://github.com/fugue-labs/monty-go) — N tool calls in 1 model round-trip
 - **Graph workflow engine** — Typed state machines with conditional branching, fan-out/map-reduce, cycle detection, and Mermaid export
@@ -309,7 +309,7 @@ Use `AdoptWithWait(...)` instead when your code already wraps `cmd.Wait()` behin
 
 ### Multi-Agent Team Swarm
 
-Spawn concurrent teammates that coordinate through best-effort mailbox notes and a shared task board. Each teammate gets a dynamically generated personality tailored to its specific task — the LLM itself writes the system prompt.
+Spawn concurrent teammates that coordinate through best-effort mailbox notes and orchestrator-backed shared tasks. Each teammate gets a dynamically generated personality tailored to its specific task — the LLM itself writes the system prompt.
 
 ```go
 import (
@@ -797,7 +797,7 @@ summary, _ := orchestration.ChainRun(ctx, researcher, writer, "Topic: AI safety"
 
 ### Multi-Agent Team Swarms
 
-Spawn teams of concurrent agents that coordinate through best-effort mailbox messaging and a shared task board. Each teammate runs as a goroutine with its own context window and tools.
+Spawn teams of concurrent agents that coordinate through best-effort mailbox messaging and orchestrator-backed shared tasks. Each teammate runs as a goroutine with its own context window and tools.
 
 ```go
 import "github.com/fugue-labs/gollem/ext/team"
@@ -817,7 +817,7 @@ middleware := t.RegisterLeader("lead")
 t.SpawnTeammate(ctx, "analyzer", "Analyze the codebase for dead code and unused imports")
 t.SpawnTeammate(ctx, "migrator", "Migrate database queries from raw SQL to the ORM")
 
-// Teammates can send notes, create/update tasks, and coordinate.
+// Teammates can send notes, create/claim/complete tasks, and coordinate.
 // The leader sees pending notes via the team-awareness middleware.
 leader := gollem.NewAgent[string](model,
     gollem.WithAgentMiddleware[string](middleware),
@@ -829,10 +829,10 @@ result, _ := leader.Run(ctx, "Coordinate the refactoring effort")
 t.Shutdown(ctx)
 ```
 
-**Task board coordination:**
+**Legacy task board compatibility view:**
 
 ```go
-// Teammates share a concurrency-safe task board.
+// Team.TaskBoard() is a legacy compatibility adapter over orchestrator-backed tasks.
 board := t.TaskBoard()
 
 // Create tasks with blocking dependencies.
@@ -841,7 +841,7 @@ id2 := board.Create("Update tests", "Update test fixtures for new schema")
 board.Update(id2, team.WithAddBlockedBy(id1)) // tests wait for migration
 
 // Claim and complete tasks.
-board.Update(id1, team.WithOwner("migrator"), team.WithStatus(team.TaskInProgress))
+board.Claim(id1, "migrator")
 board.Update(id1, team.WithStatus(team.TaskCompleted)) // unblocks id2
 ```
 

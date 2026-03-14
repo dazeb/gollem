@@ -20,6 +20,7 @@ const (
 var (
 	ErrTaskNotFound           = errors.New("orchestrator: task not found")
 	ErrTaskDependencyNotFound = errors.New("orchestrator: task dependency not found")
+	ErrTaskBlocked            = errors.New("orchestrator: task blocked")
 	ErrNoReadyTask            = errors.New("orchestrator: no ready task")
 	ErrLeaseNotFound          = errors.New("orchestrator: lease not found")
 	ErrLeaseExpired           = errors.New("orchestrator: lease expired")
@@ -116,6 +117,16 @@ type CreateTaskRequest struct {
 	BlockedBy   []string
 	MaxAttempts int
 	Metadata    map[string]any
+}
+
+// UpdateTaskRequest describes non-terminal task mutations owned by the store.
+type UpdateTaskRequest struct {
+	ID           string
+	Subject      *string
+	Description  *string
+	AddBlocks    []string
+	AddBlockedBy []string
+	Metadata     map[string]any
 }
 
 // TaskFilter narrows ListTasks results.

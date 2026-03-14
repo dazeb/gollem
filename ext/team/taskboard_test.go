@@ -170,6 +170,35 @@ func TestTaskBoard_Metadata(t *testing.T) {
 	}
 }
 
+func TestTaskBoard_UpdateCompletedTaskMetadata(t *testing.T) {
+	tb := NewTaskBoard()
+	id := tb.Create("Task", "")
+
+	if err := tb.Claim(id, "worker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tb.Update(id, WithStatus(TaskCompleted)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tb.Update(id, WithMetadata(map[string]any{"post_review": true}), WithOwner("reviewer")); err != nil {
+		t.Fatalf("expected completed task metadata update to succeed: %v", err)
+	}
+
+	task, err := tb.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != TaskCompleted {
+		t.Fatalf("expected completed status, got %v", task.Status)
+	}
+	if task.Owner != "reviewer" {
+		t.Fatalf("expected updated owner %q, got %q", "reviewer", task.Owner)
+	}
+	if task.Metadata["post_review"] != true {
+		t.Fatalf("expected post_review metadata, got %+v", task.Metadata)
+	}
+}
+
 func TestTaskBoard_GetReturnsCopy(t *testing.T) {
 	tb := NewTaskBoard()
 	id := tb.Create("Task", "Desc")

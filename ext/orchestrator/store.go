@@ -11,6 +11,9 @@ type TaskStore interface {
 	GetTask(ctx context.Context, id string) (*Task, error)
 	ListTasks(ctx context.Context, filter TaskFilter) ([]*Task, error)
 	ClaimReadyTask(ctx context.Context, req ClaimTaskRequest) (*ClaimedTask, error)
+	ClaimTask(ctx context.Context, taskID string, req ClaimTaskRequest) (*ClaimedTask, error)
+	UpdateTask(ctx context.Context, req UpdateTaskRequest) (*Task, error)
+	DeleteTask(ctx context.Context, id string) error
 	CompleteTask(ctx context.Context, taskID, leaseToken string, result *TaskResult, now time.Time) (*Task, error)
 	FailTask(ctx context.Context, taskID, leaseToken string, runErr error, now time.Time) (*Task, error)
 }

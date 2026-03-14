@@ -360,26 +360,127 @@ func TestTaskUpdateTool(t *testing.T) {
 	id := tb.Create("Task", "Desc")
 
 	tool := taskUpdateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","status":"in_progress","owner":"worker-1"}`)
+	_, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","subject":"Renamed","description":"Updated","metadata":{"priority":"high"}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	task, _ := tb.Get(id)
-	if task.Status != TaskInProgress {
-		t.Errorf("expected in_progress, got %v", task.Status)
+	if task.Subject != "Renamed" {
+		t.Errorf("expected subject %q, got %q", "Renamed", task.Subject)
 	}
-	if task.Owner != "worker-1" {
-		t.Errorf("expected owner 'worker-1', got %q", task.Owner)
+	if task.Description != "Updated" {
+		t.Errorf("expected description %q, got %q", "Updated", task.Description)
+	}
+	if task.Metadata["priority"] != "high" {
+		t.Errorf("expected metadata priority=high, got %v", task.Metadata["priority"])
 	}
 }
 
 func TestTaskUpdateTool_NotFound(t *testing.T) {
 	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
 	tool := taskUpdateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"999","status":"completed"}`)
+	_, err := tool.Handler(context.Background(), nil, `{"id":"999","subject":"nope"}`)
 	if err == nil {
 		t.Error("expected error for missing task")
+	}
+}
+
+func TestTaskUpdateTool_RejectsStatusAndOwnerChanges(t *testing.T) {
+	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
+	tb := tm.TaskBoard()
+	id := tb.Create("Task", "Desc")
+
+	tool := taskUpdateTool(tm)
+	if _, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","status":"completed"}`); err == nil {
+		t.Fatal("expected status change rejection")
+	}
+	if _, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","owner":"worker-1"}`); err == nil {
+		t.Fatal("expected owner change rejection")
+	}
+}
+
+func TestTaskClaimTool(t *testing.T) {
+	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
+	id := tm.TaskBoard().Create("Task", "Desc")
+
+	tool := taskClaimTool(tm, "worker-1")
+	result, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultMap := result.(map[string]any)
+	if resultMap["status"] != "claimed" {
+		t.Fatalf("expected status claimed, got %v", resultMap["status"])
+	}
+
+	task, err := tm.TaskBoard().Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != TaskInProgress {
+		t.Fatalf("expected in_progress, got %v", task.Status)
+	}
+	if task.Owner != "worker-1" {
+		t.Fatalf("expected owner worker-1, got %q", task.Owner)
+	}
+}
+
+func TestTaskReleaseTool(t *testing.T) {
+	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
+	tb := tm.TaskBoard()
+	id := tb.Create("Task", "Desc")
+	if err := tb.Claim(id, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := taskReleaseTool(tm, "worker-1")
+	result, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.(map[string]any)["status"] != "released" {
+		t.Fatalf("expected released status, got %v", result)
+	}
+
+	task, err := tb.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != TaskPending {
+		t.Fatalf("expected pending after release, got %v", task.Status)
+	}
+	if task.Owner != "" {
+		t.Fatalf("expected no owner after release, got %q", task.Owner)
+	}
+}
+
+func TestTaskCompleteTool(t *testing.T) {
+	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
+	tb := tm.TaskBoard()
+	id := tb.Create("Task", "Desc")
+	if err := tb.Claim(id, "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := taskCompleteTool(tm, "worker-1")
+	result, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.(map[string]any)["status"] != "completed" {
+		t.Fatalf("expected completed status, got %v", result)
+	}
+
+	task, err := tb.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != TaskCompleted {
+		t.Fatalf("expected completed task, got %v", task.Status)
+	}
+	if task.Owner != "worker-1" {
+		t.Fatalf("expected owner worker-1, got %q", task.Owner)
 	}
 }
 
@@ -456,9 +557,9 @@ func TestLeaderTools_Count(t *testing.T) {
 	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
 	tools := LeaderTools(tm)
 
-	// Leader gets: spawn_teammate, shutdown_teammate + shared (send_message, task_create, task_update, task_list, task_get) = 7
-	if len(tools) != 7 {
-		t.Errorf("expected 7 leader tools, got %d", len(tools))
+	// Leader gets: spawn_teammate, shutdown_teammate + shared.
+	if len(tools) != 9 {
+		t.Errorf("expected 9 leader tools, got %d", len(tools))
 	}
 
 	names := make(map[string]bool)
@@ -467,7 +568,8 @@ func TestLeaderTools_Count(t *testing.T) {
 	}
 	expected := []string{
 		"spawn_teammate", "shutdown_teammate", "send_message",
-		"task_create", "task_update", "task_list", "task_get",
+		"task_create", "task_claim", "task_release", "task_complete",
+		"task_list", "task_get",
 	}
 	for _, name := range expected {
 		if !names[name] {
@@ -481,9 +583,9 @@ func TestWorkerTools_Count(t *testing.T) {
 	dummy := &Teammate{name: "worker"}
 	tools := WorkerTools(tm, dummy)
 
-	// Worker gets: shared only (send_message, task_create, task_update, task_list, task_get) = 5
-	if len(tools) != 5 {
-		t.Errorf("expected 5 worker tools, got %d", len(tools))
+	// Worker gets: shared only.
+	if len(tools) != 7 {
+		t.Errorf("expected 7 worker tools, got %d", len(tools))
 	}
 
 	names := make(map[string]bool)
@@ -497,13 +599,16 @@ func TestWorkerTools_Count(t *testing.T) {
 	if names["shutdown_teammate"] {
 		t.Error("workers should not have shutdown_teammate")
 	}
+	if names["task_update"] {
+		t.Error("workers should not have task_update by default")
+	}
 	if names["ask_user"] {
 		t.Error("workers should not have ask_user")
 	}
 }
 
-// TestTaskUpdateTool_CompletionEvent tests that completing a task emits an event.
-func TestTaskUpdateTool_CompletionEvent(t *testing.T) {
+// TestTaskCompleteTool_CompletionEvent tests that completing a task emits an event.
+func TestTaskCompleteTool_CompletionEvent(t *testing.T) {
 	bus := core.NewEventBus()
 
 	var mu sync.Mutex
@@ -521,10 +626,12 @@ func TestTaskUpdateTool_CompletionEvent(t *testing.T) {
 	})
 	tb := tm.TaskBoard()
 	id := tb.Create("Task", "")
-	tb.Update(id, WithOwner("worker"))
+	if err := tb.Claim(id, "worker"); err != nil {
+		t.Fatal(err)
+	}
 
-	tool := taskUpdateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","status":"completed"}`)
+	tool := taskCompleteTool(tm, "worker")
+	_, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`"}`)
 	if err != nil {
 		t.Fatal(err)
 	}

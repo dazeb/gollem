@@ -92,7 +92,7 @@ func NewTeam(cfg TeamConfig) *Team {
 		name:            cfg.Name,
 		leader:          cfg.Leader,
 		members:         make(map[string]*Teammate),
-		taskBoard:       NewTaskBoard(),
+		taskBoard:       newTaskBoard(cfg.EventBus),
 		eventBus:        cfg.EventBus,
 		model:           cfg.Model,
 		toolset:         cfg.Toolset,
@@ -374,7 +374,9 @@ func (t *Team) Members() []TeammateInfo {
 	return infos
 }
 
-// TaskBoard returns the shared task board.
+// TaskBoard returns the team's legacy compatibility view over orchestrator-backed tasks.
+//
+// Deprecated: prefer ext/orchestrator for new task orchestration code.
 func (t *Team) TaskBoard() *TaskBoard {
 	return t.taskBoard
 }
