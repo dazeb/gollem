@@ -2,6 +2,7 @@ package team
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -256,6 +257,111 @@ func TestTeamWorkerStore_ClaimPendingCommand_ScopesToVisibleTeamTasks(t *testing
 	}
 }
 
+func TestTeamWorkerStore_CommandMethods_HideForeignTeamCommands(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(5, 0).UTC()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commandA, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskA.ID,
+		Reason: "cancel team a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandB, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskB.ID,
+		Reason: "cancel team b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker-a")
+
+	listed, err := workerStore.ListCommands(ctx, orchestrator.CommandFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != commandA.ID {
+		t.Fatalf("expected only team-a command in list, got %#v", listed)
+	}
+
+	got, err := workerStore.GetCommand(ctx, commandA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != commandA.ID {
+		t.Fatalf("expected to get team-a command %q, got %q", commandA.ID, got.ID)
+	}
+
+	if _, err := workerStore.GetCommand(ctx, commandB.ID); !errors.Is(err, orchestrator.ErrCommandNotFound) {
+		t.Fatalf("expected foreign command lookup to be hidden, got %v", err)
+	}
+
+	claimed, err := workerStore.ClaimCommand(ctx, commandA.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != commandA.ID {
+		t.Fatalf("expected to claim team-a command %q, got %q", commandA.ID, claimed.ID)
+	}
+
+	if _, err := workerStore.ClaimCommand(ctx, commandB.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base.Add(time.Second),
+	}); !errors.Is(err, orchestrator.ErrCommandNotFound) {
+		t.Fatalf("expected foreign direct claim to be rejected, got %v", err)
+	}
+
+	if err := workerStore.ReleaseCommand(ctx, commandB.ID, claimed.ClaimToken); !errors.Is(err, orchestrator.ErrCommandNotFound) {
+		t.Fatalf("expected foreign release to be rejected, got %v", err)
+	}
+	if err := workerStore.ReleaseCommand(ctx, commandA.ID, claimed.ClaimToken); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTeamWorkerStore_RecoverExpiredLeases_ScopesToVisibleTeamTasks(t *testing.T) {
 	ctx := context.Background()
 	base := time.Unix(10, 0).UTC()
@@ -312,6 +418,68 @@ func TestTeamWorkerStore_RecoverExpiredLeases_ScopesToVisibleTeamTasks(t *testin
 	}
 	if persistedA.Status != orchestrator.TaskFailed {
 		t.Fatalf("expected team-a task to be recovered to failed, got %s", persistedA.Status)
+	}
+
+	persistedB, err := shared.GetTask(ctx, taskB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedB.Status != orchestrator.TaskRunning {
+		t.Fatalf("expected foreign team task to remain running, got %s", persistedB.Status)
+	}
+}
+
+func TestTeamWorkerStore_RecoverExpiredLease_ScopesToSingleVisibleTask(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(15, 0).UTC()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Second,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Second,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker-a")
+	recovery, err := workerStore.RecoverExpiredLease(ctx, taskA.ID, base.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovery == nil || recovery.Task == nil || recovery.Task.ID != taskA.ID {
+		t.Fatalf("expected single recovery for team-a task, got %#v", recovery)
+	}
+
+	if _, err := workerStore.RecoverExpiredLease(ctx, taskB.ID, base.Add(2*time.Second)); !errors.Is(err, orchestrator.ErrTaskNotFound) {
+		t.Fatalf("expected foreign task recovery to be rejected, got %v", err)
 	}
 
 	persistedB, err := shared.GetTask(ctx, taskB.ID)
@@ -407,6 +575,97 @@ func TestTeamWorkerStore_RecoverClaimedCommands_ScopesToVisibleTeamTasks(t *test
 	}
 	if persistedA.Status != orchestrator.CommandPending {
 		t.Fatalf("expected team-a command to be recovered to pending, got %s", persistedA.Status)
+	}
+
+	persistedB, err := shared.GetCommand(ctx, commandB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedB.Status != orchestrator.CommandClaimed {
+		t.Fatalf("expected foreign team command to remain claimed, got %s", persistedB.Status)
+	}
+}
+
+func TestTeamWorkerStore_RecoverClaimedCommand_ScopesToSingleVisibleCommand(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(25, 0).UTC()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commandA, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskA.ID,
+		Reason: "cancel team a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandB, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskB.ID,
+		Reason: "cancel team b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimCommand(ctx, commandA.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimCommand(ctx, commandB.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-b",
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker-a")
+	recovery, err := workerStore.RecoverClaimedCommand(ctx, commandA.ID, base.Add(time.Second), base.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovery == nil || recovery.Command == nil || recovery.Command.ID != commandA.ID {
+		t.Fatalf("expected single recovery for team-a command, got %#v", recovery)
+	}
+
+	if _, err := workerStore.RecoverClaimedCommand(ctx, commandB.ID, base.Add(time.Second), base.Add(2*time.Second)); !errors.Is(err, orchestrator.ErrCommandNotFound) {
+		t.Fatalf("expected foreign command recovery to be rejected, got %v", err)
 	}
 
 	persistedB, err := shared.GetCommand(ctx, commandB.ID)
