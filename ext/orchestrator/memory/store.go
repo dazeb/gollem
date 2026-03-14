@@ -1,0 +1,374 @@
+package memory
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/fugue-labs/gollem/ext/orchestrator"
+)
+
+// Store is an in-memory TaskStore and LeaseStore implementation.
+type Store struct {
+	mu        sync.Mutex
+	tasks     map[string]*orchestrator.Task
+	taskOrder []string
+	leases    map[string]*orchestrator.Lease
+	nextTask  int
+	nextLease int
+	nextRun   int
+}
+
+var (
+	_ orchestrator.TaskStore  = (*Store)(nil)
+	_ orchestrator.LeaseStore = (*Store)(nil)
+)
+
+// NewStore creates an empty in-memory orchestration store.
+func NewStore() *Store {
+	return &Store{
+		tasks:  make(map[string]*orchestrator.Task),
+		leases: make(map[string]*orchestrator.Lease),
+	}
+}
+
+// CreateTask implements orchestrator.TaskStore.
+func (s *Store) CreateTask(_ context.Context, req orchestrator.CreateTaskRequest) (*orchestrator.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.nextTask++
+	now := time.Now()
+	task := &orchestrator.Task{
+		ID:          fmt.Sprintf("task-%d", s.nextTask),
+		Kind:        req.Kind,
+		Input:       req.Input,
+		Status:      orchestrator.TaskPending,
+		MaxAttempts: req.MaxAttempts,
+		Metadata:    cloneAnyMap(req.Metadata),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	s.tasks[task.ID] = task
+	s.taskOrder = append(s.taskOrder, task.ID)
+	return cloneTask(task), nil
+}
+
+// GetTask implements orchestrator.TaskStore.
+func (s *Store) GetTask(_ context.Context, id string) (*orchestrator.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[id]
+	if !ok {
+		return nil, orchestrator.ErrTaskNotFound
+	}
+	return cloneTask(task), nil
+}
+
+// ListTasks implements orchestrator.TaskStore.
+func (s *Store) ListTasks(_ context.Context, filter orchestrator.TaskFilter) ([]*orchestrator.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var tasks []*orchestrator.Task
+	for _, id := range s.taskOrder {
+		task, ok := s.tasks[id]
+		if !ok || !matchesFilter(task, filter) {
+			continue
+		}
+		tasks = append(tasks, cloneTask(task))
+	}
+	return tasks, nil
+}
+
+// ClaimReadyTask implements orchestrator.TaskStore.
+func (s *Store) ClaimReadyTask(_ context.Context, req orchestrator.ClaimTaskRequest) (*orchestrator.ClaimedTask, error) {
+	if req.LeaseTTL <= 0 {
+		return nil, errors.New("orchestrator/memory: lease ttl must be positive")
+	}
+	now := req.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, id := range s.taskOrder {
+		task, ok := s.tasks[id]
+		if !ok || !matchesKinds(task, req.Kinds) {
+			continue
+		}
+
+		lease := s.leases[id]
+		leaseExpired := lease != nil && !lease.ExpiresAt.After(now)
+		hasActiveLease := lease != nil && !leaseExpired
+		if hasActiveLease {
+			continue
+		}
+
+		if task.MaxAttempts > 0 && task.Attempt >= task.MaxAttempts {
+			if task.Status != orchestrator.TaskCompleted && task.Status != orchestrator.TaskFailed {
+				task.Status = orchestrator.TaskFailed
+				task.LastError = "task exhausted max attempts"
+				task.CompletedAt = now
+				task.UpdatedAt = now
+			}
+			continue
+		}
+
+		switch task.Status {
+		case orchestrator.TaskPending:
+		case orchestrator.TaskRunning:
+			if !leaseExpired && lease != nil {
+				continue
+			}
+		default:
+			continue
+		}
+
+		s.nextRun++
+		task.Attempt++
+		task.Status = orchestrator.TaskRunning
+		task.Run = &orchestrator.RunRef{
+			ID:        fmt.Sprintf("run-%d", s.nextRun),
+			TaskID:    task.ID,
+			WorkerID:  req.WorkerID,
+			Attempt:   task.Attempt,
+			StartedAt: now,
+		}
+		task.Result = nil
+		task.LastError = ""
+		task.StartedAt = now
+		task.CompletedAt = time.Time{}
+		task.UpdatedAt = now
+
+		s.nextLease++
+		leaseID := fmt.Sprintf("lease-%d", s.nextLease)
+		taskLease := &orchestrator.Lease{
+			ID:         leaseID,
+			TaskID:     task.ID,
+			WorkerID:   req.WorkerID,
+			Token:      leaseID,
+			AcquiredAt: now,
+			ExpiresAt:  now.Add(req.LeaseTTL),
+		}
+		s.leases[task.ID] = taskLease
+
+		return &orchestrator.ClaimedTask{
+			Task:  cloneTask(task),
+			Lease: cloneLease(taskLease),
+			Run:   cloneRunRef(task.Run),
+		}, nil
+	}
+
+	return nil, orchestrator.ErrNoReadyTask
+}
+
+// CompleteTask implements orchestrator.TaskStore.
+func (s *Store) CompleteTask(_ context.Context, taskID, leaseToken string, result *orchestrator.TaskResult, now time.Time) (*orchestrator.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, lease, err := s.validateLeaseLocked(taskID, leaseToken, now)
+	if err != nil {
+		return nil, err
+	}
+
+	if result != nil && result.CompletedAt.IsZero() {
+		result = cloneTaskResult(result)
+		result.CompletedAt = normalizeNow(now)
+	}
+	task.Status = orchestrator.TaskCompleted
+	task.Result = cloneTaskResult(result)
+	task.LastError = ""
+	task.CompletedAt = normalizeNow(now)
+	task.UpdatedAt = task.CompletedAt
+	delete(s.leases, lease.TaskID)
+	return cloneTask(task), nil
+}
+
+// FailTask implements orchestrator.TaskStore.
+func (s *Store) FailTask(_ context.Context, taskID, leaseToken string, runErr error, now time.Time) (*orchestrator.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, lease, err := s.validateLeaseLocked(taskID, leaseToken, now)
+	if err != nil {
+		return nil, err
+	}
+
+	task.Status = orchestrator.TaskFailed
+	task.Result = nil
+	if runErr != nil {
+		task.LastError = runErr.Error()
+	} else {
+		task.LastError = "task failed"
+	}
+	task.CompletedAt = normalizeNow(now)
+	task.UpdatedAt = task.CompletedAt
+	delete(s.leases, lease.TaskID)
+	return cloneTask(task), nil
+}
+
+// GetLease implements orchestrator.LeaseStore.
+func (s *Store) GetLease(_ context.Context, taskID string) (*orchestrator.Lease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	lease, ok := s.leases[taskID]
+	if !ok {
+		return nil, orchestrator.ErrLeaseNotFound
+	}
+	return cloneLease(lease), nil
+}
+
+// RenewLease implements orchestrator.LeaseStore.
+func (s *Store) RenewLease(_ context.Context, taskID, leaseToken string, ttl time.Duration, now time.Time) (*orchestrator.Lease, error) {
+	if ttl <= 0 {
+		return nil, errors.New("orchestrator/memory: lease ttl must be positive")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	lease, ok := s.leases[taskID]
+	if !ok {
+		return nil, orchestrator.ErrLeaseNotFound
+	}
+	if lease.Token != leaseToken {
+		return nil, orchestrator.ErrLeaseMismatch
+	}
+	now = normalizeNow(now)
+	if !lease.ExpiresAt.After(now) {
+		return nil, orchestrator.ErrLeaseExpired
+	}
+
+	lease.ExpiresAt = now.Add(ttl)
+	return cloneLease(lease), nil
+}
+
+// ReleaseLease implements orchestrator.LeaseStore.
+func (s *Store) ReleaseLease(_ context.Context, taskID, leaseToken string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	lease, ok := s.leases[taskID]
+	if !ok {
+		return orchestrator.ErrLeaseNotFound
+	}
+	if lease.Token != leaseToken {
+		return orchestrator.ErrLeaseMismatch
+	}
+	delete(s.leases, taskID)
+	if task, ok := s.tasks[taskID]; ok && task.Status == orchestrator.TaskRunning {
+		task.Status = orchestrator.TaskPending
+		task.UpdatedAt = time.Now()
+	}
+	return nil
+}
+
+func (s *Store) validateLeaseLocked(taskID, leaseToken string, now time.Time) (*orchestrator.Task, *orchestrator.Lease, error) {
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, nil, orchestrator.ErrTaskNotFound
+	}
+	lease, ok := s.leases[taskID]
+	if !ok {
+		return nil, nil, orchestrator.ErrLeaseNotFound
+	}
+	if lease.Token != leaseToken {
+		return nil, nil, orchestrator.ErrLeaseMismatch
+	}
+	now = normalizeNow(now)
+	if !lease.ExpiresAt.After(now) {
+		return nil, nil, orchestrator.ErrLeaseExpired
+	}
+	return task, lease, nil
+}
+
+func normalizeNow(now time.Time) time.Time {
+	if now.IsZero() {
+		return time.Now()
+	}
+	return now
+}
+
+func matchesFilter(task *orchestrator.Task, filter orchestrator.TaskFilter) bool {
+	return matchesKinds(task, filter.Kinds) && matchesStatuses(task, filter.Statuses)
+}
+
+func matchesKinds(task *orchestrator.Task, kinds []string) bool {
+	if len(kinds) == 0 {
+		return true
+	}
+	for _, kind := range kinds {
+		if task.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesStatuses(task *orchestrator.Task, statuses []orchestrator.TaskStatus) bool {
+	if len(statuses) == 0 {
+		return true
+	}
+	for _, status := range statuses {
+		if task.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[string]any, len(src))
+	for k, v := range src {
+		cloned[k] = v
+	}
+	return cloned
+}
+
+func cloneRunRef(ref *orchestrator.RunRef) *orchestrator.RunRef {
+	if ref == nil {
+		return nil
+	}
+	cp := *ref
+	return &cp
+}
+
+func cloneLease(lease *orchestrator.Lease) *orchestrator.Lease {
+	if lease == nil {
+		return nil
+	}
+	cp := *lease
+	return &cp
+}
+
+func cloneTaskResult(result *orchestrator.TaskResult) *orchestrator.TaskResult {
+	if result == nil {
+		return nil
+	}
+	cp := *result
+	cp.ToolState = cloneAnyMap(result.ToolState)
+	cp.Metadata = cloneAnyMap(result.Metadata)
+	return &cp
+}
+
+func cloneTask(task *orchestrator.Task) *orchestrator.Task {
+	if task == nil {
+		return nil
+	}
+	cp := *task
+	cp.Metadata = cloneAnyMap(task.Metadata)
+	cp.Run = cloneRunRef(task.Run)
+	cp.Result = cloneTaskResult(task.Result)
+	return &cp
+}
