@@ -362,6 +362,149 @@ func TestTeamWorkerStore_CommandMethods_HideForeignTeamCommands(t *testing.T) {
 	}
 }
 
+func TestTeamWorkerStore_TaskLeaseAndArtifactWrappers(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(6, 0).UTC()
+	shared := omemory.NewStore()
+	tm := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	worker, err := tm.SpawnTeammate(ctx, "worker-a", "initial task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, worker, TeammateIdle, 3*time.Second)
+
+	workerStore := newTeamWorkerStore(tm, "worker-a")
+	created, err := workerStore.CreateTask(ctx, orchestrator.CreateTaskRequest{
+		Kind:        teamTaskKind,
+		Subject:     "follow-up",
+		Description: "details",
+		Input:       "follow-up details",
+		Metadata:    newTeamTaskMetadata(tm.Name(), "", "leader-a"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := workerStore.ListTasks(ctx, orchestrator.TaskFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) < 2 {
+		t.Fatalf("expected team task list to include created task, got %#v", listed)
+	}
+
+	updatedSubject := "follow-up updated"
+	updatedDescription := "details updated"
+	updated, err := workerStore.UpdateTask(ctx, orchestrator.UpdateTaskRequest{
+		ID:          created.ID,
+		Subject:     &updatedSubject,
+		Description: &updatedDescription,
+		Metadata: map[string]any{
+			"custom": "value",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Subject != updatedSubject || updated.Description != updatedDescription {
+		t.Fatalf("expected updated task fields, got %+v", updated)
+	}
+
+	claim, err := workerStore.ClaimTask(ctx, created.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lease, err := workerStore.GetLease(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Token != claim.Lease.Token {
+		t.Fatalf("expected matching lease token %q, got %q", claim.Lease.Token, lease.Token)
+	}
+
+	renewed, err := workerStore.RenewLease(ctx, created.ID, claim.Lease.Token, 2*time.Minute, base.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renewed.ExpiresAt.After(lease.ExpiresAt) {
+		t.Fatalf("expected renewed lease expiry after %v, got %v", lease.ExpiresAt, renewed.ExpiresAt)
+	}
+
+	if _, err := workerStore.FailTask(ctx, created.ID, claim.Lease.Token, errors.New("blocked"), base.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	retried, err := workerStore.RetryTask(ctx, created.ID, "retry", base.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Status != orchestrator.TaskPending {
+		t.Fatalf("expected pending retried task, got %s", retried.Status)
+	}
+
+	readyClaim, err := workerStore.ClaimReadyTask(ctx, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base.Add(4 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readyClaim.Task.ID != created.ID {
+		t.Fatalf("expected ready claim for created task, got %q", readyClaim.Task.ID)
+	}
+
+	artifact, err := workerStore.CreateArtifact(ctx, orchestrator.CreateArtifactRequest{
+		TaskID:      created.ID,
+		RunID:       readyClaim.Run.ID,
+		Kind:        "report",
+		Name:        "note.txt",
+		ContentType: "text/plain",
+		Body:        []byte("hello"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotArtifact, err := workerStore.GetArtifact(ctx, artifact.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotArtifact.Body) != "hello" {
+		t.Fatalf("expected artifact body %q, got %q", "hello", string(gotArtifact.Body))
+	}
+
+	artifacts, err := workerStore.ListArtifacts(ctx, orchestrator.ArtifactFilter{TaskID: created.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 1 || artifacts[0].ID != artifact.ID {
+		t.Fatalf("expected created artifact in list, got %#v", artifacts)
+	}
+
+	if err := workerStore.ReleaseLease(ctx, created.ID, readyClaim.Lease.Token); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := workerStore.DeleteTask(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workerStore.GetTask(ctx, created.ID); !errors.Is(err, orchestrator.ErrTaskNotFound) {
+		t.Fatalf("expected deleted task lookup to fail, got %v", err)
+	}
+}
+
 func TestTeamWorkerStore_RecoverExpiredLeases_ScopesToVisibleTeamTasks(t *testing.T) {
 	ctx := context.Background()
 	base := time.Unix(10, 0).UTC()

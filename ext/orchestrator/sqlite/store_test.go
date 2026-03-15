@@ -101,6 +101,137 @@ func TestStore_PersistsClaimCompletionAndArtifactsAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestStore_TaskCommandLeaseAndArtifactPublicAPIs(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
+
+	store := newTestStore(t, dbPath)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	base := time.Unix(7, 0).UTC()
+	task, err := store.CreateTask(context.Background(), orchestrator.CreateTaskRequest{
+		Kind:        "analysis",
+		Subject:     "initial subject",
+		Description: "initial description",
+		Input:       "hello",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	tasks, err := store.ListTasks(context.Background(), orchestrator.TaskFilter{})
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != task.ID {
+		t.Fatalf("expected created task in list, got %#v", tasks)
+	}
+
+	subject := "updated subject"
+	description := "updated description"
+	updated, err := store.UpdateTask(context.Background(), orchestrator.UpdateTaskRequest{
+		ID:          task.ID,
+		Subject:     &subject,
+		Description: &description,
+		Metadata: map[string]any{
+			"priority": "high",
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateTask failed: %v", err)
+	}
+	if updated.Subject != subject || updated.Description != description {
+		t.Fatalf("expected updated task fields, got %+v", updated)
+	}
+
+	claim, err := store.ClaimTask(context.Background(), task.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	lease, err := store.GetLease(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetLease failed: %v", err)
+	}
+	if lease.Token != claim.Lease.Token {
+		t.Fatalf("expected lease token %q, got %q", claim.Lease.Token, lease.Token)
+	}
+
+	command, err := store.CreateCommand(context.Background(), orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: task.ID,
+		Reason: "cancel maybe",
+	})
+	if err != nil {
+		t.Fatalf("CreateCommand failed: %v", err)
+	}
+
+	commands, err := store.ListCommands(context.Background(), orchestrator.CommandFilter{})
+	if err != nil {
+		t.Fatalf("ListCommands failed: %v", err)
+	}
+	if len(commands) != 1 || commands[0].ID != command.ID {
+		t.Fatalf("expected created command in list, got %#v", commands)
+	}
+
+	artifact, err := store.CreateArtifact(context.Background(), orchestrator.CreateArtifactRequest{
+		TaskID:      task.ID,
+		RunID:       claim.Run.ID,
+		Kind:        "report",
+		Name:        "result.txt",
+		ContentType: "text/plain",
+		Body:        []byte("hello"),
+	})
+	if err != nil {
+		t.Fatalf("CreateArtifact failed: %v", err)
+	}
+
+	gotArtifact, err := store.GetArtifact(context.Background(), artifact.ID)
+	if err != nil {
+		t.Fatalf("GetArtifact failed: %v", err)
+	}
+	if string(gotArtifact.Body) != "hello" {
+		t.Fatalf("expected artifact body %q, got %q", "hello", string(gotArtifact.Body))
+	}
+
+	artifacts, err := store.ListArtifacts(context.Background(), orchestrator.ArtifactFilter{TaskID: task.ID})
+	if err != nil {
+		t.Fatalf("ListArtifacts failed: %v", err)
+	}
+	if len(artifacts) != 1 || artifacts[0].ID != artifact.ID {
+		t.Fatalf("expected artifact in list, got %#v", artifacts)
+	}
+
+	if err := store.ReleaseLease(context.Background(), task.ID, claim.Lease.Token); err != nil {
+		t.Fatalf("ReleaseLease failed: %v", err)
+	}
+
+	released, err := store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask after release failed: %v", err)
+	}
+	if released.Status != orchestrator.TaskPending {
+		t.Fatalf("expected pending task after lease release, got %s", released.Status)
+	}
+
+	if err := store.DeleteTask(context.Background(), task.ID); err != nil {
+		t.Fatalf("DeleteTask failed: %v", err)
+	}
+	if _, err := store.GetTask(context.Background(), task.ID); !errors.Is(err, orchestrator.ErrTaskNotFound) {
+		t.Fatalf("expected deleted task lookup to fail, got %v", err)
+	}
+	if _, err := store.GetArtifact(context.Background(), artifact.ID); !errors.Is(err, orchestrator.ErrArtifactNotFound) {
+		t.Fatalf("expected deleted task artifact lookup to fail, got %v", err)
+	}
+}
+
 func TestStore_PendingCancelCommandSurvivesReopenAndSchedulerHandlesIt(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "orchestrator.db")
 
