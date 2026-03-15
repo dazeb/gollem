@@ -2,72 +2,86 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/ext/orchestrator"
+	omemory "github.com/fugue-labs/gollem/ext/orchestrator/memory"
 	"github.com/fugue-labs/gollem/modelutil"
-	"github.com/google/uuid"
 )
+
+const (
+	teamTaskKind          = "team"
+	teamMetadataName      = "team.name"
+	teamMetadataAssignee  = "team.assignee"
+	teamMetadataCreatedBy = "team.created_by"
+	teamTaskLeaseTTL      = 24 * time.Hour
+	teamSchedulerPollRate = 100 * time.Millisecond
+)
+
+// OrchestratorStore is the backend contract ext/team needs from orchestrator.
+type OrchestratorStore interface {
+	orchestrator.TaskStore
+	orchestrator.LeaseStore
+	orchestrator.CommandStore
+	orchestrator.ArtifactStore
+	orchestrator.LeaseRecoveryStore
+	orchestrator.CommandRecoveryStore
+}
 
 // TeamConfig configures a new team.
 type TeamConfig struct {
 	// Name identifies this team.
 	Name string
 
-	// Leader is the name of the leader agent (receives idle notifications).
+	// Leader names the coordinating agent using LeaderTools.
 	Leader string
 
 	// Model is the LLM used for spawned teammates.
 	Model core.Model
 
 	// Toolset is the set of tools given to each teammate (e.g. coding tools).
-	// The team package is decoupled from codetool — the caller provides the toolset.
 	// When both Toolset and ToolsetFactory are set, ToolsetFactory takes precedence.
 	Toolset *core.Toolset
 
 	// ToolsetFactory creates a fresh toolset for each spawned teammate.
-	// Use this instead of Toolset when the toolset contains stateful
-	// components (e.g., background process managers) that must be isolated
-	// per worker. Each call should return a new instance.
 	ToolsetFactory func() *core.Toolset
 
 	// WorkerExtraTools are additional tools attached to each spawned teammate.
-	// Useful for capabilities like subagent delegation that should be available
-	// in worker contexts as well as the leader.
 	WorkerExtraTools []core.Tool
 
-	// EventBus receives team lifecycle events. Optional.
+	// EventBus receives teammate lifecycle events and orchestrator store events.
 	EventBus *core.EventBus
 
-	// MailboxSize is the buffer size for teammate mailboxes. Defaults to 64.
-	MailboxSize int
+	// Store overrides the default in-memory orchestrator backend.
+	// Pass a store dedicated to this team instance so tasks, commands,
+	// recovery, and durable history stay scoped to one team.
+	Store OrchestratorStore
 
 	// WorkerMaxTokens sets the default max output tokens per model request
-	// for all spawned teammates. Use this when teammates need to produce
-	// large outputs (e.g. writing long documents via tool calls). Can be
-	// overridden per-teammate with WithTeammateMaxTokens.
+	// for all spawned teammates.
 	WorkerMaxTokens int
 
 	// WorkerHooks are lifecycle hooks added to every spawned teammate.
 	WorkerHooks []core.Hook
 
 	// PersonalityGenerator generates task-specific system prompts for
-	// teammates. When set, each spawned teammate gets a dynamically
-	// generated personality tailored to its assigned task. Falls back
-	// to WorkerSystemPrompt on generation failure.
+	// teammates. Falls back to WorkerSystemPrompt on generation failure.
 	PersonalityGenerator modelutil.PersonalityGeneratorFunc
 }
 
-// Team manages a group of teammate agents.
+// Team manages a group of teammate agents backed by an orchestrator store.
 type Team struct {
 	mu              sync.RWMutex
 	name            string
 	leader          string
 	members         map[string]*Teammate
-	taskBoard       *TaskBoard
+	closing         bool
+	store           OrchestratorStore
 	eventBus        *core.EventBus
 	model           core.Model
 	toolset         *core.Toolset
@@ -75,24 +89,21 @@ type Team struct {
 	workerTools     []core.Tool
 	workerMaxTokens int
 	workerHooks     []core.Hook
-	mailboxSize     int
 	personalityGen  modelutil.PersonalityGeneratorFunc
-	done            chan struct{}
-	closeOnce       sync.Once
 	wg              sync.WaitGroup
 }
 
 // NewTeam creates a team with the given configuration.
 func NewTeam(cfg TeamConfig) *Team {
-	mailboxSize := cfg.MailboxSize
-	if mailboxSize <= 0 {
-		mailboxSize = 64
+	store := cfg.Store
+	if store == nil {
+		store = omemory.NewStore(omemory.WithEventBus(cfg.EventBus))
 	}
 	return &Team{
 		name:            cfg.Name,
 		leader:          cfg.Leader,
 		members:         make(map[string]*Teammate),
-		taskBoard:       NewTaskBoard(),
+		store:           store,
 		eventBus:        cfg.EventBus,
 		model:           cfg.Model,
 		toolset:         cfg.Toolset,
@@ -100,9 +111,7 @@ func NewTeam(cfg TeamConfig) *Team {
 		workerTools:     cfg.WorkerExtraTools,
 		workerMaxTokens: cfg.WorkerMaxTokens,
 		workerHooks:     cfg.WorkerHooks,
-		mailboxSize:     mailboxSize,
 		personalityGen:  cfg.PersonalityGenerator,
-		done:            make(chan struct{}),
 	}
 }
 
@@ -128,66 +137,34 @@ func WithTeammateHooks(hooks ...core.Hook) TeammateOption {
 }
 
 // WithTeammateEndStrategy sets the end strategy for a spawned teammate.
-// By default, teammates use EndStrategyExhaustive so they process all
-// tool calls before completing.
 func WithTeammateEndStrategy(s core.EndStrategy) TeammateOption {
 	return func(c *teammateConfig) { c.endStrategy = &s }
 }
 
-// WithTeammateMaxTokens sets the max output tokens per model request
-// for a spawned teammate. Use this when teammates need to produce
-// large outputs (e.g. writing long documents via tool calls).
+// WithTeammateMaxTokens sets the max output tokens per model request.
 func WithTeammateMaxTokens(n int) TeammateOption {
 	return func(c *teammateConfig) { c.maxTokens = n }
 }
 
-// WithTeammateAgentOptions appends arbitrary agent options to a spawned
-// teammate. This is an escape hatch for any core.AgentOption not
-// explicitly surfaced as a TeammateOption.
+// WithTeammateAgentOptions appends arbitrary agent options to a spawned teammate.
 func WithTeammateAgentOptions(opts ...core.AgentOption[string]) TeammateOption {
 	return func(c *teammateConfig) { c.agentOpts = append(c.agentOpts, opts...) }
 }
 
-// RegisterLeader registers the leader agent's mailbox in the team so that
-// workers can send messages to the leader. Returns a middleware that drains
-// the leader's mailbox between model turns (injecting messages as UserPromptParts).
-//
-// If the leader is already registered (e.g., across multiple Run() calls in a
-// persistent session), the existing mailbox is preserved so that pending
-// messages from teammates are not lost.
-func (t *Team) RegisterLeader(name string) core.AgentMiddleware {
-	t.mu.Lock()
-	t.leader = name
-	existing := t.members[name]
-	t.mu.Unlock()
-
-	// Preserve the existing mailbox so pending messages survive re-registration.
-	mb := NewMailbox(t.mailboxSize)
-	if existing != nil && existing.mailbox != nil {
-		mb = existing.mailbox
-	}
-
-	tm := &Teammate{
-		name:    name,
-		state:   TeammateRunning,
-		mailbox: mb,
-		team:    t,
-		wakeCh:  make(chan struct{}, 1),
-	}
-	t.mu.Lock()
-	t.members[name] = tm
-	t.mu.Unlock()
-	return TeamAwarenessMiddleware(tm)
-}
-
-// SpawnTeammate creates a new teammate agent and starts it in a goroutine.
+// SpawnTeammate creates a new teammate agent and assigns its initial task via the orchestrator store.
 func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...TeammateOption) (*Teammate, error) {
+	if name == "" {
+		return nil, errors.New("teammate name must not be empty")
+	}
+	if task == "" {
+		return nil, errors.New("initial task must not be empty")
+	}
+
 	cfg := &teammateConfig{}
 	for _, o := range opts {
 		o(cfg)
 	}
 
-	// Resolve system prompt: explicit override > personality generator > default.
 	if cfg.systemPrompt == "" && t.personalityGen != nil {
 		basePrompt := WorkerSystemPrompt(name, t.name)
 		if generated, err := t.personalityGen(ctx, modelutil.PersonalityRequest{
@@ -205,43 +182,39 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 		cfg.systemPrompt = WorkerSystemPrompt(name, t.name)
 	}
 
-	mailbox := NewMailbox(t.mailboxSize)
-
 	tm := &Teammate{
-		name:    name,
-		state:   TeammateStarting,
-		mailbox: mailbox,
-		team:    t,
-		wakeCh:  make(chan struct{}, 1),
+		name:  name,
+		state: TeammateStarting,
+		team:  t,
 	}
 
-	// Reserve the name atomically to prevent TOCTOU races.
 	t.mu.Lock()
+	if t.closing {
+		t.mu.Unlock()
+		return nil, errors.New("team is shutting down")
+	}
 	if _, exists := t.members[name]; exists {
 		t.mu.Unlock()
 		return nil, fmt.Errorf("teammate %q already exists", name)
 	}
 	t.members[name] = tm
+	t.wg.Add(1)
 	t.mu.Unlock()
 
-	// Resolve end strategy: per-teammate override > default (exhaustive).
 	endStrategy := core.EndStrategyExhaustive
 	if cfg.endStrategy != nil {
 		endStrategy = *cfg.endStrategy
 	}
 
-	// Build agent with the configured toolset + team tools + awareness middleware.
 	agentOpts := []core.AgentOption[string]{
 		core.WithSystemPrompt[string](cfg.systemPrompt),
 		core.WithTools[string](WorkerTools(t, tm)...),
-		core.WithAgentMiddleware[string](TeamAwarenessMiddleware(tm)),
 		core.WithEndStrategy[string](endStrategy),
 		core.WithMaxRetries[string](2),
 		core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(200)}),
 		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(200)),
 		core.WithDefaultToolTimeout[string](2 * time.Minute),
 	}
-	// Resolve max tokens: per-teammate override > team default.
 	maxTokens := t.workerMaxTokens
 	if cfg.maxTokens > 0 {
 		maxTokens = cfg.maxTokens
@@ -264,16 +237,23 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 	if len(allHooks) > 0 {
 		agentOpts = append(agentOpts, core.WithHooks[string](allHooks...))
 	}
-	// Apply caller-provided escape-hatch options last so they can override defaults.
 	agentOpts = append(agentOpts, cfg.agentOpts...)
 
 	tm.agent = core.NewAgent[string](t.model, agentOpts...)
 
+	if _, err := t.createTeamTask(ctx, task, "", name, t.leaderSenderName()); err != nil {
+		t.mu.Lock()
+		delete(t.members, name)
+		t.mu.Unlock()
+		t.wg.Done()
+		return nil, fmt.Errorf("create initial team task: %w", err)
+	}
+
 	tmCtx, cancel := context.WithCancel(ctx)
 	tm.cancel = cancel
+	startCh := make(chan struct{})
 
-	t.wg.Add(1)
-	go tm.run(tmCtx, task)
+	go tm.run(tmCtx, startCh)
 
 	if t.eventBus != nil {
 		core.PublishAsync(t.eventBus, TeammateSpawnedEvent{
@@ -282,6 +262,7 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 			Task:         task,
 		})
 	}
+	close(startCh)
 
 	fmt.Fprintf(os.Stderr, "[gollem] team:%s spawned teammate:%s\n", t.name, name)
 	return tm, nil
@@ -293,6 +274,16 @@ func (t *Team) leaderName() string {
 	return t.leader
 }
 
+func (t *Team) removeTeammate(name string) {
+	t.mu.Lock()
+	delete(t.members, name)
+	t.mu.Unlock()
+
+	if err := t.releaseAssignedTasks(context.Background(), name); err != nil {
+		fmt.Fprintf(os.Stderr, "[gollem] team:%s failed to release tasks for teammate:%s: %v\n", t.name, name, err)
+	}
+}
+
 func (t *Team) leaderSenderName() string {
 	if leader := t.leaderName(); leader != "" {
 		return leader
@@ -300,42 +291,118 @@ func (t *Team) leaderSenderName() string {
 	return "leader"
 }
 
-func (t *Team) requestShutdown(name, from, reason, correlationID string) (Message, error) {
+func (t *Team) createTeamTask(ctx context.Context, subject, description, assignee, createdBy string) (*orchestrator.Task, error) {
+	if subject == "" {
+		return nil, errors.New("team task subject must not be empty")
+	}
+	if assignee != "" && t.GetTeammate(assignee) == nil {
+		return nil, fmt.Errorf("teammate %q not found", assignee)
+	}
+
+	task, err := t.store.CreateTask(ctx, orchestrator.CreateTaskRequest{
+		Kind:        teamTaskKind,
+		Subject:     subject,
+		Description: description,
+		Input:       buildTeamTaskPrompt(subject, description),
+		MaxAttempts: 1,
+		Metadata:    newTeamTaskMetadata(t.name, assignee, createdBy),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func (t *Team) releaseAssignedTasks(ctx context.Context, assignee string) error {
+	if assignee == "" {
+		return nil
+	}
+
+	tasks, err := t.listTeamTasks(ctx, orchestrator.TaskFilter{
+		Statuses: []orchestrator.TaskStatus{orchestrator.TaskPending},
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, task := range tasks {
+		if teamTaskAssignee(task) != assignee {
+			continue
+		}
+		_, updateErr := t.store.UpdateTask(ctx, orchestrator.UpdateTaskRequest{
+			ID: task.ID,
+			Metadata: map[string]any{
+				teamMetadataAssignee: nil,
+			},
+		})
+		if updateErr != nil {
+			return updateErr
+		}
+	}
+	return nil
+}
+
+func (t *Team) listTeamTasks(ctx context.Context, filter orchestrator.TaskFilter) ([]*orchestrator.Task, error) {
+	filter.Kinds = []string{teamTaskKind}
+	tasks, err := t.store.ListTasks(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]*orchestrator.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if t.isTeamTask(task) {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered, nil
+}
+
+func (t *Team) getTeamTask(ctx context.Context, id string) (*orchestrator.Task, error) {
+	task, err := t.store.GetTask(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !t.isTeamTask(task) {
+		return nil, orchestrator.ErrTaskNotFound
+	}
+	return task, nil
+}
+
+func (t *Team) isTeamTask(task *orchestrator.Task) bool {
+	if task == nil || task.Kind != teamTaskKind {
+		return false
+	}
+	return teamTaskName(task) == t.name
+}
+
+func (t *Team) requestShutdown(name, from, reason, correlationID string) (shutdownRequest, error) {
 	tm := t.GetTeammate(name)
 	if tm == nil {
-		return Message{}, fmt.Errorf("teammate %q not found", name)
+		return shutdownRequest{}, fmt.Errorf("teammate %q not found", name)
 	}
 	if reason == "" {
 		reason = "work complete"
 	}
-	// First shutdown wins; Teammate.requestShutdown is intentionally idempotent.
-	msg := newMessage(from, name, MessageShutdownRequest, reason, "shutdown requested", correlationID)
-	msg = tm.requestShutdown(msg)
-	tm.Wake()
-	return msg, nil
+	req := tm.requestShutdown(from, reason, correlationID)
+	return req, nil
 }
 
 // Shutdown gracefully shuts down all teammates.
 func (t *Team) Shutdown(ctx context.Context) error {
 	fmt.Fprintf(os.Stderr, "[gollem] team:%s shutting down\n", t.name)
 
-	// Signal all teammates to stop (skip the leader — it's the caller).
-	correlationID := uuid.NewString()
-	t.mu.RLock()
+	t.mu.Lock()
+	t.closing = true
+	members := make([]*Teammate, 0, len(t.members))
 	for _, tm := range t.members {
-		if tm.name == t.leader {
-			continue
-		}
-		msg := newMessage("team", tm.name, MessageShutdownRequest, "Team is shutting down", "team shutdown", correlationID)
-		tm.requestShutdown(msg)
-		tm.Wake()
+		members = append(members, tm)
 	}
-	t.mu.RUnlock()
+	t.mu.Unlock()
 
-	// Close done channel to unblock any waiting teammates (safe to call twice).
-	t.closeOnce.Do(func() { close(t.done) })
+	for _, tm := range members {
+		tm.requestShutdown("team", "team shutdown", "")
+	}
 
-	// Wait for all goroutines with context deadline.
 	doneCh := make(chan struct{})
 	go func() {
 		t.wg.Wait()
@@ -347,7 +414,6 @@ func (t *Team) Shutdown(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "[gollem] team:%s all teammates stopped\n", t.name)
 		return nil
 	case <-ctx.Done():
-		// Force cancel all teammates.
 		t.mu.RLock()
 		for _, tm := range t.members {
 			if tm.cancel != nil {
@@ -374,25 +440,34 @@ func (t *Team) Members() []TeammateInfo {
 	return infos
 }
 
-// TaskBoard returns the shared task board.
-func (t *Team) TaskBoard() *TaskBoard {
-	return t.taskBoard
-}
-
 // Name returns the team name.
 func (t *Team) Name() string {
 	return t.name
 }
 
-// getMailbox returns the mailbox for the named member, or nil.
-func (t *Team) getMailbox(name string) *Mailbox {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+// Store exposes the underlying orchestrator store used by the team.
+func (t *Team) Store() OrchestratorStore {
+	return t.store
+}
 
-	if tm, ok := t.members[name]; ok {
-		return tm.mailbox
-	}
-	return nil
+// TaskStore exposes the team's orchestrator-backed task store.
+func (t *Team) TaskStore() orchestrator.TaskStore {
+	return t.store
+}
+
+// LeaseStore exposes the team's orchestrator-backed lease store.
+func (t *Team) LeaseStore() orchestrator.LeaseStore {
+	return t.store
+}
+
+// CommandStore exposes the team's orchestrator-backed command store.
+func (t *Team) CommandStore() orchestrator.CommandStore {
+	return t.store
+}
+
+// ArtifactStore exposes the team's orchestrator-backed artifact store.
+func (t *Team) ArtifactStore() orchestrator.ArtifactStore {
+	return t.store
 }
 
 // GetTeammate returns the teammate with the given name, or nil.

@@ -213,6 +213,13 @@ _ = c.SignalWorkflow(ctx, workflowID, "", ta.AbortSignalName(), temporal.AbortSi
 Use an empty Temporal run ID when signaling/querying by stable workflow ID so
 you target the current execution after continue-as-new.
 
+When you use `ext/orchestrator` with `temporal.NewWorkflowRunner(...)`,
+command-driven task cancellation propagates through this same surface: the
+runner sends `ta.AbortSignalName()` with the orchestrator cancel reason and
+then issues a Temporal workflow cancel request. Other non-local stop causes
+such as lease loss issue the Temporal cancel request without the abort signal.
+Plain local worker shutdown does not trigger remote workflow cancellation.
+
 ## WorkflowStatus
 
 `WorkflowStatus` is the operational view of a running durable agent. It

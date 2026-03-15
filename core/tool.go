@@ -41,6 +41,7 @@ type RunContext struct {
 	Messages     []ModelMessage // conversation history (read-only)
 	RunStep      int            // current step number
 	RunID        string         // unique run ID
+	ParentRunID  string         // parent run ID when this run was started by another run
 	RunStartTime time.Time      // when the current run started
 	EventBus     *EventBus      // event bus for agent coordination (nil if not configured)
 

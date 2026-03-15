@@ -45,6 +45,7 @@ func TestSnapshot_CaptureAndRestore(t *testing.T) {
 	rc := &RunContext{
 		Usage:        RunUsage{Requests: 2, ToolCalls: 1},
 		RunID:        "test-run",
+		ParentRunID:  "parent-run",
 		RunStep:      3,
 		RunStartTime: startTime,
 		Prompt:       "hello",
@@ -56,6 +57,9 @@ func TestSnapshot_CaptureAndRestore(t *testing.T) {
 	snap := Snapshot(rc)
 	if snap.RunID != "test-run" {
 		t.Errorf("expected run_id 'test-run', got %q", snap.RunID)
+	}
+	if snap.ParentRunID != "parent-run" {
+		t.Errorf("expected parent_run_id 'parent-run', got %q", snap.ParentRunID)
 	}
 	if snap.RunStep != 3 {
 		t.Errorf("expected run_step 3, got %d", snap.RunStep)
@@ -91,6 +95,7 @@ func TestSnapshot_Serialize(t *testing.T) {
 		Retries:         2,
 		ToolRetries:     map[string]int{"echo": 1},
 		RunID:           "snap-1",
+		ParentRunID:     "parent-1",
 		RunStep:         2,
 		RunStartTime:    runStartTime,
 		Prompt:          "test",
@@ -110,6 +115,9 @@ func TestSnapshot_Serialize(t *testing.T) {
 
 	if restored.RunID != snap.RunID {
 		t.Errorf("expected RunID %q, got %q", snap.RunID, restored.RunID)
+	}
+	if restored.ParentRunID != snap.ParentRunID {
+		t.Errorf("expected ParentRunID %q, got %q", snap.ParentRunID, restored.ParentRunID)
 	}
 	if restored.Prompt != snap.Prompt {
 		t.Errorf("expected Prompt %q, got %q", snap.Prompt, restored.Prompt)
@@ -139,7 +147,8 @@ func TestSnapshot_Branch(t *testing.T) {
 		Messages: []ModelMessage{
 			ModelRequest{Parts: []ModelRequestPart{UserPromptPart{Content: "original"}}},
 		},
-		RunID: "branch-test",
+		RunID:       "branch-test",
+		ParentRunID: "branch-parent",
 	}
 
 	branched := snap.Branch(func(msgs []ModelMessage) []ModelMessage {
@@ -159,6 +168,9 @@ func TestSnapshot_Branch(t *testing.T) {
 	}
 	if branched.RunID != snap.RunID {
 		t.Error("branch should preserve RunID")
+	}
+	if branched.ParentRunID != snap.ParentRunID {
+		t.Error("branch should preserve ParentRunID")
 	}
 }
 

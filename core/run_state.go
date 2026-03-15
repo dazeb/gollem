@@ -14,6 +14,7 @@ type RunState struct {
 	toolRetries     map[string]int
 	runStep         int
 	runID           string
+	parentRunID     string
 	startTime       time.Time
 	limits          UsageLimits
 	detach          <-chan struct{} // UI detach signal; nil if not configured
@@ -33,6 +34,7 @@ type RunStateSnapshot struct {
 	Retries         int            `json:"retries"`
 	ToolRetries     map[string]int `json:"tool_retries,omitempty"`
 	RunID           string         `json:"run_id"`
+	ParentRunID     string         `json:"parent_run_id,omitempty"`
 	RunStep         int            `json:"run_step"`
 	RunStartTime    time.Time      `json:"run_start_time"`
 	Prompt          string         `json:"prompt"`
@@ -66,6 +68,9 @@ func (s *RunState) applySnapshot(snap *RunStateSnapshot) {
 	if snap.RunID != "" {
 		s.runID = snap.RunID
 	}
+	if snap.ParentRunID != "" {
+		s.parentRunID = snap.ParentRunID
+	}
 	if !snap.RunStartTime.IsZero() {
 		s.startTime = snap.RunStartTime
 	}
@@ -87,6 +92,7 @@ func (s *RunState) snapshot(prompt string, toolState map[string]any) *RunStateSn
 		Retries:         s.retries,
 		ToolRetries:     toolRetries,
 		RunID:           s.runID,
+		ParentRunID:     s.parentRunID,
 		RunStep:         s.runStep,
 		RunStartTime:    s.startTime,
 		Prompt:          prompt,

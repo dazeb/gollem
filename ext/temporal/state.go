@@ -55,6 +55,7 @@ type AbortSignal struct {
 // WorkflowStatus is the queryable state of a Temporal agent run.
 type WorkflowStatus struct {
 	RunID                   string                      `json:"run_id"`
+	ParentRunID             string                      `json:"parent_run_id,omitempty"`
 	RunStep                 int                         `json:"run_step"`
 	Usage                   core.RunUsage               `json:"usage"`
 	WorkflowName            string                      `json:"workflow_name,omitempty"`

@@ -201,6 +201,57 @@ func TestIterResultBeforeDone(t *testing.T) {
 	}
 }
 
+func TestIterCloseBeforeStartReturnsClosedError(t *testing.T) {
+	model := NewTestModel(TextResponse("unused"))
+	agent := NewAgent[string](model)
+
+	iter := agent.Iter(context.Background(), "test")
+	if err := iter.Close(); err != nil {
+		t.Fatalf("unexpected close error: %v", err)
+	}
+	if !iter.Done() {
+		t.Fatal("expected iter to be done after Close")
+	}
+
+	_, err := iter.Result()
+	if !errors.Is(err, ErrAgentRunClosed) {
+		t.Fatalf("expected ErrAgentRunClosed from Result, got %v", err)
+	}
+	_, err = iter.Next()
+	if !errors.Is(err, ErrAgentRunClosed) {
+		t.Fatalf("expected ErrAgentRunClosed from Next after Close, got %v", err)
+	}
+}
+
+func TestIterCloseAfterStartReturnsClosedError(t *testing.T) {
+	type Params struct {
+		N int `json:"n"`
+	}
+
+	agent := NewAgent[string](
+		NewTestModel(
+			ToolCallResponse("echo", `{"n":1}`),
+			TextResponse("unused"),
+		),
+		WithTools[string](FuncTool[Params]("echo", "echo", func(context.Context, Params) (string, error) {
+			return "echoed", nil
+		})),
+	)
+
+	iter := agent.Iter(context.Background(), "test")
+	if _, err := iter.Next(); err != nil {
+		t.Fatalf("unexpected step error: %v", err)
+	}
+	if err := iter.Close(); err != nil {
+		t.Fatalf("unexpected close error: %v", err)
+	}
+
+	_, err := iter.Result()
+	if !errors.Is(err, ErrAgentRunClosed) {
+		t.Fatalf("expected ErrAgentRunClosed from Result, got %v", err)
+	}
+}
+
 // TestIterMultipleToolCalls verifies Iter with concurrent tool calls.
 func TestIterMultipleToolCalls(t *testing.T) {
 	type Params struct {

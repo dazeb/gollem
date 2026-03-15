@@ -17,6 +17,7 @@ type snapshotJSON struct {
 	Retries         int             `json:"retries"`
 	ToolRetries     map[string]int  `json:"tool_retries,omitempty"`
 	RunID           string          `json:"run_id"`
+	ParentRunID     string          `json:"parent_run_id,omitempty"`
 	RunStep         int             `json:"run_step"`
 	RunStartTime    time.Time       `json:"run_start_time"`
 	Prompt          string          `json:"prompt"`
@@ -32,6 +33,7 @@ type SerializedRunSnapshot struct {
 	Retries         int                 `json:"retries"`
 	ToolRetries     map[string]int      `json:"tool_retries,omitempty"`
 	RunID           string              `json:"run_id"`
+	ParentRunID     string              `json:"parent_run_id,omitempty"`
 	RunStep         int                 `json:"run_step"`
 	RunStartTime    time.Time           `json:"run_start_time"`
 	Prompt          string              `json:"prompt"`
@@ -50,6 +52,7 @@ func Snapshot(rc *RunContext) *RunSnapshot {
 		Messages:     cloneMessages(rc.Messages),
 		Usage:        rc.Usage,
 		RunID:        rc.RunID,
+		ParentRunID:  rc.ParentRunID,
 		RunStep:      rc.RunStep,
 		RunStartTime: rc.RunStartTime,
 		Prompt:       rc.Prompt,
@@ -62,6 +65,7 @@ func Snapshot(rc *RunContext) *RunSnapshot {
 			snap.Messages = cloneMessages(rc.Messages)
 			snap.Usage = rc.Usage
 			snap.RunID = rc.RunID
+			snap.ParentRunID = rc.ParentRunID
 			snap.RunStep = rc.RunStep
 			snap.RunStartTime = rc.RunStartTime
 			snap.Prompt = rc.Prompt
@@ -93,6 +97,7 @@ func MarshalSnapshot(snap *RunSnapshot) ([]byte, error) {
 		Retries:         encoded.Retries,
 		ToolRetries:     cloneIntMap(encoded.ToolRetries),
 		RunID:           encoded.RunID,
+		ParentRunID:     encoded.ParentRunID,
 		RunStep:         encoded.RunStep,
 		RunStartTime:    encoded.RunStartTime,
 		Prompt:          encoded.Prompt,
@@ -118,6 +123,7 @@ func UnmarshalSnapshot(data []byte) (*RunSnapshot, error) {
 		Retries:         sj.Retries,
 		ToolRetries:     cloneIntMap(sj.ToolRetries),
 		RunID:           sj.RunID,
+		ParentRunID:     sj.ParentRunID,
 		RunStep:         sj.RunStep,
 		RunStartTime:    sj.RunStartTime,
 		Prompt:          sj.Prompt,
@@ -142,6 +148,7 @@ func EncodeRunSnapshot(snap *RunSnapshot) (*SerializedRunSnapshot, error) {
 		Retries:         snap.Retries,
 		ToolRetries:     cloneIntMap(snap.ToolRetries),
 		RunID:           snap.RunID,
+		ParentRunID:     snap.ParentRunID,
 		RunStep:         snap.RunStep,
 		RunStartTime:    snap.RunStartTime,
 		Prompt:          snap.Prompt,
@@ -166,6 +173,7 @@ func DecodeRunSnapshot(snap *SerializedRunSnapshot) (*RunSnapshot, error) {
 		Retries:         snap.Retries,
 		ToolRetries:     cloneIntMap(snap.ToolRetries),
 		RunID:           snap.RunID,
+		ParentRunID:     snap.ParentRunID,
 		RunStep:         snap.RunStep,
 		RunStartTime:    snap.RunStartTime,
 		Prompt:          snap.Prompt,
@@ -193,6 +201,7 @@ func (s *RunStateSnapshot) Branch(modifier func(messages []ModelMessage) []Model
 		Retries:         s.Retries,
 		ToolRetries:     cloneIntMap(s.ToolRetries),
 		RunID:           s.RunID,
+		ParentRunID:     s.ParentRunID,
 		RunStep:         s.RunStep,
 		RunStartTime:    s.RunStartTime,
 		Prompt:          s.Prompt,

@@ -2,11 +2,14 @@ package team
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/ext/orchestrator"
+	omemory "github.com/fugue-labs/gollem/ext/orchestrator/memory"
 )
 
 func TestTeam_NewTeam(t *testing.T) {
@@ -17,44 +20,34 @@ func TestTeam_NewTeam(t *testing.T) {
 	})
 
 	if tm.Name() != "test-team" {
-		t.Errorf("expected name 'test-team', got %q", tm.Name())
+		t.Fatalf("expected name test-team, got %q", tm.Name())
 	}
 	if len(tm.Members()) != 0 {
-		t.Errorf("expected 0 members, got %d", len(tm.Members()))
+		t.Fatalf("expected no members, got %d", len(tm.Members()))
+	}
+	if tm.TaskStore() == nil || tm.LeaseStore() == nil || tm.CommandStore() == nil || tm.ArtifactStore() == nil {
+		t.Fatal("expected orchestrator-backed stores to be exposed")
 	}
 }
 
-func TestTeam_NewTeam_WorkerExtraToolsConfigured(t *testing.T) {
-	extraA := core.FuncTool[struct{}](
-		"dummy_extra_tool",
-		"dummy",
-		func(context.Context, struct{}) (any, error) { return "ok", nil },
-	)
-	extraB := core.FuncTool[struct{}](
-		"dummy_extra_tool_2",
-		"dummy",
-		func(context.Context, struct{}) (any, error) { return "ok", nil },
-	)
-
+func TestTeam_NewTeam_UsesInjectedStore(t *testing.T) {
+	store := omemory.NewStore()
 	tm := NewTeam(TeamConfig{
-		Name:             "test-team",
-		Leader:           "leader",
-		Model:            core.NewTestModel(core.TextResponse("done")),
-		WorkerExtraTools: []core.Tool{extraA, extraB},
+		Name:   "test-team",
+		Leader: "leader",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  store,
 	})
 
-	if len(tm.workerTools) != 2 {
-		t.Fatalf("expected 2 worker extra tools, got %d", len(tm.workerTools))
+	if tm.Store() != store {
+		t.Fatal("expected team to expose the injected orchestrator store")
 	}
-	if tm.workerTools[0].Definition.Name != "dummy_extra_tool" {
-		t.Fatalf("unexpected worker extra tool %q", tm.workerTools[0].Definition.Name)
-	}
-	if tm.workerTools[1].Definition.Name != "dummy_extra_tool_2" {
-		t.Fatalf("unexpected second worker extra tool %q", tm.workerTools[1].Definition.Name)
+	if tm.TaskStore() != store || tm.LeaseStore() != store || tm.CommandStore() != store || tm.ArtifactStore() != store {
+		t.Fatal("expected all team store accessors to use the injected store")
 	}
 }
 
-func TestTeam_SpawnTeammate(t *testing.T) {
+func TestTeam_SpawnTeammate_CompletesInitialTask(t *testing.T) {
 	model := core.NewTestModel(core.TextResponse("task complete"))
 	tm := NewTeam(TeamConfig{
 		Name:   "test-team",
@@ -69,30 +62,69 @@ func TestTeam_SpawnTeammate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if teammate.Name() != "worker-1" {
-		t.Errorf("expected name 'worker-1', got %q", teammate.Name())
+
+	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+
+	tasks, err := tm.listTeamTasks(context.Background(), orchestrator.TaskFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 team task, got %d", len(tasks))
+	}
+	if tasks[0].Status != orchestrator.TaskCompleted {
+		t.Fatalf("expected completed task, got %s", tasks[0].Status)
+	}
+	if got := teamTaskAssignee(tasks[0]); got != "worker-1" {
+		t.Fatalf("expected assignee worker-1, got %q", got)
+	}
+	if tasks[0].Result == nil || tasks[0].Result.Output != "task complete" {
+		t.Fatalf("expected task result output to be recorded, got %#v", tasks[0].Result)
 	}
 
-	// Wait for the teammate to become idle (completed initial task).
-	deadline := time.After(3 * time.Second)
-	for teammate.State() != TeammateIdle && teammate.State() != TeammateStopped {
-		select {
-		case <-deadline:
-			t.Fatalf("teammate did not become idle, state: %v", teammate.State())
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-
-	members := tm.Members()
-	if len(members) != 1 {
-		t.Errorf("expected 1 member, got %d", len(members))
-	}
-
-	// Shutdown.
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
 	if err := tm.Shutdown(shutdownCtx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTeam_SpawnTeammate_InitialTaskPromptIsNotDuplicated(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("done"))
+	tm := NewTeam(TeamConfig{
+		Name:   "test-team",
+		Leader: "leader",
+		Model:  model,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	worker, err := tm.SpawnTeammate(ctx, "worker-1", "investigate auth regression")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, worker, TeammateIdle, 3*time.Second)
+
+	calls := model.Calls()
+	if len(calls) == 0 {
+		t.Fatal("expected at least one model call")
+	}
+	lastMsg, ok := calls[0].Messages[len(calls[0].Messages)-1].(core.ModelRequest)
+	if !ok {
+		t.Fatalf("expected final message to be a ModelRequest, got %T", calls[0].Messages[len(calls[0].Messages)-1])
+	}
+
+	var prompt string
+	for _, part := range lastMsg.Parts {
+		userPart, ok := part.(core.UserPromptPart)
+		if ok {
+			prompt = userPart.Content
+			break
+		}
+	}
+	if prompt != "investigate auth regression" {
+		t.Fatalf("expected initial worker prompt to match original task, got %q", prompt)
 	}
 }
 
@@ -110,19 +142,16 @@ func TestTeam_SpawnDuplicate(t *testing.T) {
 	if _, err := tm.SpawnTeammate(ctx, "worker", "task 1"); err != nil {
 		t.Fatal(err)
 	}
-
-	// Spawning duplicate should fail.
 	if _, err := tm.SpawnTeammate(ctx, "worker", "task 2"); err == nil {
-		t.Error("expected error spawning duplicate teammate")
+		t.Fatal("expected duplicate teammate spawn to fail")
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
+	_ = tm.Shutdown(shutdownCtx)
 }
 
-func TestTeam_Mailbox(t *testing.T) {
-	// Model that completes immediately.
+func TestTeam_SpawnTeammate_AfterShutdownRejected(t *testing.T) {
 	model := core.NewTestModel(core.TextResponse("done"))
 	tm := NewTeam(TeamConfig{
 		Name:   "test-team",
@@ -130,59 +159,750 @@ func TestTeam_Mailbox(t *testing.T) {
 		Model:  model,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	if err := tm.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
 
-	teammate, err := tm.SpawnTeammate(ctx, "worker", "initial task")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := tm.SpawnTeammate(ctx, "worker", "task"); err == nil {
+		t.Fatal("expected spawn after shutdown to fail")
+	}
+}
+
+func TestTeamWorkerStore_ClaimPendingCommand_ScopesToVisibleTeamTasks(t *testing.T) {
+	ctx := context.Background()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker",
+		LeaseTTL: time.Minute,
+		Now:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker",
+		LeaseTTL: time.Minute,
+		Now:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commandB, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskB.ID,
+		Reason: "cancel team b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandA, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskA.ID,
+		Reason: "cancel team a",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Wait for idle.
-	waitForState(t, teammate, TeammateIdle, 3*time.Second)
-
-	// Send a message — should wake the teammate.
-	teammate.mailbox.Send(Message{
-		From:    "leader",
-		To:      "worker",
-		Type:    MessageText,
-		Content: "do more work",
+	workerStore := newTeamWorkerStore(teamA, "worker")
+	claimed, err := workerStore.ClaimPendingCommand(ctx, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker",
+		Now:      time.Now(),
 	})
-	teammate.Wake()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != commandA.ID {
+		t.Fatalf("expected to claim team-a command %q, got %q", commandA.ID, claimed.ID)
+	}
 
-	// Wait for it to process and go idle again.
-	// Give a moment for state transition.
-	time.Sleep(50 * time.Millisecond)
-	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+	persistedA, err := shared.GetCommand(ctx, commandA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedA.Status != orchestrator.CommandClaimed {
+		t.Fatalf("expected team-a command to be claimed, got %s", persistedA.Status)
+	}
 
-	// Shutdown.
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
+	persistedB, err := shared.GetCommand(ctx, commandB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedB.Status != orchestrator.CommandPending {
+		t.Fatalf("expected foreign team command to remain pending, got %s", persistedB.Status)
+	}
+}
+
+func TestTeamWorkerStore_CommandMethods_HideForeignTeamCommands(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(5, 0).UTC()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commandA, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskA.ID,
+		Reason: "cancel team a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandB, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskB.ID,
+		Reason: "cancel team b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker-a")
+
+	listed, err := workerStore.ListCommands(ctx, orchestrator.CommandFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != commandA.ID {
+		t.Fatalf("expected only team-a command in list, got %#v", listed)
+	}
+
+	got, err := workerStore.GetCommand(ctx, commandA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != commandA.ID {
+		t.Fatalf("expected to get team-a command %q, got %q", commandA.ID, got.ID)
+	}
+
+	if _, err := workerStore.GetCommand(ctx, commandB.ID); !errors.Is(err, orchestrator.ErrCommandNotFound) {
+		t.Fatalf("expected foreign command lookup to be hidden, got %v", err)
+	}
+
+	claimed, err := workerStore.ClaimCommand(ctx, commandA.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.ID != commandA.ID {
+		t.Fatalf("expected to claim team-a command %q, got %q", commandA.ID, claimed.ID)
+	}
+
+	if _, err := workerStore.ClaimCommand(ctx, commandB.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base.Add(time.Second),
+	}); !errors.Is(err, orchestrator.ErrCommandNotFound) {
+		t.Fatalf("expected foreign direct claim to be rejected, got %v", err)
+	}
+
+	if err := workerStore.ReleaseCommand(ctx, commandB.ID, claimed.ClaimToken); !errors.Is(err, orchestrator.ErrCommandNotFound) {
+		t.Fatalf("expected foreign release to be rejected, got %v", err)
+	}
+	if err := workerStore.ReleaseCommand(ctx, commandA.ID, claimed.ClaimToken); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTeamWorkerStore_TaskLeaseAndArtifactWrappers(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(6, 0).UTC()
+	shared := omemory.NewStore()
+	tm := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	worker, err := tm.SpawnTeammate(ctx, "worker-a", "initial task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, worker, TeammateIdle, 3*time.Second)
+
+	workerStore := newTeamWorkerStore(tm, "worker-a")
+	created, err := workerStore.CreateTask(ctx, orchestrator.CreateTaskRequest{
+		Kind:        teamTaskKind,
+		Subject:     "follow-up",
+		Description: "details",
+		Input:       "follow-up details",
+		Metadata:    newTeamTaskMetadata(tm.Name(), "", "leader-a"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := workerStore.ListTasks(ctx, orchestrator.TaskFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) < 2 {
+		t.Fatalf("expected team task list to include created task, got %#v", listed)
+	}
+
+	updatedSubject := "follow-up updated"
+	updatedDescription := "details updated"
+	updated, err := workerStore.UpdateTask(ctx, orchestrator.UpdateTaskRequest{
+		ID:          created.ID,
+		Subject:     &updatedSubject,
+		Description: &updatedDescription,
+		Metadata: map[string]any{
+			"custom": "value",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Subject != updatedSubject || updated.Description != updatedDescription {
+		t.Fatalf("expected updated task fields, got %+v", updated)
+	}
+
+	claim, err := workerStore.ClaimTask(ctx, created.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lease, err := workerStore.GetLease(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Token != claim.Lease.Token {
+		t.Fatalf("expected matching lease token %q, got %q", claim.Lease.Token, lease.Token)
+	}
+
+	renewed, err := workerStore.RenewLease(ctx, created.ID, claim.Lease.Token, 2*time.Minute, base.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renewed.ExpiresAt.After(lease.ExpiresAt) {
+		t.Fatalf("expected renewed lease expiry after %v, got %v", lease.ExpiresAt, renewed.ExpiresAt)
+	}
+
+	if _, err := workerStore.FailTask(ctx, created.ID, claim.Lease.Token, errors.New("blocked"), base.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	retried, err := workerStore.RetryTask(ctx, created.ID, "retry", base.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.Status != orchestrator.TaskPending {
+		t.Fatalf("expected pending retried task, got %s", retried.Status)
+	}
+
+	readyClaim, err := workerStore.ClaimReadyTask(ctx, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base.Add(4 * time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readyClaim.Task.ID != created.ID {
+		t.Fatalf("expected ready claim for created task, got %q", readyClaim.Task.ID)
+	}
+
+	artifact, err := workerStore.CreateArtifact(ctx, orchestrator.CreateArtifactRequest{
+		TaskID:      created.ID,
+		RunID:       readyClaim.Run.ID,
+		Kind:        "report",
+		Name:        "note.txt",
+		ContentType: "text/plain",
+		Body:        []byte("hello"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotArtifact, err := workerStore.GetArtifact(ctx, artifact.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotArtifact.Body) != "hello" {
+		t.Fatalf("expected artifact body %q, got %q", "hello", string(gotArtifact.Body))
+	}
+
+	artifacts, err := workerStore.ListArtifacts(ctx, orchestrator.ArtifactFilter{TaskID: created.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 1 || artifacts[0].ID != artifact.ID {
+		t.Fatalf("expected created artifact in list, got %#v", artifacts)
+	}
+
+	if err := workerStore.ReleaseLease(ctx, created.ID, readyClaim.Lease.Token); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := workerStore.DeleteTask(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workerStore.GetTask(ctx, created.ID); !errors.Is(err, orchestrator.ErrTaskNotFound) {
+		t.Fatalf("expected deleted task lookup to fail, got %v", err)
+	}
+}
+
+func TestTeamWorkerStore_RecoverExpiredLeases_ScopesToVisibleTeamTasks(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(10, 0).UTC()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Second,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Second,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker-a")
+	recovered, err := workerStore.RecoverExpiredLeases(ctx, base.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) != 1 || recovered[0] == nil || recovered[0].Task == nil || recovered[0].Task.ID != taskA.ID {
+		t.Fatalf("expected only team-a lease recovery, got %#v", recovered)
+	}
+
+	persistedA, err := shared.GetTask(ctx, taskA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedA.Status != orchestrator.TaskFailed {
+		t.Fatalf("expected team-a task to be recovered to failed, got %s", persistedA.Status)
+	}
+
+	persistedB, err := shared.GetTask(ctx, taskB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedB.Status != orchestrator.TaskRunning {
+		t.Fatalf("expected foreign team task to remain running, got %s", persistedB.Status)
+	}
+}
+
+func TestTeamWorkerStore_RecoverExpiredLease_ScopesToSingleVisibleTask(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(15, 0).UTC()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Second,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Second,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker-a")
+	recovery, err := workerStore.RecoverExpiredLease(ctx, taskA.ID, base.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovery == nil || recovery.Task == nil || recovery.Task.ID != taskA.ID {
+		t.Fatalf("expected single recovery for team-a task, got %#v", recovery)
+	}
+
+	if _, err := workerStore.RecoverExpiredLease(ctx, taskB.ID, base.Add(2*time.Second)); !errors.Is(err, orchestrator.ErrTaskNotFound) {
+		t.Fatalf("expected foreign task recovery to be rejected, got %v", err)
+	}
+
+	persistedB, err := shared.GetTask(ctx, taskB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedB.Status != orchestrator.TaskRunning {
+		t.Fatalf("expected foreign team task to remain running, got %s", persistedB.Status)
+	}
+}
+
+func TestTeamWorkerStore_RecoverClaimedCommands_ScopesToVisibleTeamTasks(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(20, 0).UTC()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commandA, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskA.ID,
+		Reason: "cancel team a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandB, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskB.ID,
+		Reason: "cancel team b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimCommand(ctx, commandA.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimCommand(ctx, commandB.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-b",
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker-a")
+	recovered, err := workerStore.RecoverClaimedCommands(ctx, base.Add(time.Second), base.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered) != 1 || recovered[0] == nil || recovered[0].Command == nil || recovered[0].Command.ID != commandA.ID {
+		t.Fatalf("expected only team-a command recovery, got %#v", recovered)
+	}
+
+	persistedA, err := shared.GetCommand(ctx, commandA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedA.Status != orchestrator.CommandPending {
+		t.Fatalf("expected team-a command to be recovered to pending, got %s", persistedA.Status)
+	}
+
+	persistedB, err := shared.GetCommand(ctx, commandB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedB.Status != orchestrator.CommandClaimed {
+		t.Fatalf("expected foreign team command to remain claimed, got %s", persistedB.Status)
+	}
+}
+
+func TestTeamWorkerStore_RecoverClaimedCommand_ScopesToSingleVisibleCommand(t *testing.T) {
+	ctx := context.Background()
+	base := time.Unix(25, 0).UTC()
+	shared := omemory.NewStore()
+	teamA := NewTeam(TeamConfig{
+		Name:   "team-a",
+		Leader: "leader-a",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+	teamB := NewTeam(TeamConfig{
+		Name:   "team-b",
+		Leader: "leader-b",
+		Model:  core.NewTestModel(core.TextResponse("done")),
+		Store:  shared,
+	})
+
+	taskA, err := teamA.createTeamTask(ctx, "team-a task", "", "", "leader-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := teamB.createTeamTask(ctx, "team-b task", "", "", "leader-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskA.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-a",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimTask(ctx, taskB.ID, orchestrator.ClaimTaskRequest{
+		WorkerID: "worker-b",
+		LeaseTTL: time.Minute,
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	commandA, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskA.ID,
+		Reason: "cancel team a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandB, err := shared.CreateCommand(ctx, orchestrator.CreateCommandRequest{
+		Kind:   orchestrator.CommandCancelTask,
+		TaskID: taskB.ID,
+		Reason: "cancel team b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimCommand(ctx, commandA.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-a",
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shared.ClaimCommand(ctx, commandB.ID, orchestrator.ClaimCommandRequest{
+		WorkerID: "worker-b",
+		Now:      base,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workerStore := newTeamWorkerStore(teamA, "worker-a")
+	recovery, err := workerStore.RecoverClaimedCommand(ctx, commandA.ID, base.Add(time.Second), base.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovery == nil || recovery.Command == nil || recovery.Command.ID != commandA.ID {
+		t.Fatalf("expected single recovery for team-a command, got %#v", recovery)
+	}
+
+	if _, err := workerStore.RecoverClaimedCommand(ctx, commandB.ID, base.Add(time.Second), base.Add(2*time.Second)); !errors.Is(err, orchestrator.ErrCommandNotFound) {
+		t.Fatalf("expected foreign command recovery to be rejected, got %v", err)
+	}
+
+	persistedB, err := shared.GetCommand(ctx, commandB.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedB.Status != orchestrator.CommandClaimed {
+		t.Fatalf("expected foreign team command to remain claimed, got %s", persistedB.Status)
+	}
+}
+
+func TestTeam_RemoveTeammate_ReleasesAssignedPendingTasks(t *testing.T) {
+	model := core.NewTestModel(
+		core.TextResponse("worker-1 initial complete"),
+		core.TextResponse("worker-2 initial complete"),
+		core.TextResponse("reclaimed follow-up complete"),
+	)
+	tm := NewTeam(TeamConfig{
+		Name:   "test-team",
+		Leader: "leader",
+		Model:  model,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	worker1, err := tm.SpawnTeammate(ctx, "worker-1", "initial task 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker2, err := tm.SpawnTeammate(ctx, "worker-2", "initial task 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitForState(t, worker1, TeammateIdle, 3*time.Second)
+	waitForState(t, worker2, TeammateIdle, 3*time.Second)
+
+	task, err := tm.createTeamTask(ctx, "follow-up", "only worker-1 was assigned", "worker-1", "leader")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tm.requestShutdown("worker-1", "leader", "done", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForState(t, worker1, TeammateStopped, 3*time.Second)
+
+	deadline := time.After(4 * time.Second)
+	for {
+		persisted, err := tm.getTeamTask(context.Background(), task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if persisted.Status == orchestrator.TaskCompleted {
+			if got := teamTaskAssignee(persisted); got != "" {
+				t.Fatalf("expected task assignee to be cleared after worker removal, got %q", got)
+			}
+			break
+		}
+
+		select {
+		case <-deadline:
+			t.Fatalf("assigned task was not reclaimed after worker shutdown: %#v", persisted)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 func TestTeam_Events(t *testing.T) {
 	bus := core.NewEventBus()
 
 	var mu sync.Mutex
-	var spawnedEvents []TeammateSpawnedEvent
-	var idleEvents []TeammateIdleEvent
+	var spawned []TeammateSpawnedEvent
+	var idle []TeammateIdleEvent
+	var sequence []string
 	core.Subscribe(bus, func(e TeammateSpawnedEvent) {
 		mu.Lock()
-		spawnedEvents = append(spawnedEvents, e)
-		mu.Unlock()
+		defer mu.Unlock()
+		spawned = append(spawned, e)
+		sequence = append(sequence, "spawned:"+e.TeammateName)
 	})
 	core.Subscribe(bus, func(e TeammateIdleEvent) {
 		mu.Lock()
-		idleEvents = append(idleEvents, e)
-		mu.Unlock()
+		defer mu.Unlock()
+		idle = append(idle, e)
+		sequence = append(sequence, "idle:"+e.TeammateName)
 	})
 
-	model := core.NewTestModel(core.TextResponse("done"))
 	tm := NewTeam(TeamConfig{
 		Name:     "test-team",
 		Leader:   "leader",
-		Model:    model,
+		Model:    core.NewTestModel(core.TextResponse("done")),
 		EventBus: bus,
 	})
 
@@ -193,108 +913,20 @@ func TestTeam_Events(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	waitForState(t, teammate, TeammateIdle, 3*time.Second)
-
-	// Give async events time to fire.
 	time.Sleep(100 * time.Millisecond)
 
 	mu.Lock()
-	spawnedCount := len(spawnedEvents)
-	idleCount := len(idleEvents)
-	mu.Unlock()
-
-	if spawnedCount != 1 {
-		t.Errorf("expected 1 spawned event, got %d", spawnedCount)
+	defer mu.Unlock()
+	if len(spawned) != 1 {
+		t.Fatalf("expected 1 spawned event, got %d", len(spawned))
 	}
-	if idleCount < 1 {
-		t.Errorf("expected at least 1 idle event, got %d", idleCount)
+	if len(idle) < 1 {
+		t.Fatalf("expected at least 1 idle event, got %d", len(idle))
 	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
-}
-
-func TestTeam_TaskBoard(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{
-		Name:   "test-team",
-		Leader: "leader",
-		Model:  model,
-	})
-
-	tb := tm.TaskBoard()
-	id := tb.Create("Test task", "Description")
-
-	task, err := tb.Get(id)
-	if err != nil {
-		t.Fatal(err)
+	if len(sequence) == 0 || sequence[0] != "spawned:worker" {
+		t.Fatalf("expected spawned event before any idle event, got %#v", sequence)
 	}
-	if task.Subject != "Test task" {
-		t.Errorf("expected 'Test task', got %q", task.Subject)
-	}
-}
-
-func TestTeam_SpawnTeammate_DefaultEndStrategyExhaustive(t *testing.T) {
-	// Use a model that returns a tool call first, then text on the second call.
-	// With EndStrategyExhaustive (the default), the agent should process the
-	// tool call before stopping.
-	model := core.NewTestModel(
-		core.TextResponse("task complete"),
-	)
-	tm := NewTeam(TeamConfig{
-		Name:   "test-team",
-		Leader: "leader",
-		Model:  model,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	waitForState(t, teammate, TeammateIdle, 3*time.Second)
-
-	// Verify the agent was created (basic sanity check — the EndStrategy
-	// is a private field on core.Agent so we can't inspect it directly,
-	// but this test ensures the default doesn't break spawning).
-	if teammate.Name() != "worker" {
-		t.Errorf("expected name 'worker', got %q", teammate.Name())
-	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
-}
-
-func TestTeam_SpawnTeammate_WithEndStrategyOverride(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{
-		Name:   "test-team",
-		Leader: "leader",
-		Model:  model,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	early := core.EndStrategyEarly
-	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something",
-		WithTeammateEndStrategy(early),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	waitForState(t, teammate, TeammateIdle, 3*time.Second)
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
 }
 
 func TestTeam_SpawnTeammate_WithMaxTokens(t *testing.T) {
@@ -308,112 +940,20 @@ func TestTeam_SpawnTeammate_WithMaxTokens(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something",
-		WithTeammateMaxTokens(16384),
-	)
+	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something", WithTeammateMaxTokens(16384))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	waitForState(t, teammate, TeammateIdle, 3*time.Second)
 
-	// Verify max tokens was passed through to the model by checking the
-	// recorded calls.
 	calls := model.Calls()
 	if len(calls) == 0 {
 		t.Fatal("expected at least one model call")
 	}
-	for i, call := range calls {
-		if call.Settings == nil {
-			t.Errorf("call %d: expected non-nil Settings", i)
-			continue
-		}
-		if call.Settings.MaxTokens == nil {
-			t.Errorf("call %d: expected MaxTokens to be set", i)
-			continue
-		}
-		if *call.Settings.MaxTokens != 16384 {
-			t.Errorf("call %d: expected MaxTokens=16384, got %d", i, *call.Settings.MaxTokens)
-		}
+	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil || *calls[0].Settings.MaxTokens != 16384 {
+		t.Fatalf("expected MaxTokens=16384, got %#v", calls[0].Settings)
 	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
-}
-
-func TestTeam_SpawnTeammate_WithAgentOptions(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{
-		Name:   "test-team",
-		Leader: "leader",
-		Model:  model,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Use WithTeammateAgentOptions to set max tokens via the escape hatch.
-	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something",
-		WithTeammateAgentOptions(core.WithMaxTokens[string](8192)),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	waitForState(t, teammate, TeammateIdle, 3*time.Second)
-
-	// Verify the option was applied.
-	calls := model.Calls()
-	if len(calls) == 0 {
-		t.Fatal("expected at least one model call")
-	}
-	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil {
-		t.Fatal("expected MaxTokens to be set via escape hatch")
-	}
-	if *calls[0].Settings.MaxTokens != 8192 {
-		t.Errorf("expected MaxTokens=8192, got %d", *calls[0].Settings.MaxTokens)
-	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
-}
-
-func TestTeam_WorkerMaxTokens(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{
-		Name:            "test-team",
-		Leader:          "leader",
-		Model:           model,
-		WorkerMaxTokens: 32768,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	waitForState(t, teammate, TeammateIdle, 3*time.Second)
-
-	// Verify the team-level max tokens was applied.
-	calls := model.Calls()
-	if len(calls) == 0 {
-		t.Fatal("expected at least one model call")
-	}
-	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil {
-		t.Fatal("expected MaxTokens to be set from WorkerMaxTokens")
-	}
-	if *calls[0].Settings.MaxTokens != 32768 {
-		t.Errorf("expected MaxTokens=32768, got %d", *calls[0].Settings.MaxTokens)
-	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
 }
 
 func TestTeam_WorkerMaxTokens_OverriddenByTeammateOption(t *testing.T) {
@@ -428,10 +968,7 @@ func TestTeam_WorkerMaxTokens_OverriddenByTeammateOption(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Per-teammate override should win.
-	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something",
-		WithTeammateMaxTokens(8192),
-	)
+	teammate, err := tm.SpawnTeammate(ctx, "worker", "do something", WithTeammateMaxTokens(8192))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,57 +979,8 @@ func TestTeam_WorkerMaxTokens_OverriddenByTeammateOption(t *testing.T) {
 	if len(calls) == 0 {
 		t.Fatal("expected at least one model call")
 	}
-	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil {
-		t.Fatal("expected MaxTokens to be set")
-	}
-	if *calls[0].Settings.MaxTokens != 8192 {
-		t.Errorf("expected MaxTokens=8192 (per-teammate override), got %d", *calls[0].Settings.MaxTokens)
-	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
-}
-
-func TestTeammateConfig_Options(t *testing.T) {
-	cfg := &teammateConfig{}
-
-	WithTeammateSystemPrompt("test prompt")(cfg)
-	if cfg.systemPrompt != "test prompt" {
-		t.Errorf("expected 'test prompt', got %q", cfg.systemPrompt)
-	}
-
-	es := core.EndStrategyEarly
-	WithTeammateEndStrategy(es)(cfg)
-	if cfg.endStrategy == nil || *cfg.endStrategy != core.EndStrategyEarly {
-		t.Error("expected EndStrategyEarly")
-	}
-
-	WithTeammateMaxTokens(4096)(cfg)
-	if cfg.maxTokens != 4096 {
-		t.Errorf("expected 4096, got %d", cfg.maxTokens)
-	}
-
-	opt := core.WithMaxRetries[string](5)
-	WithTeammateAgentOptions(opt)(cfg)
-	if len(cfg.agentOpts) != 1 {
-		t.Errorf("expected 1 agent option, got %d", len(cfg.agentOpts))
-	}
-}
-
-func waitForState(t *testing.T, tm *Teammate, state TeammateState, timeout time.Duration) {
-	t.Helper()
-	deadline := time.After(timeout)
-	for {
-		s := tm.State()
-		if s == state || s == TeammateStopped {
-			return
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("teammate did not reach state %v within %v, current: %v", state, timeout, s)
-		case <-time.After(10 * time.Millisecond):
-		}
+	if calls[0].Settings == nil || calls[0].Settings.MaxTokens == nil || *calls[0].Settings.MaxTokens != 8192 {
+		t.Fatalf("expected MaxTokens=8192, got %#v", calls[0].Settings)
 	}
 }
 
@@ -533,11 +1021,53 @@ func TestTeam_ToolsetFactory(t *testing.T) {
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
+	_ = tm.Shutdown(shutdownCtx)
 
 	mu.Lock()
+	defer mu.Unlock()
 	if callCount != 2 {
-		t.Errorf("expected factory called twice (once per worker), got %d", callCount)
+		t.Fatalf("expected factory called twice, got %d", callCount)
 	}
-	mu.Unlock()
+}
+
+func TestTeammateConfig_Options(t *testing.T) {
+	cfg := &teammateConfig{}
+
+	WithTeammateSystemPrompt("test prompt")(cfg)
+	if cfg.systemPrompt != "test prompt" {
+		t.Fatalf("expected test prompt, got %q", cfg.systemPrompt)
+	}
+
+	es := core.EndStrategyEarly
+	WithTeammateEndStrategy(es)(cfg)
+	if cfg.endStrategy == nil || *cfg.endStrategy != core.EndStrategyEarly {
+		t.Fatal("expected EndStrategyEarly")
+	}
+
+	WithTeammateMaxTokens(4096)(cfg)
+	if cfg.maxTokens != 4096 {
+		t.Fatalf("expected 4096, got %d", cfg.maxTokens)
+	}
+
+	opt := core.WithMaxRetries[string](5)
+	WithTeammateAgentOptions(opt)(cfg)
+	if len(cfg.agentOpts) != 1 {
+		t.Fatalf("expected 1 agent option, got %d", len(cfg.agentOpts))
+	}
+}
+
+func waitForState(t *testing.T, tm *Teammate, state TeammateState, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		current := tm.State()
+		if current == state || current == TeammateStopped {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("teammate did not reach state %v within %v, current: %v", state, timeout, current)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }

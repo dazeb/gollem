@@ -2,12 +2,15 @@ package team
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/ext/orchestrator"
+	"github.com/google/uuid"
 )
 
 // TeammateState represents the lifecycle state of a teammate.
@@ -44,18 +47,44 @@ type TeammateInfo struct {
 	State TeammateState `json:"state"`
 }
 
+type shutdownRequest struct {
+	ID            string
+	CorrelationID string
+	From          string
+	Reason        string
+}
+
+type activeTask struct {
+	TaskID     string
+	LeaseToken string
+	RunID      string
+	runEnded   bool
+	settled    bool
+}
+
+type failedCurrentTaskError struct {
+	Reason string
+}
+
+func (e *failedCurrentTaskError) Error() string {
+	if e == nil || e.Reason == "" {
+		return "current team task failed"
+	}
+	return "current team task failed: " + e.Reason
+}
+
 // Teammate represents a worker agent running as a goroutine.
 type Teammate struct {
 	mu                sync.Mutex
 	name              string
 	state             TeammateState
-	mailbox           *Mailbox
 	agent             *core.Agent[string]
 	cancel            context.CancelFunc
 	team              *Team
-	wakeCh            chan struct{}
+	active            *activeTask
+	runCancel         context.CancelCauseFunc
 	shutdownRequested bool
-	shutdownMessage   Message
+	shutdown          shutdownRequest
 }
 
 // Name returns the teammate's name.
@@ -76,66 +105,159 @@ func (tm *Teammate) setState(s TeammateState) {
 	tm.state = s
 }
 
-func (tm *Teammate) requestShutdown(msg Message) Message {
+func (tm *Teammate) requestShutdown(from, reason, correlationID string) shutdownRequest {
 	tm.mu.Lock()
-	defer tm.mu.Unlock()
-
-	msg = ensureMessageIdentity(msg)
-	if msg.Type == "" {
-		msg.Type = MessageShutdownRequest
-	}
+	shouldStop := false
+	cancel := tm.cancel
 	if !tm.shutdownRequested {
+		id := uuid.NewString()
+		if correlationID == "" {
+			correlationID = id
+		}
 		tm.shutdownRequested = true
-		tm.shutdownMessage = msg
-		if tm.state == TeammateIdle {
+		tm.shutdown = shutdownRequest{
+			ID:            id,
+			CorrelationID: correlationID,
+			From:          from,
+			Reason:        reason,
+		}
+		if tm.state == TeammateIdle || tm.state == TeammateStarting {
 			tm.state = TeammateShuttingDown
+			shouldStop = true
 		}
 	}
-	return tm.shutdownMessage
+	req := tm.shutdown
+	tm.mu.Unlock()
+
+	if shouldStop && cancel != nil {
+		cancel()
+	}
+	return req
 }
 
-func (tm *Teammate) shutdownRequest() (Message, bool) {
+func (tm *Teammate) shutdownSignal() (shutdownRequest, bool) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 	if !tm.shutdownRequested {
-		return Message{}, false
+		return shutdownRequest{}, false
 	}
-	return tm.shutdownMessage, true
+	return tm.shutdown, true
 }
 
-func (tm *Teammate) filterControlMessages(msgs []Message) []Message {
-	if len(msgs) == 0 {
-		return nil
+func (tm *Teammate) setActiveClaim(claim *orchestrator.ClaimedTask) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if claim == nil || claim.Task == nil || claim.Lease == nil {
+		tm.active = nil
+		return
 	}
+	runID := ""
+	if claim.Run != nil {
+		runID = claim.Run.ID
+	}
+	tm.active = &activeTask{
+		TaskID:     claim.Task.ID,
+		LeaseToken: claim.Lease.Token,
+		RunID:      runID,
+	}
+}
 
-	filtered := make([]Message, 0, len(msgs))
-	for _, msg := range msgs {
-		msg = ensureMessageIdentity(msg)
-		if msg.Type == MessageShutdownRequest {
-			tm.requestShutdown(msg)
-			continue
+func (tm *Teammate) activeClaim() (activeTask, bool) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if tm.active == nil {
+		return activeTask{}, false
+	}
+	return *tm.active, true
+}
+
+func (tm *Teammate) beginRun(cancel context.CancelCauseFunc) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.runCancel = cancel
+}
+
+func (tm *Teammate) endRun() {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.runCancel = nil
+}
+
+func (tm *Teammate) abortCurrentRun(cause error) bool {
+	tm.mu.Lock()
+	cancel := tm.runCancel
+	tm.mu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel(cause)
+	return true
+}
+
+func (tm *Teammate) markRunEnded(taskID string) {
+	tm.markTaskProgress(taskID, true, false)
+}
+
+func (tm *Teammate) markTaskSettled(taskID string) {
+	tm.markTaskProgress(taskID, false, true)
+}
+
+func (tm *Teammate) markTaskProgress(taskID string, runEnded, settled bool) {
+	action := ""
+
+	tm.mu.Lock()
+	if tm.active != nil && tm.active.TaskID == taskID {
+		if runEnded {
+			tm.active.runEnded = true
 		}
-		filtered = append(filtered, msg)
+		if settled {
+			tm.active.settled = true
+		}
+		if tm.active.runEnded && tm.active.settled {
+			tm.active = nil
+			if tm.shutdownRequested {
+				tm.state = TeammateShuttingDown
+				action = "shutdown"
+			} else {
+				tm.state = TeammateIdle
+				action = "idle"
+			}
+		}
 	}
-	return filtered
+	tm.mu.Unlock()
+
+	switch action {
+	case "shutdown":
+		tm.cancelScheduler()
+	case "idle":
+		if tm.team.eventBus != nil {
+			core.PublishAsync(tm.team.eventBus, TeammateIdleEvent{
+				TeamName:     tm.team.name,
+				TeammateName: tm.name,
+			})
+		}
+	}
 }
 
-// Wake signals the teammate to process new messages.
-func (tm *Teammate) Wake() {
-	select {
-	case tm.wakeCh <- struct{}{}:
-	default:
-		// Already signaled.
+func (tm *Teammate) cancelScheduler() {
+	tm.mu.Lock()
+	cancel := tm.cancel
+	tm.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
 // run is the main goroutine loop for a teammate.
-func (tm *Teammate) run(ctx context.Context, initialTask string) {
+func (tm *Teammate) run(ctx context.Context, start <-chan struct{}) {
 	defer func() {
 		tm.setState(TeammateStopped)
 		reason := "stopped"
-		if _, ok := tm.shutdownRequest(); ok {
+		if sig, ok := tm.shutdownSignal(); ok {
 			reason = "shutdown_requested"
+			if sig.Reason != "" {
+				reason = sig.Reason
+			}
 		} else if ctx.Err() != nil {
 			reason = "context_cancelled"
 		}
@@ -146,167 +268,108 @@ func (tm *Teammate) run(ctx context.Context, initialTask string) {
 				Reason:       reason,
 			})
 		}
+		tm.team.removeTeammate(tm.name)
 		tm.team.wg.Done()
 	}()
 
-	prompt := initialTask
-	consecutiveErrors := 0
-
-	// Clear the parent's ToolCallID after the first run so that subsequent
-	// runs (triggered by mailbox messages) don't nest under the original
-	// spawn_teammate tool span. The first run correctly nests; later runs
-	// create independent spans under the teammate's own trace context.
-	firstRun := true
-
-	for {
-		if msg, ok := tm.shutdownRequest(); ok {
-			tm.setState(TeammateShuttingDown)
-			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s stopping after shutdown request from %s: %s\n",
-				tm.team.name, tm.name, msg.From, previewForLog(msg.Content, 240))
+	if start != nil {
+		select {
+		case <-start:
+		case <-ctx.Done():
 			return
 		}
+	}
 
-		tm.setState(TeammateRunning)
-		fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s running\n", tm.team.name, tm.name)
-
-		runCtx := ctx
-		if !firstRun {
-			runCtx = core.ContextWithToolCallID(ctx, "")
-		}
-		firstRun = false
-
-		result, err := tm.agent.Run(runCtx, prompt)
-		if msg, ok := tm.shutdownRequest(); ok {
-			tm.setState(TeammateShuttingDown)
-			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s stopping after current run due to shutdown request from %s: %s\n",
-				tm.team.name, tm.name, msg.From, previewForLog(msg.Content, 240))
-			return
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				// Context cancelled — shut down.
+	store := newTeamWorkerStore(tm.team, tm.name)
+	runner := &teammateRunner{tm: tm}
+	scheduler := orchestrator.NewScheduler(
+		store,
+		store,
+		runner,
+		orchestrator.WithWorkerID(tm.name),
+		orchestrator.WithMaxConcurrentRuns(1),
+		orchestrator.WithPollInterval(teamSchedulerPollRate),
+		orchestrator.WithLeaseTTL(teamTaskLeaseTTL),
+		orchestrator.WithSchedulerErrorHandler(func(err error) {
+			if ctx.Err() != nil || err == nil {
 				return
 			}
-			consecutiveErrors++
-			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s error (%d): %v\n",
-				tm.team.name, tm.name, consecutiveErrors, err)
-
-			// Notify leader of error.
-			if leaderName := tm.team.leaderName(); leaderName != "" {
-				if leaderMB := tm.team.getMailbox(leaderName); leaderMB != nil {
-					statusMsg := newMessage(
-						tm.name,
-						leaderName,
-						MessageStatusUpdate,
-						fmt.Sprintf("Error on attempt %d: %v", consecutiveErrors, err),
-						tm.name+" encountered an error",
-						"",
-					)
-					if sendErr := leaderMB.TrySend(statusMsg); sendErr != nil {
-						fmt.Fprintf(os.Stderr, "[gollem] WARNING: failed to deliver error update from %s to leader %s: %v\n",
-							tm.name, leaderName, sendErr)
-					}
-				}
-			}
-
-			// Stop after 3 consecutive errors to prevent hot retry loops.
-			if consecutiveErrors >= 3 {
-				fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s stopping after %d consecutive errors\n",
-					tm.team.name, tm.name, consecutiveErrors)
-				return
-			}
-		} else {
-			consecutiveErrors = 0
-			outputPreview := previewForLog(result.Output, 320)
-			summary := tm.name + " finished current task"
-			if outputPreview != "<empty>" {
-				summary = tm.name + ": " + outputPreview
-			}
-			// Notify leader of completion via their mailbox.
-			if leaderName := tm.team.leaderName(); leaderName != "" {
-				leaderMB := tm.team.getMailbox(leaderName)
-				if leaderMB != nil {
-					statusMsg := newMessage(
-						tm.name,
-						leaderName,
-						MessageStatusUpdate,
-						result.Output,
-						summary,
-						"",
-					)
-					if sendErr := leaderMB.TrySend(statusMsg); sendErr != nil {
-						fmt.Fprintf(os.Stderr, "[gollem] WARNING: failed to deliver completion update from %s to leader %s: %v\n",
-							tm.name, leaderName, sendErr)
-					}
-				}
-			}
-
-			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s completed (tokens: %d in, %d out)\n",
-				tm.team.name, tm.name, result.Usage.InputTokens, result.Usage.OutputTokens)
-			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s output: %s\n",
-				tm.team.name, tm.name, outputPreview)
-		}
-
-		// Go idle and wait for new work or shutdown.
-		tm.setState(TeammateIdle)
-		if msg, ok := tm.shutdownRequest(); ok {
-			tm.setState(TeammateShuttingDown)
-			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s stopping while idle due to shutdown request from %s: %s\n",
-				tm.team.name, tm.name, msg.From, previewForLog(msg.Content, 240))
-			return
-		}
-		if tm.team.eventBus != nil {
-			core.PublishAsync(tm.team.eventBus, TeammateIdleEvent{
-				TeamName:     tm.team.name,
-				TeammateName: tm.name,
-			})
-		}
-		fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s idle, waiting for messages\n", tm.team.name, tm.name)
-
-		// Inner loop: wait for messages with actual content. Spurious
-		// wakes (empty mailbox, e.g. when the middleware already consumed
-		// the message during the previous run) go back to waiting instead
-		// of re-running the previous task with the stale prompt.
-		gotWork := false
-		for !gotWork {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tm.team.done:
-				return
-			case <-tm.wakeCh:
-				msgs := tm.filterControlMessages(tm.mailbox.DrainAll())
-				if msg, ok := tm.shutdownRequest(); ok {
-					tm.setState(TeammateShuttingDown)
-					fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s received shutdown request from %s: %s\n",
-						tm.team.name, tm.name, msg.From, previewForLog(msg.Content, 240))
-					return
-				}
-				if len(msgs) == 0 {
-					continue // spurious wake — go back to select
-				}
-
-				// Build prompt from messages.
-				prompt = formatMessagesAsPrompt(msgs)
-				gotWork = true
-			}
-		}
+			fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s scheduler error: %v\n", tm.team.name, tm.name, err)
+		}),
+	)
+	if err := scheduler.Run(ctx); err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s scheduler stopped with error: %v\n", tm.team.name, tm.name, err)
+	}
+	if sig, ok := tm.shutdownSignal(); ok {
+		tm.setState(TeammateShuttingDown)
+		fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s stopping after shutdown request from %s: %s\n",
+			tm.team.name, tm.name, sig.From, previewForLog(sig.Reason, 240))
 	}
 }
 
-func formatMessagesAsPrompt(msgs []Message) string {
-	if len(msgs) == 1 {
-		return "[Message from " + msgs[0].From + "]: " + msgs[0].Content
+type teammateRunner struct {
+	tm *Teammate
+}
+
+func (r *teammateRunner) RunTask(ctx context.Context, claim *orchestrator.ClaimedTask) (*orchestrator.TaskOutcome, error) {
+	if claim == nil || claim.Task == nil {
+		return nil, nil
 	}
-	var b strings.Builder
-	for i, msg := range msgs {
-		if i > 0 {
-			b.WriteString("\n\n")
+
+	tm := r.tm
+	tm.setActiveClaim(claim)
+	tm.setState(TeammateRunning)
+	fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s running task:%s\n", tm.team.name, tm.name, claim.Task.ID)
+
+	defer func() {
+		tm.markRunEnded(claim.Task.ID)
+	}()
+
+	runCtx, cancelRun := context.WithCancelCause(ctx)
+	tm.beginRun(cancelRun)
+	defer func() {
+		tm.endRun()
+		cancelRun(nil)
+	}()
+
+	runCtx = core.ContextWithToolCallID(runCtx, "")
+	if claim.Run != nil && claim.Run.ID != "" {
+		runCtx = core.ContextWithRunID(runCtx, claim.Run.ID)
+	}
+
+	result, runErr := tm.agent.Run(runCtx, teamTaskPrompt(claim.Task))
+	if runErr != nil && errors.Is(runErr, context.Canceled) {
+		if cause := context.Cause(runCtx); cause != nil && !errors.Is(cause, context.Canceled) {
+			runErr = cause
 		}
-		b.WriteString("[Message from ")
-		b.WriteString(msg.From)
-		b.WriteString("]: ")
-		b.WriteString(msg.Content)
 	}
-	return b.String()
+	if runErr != nil {
+		var failedCurrent *failedCurrentTaskError
+		if errors.As(runErr, &failedCurrent) {
+			return nil, nil
+		}
+		var canceledTask *orchestrator.TaskCancelCause
+		if errors.As(runErr, &canceledTask) {
+			return nil, nil
+		}
+		return nil, runErr
+	}
+
+	outcome := &orchestrator.TaskOutcome{
+		Result: &orchestrator.TaskResult{
+			RunnerRunID: result.RunID,
+			Output:      result.Output,
+			Usage:       result.Usage,
+			ToolState:   cloneAnyMap(result.ToolState),
+			Metadata: map[string]any{
+				"teammate": tm.name,
+			},
+			CompletedAt: time.Now(),
+		},
+	}
+	fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s completed task:%s (tokens: %d in, %d out)\n",
+		tm.team.name, tm.name, claim.Task.ID, result.Usage.InputTokens, result.Usage.OutputTokens)
+	fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s output: %s\n",
+		tm.team.name, tm.name, previewForLog(result.Output, 320))
+	return outcome, nil
 }

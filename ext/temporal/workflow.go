@@ -15,6 +15,7 @@ import (
 // WorkflowInput is the serializable input to a durable Temporal agent run.
 type WorkflowInput struct {
 	Prompt                        string                      `json:"prompt"`
+	ParentRunID                   string                      `json:"parent_run_id,omitempty"`
 	Snapshot                      *core.SerializedRunSnapshot `json:"snapshot,omitempty"`
 	SnapshotJSON                  json.RawMessage             `json:"snapshot_json,omitempty"` // Deprecated: prefer Snapshot.
 	TraceSteps                    []core.TraceStep            `json:"trace_steps,omitempty"`
@@ -152,6 +153,7 @@ func (s *workflowSignalState) refreshStatus(
 		Retries:         state.Retries,
 		ToolRetries:     cloneIntMap(state.ToolRetries),
 		RunID:           state.RunID,
+		ParentRunID:     state.ParentRunID,
 		RunStep:         state.RunStep,
 		RunStartTime:    state.RunStartTime,
 		Prompt:          prompt,
@@ -181,6 +183,7 @@ func (s *workflowSignalState) refreshStatus(
 
 	status := WorkflowStatus{
 		RunID:                   state.RunID,
+		ParentRunID:             state.ParentRunID,
 		RunStep:                 state.RunStep,
 		Usage:                   state.Usage,
 		WorkflowName:            s.workflowName,
@@ -407,6 +410,7 @@ func buildCallbackInput(state *workflowRunState, prompt, toolName, toolCallID st
 		ToolRetries:     cloneIntMap(state.ToolRetries),
 		RunStep:         state.RunStep,
 		RunID:           state.RunID,
+		ParentRunID:     state.ParentRunID,
 		RunStartTime:    state.RunStartTime,
 		ToolState:       cloneAnyMap(state.ToolState),
 		ToolName:        toolName,
@@ -832,6 +836,7 @@ func (ta *TemporalAgent[T]) continueAsNew(ctx workflow.Context, state *workflowR
 	state.ContinueAsNewCount++
 	nextInput := WorkflowInput{
 		Prompt:                        prompt,
+		ParentRunID:                   state.ParentRunID,
 		Snapshot:                      encodedSnapshot,
 		TraceSteps:                    cloneTraceSteps(state.TraceSteps),
 		DepsJSON:                      append([]byte(nil), state.DepsJSON...),
@@ -971,10 +976,13 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 			return
 		}
 		if busErr := ta.publishEventBus(ctx, eventBusActivityInput{
-			EventType: hookEventRunEnd,
-			RunID:     state.RunID,
-			Success:   runErr == nil,
-			Error:     errorString(runErr),
+			EventType:    hookEventRunEnd,
+			RunID:        state.RunID,
+			ParentRunID:  state.ParentRunID,
+			RunStartTime: state.RunStartTime,
+			OccurredAt:   workflow.Now(ctx),
+			Success:      runErr == nil,
+			Error:        errorString(runErr),
 		}); busErr != nil && runErr == nil {
 			runErr = fmt.Errorf("run end event publish failed: %w", busErr)
 			return
@@ -1061,9 +1069,11 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 	}
 	if !continueAsNewResume {
 		if err := ta.publishEventBus(ctx, eventBusActivityInput{
-			EventType: hookEventRunStart,
-			RunID:     state.RunID,
-			Prompt:    prompt,
+			EventType:    hookEventRunStart,
+			RunID:        state.RunID,
+			ParentRunID:  state.ParentRunID,
+			Prompt:       prompt,
+			RunStartTime: state.RunStartTime,
 		}); err != nil {
 			return nil, fmt.Errorf("run start event publish failed: %w", err)
 		}
@@ -1614,10 +1624,13 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 			}
 			if !callState.eventPublished {
 				if err := ta.publishEventBus(ctx, eventBusActivityInput{
-					EventType: hookEventToolStart,
-					RunID:     state.RunID,
-					ToolName:  callState.call.ToolName,
-					ArgsJSON:  callState.call.ArgsJSON,
+					EventType:   hookEventToolStart,
+					RunID:       state.RunID,
+					ParentRunID: state.ParentRunID,
+					ToolCallID:  callState.call.ToolCallID,
+					ToolName:    callState.call.ToolName,
+					ArgsJSON:    callState.call.ArgsJSON,
+					OccurredAt:  workflow.Now(ctx),
 				}); err != nil {
 					return nil, err
 				}
@@ -1750,6 +1763,7 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 				DepsJSON:        append([]byte(nil), state.DepsJSON...),
 				RunStep:         state.RunStep,
 				RunID:           state.RunID,
+				ParentRunID:     state.ParentRunID,
 				RunStartTime:    state.RunStartTime,
 				Usage:           state.Usage,
 				LastInputTokens: state.LastInputTokens,
@@ -1856,6 +1870,7 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 							DepsJSON:        append([]byte(nil), state.DepsJSON...),
 							RunStep:         state.RunStep,
 							RunID:           state.RunID,
+							ParentRunID:     state.ParentRunID,
 							RunStartTime:    state.RunStartTime,
 							Usage:           state.Usage,
 							LastInputTokens: state.LastInputTokens,

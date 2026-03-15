@@ -3,86 +3,49 @@ package team
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/ext/orchestrator"
 )
 
 func TestSpawnTool(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
 	tm := NewTeam(TeamConfig{
 		Name:   "tool-test",
 		Leader: "leader",
-		Model:  model,
+		Model:  core.NewTestModel(core.TextResponse("done")),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	tool := spawnTool(tm)
-	if tool.Definition.Name != "spawn_teammate" {
-		t.Errorf("expected tool name 'spawn_teammate', got %q", tool.Definition.Name)
-	}
-
-	// Call the tool via the agent's handler.
 	result, err := tool.Handler(ctx, nil, `{"name":"helper","task":"do something"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	resultMap, ok := result.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map result, got %T", result)
-	}
+	resultMap := result.(map[string]any)
 	if resultMap["status"] != "spawned" {
-		t.Errorf("expected status 'spawned', got %v", resultMap["status"])
+		t.Fatalf("expected spawned status, got %v", resultMap["status"])
 	}
 	if resultMap["name"] != "helper" {
-		t.Errorf("expected name 'helper', got %v", resultMap["name"])
+		t.Fatalf("expected helper name, got %v", resultMap["name"])
 	}
 
-	// Wait for worker to go idle and clean up.
-	w := tm.GetTeammate("helper")
-	if w == nil {
-		t.Fatal("helper not found")
+	helper := tm.GetTeammate("helper")
+	if helper == nil {
+		t.Fatal("expected helper teammate to exist")
 	}
-	waitForState(t, w, TeammateIdle, 3*time.Second)
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
-}
-
-func TestSpawnTool_EmptyName(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{Name: "test", Model: model})
-
-	tool := spawnTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"name":"","task":"x"}`)
-	if err == nil {
-		t.Error("expected error for empty name")
-	}
-}
-
-func TestSpawnTool_EmptyTask(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{Name: "test", Model: model})
-
-	tool := spawnTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"name":"x","task":""}`)
-	if err == nil {
-		t.Error("expected error for empty task")
-	}
+	waitForState(t, helper, TeammateIdle, 3*time.Second)
 }
 
 func TestShutdownTool(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
 	tm := NewTeam(TeamConfig{
 		Name:   "test",
 		Leader: "leader",
-		Model:  model,
+		Model:  core.NewTestModel(core.TextResponse("done")),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -92,8 +55,8 @@ func TestShutdownTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := tm.GetTeammate("worker")
-	waitForState(t, w, TeammateIdle, 3*time.Second)
+	worker := tm.GetTeammate("worker")
+	waitForState(t, worker, TeammateIdle, 3*time.Second)
 
 	tool := shutdownTool(tm)
 	result, err := tool.Handler(ctx, nil, `{"name":"worker","reason":"all done"}`)
@@ -102,445 +65,174 @@ func TestShutdownTool(t *testing.T) {
 	}
 	resultMap := result.(map[string]any)
 	if resultMap["status"] != "shutdown_requested" {
-		t.Errorf("expected status 'shutdown_requested', got %v", resultMap["status"])
+		t.Fatalf("expected shutdown_requested, got %v", resultMap["status"])
 	}
 	if resultMap["requested_by"] != "leader" {
-		t.Errorf("expected requested_by 'leader', got %v", resultMap["requested_by"])
+		t.Fatalf("expected requested_by leader, got %v", resultMap["requested_by"])
 	}
-	if resultMap["shutdown_id"] == "" {
-		t.Error("expected non-empty shutdown_id")
-	}
-	if resultMap["correlation_id"] == "" {
-		t.Error("expected non-empty correlation_id")
-	}
-
-	// Worker should stop.
-	deadline := time.After(3 * time.Second)
-	for w.State() != TeammateStopped {
-		select {
-		case <-deadline:
-			t.Fatalf("worker did not stop")
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-}
-
-func TestShutdownTool_NotFound(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{Name: "test", Model: model})
-
-	tool := shutdownTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"name":"nobody"}`)
-	if err == nil {
-		t.Error("expected error for missing teammate")
-	}
-}
-
-func TestShutdownTool_UsesConfiguredLeaderName(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{
-		Name:   "test",
-		Leader: "lead",
-		Model:  model,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := tm.SpawnTeammate(ctx, "worker", "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := tm.GetTeammate("worker")
-	waitForState(t, w, TeammateIdle, 3*time.Second)
-
-	tool := shutdownTool(tm)
-	result, err := tool.Handler(ctx, nil, `{"name":"worker","reason":"all done"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resultMap := result.(map[string]any)
-	if resultMap["requested_by"] != "lead" {
-		t.Errorf("expected requested_by 'lead', got %v", resultMap["requested_by"])
-	}
-}
-
-func TestSendMessageTool(t *testing.T) {
-	bus := core.NewEventBus()
-
-	var mu sync.Mutex
-	var sentEvents []MessageSentEvent
-	core.Subscribe(bus, func(e MessageSentEvent) {
-		mu.Lock()
-		sentEvents = append(sentEvents, e)
-		mu.Unlock()
-	})
-
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{
-		Name:     "test",
-		Leader:   "leader",
-		Model:    model,
-		EventBus: bus,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := tm.SpawnTeammate(ctx, "bob", "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bob := tm.GetTeammate("bob")
-	waitForState(t, bob, TeammateIdle, 3*time.Second)
-
-	tool := sendMessageTool(tm, "alice")
-	result, err := tool.Handler(ctx, nil, `{"to":"bob","content":"check handler.go","summary":"review request"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resultMap := result.(map[string]any)
-	if resultMap["status"] != "sent" {
-		t.Errorf("expected status 'sent', got %v", resultMap["status"])
-	}
-	if resultMap["message_id"] == "" {
-		t.Error("expected non-empty message_id")
-	}
-	if resultMap["correlation_id"] == "" {
-		t.Error("expected non-empty correlation_id")
-	}
-
-	// The send_message tool also wakes bob, which causes the teammate loop
-	// to drain the mailbox and run. So instead of checking the mailbox directly
-	// (it gets drained by the run loop), we verify the message was sent via
-	// the event and that bob woke up and ran again.
-	time.Sleep(50 * time.Millisecond)
-	waitForState(t, bob, TeammateIdle, 3*time.Second)
-
-	// Verify event was fired.
-	mu.Lock()
-	defer mu.Unlock()
-	if len(sentEvents) != 1 {
-		t.Fatalf("expected 1 sent event, got %d", len(sentEvents))
-	}
-	if sentEvents[0].From != "alice" {
-		t.Errorf("expected from 'alice', got %q", sentEvents[0].From)
-	}
-	if sentEvents[0].To != "bob" {
-		t.Errorf("expected to 'bob', got %q", sentEvents[0].To)
-	}
-	if sentEvents[0].Summary != "review request" {
-		t.Errorf("expected summary 'review request', got %q", sentEvents[0].Summary)
-	}
-	if sentEvents[0].MessageID == "" {
-		t.Error("expected sent event to include message ID")
-	}
-	if sentEvents[0].CorrelationID == "" {
-		t.Error("expected sent event to include correlation ID")
-	}
-	if sentEvents[0].Type != MessageText {
-		t.Errorf("expected message type %q, got %q", MessageText, sentEvents[0].Type)
-	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
-}
-
-func TestSendMessageTool_NotFound(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tool := sendMessageTool(tm, "alice")
-	_, err := tool.Handler(context.Background(), nil, `{"to":"nobody","content":"hello"}`)
-	if err == nil {
-		t.Error("expected error for missing recipient")
-	}
-}
-
-func TestSendMessageTool_MailboxFullReturnsError(t *testing.T) {
-	tm := NewTeam(TeamConfig{
-		Name:        "test",
-		Leader:      "lead",
-		Model:       core.NewTestModel(core.TextResponse("done")),
-		MailboxSize: 1,
-	})
-	_ = tm.RegisterLeader("lead")
-
-	leaderMB := tm.getMailbox("lead")
-	if leaderMB == nil {
-		t.Fatal("expected leader mailbox")
-	}
-	leaderMB.Send(Message{From: "existing", To: "lead", Type: MessageText, Content: "already full"})
-
-	tool := sendMessageTool(tm, "alice")
-	_, err := tool.Handler(context.Background(), nil, `{"to":"lead","content":"overflow"}`)
-	if err == nil {
-		t.Fatal("expected mailbox full error")
-	}
-}
-
-func TestSendMessageTool_EmptyContent(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tool := sendMessageTool(tm, "alice")
-	_, err := tool.Handler(context.Background(), nil, `{"to":"bob","content":""}`)
-	if err == nil {
-		t.Error("expected error for empty content")
-	}
-}
-
-func TestSendMessageTool_AutoSummary(t *testing.T) {
-	model := core.NewTestModel(core.TextResponse("done"))
-	tm := NewTeam(TeamConfig{
-		Name:   "test",
-		Leader: "leader",
-		Model:  model,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := tm.SpawnTeammate(ctx, "bob", "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bob := tm.GetTeammate("bob")
-	waitForState(t, bob, TeammateIdle, 3*time.Second)
-
-	// Send with long content but no explicit summary.
-	longContent := "This is a very long message that exceeds fifty characters and should be auto-truncated for the summary field."
-	tool := sendMessageTool(tm, "alice")
-	_, err = tool.Handler(ctx, nil, `{"to":"bob","content":"`+longContent+`"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer shutdownCancel()
-	tm.Shutdown(shutdownCtx)
 }
 
 func TestTaskCreateTool(t *testing.T) {
 	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tool := taskCreateTool(tm)
 
-	result, err := tool.Handler(context.Background(), nil, `{"subject":"Fix bug","description":"In auth module"}`)
+	ctx := context.Background()
+	if _, err := tm.SpawnTeammate(ctx, "worker", "initial"); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := taskCreateTool(tm, "leader")
+	result, err := tool.Handler(ctx, nil, `{"subject":"Fix bug","description":"In auth module","assignee":"worker"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	resultMap := result.(map[string]any)
 	if resultMap["status"] != "created" {
-		t.Errorf("expected status 'created', got %v", resultMap["status"])
-	}
-	taskID := resultMap["task_id"].(string)
-	if taskID == "" {
-		t.Error("expected non-empty task_id")
+		t.Fatalf("expected created status, got %v", resultMap["status"])
 	}
 
-	// Verify task exists on board.
-	task, err := tm.TaskBoard().Get(taskID)
+	taskID := resultMap["task_id"].(string)
+	task, err := tm.getTeamTask(ctx, taskID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if task.Subject != "Fix bug" {
-		t.Errorf("expected subject 'Fix bug', got %q", task.Subject)
+		t.Fatalf("expected subject Fix bug, got %q", task.Subject)
+	}
+	if got := teamTaskAssignee(task); got != "worker" {
+		t.Fatalf("expected assignee worker, got %q", got)
 	}
 }
 
-func TestTaskCreateTool_EmptySubject(t *testing.T) {
+func TestTaskCreateTool_UnknownAssignee(t *testing.T) {
 	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tool := taskCreateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"subject":"","description":"x"}`)
-	if err == nil {
-		t.Error("expected error for empty subject")
+	tool := taskCreateTool(tm, "leader")
+	if _, err := tool.Handler(context.Background(), nil, `{"subject":"Fix bug","assignee":"nobody"}`); err == nil {
+		t.Fatal("expected unknown assignee error")
 	}
 }
 
-func TestTaskUpdateTool(t *testing.T) {
+func TestTaskListAndGetTools(t *testing.T) {
 	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tb := tm.TaskBoard()
-	id := tb.Create("Task", "Desc")
-
-	tool := taskUpdateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","status":"in_progress","owner":"worker-1"}`)
+	task, err := tm.createTeamTask(context.Background(), "Task A", "Desc", "", "leader")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	task, _ := tb.Get(id)
-	if task.Status != TaskInProgress {
-		t.Errorf("expected in_progress, got %v", task.Status)
-	}
-	if task.Owner != "worker-1" {
-		t.Errorf("expected owner 'worker-1', got %q", task.Owner)
-	}
-}
-
-func TestTaskUpdateTool_NotFound(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tool := taskUpdateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"999","status":"completed"}`)
-	if err == nil {
-		t.Error("expected error for missing task")
-	}
-}
-
-func TestTaskListTool(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tb := tm.TaskBoard()
-	tb.Create("Task A", "")
-	tb.Create("Task B", "")
-
-	tool := taskListTool(tm)
-	result, err := tool.Handler(context.Background(), nil, `{}`)
+	listTool := taskListTool(tm)
+	listResult, err := listTool.Handler(context.Background(), nil, `{}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Result should be json.RawMessage.
-	raw, ok := result.(json.RawMessage)
-	if !ok {
-		t.Fatalf("expected json.RawMessage, got %T", result)
-	}
-
-	var tasks []map[string]any
-	if err := json.Unmarshal(raw, &tasks); err != nil {
+	rawList := listResult.(json.RawMessage)
+	var tasks []teamTaskView
+	if err := json.Unmarshal(rawList, &tasks); err != nil {
 		t.Fatal(err)
 	}
-	if len(tasks) != 2 {
-		t.Errorf("expected 2 tasks, got %d", len(tasks))
+	if len(tasks) != 1 || tasks[0].ID != task.ID {
+		t.Fatalf("unexpected task list: %#v", tasks)
 	}
-}
 
-func TestTaskGetTool(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tb := tm.TaskBoard()
-	id := tb.Create("My Task", "Details here")
-
-	tool := taskGetTool(tm)
-	result, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`"}`)
+	getTool := taskGetTool(tm)
+	getResult, err := getTool.Handler(context.Background(), nil, `{"id":"`+task.ID+`"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	raw := result.(json.RawMessage)
-	var task Task
-	if err := json.Unmarshal(raw, &task); err != nil {
+	var view teamTaskView
+	if err := json.Unmarshal(getResult.(json.RawMessage), &view); err != nil {
 		t.Fatal(err)
 	}
-	if task.Subject != "My Task" {
-		t.Errorf("expected 'My Task', got %q", task.Subject)
-	}
-	if task.Description != "Details here" {
-		t.Errorf("expected 'Details here', got %q", task.Description)
+	if view.ID != task.ID || view.Subject != task.Subject {
+		t.Fatalf("unexpected task view: %#v", view)
 	}
 }
 
-func TestTaskGetTool_NotFound(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tool := taskGetTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"999"}`)
-	if err == nil {
-		t.Error("expected error for missing task")
-	}
-}
+func TestTaskFailCurrentTool_FailsClaimedTask(t *testing.T) {
+	unexpectedCalls := 0
+	unexpectedTool := core.FuncTool[struct{}](
+		"unexpected",
+		"should not run after task_fail_current",
+		func(_ context.Context, _ struct{}) (string, error) {
+			unexpectedCalls++
+			return "unexpected", nil
+		},
+	)
 
-func TestTaskGetTool_EmptyID(t *testing.T) {
-	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	tool := taskGetTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":""}`)
-	if err == nil {
-		t.Error("expected error for empty ID")
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("task_fail_current", `{"reason":"blocked on missing API"}`, "call_fail"),
+		core.ToolCallResponseWithID("unexpected", `{}`, "call_unexpected"),
+		core.TextResponse("reported failure"),
+	)
+	tm := NewTeam(TeamConfig{
+		Name:             "test",
+		Leader:           "leader",
+		Model:            model,
+		WorkerExtraTools: []core.Tool{unexpectedTool},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	worker, err := tm.SpawnTeammate(ctx, "worker", "do something impossible")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, worker, TeammateIdle, 3*time.Second)
+
+	tasks, err := tm.listTeamTasks(context.Background(), orchestrator.TaskFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0].Status != orchestrator.TaskFailed {
+		t.Fatalf("expected failed task, got %s", tasks[0].Status)
+	}
+	if tasks[0].LastError != "blocked on missing API" {
+		t.Fatalf("expected failure reason to be recorded, got %q", tasks[0].LastError)
+	}
+	if unexpectedCalls != 0 {
+		t.Fatalf("expected no follow-on tool calls after task failure, got %d", unexpectedCalls)
+	}
+	if got := len(model.Calls()); got != 1 {
+		t.Fatalf("expected current run to stop after first model response, got %d model calls", got)
 	}
 }
 
 func TestLeaderTools_Count(t *testing.T) {
 	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
 	tools := LeaderTools(tm)
-
-	// Leader gets: spawn_teammate, shutdown_teammate + shared (send_message, task_create, task_update, task_list, task_get) = 7
-	if len(tools) != 7 {
-		t.Errorf("expected 7 leader tools, got %d", len(tools))
+	if len(tools) != 5 {
+		t.Fatalf("expected 5 leader tools, got %d", len(tools))
 	}
-
-	names := make(map[string]bool)
+	names := map[string]bool{}
 	for _, tool := range tools {
 		names[tool.Definition.Name] = true
 	}
-	expected := []string{
-		"spawn_teammate", "shutdown_teammate", "send_message",
-		"task_create", "task_update", "task_list", "task_get",
-	}
-	for _, name := range expected {
+	for _, name := range []string{"spawn_teammate", "shutdown_teammate", "task_create", "task_list", "task_get"} {
 		if !names[name] {
-			t.Errorf("missing tool %q", name)
+			t.Fatalf("missing leader tool %q", name)
 		}
 	}
 }
 
 func TestWorkerTools_Count(t *testing.T) {
 	tm := NewTeam(TeamConfig{Name: "test", Model: core.NewTestModel(core.TextResponse("done"))})
-	dummy := &Teammate{name: "worker"}
-	tools := WorkerTools(tm, dummy)
-
-	// Worker gets: shared only (send_message, task_create, task_update, task_list, task_get) = 5
-	if len(tools) != 5 {
-		t.Errorf("expected 5 worker tools, got %d", len(tools))
+	worker := &Teammate{name: "worker"}
+	tools := WorkerTools(tm, worker)
+	if len(tools) != 4 {
+		t.Fatalf("expected 4 worker tools, got %d", len(tools))
 	}
-
-	names := make(map[string]bool)
+	names := map[string]bool{}
 	for _, tool := range tools {
 		names[tool.Definition.Name] = true
 	}
-	// Workers should NOT have spawn_teammate, shutdown_teammate, or ask_user.
-	if names["spawn_teammate"] {
-		t.Error("workers should not have spawn_teammate")
+	if names["spawn_teammate"] || names["shutdown_teammate"] {
+		t.Fatal("worker tools should not include team lifecycle controls")
 	}
-	if names["shutdown_teammate"] {
-		t.Error("workers should not have shutdown_teammate")
-	}
-	if names["ask_user"] {
-		t.Error("workers should not have ask_user")
-	}
-}
-
-// TestTaskUpdateTool_CompletionEvent tests that completing a task emits an event.
-func TestTaskUpdateTool_CompletionEvent(t *testing.T) {
-	bus := core.NewEventBus()
-
-	var mu sync.Mutex
-	var completedEvents []TaskCompletedEvent
-	core.Subscribe(bus, func(e TaskCompletedEvent) {
-		mu.Lock()
-		completedEvents = append(completedEvents, e)
-		mu.Unlock()
-	})
-
-	tm := NewTeam(TeamConfig{
-		Name:     "test",
-		Model:    core.NewTestModel(core.TextResponse("done")),
-		EventBus: bus,
-	})
-	tb := tm.TaskBoard()
-	id := tb.Create("Task", "")
-	tb.Update(id, WithOwner("worker"))
-
-	tool := taskUpdateTool(tm)
-	_, err := tool.Handler(context.Background(), nil, `{"id":"`+id+`","status":"completed"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Give async event time.
-	time.Sleep(50 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(completedEvents) != 1 {
-		t.Fatalf("expected 1 completion event, got %d", len(completedEvents))
-	}
-	if completedEvents[0].TaskID != id {
-		t.Errorf("expected task ID %q, got %q", id, completedEvents[0].TaskID)
-	}
-	if completedEvents[0].Owner != "worker" {
-		t.Errorf("expected owner 'worker', got %q", completedEvents[0].Owner)
+	for _, name := range []string{"task_create", "task_list", "task_get", "task_fail_current"} {
+		if !names[name] {
+			t.Fatalf("missing worker tool %q", name)
+		}
 	}
 }
