@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"unicode/utf8"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -390,29 +390,29 @@ func isSkippableDir(name string) bool {
 		".coverage", // Python coverage
 		".DS_Store", // macOS metadata (file, not dir, but harmless to check)
 		// IDE and editor directories.
-		".idea",        // JetBrains (IntelliJ, PyCharm, GoLand, etc.)
-		".vscode",      // VS Code settings
-		".vs",          // Visual Studio
-		".eclipse",     // Eclipse metadata
-		".settings",    // Eclipse settings
-		"__snapshots__",       // Jest test snapshots
-		".ipynb_checkpoints",  // Jupyter notebook checkpoints
+		".idea",              // JetBrains (IntelliJ, PyCharm, GoLand, etc.)
+		".vscode",            // VS Code settings
+		".vs",                // Visual Studio
+		".eclipse",           // Eclipse metadata
+		".settings",          // Eclipse settings
+		"__snapshots__",      // Jest test snapshots
+		".ipynb_checkpoints", // Jupyter notebook checkpoints
 		// Language-specific build/cache directories.
-		".stack-work", // Haskell Stack build artifacts
-		"_opam",       // OCaml opam local switch
-		".dart_tool",  // Dart tool cache
-		".packages",   // Dart package links
-		"elm-stuff",   // Elm build artifacts
-		".elixir_ls",  // Elixir language server cache
-		".cargo",      // Rust cargo registry (when local)
+		".stack-work",    // Haskell Stack build artifacts
+		"_opam",          // OCaml opam local switch
+		".dart_tool",     // Dart tool cache
+		".packages",      // Dart package links
+		"elm-stuff",      // Elm build artifacts
+		".elixir_ls",     // Elixir language server cache
+		".cargo",         // Rust cargo registry (when local)
 		".cabal-sandbox", // Haskell Cabal sandbox
-		"_esy",        // OCaml esy package cache
-		".lake",       // Lean 4 Lake build cache
-		".eunit",      // Erlang EUnit output
-		".angular",    // Angular cache
-		".parcel-cache", // Parcel bundler cache
-		".svelte-kit",   // SvelteKit build
-		"_rel",        // Erlang release directory
+		"_esy",           // OCaml esy package cache
+		".lake",          // Lean 4 Lake build cache
+		".eunit",         // Erlang EUnit output
+		".angular",       // Angular cache
+		".parcel-cache",  // Parcel bundler cache
+		".svelte-kit",    // SvelteKit build
+		"_rel",           // Erlang release directory
 		// Infrastructure/deployment directories.
 		".terraform",  // Terraform providers and state (can be huge)
 		".serverless", // Serverless Framework
@@ -428,40 +428,40 @@ func isSkippableDir(name string) bool {
 		// CMake build artifacts (generated files, object directories).
 		"CMakeFiles",
 		// Additional caches and generated directories.
-		".hypothesis",   // Python hypothesis testing cache
-		"htmlcov",       // Python coverage HTML reports
-		".output",       // Nuxt 3 output
-		".vercel",       // Vercel deployment cache
-		".netlify",      // Netlify deployment cache
-		".astro",        // Astro build cache
-		".docusaurus",   // Docusaurus build cache
-		".sass-cache",   // Sass compilation cache
-		".nx",           // Nx monorepo cache
-		".swc",          // SWC compiler cache
-		".temp",         // Generic temp directory
-		".tmp",          // Generic temp directory
+		".hypothesis", // Python hypothesis testing cache
+		"htmlcov",     // Python coverage HTML reports
+		".output",     // Nuxt 3 output
+		".vercel",     // Vercel deployment cache
+		".netlify",    // Netlify deployment cache
+		".astro",      // Astro build cache
+		".docusaurus", // Docusaurus build cache
+		".sass-cache", // Sass compilation cache
+		".nx",         // Nx monorepo cache
+		".swc",        // SWC compiler cache
+		".temp",       // Generic temp directory
+		".tmp",        // Generic temp directory
 		// Apple/iOS/macOS build artifacts.
-		"Pods",          // CocoaPods dependencies
-		"DerivedData",   // Xcode build cache
-		"Carthage",      // Carthage dependencies
-		".swiftpm",      // Swift Package Manager cache
+		"Pods",        // CocoaPods dependencies
+		"DerivedData", // Xcode build cache
+		"Carthage",    // Carthage dependencies
+		".swiftpm",    // Swift Package Manager cache
 		// Ruby/bundler.
-		".bundle",       // Bundler gem install location
+		".bundle", // Bundler gem install location
 		// Additional language/framework caches.
-		".zig-cache",    // Alternative Zig cache path
-		".mypy_output",  // mypy daemon output
-		".pixi",         // Pixi (conda alternative) environment
-		".uv",           // uv Python package cache
-		".rspec",        // RSpec cache
+		".zig-cache",     // Alternative Zig cache path
+		".mypy_output",   // mypy daemon output
+		".pixi",          // Pixi (conda alternative) environment
+		".uv",            // uv Python package cache
+		".rspec",         // RSpec cache
 		".phpunit.cache", // PHPUnit cache
-		".pytest",       // Alternative pytest cache location
-		".bloop",        // Scala Bloop build server cache
-		".nox",          // Python Nox test automation sessions
-		".cpcache",      // Clojure classpath cache
-		".ccls-cache",   // C/C++ ccls language server cache
-		".clangd",       // clangd language server cache
-		".cache-loader", // webpack cache-loader
-		"__fixtures__":  // Test fixture directories (often large data)
+		".pytest",        // Alternative pytest cache location
+		".bloop",         // Scala Bloop build server cache
+		".nox",           // Python Nox test automation sessions
+		".cpcache",       // Clojure classpath cache
+		".ccls-cache",    // C/C++ ccls language server cache
+		".clangd",        // clangd language server cache
+		".cache-loader",  // webpack cache-loader
+		"__fixtures__":   // Test fixture directories (often large data)
 		return true
 	}
 	return false
@@ -471,30 +471,30 @@ func isBinaryFilename(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff", ".tif",
-		".ppm", ".pgm", ".icns",                    // uncommon image formats
-		".heic", ".heif", ".avif", ".jxl",           // modern image formats
+		".ppm", ".pgm", ".icns", // uncommon image formats
+		".heic", ".heif", ".avif", ".jxl", // modern image formats
 		".psd", ".ai", ".sketch", ".fig", ".blend", // design/3D files
 		".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".zst",
 		".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib", ".obj", ".wasm",
 		".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
 		".pyc", ".pyo", ".class", ".jar", ".war", ".whl", ".egg", // compiled/packaged
 		".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac", ".ogg",
-		".aac", ".m4a", ".aiff", ".wma",                 // additional audio
-		".wmv", ".flv", ".webm",                         // additional video
+		".aac", ".m4a", ".aiff", ".wma", // additional audio
+		".wmv", ".flv", ".webm", // additional video
 		".ttf", ".otf", ".woff", ".woff2", ".eot",
 		".sqlite", ".sqlite3", ".db", ".db3", ".mdb", ".accdb", // databases
-		".qcow2", ".img", ".iso", ".vmdk", ".vdi",      // disk images
-		".bin", ".dat", ".raw", ".pak",                  // generic binary
-		".lockb",                                        // binary lock files (Bun)
-		".swp", ".swo",                                  // Vim swap files
+		".qcow2", ".img", ".iso", ".vmdk", ".vdi", // disk images
+		".bin", ".dat", ".raw", ".pak", // generic binary
+		".lockb",       // binary lock files (Bun)
+		".swp", ".swo", // Vim swap files
 		".npy", ".npz", ".pkl", ".pickle", ".pt", ".pth", // ML data/models
-		".onnx", ".safetensors", ".tflite", ".gguf",    // ML model formats
-		".pb",                                           // protobuf binary
-		".h5", ".hdf5", ".parquet", ".feather",          // data formats
-		".arrow", ".avro", ".orc",                       // columnar data formats
-		".cab", ".deb", ".rpm", ".snap", ".flatpak",     // packages
-		".lz4", ".lzo", ".br",                           // additional compression
-		".DS_Store":                                     // macOS metadata
+		".onnx", ".safetensors", ".tflite", ".gguf", // ML model formats
+		".pb",                                  // protobuf binary
+		".h5", ".hdf5", ".parquet", ".feather", // data formats
+		".arrow", ".avro", ".orc", // columnar data formats
+		".cab", ".deb", ".rpm", ".snap", ".flatpak", // packages
+		".lz4", ".lzo", ".br", // additional compression
+		".DS_Store": // macOS metadata
 		return true
 	}
 	return false

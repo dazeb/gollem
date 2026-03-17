@@ -31,31 +31,14 @@ import (
 //	agent := core.NewAgent(model, "...", core.WithToolsets[string](ts))
 func Toolset(opts ...Option) *core.Toolset {
 	return &core.Toolset{
-		Name: "codetool",
-		Tools: []core.Tool{
-			Bash(opts...),
-			BashStatus(opts...),
-			BashKill(opts...),
-			View(opts...),
-			Write(opts...),
-			Edit(opts...),
-			MultiEdit(opts...),
-			Grep(opts...),
-			Glob(opts...),
-			Ls(opts...),
-			LSP(opts...),
-		},
+		Name:  "codetool",
+		Tools: toolsetTools(opts...),
 	}
 }
 
-// AllTools returns all coding agent tools as a slice.
-//
-// Like [Toolset], background process support requires an explicit
-// [BackgroundProcessManager] via [WithBackgroundProcessManager], and
-// lifecycle (cleanup, completion notifications) must be wired manually.
-// Use [AgentOptions] for the automatic single-agent path.
-func AllTools(opts ...Option) []core.Tool {
-	return []core.Tool{
+func toolsetTools(opts ...Option) []core.Tool {
+	cfg := applyOpts(opts)
+	tools := []core.Tool{
 		Bash(opts...),
 		BashStatus(opts...),
 		BashKill(opts...),
@@ -68,6 +51,20 @@ func AllTools(opts ...Option) []core.Tool {
 		Ls(opts...),
 		LSP(opts...),
 	}
+	if cfg.Model != nil && modelutil.GetProfile(cfg.Model).SupportsVision {
+		tools = append(tools, OpenImage(opts...))
+	}
+	return tools
+}
+
+// AllTools returns all coding agent tools as a slice.
+//
+// Like [Toolset], background process support requires an explicit
+// [BackgroundProcessManager] via [WithBackgroundProcessManager], and
+// lifecycle (cleanup, completion notifications) must be wired manually.
+// Use [AgentOptions] for the automatic single-agent path.
+func AllTools(opts ...Option) []core.Tool {
+	return toolsetTools(opts...)
 }
 
 // ensureBackgroundManager ensures that opts contain a shared BackgroundProcessManager.
@@ -191,9 +188,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		extraTools = append(extraTools, SubAgentTool(cfg.Model, toolOpts...))
 	}
 
-	// open_image: available when the model supports vision.
 	if cfg.Model != nil && modelutil.GetProfile(cfg.Model).SupportsVision {
-		extraTools = append(extraTools, OpenImage(toolOpts...))
 		systemPrompt += "\n\n" + openImageHint
 	}
 
@@ -305,7 +300,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		//    Pass timeout so it can also use time-based triggers.
 		core.WithAgentMiddleware[string](ProgressTrackingMiddleware(workDir, cfg.Timeout)),
 		// 3. Context injection — discover environment on first turn.
-		core.WithAgentMiddleware[string](ContextInjectionMiddleware(workDir, cfg.Timeout)),
+		core.WithAgentMiddleware[string](ContextInjectionMiddleware(workDir, cfg.BenchmarkMode, cfg.Timeout)),
 		// 4. Reasoning sandwich — vary thinking budget by phase.
 		core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(reasoningCfg)),
 		// 5. Verification tracking — track whether agent runs tests.

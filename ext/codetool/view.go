@@ -125,10 +125,10 @@ func View(opts ...Option) core.Tool {
 					line := allLines[i]
 					if len(line) > 2000 {
 						n := 2000
-					for n > 0 && !utf8.RuneStart(line[n]) {
-						n--
-					}
-					line = line[:n] + "..."
+						for n > 0 && !utf8.RuneStart(line[n]) {
+							n--
+						}
+						line = line[:n] + "..."
 					}
 					lines = append(lines, fmt.Sprintf("%6d\t%s", i+1, line))
 				}
@@ -269,15 +269,15 @@ func isLockFile(name string) bool {
 		"poetry.lock", "pipfile.lock", "pdm.lock", "uv.lock",
 		"gemfile.lock",
 		"composer.lock",
-		"pubspec.lock",        // Dart/Flutter
-		"packages.lock.json",  // .NET NuGet
-		"mix.lock",            // Elixir
-		"flake.lock",          // Nix
-		"pixi.lock",           // Pixi (conda ecosystem)
-		"podfile.lock",        // CocoaPods (iOS)
-		"pom.xml.sha1",        // Maven checksum
-		"gradle.lockfile",     // Gradle
-		"shrinkwrap.yaml",      // pnpm
+		"pubspec.lock",          // Dart/Flutter
+		"packages.lock.json",    // .NET NuGet
+		"mix.lock",              // Elixir
+		"flake.lock",            // Nix
+		"pixi.lock",             // Pixi (conda ecosystem)
+		"podfile.lock",          // CocoaPods (iOS)
+		"pom.xml.sha1",          // Maven checksum
+		"gradle.lockfile",       // Gradle
+		"shrinkwrap.yaml",       // pnpm
 		"package-resolved.json", // Swift Package Manager
 		"rebar.lock",            // Erlang Rebar3
 		"stack.yaml.lock",       // Haskell Stack

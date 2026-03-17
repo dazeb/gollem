@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 func setupTestDir(t *testing.T) string {
@@ -66,6 +67,15 @@ func writeTestFile(t *testing.T, dir, relPath, content string) {
 	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type profiledTestModel struct {
+	*core.TestModel
+	profile modelutil.ModelProfile
+}
+
+func (m *profiledTestModel) Profile() modelutil.ModelProfile {
+	return m.profile
 }
 
 func call(t *testing.T, tool core.Tool, argsJSON string) string {
@@ -1279,6 +1289,41 @@ func TestToolset_AllTools(t *testing.T) {
 		if !names[name] {
 			t.Errorf("missing tool: %s", name)
 		}
+	}
+}
+
+func TestToolset_IncludesOpenImageForVisionModels(t *testing.T) {
+	visionModel := &profiledTestModel{
+		TestModel: core.NewTestModel(core.TextResponse("ok")),
+		profile:   modelutil.ModelProfile{SupportsVision: true},
+	}
+	noVisionModel := &profiledTestModel{
+		TestModel: core.NewTestModel(core.TextResponse("ok")),
+		profile:   modelutil.ModelProfile{SupportsVision: false},
+	}
+
+	visionNames := map[string]bool{}
+	for _, tool := range Toolset(WithModel(visionModel)).Tools {
+		visionNames[tool.Definition.Name] = true
+	}
+	if !visionNames["open_image"] {
+		t.Fatal("expected open_image in toolset for vision-capable models")
+	}
+
+	allVisionNames := map[string]bool{}
+	for _, tool := range AllTools(WithModel(visionModel)) {
+		allVisionNames[tool.Definition.Name] = true
+	}
+	if !allVisionNames["open_image"] {
+		t.Fatal("expected open_image in AllTools for vision-capable models")
+	}
+
+	noVisionNames := map[string]bool{}
+	for _, tool := range Toolset(WithModel(noVisionModel)).Tools {
+		noVisionNames[tool.Definition.Name] = true
+	}
+	if noVisionNames["open_image"] {
+		t.Fatal("did not expect open_image in toolset for non-vision models")
 	}
 }
 
@@ -14065,7 +14110,7 @@ func TestContextInjectionMiddleware_DoesNotMutateInput(t *testing.T) {
 	// array with the agent's persistent message history.
 
 	dir := t.TempDir()
-	mw := requireRequestMiddleware(t, ContextInjectionMiddleware(dir))
+	mw := requireRequestMiddleware(t, ContextInjectionMiddleware(dir, false))
 	ctx := context.Background()
 
 	originalPart := core.UserPromptPart{Content: "Hello"}

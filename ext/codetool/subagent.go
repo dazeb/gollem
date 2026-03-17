@@ -56,7 +56,9 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 			}
 
 			// Build a lightweight subagent with coding tools but no delegation
-			// (prevents infinite recursion).
+			// (prevents infinite recursion). open_image is still included for
+			// vision-capable models so the subagent tool surface matches the
+			// advertised visual-inspection capability.
 			acConfig := subagentAutoContextConfig(cfg)
 
 			// Each subagent gets its own BackgroundProcessManager so
@@ -104,7 +106,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				// Environment discovery: give the subagent awareness of directory
 				// structure, README, tests, and task type so it doesn't waste turns
 				// on basic orientation. #1 source of wasted subagent turns.
-				core.WithAgentMiddleware[string](ContextInjectionMiddleware(cfg.WorkDir)),
+				core.WithAgentMiddleware[string](ContextInjectionMiddleware(cfg.WorkDir, cfg.BenchmarkMode)),
 				// Loop detection: catch subagent doom loops early (3 repeated edits).
 				core.WithAgentMiddleware[string](LoopDetectionMiddleware(3)),
 				// Progress tracking: nudge subagent to produce output files early.

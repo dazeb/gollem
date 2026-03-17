@@ -376,7 +376,7 @@ done:
 // conversation. It runs a set of bash commands to discover the environment
 // (e.g., directory structure, language, available tools) and prepends the
 // results as a system-level context message.
-func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.AgentMiddleware {
+func ContextInjectionMiddleware(workDir string, benchmarkMode bool, timeout ...time.Duration) core.AgentMiddleware {
 	var once sync.Once
 	var envContext string
 
@@ -388,7 +388,7 @@ func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.A
 		next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error),
 	) (*core.ModelResponse, error) {
 		once.Do(func() {
-			envContext = discoverEnvironment(workDir)
+			envContext = discoverEnvironment(workDir, benchmarkMode)
 
 			// Determine effective timeout: prefer task-level timeout from
 			// task.toml (accurate per-task) over the agent's configured timeout.
@@ -434,7 +434,7 @@ func ContextInjectionMiddleware(workDir string, timeout ...time.Duration) core.A
 // discoverEnvironment maps the workspace by inspecting files and running
 // lightweight commands. This gives the model a head start so it doesn't waste
 // tool calls on basic orientation.
-func discoverEnvironment(workDir string) string {
+func discoverEnvironment(workDir string, benchmarkMode bool) string {
 	var parts []string
 	parts = append(parts, "## Environment Context")
 	parts = append(parts, "Working directory: "+workDir)
@@ -1369,17 +1369,23 @@ func discoverEnvironment(workDir string) string {
 		parts = append(parts, "Run these EARLY after creating output files to check correctness.")
 		// Auto-chmod +x for shell scripts to prevent "Permission denied" errors.
 		// This is a very common 1-2 turn waste on TB2 tasks.
-		chmodScripts(verifyScripts)
+		// Only in benchmark mode to avoid mutating user codebases.
+		if benchmarkMode {
+			chmodScripts(verifyScripts)
+		}
 	}
 
 	// chmod +x shell/Python scripts in test directories and working directory.
 	// This prevents "Permission denied" errors that waste 1-2 agent turns.
-	for _, td := range testDirs {
-		chmodScriptsInDir(td)
-	}
-	chmodScriptsInDir(workDir)
-	if workDir != "/app" {
-		chmodScriptsInDir("/app")
+	// Only in benchmark mode to avoid mutating user codebases.
+	if benchmarkMode {
+		for _, td := range testDirs {
+			chmodScriptsInDir(td)
+		}
+		chmodScriptsInDir(workDir)
+		if workDir != "/app" {
+			chmodScriptsInDir("/app")
+		}
 	}
 
 	// Check for output directories that need to be populated.
