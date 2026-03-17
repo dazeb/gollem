@@ -6112,7 +6112,7 @@ func TestDetectAndActivateVenv(t *testing.T) {
 	dir := t.TempDir()
 
 	// No venv — should return empty.
-	if hint := detectAndActivateVenv(dir); hint != "" {
+	if hint := detectAndActivateVenv(dir, true); hint != "" {
 		t.Errorf("expected empty hint for no venv, got %q", hint)
 	}
 
@@ -6121,7 +6121,7 @@ func TestDetectAndActivateVenv(t *testing.T) {
 	os.MkdirAll(venvBin, 0o755)
 	writeTestFile(t, dir, "venv/bin/activate", "# fake activate script\n")
 
-	hint := detectAndActivateVenv(dir)
+	hint := detectAndActivateVenv(dir, true)
 	if hint == "" {
 		t.Error("expected hint for dir with venv/bin/activate")
 	}

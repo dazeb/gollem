@@ -519,54 +519,60 @@ func discoverEnvironment(workDir string, benchmarkMode bool) string {
 		// This is the #1 "command not found" error on TB2: test scripts often use
 		// "python" but containers only have "python3". Creating the symlink
 		// preemptively saves 1-2 turns of debugging.
-		if runQuiet(workDir, "which", "python") == "" {
-			if py3Path := runQuiet(workDir, "which", "python3"); py3Path != "" {
-				_ = os.Symlink(py3Path, "/usr/local/bin/python")
-				fmt.Fprintf(os.Stderr, "[gollem] created python → python3 symlink\n")
+		// Only in benchmark mode to avoid mutating user systems.
+		if benchmarkMode {
+			if runQuiet(workDir, "which", "python") == "" {
+				if py3Path := runQuiet(workDir, "which", "python3"); py3Path != "" {
+					_ = os.Symlink(py3Path, "/usr/local/bin/python")
+					fmt.Fprintf(os.Stderr, "[gollem] created python → python3 symlink\n")
+				}
 			}
-		}
-		// Also create pip → pip3 symlink for the same reason.
-		if runQuiet(workDir, "which", "pip") == "" {
-			if pip3Path := runQuiet(workDir, "which", "pip3"); pip3Path != "" {
-				_ = os.Symlink(pip3Path, "/usr/local/bin/pip")
-				fmt.Fprintf(os.Stderr, "[gollem] created pip → pip3 symlink\n")
+			// Also create pip → pip3 symlink for the same reason.
+			if runQuiet(workDir, "which", "pip") == "" {
+				if pip3Path := runQuiet(workDir, "which", "pip3"); pip3Path != "" {
+					_ = os.Symlink(pip3Path, "/usr/local/bin/pip")
+					fmt.Fprintf(os.Stderr, "[gollem] created pip → pip3 symlink\n")
+				}
 			}
 		}
 	}
 
-	// Set Python env vars for all bash commands to prevent common issues:
-	// - PYTHONDONTWRITEBYTECODE: prevents __pycache__/.pyc clutter that causes
-	//   "extra files in directory" test failures. This is the #2 cleanup issue.
-	// - PYTHONUNBUFFERED: ensures real-time output flushing, so error messages
-	//   aren't lost when commands timeout.
-	_ = os.Setenv("PYTHONDONTWRITEBYTECODE", "1")
-	_ = os.Setenv("PYTHONUNBUFFERED", "1")
+	// Set Python env vars for all bash commands to prevent common issues.
+	// Only in benchmark mode to avoid mutating user process environment.
+	if benchmarkMode {
+		// - PYTHONDONTWRITEBYTECODE: prevents __pycache__/.pyc clutter that causes
+		//   "extra files in directory" test failures. This is the #2 cleanup issue.
+		// - PYTHONUNBUFFERED: ensures real-time output flushing, so error messages
+		//   aren't lost when commands timeout.
+		_ = os.Setenv("PYTHONDONTWRITEBYTECODE", "1")
+		_ = os.Setenv("PYTHONUNBUFFERED", "1")
 
-	// Set PYTHONPATH to include the working directory and /app so that test
-	// scripts can import local modules regardless of their cwd. This is the #1
-	// cause of "ModuleNotFoundError: No module named 'solution'" — tests in
-	// /tests/ run with cwd=/tests/ and can't see modules in /app/. Setting
-	// PYTHONPATH preemptively prevents this entirely, saving 1-2 turns.
-	pythonPaths := []string{}
-	if workDir != "" {
-		pythonPaths = append(pythonPaths, workDir)
-	}
-	if workDir != "/app" && dirExists("/app") {
-		pythonPaths = append(pythonPaths, "/app")
-	}
-	// Preserve existing PYTHONPATH if set (e.g., from venv activation).
-	if existing := os.Getenv("PYTHONPATH"); existing != "" {
-		pythonPaths = append(pythonPaths, existing)
-	}
-	if len(pythonPaths) > 0 {
-		_ = os.Setenv("PYTHONPATH", strings.Join(pythonPaths, ":"))
+		// Set PYTHONPATH to include the working directory and /app so that test
+		// scripts can import local modules regardless of their cwd. This is the #1
+		// cause of "ModuleNotFoundError: No module named 'solution'" — tests in
+		// /tests/ run with cwd=/tests/ and can't see modules in /app/. Setting
+		// PYTHONPATH preemptively prevents this entirely, saving 1-2 turns.
+		pythonPaths := []string{}
+		if workDir != "" {
+			pythonPaths = append(pythonPaths, workDir)
+		}
+		if workDir != "/app" && dirExists("/app") {
+			pythonPaths = append(pythonPaths, "/app")
+		}
+		// Preserve existing PYTHONPATH if set (e.g., from venv activation).
+		if existing := os.Getenv("PYTHONPATH"); existing != "" {
+			pythonPaths = append(pythonPaths, existing)
+		}
+		if len(pythonPaths) > 0 {
+			_ = os.Setenv("PYTHONPATH", strings.Join(pythonPaths, ":"))
+		}
 	}
 
 	// Detect Python virtual environments (venv/conda) that need activation.
 	// Many containers have packages installed in a venv, but the agent's shell
 	// doesn't activate it by default. Detecting and activating saves 2-3 turns
 	// of "ModuleNotFoundError" debugging.
-	if venvHint := detectAndActivateVenv(workDir); venvHint != "" {
+	if venvHint := detectAndActivateVenv(workDir, benchmarkMode); venvHint != "" {
 		parts = append(parts, venvHint)
 	}
 
@@ -803,7 +809,7 @@ func discoverEnvironment(workDir string, benchmarkMode bool) string {
 		}
 	}
 
-	if !runtimeDepInstallDisabled {
+	if benchmarkMode && !runtimeDepInstallDisabled {
 		// Skip dependency installation if another agent (parent) already did it.
 		// This prevents subagents from wasting 10-60 seconds re-installing Maven,
 		// Gradle, Haskell, or OCaml dependencies that the parent already resolved.
@@ -1457,7 +1463,10 @@ func discoverEnvironment(workDir string, benchmarkMode bool) string {
 
 	// Auto-create output directories that tests reference but don't exist.
 	// This saves 1 turn of "mkdir: no such file or directory" errors.
-	autoMkdirOutputDirs(workDir, expectedOutputs)
+	// Only in benchmark mode to avoid mutating user codebases.
+	if benchmarkMode {
+		autoMkdirOutputDirs(workDir, expectedOutputs)
+	}
 
 	// Detect output format and execution patterns from test code.
 	// This addresses failure mode #5: correct logic but wrong output format.
@@ -5732,9 +5741,10 @@ func chmodScriptsInDirRecursive(dir string, depth, maxDepth int) {
 }
 
 // detectAndActivateVenv detects Python virtual environments (venv, conda) and
-// returns a hint string if one is found. Also modifies PATH environment variable
-// so subsequent pip/python commands use the venv's interpreter.
-func detectAndActivateVenv(workDir string) string {
+// returns a hint string if one is found. When activate is true, it also modifies
+// the PATH environment variable so subsequent pip/python commands use the venv's
+// interpreter. When false, it only reports detection without mutating state.
+func detectAndActivateVenv(workDir string, activate bool) string {
 	// Common venv locations.
 	venvPaths := []string{
 		filepath.Join(workDir, "venv"),
@@ -5744,15 +5754,18 @@ func detectAndActivateVenv(workDir string) string {
 		filepath.Join(workDir, "env"),
 	}
 	for _, vp := range venvPaths {
-		activate := filepath.Join(vp, "bin", "activate")
-		if fileExists(activate) {
-			// Add venv bin to PATH so python/pip resolve to the venv.
-			binDir := filepath.Join(vp, "bin")
-			currentPath := os.Getenv("PATH")
-			if !strings.Contains(currentPath, binDir) {
-				_ = os.Setenv("PATH", binDir+":"+currentPath)
+		activatePath := filepath.Join(vp, "bin", "activate")
+		if fileExists(activatePath) {
+			if activate {
+				// Add venv bin to PATH so python/pip resolve to the venv.
+				binDir := filepath.Join(vp, "bin")
+				currentPath := os.Getenv("PATH")
+				if !strings.Contains(currentPath, binDir) {
+					_ = os.Setenv("PATH", binDir+":"+currentPath)
+				}
+				return fmt.Sprintf("Python venv detected: %s (auto-activated — python/pip resolve to venv)", vp)
 			}
-			return fmt.Sprintf("Python venv detected: %s (auto-activated — python/pip resolve to venv)", vp)
+			return fmt.Sprintf("Python venv detected: %s (use `source %s/bin/activate`)", vp, vp)
 		}
 	}
 
