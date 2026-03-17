@@ -93,7 +93,7 @@ func defaultIsRetryable(err error) bool {
 
 	// Check error message for common transient patterns.
 	msg := err.Error()
-	for _, pattern := range []string{"unexpected EOF", "connection reset", "connection refused", "broken pipe", "i/o timeout", "no such host", "dns", "temporary failure"} {
+	for _, pattern := range []string{"unexpected EOF", "connection reset", "connection refused", "broken pipe", "i/o timeout", "no such host", "dns", "temporary failure", "internal_error", "stream error"} {
 		if strings.Contains(strings.ToLower(msg), pattern) {
 			return true
 		}

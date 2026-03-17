@@ -364,6 +364,48 @@ func TestRetryModel_StreamRetry(t *testing.T) {
 	}
 }
 
+func TestRetryModel_HTTP2StreamError(t *testing.T) {
+	// HTTP/2 stream errors like "stream error: stream ID 53; INTERNAL_ERROR;
+	// received from peer" are transient and should be retried. These occur
+	// mid-SSE-stream when the server drops the connection.
+	for _, tc := range []struct {
+		name string
+		err  string
+	}{
+		{
+			"INTERNAL_ERROR",
+			"openai: SSE read error: stream error: stream ID 53; INTERNAL_ERROR; received from peer",
+		},
+		{
+			"generic stream error",
+			"openai: SSE read error: stream error: stream ID 7; PROTOCOL_ERROR",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fm := &retryFailingModel{
+				failCount:  1,
+				failErr:    errors.New(tc.err),
+				successMsg: "recovered",
+			}
+			rm := NewRetryModel(fm, RetryConfig{
+				MaxRetries:     2,
+				InitialBackoff: time.Millisecond,
+				Jitter:         false,
+			})
+			resp, err := rm.Request(context.Background(), nil, nil, &core.ModelRequestParameters{AllowTextOutput: true})
+			if err != nil {
+				t.Fatalf("expected success after retry, got: %v", err)
+			}
+			if resp.TextContent() != "recovered" {
+				t.Errorf("expected 'recovered', got %q", resp.TextContent())
+			}
+			if int(fm.attempts.Load()) != 2 {
+				t.Errorf("expected 2 attempts, got %d", fm.attempts.Load())
+			}
+		})
+	}
+}
+
 func TestDefaultRetryConfig_HeartbeatInterval(t *testing.T) {
 	cfg := DefaultRetryConfig()
 	if cfg.HeartbeatInterval != 0 {
