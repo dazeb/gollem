@@ -12,6 +12,7 @@ type RunState struct {
 	lastInputTokens int // input tokens from the most recent model response (0 on first turn)
 	retries         int
 	toolRetries     map[string]int
+	activeApprovals int
 	runStep         int
 	runID           string
 	parentRunID     string
@@ -99,6 +100,23 @@ func (s *RunState) snapshot(prompt string, toolState map[string]any) *RunStateSn
 		ToolState:       cloneAnyMap(toolState),
 		Timestamp:       time.Now(),
 	}
+}
+
+func (s *RunState) beginApprovalWait() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeApprovals++
+	return s.activeApprovals == 1
+}
+
+func (s *RunState) endApprovalWait() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeApprovals == 0 {
+		return false
+	}
+	s.activeApprovals--
+	return s.activeApprovals == 0
 }
 
 func cloneMessages(messages []ModelMessage) []ModelMessage {

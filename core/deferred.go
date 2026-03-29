@@ -96,6 +96,8 @@ func (e *ErrDeferred[T]) Error() string {
 	return fmt.Sprintf("agent run deferred: %d tool call(s) require external resolution", len(e.Result.DeferredRequests))
 }
 
+func (e *ErrDeferred[T]) deferredRunError() {}
+
 // WithDeferredResults injects deferred tool results into the run.
 // When provided, the results are sent as ToolReturnParts (or RetryPromptParts
 // for error results) before the first model call.
