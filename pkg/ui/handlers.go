@@ -33,6 +33,11 @@ type pageData struct {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
 	s.render(w, "index", pageData{
 		AppTitle:    "gollem",
 		PageTitle:   "Dashboard",
