@@ -134,6 +134,16 @@ func TestActionHandler_BadJSON(t *testing.T) {
 	}
 }
 
+func TestActionHandler_RejectsTrailingJSON(t *testing.T) {
+	h := NewActionHandler(ActionHandlerConfig{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/action", strings.NewReader(`{"type":"abort_session","session_id":"ses_1"} {}`))
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
 func TestActionHandler_UnsupportedAction(t *testing.T) {
 	h := NewActionHandler(ActionHandlerConfig{})
 	rec := httptest.NewRecorder()
@@ -185,6 +195,18 @@ func TestActionHandler_UnknownToolCall(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/action", strings.NewReader(`{"type":"approve_tool_call","session_id":"ses_1","tool_call_id":"missing"}`))
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestActionHandler_SharedApprovalBridgeDoesNotProveSessionExists(t *testing.T) {
+	bridge := agui.NewApprovalBridge()
+	h := NewActionHandler(ActionHandlerConfig{ApprovalBridge: bridge})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/action", strings.NewReader(`{"type":"approve_tool_call","session_id":"ses_missing","tool_call_id":"tc_1"}`))
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
