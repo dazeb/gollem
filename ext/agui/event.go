@@ -77,12 +77,16 @@ const (
 // Event is the normalized AGUI event envelope. Every event emitted through
 // the AGUI adapter uses this structure, regardless of the underlying gollem
 // backend (core Run, RunStream, Iter, Temporal, graph, or team).
+//
+// Transport contract: Sequence is the replay cursor and therefore also the SSE
+// `id` value for reconnectable streams. Event.ID remains an opaque event UUID
+// for deduplication/debugging, but reconnect uses Sequence/Last-Event-ID.
 type Event struct {
 	// ID is a unique event identifier for deduplication.
 	ID string `json:"id"`
 
 	// Sequence is a monotonically increasing counter within a session.
-	// Used for reconnect replay: clients send last_seq to resume.
+	// Used for reconnect replay: clients send last_seq or Last-Event-ID to resume.
 	Sequence uint64 `json:"sequence"`
 
 	// Type is one of the Event* constants.

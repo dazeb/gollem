@@ -58,11 +58,21 @@ func (b *EventBuffer) Append(ev Event) {
 //   - false: some events were evicted from the buffer. The caller
 //     should send a session.snapshot instead of replaying.
 //
+// Replay is defined over normalized session sequences, which also map directly
+// to SSE `id` values on reconnectable transports.
+//
 // When lastSeq is 0 (fresh client), all buffered events are returned with
 // complete=true. This means the client accepts whatever history is available;
 // if events were evicted before the client connected, those are simply not
 // available and no gap is reported. Use LastSeq() == 0 && Len() > 0 to detect
 // whether the buffer has been active before a fresh client connects.
+//
+// The transport must perform an atomic replay-to-live handoff around this call:
+// attach a live subscriber first, capture a replay high-water mark from the
+// same session/log lock, replay (lastSeq, highWatermark], then drain any queued
+// live events with sequence > highWatermark. If Since reports complete=false,
+// skip partial replay and send a snapshot whose snapshot_sequence comes from
+// the same transaction used to capture snapshot contents.
 //
 // Returns (nil, true) if no new events exist.
 func (b *EventBuffer) Since(lastSeq uint64) (events []Event, complete bool) {

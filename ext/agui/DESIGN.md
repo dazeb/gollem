@@ -518,17 +518,33 @@ AG-UI JSON payload remains the `data:` body of the SSE frame.
 
 ### Replay algorithm (decision)
 
+Reconnect must use an atomic replay-to-live handoff so the client never misses or duplicates a
+live event during the switchover.
+
 On reconnect, the SSE handler should do exactly this:
 
 1. Resolve the target session by `session_id`.
 2. Read the resume cursor from `Last-Event-ID` if present; otherwise fall back to explicit `last_seq`.
-3. Ask the session replay store for `Since(lastSeq)`.
-4. If replay is complete, send each replayed event with the original sequence as SSE `id`, then attach
-   the client to the live subscriber stream.
-5. If replay is incomplete (buffer gap / store compaction / process loss), do **not** attempt a partial
-   replay from the oldest remaining event. Instead send one `session.snapshot` event that represents the
-   latest authoritative state, then continue with only events whose sequence is greater than the snapshot
-   watermark.
+3. Attach a live subscriber to the session **before** examining replay state. The subscriber should
+   queue normalized events rather than writing directly to the socket.
+4. In the same session/event-log critical section, capture a replay high-water mark equal to the
+   latest committed normalized sequence visible to replay.
+5. Ask the replay store for the range `(lastSeq, highWatermark]`.
+6. If replay is complete, send those replayed events in order using their original sequence as SSE
+   `id`.
+7. Drain any queued live events with `sequence > highWatermark` in order.
+8. Switch the subscriber from queued mode to direct live streaming.
+9. If replay is incomplete (buffer gap / store compaction / process loss), do **not** attempt a
+   partial replay from the oldest remaining event. Instead produce one authoritative
+   `session.snapshot`, send it with `id == snapshot_sequence`, discard any queued events with
+   `sequence <= snapshot_sequence`, then drain queued/live events with `sequence > snapshot_sequence`.
+
+The important invariants are:
+
+- the subscriber is attached before the high-water mark is captured
+- the high-water mark is captured from the same session/event-log transaction that defines replay
+  visibility
+- the handoff to direct live writes happens only after replay-or-snapshot catch-up is complete
 
 ### Snapshot fallback contract (decision)
 
@@ -545,11 +561,18 @@ The snapshot payload should include at minimum:
 - any resumable core/Temporal snapshot payload needed for later `resume_session`
 - `snapshot_sequence`: the highest normalized event sequence fully reflected in the snapshot
 
+`snapshot_sequence` must be captured atomically with the snapshot contents. In other words, the
+session manager must read mutable session state, pending approval/deferred maps, and replay watermark
+from the same session/event-log transaction or lock scope so the snapshot cannot describe state that is
+older or newer than its advertised watermark.
+
 Transport behavior after sending snapshot fallback:
 
 - SSE `id` for the snapshot frame is `snapshot_sequence`
 - the client discards any prior incremental UI state and rebuilds from the snapshot
 - live streaming resumes only for events with `sequence > snapshot_sequence`
+- queued reconnect events with `sequence <= snapshot_sequence` are dropped because they are already
+  covered by the snapshot
 - if no live run exists anymore, the snapshot may be the final event returned by reconnect
 
 This makes replay gaps deterministic: exact replay if possible, otherwise one authoritative snapshot
@@ -625,6 +648,14 @@ Responsibilities:
 - reconnect using `session_id` + sequence
 - stream normalized events
 - accept actions (approval, deferred result, abort)
+
+Transport implementation notes:
+
+- outgoing SSE frames use normalized `Event.Sequence` as `id`
+- the SSE `data:` body can contain either normalized AGUI JSON or wrapped protocol JSON, but replay and
+  `Last-Event-ID` always operate on the normalized session sequence
+- reconnect must use the atomic replay-to-live handoff defined in section 7.1
+- snapshot fallback uses `session.snapshot` with an atomically captured `snapshot_sequence`
 
 This should be a new transport surface, not a retrofit of the current `contrib/*handler`
 text-only SSE examples.
