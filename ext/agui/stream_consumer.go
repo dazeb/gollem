@@ -2,7 +2,6 @@ package agui
 
 import (
 	"iter"
-	"sort"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -15,12 +14,21 @@ const (
 	streamPartKindReasoning
 )
 
+const noActiveStreamPart = -1
+
 type streamPartState struct {
 	kind          streamPartKind
 	messageID     string
 	sawStart      bool
-	everStarted   bool
-	activeSegment bool
+	emitted       bool
+	closed        bool
+	queued        bool
+	pendingDeltas []string
+}
+
+type streamKindState struct {
+	activeIndex int
+	queue       []int
 }
 
 // ConsumeStream bridges a RunStream event iterator into AG-UI adapter events.
@@ -34,11 +42,15 @@ type streamPartState struct {
 // end events. Message IDs are allocated once per streamed part and reused for all
 // deltas of that part, remaining unique across later parts and turns.
 func ConsumeStream(adapter *Adapter, events iter.Seq2[core.ModelResponseStreamEvent, error]) error {
-	parts := make(map[int]streamPartState)
+	parts := make(map[int]*streamPartState)
+	kinds := map[streamPartKind]*streamKindState{
+		streamPartKindText:      {activeIndex: noActiveStreamPart},
+		streamPartKindReasoning: {activeIndex: noActiveStreamPart},
+	}
 
 	for event, err := range events {
 		if err != nil {
-			closeAllStreamParts(adapter, parts)
+			closeAllStreamParts(adapter, parts, kinds)
 			return err
 		}
 		if event == nil {
@@ -49,158 +61,192 @@ func ConsumeStream(adapter *Adapter, events iter.Seq2[core.ModelResponseStreamEv
 		case core.PartStartEvent:
 			switch part := ev.Part.(type) {
 			case core.TextPart:
-				state := ensureStreamPart(adapter, parts, ev.Index, streamPartKindText)
+				state := ensureStreamPart(adapter, parts, kinds, ev.Index, streamPartKindText)
 				state.sawStart = true
-				parts[ev.Index] = state
 				if part.Content != "" {
-					emitStreamPartDelta(adapter, parts, ev.Index, streamPartKindText, part.Content)
+					appendStreamPartDelta(adapter, parts, kinds, ev.Index, streamPartKindText, part.Content)
 				}
 			case core.ThinkingPart:
-				state := ensureStreamPart(adapter, parts, ev.Index, streamPartKindReasoning)
+				state := ensureStreamPart(adapter, parts, kinds, ev.Index, streamPartKindReasoning)
 				state.sawStart = true
-				parts[ev.Index] = state
 				if part.Content != "" {
-					emitStreamPartDelta(adapter, parts, ev.Index, streamPartKindReasoning, part.Content)
+					appendStreamPartDelta(adapter, parts, kinds, ev.Index, streamPartKindReasoning, part.Content)
 				}
 			}
 
 		case core.PartDeltaEvent:
 			switch delta := ev.Delta.(type) {
 			case core.TextPartDelta:
-				emitStreamPartDelta(adapter, parts, ev.Index, streamPartKindText, delta.ContentDelta)
+				appendStreamPartDelta(adapter, parts, kinds, ev.Index, streamPartKindText, delta.ContentDelta)
 			case core.ThinkingPartDelta:
-				emitStreamPartDelta(adapter, parts, ev.Index, streamPartKindReasoning, delta.ContentDelta)
+				appendStreamPartDelta(adapter, parts, kinds, ev.Index, streamPartKindReasoning, delta.ContentDelta)
 			}
 
 		case core.PartEndEvent:
-			closeStreamPart(adapter, parts, ev.Index)
+			closeStreamPart(adapter, parts, kinds, ev.Index)
 		}
 	}
 
-	closeAllStreamParts(adapter, parts)
+	closeAllStreamParts(adapter, parts, kinds)
 	return nil
 }
 
 func ensureStreamPart(
 	adapter *Adapter,
-	parts map[int]streamPartState,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
 	index int,
 	kind streamPartKind,
-) streamPartState {
+) *streamPartState {
 	if state, ok := parts[index]; ok {
 		if state.kind == kind {
 			return state
 		}
-		closeStreamPart(adapter, parts, index)
+		closeAllStreamParts(adapter, parts, kinds)
 	}
 
-	state := streamPartState{
+	state := &streamPartState{
 		kind:      kind,
 		messageID: nextStreamMessageID(adapter),
 	}
 	parts[index] = state
+
+	kindState := getStreamKindState(kinds, kind)
+	if kindState.activeIndex == noActiveStreamPart {
+		kindState.activeIndex = index
+	} else if kindState.activeIndex != index {
+		kindState.queue = append(kindState.queue, index)
+		state.queued = true
+	}
+
 	return state
 }
 
-func emitStreamPartDelta(
+func appendStreamPartDelta(
 	adapter *Adapter,
-	parts map[int]streamPartState,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
 	index int,
 	kind streamPartKind,
 	delta string,
 ) {
-	state := ensureStreamPart(adapter, parts, index, kind)
-	if adapter != nil && state.messageID != "" {
-		closeActiveStreamPartSegment(adapter, parts, kind, state.messageID)
-		switch kind {
+	state := ensureStreamPart(adapter, parts, kinds, index, kind)
+	if delta != "" {
+		state.pendingDeltas = append(state.pendingDeltas, delta)
+	}
+	advanceStreamKind(adapter, parts, kinds, kind)
+}
+
+func closeStreamPart(
+	adapter *Adapter,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
+	index int,
+) {
+	state, ok := parts[index]
+	if !ok {
+		return
+	}
+	state.closed = true
+	advanceStreamKind(adapter, parts, kinds, state.kind)
+}
+
+func closeAllStreamParts(
+	adapter *Adapter,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
+) {
+	for _, state := range parts {
+		state.closed = true
+	}
+	advanceStreamKind(adapter, parts, kinds, streamPartKindText)
+	advanceStreamKind(adapter, parts, kinds, streamPartKindReasoning)
+}
+
+func advanceStreamKind(
+	adapter *Adapter,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
+	kind streamPartKind,
+) {
+	kindState := getStreamKindState(kinds, kind)
+
+	for {
+		if kindState.activeIndex == noActiveStreamPart {
+			nextIndex, ok := dequeueNextStreamPart(parts, kindState, kind)
+			if !ok {
+				return
+			}
+			kindState.activeIndex = nextIndex
+		}
+
+		state, ok := parts[kindState.activeIndex]
+		if !ok || state.kind != kind {
+			kindState.activeIndex = noActiveStreamPart
+			continue
+		}
+
+		emitStreamPartBufferedDeltas(adapter, state)
+		if !state.closed {
+			return
+		}
+
+		finalizeStreamPart(adapter, *state)
+		delete(parts, kindState.activeIndex)
+		kindState.activeIndex = noActiveStreamPart
+	}
+}
+
+func getStreamKindState(
+	kinds map[streamPartKind]*streamKindState,
+	kind streamPartKind,
+) *streamKindState {
+	state, ok := kinds[kind]
+	if !ok {
+		state = &streamKindState{activeIndex: noActiveStreamPart}
+		kinds[kind] = state
+	}
+	return state
+}
+
+func dequeueNextStreamPart(
+	parts map[int]*streamPartState,
+	kindState *streamKindState,
+	kind streamPartKind,
+) (int, bool) {
+	for len(kindState.queue) > 0 {
+		index := kindState.queue[0]
+		kindState.queue = kindState.queue[1:]
+
+		state, ok := parts[index]
+		if !ok || state.kind != kind {
+			continue
+		}
+		state.queued = false
+		return index, true
+	}
+	return 0, false
+}
+
+func emitStreamPartBufferedDeltas(adapter *Adapter, state *streamPartState) {
+	if len(state.pendingDeltas) == 0 {
+		return
+	}
+	if adapter == nil || state.messageID == "" {
+		state.pendingDeltas = nil
+		state.emitted = true
+		return
+	}
+	for _, delta := range state.pendingDeltas {
+		switch state.kind {
 		case streamPartKindText:
 			adapter.EmitTextDelta(state.messageID, delta)
 		case streamPartKindReasoning:
 			adapter.EmitReasoningDelta(state.messageID, delta)
 		}
-		state.everStarted = true
-		state.activeSegment = true
 	}
-	parts[index] = state
-}
-
-func closeStreamPart(adapter *Adapter, parts map[int]streamPartState, index int) {
-	state, ok := parts[index]
-	if !ok {
-		return
-	}
-	delete(parts, index)
-
-	if state.activeSegment {
-		emitStreamPartEnd(adapter, state)
-		return
-	}
-	if state.sawStart && !state.everStarted {
-		emitEmptyStreamPartLifecycle(adapter, parts, state)
-	}
-}
-
-func closeAllStreamParts(adapter *Adapter, parts map[int]streamPartState) {
-	indices := make([]int, 0, len(parts))
-	for index := range parts {
-		indices = append(indices, index)
-	}
-	sort.Ints(indices)
-	for _, index := range indices {
-		closeStreamPart(adapter, parts, index)
-	}
-}
-
-func closeActiveStreamPartSegment(
-	adapter *Adapter,
-	parts map[int]streamPartState,
-	kind streamPartKind,
-	keepMessageID string,
-) {
-	if adapter == nil {
-		return
-	}
-
-	adapter.mu.Lock()
-	batch := adapter.beginEmit()
-	var activeMessageID string
-
-	switch kind {
-	case streamPartKindText:
-		activeMessageID = adapter.activeMessageID
-		if activeMessageID != "" && activeMessageID != keepMessageID {
-			batch.enqueue(aguiTextMessageEnd{
-				Type: AGUITextMessageEnd, Timestamp: nowMillis(), MessageID: activeMessageID,
-			})
-			adapter.activeMessageID = ""
-		}
-	case streamPartKindReasoning:
-		activeMessageID = adapter.activeReasoningID
-		if activeMessageID != "" && activeMessageID != keepMessageID {
-			ts := nowMillis()
-			batch.enqueue(aguiReasoningMessageEnd{
-				Type: AGUIReasoningMessageEnd, Timestamp: ts, MessageID: activeMessageID,
-			})
-			batch.enqueue(aguiReasoningEnd{
-				Type: AGUIReasoningEnd, Timestamp: ts, MessageID: activeMessageID,
-			})
-			adapter.activeReasoningID = ""
-		}
-	}
-
-	adapter.mu.Unlock()
-	batch.send()
-
-	if activeMessageID == "" || activeMessageID == keepMessageID {
-		return
-	}
-	for partIndex, state := range parts {
-		if state.kind == kind && state.messageID == activeMessageID {
-			state.activeSegment = false
-			parts[partIndex] = state
-			return
-		}
-	}
+	state.pendingDeltas = nil
+	state.emitted = true
 }
 
 func nextStreamMessageID(adapter *Adapter) string {
@@ -212,16 +258,20 @@ func nextStreamMessageID(adapter *Adapter) string {
 	return adapter.nextMessageID()
 }
 
-func emitEmptyStreamPartLifecycle(
-	adapter *Adapter,
-	parts map[int]streamPartState,
-	state streamPartState,
-) {
+func finalizeStreamPart(adapter *Adapter, state streamPartState) {
+	if state.emitted {
+		emitStreamPartEnd(adapter, state)
+		return
+	}
+	if state.sawStart {
+		emitEmptyStreamPartLifecycle(adapter, state)
+	}
+}
+
+func emitEmptyStreamPartLifecycle(adapter *Adapter, state streamPartState) {
 	if adapter == nil || state.messageID == "" {
 		return
 	}
-
-	closeActiveStreamPartSegment(adapter, parts, state.kind, state.messageID)
 
 	switch state.kind {
 	case streamPartKindText:
@@ -230,8 +280,6 @@ func emitEmptyStreamPartLifecycle(
 		adapter.EmitReasoningDelta(state.messageID, "")
 	}
 
-	state.everStarted = true
-	state.activeSegment = true
 	emitStreamPartEnd(adapter, state)
 }
 
