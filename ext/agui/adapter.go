@@ -57,9 +57,10 @@ type Adapter struct {
 	listeners []func(json.RawMessage)
 	unsubs    []func()
 
-	activeMessageID   string
-	activeReasoningID string
-	msgCounter        int64 // only accessed under mu
+	activeMessageID       string
+	activeReasoningID     string
+	msgCounter            int64 // only accessed under mu
+	streamBoundaryVersion int64
 
 	outCh     chan []json.RawMessage // serializing delivery channel
 	done      chan struct{}          // closed when delivery goroutine exits
@@ -451,8 +452,10 @@ func (a *Adapter) EmitReasoningDelta(messageID, delta string) {
 }
 
 // enqueueCloseActiveMessage enqueues End events for any active text/reasoning
-// message and clears the active IDs. MUST be called with a.mu held.
+// message, advances the stream boundary, and clears the active IDs.
+// MUST be called with a.mu held.
 func (a *Adapter) enqueueCloseActiveMessage(batch *pendingEvents) {
+	a.streamBoundaryVersion++
 	ts := nowMillis()
 	if a.activeMessageID != "" {
 		batch.enqueue(aguiTextMessageEnd{
