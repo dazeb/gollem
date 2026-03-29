@@ -109,7 +109,7 @@ func TestSSEHandlerGapFallsBackToSnapshot(t *testing.T) {
 
 	h := NewSSEHandler(bus, adapter, agui.NewSession(agui.SessionModeCoreStream), WithReplayCapacity(3))
 
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		core.Publish(bus, core.RunStartedEvent{RunID: "run_1", StartedAt: time.Now()})
 	}
 	eventually(t, func() bool { return h.state.buffer.LastSeq() >= 6 })
