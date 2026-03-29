@@ -1,4 +1,4 @@
-{{define "run_content"}}
+{{define "content"}}
 <div class="run-layout">
   <aside id="run-sidebar" class="panel panel--sidebar" hx-get="/runs/{{.Run.ID}}/sidebar" hx-trigger="load" hx-swap="innerHTML">
     <p class="muted">Loading sidebar…</p>
@@ -53,3 +53,5 @@
   </section>
 </div>
 {{end}}
+
+{{define "run"}}{{template "layout" .}}{{end}}
