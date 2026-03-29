@@ -32,17 +32,17 @@ func WithReplayCapacity(capacity int) SSEOption {
 
 // SSEHandler exposes AG-UI adapter output over Server-Sent Events.
 //
-// The adapter produces raw AG-UI JSON. This transport assigns normalized
-// session sequences for replay, persists them in an EventBuffer, and emits each
-// raw AG-UI payload as the SSE data body with Event.Sequence as the SSE id.
+// The adapter emits raw AG-UI protocol JSON. This transport adopts each raw
+// payload into the session-owned normalized replay log, uses Event.Sequence as
+// the SSE id, and writes the original raw AG-UI JSON as the SSE data body.
 type SSEHandler struct {
 	state *streamState
 }
 
 // NewSSEHandler creates an SSE handler wired to a single adapter/event-bus/session.
-// The adapter is subscribed to the bus once at construction time; reconnecting
-// HTTP clients only attach/detach per-request listeners and do not duplicate the
-// underlying live subscription state.
+// The adapter subscribes to the bus once at construction time; reconnecting HTTP
+// clients only add/remove per-request listeners and do not duplicate live
+// runtime subscriptions.
 func NewSSEHandler(bus *core.EventBus, adapter *agui.Adapter, session *agui.Session, opts ...SSEOption) *SSEHandler {
 	cfg := sseConfig{
 		replayCapacity: 10000,
@@ -93,9 +93,10 @@ func newStreamState(bus *core.EventBus, adapter *agui.Adapter, session *agui.Ses
 		session = agui.NewSession(agui.SessionModeCoreStream)
 	}
 
+	buffer := session.EnsureReplayBuffer(cfg.replayCapacity)
 	state := &streamState{
 		session:   session,
-		buffer:    agui.NewEventBuffer(cfg.replayCapacity),
+		buffer:    buffer,
 		now:       cfg.now,
 		listeners: make(map[uint64]*liveListener),
 	}
@@ -105,12 +106,8 @@ func newStreamState(bus *core.EventBus, adapter *agui.Adapter, session *agui.Ses
 }
 
 func (s *streamState) capture(data json.RawMessage) {
-	dataCopy := append(json.RawMessage(nil), data...)
-	ev := s.session.NewEvent(rawAGUIEventType, nil)
-	ev.Data = dataCopy
-
 	s.mu.Lock()
-	s.buffer.Append(ev)
+	ev := s.session.CaptureRawEvent(rawAGUIEventType, data, s.now())
 	listeners := make([]*liveListener, 0, len(s.listeners))
 	for _, listener := range s.listeners {
 		listeners = append(listeners, listener)
@@ -122,8 +119,8 @@ func (s *streamState) capture(data json.RawMessage) {
 		case listener.ch <- ev:
 		case <-listener.done:
 		default:
-			// Do not block the live runtime on a stalled client. The event remains
-			// available from replay via Last-Event-ID reconnect.
+			// Keep the runtime non-blocking for slow clients. Missed live frames are
+			// recoverable through Last-Event-ID replay on reconnect.
 		}
 	}
 }
@@ -153,6 +150,7 @@ func (s *streamState) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
 	if snapshot != nil {
 		if err := writeSSE(w, *snapshot); err != nil {
@@ -201,14 +199,9 @@ func (s *streamState) attachAndPrepareReplay(lastSeq uint64) (uint64, <-chan agu
 	}
 	s.listeners[listenerID] = listener
 
-	highWater := s.buffer.LastSeq()
-	replay, complete := s.buffer.Since(lastSeq)
-	if !complete {
-		snapshot := s.buildSnapshotLocked(highWater)
-		return listenerID, listener.ch, highWater, nil, &snapshot
-	}
-	if len(replay) == 0 {
-		return listenerID, listener.ch, highWater, nil, nil
+	highWater, replay, snapshot := s.session.PrepareReconnect(lastSeq, s.now())
+	if snapshot != nil {
+		return listenerID, listener.ch, highWater, nil, snapshot
 	}
 
 	trimmed := make([]agui.Event, 0, len(replay))
@@ -230,28 +223,6 @@ func (s *streamState) removeListener(listenerID uint64) {
 	}
 	delete(s.listeners, listenerID)
 	close(listener.done)
-}
-
-func (s *streamState) buildSnapshotLocked(snapshotSeq uint64) agui.Event {
-	payload := map[string]any{
-		"session_id":        s.session.ID,
-		"run_id":            s.session.RunID,
-		"parent_run_id":     s.session.ParentRunID,
-		"mode":              s.session.Mode,
-		"status":            s.session.GetStatus(),
-		"waiting_reason":    s.session.WaitingReason,
-		"snapshot_sequence": snapshotSeq,
-	}
-	return agui.Event{
-		ID:          fmt.Sprintf("snapshot_%d", snapshotSeq),
-		Sequence:    snapshotSeq,
-		Type:        agui.EventSessionSnapshot,
-		SessionID:   s.session.ID,
-		RunID:       s.session.RunID,
-		ParentRunID: s.session.ParentRunID,
-		Timestamp:   s.now(),
-		Data:        agui.MarshalData(payload),
-	}
 }
 
 func (s *streamState) drainQueued(w http.ResponseWriter, r *http.Request, live <-chan agui.Event, minSeq uint64, flusher http.Flusher) error {

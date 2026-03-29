@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,25 +21,14 @@ func TestSSEHandlerSetsStreamingHeadersAndFrames(t *testing.T) {
 	defer adapter.Close()
 
 	h := NewSSEHandler(bus, adapter, agui.NewSession(agui.SessionModeCoreStream))
+	server := httptest.NewServer(h)
+	defer server.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/sse", nil).WithContext(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		h.ServeHTTP(w, req)
-	}()
+	resp := mustOpenSSE(t, ctx, server.URL, "")
+	defer resp.Body.Close()
 
-	core.Publish(bus, core.RunStartedEvent{RunID: "run_1", StartedAt: time.Now()})
-	eventually(t, func() bool {
-		return strings.Contains(w.Body.String(), "id: 1\n")
-	})
-	cancel()
-	<-done
-
-	resp := w.Result()
 	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("Content-Type = %q, want text/event-stream", got)
 	}
@@ -49,15 +39,13 @@ func TestSSEHandlerSetsStreamingHeadersAndFrames(t *testing.T) {
 		t.Fatalf("Connection = %q, want keep-alive", got)
 	}
 
-	frames := parseSSEFrames(w.Body.String())
-	if len(frames) == 0 {
-		t.Fatal("expected at least one SSE frame")
+	core.Publish(bus, core.RunStartedEvent{RunID: "run_1", StartedAt: time.Now()})
+	frame := readSSEFrame(t, resp.Body)
+	if frame.id != "1" {
+		t.Fatalf("first frame id = %q, want 1", frame.id)
 	}
-	if frames[0].id != "1" {
-		t.Fatalf("first frame id = %q, want 1", frames[0].id)
-	}
-	if !strings.Contains(frames[0].data, `"type":"RUN_STARTED"`) {
-		t.Fatalf("unexpected first frame data: %s", frames[0].data)
+	if !strings.Contains(frame.data, `"type":"RUN_STARTED"`) {
+		t.Fatalf("unexpected first frame data: %s", frame.data)
 	}
 }
 
@@ -67,6 +55,8 @@ func TestSSEHandlerReconnectReplaysFromLastEventID(t *testing.T) {
 	defer adapter.Close()
 
 	h := NewSSEHandler(bus, adapter, agui.NewSession(agui.SessionModeCoreStream))
+	server := httptest.NewServer(h)
+	defer server.Close()
 
 	core.Publish(bus, core.RunStartedEvent{RunID: "run_1", StartedAt: time.Now()})
 	core.Publish(bus, core.TurnStartedEvent{RunID: "run_1", TurnNumber: 1, StartedAt: time.Now()})
@@ -74,31 +64,15 @@ func TestSSEHandlerReconnectReplaysFromLastEventID(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/sse", nil).WithContext(ctx)
-	req.Header.Set("Last-Event-ID", "1")
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		h.ServeHTTP(w, req)
-	}()
+	resp := mustOpenSSE(t, ctx, server.URL, "1")
+	defer resp.Body.Close()
 
-	eventually(t, func() bool {
-		frames := parseSSEFrames(w.Body.String())
-		return len(frames) >= 1
-	})
-	cancel()
-	<-done
-
-	frames := parseSSEFrames(w.Body.String())
-	if len(frames) != 1 {
-		t.Fatalf("expected 1 replayed frame, got %d: %#v", len(frames), frames)
+	frame := readSSEFrame(t, resp.Body)
+	if frame.id != "2" {
+		t.Fatalf("replayed frame id = %q, want 2", frame.id)
 	}
-	if frames[0].id != "2" {
-		t.Fatalf("replayed frame id = %q, want 2", frames[0].id)
-	}
-	if !strings.Contains(frames[0].data, `"type":"STEP_STARTED"`) {
-		t.Fatalf("unexpected replay frame data: %s", frames[0].data)
+	if !strings.Contains(frame.data, `"type":"STEP_STARTED"`) {
+		t.Fatalf("unexpected replay frame data: %s", frame.data)
 	}
 }
 
@@ -108,6 +82,8 @@ func TestSSEHandlerGapFallsBackToSnapshot(t *testing.T) {
 	defer adapter.Close()
 
 	h := NewSSEHandler(bus, adapter, agui.NewSession(agui.SessionModeCoreStream), WithReplayCapacity(3))
+	server := httptest.NewServer(h)
+	defer server.Close()
 
 	for range 6 {
 		core.Publish(bus, core.RunStartedEvent{RunID: "run_1", StartedAt: time.Now()})
@@ -116,32 +92,19 @@ func TestSSEHandlerGapFallsBackToSnapshot(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/sse", nil).WithContext(ctx)
-	req.Header.Set("Last-Event-ID", "1")
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		h.ServeHTTP(w, req)
-	}()
+	resp := mustOpenSSE(t, ctx, server.URL, "1")
+	defer resp.Body.Close()
 
-	eventually(t, func() bool {
-		frames := parseSSEFrames(w.Body.String())
-		return len(frames) >= 1
-	})
-	cancel()
-	<-done
-
-	frames := parseSSEFrames(w.Body.String())
+	frame := readSSEFrame(t, resp.Body)
 	var ev agui.Event
-	if err := json.Unmarshal([]byte(frames[0].data), &ev); err != nil {
+	if err := json.Unmarshal([]byte(frame.data), &ev); err != nil {
 		t.Fatalf("unmarshal snapshot event: %v", err)
 	}
 	if ev.Type != agui.EventSessionSnapshot {
 		t.Fatalf("first frame type = %q, want %q", ev.Type, agui.EventSessionSnapshot)
 	}
-	if frames[0].id != "6" {
-		t.Fatalf("snapshot frame id = %q, want 6", frames[0].id)
+	if frame.id != "6" {
+		t.Fatalf("snapshot frame id = %q, want 6", frame.id)
 	}
 }
 
@@ -151,15 +114,11 @@ func TestSSEHandlerDisconnectCleansUpListener(t *testing.T) {
 	defer adapter.Close()
 
 	h := NewSSEHandler(bus, adapter, agui.NewSession(agui.SessionModeCoreStream))
+	server := httptest.NewServer(h)
+	defer server.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/sse", nil).WithContext(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		h.ServeHTTP(w, req)
-	}()
+	resp := mustOpenSSE(t, ctx, server.URL, "")
 
 	eventually(t, func() bool {
 		h.state.mu.Lock()
@@ -168,13 +127,12 @@ func TestSSEHandlerDisconnectCleansUpListener(t *testing.T) {
 	})
 
 	cancel()
-	<-done
-
-	h.state.mu.Lock()
-	defer h.state.mu.Unlock()
-	if got := len(h.state.listeners); got != 0 {
-		t.Fatalf("listener count = %d, want 0", got)
-	}
+	resp.Body.Close()
+	eventually(t, func() bool {
+		h.state.mu.Lock()
+		defer h.state.mu.Unlock()
+		return len(h.state.listeners) == 0
+	})
 }
 
 type sseFrame struct {
@@ -182,30 +140,52 @@ type sseFrame struct {
 	data string
 }
 
-func parseSSEFrames(body string) []sseFrame {
-	scanner := bufio.NewScanner(strings.NewReader(body))
-	var frames []sseFrame
-	var current sseFrame
+func mustOpenSSE(t *testing.T, ctx context.Context, url, lastEventID string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE stream: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, string(body))
+	}
+	return resp
+}
+
+func readSSEFrame(t *testing.T, body io.Reader) sseFrame {
+	t.Helper()
+	scanner := bufio.NewScanner(body)
+	var frame sseFrame
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
-			if current.id != "" || current.data != "" {
-				frames = append(frames, current)
-				current = sseFrame{}
+			if frame.id != "" || frame.data != "" {
+				return frame
 			}
 			continue
 		}
 		if strings.HasPrefix(line, "id: ") {
-			current.id = strings.TrimPrefix(line, "id: ")
+			frame.id = strings.TrimPrefix(line, "id: ")
+			continue
 		}
 		if strings.HasPrefix(line, "data: ") {
-			current.data = strings.TrimPrefix(line, "data: ")
+			frame.data = strings.TrimPrefix(line, "data: ")
 		}
 	}
-	if current.id != "" || current.data != "" {
-		frames = append(frames, current)
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read SSE frame: %v", err)
 	}
-	return frames
+	t.Fatal("no SSE frame received")
+	return sseFrame{}
 }
 
 func eventually(t *testing.T, fn func() bool) {
