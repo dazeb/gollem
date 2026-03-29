@@ -17,13 +17,14 @@ const (
 const noActiveStreamPart = -1
 
 type streamPartState struct {
-	kind          streamPartKind
-	messageID     string
-	sawStart      bool
-	emitted       bool
-	closed        bool
-	queued        bool
-	pendingDeltas []string
+	kind            streamPartKind
+	messageID       string
+	boundaryVersion int64
+	sawStart        bool
+	emitted         bool
+	closed          bool
+	queued          bool
+	pendingDeltas   []string
 }
 
 type streamKindState struct {
@@ -108,9 +109,11 @@ func ensureStreamPart(
 		suppressRemainingStreamParts(adapter, parts, kinds)
 	}
 
+	messageID, boundaryVersion := newStreamPartIdentity(adapter)
 	state := &streamPartState{
-		kind:      kind,
-		messageID: nextStreamMessageID(adapter),
+		kind:            kind,
+		messageID:       messageID,
+		boundaryVersion: boundaryVersion,
 	}
 	parts[index] = state
 
@@ -286,13 +289,22 @@ func emitStreamPartBufferedDeltas(adapter *Adapter, state *streamPartState) {
 	state.emitted = true
 }
 
-func nextStreamMessageID(adapter *Adapter) string {
+func newStreamPartIdentity(adapter *Adapter) (string, int64) {
 	if adapter == nil {
-		return ""
+		return "", 0
 	}
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
-	return adapter.nextMessageID()
+	return adapter.nextMessageID(), adapter.streamBoundaryVersion
+}
+
+func currentStreamBoundaryVersion(adapter *Adapter) int64 {
+	if adapter == nil {
+		return 0
+	}
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+	return adapter.streamBoundaryVersion
 }
 
 func finalizeStreamPart(adapter *Adapter, state streamPartState) {
@@ -366,7 +378,13 @@ func syncStreamPartsWithAdapter(
 		return
 	}
 
+	boundaryVersion := currentStreamBoundaryVersion(adapter)
 	for _, kind := range []streamPartKind{streamPartKindText, streamPartKindReasoning} {
+		if streamPartKindCrossedBoundary(parts, kind, boundaryVersion) {
+			suppressStreamPartKind(adapter, parts, kinds, kind, false)
+			continue
+		}
+
 		kindState := getStreamKindState(kinds, kind)
 		if kindState.activeIndex == noActiveStreamPart {
 			continue
@@ -383,6 +401,18 @@ func syncStreamPartsWithAdapter(
 
 		suppressStreamPartKind(adapter, parts, kinds, kind, false)
 	}
+}
+
+func streamPartKindCrossedBoundary(parts map[int]*streamPartState, kind streamPartKind, boundaryVersion int64) bool {
+	for _, state := range parts {
+		if state == nil || state.kind != kind {
+			continue
+		}
+		if state.boundaryVersion != boundaryVersion {
+			return true
+		}
+	}
+	return false
 }
 
 func streamPartStillActive(adapter *Adapter, state streamPartState) bool {
