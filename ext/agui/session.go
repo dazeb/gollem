@@ -34,6 +34,11 @@ const (
 
 // Session tracks the state of an AGUI interaction. It owns a stable session ID
 // that survives reconnects and, in Temporal mode, continue-as-new cycles.
+//
+// Ownership contract: Session (or a session-owned runtime wrapper) is the
+// source of truth for replay sequencing, snapshot watermarks, pending approval
+// metadata, pending deferred-input metadata, and the live cancel/abort handle.
+// Adapter output is transient protocol formatting layered on top of this state.
 type Session struct {
 	mu sync.RWMutex
 

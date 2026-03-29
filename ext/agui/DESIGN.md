@@ -445,6 +445,41 @@ Temporal already has the async shape needed by AGUI:
 
 This is the target behavior for AGUI parity across all runtimes.
 
+## 6.4 Session-owned control state (decision)
+
+The transport-facing session must own all mutable state that needs to survive reconnects or appear in
+`session.snapshot`. The current `Adapter` should not own approval, deferred-input, or cancel/abort
+state because it only formats protocol output and can be detached/recreated independently of the live
+session.
+
+For each active AGUI session, keep one run-local control record owned by the session manager (or a
+`SessionRuntime` attached to `Session`) with at least:
+
+- current run identity: `run_id`, `parent_run_id`, mode, status, waiting reason
+- the active cancellation handle:
+  - in-process/core runs: the `context.CancelCauseFunc` or equivalent abort callback for the live run
+  - Temporal runs: workflow client handle / stable workflow ID used to send `AbortSignal`
+- approval coordination:
+  - the blocking `ApprovalBridge` (or Temporal signal bridge) used to resolve the live wait
+  - a `pending_approvals` map keyed by `tool_call_id` containing `tool_name`, `args_json`,
+    requested timestamp, optional human summary/message, and resolution status
+- deferred/external-input coordination:
+  - a `pending_external_inputs` map keyed by `tool_call_id` containing the deferred request metadata
+- replay/snapshot state:
+  - the session sequencer
+  - replay buffer/event store
+  - the latest resumable snapshot payload plus the replay watermark it reflects
+
+That split gives each layer one job:
+
+- `Adapter`: translate runtime signals into AG-UI protocol payloads
+- `Session`/session manager: own mutable run-local state, sequence assignment, snapshots, replay, and
+  action routing
+- transport: expose SSE and POST/action endpoints over the session-owned state
+
+Approval resolution therefore becomes a two-part model: the bridge/channel unblocks the live run, but
+all metadata that must be replayable or snapshottable lives in the session-owned maps above.
+
 ---
 
 ## 7. Reconnect and resume contract
@@ -462,6 +497,86 @@ AGUI reconnect should work like this:
 2. Server replays buffered/durable events after that sequence
 3. Server resumes live streaming
 4. If replay is unavailable, server sends a fresh `session.snapshot` followed by current state
+
+### Transport decision: SSE IDs come from normalized session sequence
+
+The transport must not invent an independent SSE cursor. The replay cursor is the normalized AGUI
+session sequence already carried by `Event.Sequence`.
+
+- Every replayable outgoing SSE frame carries `id: <sequence>` where `<sequence>` is the base-10 value
+  of the normalized event sequence assigned by the session.
+- `Event.ID` remains a stable opaque event identifier for deduplication/debugging, but **not** the SSE
+  resume cursor.
+- `Last-Event-ID` and `Action.LastSeq` both mean the same thing: the highest normalized sequence the
+  client has fully processed.
+- Live AG-UI protocol JSON emitted by `Adapter` therefore has to be wrapped before transport writes it:
+  the session manager first converts/adopts it into a normalized `Event`, assigns the next sequence,
+  appends it to replay storage, and only then writes the SSE frame.
+
+That resolves the current mismatch: replay is defined over the normalized session event log, while the
+AG-UI JSON payload remains the `data:` body of the SSE frame.
+
+### Replay algorithm (decision)
+
+Reconnect must use an atomic replay-to-live handoff so the client never misses or duplicates a
+live event during the switchover.
+
+On reconnect, the SSE handler should do exactly this:
+
+1. Resolve the target session by `session_id`.
+2. Read the resume cursor from `Last-Event-ID` if present; otherwise fall back to explicit `last_seq`.
+3. Attach a live subscriber to the session **before** examining replay state. The subscriber should
+   queue normalized events rather than writing directly to the socket.
+4. In the same session/event-log critical section, capture a replay high-water mark equal to the
+   latest committed normalized sequence visible to replay.
+5. Ask the replay store for the range `(lastSeq, highWatermark]`.
+6. If replay is complete, send those replayed events in order using their original sequence as SSE
+   `id`.
+7. Drain any queued live events with `sequence > highWatermark` in order.
+8. Switch the subscriber from queued mode to direct live streaming.
+9. If replay is incomplete (buffer gap / store compaction / process loss), do **not** attempt a
+   partial replay from the oldest remaining event. Instead produce one authoritative
+   `session.snapshot`, send it with `id == snapshot_sequence`, discard any queued events with
+   `sequence <= snapshot_sequence`, then drain queued/live events with `sequence > snapshot_sequence`.
+
+The important invariants are:
+
+- the subscriber is attached before the high-water mark is captured
+- the high-water mark is captured from the same session/event-log transaction that defines replay
+  visibility
+- the handoff to direct live writes happens only after replay-or-snapshot catch-up is complete
+
+### Snapshot fallback contract (decision)
+
+`session.snapshot` is the reconnect fallback whenever the transport cannot guarantee an exact ordered
+replay after the requested cursor.
+
+The snapshot payload should include at minimum:
+
+- session identity and status
+- current `run_id` / `parent_run_id`
+- waiting reason
+- pending approvals metadata
+- pending deferred/external-input metadata
+- any resumable core/Temporal snapshot payload needed for later `resume_session`
+- `snapshot_sequence`: the highest normalized event sequence fully reflected in the snapshot
+
+`snapshot_sequence` must be captured atomically with the snapshot contents. In other words, the
+session manager must read mutable session state, pending approval/deferred maps, and replay watermark
+from the same session/event-log transaction or lock scope so the snapshot cannot describe state that is
+older or newer than its advertised watermark.
+
+Transport behavior after sending snapshot fallback:
+
+- SSE `id` for the snapshot frame is `snapshot_sequence`
+- the client discards any prior incremental UI state and rebuilds from the snapshot
+- live streaming resumes only for events with `sequence > snapshot_sequence`
+- queued reconnect events with `sequence <= snapshot_sequence` are dropped because they are already
+  covered by the snapshot
+- if no live run exists anymore, the snapshot may be the final event returned by reconnect
+
+This makes replay gaps deterministic: exact replay if possible, otherwise one authoritative snapshot
+reset instead of a confusing partial history.
 
 ### Current gollem support
 
@@ -533,6 +648,14 @@ Responsibilities:
 - reconnect using `session_id` + sequence
 - stream normalized events
 - accept actions (approval, deferred result, abort)
+
+Transport implementation notes:
+
+- outgoing SSE frames use normalized `Event.Sequence` as `id`
+- the SSE `data:` body can contain either normalized AGUI JSON or wrapped protocol JSON, but replay and
+  `Last-Event-ID` always operate on the normalized session sequence
+- reconnect must use the atomic replay-to-live handoff defined in section 7.1
+- snapshot fallback uses `session.snapshot` with an atomically captured `snapshot_sequence`
 
 This should be a new transport surface, not a retrofit of the current `contrib/*handler`
 text-only SSE examples.
