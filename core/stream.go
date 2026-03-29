@@ -288,6 +288,33 @@ func (s *agentStream[T]) Result() (*RunResult[T], error) {
 	return s.result, nil
 }
 
+// emitStreamTurnCompleted publishes a TurnCompletedEvent for streaming runs.
+func (s *agentStream[T]) emitStreamTurnCompleted(resp *ModelResponse, turnErr error) {
+	if s.agent.eventBus == nil {
+		return
+	}
+	ev := TurnCompletedEvent{
+		RunID:       s.state.runID,
+		ParentRunID: s.state.parentRunID,
+		TurnNumber:  s.state.runStep,
+		CompletedAt: time.Now(),
+	}
+	if resp != nil {
+		ev.HasToolCalls = len(resp.ToolCalls()) > 0
+		ev.HasText = resp.TextContent() != ""
+	}
+	if turnErr != nil {
+		ev.Error = turnErr.Error()
+	}
+	Publish(s.agent.eventBus, ev)
+}
+
+func (s *agentStream[T]) completeActiveTurn(resp *ModelResponse, turnErr error) {
+	s.emitStreamTurnCompleted(resp, turnErr)
+	s.currentTurnRC = nil
+	s.currentModelRC = nil
+}
+
 func (s *agentStream[T]) startTurn() error {
 	if err := s.ctx.Err(); err != nil {
 		return err
@@ -320,6 +347,14 @@ func (s *agentStream[T]) startTurn() error {
 			h.OnTurnStart(s.ctx, turnRC, s.state.runStep)
 		}
 	})
+	if s.agent.eventBus != nil {
+		Publish(s.agent.eventBus, TurnStartedEvent{
+			RunID:       s.state.runID,
+			ParentRunID: s.state.parentRunID,
+			TurnNumber:  s.state.runStep,
+			StartedAt:   time.Now(),
+		})
+	}
 
 	preparedTools := s.agent.prepareTools(s.ctx, s.state, s.allTools, s.deps, s.prompt)
 	params := buildModelRequestParams(preparedTools, s.agent.outputSchema)
@@ -361,7 +396,9 @@ func (s *agentStream[T]) startTurn() error {
 		beforeTokens := estimateTokens(messages)
 		processed, procErr := proc(s.ctx, messages)
 		if procErr != nil {
-			return fmt.Errorf("history processor failed: %w", procErr)
+			hpErr := fmt.Errorf("history processor failed: %w", procErr)
+			s.emitStreamTurnCompleted(nil, hpErr)
+			return hpErr
 		}
 		afterCount := len(processed)
 		afterTokens := estimateTokens(processed)
@@ -388,7 +425,9 @@ func (s *agentStream[T]) startTurn() error {
 		var dropped bool
 		messages, dropped = runMessageInterceptors(s.ctx, s.agent.messageInterceptors, messages)
 		if dropped {
-			return errors.New("message interceptor dropped the request")
+			miErr := errors.New("message interceptor dropped the request")
+			s.emitStreamTurnCompleted(nil, miErr)
+			return miErr
 		}
 	}
 
@@ -403,10 +442,12 @@ func (s *agentStream[T]) startTurn() error {
 			}
 		})
 		if gErr != nil {
-			return &GuardrailError{
+			grErr := &GuardrailError{
 				GuardrailName: g.name,
 				Message:       gErr.Error(),
 			}
+			s.emitStreamTurnCompleted(nil, grErr)
+			return grErr
 		}
 	}
 
@@ -419,6 +460,15 @@ func (s *agentStream[T]) startTurn() error {
 	})
 
 	modelReqStart := time.Now()
+	if s.agent.eventBus != nil {
+		Publish(s.agent.eventBus, ModelRequestStartedEvent{
+			RunID:        s.state.runID,
+			ParentRunID:  s.state.parentRunID,
+			TurnNumber:   s.state.runStep,
+			MessageCount: len(messages),
+			StartedAt:    modelReqStart,
+		})
+	}
 	if s.agent.tracingEnabled {
 		s.state.traceSteps = append(s.state.traceSteps, TraceStep{
 			Kind:      TraceModelRequest,
@@ -445,7 +495,9 @@ func (s *agentStream[T]) startTurn() error {
 		stream, err = s.agent.model.RequestStream(s.ctx, messages, settings, params)
 	}
 	if err != nil {
-		return fmt.Errorf("model stream request failed: %w", err)
+		streamErr := fmt.Errorf("model stream request failed: %w", err)
+		s.emitStreamTurnCompleted(nil, streamErr)
+		return streamErr
 	}
 
 	s.settings = settings
@@ -487,6 +539,7 @@ func (s *agentStream[T]) completeTurn() error {
 
 	if len(s.agent.responseInterceptors) > 0 {
 		if runResponseInterceptors(s.ctx, s.agent.responseInterceptors, resp) {
+			s.completeActiveTurn(resp, nil)
 			return nil
 		}
 	}
@@ -504,6 +557,20 @@ func (s *agentStream[T]) completeTurn() error {
 		}
 	})
 
+	if s.agent.eventBus != nil {
+		Publish(s.agent.eventBus, ModelResponseCompletedEvent{
+			RunID:        s.state.runID,
+			ParentRunID:  s.state.parentRunID,
+			TurnNumber:   s.state.runStep,
+			FinishReason: string(resp.FinishReason),
+			InputTokens:  resp.Usage.InputTokens,
+			OutputTokens: resp.Usage.OutputTokens,
+			HasToolCalls: len(resp.ToolCalls()) > 0,
+			HasText:      resp.TextContent() != "",
+			DurationMs:   time.Since(s.currentReqStart).Milliseconds(),
+			CompletedAt:  time.Now(),
+		})
+	}
 	if s.agent.tracingEnabled {
 		s.state.traceSteps = append(s.state.traceSteps, TraceStep{
 			Kind:      TraceModelResponse,
@@ -515,6 +582,7 @@ func (s *agentStream[T]) completeTurn() error {
 
 	if s.limits.HasTokenLimits() {
 		if err := s.limits.CheckTokens(s.state.usage); err != nil {
+			s.completeActiveTurn(resp, err)
 			return err
 		}
 	}
@@ -538,6 +606,7 @@ func (s *agentStream[T]) completeTurn() error {
 						}
 					}
 					if parseErr == nil {
+						s.completeActiveTurn(resp, nil)
 						s.finish(&RunResult[T]{
 							Output:    output,
 							Messages:  s.state.messages,
@@ -548,7 +617,9 @@ func (s *agentStream[T]) completeTurn() error {
 						return nil
 					}
 				}
-				return &RunConditionError{Reason: reason}
+				condErr := &RunConditionError{Reason: reason}
+				s.completeActiveTurn(resp, condErr)
+				return condErr
 			}
 		}
 	}
@@ -562,9 +633,29 @@ func (s *agentStream[T]) completeTurn() error {
 	})
 
 	if err != nil {
+		s.completeActiveTurn(resp, err)
 		return err
 	}
 	if len(deferredReqs) > 0 {
+		s.completeActiveTurn(resp, nil)
+		if s.agent.eventBus != nil {
+			for _, dr := range deferredReqs {
+				Publish(s.agent.eventBus, DeferredRequestedEvent{
+					RunID:       s.state.runID,
+					ParentRunID: s.state.parentRunID,
+					ToolCallID:  dr.ToolCallID,
+					ToolName:    dr.ToolName,
+					ArgsJSON:    dr.ArgsJSON,
+					RequestedAt: time.Now(),
+				})
+			}
+			Publish(s.agent.eventBus, RunWaitingEvent{
+				RunID:       s.state.runID,
+				ParentRunID: s.state.parentRunID,
+				Reason:      "deferred",
+				WaitingAt:   time.Now(),
+			})
+		}
 		if len(nextParts) > 0 {
 			s.state.messages = append(s.state.messages, ModelRequest{
 				Parts:     nextParts,
@@ -584,10 +675,13 @@ func (s *agentStream[T]) completeTurn() error {
 			responseText := resp.TextContent()
 			if responseText != "" {
 				if storeErr := s.agent.knowledgeBase.Store(s.ctx, responseText); storeErr != nil {
-					return fmt.Errorf("knowledge base store failed: %w", storeErr)
+					kbErr := fmt.Errorf("knowledge base store failed: %w", storeErr)
+					s.completeActiveTurn(resp, kbErr)
+					return kbErr
 				}
 			}
 		}
+		s.completeActiveTurn(resp, nil)
 		s.finish(&RunResult[T]{
 			Output:    result.output,
 			Messages:  s.state.messages,
@@ -598,6 +692,9 @@ func (s *agentStream[T]) completeTurn() error {
 		return nil
 	}
 
+	// No result — tool calls processed, continue to next turn.
+	s.completeActiveTurn(resp, nil)
+
 	if len(nextParts) > 0 {
 		s.state.messages = append(s.state.messages, ModelRequest{
 			Parts:     nextParts,
@@ -605,8 +702,6 @@ func (s *agentStream[T]) completeTurn() error {
 		})
 	}
 
-	s.currentTurnRC = nil
-	s.currentModelRC = nil
 	return nil
 }
 
@@ -615,6 +710,16 @@ func (s *agentStream[T]) finish(result *RunResult[T], runErr error) {
 		_ = s.current.Close()
 		s.current = nil
 	}
+
+	// If a turn is active (startTurn was called but completeTurn hasn't
+	// cleared currentTurnRC), emit TurnCompleted so the turn lifecycle
+	// is always balanced. This handles mid-stream errors and early Close.
+	if s.currentTurnRC != nil {
+		s.emitStreamTurnCompleted(s.finalResponse, runErr)
+		s.currentTurnRC = nil
+		s.currentModelRC = nil
+	}
+
 	s.done = true
 	s.result = result
 	s.err = runErr

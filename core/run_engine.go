@@ -181,6 +181,29 @@ func (a *Agent[T]) newTurnEngine(ctx context.Context, state *RunState, prompt st
 	}
 }
 
+// emitTurnCompleted publishes a TurnCompletedEvent if an event bus is configured.
+// Pass nil for resp if the model response was not received. Pass nil for turnErr
+// if the turn completed successfully.
+func (e *turnEngine[T]) emitTurnCompleted(resp *ModelResponse, turnErr error) {
+	if e.agent.eventBus == nil {
+		return
+	}
+	ev := TurnCompletedEvent{
+		RunID:       e.state.runID,
+		ParentRunID: e.state.parentRunID,
+		TurnNumber:  e.state.runStep,
+		CompletedAt: time.Now(),
+	}
+	if resp != nil {
+		ev.HasToolCalls = len(resp.ToolCalls()) > 0
+		ev.HasText = resp.TextContent() != ""
+	}
+	if turnErr != nil {
+		ev.Error = turnErr.Error()
+	}
+	Publish(e.agent.eventBus, ev)
+}
+
 // Step executes one non-streaming turn: one model response and any resulting
 // tool execution, including retries and deferred tool handling.
 func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
@@ -208,6 +231,14 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 				h.OnTurnStart(e.ctx, turnRC, e.state.runStep)
 			}
 		})
+		if e.agent.eventBus != nil {
+			Publish(e.agent.eventBus, TurnStartedEvent{
+				RunID:       e.state.runID,
+				ParentRunID: e.state.parentRunID,
+				TurnNumber:  e.state.runStep,
+				StartedAt:   time.Now(),
+			})
+		}
 
 		preparedTools := e.agent.prepareTools(e.ctx, e.state, e.allTools, e.deps, e.prompt)
 		params := buildModelRequestParams(preparedTools, e.agent.outputSchema)
@@ -249,7 +280,9 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			beforeTokens := estimateTokens(messages)
 			processed, procErr := proc(e.ctx, messages)
 			if procErr != nil {
-				return nil, nil, fmt.Errorf("history processor failed: %w", procErr)
+				hpErr := fmt.Errorf("history processor failed: %w", procErr)
+				e.emitTurnCompleted(nil, hpErr)
+				return nil, nil, hpErr
 			}
 			afterCount := len(processed)
 			afterTokens := estimateTokens(processed)
@@ -276,7 +309,9 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			var dropped bool
 			messages, dropped = runMessageInterceptors(e.ctx, e.agent.messageInterceptors, messages)
 			if dropped {
-				return nil, nil, errors.New("message interceptor dropped the request")
+				miErr := errors.New("message interceptor dropped the request")
+				e.emitTurnCompleted(nil, miErr)
+				return nil, nil, miErr
 			}
 		}
 
@@ -291,10 +326,12 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 				}
 			})
 			if gErr != nil {
-				return nil, nil, &GuardrailError{
+				grErr := &GuardrailError{
 					GuardrailName: g.name,
 					Message:       gErr.Error(),
 				}
+				e.emitTurnCompleted(nil, grErr)
+				return nil, nil, grErr
 			}
 		}
 
@@ -307,6 +344,15 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 		})
 
 		modelReqStart := time.Now()
+		if e.agent.eventBus != nil {
+			Publish(e.agent.eventBus, ModelRequestStartedEvent{
+				RunID:        e.state.runID,
+				ParentRunID:  e.state.parentRunID,
+				TurnNumber:   e.state.runStep,
+				MessageCount: len(messages),
+				StartedAt:    modelReqStart,
+			})
+		}
 		if e.agent.tracingEnabled {
 			e.state.traceSteps = append(e.state.traceSteps, TraceStep{
 				Kind:      TraceModelRequest,
@@ -333,7 +379,9 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			resp, err = e.agent.model.Request(e.ctx, messages, settings, params)
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("model request failed: %w", err)
+			modelErr := fmt.Errorf("model request failed: %w", err)
+			e.emitTurnCompleted(nil, modelErr)
+			return nil, nil, modelErr
 		}
 
 		e.state.usage.IncrRequest(resp.Usage)
@@ -349,6 +397,7 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 
 		if len(e.agent.responseInterceptors) > 0 {
 			if runResponseInterceptors(e.ctx, e.agent.responseInterceptors, resp) {
+				e.emitTurnCompleted(resp, nil)
 				continue
 			}
 		}
@@ -366,6 +415,20 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 				h.OnModelResponse(e.ctx, modelRC, resp)
 			}
 		})
+		if e.agent.eventBus != nil {
+			Publish(e.agent.eventBus, ModelResponseCompletedEvent{
+				RunID:        e.state.runID,
+				ParentRunID:  e.state.parentRunID,
+				TurnNumber:   e.state.runStep,
+				FinishReason: string(resp.FinishReason),
+				InputTokens:  resp.Usage.InputTokens,
+				OutputTokens: resp.Usage.OutputTokens,
+				HasToolCalls: len(resp.ToolCalls()) > 0,
+				HasText:      resp.TextContent() != "",
+				DurationMs:   time.Since(modelReqStart).Milliseconds(),
+				CompletedAt:  time.Now(),
+			})
+		}
 
 		if e.agent.tracingEnabled {
 			e.state.traceSteps = append(e.state.traceSteps, TraceStep{
@@ -378,6 +441,7 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 
 		if e.limits.HasTokenLimits() {
 			if err := e.limits.CheckTokens(e.state.usage); err != nil {
+				e.emitTurnCompleted(resp, err)
 				return resp, nil, err
 			}
 		}
@@ -401,10 +465,13 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 							}
 						}
 						if parseErr == nil {
+							e.emitTurnCompleted(resp, nil)
 							return resp, e.agent.buildRunResult(e.state, output), nil
 						}
 					}
-					return resp, nil, &RunConditionError{Reason: reason}
+					condErr := &RunConditionError{Reason: reason}
+					e.emitTurnCompleted(resp, condErr)
+					return resp, nil, condErr
 				}
 			}
 		}
@@ -416,9 +483,29 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			}
 		})
 		if err != nil {
+			e.emitTurnCompleted(resp, err)
 			return resp, nil, err
 		}
 		if len(deferredReqs) > 0 {
+			e.emitTurnCompleted(resp, nil)
+			if e.agent.eventBus != nil {
+				for _, dr := range deferredReqs {
+					Publish(e.agent.eventBus, DeferredRequestedEvent{
+						RunID:       e.state.runID,
+						ParentRunID: e.state.parentRunID,
+						ToolCallID:  dr.ToolCallID,
+						ToolName:    dr.ToolName,
+						ArgsJSON:    dr.ArgsJSON,
+						RequestedAt: time.Now(),
+					})
+				}
+				Publish(e.agent.eventBus, RunWaitingEvent{
+					RunID:       e.state.runID,
+					ParentRunID: e.state.parentRunID,
+					Reason:      "deferred",
+					WaitingAt:   time.Now(),
+				})
+			}
 			if len(nextParts) > 0 {
 				e.state.messages = append(e.state.messages, ModelRequest{
 					Parts:     nextParts,
@@ -438,12 +525,17 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 				responseText := resp.TextContent()
 				if responseText != "" {
 					if storeErr := e.agent.knowledgeBase.Store(e.ctx, responseText); storeErr != nil {
-						return resp, nil, fmt.Errorf("knowledge base store failed: %w", storeErr)
+						kbErr := fmt.Errorf("knowledge base store failed: %w", storeErr)
+						e.emitTurnCompleted(resp, kbErr)
+						return resp, nil, kbErr
 					}
 				}
 			}
+			e.emitTurnCompleted(resp, nil)
 			return resp, e.agent.buildRunResult(e.state, result.output), nil
 		}
+		// No result — tool calls processed, continue to next turn.
+		e.emitTurnCompleted(resp, nil)
 		if len(nextParts) > 0 {
 			e.state.messages = append(e.state.messages, ModelRequest{
 				Parts:     nextParts,

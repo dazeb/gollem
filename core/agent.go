@@ -529,6 +529,27 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	// fire, inject this run's RunID so child work propagates the correct lineage.
 	ctx = a.beginRun(ctx, state, deps, prompt)
 
+	// Emit deferred resolution events AFTER RunStarted so subscribers
+	// see them in the correct order: RunStarted → RunResumed → DeferredResolved.
+	if a.eventBus != nil && len(cfg.deferredResults) > 0 {
+		Publish(a.eventBus, RunResumedEvent{
+			RunID:       state.runID,
+			ParentRunID: state.parentRunID,
+			ResumedAt:   time.Now(),
+		})
+		for _, dr := range cfg.deferredResults {
+			Publish(a.eventBus, DeferredResolvedEvent{
+				RunID:       state.runID,
+				ParentRunID: state.parentRunID,
+				ToolCallID:  dr.ToolCallID,
+				ToolName:    dr.ToolName,
+				Content:     dr.Content,
+				IsError:     dr.IsError,
+				ResolvedAt:  time.Now(),
+			})
+		}
+	}
+
 	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, deps)
 	a.endRun(ctx, state, deps, prompt, runErr)
 
@@ -594,6 +615,26 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 	}
 
 	ctx = a.beginRun(ctx, state, deps, prompt)
+
+	// Emit deferred resolution events AFTER RunStarted (same as Run).
+	if a.eventBus != nil && len(cfg.deferredResults) > 0 {
+		Publish(a.eventBus, RunResumedEvent{
+			RunID:       state.runID,
+			ParentRunID: state.parentRunID,
+			ResumedAt:   time.Now(),
+		})
+		for _, dr := range cfg.deferredResults {
+			Publish(a.eventBus, DeferredResolvedEvent{
+				RunID:       state.runID,
+				ParentRunID: state.parentRunID,
+				ToolCallID:  dr.ToolCallID,
+				ToolName:    dr.ToolName,
+				Content:     dr.Content,
+				IsError:     dr.IsError,
+				ResolvedAt:  time.Now(),
+			})
+		}
+	}
 
 	// Gather all tools and build lookup maps.
 	allTools := a.allTools()
@@ -1040,6 +1081,18 @@ func (a *Agent[T]) executeFunctionTools(
 					case sem <- struct{}{}:
 						defer func() { <-sem }()
 					case <-ctx.Done():
+						if a.eventBus != nil {
+							Publish(a.eventBus, ToolCalledEvent{
+								RunID: state.runID, ParentRunID: state.parentRunID,
+								ToolCallID: ic.call.ToolCallID, ToolName: ic.call.ToolName,
+								ArgsJSON: ic.call.ArgsJSON, CalledAt: time.Now(),
+							})
+							Publish(a.eventBus, ToolFailedEvent{
+								RunID: state.runID, ParentRunID: state.parentRunID,
+								ToolCallID: ic.call.ToolCallID, ToolName: ic.call.ToolName,
+								Error: "context cancelled waiting for semaphore", FailedAt: time.Now(),
+							})
+						}
 						mu.Lock()
 						results[ic.idx] = ToolReturnPart{
 							ToolName:   ic.call.ToolName,
@@ -1063,6 +1116,24 @@ func (a *Agent[T]) executeFunctionTools(
 	// Execute sequential tools.
 	for _, ic := range sequentialCalls {
 		if err := ctx.Err(); err != nil {
+			// Emit events for remaining sequential tools that won't execute.
+			if a.eventBus != nil {
+				for _, remaining := range sequentialCalls {
+					if results[remaining.idx] != nil {
+						continue // already executed
+					}
+					Publish(a.eventBus, NewToolCalledEvent(
+						state.runID, state.parentRunID,
+						remaining.call.ToolCallID, remaining.call.ToolName,
+						remaining.call.ArgsJSON, time.Now(),
+					))
+					Publish(a.eventBus, ToolFailedEvent{
+						RunID: state.runID, ParentRunID: state.parentRunID,
+						ToolCallID: remaining.call.ToolCallID, ToolName: remaining.call.ToolName,
+						Error: "context cancelled", FailedAt: time.Now(),
+					})
+				}
+			}
 			return nil, err
 		}
 		part := a.executeSingleTool(ctx, state, ic.call, ic.tool, deps, prompt)
@@ -1110,9 +1181,40 @@ func (a *Agent[T]) executeSingleTool(
 		))
 	}
 
+	// Enrich context with tool call ID early so approval funcs can access it.
+	approvalCtx := ContextWithToolCallID(ctx, call.ToolCallID)
+
 	// Check tool approval if required.
 	if tool.RequiresApproval {
+		if a.eventBus != nil {
+			Publish(a.eventBus, ApprovalRequestedEvent{
+				RunID:       state.runID,
+				ParentRunID: state.parentRunID,
+				ToolCallID:  call.ToolCallID,
+				ToolName:    call.ToolName,
+				ArgsJSON:    call.ArgsJSON,
+				RequestedAt: time.Now(),
+			})
+		}
 		if a.toolApprovalFunc == nil {
+			if a.eventBus != nil {
+				Publish(a.eventBus, ApprovalResolvedEvent{
+					RunID:       state.runID,
+					ParentRunID: state.parentRunID,
+					ToolCallID:  call.ToolCallID,
+					ToolName:    call.ToolName,
+					Approved:    false,
+					ResolvedAt:  time.Now(),
+				})
+				Publish(a.eventBus, ToolFailedEvent{
+					RunID:       state.runID,
+					ParentRunID: state.parentRunID,
+					ToolCallID:  call.ToolCallID,
+					ToolName:    call.ToolName,
+					Error:       "no approval function configured",
+					FailedAt:    time.Now(),
+				})
+			}
 			return RetryPromptPart{
 				Content:    fmt.Sprintf("tool %q requires approval but no approval function is configured", call.ToolName),
 				ToolName:   call.ToolName,
@@ -1120,8 +1222,45 @@ func (a *Agent[T]) executeSingleTool(
 				Timestamp:  time.Now(),
 			}
 		}
-		approved, approvalErr := a.toolApprovalFunc(ctx, call.ToolName, call.ArgsJSON)
+		firstApprovalWait := state.beginApprovalWait()
+		if a.eventBus != nil && firstApprovalWait {
+			Publish(a.eventBus, RunWaitingEvent{
+				RunID:       state.runID,
+				ParentRunID: state.parentRunID,
+				Reason:      "approval",
+				WaitingAt:   time.Now(),
+			})
+		}
+		approved, approvalErr := a.toolApprovalFunc(approvalCtx, call.ToolName, call.ArgsJSON)
+		lastApprovalResolved := state.endApprovalWait()
+		if a.eventBus != nil && lastApprovalResolved {
+			Publish(a.eventBus, RunResumedEvent{
+				RunID:       state.runID,
+				ParentRunID: state.parentRunID,
+				ResumedAt:   time.Now(),
+			})
+		}
+		if a.eventBus != nil {
+			Publish(a.eventBus, ApprovalResolvedEvent{
+				RunID:       state.runID,
+				ParentRunID: state.parentRunID,
+				ToolCallID:  call.ToolCallID,
+				ToolName:    call.ToolName,
+				Approved:    approvalErr == nil && approved,
+				ResolvedAt:  time.Now(),
+			})
+		}
 		if approvalErr != nil {
+			if a.eventBus != nil {
+				Publish(a.eventBus, ToolFailedEvent{
+					RunID:       state.runID,
+					ParentRunID: state.parentRunID,
+					ToolCallID:  call.ToolCallID,
+					ToolName:    call.ToolName,
+					Error:       "approval error: " + approvalErr.Error(),
+					FailedAt:    time.Now(),
+				})
+			}
 			return ToolReturnPart{
 				ToolName:   call.ToolName,
 				Content:    "error checking tool approval: " + approvalErr.Error(),
@@ -1130,6 +1269,16 @@ func (a *Agent[T]) executeSingleTool(
 			}
 		}
 		if !approved {
+			if a.eventBus != nil {
+				Publish(a.eventBus, ToolFailedEvent{
+					RunID:       state.runID,
+					ParentRunID: state.parentRunID,
+					ToolCallID:  call.ToolCallID,
+					ToolName:    call.ToolName,
+					Error:       "denied by user",
+					FailedAt:    time.Now(),
+				})
+			}
 			return RetryPromptPart{
 				Content:    fmt.Sprintf("tool call %q was denied by the user", call.ToolName),
 				ToolName:   call.ToolName,
@@ -1159,7 +1308,7 @@ func (a *Agent[T]) executeSingleTool(
 	}
 
 	// Apply tool timeout.
-	toolCtx := ContextWithToolCallID(ctx, call.ToolCallID)
+	toolCtx := approvalCtx
 	timeout := tool.Timeout
 	if timeout == 0 && a.defaultToolTimeout > 0 {
 		timeout = a.defaultToolTimeout
@@ -1187,6 +1336,40 @@ func (a *Agent[T]) executeSingleTool(
 				h.OnToolEnd(ctx, rc, call.ToolCallID, call.ToolName, resultStr, err)
 			}
 		})
+
+		// Publish ToolCompleted or ToolFailed runtime event.
+		// CallDeferred is not a failure — it's expected control flow.
+		if a.eventBus != nil {
+			var isDeferred bool
+			if err != nil {
+				var deferredCheck *CallDeferred
+				isDeferred = errors.As(err, &deferredCheck)
+			}
+			if !isDeferred {
+				dur := time.Since(toolStart).Milliseconds()
+				if err != nil {
+					Publish(a.eventBus, ToolFailedEvent{
+						RunID:       state.runID,
+						ParentRunID: state.parentRunID,
+						ToolCallID:  call.ToolCallID,
+						ToolName:    call.ToolName,
+						Error:       err.Error(),
+						DurationMs:  dur,
+						FailedAt:    time.Now(),
+					})
+				} else {
+					Publish(a.eventBus, ToolCompletedEvent{
+						RunID:       state.runID,
+						ParentRunID: state.parentRunID,
+						ToolCallID:  call.ToolCallID,
+						ToolName:    call.ToolName,
+						Result:      resultStr,
+						DurationMs:  dur,
+						CompletedAt: time.Now(),
+					})
+				}
+			}
+		}
 
 		// Add trace step for tool result.
 		if a.tracingEnabled {

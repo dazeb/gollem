@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,38 @@ type testEvent struct {
 type otherEvent struct {
 	Count int
 }
+
+type noResponseStreamModel struct{}
+
+func (m *noResponseStreamModel) Request(context.Context, []ModelMessage, *ModelSettings, *ModelRequestParameters) (*ModelResponse, error) {
+	return TextResponse("unused"), nil
+}
+
+func (m *noResponseStreamModel) RequestStream(context.Context, []ModelMessage, *ModelSettings, *ModelRequestParameters) (StreamedResponse, error) {
+	return &noResponseStream{}, nil
+}
+
+func (m *noResponseStreamModel) ModelName() string {
+	return "no-response-stream-model"
+}
+
+type noResponseStream struct {
+	done bool
+}
+
+func (s *noResponseStream) Next() (ModelResponseStreamEvent, error) {
+	if s.done {
+		return nil, io.EOF
+	}
+	s.done = true
+	return nil, io.EOF
+}
+
+func (s *noResponseStream) Response() *ModelResponse { return nil }
+
+func (s *noResponseStream) Usage() Usage { return Usage{} }
+
+func (s *noResponseStream) Close() error { return nil }
 
 func TestEventBus_PublishSubscribe(t *testing.T) {
 	bus := NewEventBus()
@@ -339,6 +372,167 @@ func TestEventBus_AgentIntegration(t *testing.T) {
 	}
 	if busFromTool != bus {
 		t.Error("expected EventBus to be accessible via RunContext in tool")
+	}
+}
+
+func TestEventBus_ConcurrentApprovalsPublishSingleWaitResumePair(t *testing.T) {
+	bus := NewEventBus()
+
+	var (
+		waitingCount atomic.Int32
+		resumedCount atomic.Int32
+	)
+	Subscribe(bus, func(RunWaitingEvent) {
+		waitingCount.Add(1)
+	})
+	Subscribe(bus, func(RunResumedEvent) {
+		resumedCount.Add(1)
+	})
+
+	approvalStarted := make(chan string, 2)
+	releaseApproval := make(chan struct{})
+	approvalFn := func(ctx context.Context, _ string, _ string) (bool, error) {
+		approvalStarted <- ToolCallIDFromContext(ctx)
+		<-releaseApproval
+		return true, nil
+	}
+
+	toolOne := FuncTool[struct{}]("tool_one", "first tool", func(context.Context, struct{}) (string, error) {
+		return "one", nil
+	}, WithRequiresApproval())
+	toolTwo := FuncTool[struct{}]("tool_two", "second tool", func(context.Context, struct{}) (string, error) {
+		return "two", nil
+	}, WithRequiresApproval())
+
+	model := NewTestModel(
+		MultiToolCallResponse(
+			ToolCallPart{ToolName: "tool_one", ToolCallID: "call_1", ArgsJSON: `{}`},
+			ToolCallPart{ToolName: "tool_two", ToolCallID: "call_2", ArgsJSON: `{}`},
+		),
+		TextResponse("done"),
+	)
+	agent := NewAgent[string](
+		model,
+		WithTools[string](toolOne, toolTwo),
+		WithToolApproval[string](approvalFn),
+		WithEventBus[string](bus),
+		WithMaxConcurrency[string](2),
+	)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := agent.Run(context.Background(), "run both tools")
+		done <- err
+	}()
+
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case toolCallID := <-approvalStarted:
+			seen[toolCallID] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for approvals, saw %v", seen)
+		}
+	}
+
+	if waitingCount.Load() != 1 {
+		t.Fatalf("expected 1 RunWaitingEvent while approvals are blocked, got %d", waitingCount.Load())
+	}
+	if resumedCount.Load() != 0 {
+		t.Fatalf("expected no RunResumedEvent before approvals resolve, got %d", resumedCount.Load())
+	}
+
+	close(releaseApproval)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("agent.Run returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for run completion")
+	}
+
+	if resumedCount.Load() != 1 {
+		t.Fatalf("expected 1 RunResumedEvent after all approvals resolve, got %d", resumedCount.Load())
+	}
+}
+
+func TestEventBus_RunStreamPublishesSingleTurnCompletion(t *testing.T) {
+	bus := NewEventBus()
+
+	var (
+		startedCount   atomic.Int32
+		completedCount atomic.Int32
+		lastCompleted  TurnCompletedEvent
+	)
+	Subscribe(bus, func(TurnStartedEvent) {
+		startedCount.Add(1)
+	})
+	Subscribe(bus, func(e TurnCompletedEvent) {
+		completedCount.Add(1)
+		lastCompleted = e
+	})
+
+	agent := NewAgent[string](
+		NewTestModel(TextResponse("streamed")),
+		WithEventBus[string](bus),
+	)
+	stream, err := agent.RunStream(context.Background(), "stream")
+	if err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	if _, err := stream.Result(); err != nil {
+		t.Fatalf("stream.Result returned error: %v", err)
+	}
+
+	if startedCount.Load() != 1 {
+		t.Fatalf("expected 1 TurnStartedEvent, got %d", startedCount.Load())
+	}
+	if completedCount.Load() != 1 {
+		t.Fatalf("expected 1 TurnCompletedEvent, got %d", completedCount.Load())
+	}
+	if lastCompleted.Error != "" {
+		t.Fatalf("expected successful turn completion, got error %q", lastCompleted.Error)
+	}
+}
+
+func TestEventBus_RunStreamNoResponsePublishesSingleTurnCompletion(t *testing.T) {
+	bus := NewEventBus()
+
+	var (
+		startedCount   atomic.Int32
+		completedCount atomic.Int32
+		lastCompleted  TurnCompletedEvent
+	)
+	Subscribe(bus, func(TurnStartedEvent) {
+		startedCount.Add(1)
+	})
+	Subscribe(bus, func(e TurnCompletedEvent) {
+		completedCount.Add(1)
+		lastCompleted = e
+	})
+
+	agent := NewAgent[string](
+		&noResponseStreamModel{},
+		WithEventBus[string](bus),
+	)
+	stream, err := agent.RunStream(context.Background(), "broken stream")
+	if err != nil {
+		t.Fatalf("RunStream returned error: %v", err)
+	}
+	if _, err := stream.Result(); err == nil {
+		t.Fatal("expected stream.Result to fail when no final response is produced")
+	}
+
+	if startedCount.Load() != 1 {
+		t.Fatalf("expected 1 TurnStartedEvent, got %d", startedCount.Load())
+	}
+	if completedCount.Load() != 1 {
+		t.Fatalf("expected 1 TurnCompletedEvent, got %d", completedCount.Load())
+	}
+	if lastCompleted.Error != "stream completed without a response" {
+		t.Fatalf("unexpected TurnCompletedEvent error: %q", lastCompleted.Error)
 	}
 }
 
