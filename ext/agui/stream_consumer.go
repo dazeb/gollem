@@ -49,16 +49,15 @@ func ConsumeStream(adapter *Adapter, events iter.Seq2[core.ModelResponseStreamEv
 	}
 
 	for event, err := range events {
-		syncStreamPartsWithAdapter(adapter, parts, kinds)
-
 		if err != nil {
-			syncStreamPartsWithAdapter(adapter, parts, kinds)
-			closeAllStreamParts(adapter, parts, kinds)
+			suppressRemainingStreamParts(adapter, parts, kinds)
 			return err
 		}
 		if event == nil {
 			continue
 		}
+
+		syncStreamPartsWithAdapter(adapter, parts, kinds)
 
 		switch ev := event.(type) {
 		case core.PartStartEvent:
@@ -106,7 +105,7 @@ func ensureStreamPart(
 		if state.kind == kind {
 			return state
 		}
-		closeAllStreamParts(adapter, parts, kinds)
+		suppressRemainingStreamParts(adapter, parts, kinds)
 	}
 
 	state := &streamPartState{
@@ -165,6 +164,40 @@ func closeAllStreamParts(
 	}
 	advanceStreamKind(adapter, parts, kinds, streamPartKindText)
 	advanceStreamKind(adapter, parts, kinds, streamPartKindReasoning)
+}
+
+func suppressRemainingStreamParts(
+	adapter *Adapter,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
+) {
+	suppressStreamPartKind(adapter, parts, kinds, streamPartKindText, true)
+	suppressStreamPartKind(adapter, parts, kinds, streamPartKindReasoning, true)
+}
+
+func suppressStreamPartKind(
+	adapter *Adapter,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
+	kind streamPartKind,
+	closeActive bool,
+) {
+	kindState := getStreamKindState(kinds, kind)
+	if closeActive && kindState.activeIndex != noActiveStreamPart {
+		if state, ok := parts[kindState.activeIndex]; ok && state != nil && state.kind == kind {
+			state.closed = true
+			finalizeStreamPart(adapter, *state)
+		}
+	}
+
+	for index, state := range parts {
+		if state == nil || state.kind != kind {
+			continue
+		}
+		delete(parts, index)
+	}
+	kindState.activeIndex = noActiveStreamPart
+	kindState.queue = nil
 }
 
 func advanceStreamKind(
@@ -333,60 +366,23 @@ func syncStreamPartsWithAdapter(
 		return
 	}
 
-	for {
-		retired := false
-		for index, state := range parts {
-			if state == nil || !state.emitted {
-				continue
-			}
-			if streamPartStillActive(adapter, *state) {
-				continue
-			}
-			retireStreamPart(adapter, parts, kinds, index)
-			retired = true
-			break
-		}
-		if !retired {
-			return
-		}
-	}
-}
-
-func retireStreamPart(
-	adapter *Adapter,
-	parts map[int]*streamPartState,
-	kinds map[streamPartKind]*streamKindState,
-	index int,
-) {
-	state, ok := parts[index]
-	if !ok || state == nil {
-		return
-	}
-	delete(parts, index)
-
-	kindState := getStreamKindState(kinds, state.kind)
-	if kindState.activeIndex == index {
-		kindState.activeIndex = noActiveStreamPart
-	} else {
-		removeQueuedStreamPart(kindState, index)
-	}
-
-	advanceStreamKind(adapter, parts, kinds, state.kind)
-}
-
-func removeQueuedStreamPart(kindState *streamKindState, index int) {
-	if kindState == nil || len(kindState.queue) == 0 {
-		return
-	}
-
-	queue := kindState.queue[:0]
-	for _, queuedIndex := range kindState.queue {
-		if queuedIndex == index {
+	for _, kind := range []streamPartKind{streamPartKindText, streamPartKindReasoning} {
+		kindState := getStreamKindState(kinds, kind)
+		if kindState.activeIndex == noActiveStreamPart {
 			continue
 		}
-		queue = append(queue, queuedIndex)
+
+		state, ok := parts[kindState.activeIndex]
+		if !ok || state == nil {
+			kindState.activeIndex = noActiveStreamPart
+			continue
+		}
+		if !state.emitted || streamPartStillActive(adapter, *state) {
+			continue
+		}
+
+		suppressStreamPartKind(adapter, parts, kinds, kind, false)
 	}
-	kindState.queue = queue
 }
 
 func streamPartStillActive(adapter *Adapter, state streamPartState) bool {
