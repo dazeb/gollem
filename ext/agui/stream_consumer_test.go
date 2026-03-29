@@ -171,6 +171,170 @@ func TestConsumeStream_PropagatesIteratorErrorAndClosesActiveParts(t *testing.T)
 	}
 }
 
+func TestConsumeStream_InterleavedTextPartsBufferUntilPartEnd(t *testing.T) {
+	adapter := NewAdapter("thread_1")
+	defer adapter.Close()
+	collector := collectEvents(adapter)
+
+	err := ConsumeStream(adapter, func(yield func(core.ModelResponseStreamEvent, error) bool) {
+		if !yield(core.PartStartEvent{Index: 0, Part: core.TextPart{}}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 0, Delta: core.TextPartDelta{ContentDelta: "hello"}}, nil) {
+			return
+		}
+		if !yield(core.PartStartEvent{Index: 1, Part: core.TextPart{}}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 1, Delta: core.TextPartDelta{ContentDelta: " queued"}}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 0, Delta: core.TextPartDelta{ContentDelta: " world"}}, nil) {
+			return
+		}
+		if !yield(core.PartEndEvent{Index: 0}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 1, Delta: core.TextPartDelta{ContentDelta: "!"}}, nil) {
+			return
+		}
+		yield(core.PartEndEvent{Index: 1}, nil)
+	})
+	if err != nil {
+		fatalUnexpectedErr(t, err)
+	}
+	adapter.Close()
+
+	raw := collector.all()
+	wantTypes := []string{
+		AGUITextMessageStart,
+		AGUITextMessageContent,
+		AGUITextMessageContent,
+		AGUITextMessageEnd,
+		AGUITextMessageStart,
+		AGUITextMessageContent,
+		AGUITextMessageContent,
+		AGUITextMessageEnd,
+	}
+	if len(raw) != len(wantTypes) {
+		t.Fatalf("event count = %d, want %d", len(raw), len(wantTypes))
+	}
+	for i, want := range wantTypes {
+		if got := parseType(raw[i]); got != want {
+			t.Fatalf("event[%d] type = %q, want %q", i, got, want)
+		}
+	}
+
+	firstID := parseField(raw[0], "messageId")
+	secondID := parseField(raw[4], "messageId")
+	if firstID == nil || secondID == nil || firstID == "" || secondID == "" {
+		t.Fatal("text message IDs should be non-empty")
+	}
+	if firstID == secondID {
+		t.Fatalf("interleaved text parts reused message ID %v", firstID)
+	}
+	for _, idx := range []int{1, 2, 3} {
+		if got := parseField(raw[idx], "messageId"); got != firstID {
+			t.Fatalf("first text event[%d] messageId = %v, want %v", idx, got, firstID)
+		}
+	}
+	for _, idx := range []int{5, 6, 7} {
+		if got := parseField(raw[idx], "messageId"); got != secondID {
+			t.Fatalf("second text event[%d] messageId = %v, want %v", idx, got, secondID)
+		}
+	}
+	if got := parseField(raw[5], "delta"); got != " queued" {
+		t.Fatalf("buffered text delta = %v, want %q", got, " queued")
+	}
+	if got := parseField(raw[6], "delta"); got != "!" {
+		t.Fatalf("post-activation text delta = %v, want %q", got, "!")
+	}
+}
+
+func TestConsumeStream_InterleavedReasoningPartsBufferUntilPartEnd(t *testing.T) {
+	adapter := NewAdapter("thread_1")
+	defer adapter.Close()
+	collector := collectEvents(adapter)
+
+	err := ConsumeStream(adapter, func(yield func(core.ModelResponseStreamEvent, error) bool) {
+		if !yield(core.PartStartEvent{Index: 0, Part: core.ThinkingPart{}}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 0, Delta: core.ThinkingPartDelta{ContentDelta: "alpha"}}, nil) {
+			return
+		}
+		if !yield(core.PartStartEvent{Index: 1, Part: core.ThinkingPart{}}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 1, Delta: core.ThinkingPartDelta{ContentDelta: " queued"}}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 0, Delta: core.ThinkingPartDelta{ContentDelta: " beta"}}, nil) {
+			return
+		}
+		if !yield(core.PartEndEvent{Index: 0}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 1, Delta: core.ThinkingPartDelta{ContentDelta: "!"}}, nil) {
+			return
+		}
+		yield(core.PartEndEvent{Index: 1}, nil)
+	})
+	if err != nil {
+		fatalUnexpectedErr(t, err)
+	}
+	adapter.Close()
+
+	raw := collector.all()
+	wantTypes := []string{
+		AGUIReasoningStart,
+		AGUIReasoningMessageStart,
+		AGUIReasoningMessageContent,
+		AGUIReasoningMessageContent,
+		AGUIReasoningMessageEnd,
+		AGUIReasoningEnd,
+		AGUIReasoningStart,
+		AGUIReasoningMessageStart,
+		AGUIReasoningMessageContent,
+		AGUIReasoningMessageContent,
+		AGUIReasoningMessageEnd,
+		AGUIReasoningEnd,
+	}
+	if len(raw) != len(wantTypes) {
+		t.Fatalf("event count = %d, want %d", len(raw), len(wantTypes))
+	}
+	for i, want := range wantTypes {
+		if got := parseType(raw[i]); got != want {
+			t.Fatalf("event[%d] type = %q, want %q", i, got, want)
+		}
+	}
+
+	firstID := parseField(raw[0], "messageId")
+	secondID := parseField(raw[6], "messageId")
+	if firstID == nil || secondID == nil || firstID == "" || secondID == "" {
+		t.Fatal("reasoning message IDs should be non-empty")
+	}
+	if firstID == secondID {
+		t.Fatalf("interleaved reasoning parts reused message ID %v", firstID)
+	}
+	for _, idx := range []int{1, 2, 3, 4, 5} {
+		if got := parseField(raw[idx], "messageId"); got != firstID {
+			t.Fatalf("first reasoning event[%d] messageId = %v, want %v", idx, got, firstID)
+		}
+	}
+	for _, idx := range []int{7, 8, 9, 10, 11} {
+		if got := parseField(raw[idx], "messageId"); got != secondID {
+			t.Fatalf("second reasoning event[%d] messageId = %v, want %v", idx, got, secondID)
+		}
+	}
+	if got := parseField(raw[8], "delta"); got != " queued" {
+		t.Fatalf("buffered reasoning delta = %v, want %q", got, " queued")
+	}
+	if got := parseField(raw[9], "delta"); got != "!" {
+		t.Fatalf("post-activation reasoning delta = %v, want %q", got, "!")
+	}
+}
+
 func fatalUnexpectedErr(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
