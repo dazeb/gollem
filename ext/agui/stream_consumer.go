@@ -333,16 +333,60 @@ func syncStreamPartsWithAdapter(
 		return
 	}
 
-	for _, state := range parts {
-		if state == nil || !state.emitted {
-			continue
+	for {
+		retired := false
+		for index, state := range parts {
+			if state == nil || !state.emitted {
+				continue
+			}
+			if streamPartStillActive(adapter, *state) {
+				continue
+			}
+			retireStreamPart(adapter, parts, kinds, index)
+			retired = true
+			break
 		}
-		if streamPartStillActive(adapter, *state) {
-			continue
+		if !retired {
+			return
 		}
-		discardStreamParts(parts, kinds)
+	}
+}
+
+func retireStreamPart(
+	adapter *Adapter,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
+	index int,
+) {
+	state, ok := parts[index]
+	if !ok || state == nil {
 		return
 	}
+	delete(parts, index)
+
+	kindState := getStreamKindState(kinds, state.kind)
+	if kindState.activeIndex == index {
+		kindState.activeIndex = noActiveStreamPart
+	} else {
+		removeQueuedStreamPart(kindState, index)
+	}
+
+	advanceStreamKind(adapter, parts, kinds, state.kind)
+}
+
+func removeQueuedStreamPart(kindState *streamKindState, index int) {
+	if kindState == nil || len(kindState.queue) == 0 {
+		return
+	}
+
+	queue := kindState.queue[:0]
+	for _, queuedIndex := range kindState.queue {
+		if queuedIndex == index {
+			continue
+		}
+		queue = append(queue, queuedIndex)
+	}
+	kindState.queue = queue
 }
 
 func streamPartStillActive(adapter *Adapter, state streamPartState) bool {
@@ -360,21 +404,5 @@ func streamPartStillActive(adapter *Adapter, state streamPartState) bool {
 		return adapter.activeReasoningID == state.messageID
 	default:
 		return false
-	}
-}
-
-func discardStreamParts(
-	parts map[int]*streamPartState,
-	kinds map[streamPartKind]*streamKindState,
-) {
-	for index := range parts {
-		delete(parts, index)
-	}
-	for _, kindState := range kinds {
-		if kindState == nil {
-			continue
-		}
-		kindState.activeIndex = noActiveStreamPart
-		kindState.queue = nil
 	}
 }
