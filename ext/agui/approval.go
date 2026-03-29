@@ -2,7 +2,7 @@ package agui
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 
 	"github.com/fugue-labs/gollem/core"
@@ -70,7 +70,7 @@ func (b *ApprovalBridge) ToolApprovalFunc() core.ToolApprovalFunc {
 	return func(ctx context.Context, toolName, argsJSON string) (bool, error) {
 		toolCallID := core.ToolCallIDFromContext(ctx)
 		if toolCallID == "" {
-			return false, fmt.Errorf("agui: no tool call ID in context for approval")
+			return false, errors.New("agui: no tool call ID in context for approval")
 		}
 
 		pa := &pendingApproval{

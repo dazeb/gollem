@@ -279,7 +279,7 @@ func TestInvariant_MultipleToolsConcurrent(t *testing.T) {
 
 	// Simulate concurrent tool calls
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -493,7 +493,7 @@ func TestInvariant_MessageIDUniqueness(t *testing.T) {
 
 	// Fire 20 tool completions concurrently — each should get a unique messageId
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()

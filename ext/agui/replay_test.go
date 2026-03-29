@@ -8,7 +8,7 @@ func TestEventBuffer_AppendAndSince(t *testing.T) {
 	buf := NewEventBuffer(100)
 	s := &Session{ID: "ses_1", Mode: SessionModeCoreRun}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		buf.Append(s.NewEvent(EventRunStarted, nil))
 	}
 
@@ -52,7 +52,7 @@ func TestEventBuffer_Eviction(t *testing.T) {
 	s := &Session{ID: "ses_1", Mode: SessionModeCoreRun}
 
 	// Fill to capacity and beyond.
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		buf.Append(s.NewEvent(EventRunStarted, nil))
 	}
 
@@ -121,7 +121,7 @@ func TestEventBuffer_All(t *testing.T) {
 	buf := NewEventBuffer(100)
 	s := &Session{ID: "ses_1", Mode: SessionModeCoreRun}
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		buf.Append(s.NewEvent(EventRunStarted, nil))
 	}
 
@@ -141,7 +141,7 @@ func TestEventBuffer_All(t *testing.T) {
 func TestSequencer_Monotonic(t *testing.T) {
 	var s Sequencer
 	prev := uint64(0)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		next := s.Next()
 		if next <= prev {
 			t.Errorf("sequence %d is not greater than %d", next, prev)

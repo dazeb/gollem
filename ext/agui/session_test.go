@@ -9,7 +9,7 @@ func TestSession_NewEvent_UniqueIDs(t *testing.T) {
 	s.SetRunID("run_1", "")
 
 	seen := map[string]bool{}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		ev := s.NewEvent(EventRunStarted, nil)
 		if seen[ev.ID] {
 			t.Errorf("duplicate event ID: %s", ev.ID)
@@ -23,7 +23,7 @@ func TestSession_NewEvent_MonotonicSequence(t *testing.T) {
 	s.SetRunID("run_1", "parent_1")
 
 	prev := uint64(0)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		ev := s.NewEvent(EventTurnStarted, nil)
 		if ev.Sequence <= prev {
 			t.Errorf("sequence %d not greater than %d", ev.Sequence, prev)

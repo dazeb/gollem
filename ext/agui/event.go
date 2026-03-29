@@ -14,7 +14,7 @@ import (
 
 // Event type constants for the AGUI normalized event stream.
 const (
-	// Session lifecycle
+	// Session lifecycle.
 	EventSessionOpened        = "session.opened"
 	EventSessionInputAccepted = "session.input.accepted"
 	EventSessionCompleted     = "session.completed"
@@ -25,19 +25,19 @@ const (
 	EventSessionResumed       = "session.resumed"
 	EventSessionSnapshot      = "session.snapshot"
 
-	// Run lifecycle
+	// Run lifecycle.
 	EventRunStarted   = "run.started"
 	EventRunCompleted = "run.completed"
 
-	// Turn lifecycle
+	// Turn lifecycle.
 	EventTurnStarted   = "turn.started"
 	EventTurnCompleted = "turn.completed"
 
-	// Model request/response
+	// Model request/response.
 	EventModelRequestStarted    = "model.request.started"
 	EventModelResponseCompleted = "model.response.completed"
 
-	// Model output streaming
+	// Model output streaming.
 	EventModelOutputTextDelta       = "model.output.text.delta"
 	EventModelOutputTextStarted     = "model.output.text.started"
 	EventModelOutputTextCompleted   = "model.output.text.completed"
@@ -45,29 +45,29 @@ const (
 	EventModelOutputToolCallDelta   = "model.output.tool_call.delta"
 	EventModelOutputToolCallStarted = "model.output.tool_call.started"
 
-	// Tool lifecycle
+	// Tool lifecycle.
 	EventToolCallRequested      = "tool.call.requested"
 	EventToolExecutionStarted   = "tool.execution.started"
 	EventToolExecutionCompleted = "tool.execution.completed"
 	EventToolExecutionFailed    = "tool.execution.failed"
 	EventToolDeferred           = "tool.deferred"
 
-	// Approval
+	// Approval.
 	EventApprovalRequested = "approval.requested"
 	EventApprovalApproved  = "approval.approved"
 	EventApprovalDenied    = "approval.denied"
 
-	// External input (deferred tools)
+	// External input (deferred tools).
 	EventExternalInputRequested = "external_input.requested"
 	EventExternalInputProvided  = "external_input.provided"
 
-	// Graph topology (P1)
+	// Graph topology (P1).
 	EventGraphNodeStarted   = "graph.node.started"
 	EventGraphNodeCompleted = "graph.node.completed"
 	EventGraphFanoutStarted = "graph.fanout.started"
 	EventGraphFanoutJoined  = "graph.fanout.joined"
 
-	// Team topology (P1)
+	// Team topology (P1).
 	EventTeamTeammateSpawned     = "team.teammate.spawned"
 	EventTeamTeammateIdle        = "team.teammate.idle"
 	EventTeamTeammateTerminated  = "team.teammate.terminated"

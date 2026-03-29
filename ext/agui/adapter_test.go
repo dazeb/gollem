@@ -33,12 +33,6 @@ func (c *eventCollector) all() []json.RawMessage {
 	return cp
 }
 
-func (c *eventCollector) len() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.events)
-}
-
 func parseType(data json.RawMessage) string {
 	var m map[string]any
 	json.Unmarshal(data, &m)
@@ -465,7 +459,7 @@ func TestAdapter_ConcurrentToolEvents_OrderPreserved(t *testing.T) {
 
 	// Simulate concurrent tool completions from parallel goroutines.
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -551,7 +545,7 @@ func TestAdapter_CloseWhilePublishing_NoPanic(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			core.Publish(bus, core.ToolCompletedEvent{
 				RunID: "r1", ToolCallID: "tc", ToolName: "t",
 				Result: "ok", CompletedAt: time.Now(),

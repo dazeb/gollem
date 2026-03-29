@@ -92,7 +92,7 @@ func (a *Adapter) deliverLoop() {
 			for _, fn := range listeners {
 				if fn != nil {
 					func() {
-						defer func() { recover() }()
+						defer func() { _ = recover() }()
 						fn(data)
 					}()
 				}
@@ -143,7 +143,7 @@ func (p *pendingEvents) send() {
 	if len(p.data) == 0 {
 		return
 	}
-	defer func() { recover() }() // catch send on closed channel during shutdown
+	defer func() { _ = recover() }() // catch send on closed channel during shutdown
 	p.ch <- p.data
 }
 

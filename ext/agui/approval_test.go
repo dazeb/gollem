@@ -221,7 +221,7 @@ func TestApprovalBridge_ConcurrentApprovals(t *testing.T) {
 	results := make([]bool, N)
 	var wg sync.WaitGroup
 
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -243,14 +243,14 @@ func TestApprovalBridge_ConcurrentApprovals(t *testing.T) {
 	}
 
 	// Resolve all — approve even, deny odd.
-	for i := 0; i < N; i++ {
+	for i := range N {
 		tcID := "tc_" + string(rune('A'+i))
 		bridge.Resolve(tcID, i%2 == 0, "")
 	}
 
 	wg.Wait()
 
-	for i := 0; i < N; i++ {
+	for i := range N {
 		want := i%2 == 0
 		if results[i] != want {
 			t.Errorf("tool %d: approved=%v, want %v", i, results[i], want)
