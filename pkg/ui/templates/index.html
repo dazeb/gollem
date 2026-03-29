@@ -1,0 +1,48 @@
+{{define "index_content"}}
+<section class="panel panel--hero">
+  <div>
+    <p class="eyebrow">Dark shell</p>
+    <h2>Dashboard</h2>
+    <p class="lede">A single-binary AGUI shell with embedded templates, CSS, and browser-side renderer hooks.</p>
+  </div>
+  <div class="stat-grid">
+    <article class="stat-card">
+      <span class="stat-card__label">Runs</span>
+      <strong>{{len .Runs}}</strong>
+    </article>
+    <article class="stat-card">
+      <span class="stat-card__label">Transport</span>
+      <strong>HTMX-ready</strong>
+    </article>
+    <article class="stat-card">
+      <span class="stat-card__label">Assets</span>
+      <strong>Embedded</strong>
+    </article>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel__header">
+    <div>
+      <p class="eyebrow">Recent sessions</p>
+      <h3>Runs</h3>
+    </div>
+  </div>
+  <div class="run-list">
+    {{range .Runs}}
+    <article class="run-card">
+      <div class="run-card__meta">
+        <span class="status status--{{.Status}}">{{.Status}}</span>
+        <span>{{.Provider}} / {{.Model}}</span>
+      </div>
+      <h4><a href="/runs/{{.ID}}">{{.Title}}</a></h4>
+      <p>{{.Summary}}</p>
+      <div class="run-card__footer">
+        <span>{{.ID}}</span>
+        <a class="button button--ghost" href="/runs/{{.ID}}">Open run</a>
+      </div>
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}

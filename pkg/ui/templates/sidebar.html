@@ -1,0 +1,36 @@
+{{define "sidebar"}}
+<div class="sidebar-fragment">
+  <div>
+    <p class="eyebrow">Run sidebar</p>
+    <h3>{{.Run.ID}}</h3>
+  </div>
+
+  <dl class="sidebar-metadata">
+    <div>
+      <dt>Status</dt>
+      <dd><span class="status status--{{.Run.Status}}">{{.Run.Status}}</span></dd>
+    </div>
+    <div>
+      <dt>Started</dt>
+      <dd>{{.Run.StartedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
+    </div>
+    <div>
+      <dt>Updated</dt>
+      <dd>{{.Run.UpdatedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
+    </div>
+    <div>
+      <dt>Provider</dt>
+      <dd>{{.Run.Provider}}</dd>
+    </div>
+    <div>
+      <dt>Model</dt>
+      <dd>{{.Run.Model}}</dd>
+    </div>
+  </dl>
+
+  <div class="sidebar-actions">
+    <a class="button" href="/runs/{{.Run.ID}}">Refresh run</a>
+    <a class="button button--ghost" href="/">Back to dashboard</a>
+  </div>
+</div>
+{{end}}

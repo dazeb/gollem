@@ -1,0 +1,55 @@
+{{define "run_content"}}
+<div class="run-layout">
+  <aside id="run-sidebar" class="panel panel--sidebar" hx-get="/runs/{{.Run.ID}}/sidebar" hx-trigger="load" hx-swap="innerHTML">
+    <p class="muted">Loading sidebar…</p>
+  </aside>
+
+  <section class="panel panel--main">
+    <div class="panel__header panel__header--run">
+      <div>
+        <p class="eyebrow">Run detail</p>
+        <h2>{{.Run.Title}}</h2>
+        <p class="lede">{{.Run.Summary}}</p>
+      </div>
+      <span class="status status--{{.Run.Status}}">{{.Run.Status}}</span>
+    </div>
+
+    <div class="detail-grid">
+      <article>
+        <span class="detail-grid__label">Run ID</span>
+        <strong>{{.Run.ID}}</strong>
+      </article>
+      <article>
+        <span class="detail-grid__label">Provider</span>
+        <strong>{{.Run.Provider}}</strong>
+      </article>
+      <article>
+        <span class="detail-grid__label">Model</span>
+        <strong>{{.Run.Model}}</strong>
+      </article>
+      <article>
+        <span class="detail-grid__label">Updated</span>
+        <strong>{{.Run.UpdatedAt.Format "15:04:05 MST"}}</strong>
+      </article>
+    </div>
+
+    <section class="transcript">
+      <div class="transcript__header">
+        <h3>Prompt</h3>
+      </div>
+      <pre><code>{{.Run.Prompt}}</code></pre>
+    </section>
+
+    <section class="transcript">
+      <div class="transcript__header">
+        <h3>Event stream preview</h3>
+      </div>
+      <ol class="event-list">
+        {{range .Run.Events}}
+        <li>{{.}}</li>
+        {{end}}
+      </ol>
+    </section>
+  </section>
+</div>
+{{end}}
