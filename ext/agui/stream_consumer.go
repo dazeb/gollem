@@ -2,6 +2,7 @@ package agui
 
 import (
 	"iter"
+	"sort"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -15,8 +16,11 @@ const (
 )
 
 type streamPartState struct {
-	kind      streamPartKind
-	messageID string
+	kind          streamPartKind
+	messageID     string
+	sawStart      bool
+	everStarted   bool
+	activeSegment bool
 }
 
 // ConsumeStream bridges a RunStream event iterator into AG-UI adapter events.
@@ -31,12 +35,10 @@ type streamPartState struct {
 // deltas of that part, remaining unique across later parts and turns.
 func ConsumeStream(adapter *Adapter, events iter.Seq2[core.ModelResponseStreamEvent, error]) error {
 	parts := make(map[int]streamPartState)
-	activeTextIndex := -1
-	activeReasoningIndex := -1
 
 	for event, err := range events {
 		if err != nil {
-			closeAllStreamParts(adapter, parts, &activeTextIndex, &activeReasoningIndex)
+			closeAllStreamParts(adapter, parts)
 			return err
 		}
 		if event == nil {
@@ -47,37 +49,35 @@ func ConsumeStream(adapter *Adapter, events iter.Seq2[core.ModelResponseStreamEv
 		case core.PartStartEvent:
 			switch part := ev.Part.(type) {
 			case core.TextPart:
-				state := ensureStreamPart(adapter, parts, ev.Index, streamPartKindText, &activeTextIndex, &activeReasoningIndex)
-				if adapter != nil && part.Content != "" {
-					adapter.EmitTextDelta(state.messageID, part.Content)
+				state := ensureStreamPart(adapter, parts, ev.Index, streamPartKindText)
+				state.sawStart = true
+				parts[ev.Index] = state
+				if part.Content != "" {
+					emitStreamPartDelta(adapter, parts, ev.Index, streamPartKindText, part.Content)
 				}
 			case core.ThinkingPart:
-				state := ensureStreamPart(adapter, parts, ev.Index, streamPartKindReasoning, &activeTextIndex, &activeReasoningIndex)
-				if adapter != nil && part.Content != "" {
-					adapter.EmitReasoningDelta(state.messageID, part.Content)
+				state := ensureStreamPart(adapter, parts, ev.Index, streamPartKindReasoning)
+				state.sawStart = true
+				parts[ev.Index] = state
+				if part.Content != "" {
+					emitStreamPartDelta(adapter, parts, ev.Index, streamPartKindReasoning, part.Content)
 				}
 			}
 
 		case core.PartDeltaEvent:
 			switch delta := ev.Delta.(type) {
 			case core.TextPartDelta:
-				state := ensureStreamPart(adapter, parts, ev.Index, streamPartKindText, &activeTextIndex, &activeReasoningIndex)
-				if adapter != nil {
-					adapter.EmitTextDelta(state.messageID, delta.ContentDelta)
-				}
+				emitStreamPartDelta(adapter, parts, ev.Index, streamPartKindText, delta.ContentDelta)
 			case core.ThinkingPartDelta:
-				state := ensureStreamPart(adapter, parts, ev.Index, streamPartKindReasoning, &activeTextIndex, &activeReasoningIndex)
-				if adapter != nil {
-					adapter.EmitReasoningDelta(state.messageID, delta.ContentDelta)
-				}
+				emitStreamPartDelta(adapter, parts, ev.Index, streamPartKindReasoning, delta.ContentDelta)
 			}
 
 		case core.PartEndEvent:
-			closeStreamPart(adapter, parts, ev.Index, &activeTextIndex, &activeReasoningIndex)
+			closeStreamPart(adapter, parts, ev.Index)
 		}
 	}
 
-	closeAllStreamParts(adapter, parts, &activeTextIndex, &activeReasoningIndex)
+	closeAllStreamParts(adapter, parts)
 	return nil
 }
 
@@ -86,18 +86,14 @@ func ensureStreamPart(
 	parts map[int]streamPartState,
 	index int,
 	kind streamPartKind,
-	activeTextIndex *int,
-	activeReasoningIndex *int,
 ) streamPartState {
 	if state, ok := parts[index]; ok {
 		if state.kind == kind {
-			activateStreamPart(adapter, parts, index, kind, activeTextIndex, activeReasoningIndex)
 			return state
 		}
-		closeStreamPart(adapter, parts, index, activeTextIndex, activeReasoningIndex)
+		closeStreamPart(adapter, parts, index)
 	}
 
-	activateStreamPart(adapter, parts, index, kind, activeTextIndex, activeReasoningIndex)
 	state := streamPartState{
 		kind:      kind,
 		messageID: nextStreamMessageID(adapter),
@@ -106,63 +102,104 @@ func ensureStreamPart(
 	return state
 }
 
-func activateStreamPart(
+func emitStreamPartDelta(
 	adapter *Adapter,
 	parts map[int]streamPartState,
 	index int,
 	kind streamPartKind,
-	activeTextIndex *int,
-	activeReasoningIndex *int,
+	delta string,
 ) {
-	switch kind {
-	case streamPartKindText:
-		if *activeTextIndex != -1 && *activeTextIndex != index {
-			closeStreamPart(adapter, parts, *activeTextIndex, activeTextIndex, activeReasoningIndex)
+	state := ensureStreamPart(adapter, parts, index, kind)
+	if adapter != nil && state.messageID != "" {
+		closeActiveStreamPartSegment(adapter, parts, kind, state.messageID)
+		switch kind {
+		case streamPartKindText:
+			adapter.EmitTextDelta(state.messageID, delta)
+		case streamPartKindReasoning:
+			adapter.EmitReasoningDelta(state.messageID, delta)
 		}
-		*activeTextIndex = index
-	case streamPartKindReasoning:
-		if *activeReasoningIndex != -1 && *activeReasoningIndex != index {
-			closeStreamPart(adapter, parts, *activeReasoningIndex, activeTextIndex, activeReasoningIndex)
-		}
-		*activeReasoningIndex = index
+		state.everStarted = true
+		state.activeSegment = true
 	}
+	parts[index] = state
 }
 
-func closeStreamPart(
-	adapter *Adapter,
-	parts map[int]streamPartState,
-	index int,
-	activeTextIndex *int,
-	activeReasoningIndex *int,
-) {
+func closeStreamPart(adapter *Adapter, parts map[int]streamPartState, index int) {
 	state, ok := parts[index]
 	if !ok {
 		return
 	}
 	delete(parts, index)
 
-	switch state.kind {
+	if state.activeSegment {
+		emitStreamPartEnd(adapter, state)
+		return
+	}
+	if state.sawStart && !state.everStarted {
+		emitEmptyStreamPartLifecycle(adapter, parts, state)
+	}
+}
+
+func closeAllStreamParts(adapter *Adapter, parts map[int]streamPartState) {
+	indices := make([]int, 0, len(parts))
+	for index := range parts {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	for _, index := range indices {
+		closeStreamPart(adapter, parts, index)
+	}
+}
+
+func closeActiveStreamPartSegment(
+	adapter *Adapter,
+	parts map[int]streamPartState,
+	kind streamPartKind,
+	keepMessageID string,
+) {
+	if adapter == nil {
+		return
+	}
+
+	adapter.mu.Lock()
+	batch := adapter.beginEmit()
+	var activeMessageID string
+
+	switch kind {
 	case streamPartKindText:
-		if *activeTextIndex == index {
-			*activeTextIndex = -1
+		activeMessageID = adapter.activeMessageID
+		if activeMessageID != "" && activeMessageID != keepMessageID {
+			batch.enqueue(aguiTextMessageEnd{
+				Type: AGUITextMessageEnd, Timestamp: nowMillis(), MessageID: activeMessageID,
+			})
+			adapter.activeMessageID = ""
 		}
 	case streamPartKindReasoning:
-		if *activeReasoningIndex == index {
-			*activeReasoningIndex = -1
+		activeMessageID = adapter.activeReasoningID
+		if activeMessageID != "" && activeMessageID != keepMessageID {
+			ts := nowMillis()
+			batch.enqueue(aguiReasoningMessageEnd{
+				Type: AGUIReasoningMessageEnd, Timestamp: ts, MessageID: activeMessageID,
+			})
+			batch.enqueue(aguiReasoningEnd{
+				Type: AGUIReasoningEnd, Timestamp: ts, MessageID: activeMessageID,
+			})
+			adapter.activeReasoningID = ""
 		}
 	}
 
-	emitStreamPartEnd(adapter, state)
-}
+	adapter.mu.Unlock()
+	batch.send()
 
-func closeAllStreamParts(
-	adapter *Adapter,
-	parts map[int]streamPartState,
-	activeTextIndex *int,
-	activeReasoningIndex *int,
-) {
-	for index := range parts {
-		closeStreamPart(adapter, parts, index, activeTextIndex, activeReasoningIndex)
+	if activeMessageID == "" || activeMessageID == keepMessageID {
+		return
+	}
+	for partIndex, state := range parts {
+		if state.kind == kind && state.messageID == activeMessageID {
+			state.activeSegment = false
+			parts[partIndex] = state
+			return
+		}
 	}
 }
 
@@ -173,6 +210,29 @@ func nextStreamMessageID(adapter *Adapter) string {
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
 	return adapter.nextMessageID()
+}
+
+func emitEmptyStreamPartLifecycle(
+	adapter *Adapter,
+	parts map[int]streamPartState,
+	state streamPartState,
+) {
+	if adapter == nil || state.messageID == "" {
+		return
+	}
+
+	closeActiveStreamPartSegment(adapter, parts, state.kind, state.messageID)
+
+	switch state.kind {
+	case streamPartKindText:
+		adapter.EmitTextDelta(state.messageID, "")
+	case streamPartKindReasoning:
+		adapter.EmitReasoningDelta(state.messageID, "")
+	}
+
+	state.everStarted = true
+	state.activeSegment = true
+	emitStreamPartEnd(adapter, state)
 }
 
 func emitStreamPartEnd(adapter *Adapter, state streamPartState) {
