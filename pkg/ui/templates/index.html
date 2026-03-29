@@ -1,9 +1,9 @@
-{{define "index_content"}}
+{{define "content"}}
 <section class="panel panel--hero">
   <div>
     <p class="eyebrow">Dark shell</p>
     <h2>Dashboard</h2>
-    <p class="lede">A single-binary AGUI shell with embedded templates, CSS, and browser-side renderer hooks.</p>
+    <p class="lede">A single-binary AGUI shell with embedded templates, CSS, htmx, and browser-side renderer hooks.</p>
   </div>
   <div class="stat-grid">
     <article class="stat-card">
@@ -46,3 +46,5 @@
   </div>
 </section>
 {{end}}
+
+{{define "index"}}{{template "layout" .}}{{end}}

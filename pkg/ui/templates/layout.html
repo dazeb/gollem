@@ -4,39 +4,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>{{if .PageTitle}}{{.PageTitle}} · {{end}}{{.AppTitle}}</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script defer src="/static/htmx.min.js"></script>
   <script defer src="/static/pretext.min.js"></script>
-  <script>
-    window.htmx = window.htmx || {
-      process(root) {
-        const scope = root || document;
-        scope.querySelectorAll('[hx-get][hx-trigger="load"]').forEach((node) => {
-          if (node.dataset.htmxLoaded === 'true') {
-            return;
-          }
-          node.dataset.htmxLoaded = 'true';
-          fetch(node.getAttribute('hx-get'), {
-            headers: {'HX-Request': 'true'}
-          })
-            .then((response) => response.text())
-            .then((html) => {
-              const swap = node.getAttribute('hx-swap') || 'innerHTML';
-              if (swap === 'outerHTML') {
-                node.outerHTML = html;
-              } else {
-                node.innerHTML = html;
-              }
-              document.body.dispatchEvent(new CustomEvent('ui:fragment-loaded'));
-            })
-            .catch((error) => {
-              console.error('htmx shim request failed', error);
-            });
-        });
-      }
-    };
-    document.addEventListener('DOMContentLoaded', () => window.htmx.process(document));
-  </script>
   <script type="module" src="/static/renderer.js"></script>
 </head>
 <body data-renderer-root data-route="{{.Path}}">
@@ -48,12 +20,12 @@
       </div>
       <nav class="shell__nav" aria-label="Primary">
         <a href="/" class="{{if eq .Path "/"}}is-active{{end}}">Dashboard</a>
-        {{if .Run.ID}}<a href="/runs/{{.Run.ID}}" class="{{if .Run.ID}}is-active{{end}}">Current run</a>{{end}}
+        {{if .Run.ID}}<a href="/runs/{{.Run.ID}}" class="{{if .IsRunPage}}is-active{{end}}">Current run</a>{{end}}
       </nav>
     </header>
 
     <main class="shell__body">
-      {{template .ContentTemplate .}}
+      {{block "content" .}}{{end}}
     </main>
 
     <footer class="shell__footer">

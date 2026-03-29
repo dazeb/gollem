@@ -13,16 +13,16 @@ var embeddedFiles embed.FS
 
 // Server serves the AGUI dashboard scaffold from embedded templates and assets.
 type Server struct {
-	mux       *http.ServeMux
-	templates *template.Template
-	static    http.Handler
+	mux    *http.ServeMux
+	pages  map[string]*template.Template
+	static http.Handler
 }
 
 // NewServer builds a UI server backed by embedded templates and static assets.
 func NewServer() (*Server, error) {
-	templates, err := template.New("ui").ParseFS(embeddedFiles, "templates/*.html")
+	pages, err := parsePageTemplates()
 	if err != nil {
-		return nil, fmt.Errorf("parse ui templates: %w", err)
+		return nil, err
 	}
 
 	staticFS, err := fs.Sub(embeddedFiles, "static")
@@ -31,12 +31,35 @@ func NewServer() (*Server, error) {
 	}
 
 	s := &Server{
-		mux:       http.NewServeMux(),
-		templates: templates,
-		static:    http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))),
+		mux:    http.NewServeMux(),
+		pages:  pages,
+		static: http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))),
 	}
 	s.routes()
 	return s, nil
+}
+
+func parsePageTemplates() (map[string]*template.Template, error) {
+	indexPage, err := template.ParseFS(embeddedFiles, "templates/layout.html", "templates/index.html")
+	if err != nil {
+		return nil, fmt.Errorf("parse index templates: %w", err)
+	}
+
+	runPage, err := template.ParseFS(embeddedFiles, "templates/layout.html", "templates/run.html")
+	if err != nil {
+		return nil, fmt.Errorf("parse run templates: %w", err)
+	}
+
+	sidebarFragment, err := template.ParseFS(embeddedFiles, "templates/sidebar.html")
+	if err != nil {
+		return nil, fmt.Errorf("parse sidebar templates: %w", err)
+	}
+
+	return map[string]*template.Template{
+		"index":   indexPage,
+		"run":     runPage,
+		"sidebar": sidebarFragment,
+	}, nil
 }
 
 // MustNewServer builds a UI server or panics if the embedded assets are invalid.

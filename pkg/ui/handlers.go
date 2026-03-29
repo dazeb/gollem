@@ -23,39 +23,36 @@ type RunView struct {
 }
 
 type pageData struct {
-	AppTitle        string
-	PageTitle       string
-	ContentTemplate string
-	Path            string
-	CurrentYear     int
-	Runs            []RunView
-	Run             RunView
+	AppTitle    string
+	PageTitle   string
+	Path        string
+	CurrentYear int
+	IsRunPage   bool
+	Runs        []RunView
+	Run         RunView
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	data := pageData{
-		AppTitle:        "gollem",
-		PageTitle:       "Dashboard",
-		ContentTemplate: "index_content",
-		Path:            r.URL.Path,
-		CurrentYear:     time.Now().Year(),
-		Runs:            sampleRuns(),
-	}
-	s.render(w, "layout", data)
+	s.render(w, "index", pageData{
+		AppTitle:    "gollem",
+		PageTitle:   "Dashboard",
+		Path:        r.URL.Path,
+		CurrentYear: time.Now().Year(),
+		Runs:        sampleRuns(),
+	})
 }
 
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	run := findRun(r.PathValue("id"))
-	data := pageData{
-		AppTitle:        "gollem",
-		PageTitle:       run.Title,
-		ContentTemplate: "run_content",
-		Path:            r.URL.Path,
-		CurrentYear:     time.Now().Year(),
-		Runs:            sampleRuns(),
-		Run:             run,
-	}
-	s.render(w, "layout", data)
+	s.render(w, "run", pageData{
+		AppTitle:    "gollem",
+		PageTitle:   run.Title,
+		Path:        r.URL.Path,
+		CurrentYear: time.Now().Year(),
+		IsRunPage:   true,
+		Runs:        sampleRuns(),
+		Run:         run,
+	})
 }
 
 func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
@@ -66,14 +63,21 @@ func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
 		PageTitle:   run.Title,
 		Path:        r.URL.Path,
 		CurrentYear: time.Now().Year(),
+		IsRunPage:   true,
 		Run:         run,
 	})
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
+func (s *Server) render(w http.ResponseWriter, page string, data any) {
+	tmpl, ok := s.pages[page]
+	if !ok {
+		http.Error(w, fmt.Sprintf("unknown ui page %q", page), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, fmt.Sprintf("render %s: %v", name, err), http.StatusInternalServerError)
+	if err := tmpl.ExecuteTemplate(w, page, data); err != nil {
+		http.Error(w, fmt.Sprintf("render %s: %v", page, err), http.StatusInternalServerError)
 	}
 }
 
