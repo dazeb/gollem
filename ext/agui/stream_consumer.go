@@ -51,7 +51,7 @@ func ConsumeStream(adapter *Adapter, events iter.Seq2[core.ModelResponseStreamEv
 
 	for event, err := range events {
 		if err != nil {
-			suppressRemainingStreamParts(adapter, parts, kinds)
+			closeAllStreamParts(adapter, parts, kinds)
 			return err
 		}
 		if event == nil {
