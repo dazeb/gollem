@@ -139,6 +139,53 @@ func TestConsumeStream_StableIDsAcrossTurnsAndPartIndices(t *testing.T) {
 	}
 }
 
+func TestConsumeStream_DoesNotDuplicateEndWhenTurnLifecycleAlreadyClosedText(t *testing.T) {
+	adapter := NewAdapter("thread_1")
+	defer adapter.Close()
+	collector := collectEvents(adapter)
+	bus := core.NewEventBus()
+	adapter.SubscribeTo(bus)
+
+	core.Publish(bus, core.TurnStartedEvent{RunID: "r1", TurnNumber: 1})
+	err := ConsumeStream(adapter, func(yield func(core.ModelResponseStreamEvent, error) bool) {
+		if !yield(core.PartStartEvent{Index: 0, Part: core.TextPart{}}, nil) {
+			return
+		}
+		if !yield(core.PartDeltaEvent{Index: 0, Delta: core.TextPartDelta{ContentDelta: "partial"}}, nil) {
+			return
+		}
+		core.Publish(bus, core.TurnCompletedEvent{RunID: "r1", TurnNumber: 1})
+	})
+	if err != nil {
+		fatalUnexpectedErr(t, err)
+	}
+	adapter.Close()
+
+	raw := collector.all()
+	wantTypes := []string{
+		AGUIStepStarted,
+		AGUITextMessageStart,
+		AGUITextMessageContent,
+		AGUITextMessageEnd,
+		AGUIStepFinished,
+	}
+	if len(raw) != len(wantTypes) {
+		t.Fatalf("event count = %d, want %d", len(raw), len(wantTypes))
+	}
+	for i, want := range wantTypes {
+		if got := parseType(raw[i]); got != want {
+			t.Fatalf("event[%d] type = %q, want %q", i, got, want)
+		}
+	}
+
+	messageID := parseField(raw[1], "messageId")
+	for _, idx := range []int{2, 3} {
+		if got := parseField(raw[idx], "messageId"); got != messageID {
+			t.Fatalf("event[%d] messageId = %v, want %v", idx, got, messageID)
+		}
+	}
+}
+
 func TestConsumeStream_PropagatesIteratorErrorAndClosesActiveParts(t *testing.T) {
 	adapter := NewAdapter("thread_1")
 	defer adapter.Close()
