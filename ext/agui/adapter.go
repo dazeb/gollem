@@ -64,6 +64,8 @@ type Adapter struct {
 	outCh     chan []json.RawMessage // serializing delivery channel
 	done      chan struct{}          // closed when delivery goroutine exits
 	closeOnce sync.Once              // ensures Close is idempotent
+	sendMu    sync.RWMutex           // synchronizes sends with Close
+	closed    bool
 }
 
 // NewAdapter creates an AG-UI adapter for a gollem session.
@@ -122,8 +124,8 @@ func (a *Adapter) OnEvent(fn func(json.RawMessage)) func() {
 // complete, ensuring multi-event sequences are emitted atomically and
 // cross-handler ordering is preserved via the serializing channel.
 type pendingEvents struct {
-	data []json.RawMessage
-	ch   chan<- []json.RawMessage
+	data    []json.RawMessage
+	adapter *Adapter
 }
 
 // enqueue marshals an event and adds it to the pending batch.
@@ -138,19 +140,23 @@ func (p *pendingEvents) enqueue(v any) {
 // send submits the batch to the delivery channel. Non-blocking if the
 // channel has capacity; blocks if the delivery goroutine is backed up.
 // Must be called AFTER releasing the adapter mutex.
-// Safe to call after Close() — recovers from send-on-closed-channel.
+// Safe to call after Close() — batches are dropped once the adapter closes.
 func (p *pendingEvents) send() {
 	if len(p.data) == 0 {
 		return
 	}
-	defer func() { _ = recover() }() // catch send on closed channel during shutdown
-	p.ch <- p.data
+	p.adapter.sendMu.RLock()
+	defer p.adapter.sendMu.RUnlock()
+	if p.adapter.closed {
+		return
+	}
+	p.adapter.outCh <- p.data
 }
 
 // beginEmit returns a pendingEvents batch targeting the delivery channel.
 // MUST be called with a.mu held.
 func (a *Adapter) beginEmit() *pendingEvents {
-	return &pendingEvents{ch: a.outCh}
+	return &pendingEvents{adapter: a}
 }
 
 func nowMillis() int64 {
@@ -199,7 +205,10 @@ func (a *Adapter) Close() {
 		unsub()
 	}
 	a.closeOnce.Do(func() {
+		a.sendMu.Lock()
+		a.closed = true
 		close(a.outCh)
+		a.sendMu.Unlock()
 		<-a.done
 	})
 }

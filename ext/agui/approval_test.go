@@ -142,9 +142,9 @@ func TestApprovalBridge_MissingToolCallID_ReturnsError(t *testing.T) {
 
 func TestApprovalBridge_OnRequestCalledBeforeBlocking(t *testing.T) {
 	bridge := NewApprovalBridge()
-	var received ApprovalRequest
+	reqCh := make(chan ApprovalRequest, 1)
 	bridge.OnRequest = func(req ApprovalRequest) {
-		received = req
+		reqCh <- req
 	}
 	fn := bridge.ToolApprovalFunc()
 
@@ -155,7 +155,12 @@ func TestApprovalBridge_OnRequestCalledBeforeBlocking(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	var received ApprovalRequest
+	select {
+	case received = <-reqCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for OnRequest")
+	}
 	if received.ToolCallID != "tc_1" {
 		t.Errorf("OnRequest ToolCallID = %q, want %q", received.ToolCallID, "tc_1")
 	}
@@ -175,9 +180,9 @@ func TestApprovalBridge_OnRequestPanic_DoesNotDeadlock(t *testing.T) {
 	// cleanup runs even if OnRequest panics — we verify by checking
 	// that the bridge is usable after a context-cancelled approval
 	// where OnRequest sets an error flag.
-	var onRequestCalled bool
+	onRequestCalled := make(chan struct{}, 1)
 	bridge.OnRequest = func(req ApprovalRequest) {
-		onRequestCalled = true
+		onRequestCalled <- struct{}{}
 	}
 	fn := bridge.ToolApprovalFunc()
 
@@ -190,8 +195,12 @@ func TestApprovalBridge_OnRequestPanic_DoesNotDeadlock(t *testing.T) {
 		fn(ctx, "tool", `{}`)
 		close(done)
 	}()
-	time.Sleep(10 * time.Millisecond)
-	if !onRequestCalled {
+	select {
+	case <-onRequestCalled:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for OnRequest")
+	}
+	if bridge.PendingCount() == 0 {
 		t.Error("OnRequest should have been called")
 	}
 	cancel()
