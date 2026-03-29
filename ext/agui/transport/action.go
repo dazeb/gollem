@@ -2,6 +2,7 @@ package transport
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"sync"
 
@@ -149,6 +150,14 @@ func (h *ActionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	if err := dec.Decode(new(struct{})); err != io.EOF {
+		if err == nil {
+			writeError(w, http.StatusBadRequest, "invalid request body: multiple JSON values are not allowed")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
 
 	if action.Type == "" {
 		writeError(w, http.StatusBadRequest, "type is required")
@@ -248,9 +257,6 @@ func (h *ActionHandler) runtimeForSession(sessionID string) (*SessionRuntime, bo
 			return nil, true
 		}
 	}
-	if h.config.ApprovalBridge != nil {
-		return nil, true
-	}
 	return nil, false
 }
 
@@ -263,7 +269,10 @@ func (h *ActionHandler) approvalBridgeForSession(sessionID string, runtime *Sess
 			return bridge
 		}
 	}
-	return h.config.ApprovalBridge
+	if runtime != nil {
+		return h.config.ApprovalBridge
+	}
+	return nil
 }
 
 func (h *ActionHandler) cancelForSession(sessionID string, runtime *SessionRuntime) func() {
