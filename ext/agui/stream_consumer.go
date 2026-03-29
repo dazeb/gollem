@@ -49,7 +49,10 @@ func ConsumeStream(adapter *Adapter, events iter.Seq2[core.ModelResponseStreamEv
 	}
 
 	for event, err := range events {
+		syncStreamPartsWithAdapter(adapter, parts, kinds)
+
 		if err != nil {
+			syncStreamPartsWithAdapter(adapter, parts, kinds)
 			closeAllStreamParts(adapter, parts, kinds)
 			return err
 		}
@@ -87,6 +90,7 @@ func ConsumeStream(adapter *Adapter, events iter.Seq2[core.ModelResponseStreamEv
 		}
 	}
 
+	syncStreamPartsWithAdapter(adapter, parts, kinds)
 	closeAllStreamParts(adapter, parts, kinds)
 	return nil
 }
@@ -294,24 +298,83 @@ func emitStreamPartEnd(adapter *Adapter, state streamPartState) {
 
 	switch state.kind {
 	case streamPartKindText:
+		if adapter.activeMessageID != state.messageID {
+			adapter.mu.Unlock()
+			return
+		}
 		batch.enqueue(aguiTextMessageEnd{
 			Type: AGUITextMessageEnd, Timestamp: ts, MessageID: state.messageID,
 		})
-		if adapter.activeMessageID == state.messageID {
-			adapter.activeMessageID = ""
-		}
+		adapter.activeMessageID = ""
 	case streamPartKindReasoning:
+		if adapter.activeReasoningID != state.messageID {
+			adapter.mu.Unlock()
+			return
+		}
 		batch.enqueue(aguiReasoningMessageEnd{
 			Type: AGUIReasoningMessageEnd, Timestamp: ts, MessageID: state.messageID,
 		})
 		batch.enqueue(aguiReasoningEnd{
 			Type: AGUIReasoningEnd, Timestamp: ts, MessageID: state.messageID,
 		})
-		if adapter.activeReasoningID == state.messageID {
-			adapter.activeReasoningID = ""
-		}
+		adapter.activeReasoningID = ""
 	}
 
 	adapter.mu.Unlock()
 	batch.send()
+}
+
+func syncStreamPartsWithAdapter(
+	adapter *Adapter,
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
+) {
+	if adapter == nil || len(parts) == 0 {
+		return
+	}
+
+	for _, state := range parts {
+		if state == nil || !state.emitted {
+			continue
+		}
+		if streamPartStillActive(adapter, *state) {
+			continue
+		}
+		discardStreamParts(parts, kinds)
+		return
+	}
+}
+
+func streamPartStillActive(adapter *Adapter, state streamPartState) bool {
+	if adapter == nil || state.messageID == "" {
+		return false
+	}
+
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+
+	switch state.kind {
+	case streamPartKindText:
+		return adapter.activeMessageID == state.messageID
+	case streamPartKindReasoning:
+		return adapter.activeReasoningID == state.messageID
+	default:
+		return false
+	}
+}
+
+func discardStreamParts(
+	parts map[int]*streamPartState,
+	kinds map[streamPartKind]*streamKindState,
+) {
+	for index := range parts {
+		delete(parts, index)
+	}
+	for _, kindState := range kinds {
+		if kindState == nil {
+			continue
+		}
+		kindState.activeIndex = noActiveStreamPart
+		kindState.queue = nil
+	}
 }
