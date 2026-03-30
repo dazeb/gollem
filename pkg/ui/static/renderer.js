@@ -328,6 +328,7 @@ const obstacleLayoutSignature = (obstacles) => {
 };
 
 const signatureChanged = (a, b) => a !== b;
+const isResolvedToolStatus = (status) => status === 'returned' || status === 'approved' || status === 'denied' || status === 'failed';
 
 class RunSceneRenderer {
   constructor(root) {
@@ -381,6 +382,9 @@ class RunSceneRenderer {
     this.lastMeasure = { width: 0, height: 420 };
     this.layoutRevision = 0;
     this.lastLayoutKey = '';
+    this.cachedLayout = null;
+    this.backgroundLayer = null;
+    this.dotOverlayLayer = null;
     this.layoutCache = new Map();
     this.layoutCacheLimit = 96;
 
@@ -876,6 +880,11 @@ class RunSceneRenderer {
   invalidateLayout(reason = 'update') {
     this.layoutRevision += 1;
     this.lastLayoutKey = '';
+    this.cachedLayout = null;
+    if (reason === 'resize') {
+      this.backgroundLayer = null;
+      this.dotOverlayLayer = null;
+    }
     if (reason === 'resize' || this.layoutCache.size > this.layoutCacheLimit * 2) {
       this.layoutCache.clear();
     }
@@ -963,17 +972,24 @@ class RunSceneRenderer {
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, width, height);
 
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
-    const dotSpacing = 24;
-    for (let x = 20; x < width; x += dotSpacing) {
-      for (let y = 20; y < height; y += dotSpacing) {
-        ctx.globalAlpha = 0.24 + ((x / dotSpacing + y / dotSpacing) % 3) * 0.06;
-        ctx.fillRect(x, y, 1.4, 1.4);
-      }
+    const majorSpacing = 96;
+    const minorSpacing = 24;
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.045)';
+    ctx.lineWidth = 1;
+    for (let x = 18.5 + majorSpacing; x < width; x += majorSpacing) {
+      ctx.beginPath();
+      ctx.moveTo(x, 18);
+      ctx.lineTo(x, height - 18);
+      ctx.stroke();
     }
-    ctx.globalAlpha = 1;
+    for (let y = 18.5 + majorSpacing; y < height; y += majorSpacing) {
+      ctx.beginPath();
+      ctx.moveTo(18, y);
+      ctx.lineTo(width - 18, y);
+      ctx.stroke();
+    }
 
-    ctx.fillStyle = 'rgba(8, 15, 30, 0.92)';
+    ctx.fillStyle = 'rgba(8, 15, 30, 0.94)';
     ctx.fillRect(0, 0, width, 18);
     ctx.fillRect(0, 0, 18, height);
     ctx.strokeStyle = 'rgba(125, 211, 252, 0.12)';
@@ -988,14 +1004,14 @@ class RunSceneRenderer {
     ctx.font = META_FONT;
     ctx.fillStyle = 'rgba(148, 163, 184, 0.72)';
     ctx.textBaseline = 'middle';
-    for (let x = 48; x < width; x += 96) {
+    for (let x = 48; x < width; x += majorSpacing) {
       ctx.beginPath();
       ctx.moveTo(x + 0.5, 0);
       ctx.lineTo(x + 0.5, 12);
       ctx.stroke();
       ctx.fillText(String(x).padStart(3, '0'), x - 10, 10);
     }
-    for (let y = 56; y < height; y += 96) {
+    for (let y = 56; y < height; y += majorSpacing) {
       ctx.beginPath();
       ctx.moveTo(0, y + 0.5);
       ctx.lineTo(12, y + 0.5);
@@ -1016,7 +1032,25 @@ class RunSceneRenderer {
     ctx.fillText('RUN', 0, 0);
     ctx.restore();
 
+    const dotLayer = document.createElement('canvas');
+    dotLayer.width = layer.width;
+    dotLayer.height = layer.height;
+    const dotCtx = dotLayer.getContext('2d');
+    if (dotCtx) {
+      dotCtx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      for (let x = 20; x < width; x += minorSpacing) {
+        for (let y = 20; y < height; y += minorSpacing) {
+          const tier = ((Math.round(x / minorSpacing) + Math.round(y / minorSpacing)) % 4) / 4;
+          dotCtx.globalAlpha = 0.04 + tier * 0.06;
+          dotCtx.fillStyle = 'rgba(148, 163, 184, 0.95)';
+          dotCtx.fillRect(x, y, 1.2, 1.2);
+        }
+      }
+      dotCtx.globalAlpha = 1;
+    }
+
     this.backgroundLayer = { key, canvas: layer };
+    this.dotOverlayLayer = { key, canvas: dotLayer };
     return layer;
   }
 
@@ -1071,10 +1105,10 @@ class RunSceneRenderer {
     this.scene.flow.forEach((item) => {
       const shouldDissolve = item.kind === 'tool'
         && item.resolvedAt
-        && item.status !== 'failed'
+        && isResolvedToolStatus(item.status)
         && this.toolResolveProgress(item, now) >= 1
-        && (item.alpha || 0) <= 0.06
-        && (item.layoutWeight || 0) <= 0.04;
+        && (item.alpha || 0) <= 0.03
+        && (item.layoutWeight || 0) <= 0.03;
       if (!shouldDissolve) {
         remaining.push(item);
         return;
@@ -1222,6 +1256,8 @@ class RunSceneRenderer {
         appearedAt: sceneClock(),
         radius: 0,
         targetRadius: 0,
+        layoutWeight: 1,
+        targetAlpha: 1,
       });
       this.scene.toolBodies.set(toolCallId, tool);
       tool.vx = (tool.order % 2 === 0 ? -1 : 1) * 18;
@@ -1234,9 +1270,13 @@ class RunSceneRenderer {
     if (!tool.stepName && this.scene.activeStepName) {
       tool.stepName = this.scene.activeStepName;
     }
-    tool.resolvedAt = (tool.status === 'returned' || tool.status === 'failed' || tool.status === 'approved' || tool.status === 'denied')
+    tool.resolvedAt = isResolvedToolStatus(tool.status)
       ? tool.resolvedAt
       : 0;
+    if (!tool.resolvedAt) {
+      tool.layoutWeight = Math.max(tool.layoutWeight || 0, 1);
+      tool.targetAlpha = Math.max(tool.targetAlpha || 0, 1);
+    }
     return tool;
   }
 
@@ -1357,11 +1397,8 @@ class RunSceneRenderer {
     if (!item) {
       return 0;
     }
-    if (item.status === 'failed') {
-      return 0.94 + (1 - this.toolResolveProgress(item, now)) * 0.24;
-    }
-    if (item.status === 'returned' || item.status === 'approved' || item.status === 'denied') {
-      return 1 - this.toolResolveProgress(item, now);
+    if (isResolvedToolStatus(item.status)) {
+      return Math.max(0, 1 - this.toolResolveProgress(item, now));
     }
     if (item.status === 'deferred') {
       return 1.12;
@@ -1381,19 +1418,16 @@ class RunSceneRenderer {
           : item.status === 'returned'
             ? -6
             : 0;
-    const resolvedShrink = (item.status === 'returned' || item.status === 'approved' || item.status === 'denied' || item.status === 'failed')
-      ? lerp(1, item.status === 'failed' ? 0.86 : 0.12, this.toolResolveProgress(item, now))
+    const resolvedShrink = isResolvedToolStatus(item.status)
+      ? lerp(1, 0.04, this.toolResolveProgress(item, now))
       : 1;
-    return Math.max(18, (base + statusBoost) * resolvedShrink);
+    return Math.max(6, (base + statusBoost) * resolvedShrink);
   }
 
   toolAlphaTarget(item, now) {
     const base = item.status === 'failed' ? 0.92 : 1;
-    if (item.status === 'returned' || item.status === 'approved' || item.status === 'denied') {
-      return lerp(base, 0.04, this.toolResolveProgress(item, now));
-    }
-    if (item.status === 'failed') {
-      return lerp(base, 0.76, this.toolResolveProgress(item, now));
+    if (isResolvedToolStatus(item.status)) {
+      return lerp(base, 0, this.toolResolveProgress(item, now));
     }
     return base;
   }
@@ -1425,6 +1459,7 @@ class RunSceneRenderer {
         weight: Math.round((obstacle.weight || 0) * 4) / 4,
       }));
     const cacheable = normalizedObstacles.length === 0;
+    const widthBudget = Math.max(168, width - 56);
     const key = [
       item.id,
       item.layoutVersion || 0,
@@ -1449,19 +1484,32 @@ class RunSceneRenderer {
 
     const textLeft = left + 28;
     const textTop = top + 48;
-    const layout = layoutTextAroundObstacles(content, {
+    let layout = layoutTextAroundObstacles(content, {
       left: textLeft,
       top: textTop,
-      maxWidth: Math.max(168, width - 56),
+      maxWidth: widthBudget,
       font,
       lineHeight,
       obstacles: normalizedObstacles,
     });
     const pressure = Math.max(layout.maxRightInset, Math.round(layout.maxLeftInset * 0.55));
     const widthReduction = clamp(Math.round(pressure * 0.56), 0, Math.round(width * 0.26));
+    const targetWidth = Math.max(236, width - widthReduction);
+
+    if (widthReduction > 0 && targetWidth < width - 2) {
+      layout = layoutTextAroundObstacles(content, {
+        left: textLeft,
+        top: textTop,
+        maxWidth: Math.max(168, targetWidth - 56),
+        font,
+        lineHeight,
+        obstacles: normalizedObstacles,
+      });
+    }
+
     const result = {
       ...layout,
-      targetWidth: Math.max(236, width - widthReduction),
+      targetWidth,
       targetHeight: 70 + layout.height,
     };
     if (cacheable) {
@@ -1638,6 +1686,22 @@ class RunSceneRenderer {
     const narrativeWidth = Math.max(244, contentWidth - (compactHeader ? 8 : 18));
     const gap = width < 760 ? 16 : 20;
     const tools = this.scene.flow.filter((item) => item.kind === 'tool');
+    const toolPhaseKey = tools.map((tool) => [
+      tool.id,
+      tool.status,
+      quantize(this.toolResolveProgress(tool, now) * 100, 4),
+      quantize((tool.layoutWeight || 0) * 100, 4),
+    ].join(':')).join('|');
+    const layoutKey = [
+      this.layoutRevision,
+      width,
+      compactHeader ? 'compact' : 'full',
+      this.scene.runStatus,
+      toolPhaseKey,
+    ].join('|');
+    if (this.lastLayoutKey === layoutKey && this.cachedLayout) {
+      return this.cachedLayout;
+    }
 
     const provisionalNarrative = this.buildNarrativeLayout(width, headerHeight, pad, contentLeft, contentWidth, narrativeWidth, gap, []);
     tools.forEach((tool) => {
@@ -1689,7 +1753,7 @@ class RunSceneRenderer {
       items.push(item);
     });
 
-    return {
+    const layout = {
       width,
       pad,
       headerHeight,
@@ -1697,6 +1761,9 @@ class RunSceneRenderer {
       items,
       height: Math.max(440, Math.round(Math.max(finalNarrative.cursorY + 34, maxBottom + 24))),
     };
+    this.lastLayoutKey = layoutKey;
+    this.cachedLayout = layout;
+    return layout;
   }
 
   advanceCard(item, dt, width, height) {
@@ -1855,16 +1922,26 @@ class RunSceneRenderer {
       this.ctx.drawImage(layer, 0, 0, width, height);
     }
 
-    this.ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
-    const dotSpacing = 24;
-    for (let x = 20; x < width; x += dotSpacing) {
-      for (let y = 20; y < height; y += dotSpacing) {
-        const phase = Math.sin((now / 900) + x * 0.02 + y * 0.015) * 0.06;
-        this.ctx.globalAlpha = 0.06 + phase;
-        this.ctx.fillRect(x, y, 1.4, 1.4);
-      }
+    const dotLayer = this.dotOverlayLayer?.canvas;
+    const pulse = 0.5 + Math.sin(now / 880) * 0.5;
+    if (dotLayer) {
+      this.ctx.save();
+      this.ctx.globalAlpha = 0.5 + pulse * 0.18;
+      this.ctx.drawImage(dotLayer, 0, 0, width, height);
+      this.ctx.restore();
     }
-    this.ctx.globalAlpha = 1;
+
+    const sweep = (now / 48) % 96;
+    this.ctx.save();
+    this.ctx.strokeStyle = `rgba(125, 211, 252, ${0.035 + pulse * 0.025})`;
+    this.ctx.lineWidth = 1;
+    for (let x = 18.5 + sweep; x < width; x += 96) {
+      this.ctx.beginPath();
+      this.ctx.moveTo(x, 18);
+      this.ctx.lineTo(x, height - 18);
+      this.ctx.stroke();
+    }
+    this.ctx.restore();
   }
 
   renderSceneFx(width, height, now) {
