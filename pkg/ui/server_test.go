@@ -174,9 +174,17 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		"\"ui:fragment-loaded\"",
 		"\"runId\":\""+runID+"\"",
 		"\"scene\"",
-		"\"status\":{\"code\":\"waiting\",\"detail\":\"1 pending tool approval.\",\"isTerminal\":false,\"isWaiting\":true,\"label\":\"Waiting\",\"tone\":\"approval\"}",
-		"\"waiting\":{\"active\":true,\"approvalPendingCount\":1,\"detail\":\"1 pending tool approval.\",\"label\":\"Waiting for approval\",\"pendingKind\":\"approval\",\"reason\":\"approval\",\"statusLabel\":\"Waiting\",\"summary\":\"Waiting for approval · 1 pending tool approval.\"}",
-		"\"lastEvent\":{\"detail\":\"1 pending tool approval.\",\"label\":\"Waiting for approval\"",
+		"\"status\":\"waiting\"",
+		"\"status_detail\":\"1 pending tool approval.\"",
+		"\"status_is_terminal\":false",
+		"\"status_is_waiting\":true",
+		"\"status_label\":\"Waiting\"",
+		"\"status_tone\":\"approval\"",
+		"\"waiting_reason\":\"approval\"",
+		"\"waiting_label\":\"Waiting for approval\"",
+		"\"waiting_summary\":\"Waiting for approval · 1 pending tool approval.\"",
+		"\"last_event_label\":\"Waiting for approval\"",
+		"\"last_event_summary\":\"Waiting for approval · 1 pending tool approval.\"",
 	)
 
 	assetReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/static/style.css", nil)

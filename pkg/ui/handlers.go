@@ -113,34 +113,7 @@ func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	trigger, err := json.Marshal(map[string]any{
 		"ui:fragment-loaded": map[string]any{
 			"runId": view.ID,
-			"scene": map[string]any{
-				"status": map[string]any{
-					"code":       view.Scene.Status.Code,
-					"label":      view.Scene.Status.Label,
-					"tone":       view.Scene.Status.Tone,
-					"detail":     view.Scene.Status.Detail,
-					"isWaiting":  view.Scene.Status.IsWaiting,
-					"isTerminal": view.Scene.Status.IsTerminal,
-				},
-				"waiting": map[string]any{
-					"active":               view.Scene.Waiting.Active,
-					"reason":               view.Scene.Waiting.Reason,
-					"label":                view.Scene.Waiting.Label,
-					"detail":               view.Scene.Waiting.Detail,
-					"summary":              view.Scene.Waiting.Summary,
-					"pendingKind":          view.Scene.Waiting.PendingKind,
-					"approvalPendingCount": view.Scene.Waiting.ApprovalPendingCount,
-					"statusLabel":          view.Scene.Waiting.StatusLabel,
-				},
-				"lastEvent": map[string]any{
-					"type":          view.Scene.LastEvent.Type,
-					"label":         view.Scene.LastEvent.Label,
-					"summary":       view.Scene.LastEvent.Summary,
-					"detail":        view.Scene.LastEvent.Detail,
-					"occurredLabel": view.Scene.LastEvent.OccurredLabel,
-					"tone":          view.Scene.LastEvent.Tone,
-				},
-			},
+			"scene": buildSnapshotPayload(view),
 		},
 	})
 	if err == nil {
