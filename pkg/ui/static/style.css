@@ -319,6 +319,21 @@ body {
   color: #d8e3f3;
 }
 
+.run-scene__metric--waiting strong {
+  color: #f8fafc;
+}
+
+.run-scene[data-scene-waiting="true"] .run-scene__metric--waiting {
+  border-color: rgba(251, 191, 36, 0.18);
+  background:
+    linear-gradient(180deg, rgba(61, 42, 8, 0.86), rgba(29, 22, 7, 0.92)),
+    radial-gradient(circle at top left, rgba(251, 191, 36, 0.12), transparent 62%);
+}
+
+.run-scene[data-scene-waiting="true"] .run-scene__metric--waiting strong {
+  color: #fde68a;
+}
+
 .run-scene__metrics strong {
   display: block;
   margin-top: 6px;

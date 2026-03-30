@@ -429,6 +429,7 @@ class RunSceneRenderer {
     this.stepCountTarget = root.querySelector('[data-scene-step-count]');
     this.entityCountTarget = root.querySelector('[data-scene-entity-count]');
     this.lastEventTarget = root.querySelector('[data-run-last-event]');
+    this.waitingReasonTarget = root.querySelector('[data-scene-waiting-reason]');
     this.emptyState = root.querySelector('[data-run-empty-state]');
     this.runId = root.dataset.runId || '';
     this.eventsUrl = root.dataset.eventsUrl || '';
@@ -451,6 +452,12 @@ class RunSceneRenderer {
       transition: { name: 'boot', startedAt: sceneClock() },
       statusChangedAt: sceneClock(),
       lastEventAt: sceneClock(),
+      waitingReason: root.dataset.runWaitingReason || '',
+      waitingSnapshot: null,
+      customEventState: {},
+      lastObstacleSignature: '',
+      obstacleLayoutStableUntil: 0,
+      obstacleLayoutObstacles: [],
     };
     this.destroyed = false;
     this.dpr = window.devicePixelRatio || 1;
@@ -471,6 +478,7 @@ class RunSceneRenderer {
     this.dotOverlayLayer = null;
     this.layoutCache = new Map();
     this.layoutCacheLimit = 96;
+    this.obstacleLayoutRetainMs = 160;
 
     this.root.dataset.sceneStatus = this.scene.runStatus;
     this.root.dataset.sceneConnection = this.scene.connection;
@@ -623,15 +631,15 @@ class RunSceneRenderer {
   applySnapshot(event, seq) {
     const snapshot = event.data || {};
     const appliedAt = Date.now();
+    this.scene.waitingSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : null;
     if (snapshot.run_id) {
       this.runId = snapshot.run_id;
-    }
-    if (snapshot.status) {
-      this.updateStatus(snapshot.status);
     }
 
     const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
     const deferredInputs = snapshot.pending_external_inputs && typeof snapshot.pending_external_inputs === 'object' ? snapshot.pending_external_inputs : {};
+    this.scene.customEventState.pendingApproval = Object.keys(approvals).length > 0;
+    this.scene.customEventState.pendingDeferred = Object.keys(deferredInputs).length > 0;
     const pendingToolIds = new Set();
 
     this.scene.toolBodies.forEach((tool) => {
@@ -697,11 +705,31 @@ class RunSceneRenderer {
       }
     });
 
-    if (snapshot.waiting_reason) {
+    const waitingReason = snapshot.waiting_reason || (pendingToolIds.size ? 'approval/deferred' : '');
+    if (waitingReason) {
+      this.scene.customEventState.waiting = true;
+      this.updateWaitingState(waitingReason, snapshot);
       this.updateStatus('waiting');
       this.triggerTransition('waiting');
       if (!pendingToolIds.size) {
-        this.pushNotice('Run waiting', snapshot.waiting_reason, appliedAt);
+        this.pushNotice('Run waiting', waitingReason, appliedAt);
+      }
+    } else {
+      this.scene.customEventState.waiting = false;
+      this.updateWaitingState('', snapshot);
+      if (!this.hasPendingWaitingSignals()) {
+        this.clearWaitingState();
+      }
+    }
+
+    if (snapshot.status) {
+      if (snapshot.status === 'completed' && this.hasPendingWaitingSignals()) {
+        this.updateStatus('waiting');
+      } else {
+        this.updateStatus(snapshot.status);
+        if (snapshot.status !== 'waiting' && !this.hasPendingWaitingSignals()) {
+          this.clearWaitingState();
+        }
       }
     }
 
@@ -713,16 +741,29 @@ class RunSceneRenderer {
     switch (event.type) {
       case 'RUN_STARTED':
         this.runId = event.runId || this.runId;
+        this.scene.customEventState.waiting = false;
+        this.scene.customEventState.pendingApproval = false;
+        this.scene.customEventState.pendingDeferred = false;
+        this.clearWaitingState();
         this.updateStatus('running');
         this.triggerTransition('resumed');
         this.pushNotice('Run started', this.runId || 'live session', timestamp);
         break;
       case 'RUN_FINISHED':
-        this.updateStatus('completed');
-        this.triggerTransition('finished');
-        this.pushNotice('Run finished', this.runId || 'completed', timestamp);
+        if (this.hasPendingWaitingSignals()) {
+          this.updateStatus('waiting');
+          this.triggerTransition('waiting');
+          this.pushNotice('Run deferred', this.scene.waitingReason || 'awaiting approval or external input', timestamp);
+        } else {
+          this.clearWaitingState();
+          this.updateStatus('completed');
+          this.triggerTransition('finished');
+          this.pushNotice('Run finished', this.runId || 'completed', timestamp);
+        }
         break;
       case 'RUN_ERROR':
+        this.scene.customEventState.waiting = false;
+        this.clearWaitingState();
         this.updateStatus('failed');
         this.triggerTransition('error');
         this.pushNotice('Run error', event.message || 'Unknown failure', timestamp);
@@ -776,6 +817,10 @@ class RunSceneRenderer {
         break;
       case 'TOOL_CALL_RESULT':
         this.attachToolResult(event.toolCallId, event.content || '', event.role || 'tool', timestamp);
+        if (!this.hasPendingWaitingSignals() && this.scene.runStatus === 'waiting') {
+          this.clearWaitingState();
+          this.updateStatus('running');
+        }
         break;
       case 'CUSTOM':
         this.applyCustomEvent(event.name, event.value, timestamp);
@@ -791,11 +836,17 @@ class RunSceneRenderer {
     const payload = value && typeof value === 'object' ? value : readJSON(JSON.stringify(value || {})) || {};
     switch (name) {
       case 'gollem.run.waiting':
+        this.scene.customEventState.waiting = true;
+        this.updateWaitingState(payload.reason || 'paused', this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
         this.pushNotice('Run waiting', payload.reason || 'paused', timestamp);
         break;
       case 'gollem.run.resumed':
+        this.scene.customEventState.waiting = false;
+        this.scene.customEventState.pendingApproval = false;
+        this.scene.customEventState.pendingDeferred = false;
+        this.clearWaitingState();
         this.updateStatus('running');
         this.triggerTransition('resumed');
         this.pushNotice('Run resumed', payload.runId || this.runId || 'stream resumed', timestamp);
@@ -810,6 +861,9 @@ class RunSceneRenderer {
           tool.updatedAt = timestamp;
           tool.pulseBoost = Math.max(tool.pulseBoost || 0, 1.15);
         }
+        this.scene.customEventState.waiting = true;
+        this.scene.customEventState.pendingApproval = true;
+        this.updateWaitingState('approval', this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
         break;
@@ -824,7 +878,12 @@ class RunSceneRenderer {
             isError: !payload.approved,
           });
         }
-        this.updateStatus('running');
+        this.scene.customEventState.pendingApproval = false;
+        if (!this.hasPendingWaitingSignals()) {
+          this.scene.customEventState.waiting = false;
+          this.clearWaitingState();
+          this.updateStatus('running');
+        }
         this.triggerTransition('resumed');
         break;
       }
@@ -838,6 +897,9 @@ class RunSceneRenderer {
           tool.updatedAt = timestamp;
           tool.pulseBoost = Math.max(tool.pulseBoost || 0, 1.25);
         }
+        this.scene.customEventState.waiting = true;
+        this.scene.customEventState.pendingDeferred = true;
+        this.updateWaitingState(payload.toolName || 'deferred', this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
         this.pushNotice('Deferred input', payload.toolName || payload.toolCallId || 'awaiting input', timestamp);
@@ -852,7 +914,12 @@ class RunSceneRenderer {
             isError: !!payload.isError,
           });
         }
-        this.updateStatus('running');
+        this.scene.customEventState.pendingDeferred = false;
+        if (!this.hasPendingWaitingSignals()) {
+          this.scene.customEventState.waiting = false;
+          this.clearWaitingState();
+          this.updateStatus('running');
+        }
         this.triggerTransition('resumed');
         this.pushNotice('Deferred resolved', summarize(payload.content || payload.toolName || ''), timestamp);
         break;
@@ -938,6 +1005,48 @@ class RunSceneRenderer {
     });
   }
 
+  updateWaitingState(reason = '', snapshot = null) {
+    const nextReason = compactWhitespace(reason || '');
+    const changed = nextReason !== this.scene.waitingReason;
+    this.scene.waitingReason = nextReason;
+    this.scene.waitingSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : this.scene.waitingSnapshot;
+    this.root.dataset.sceneWaiting = nextReason ? 'true' : 'false';
+    this.root.dataset.sceneWaitingReason = nextReason || '';
+    if (this.waitingReasonTarget) {
+      this.waitingReasonTarget.textContent = nextReason || 'active';
+    }
+    if (changed) {
+      this.invalidateLayout('waiting');
+    }
+  }
+
+  clearWaitingState() {
+    if (!this.scene.waitingReason && !this.scene.waitingSnapshot) {
+      return;
+    }
+    this.scene.waitingSnapshot = null;
+    this.updateWaitingState('', null);
+  }
+
+  hasPendingWaitingSignals() {
+    if (compactWhitespace(this.scene.waitingReason || '')) {
+      return true;
+    }
+    const custom = this.scene.customEventState || {};
+    if (custom.waiting || custom.pendingApproval || custom.pendingDeferred) {
+      return true;
+    }
+    if (this.scene.waitingSnapshot) {
+      const snapshot = this.scene.waitingSnapshot;
+      const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
+      const deferredInputs = snapshot.pending_external_inputs && typeof snapshot.pending_external_inputs === 'object' ? snapshot.pending_external_inputs : {};
+      if (Object.keys(approvals).length || Object.keys(deferredInputs).length || compactWhitespace(snapshot.waiting_reason || '')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   updateStatus(status) {
     const next = status || this.scene.runStatus || 'running';
     const changed = next !== this.scene.runStatus;
@@ -945,6 +1054,15 @@ class RunSceneRenderer {
     this.root.dataset.sceneStatus = next;
     if (changed) {
       this.scene.statusChangedAt = sceneClock();
+    }
+    if (next === 'waiting') {
+      this.root.dataset.sceneWaiting = 'true';
+    } else if (next !== 'waiting' && !compactWhitespace(this.scene.waitingReason || '')) {
+      this.root.dataset.sceneWaiting = 'false';
+      this.root.dataset.sceneWaitingReason = '';
+      if (this.waitingReasonTarget) {
+        this.waitingReasonTarget.textContent = 'active';
+      }
     }
     this.statusTargets.forEach((target) => {
       if (!target) {
@@ -1563,28 +1681,26 @@ class RunSceneRenderer {
         radius: quantize(obstacle.radius, 12),
         weight: Math.round((obstacle.weight || 0) * 4) / 4,
       }));
-    const cacheable = normalizedObstacles.length === 0;
     const widthBudget = Math.max(168, width - 56);
+    const obstacleSignature = obstacleLayoutSignature(normalizedObstacles);
     const key = [
       item.id,
       item.layoutVersion || 0,
       quantize(left, 4),
       quantize(top, 8),
       quantize(width, 8),
-      obstacleLayoutSignature(normalizedObstacles),
+      obstacleSignature,
     ].join('|');
 
     if (item.textLayoutKey === key && item.textLayout) {
       return item.textLayout;
     }
 
-    if (cacheable) {
-      const cached = this.getLayoutCache(key);
-      if (cached) {
-        item.textLayoutKey = key;
-        item.textLayout = cached;
-        return cached;
-      }
+    const cached = this.getLayoutCache(key);
+    if (cached) {
+      item.textLayoutKey = key;
+      item.textLayout = cached;
+      return cached;
     }
 
     const textLeft = left + 28;
@@ -1617,9 +1733,7 @@ class RunSceneRenderer {
       targetWidth,
       targetHeight: 70 + layout.height,
     };
-    if (cacheable) {
-      this.setLayoutCache(key, result);
-    }
+    this.setLayoutCache(key, result);
     item.textLayoutKey = key;
     item.textLayout = result;
     return result;
@@ -1823,7 +1937,15 @@ class RunSceneRenderer {
       narrativeWidth,
       now,
     });
-    const narrative = this.buildNarrativeLayout(width, headerHeight, pad, contentLeft, contentWidth, narrativeWidth, gap, provisionalTargets.obstacles);
+    const provisionalSignature = obstacleLayoutSignature(provisionalTargets.obstacles);
+    const stableObstacleActive = this.scene.lastObstacleSignature
+      && this.scene.obstacleLayoutStableUntil > now
+      && provisionalSignature === this.scene.lastObstacleSignature
+      && Array.isArray(this.scene.obstacleLayoutObstacles)
+      && this.scene.obstacleLayoutObstacles.length;
+    const obstacleSeed = stableObstacleActive ? this.scene.obstacleLayoutObstacles : provisionalTargets.obstacles;
+
+    const narrative = this.buildNarrativeLayout(width, headerHeight, pad, contentLeft, contentWidth, narrativeWidth, gap, obstacleSeed);
     const finalTargets = this.buildToolTargets(tools, narrative.narrativePlacements, {
       width,
       pad,
@@ -1832,12 +1954,17 @@ class RunSceneRenderer {
       narrativeWidth,
       now,
     });
-    const finalNarrative = signatureChanged(
-      obstacleLayoutSignature(provisionalTargets.obstacles),
-      obstacleLayoutSignature(finalTargets.obstacles),
-    )
+    const finalSignature = obstacleLayoutSignature(finalTargets.obstacles);
+    const obstacleChanged = signatureChanged(provisionalSignature, finalSignature);
+    const finalNarrative = obstacleChanged
       ? this.buildNarrativeLayout(width, headerHeight, pad, contentLeft, contentWidth, narrativeWidth, gap, finalTargets.obstacles)
       : narrative;
+
+    if (obstacleChanged || !stableObstacleActive) {
+      this.scene.lastObstacleSignature = finalSignature;
+      this.scene.obstacleLayoutStableUntil = now + this.obstacleLayoutRetainMs;
+      this.scene.obstacleLayoutObstacles = finalTargets.obstacles.map((obstacle) => ({ ...obstacle }));
+    }
 
     const items = [];
     let maxBottom = finalNarrative.maxBottom;
