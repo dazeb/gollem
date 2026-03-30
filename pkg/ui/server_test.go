@@ -95,6 +95,41 @@ func TestSidebarRendersLiveStatusUsageAndApprovals(t *testing.T) {
 	}
 }
 
+func TestHandleRunRendersSpatialRendererScaffold(t *testing.T) {
+	store := NewRunStateStore()
+	run := store.create(RunStartRequest{
+		Title:    "Renderer run",
+		Summary:  "stream into the canvas",
+		Prompt:   "show live output",
+		Provider: "test",
+		Model:    "gpt-test",
+	})
+	server := MustNewServer(WithRunStore(store))
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+run.ID(), nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Baseline spatial renderer",
+		"data-run-scene",
+		"data-run-canvas",
+		"data-run-event-log",
+		"/runs/" + run.ID() + "/events",
+		"Renderer run",
+		"stream into the canvas",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("run page missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestHandleActionAbortUsesRunSpecificSessionWithoutMutatingStatus(t *testing.T) {
 	store := NewRunStateStore()
 	run := store.create(RunStartRequest{Prompt: "abort me"})

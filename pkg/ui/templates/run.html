@@ -11,7 +11,7 @@
         <h2>{{.Run.Title}}</h2>
         <p class="lede">{{.Run.Summary}}</p>
       </div>
-      <span class="status status--{{.Run.Status}}">{{.Run.Status}}</span>
+      <span class="status status--{{.Run.Status}}" data-run-status-badge>{{.Run.Status}}</span>
     </div>
 
     <div class="detail-grid">
@@ -33,22 +33,71 @@
       </article>
     </div>
 
+    <section
+      class="run-scene"
+      data-run-scene
+      data-renderer-root
+      data-run-id="{{.Run.ID}}"
+      data-run-title="{{.Run.Title}}"
+      data-run-summary="{{.Run.Summary}}"
+      data-run-status="{{.Run.Status}}"
+      data-events-url="/runs/{{.Run.ID}}/events"
+    >
+      <div class="run-scene__header">
+        <div>
+          <p class="eyebrow">Baseline spatial renderer</p>
+          <h3>Live stream</h3>
+        </div>
+        <div class="run-scene__metrics" aria-label="Run scene metrics">
+          <article>
+            <span class="detail-grid__label">Connection</span>
+            <strong data-run-connection>SSE connecting</strong>
+          </article>
+          <article>
+            <span class="detail-grid__label">Stream state</span>
+            <strong data-scene-stream-state>connecting</strong>
+          </article>
+          <article>
+            <span class="detail-grid__label">Steps</span>
+            <strong data-scene-step-count>0</strong>
+          </article>
+          <article>
+            <span class="detail-grid__label">Entities</span>
+            <strong data-scene-entity-count>0</strong>
+          </article>
+          <article>
+            <span class="detail-grid__label">Last event</span>
+            <strong data-run-last-event>live</strong>
+          </article>
+        </div>
+      </div>
+
+      <div class="run-scene__viewport" data-run-viewport>
+        <canvas class="run-scene__canvas" data-run-canvas aria-label="Live run scene"></canvas>
+        <div class="run-scene__empty" data-run-empty-state>
+          <p class="eyebrow">Awaiting events</p>
+          <p>Streaming text, reasoning, steps, and tool calls will appear here as AG-UI events arrive.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="transcript transcript--live-log">
+      <div class="transcript__header">
+        <h3>Live event log</h3>
+        <span class="muted">Oldest first · live updates append at the end</span>
+      </div>
+      <ol class="event-list event-list--dense" data-run-event-log>
+        {{range .Run.Events}}
+        <li>{{.}}</li>
+        {{end}}
+      </ol>
+    </section>
+
     <section class="transcript">
       <div class="transcript__header">
         <h3>Prompt</h3>
       </div>
       <pre><code>{{.Run.Prompt}}</code></pre>
-    </section>
-
-    <section class="transcript">
-      <div class="transcript__header">
-        <h3>Event stream preview</h3>
-      </div>
-      <ol class="event-list">
-        {{range .Run.Events}}
-        <li>{{.}}</li>
-        {{end}}
-      </ol>
     </section>
   </section>
 </div>
