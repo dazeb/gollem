@@ -54,12 +54,12 @@
         {{if .Run.Scene.LastEvent.OccurredLabel}}<br><span class="muted">{{.Run.Scene.LastEvent.OccurredLabel}}</span>{{else if .Run.Controls.LastActivityTimeLabel}}<br><span class="muted">{{.Run.Controls.LastActivityTimeLabel}}</span>{{end}}
       </dd>
     </div>
-    {{if .Run.Waiting.Active}}
+    {{if .Run.Scene.Waiting.Active}}
     <div>
       <dt>Waiting</dt>
       <dd>
-        <strong>{{.Run.Waiting.Label}}</strong>
-        {{if .Run.Waiting.Detail}}<br><span class="muted">{{.Run.Waiting.Detail}}</span>{{end}}
+        <strong>{{.Run.Scene.Waiting.Label}}</strong>
+        {{if .Run.Scene.Waiting.Detail}}<br><span class="muted">{{.Run.Scene.Waiting.Detail}}</span>{{end}}
       </dd>
     </div>
     {{end}}

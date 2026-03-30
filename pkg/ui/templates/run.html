@@ -9,7 +9,7 @@
 })();
 </script>
 <div class="run-layout">
-  <aside id="run-sidebar" class="panel panel--sidebar" hx-get="/runs/{{.Run.ID}}/sidebar" hx-trigger="load" hx-swap="innerHTML">
+  <aside id="run-sidebar" class="panel panel--sidebar" hx-get="/runs/{{.Run.ID}}/sidebar" hx-trigger="load" hx-swap="innerHTML" data-sidebar-run-id="{{.Run.ID}}">
     <p class="muted">Loading sidebar…</p>
   </aside>
 
@@ -152,7 +152,7 @@
           <span class="muted">{{.Run.Controls.Summary}}</span>
         </div>
         <div>
-          {{if .Run.Waiting.Active}}
+          {{if .Run.Scene.Waiting.Active}}
           <strong>{{.Run.Scene.Waiting.Label}}</strong>
           {{if .Run.Scene.Waiting.Detail}}<span class="muted"> · {{.Run.Scene.Waiting.Detail}}</span>{{end}}
           {{else}}
@@ -164,7 +164,8 @@
         {{range .Run.RecentActivity}}
         <li data-activity-kind="{{.Kind}}" data-activity-tone="{{.Tone}}">
           <strong>{{.Label}}</strong>
-          {{if .Detail}}<span> {{.Detail}}</span>{{end}}
+          {{if and .Summary (ne .Summary .Label)}}<div class="muted">{{.Summary}}</div>{{end}}
+          {{if .Detail}}<span>{{if and .Summary (ne .Summary .Detail)}} {{.Detail}}{{end}}</span>{{end}}
           <div class="muted">{{.OccurredLabel}}</div>
         </li>
         {{else}}

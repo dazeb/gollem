@@ -317,7 +317,7 @@ func (r *RunRecord) appendActivityLocked(activity RunActivityView) {
 		activity.OccurredAt = time.Now().UTC()
 	}
 	activity.OccurredAt = activity.OccurredAt.UTC()
-	activity.Kind = firstNonEmpty(activity.Kind, activity.Type)
+	activity.Kind = firstNonEmpty(activity.Kind, classifyActivityKind(activity.Type))
 	activity.Label = firstNonEmpty(activity.Label, humanizeRuntimeEventType(activity.Type))
 	activity.Detail = strings.TrimSpace(activity.Detail)
 	activity.Summary = firstNonEmpty(strings.TrimSpace(activity.Summary), joinActivitySummary(activity.Label, activity.Detail))
@@ -431,12 +431,13 @@ func (r *RunRecord) Snapshot() RunView {
 	statusView := buildStatusView(r.status, waiting)
 	latest := latestActivity(recent)
 	latestProtocol := latestProtocolActivity(recentProtocolActivity)
+	sceneWaiting := buildSceneWaitingView(r.status, waiting, pendingApprovalCount)
 	scene := RunSceneStateView{
 		Status:    statusView,
-		Waiting:   waiting,
-		LastEvent: buildEventStateView(statusView, waiting, latest, latestProtocol),
+		Waiting:   sceneWaiting,
+		LastEvent: buildEventStateView(statusView, sceneWaiting, latest, latestProtocol),
 	}
-	controls := buildControlsView(statusView, waiting, pendingApprovalCount, latest, latestProtocol, len(recent) > 0)
+	controls := buildControlsView(statusView, sceneWaiting, pendingApprovalCount, latest, latestProtocol, len(recent) > 0)
 
 	view := RunView{
 		ID:                     r.id,
@@ -706,6 +707,16 @@ func snapshotRecentProtocolEvents(src []string) []string {
 		start = len(src) - maxRecentRunActivities
 	}
 	return append([]string(nil), src[start:]...)
+}
+
+func buildSceneWaitingView(status string, waiting RunWaitingView, pendingApprovalCount int) RunWaitingView {
+	if waiting.Active {
+		return waiting
+	}
+	if pendingApprovalCount > 0 {
+		return buildWaitingView(status, "approval", pendingApprovalCount)
+	}
+	return RunWaitingView{}
 }
 
 func buildWaitingView(status, reason string, pendingApprovalCount int) RunWaitingView {
@@ -1258,6 +1269,27 @@ func joinActivitySummary(label, detail string) string {
 		return label
 	default:
 		return label + " · " + detail
+	}
+}
+
+func classifyActivityKind(eventType string) string {
+	switch strings.TrimSpace(eventType) {
+	case core.RuntimeEventTypeRunStarted, core.RuntimeEventTypeRunCompleted:
+		return "run"
+	case core.RuntimeEventTypeTurnStarted, core.RuntimeEventTypeTurnCompleted:
+		return "turn"
+	case core.RuntimeEventTypeModelRequestStarted, core.RuntimeEventTypeModelResponseCompleted:
+		return "model"
+	case core.RuntimeEventTypeToolCalled, core.RuntimeEventTypeToolCompleted, core.RuntimeEventTypeToolFailed:
+		return "tool"
+	case core.RuntimeEventTypeApprovalRequested, core.RuntimeEventTypeApprovalResolved:
+		return "approval"
+	case core.RuntimeEventTypeDeferredRequested, core.RuntimeEventTypeDeferredResolved:
+		return "deferred"
+	case core.RuntimeEventTypeRunWaiting, core.RuntimeEventTypeRunResumed:
+		return "waiting"
+	default:
+		return firstNonEmpty(strings.TrimSpace(eventType), "activity")
 	}
 }
 
