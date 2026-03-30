@@ -26,7 +26,7 @@ func TestSSEHandlerSetsStreamingHeadersAndFrames(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	resp := mustOpenSSE(t, ctx, server.URL, "")
+	resp := mustOpenSSE(t, newSSERequest(t, ctx, server.URL, ""))
 	defer resp.Body.Close()
 
 	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
@@ -40,16 +40,55 @@ func TestSSEHandlerSetsStreamingHeadersAndFrames(t *testing.T) {
 	}
 
 	core.Publish(bus, core.RunStartedEvent{RunID: "run_1", StartedAt: time.Now()})
-	frame := readSSEFrame(t, resp.Body)
+
+	reader := newSSEStreamReader(t, resp.Body)
+	frame := reader.Next()
 	if frame.id != "1" {
 		t.Fatalf("first frame id = %q, want 1", frame.id)
 	}
-	if !strings.Contains(frame.data, `"type":"RUN_STARTED"`) {
-		t.Fatalf("unexpected first frame data: %s", frame.data)
+	if len(frame.rawLines) == 0 || !strings.HasPrefix(frame.rawLines[0], "data: ") {
+		t.Fatalf("expected SSE data framing, got lines %v", frame.rawLines)
+	}
+	if got := aguiTypeFromFrame(t, frame); got != agui.AGUIRunStarted {
+		t.Fatalf("first frame type = %q, want %q", got, agui.AGUIRunStarted)
 	}
 }
 
-func TestSSEHandlerReconnectReplaysFromLastEventID(t *testing.T) {
+func TestWriteSSEPrefixesEveryPayloadLineWithData(t *testing.T) {
+	rec := httptest.NewRecorder()
+	ev := agui.Event{
+		Sequence: 7,
+		Type:     rawAGUIEventType,
+		Data:     json.RawMessage("{\n\"type\":\"RUN_STARTED\",\n\"runId\":\"run_1\"\n}"),
+	}
+
+	if err := writeSSE(rec, ev); err != nil {
+		t.Fatalf("writeSSE returned error: %v", err)
+	}
+
+	got := rec.Body.String()
+	if !strings.HasPrefix(got, "id: 7\n") {
+		t.Fatalf("frame = %q, want id prefix", got)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(got, "\n\n"), "\n") {
+		if strings.HasPrefix(line, "id: ") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			t.Fatalf("frame line %q missing data prefix in %q", line, got)
+		}
+	}
+
+	frame := newSSEStreamReader(t, strings.NewReader(got)).Next()
+	if frame.id != "7" {
+		t.Fatalf("frame id = %q, want 7", frame.id)
+	}
+	if got := aguiTypeFromFrame(t, frame); got != agui.AGUIRunStarted {
+		t.Fatalf("frame type = %q, want %q", got, agui.AGUIRunStarted)
+	}
+}
+
+func TestSSEHandlerFreshClientReplaysBufferedEventsAndStreamsLive(t *testing.T) {
 	bus := core.NewEventBus()
 	adapter := agui.NewAdapter("thread_1")
 	defer adapter.Close()
@@ -64,15 +103,94 @@ func TestSSEHandlerReconnectReplaysFromLastEventID(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	resp := mustOpenSSE(t, ctx, server.URL, "1")
+	resp := mustOpenSSE(t, newSSERequest(t, ctx, server.URL, ""))
 	defer resp.Body.Close()
 
-	frame := readSSEFrame(t, resp.Body)
+	reader := newSSEStreamReader(t, resp.Body)
+	frame1 := reader.Next()
+	frame2 := reader.Next()
+	if frame1.id != "1" || frame2.id != "2" {
+		t.Fatalf("fresh replay ids = [%s %s], want [1 2]", frame1.id, frame2.id)
+	}
+	if got := aguiTypeFromFrame(t, frame1); got != agui.AGUIRunStarted {
+		t.Fatalf("frame1 type = %q, want %q", got, agui.AGUIRunStarted)
+	}
+	if got := aguiTypeFromFrame(t, frame2); got != agui.AGUIStepStarted {
+		t.Fatalf("frame2 type = %q, want %q", got, agui.AGUIStepStarted)
+	}
+
+	core.Publish(bus, core.TurnCompletedEvent{RunID: "run_1", TurnNumber: 1, CompletedAt: time.Now()})
+	frame3 := reader.Next()
+	if frame3.id != "3" {
+		t.Fatalf("live frame id = %q, want 3", frame3.id)
+	}
+	if got := aguiTypeFromFrame(t, frame3); got != agui.AGUIStepFinished {
+		t.Fatalf("frame3 type = %q, want %q", got, agui.AGUIStepFinished)
+	}
+}
+
+func TestSSEHandlerReconnectReplaysFromLastEventID(t *testing.T) {
+	bus := core.NewEventBus()
+	adapter := agui.NewAdapter("thread_1")
+	defer adapter.Close()
+
+	h := NewSSEHandler(bus, adapter, agui.NewSession(agui.SessionModeCoreStream))
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	core.Publish(bus, core.RunStartedEvent{RunID: "run_1", StartedAt: time.Now()})
+	core.Publish(bus, core.TurnStartedEvent{RunID: "run_1", TurnNumber: 1, StartedAt: time.Now()})
+	core.Publish(bus, core.TurnCompletedEvent{RunID: "run_1", TurnNumber: 1, CompletedAt: time.Now()})
+	eventually(t, func() bool { return h.state.buffer.LastSeq() >= 3 })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	resp := mustOpenSSE(t, newSSERequest(t, ctx, server.URL, "2"))
+	defer resp.Body.Close()
+
+	reader := newSSEStreamReader(t, resp.Body)
+	frame := reader.Next()
+	if frame.id != "3" {
+		t.Fatalf("replayed frame id = %q, want 3", frame.id)
+	}
+	if got := aguiTypeFromFrame(t, frame); got != agui.AGUIStepFinished {
+		t.Fatalf("replayed frame type = %q, want %q", got, agui.AGUIStepFinished)
+	}
+
+	core.Publish(bus, core.RunCompletedEvent{RunID: "run_1", Success: true, CompletedAt: time.Now()})
+	live := reader.Next()
+	if live.id != "4" {
+		t.Fatalf("live frame id after resume = %q, want 4", live.id)
+	}
+	if got := aguiTypeFromFrame(t, live); got != agui.AGUIRunFinished {
+		t.Fatalf("live frame type = %q, want %q", got, agui.AGUIRunFinished)
+	}
+}
+
+func TestSSEHandlerReconnectReplaysFromLastSeqQuery(t *testing.T) {
+	bus := core.NewEventBus()
+	adapter := agui.NewAdapter("thread_1")
+	defer adapter.Close()
+
+	h := NewSSEHandler(bus, adapter, agui.NewSession(agui.SessionModeCoreStream))
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	core.Publish(bus, core.RunStartedEvent{RunID: "run_1", StartedAt: time.Now()})
+	core.Publish(bus, core.TurnStartedEvent{RunID: "run_1", TurnNumber: 1, StartedAt: time.Now()})
+	eventually(t, func() bool { return h.state.buffer.LastSeq() >= 2 })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	resp := mustOpenSSE(t, newSSERequest(t, ctx, server.URL+"?last_seq=1", ""))
+	defer resp.Body.Close()
+
+	frame := newSSEStreamReader(t, resp.Body).Next()
 	if frame.id != "2" {
 		t.Fatalf("replayed frame id = %q, want 2", frame.id)
 	}
-	if !strings.Contains(frame.data, `"type":"STEP_STARTED"`) {
-		t.Fatalf("unexpected replay frame data: %s", frame.data)
+	if got := aguiTypeFromFrame(t, frame); got != agui.AGUIStepStarted {
+		t.Fatalf("replayed frame type = %q, want %q", got, agui.AGUIStepStarted)
 	}
 }
 
@@ -92,10 +210,10 @@ func TestSSEHandlerGapFallsBackToSnapshot(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	resp := mustOpenSSE(t, ctx, server.URL, "1")
+	resp := mustOpenSSE(t, newSSERequest(t, ctx, server.URL, "1"))
 	defer resp.Body.Close()
 
-	frame := readSSEFrame(t, resp.Body)
+	frame := newSSEStreamReader(t, resp.Body).Next()
 	var ev agui.Event
 	if err := json.Unmarshal([]byte(frame.data), &ev); err != nil {
 		t.Fatalf("unmarshal snapshot event: %v", err)
@@ -105,6 +223,13 @@ func TestSSEHandlerGapFallsBackToSnapshot(t *testing.T) {
 	}
 	if frame.id != "6" {
 		t.Fatalf("snapshot frame id = %q, want 6", frame.id)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(ev.Data, &payload); err != nil {
+		t.Fatalf("unmarshal snapshot payload: %v", err)
+	}
+	if got := payload["snapshot_sequence"]; got != float64(6) {
+		t.Fatalf("snapshot_sequence = %v, want 6", got)
 	}
 }
 
@@ -118,7 +243,7 @@ func TestSSEHandlerDisconnectCleansUpListener(t *testing.T) {
 	defer server.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	resp := mustOpenSSE(t, ctx, server.URL, "")
+	resp := mustOpenSSE(t, newSSERequest(t, ctx, server.URL, ""))
 
 	eventually(t, func() bool {
 		h.state.mu.Lock()
@@ -136,11 +261,53 @@ func TestSSEHandlerDisconnectCleansUpListener(t *testing.T) {
 }
 
 type sseFrame struct {
-	id   string
-	data string
+	id       string
+	data     string
+	rawLines []string
 }
 
-func mustOpenSSE(t *testing.T, ctx context.Context, url, lastEventID string) *http.Response {
+type sseStreamReader struct {
+	t       *testing.T
+	scanner *bufio.Scanner
+}
+
+func newSSEStreamReader(t *testing.T, body io.Reader) *sseStreamReader {
+	t.Helper()
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 1024), 1024*1024)
+	return &sseStreamReader{t: t, scanner: scanner}
+}
+
+func (r *sseStreamReader) Next() sseFrame {
+	r.t.Helper()
+	var frame sseFrame
+	var dataLines []string
+	for r.scanner.Scan() {
+		line := r.scanner.Text()
+		if line == "" {
+			if frame.id != "" || len(dataLines) > 0 {
+				frame.data = strings.Join(dataLines, "\n")
+				return frame
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "id: ") {
+			frame.id = strings.TrimPrefix(line, "id: ")
+			continue
+		}
+		if strings.HasPrefix(line, "data: ") {
+			frame.rawLines = append(frame.rawLines, line)
+			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+		}
+	}
+	if err := r.scanner.Err(); err != nil {
+		r.t.Fatalf("read SSE frame: %v", err)
+	}
+	r.t.Fatal("no SSE frame received")
+	return sseFrame{}
+}
+
+func newSSERequest(t *testing.T, ctx context.Context, url, lastEventID string) *http.Request {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -149,6 +316,11 @@ func mustOpenSSE(t *testing.T, ctx context.Context, url, lastEventID string) *ht
 	if lastEventID != "" {
 		req.Header.Set("Last-Event-ID", lastEventID)
 	}
+	return req
+}
+
+func mustOpenSSE(t *testing.T, req *http.Request) *http.Response {
+	t.Helper()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("open SSE stream: %v", err)
@@ -161,31 +333,15 @@ func mustOpenSSE(t *testing.T, ctx context.Context, url, lastEventID string) *ht
 	return resp
 }
 
-func readSSEFrame(t *testing.T, body io.Reader) sseFrame {
+func aguiTypeFromFrame(t *testing.T, frame sseFrame) string {
 	t.Helper()
-	scanner := bufio.NewScanner(body)
-	var frame sseFrame
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			if frame.id != "" || frame.data != "" {
-				return frame
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "id: ") {
-			frame.id = strings.TrimPrefix(line, "id: ")
-			continue
-		}
-		if strings.HasPrefix(line, "data: ") {
-			frame.data = strings.TrimPrefix(line, "data: ")
-		}
+	var payload struct {
+		Type string `json:"type"`
 	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("read SSE frame: %v", err)
+	if err := json.Unmarshal([]byte(frame.data), &payload); err != nil {
+		t.Fatalf("unmarshal frame data: %v\nframe=%+v", err, frame)
 	}
-	t.Fatal("no SSE frame received")
-	return sseFrame{}
+	return payload.Type
 }
 
 func eventually(t *testing.T, fn func() bool) {
