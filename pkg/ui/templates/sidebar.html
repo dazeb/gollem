@@ -5,6 +5,8 @@
   hx-get="/runs/{{.Run.ID}}/sidebar"
   {{if .Run.StatusView.IsTerminal}}data-sidebar-live="false"{{else}}hx-trigger="every 2s" data-sidebar-live="true"{{end}}
   hx-swap="outerHTML"
+  hx-select="#run-sidebar"
+  hx-target="this"
   data-sidebar-run-id="{{.Run.ID}}"
 >
   {{template "sidebar_content" .}}
@@ -13,15 +15,23 @@
 
 {{define "sidebar_content"}}
 <div class="sidebar-fragment" data-renderer-root data-run-id="{{.Run.ID}}" data-run-status="{{.Run.Scene.Status.Code}}" data-run-status-label="{{.Run.Scene.Status.Label}}" data-run-status-tone="{{.Run.Scene.Status.Tone}}" data-run-status-detail="{{.Run.Scene.Status.Detail}}" data-run-status-is-waiting="{{.Run.Scene.Status.IsWaiting}}" data-run-status-is-terminal="{{.Run.Scene.Status.IsTerminal}}" data-run-waiting-active="{{.Run.Scene.Waiting.Active}}" data-run-waiting-reason="{{.Run.Scene.Waiting.Reason}}" data-run-waiting-label="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}" data-run-waiting-detail="{{.Run.Scene.Waiting.Detail}}" data-run-waiting-summary="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}" data-run-waiting-pending-kind="{{.Run.Scene.Waiting.PendingKind}}" data-run-waiting-approval-pending-count="{{.Run.Scene.Waiting.ApprovalPendingCount}}" data-run-waiting-status-label="{{.Run.Scene.Waiting.StatusLabel}}" data-run-last-event-type="{{.Run.Scene.LastEvent.Type}}" data-run-last-event-label="{{.Run.Scene.LastEvent.Label}}" data-run-last-event-summary="{{.Run.Scene.LastEvent.Summary}}" data-run-last-event-detail="{{.Run.Scene.LastEvent.Detail}}" data-run-last-event-occurred-label="{{.Run.Scene.LastEvent.OccurredLabel}}" data-run-last-event-tone="{{.Run.Scene.LastEvent.Tone}}">
-  <div>
-    <div class="sidebar-heading">
-      <div>
-        <p class="eyebrow">Run sidebar</p>
-        <h3>{{.Run.ID}}</h3>
+  <div class="sidebar-fragment__header">
+    <div>
+      <div class="sidebar-heading">
+        <div>
+          <p class="eyebrow">Run sidebar</p>
+          <h3>{{.Run.ID}}</h3>
+        </div>
+        <span class="status status--{{.Run.StatusView.Code}}" data-run-status-badge data-status-code="{{.Run.StatusView.Code}}" data-status-label="{{.Run.StatusView.Label}}">{{.Run.StatusView.Label}}</span>
       </div>
-      <span class="status status--{{.Run.StatusView.Code}}" data-run-status-badge data-status-code="{{.Run.StatusView.Code}}" data-status-label="{{.Run.StatusView.Label}}">{{.Run.StatusView.Label}}</span>
+      <p class="muted">{{.Run.Controls.Summary}}</p>
     </div>
-    <p class="muted">{{.Run.Controls.Summary}}</p>
+    {{if not .Run.StatusView.IsTerminal}}
+    <span class="sidebar-live-indicator" aria-live="polite">
+      <span class="sidebar-live-indicator__dot" aria-hidden="true"></span>
+      Live refresh
+    </span>
+    {{end}}
   </div>
 
   <div class="sidebar-control-strip">
@@ -121,6 +131,26 @@
           </div>
           <span class="status status--pending">Awaiting decision</span>
         </div>
+        <dl class="approval-card__facts">
+          <div>
+            <dt>Decision</dt>
+            <dd>Approve to continue the run, or deny to keep the tool from executing.</dd>
+          </div>
+          <div>
+            <dt>Tool call</dt>
+            <dd><code>{{.ToolCallID}}</code></dd>
+          </div>
+          <div>
+            <dt>Tool</dt>
+            <dd>{{.ToolName}}</dd>
+          </div>
+          {{if not .RequestedAt.IsZero}}
+          <div>
+            <dt>Requested</dt>
+            <dd>{{.RequestedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
+          </div>
+          {{end}}
+        </dl>
         {{if .ArgsJSON}}
         <div class="approval-card__body">
           <span class="detail-grid__label">Arguments</span>

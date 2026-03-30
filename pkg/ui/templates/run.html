@@ -8,7 +8,7 @@
   return;
 })();
 </script>
-<div class="run-layout">
+<div class="run-layout" data-live-control-surface="{{if .Run.StatusView.IsTerminal}}false{{else}}true{{end}}">
   {{template "sidebar" .}}
 
   <section class="panel panel--main">

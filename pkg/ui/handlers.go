@@ -122,23 +122,7 @@ func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view := run.Snapshot()
-	trigger, err := json.Marshal(map[string]any{
-		"ui:fragment-loaded": map[string]any{
-			"runId": view.ID,
-			"scene": buildSnapshotPayload(view),
-		},
-	})
-	if err == nil {
-		w.Header().Set("HX-Trigger", string(trigger))
-	}
-	s.render(w, "sidebar", pageData{
-		AppTitle:    "gollem",
-		PageTitle:   view.Title + " sidebar",
-		Path:        r.URL.Path,
-		CurrentYear: time.Now().Year(),
-		Run:         view,
-	})
+	s.renderSidebar(w, r, run.Snapshot())
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -183,15 +167,38 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(rec.body.Bytes())
 			return
 		}
-		waitForRunMutation(run, before, 750*time.Millisecond)
-		s.handleSidebar(w, r)
+		view := waitForRunMutation(run, before, action, 750*time.Millisecond)
+		s.renderSidebar(w, r, view)
 		return
 	}
 
 	run.actionHandler().ServeHTTP(w, clone)
 }
 
+func (s *Server) renderSidebar(w http.ResponseWriter, r *http.Request, view RunView) {
+	trigger, err := json.Marshal(map[string]any{
+		"ui:fragment-loaded": map[string]any{
+			"runId": view.ID,
+			"scene": buildSnapshotPayload(view),
+		},
+	})
+	if err == nil {
+		w.Header().Set("HX-Trigger", string(trigger))
+	}
+	s.renderNamedTemplate(w, "run", "sidebar", pageData{
+		AppTitle:    "gollem",
+		PageTitle:   view.Title + " sidebar",
+		Path:        r.URL.Path,
+		CurrentYear: time.Now().Year(),
+		Run:         view,
+	})
+}
+
 func (s *Server) render(w http.ResponseWriter, page string, data any) {
+	s.renderNamedTemplate(w, page, page, data)
+}
+
+func (s *Server) renderNamedTemplate(w http.ResponseWriter, page, templateName string, data any) {
 	tmpl, ok := s.pages[page]
 	if !ok {
 		http.Error(w, fmt.Sprintf("unknown ui page %q", page), http.StatusInternalServerError)
@@ -199,8 +206,8 @@ func (s *Server) render(w http.ResponseWriter, page string, data any) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, page, data); err != nil {
-		http.Error(w, fmt.Sprintf("render %s: %v", page, err), http.StatusInternalServerError)
+	if err := tmpl.ExecuteTemplate(w, templateName, data); err != nil {
+		http.Error(w, fmt.Sprintf("render %s: %v", templateName, err), http.StatusInternalServerError)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/fugue-labs/gollem/ext/agui"
 )
 
 type bufferedResponseWriter struct {
@@ -50,17 +52,47 @@ func isHTMXRequest(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("HX-Request")), "true")
 }
 
-func waitForRunMutation(run *RunRecord, before RunView, timeout time.Duration) {
+func waitForRunMutation(run *RunRecord, before RunView, action agui.Action, timeout time.Duration) RunView {
 	deadline := time.Now().Add(timeout)
+	settleWindow := 60 * time.Millisecond
+	lastStable := before
+	lastChangeAt := time.Now()
+
 	for {
 		after := run.Snapshot()
-		if runViewChanged(before, after) {
-			return
+		if runViewChanged(lastStable, after) {
+			lastStable = after
+			lastChangeAt = time.Now()
+		}
+		if runViewReflectsAction(before, after, action) && time.Since(lastChangeAt) >= settleWindow {
+			return after
 		}
 		if time.Now().After(deadline) {
-			return
+			return after
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func runViewReflectsAction(before, after RunView, action agui.Action) bool {
+	switch strings.TrimSpace(action.Type) {
+	case agui.ActionApproveToolCall, agui.ActionDenyToolCall:
+		toolCallID := strings.TrimSpace(action.ToolCallID)
+		if toolCallID == "" {
+			return runViewChanged(before, after)
+		}
+		beforeApprovals := pendingApprovalsByID(before.PendingApprovals)
+		if _, existed := beforeApprovals[toolCallID]; !existed {
+			return runViewChanged(before, after)
+		}
+		afterApprovals := pendingApprovalsByID(after.PendingApprovals)
+		_, stillPending := afterApprovals[toolCallID]
+		return !stillPending
+	case agui.ActionAbortSession:
+		status := strings.TrimSpace(after.Status)
+		return status == "aborted" || status == "failed" || after.StatusView.IsTerminal
+	default:
+		return runViewChanged(before, after)
 	}
 }
 
