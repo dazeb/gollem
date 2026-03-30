@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -248,8 +249,13 @@ func parseBoolString(raw string) (bool, error) {
 
 func newServeRunStarter(cfg serveRunConfig) ui.RunStarter {
 	return ui.RunStarterFunc(func(ctx context.Context, runtime *ui.RunRuntime, req ui.RunStartRequest) error {
-		agent := newServeAgent(cfg, runtime)
-		stream, err := agent.RunStream(ctx, req.Prompt, buildServeRunOptions(cfg, req)...)
+		runCfg := cfg
+		runCfg.model = modelutil.NewSessionModel(cfg.model)
+
+		agent := newServeAgent(runCfg, runtime)
+		defer closeServeRunModels(runCfg.model, agent.GetModel())
+
+		stream, err := agent.RunStream(ctx, req.Prompt, buildServeRunOptions(runCfg, req)...)
 		if err != nil {
 			return err
 		}
@@ -325,12 +331,8 @@ func applyRunStartDefaults(r *http.Request, defaults ui.RunStartRequest) (*http.
 				return nil, fmt.Errorf("invalid request body: %w", err)
 			}
 		}
-		if strings.TrimSpace(req.Provider) == "" {
-			req.Provider = strings.TrimSpace(defaults.Provider)
-		}
-		if strings.TrimSpace(req.Model) == "" {
-			req.Model = strings.TrimSpace(defaults.Model)
-		}
+		req.Provider = strings.TrimSpace(defaults.Provider)
+		req.Model = strings.TrimSpace(defaults.Model)
 
 		encoded, err := json.Marshal(req)
 		if err != nil {
@@ -350,12 +352,8 @@ func applyRunStartDefaults(r *http.Request, defaults ui.RunStartRequest) (*http.
 	for key, values := range r.Form {
 		form[key] = append([]string(nil), values...)
 	}
-	if strings.TrimSpace(form.Get("provider")) == "" {
-		form.Set("provider", strings.TrimSpace(defaults.Provider))
-	}
-	if strings.TrimSpace(form.Get("model")) == "" {
-		form.Set("model", strings.TrimSpace(defaults.Model))
-	}
+	form.Set("provider", strings.TrimSpace(defaults.Provider))
+	form.Set("model", strings.TrimSpace(defaults.Model))
 	encoded := form.Encode()
 	clone.Body = io.NopCloser(strings.NewReader(encoded))
 	clone.ContentLength = int64(len(encoded))
@@ -370,6 +368,25 @@ func closeServeModel(model core.Model) {
 	if closer, ok := model.(interface{ Close() error }); ok {
 		_ = closer.Close()
 	}
+}
+
+func closeServeRunModels(runModel, agentModel core.Model) {
+	closeServeModel(agentModel)
+	if !sameServeModelInstance(runModel, agentModel) {
+		closeServeModel(runModel)
+	}
+}
+
+func sameServeModelInstance(a, b core.Model) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	ta := reflect.TypeOf(a)
+	tb := reflect.TypeOf(b)
+	if ta != tb || !ta.Comparable() {
+		return false
+	}
+	return a == b
 }
 
 func openBrowser(ctx context.Context, target string) error {

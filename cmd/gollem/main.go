@@ -1741,7 +1741,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `gollem - Coding agent framework CLI
 
 Usage:
-  gollem <command> [options] "prompt"
+  gollem <command> [options] [prompt]
 
 Commands:
   run     Run a coding agent with tools (for benchmarks and automation)
