@@ -146,7 +146,9 @@ type RunView struct {
 	Events                 []string
 	RecentProtocolEvents   []string
 	RecentProtocolActivity []RunProtocolEventView
+	LastProtocolActivity   RunProtocolEventView
 	RecentActivity         []RunActivityView
+	LastActivity           RunActivityView
 	SessionID              string
 	Usage                  core.RunUsage
 	WaitingReason          string
@@ -405,9 +407,10 @@ func (r *RunRecord) Snapshot() RunView {
 	waiting := buildWaitingView(r.status, r.waitingReason, pendingApprovalCount)
 	statusView := buildStatusView(r.status, waiting)
 	latest := latestActivity(recent)
-	controls := buildControlsView(statusView, waiting, pendingApprovalCount, latest, len(recent) > 0)
+	latestProtocol := latestProtocolActivity(recentProtocolActivity)
+	controls := buildControlsView(statusView, waiting, pendingApprovalCount, latest, latestProtocol, len(recent) > 0)
 
-	return RunView{
+	view := RunView{
 		ID:                     r.id,
 		Title:                  r.title,
 		Status:                 r.status,
@@ -429,6 +432,13 @@ func (r *RunRecord) Snapshot() RunView {
 		PendingApprovals:       pending,
 		Controls:               controls,
 	}
+	if latest != nil {
+		view.LastActivity = *latest
+	}
+	if latestProtocol != nil {
+		view.LastProtocolActivity = *latestProtocol
+	}
+	return view
 }
 
 func (r *RunRecord) attachRuntimeProjection() {
@@ -729,6 +739,14 @@ func latestActivity(src []RunActivityView) *RunActivityView {
 	return &activity
 }
 
+func latestProtocolActivity(src []RunProtocolEventView) *RunProtocolEventView {
+	if len(src) == 0 {
+		return nil
+	}
+	activity := src[len(src)-1]
+	return &activity
+}
+
 func buildProtocolEventViews(events []string, activities []RunActivityView) []RunProtocolEventView {
 	if len(events) == 0 {
 		return nil
@@ -774,16 +792,22 @@ func protocolEventTone(eventType string) string {
 	}
 }
 
-func buildControlsView(status RunStatusView, waiting RunWaitingView, pendingApprovalCount int, latest *RunActivityView, hasRecentActivity bool) RunControlsView {
+func buildControlsView(status RunStatusView, waiting RunWaitingView, pendingApprovalCount int, latest *RunActivityView, latestProtocol *RunProtocolEventView, hasRecentActivity bool) RunControlsView {
 	lastEventType := status.Code
 	lastEventLabel := firstNonEmpty(waiting.Label, status.Label)
 	lastActivitySummary := lastEventLabel
 	lastActivityTimeLabel := ""
+	if latestProtocol != nil {
+		lastEventType = firstNonEmpty(latestProtocol.Type, lastEventType)
+		lastEventLabel = firstNonEmpty(latestProtocol.Label, lastEventLabel)
+		lastActivitySummary = firstNonEmpty(latestProtocol.Summary, lastActivitySummary)
+		lastActivityTimeLabel = firstNonEmpty(latestProtocol.OccurredLabel, lastActivityTimeLabel)
+	}
 	if latest != nil {
-		lastEventType = latest.Type
+		lastEventType = firstNonEmpty(latest.Type, lastEventType)
 		lastEventLabel = firstNonEmpty(latest.Label, lastEventLabel)
-		lastActivitySummary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), lastEventLabel)
-		lastActivityTimeLabel = latest.OccurredLabel
+		lastActivitySummary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), lastActivitySummary)
+		lastActivityTimeLabel = firstNonEmpty(latest.OccurredLabel, lastActivityTimeLabel)
 	}
 	pendingApprovalLabel := fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
 	if pendingApprovalCount == 0 {

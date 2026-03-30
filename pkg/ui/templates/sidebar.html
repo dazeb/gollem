@@ -1,5 +1,5 @@
 {{define "sidebar"}}
-<div class="sidebar-fragment" data-renderer-root>
+<div class="sidebar-fragment" data-renderer-root data-run-id="{{.Run.ID}}" data-status-code="{{.Run.StatusView.Code}}" data-status-label="{{.Run.StatusView.Label}}" data-waiting-reason="{{.Run.Waiting.Reason}}" data-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}Active{{end}}" data-last-event-type="{{.Run.Controls.LastEventType}}" data-last-event-label="{{.Run.Controls.LastEventLabel}}">
   <div>
     <p class="eyebrow">Run sidebar</p>
     <h3>{{.Run.ID}}</h3>

@@ -1,4 +1,313 @@
 {{define "content"}}
+<script>
+(() => {
+  if (window.__gollemRunLabelsInstalled) {
+    return;
+  }
+  window.__gollemRunLabelsInstalled = true;
+
+  const titleize = (value, fallback = '') => {
+    const text = String(value || '')
+      .replace(/[._-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) {
+      return fallback;
+    }
+    return text
+      .split(' ')
+      .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : ''))
+      .join(' ');
+  };
+
+  const statusLabelFor = (status, fallback = '') => fallback || titleize(status, 'Run status');
+
+  const waitingLabelFor = (reason, fallback = '') => {
+    if (fallback && !/^(active|waiting)$/i.test(fallback)) {
+      return fallback;
+    }
+    switch (String(reason || '').trim()) {
+      case 'approval':
+        return 'Waiting for approval';
+      case 'deferred':
+        return 'Waiting for deferred input';
+      case 'approval_and_deferred':
+        return 'Waiting for approval and deferred input';
+      case '':
+        return 'Active';
+      default:
+        return titleize(reason, 'Waiting');
+    }
+  };
+
+  const customEventLabelFor = (name, value) => {
+    switch (name) {
+      case 'gollem.run.waiting':
+        return waitingLabelFor(value && value.reason, 'Waiting');
+      case 'gollem.run.resumed':
+        return 'Run resumed';
+      case 'gollem.approval.requested':
+        return 'Approval requested';
+      case 'gollem.approval.resolved':
+        return value && value.approved === false ? 'Approval denied' : 'Approval granted';
+      case 'gollem.deferred.requested':
+        return 'Deferred input requested';
+      case 'gollem.deferred.resolved':
+        return value && value.isError ? 'Deferred input failed' : 'Deferred input received';
+      default:
+        return titleize(String(name || '').replace(/^gollem\./, ''), 'Custom event');
+    }
+  };
+
+  const eventLabelFor = (eventType, name, value, fallback = '') => {
+    if (fallback && !/^#\d+\s+·\s+/i.test(fallback)) {
+      return fallback;
+    }
+    switch (String(eventType || '').trim()) {
+      case 'RUN_STARTED':
+        return 'Run started';
+      case 'RUN_FINISHED':
+        return 'Run completed';
+      case 'RUN_ERROR':
+        return 'Run failed';
+      case 'STEP_STARTED':
+        return 'Step started';
+      case 'STEP_FINISHED':
+        return 'Step completed';
+      case 'TEXT_MESSAGE_START':
+      case 'TEXT_MESSAGE_CONTENT':
+      case 'TEXT_MESSAGE_END':
+        return 'Text stream';
+      case 'REASONING_START':
+      case 'REASONING_MESSAGE_START':
+      case 'REASONING_MESSAGE_CONTENT':
+      case 'REASONING_MESSAGE_END':
+      case 'REASONING_END':
+        return 'Reasoning update';
+      case 'TOOL_CALL_START':
+        return 'Tool called';
+      case 'TOOL_CALL_ARGS':
+        return 'Tool arguments';
+      case 'TOOL_CALL_END':
+        return 'Tool dispatched';
+      case 'TOOL_CALL_RESULT':
+        return 'Tool completed';
+      case 'CUSTOM':
+        return customEventLabelFor(name, value);
+      case 'snapshot':
+        return fallback || 'Session snapshot';
+      default:
+        return titleize(eventType || name, fallback || 'Event');
+    }
+  };
+
+  const findScene = (url) => {
+    const scenes = Array.from(document.querySelectorAll('[data-run-scene]'));
+    return scenes.find((node) => node.dataset.eventsUrl === url) || scenes[0] || null;
+  };
+
+  const applySceneLabels = (scene) => {
+    if (!scene) {
+      return;
+    }
+    const statusCode = scene.dataset.runStatus || scene.dataset.sceneStatus || 'starting';
+    const statusLabel = statusLabelFor(statusCode, scene.dataset.runStatusLabel || scene.dataset.sceneStatusLabel || '');
+    scene.dataset.runStatusLabel = statusLabel;
+    scene.dataset.sceneStatusLabel = statusLabel;
+
+    document.querySelectorAll('[data-run-status-badge]').forEach((target) => {
+      target.dataset.statusCode = statusCode;
+      target.dataset.statusLabel = statusLabel;
+      target.textContent = statusLabel;
+    });
+
+    const streamState = scene.querySelector('[data-scene-stream-state]');
+    if (streamState) {
+      streamState.dataset.statusLabel = statusLabel;
+      streamState.textContent = statusLabel;
+    }
+
+    const waitingReason = scene.dataset.runWaitingReason || scene.dataset.sceneWaitingReason || '';
+    const waitingLabel = waitingLabelFor(waitingReason, scene.dataset.runWaitingLabel || '');
+    scene.dataset.runWaitingLabel = waitingLabel;
+    const waitingTarget = scene.querySelector('[data-scene-waiting-reason]');
+    if (waitingTarget) {
+      waitingTarget.dataset.waitingLabel = waitingLabel;
+      waitingTarget.textContent = waitingLabel;
+    }
+
+    const lastEventTarget = scene.querySelector('[data-run-last-event]');
+    if (lastEventTarget) {
+      const lastEventLabel = eventLabelFor(
+        lastEventTarget.dataset.eventType || scene.dataset.runLastEventType || '',
+        scene.dataset.runLastCustomEventName || '',
+        null,
+        scene.dataset.runLastEventLabel || lastEventTarget.dataset.eventLabel || ''
+      );
+      scene.dataset.runLastEventLabel = lastEventLabel;
+      lastEventTarget.dataset.eventLabel = lastEventLabel;
+      lastEventTarget.textContent = lastEventLabel;
+    }
+  };
+
+  const updateSceneFromPayload = (scene, payload) => {
+    if (!scene || !payload || typeof payload !== 'object') {
+      return;
+    }
+
+    const materialize = (value) => {
+      if (!value) {
+        return null;
+      }
+      if (typeof value === 'object') {
+        return value;
+      }
+      try {
+        return JSON.parse(value);
+      } catch {
+        return null;
+      }
+    };
+
+    const data = materialize(payload.data) || payload.data || null;
+    if (payload.type === 'session.snapshot' && data && typeof data === 'object') {
+      const pendingApprovals = data.pending_approvals && typeof data.pending_approvals === 'object' ? Object.keys(data.pending_approvals).length : 0;
+      const pendingDeferred = data.pending_external_inputs && typeof data.pending_external_inputs === 'object' ? Object.keys(data.pending_external_inputs).length : 0;
+      scene.dataset.runStatus = data.status || scene.dataset.runStatus || 'starting';
+      scene.dataset.runStatusLabel = statusLabelFor(scene.dataset.runStatus, scene.dataset.runStatusLabel || '');
+      let waitingReason = String(data.waiting_reason || '').trim();
+      if (!waitingReason && scene.dataset.runStatus === 'waiting') {
+        if (pendingApprovals && pendingDeferred) {
+          waitingReason = 'approval_and_deferred';
+        } else if (pendingApprovals) {
+          waitingReason = 'approval';
+        } else if (pendingDeferred) {
+          waitingReason = 'deferred';
+        }
+      }
+      scene.dataset.runWaitingReason = waitingReason;
+      scene.dataset.runWaitingLabel = waitingLabelFor(waitingReason, scene.dataset.runWaitingLabel || '');
+      applySceneLabels(scene);
+      return;
+    }
+
+    const event = data && typeof data === 'object' && data.type ? data : payload;
+    if (!event || typeof event !== 'object') {
+      return;
+    }
+
+    const eventType = String(event.type || '').trim();
+    const customName = eventType === 'CUSTOM' ? String(event.name || '').trim() : '';
+    const customValue = customName ? materialize(event.value) || event.value || null : null;
+    scene.dataset.runLastEventType = eventType || scene.dataset.runLastEventType || '';
+    scene.dataset.runLastCustomEventName = customName;
+
+    switch (eventType) {
+      case 'RUN_STARTED':
+        scene.dataset.runStatus = 'running';
+        scene.dataset.runWaitingReason = '';
+        break;
+      case 'RUN_FINISHED':
+        scene.dataset.runStatus = scene.dataset.runWaitingReason ? 'waiting' : 'completed';
+        break;
+      case 'RUN_ERROR':
+        scene.dataset.runStatus = 'failed';
+        scene.dataset.runWaitingReason = '';
+        break;
+      case 'CUSTOM':
+        switch (customName) {
+          case 'gollem.run.waiting':
+            scene.dataset.runStatus = 'waiting';
+            scene.dataset.runWaitingReason = String((customValue && customValue.reason) || '').trim();
+            break;
+          case 'gollem.run.resumed':
+            scene.dataset.runStatus = 'running';
+            scene.dataset.runWaitingReason = '';
+            break;
+          case 'gollem.approval.requested':
+            scene.dataset.runStatus = 'waiting';
+            scene.dataset.runWaitingReason = 'approval';
+            break;
+          case 'gollem.approval.resolved':
+            scene.dataset.runStatus = 'running';
+            scene.dataset.runWaitingReason = '';
+            break;
+          case 'gollem.deferred.requested':
+            scene.dataset.runStatus = 'waiting';
+            scene.dataset.runWaitingReason = 'deferred';
+            break;
+          case 'gollem.deferred.resolved':
+            scene.dataset.runStatus = 'running';
+            scene.dataset.runWaitingReason = '';
+            break;
+          default:
+            break;
+        }
+        scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
+        break;
+      default:
+        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, scene.dataset.runLastEventLabel || '');
+        break;
+    }
+
+    if (eventType !== 'CUSTOM') {
+      scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, scene.dataset.runLastEventLabel || '');
+    }
+    scene.dataset.runStatusLabel = statusLabelFor(scene.dataset.runStatus, scene.dataset.runStatusLabel || '');
+    scene.dataset.runWaitingLabel = waitingLabelFor(scene.dataset.runWaitingReason || '', scene.dataset.runWaitingLabel || '');
+    applySceneLabels(scene);
+  };
+
+  const hydrateLabels = (root = document) => {
+    if (root.matches && root.matches('[data-run-scene]')) {
+      applySceneLabels(root);
+    }
+    root.querySelectorAll?.('[data-run-scene]').forEach((scene) => applySceneLabels(scene));
+  };
+
+  const NativeEventSource = window.EventSource;
+  if (typeof NativeEventSource === 'function' && !window.__gollemRunLabelEventSourceWrapped) {
+    const WrappedEventSource = function(url, init) {
+      const source = new NativeEventSource(url, init);
+      source.addEventListener('message', (event) => {
+        let payload = null;
+        try {
+          payload = JSON.parse(event.data || 'null');
+        } catch {
+          payload = null;
+        }
+        updateSceneFromPayload(findScene(url), payload);
+      });
+      return source;
+    };
+    WrappedEventSource.prototype = NativeEventSource.prototype;
+    WrappedEventSource.CONNECTING = NativeEventSource.CONNECTING;
+    WrappedEventSource.OPEN = NativeEventSource.OPEN;
+    WrappedEventSource.CLOSED = NativeEventSource.CLOSED;
+    window.EventSource = WrappedEventSource;
+    window.__gollemRunLabelEventSourceWrapped = true;
+  }
+
+  document.addEventListener('DOMContentLoaded', () => hydrateLabels(document));
+  document.body?.addEventListener('htmx:load', (event) => hydrateLabels(event.target || document));
+  document.body?.addEventListener('ui:fragment-loaded', (event) => {
+    const detail = event.detail || {};
+    const scene = Array.from(document.querySelectorAll('[data-run-scene]')).find((node) => !detail.runId || node.dataset.runId === detail.runId);
+    if (scene) {
+      if (detail.statusLabel) {
+        scene.dataset.runStatusLabel = detail.statusLabel;
+      }
+      if (detail.waitingLabel) {
+        scene.dataset.runWaitingLabel = detail.waitingLabel;
+      }
+      if (detail.lastEventLabel) {
+        scene.dataset.runLastEventLabel = detail.lastEventLabel;
+      }
+    }
+    hydrateLabels(document);
+  });
+})();
+</script>
 <div class="run-layout">
   <aside id="run-sidebar" class="panel panel--sidebar" hx-get="/runs/{{.Run.ID}}/sidebar" hx-trigger="load" hx-swap="innerHTML">
     <p class="muted">Loading sidebar…</p>
@@ -51,6 +360,7 @@
       data-run-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}"
       data-run-last-event-type="{{.Run.Controls.LastEventType}}"
       data-run-last-event-label="{{.Run.Controls.LastEventLabel}}"
+      data-run-last-activity-summary="{{.Run.Controls.LastActivitySummary}}"
       data-scene-status="{{.Run.StatusView.Code}}"
       data-scene-status-label="{{.Run.StatusView.Label}}"
       data-scene-connection="connecting"
