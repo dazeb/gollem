@@ -108,20 +108,8 @@ func TestHandleStartRunAcceptsJSONAndFormBodies(t *testing.T) {
 	}
 
 	assertStartedRunRequestSet(t, started,
-		RunStartRequest{
-			Title:    "JSON run",
-			Summary:  "json summary",
-			Prompt:   "json prompt",
-			Provider: "json-provider",
-			Model:    "json-model",
-		},
-		RunStartRequest{
-			Title:    "Form run",
-			Summary:  "form summary",
-			Prompt:   "form prompt",
-			Provider: "form-provider",
-			Model:    "form-model",
-		},
+		RunStartRequest{Title: "JSON run", Summary: "json summary", Prompt: "json prompt", Provider: "json-provider", Model: "json-model"},
+		RunStartRequest{Title: "Form run", Summary: "form summary", Prompt: "form prompt", Provider: "form-provider", Model: "form-model"},
 	)
 }
 
@@ -227,7 +215,10 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		">1<",
 	)
 
-	assetResp := mustDoRequest(t, client, mustNewRequest(t, http.MethodGet, ts.URL+"/static/style.css", "", nil))
+	assetResp, err := client.Get(ts.URL + "/static/style.css")
+	if err != nil {
+		t.Fatalf("GET static asset: %v", err)
+	}
 	assetBody, err := io.ReadAll(assetResp.Body)
 	assetResp.Body.Close()
 	if err != nil {
@@ -262,12 +253,7 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 	assertUISSECustomEvent(t, preApprovalFrames, "gollem.approval.requested")
 	assertUISSECustomEvent(t, preApprovalFrames, "gollem.run.waiting")
 
-	actionResp := mustPOSTForm(t, client, ts.URL+"/runs/"+runID+"/action", url.Values{
-		"type":         {agui.ActionApproveToolCall},
-		"session_id":   {"wrong-session"},
-		"tool_call_id": {"tool_approve"},
-		"message":      {"ship it"},
-	})
+	actionResp := mustPOSTForm(t, client, ts.URL+"/runs/"+runID+"/action", url.Values{"type": {agui.ActionApproveToolCall}, "session_id": {"wrong-session"}, "tool_call_id": {"tool_approve"}, "message": {"ship it"}})
 	defer actionResp.Body.Close()
 	if actionResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(actionResp.Body)
@@ -390,21 +376,6 @@ func TestHandleActionDenyFlow(t *testing.T) {
 	)
 }
 
-func TestHandleActionRejectsBadFormInput(t *testing.T) {
-	store := NewRunStateStore()
-	server := MustNewServer(WithRunStore(store))
-	run := store.create(RunStartRequest{Prompt: "bad action"})
-
-	req := httptest.NewRequest(http.MethodPost, "/runs/"+run.ID()+"/action", strings.NewReader(url.Values{
-		"approved": {"definitely"},
-	}.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-	assertHTTPErrorContains(t, rec, http.StatusBadRequest, "approved must be a boolean")
-}
-
 func TestHandleActionAbortUsesRunSpecificSessionAndMarksRunAborted(t *testing.T) {
 	store := NewRunStateStore()
 	server := MustNewServer(
@@ -430,10 +401,7 @@ func TestHandleActionAbortUsesRunSpecificSessionAndMarksRunAborted(t *testing.T)
 
 	run := waitForRun(t, store, runID)
 	waitForRunStatus(t, store, runID, "running")
-	actionResp := mustPOSTForm(t, client, ts.URL+"/runs/"+runID+"/action", url.Values{
-		"type":       {agui.ActionAbortSession},
-		"session_id": {"wrong-session"},
-	})
+	actionResp := mustPOSTForm(t, client, ts.URL+"/runs/"+runID+"/action", url.Values{"type": {agui.ActionAbortSession}, "session_id": {"wrong-session"}})
 	defer actionResp.Body.Close()
 	if actionResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(actionResp.Body)
@@ -461,6 +429,19 @@ func TestHandleActionAbortUsesRunSpecificSessionAndMarksRunAborted(t *testing.T)
 	if got := run.Session().GetStatus(); got != agui.SessionStatusAborted {
 		t.Fatalf("session status = %q, want %q", got, agui.SessionStatusAborted)
 	}
+}
+
+func TestHandleActionRejectsBadFormInput(t *testing.T) {
+	store := NewRunStateStore()
+	server := MustNewServer(WithRunStore(store))
+	run := store.create(RunStartRequest{Prompt: "bad action"})
+
+	req := httptest.NewRequest(http.MethodPost, "/runs/"+run.ID()+"/action", strings.NewReader(url.Values{"approved": {"definitely"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+	assertHTTPErrorContains(t, rec, http.StatusBadRequest, "approved must be a boolean")
 }
 
 func TestRunCompletedDeferredPreservesExistingWaitingReason(t *testing.T) {
@@ -507,53 +488,6 @@ func TestRunStateStoreCreateRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
-func mustPOSTForm(t *testing.T, client *http.Client, target string, form url.Values) *http.Response {
-	t.Helper()
-	return mustDoRequest(t, client, mustNewRequest(t, http.MethodPost, target, form.Encode(), func(req *http.Request) {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}))
-}
-
-func mustPOSTJSON(t *testing.T, client *http.Client, target, body string) *http.Response {
-	t.Helper()
-	return mustDoRequest(t, client, mustNewRequest(t, http.MethodPost, target, body, func(req *http.Request) {
-		req.Header.Set("Content-Type", "application/json")
-	}))
-}
-
-func mustNewRequest(t *testing.T, method, target, body string, mutate func(*http.Request)) *http.Request {
-	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("new request %s %s: %v", method, target, err)
-	}
-	if mutate != nil {
-		mutate(req)
-	}
-	return req
-}
-
-func mustDoRequest(t *testing.T, client *http.Client, req *http.Request) *http.Response {
-	t.Helper()
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", req.Method, req.URL.String(), err)
-	}
-	return resp
-}
-
-func assertStartedRunRequest(t *testing.T, started <-chan RunStartRequest, want RunStartRequest) {
-	t.Helper()
-	select {
-	case got := <-started:
-		if got != want {
-			t.Fatalf("started request = %+v, want %+v", got, want)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("timed out waiting for start request %+v", want)
-	}
-}
-
 func assertStartedRunRequestSet(t *testing.T, started <-chan RunStartRequest, wants ...RunStartRequest) {
 	t.Helper()
 	remaining := append([]RunStartRequest(nil), wants...)
@@ -586,6 +520,41 @@ func assertHTTPErrorContains(t *testing.T, rec *httptest.ResponseRecorder, wantS
 	if !strings.Contains(rec.Body.String(), wantText) {
 		t.Fatalf("body %q missing %q", rec.Body.String(), wantText)
 	}
+}
+
+func mustNewRequest(t *testing.T, method, target, body string, mutate func(*http.Request)) *http.Request {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request %s %s: %v", method, target, err)
+	}
+	if mutate != nil {
+		mutate(req)
+	}
+	return req
+}
+
+func mustDoRequest(t *testing.T, client *http.Client, req *http.Request) *http.Response {
+	t.Helper()
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", req.Method, req.URL.String(), err)
+	}
+	return resp
+}
+
+func mustPOSTForm(t *testing.T, client *http.Client, target string, form url.Values) *http.Response {
+	t.Helper()
+	return mustDoRequest(t, client, mustNewRequest(t, http.MethodPost, target, form.Encode(), func(req *http.Request) {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}))
+}
+
+func mustPOSTJSON(t *testing.T, client *http.Client, target, body string) *http.Response {
+	t.Helper()
+	return mustDoRequest(t, client, mustNewRequest(t, http.MethodPost, target, body, func(req *http.Request) {
+		req.Header.Set("Content-Type", "application/json")
+	}))
 }
 
 func mustGETBody(t *testing.T, client *http.Client, target string) string {
