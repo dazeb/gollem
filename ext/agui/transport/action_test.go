@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -106,6 +107,105 @@ func TestActionHandler_AbortSession(t *testing.T) {
 	}
 }
 
+func TestActionHandler_ApproveToolCallForm(t *testing.T) {
+	bridge := agui.NewApprovalBridge()
+	approvedCh := waitForApprovalResult(t, bridge, "tc_form")
+
+	h := NewActionHandler(ActionHandlerConfig{
+		Runtimes: map[string]*SessionRuntime{
+			"ses_form": {ApprovalBridge: bridge},
+		},
+	})
+
+	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
+		"type":         {agui.ActionApproveToolCall},
+		"session_id":   {"ses_form"},
+		"tool_call_id": {"tc_form"},
+		"message":      {"approved from form"},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	select {
+	case approved := <-approvedCh:
+		if !approved {
+			t.Fatal("expected approved=true")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for approval resolution")
+	}
+
+	var body successResponse
+	decodeJSONBody(t, resp, &body)
+	if body.Action != agui.ActionApproveToolCall || body.ToolCallID != "tc_form" || body.Message != "approved from form" {
+		t.Fatalf("unexpected response: %+v", body)
+	}
+}
+
+func TestActionHandler_DenyToolCallForm(t *testing.T) {
+	bridge := agui.NewApprovalBridge()
+	approvedCh := waitForApprovalResult(t, bridge, "tc_deny_form")
+
+	h := NewActionHandler(ActionHandlerConfig{
+		Runtimes: map[string]*SessionRuntime{
+			"ses_form": {ApprovalBridge: bridge},
+		},
+	})
+
+	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
+		"type":         {agui.ActionDenyToolCall},
+		"session_id":   {"ses_form"},
+		"tool_call_id": {"tc_deny_form"},
+		"message":      {"denied from form"},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	select {
+	case approved := <-approvedCh:
+		if approved {
+			t.Fatal("expected approved=false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for denial resolution")
+	}
+
+	var body successResponse
+	decodeJSONBody(t, resp, &body)
+	if body.Action != agui.ActionDenyToolCall || body.ToolCallID != "tc_deny_form" || body.Message != "denied from form" {
+		t.Fatalf("unexpected response: %+v", body)
+	}
+}
+
+func TestActionHandler_AbortSessionForm(t *testing.T) {
+	session := agui.NewSession(agui.SessionModeCoreRun)
+	var cancelled atomic.Int32
+	h := NewActionHandler(ActionHandlerConfig{
+		Runtimes: map[string]*SessionRuntime{
+			"ses_form": {
+				Session: session,
+				Cancel: func() {
+					cancelled.Add(1)
+				},
+			},
+		},
+	})
+
+	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
+		"type":       {agui.ActionAbortSession},
+		"session_id": {"ses_form"},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if cancelled.Load() != 1 {
+		t.Fatalf("cancel called %d times, want 1", cancelled.Load())
+	}
+	if got := session.GetStatus(); got != agui.SessionStatusAborted {
+		t.Fatalf("session status = %q, want %q", got, agui.SessionStatusAborted)
+	}
+}
+
 func TestActionHandler_ApproveViaSessionRegistry(t *testing.T) {
 	bridge := agui.NewApprovalBridge()
 	approvedCh := waitForApprovalResult(t, bridge, "tc_reg")
@@ -152,6 +252,16 @@ func TestActionHandler_RejectsTrailingJSON(t *testing.T) {
 	h := NewActionHandler(ActionHandlerConfig{})
 	resp := doActionRequest(t, h, http.MethodPost, `{"type":"abort_session","session_id":"ses_1"} {}`)
 	assertErrorResponse(t, resp, http.StatusBadRequest, "multiple JSON values")
+}
+
+func TestActionHandler_InvalidFormValue(t *testing.T) {
+	h := NewActionHandler(ActionHandlerConfig{})
+	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
+		"type":       {agui.ActionAbortSession},
+		"session_id": {"ses_1"},
+		"last_seq":   {"not-a-number"},
+	})
+	assertErrorResponse(t, resp, http.StatusBadRequest, "last_seq must be an unsigned integer")
 }
 
 func TestActionHandler_RejectsWrongMethod(t *testing.T) {
@@ -235,10 +345,20 @@ func waitForApprovalResult(t *testing.T, bridge *agui.ApprovalBridge, toolCallID
 
 func doActionRequest(t *testing.T, h http.Handler, method, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return doActionRequestWithContentType(t, h, method, body, "application/json")
+}
+
+func doActionFormRequest(t *testing.T, h http.Handler, method string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	return doActionRequestWithContentType(t, h, method, form.Encode(), "application/x-www-form-urlencoded")
+}
+
+func doActionRequestWithContentType(t *testing.T, h http.Handler, method, body, contentType string) *httptest.ResponseRecorder {
+	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, "/action", strings.NewReader(body))
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	h.ServeHTTP(rec, req)
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {

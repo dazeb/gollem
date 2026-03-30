@@ -2,8 +2,12 @@ package transport
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/fugue-labs/gollem/ext/agui"
@@ -142,20 +146,9 @@ func (h *ActionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer r.Body.Close()
-
-	var action agui.Action
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&action); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	if err := dec.Decode(new(struct{})); err != io.EOF {
-		if err == nil {
-			writeError(w, http.StatusBadRequest, "invalid request body: multiple JSON values are not allowed")
-			return
-		}
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+	action, err := decodeActionRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -236,6 +229,97 @@ func (h *ActionHandler) handleAbort(w http.ResponseWriter, action agui.Action) {
 		SessionID: action.SessionID,
 		Message:   "session aborted",
 	})
+}
+
+func decodeActionRequest(r *http.Request) (agui.Action, error) {
+	if requestHasJSONBody(r) {
+		return decodeJSONAction(r)
+	}
+	return decodeFormAction(r)
+}
+
+func requestHasJSONBody(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))), "application/json")
+}
+
+func decodeJSONAction(r *http.Request) (agui.Action, error) {
+	defer r.Body.Close()
+
+	var action agui.Action
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&action); err != nil {
+		return agui.Action{}, fmt.Errorf("invalid request body: %w", err)
+	}
+	if err := dec.Decode(new(struct{})); err != io.EOF {
+		if err == nil {
+			return agui.Action{}, errors.New("invalid request body: multiple JSON values are not allowed")
+		}
+		return agui.Action{}, fmt.Errorf("invalid request body: %w", err)
+	}
+	return action, nil
+}
+
+func decodeFormAction(r *http.Request) (agui.Action, error) {
+	if err := r.ParseForm(); err != nil {
+		return agui.Action{}, fmt.Errorf("invalid form body: %w", err)
+	}
+
+	action := agui.Action{
+		Type:       r.FormValue("type"),
+		SessionID:  r.FormValue("session_id"),
+		ToolCallID: r.FormValue("tool_call_id"),
+		ToolName:   r.FormValue("tool_name"),
+		Content:    r.FormValue("content"),
+		Message:    r.FormValue("message"),
+	}
+
+	approved, err := parseOptionalBoolFormValue(r, "approved")
+	if err != nil {
+		return agui.Action{}, err
+	}
+	action.Approved = approved
+
+	isError, err := parseOptionalBoolFormValue(r, "is_error")
+	if err != nil {
+		return agui.Action{}, err
+	}
+	if isError != nil {
+		action.IsError = *isError
+	}
+
+	lastSeq, err := parseOptionalUint64FormValue(r, "last_seq")
+	if err != nil {
+		return agui.Action{}, err
+	}
+	if lastSeq != nil {
+		action.LastSeq = *lastSeq
+	}
+
+	return action, nil
+}
+
+func parseOptionalBoolFormValue(r *http.Request, key string) (*bool, error) {
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid form body: %s must be a boolean", key)
+	}
+	return &parsed, nil
+}
+
+func parseOptionalUint64FormValue(r *http.Request, key string) (*uint64, error) {
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid form body: %s must be an unsigned integer", key)
+	}
+	return &parsed, nil
 }
 
 func (h *ActionHandler) runtimeForSession(sessionID string) (*SessionRuntime, bool) {
