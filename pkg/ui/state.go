@@ -109,23 +109,24 @@ type RunControlsView struct {
 
 // RunView is the UI projection for one run.
 type RunView struct {
-	ID               string
-	Title            string
-	Status           string
-	Provider         string
-	Model            string
-	Summary          string
-	Prompt           string
-	StartedAt        time.Time
-	UpdatedAt        time.Time
-	Events           []string
-	RecentActivity   []RunActivityView
-	SessionID        string
-	Usage            core.RunUsage
-	WaitingReason    string
-	Waiting          RunWaitingView
-	PendingApprovals []PendingApprovalView
-	Controls         RunControlsView
+	ID                   string
+	Title                string
+	Status               string
+	Provider             string
+	Model                string
+	Summary              string
+	Prompt               string
+	StartedAt            time.Time
+	UpdatedAt            time.Time
+	Events               []string
+	RecentProtocolEvents []string
+	RecentActivity       []RunActivityView
+	SessionID            string
+	Usage                core.RunUsage
+	WaitingReason        string
+	Waiting              RunWaitingView
+	PendingApprovals     []PendingApprovalView
+	Controls             RunControlsView
 }
 
 // RunStartRequest is the accepted POST /runs/start payload.
@@ -372,32 +373,34 @@ func (r *RunRecord) Snapshot() RunView {
 	})
 
 	recent := snapshotRecentActivities(r.activities)
+	recentProtocolEvents := snapshotRecentProtocolEvents(r.events)
 	pendingApprovalCount := len(pending)
 	waiting := buildWaitingView(r.status, r.waitingReason, pendingApprovalCount)
 	lastLabel := waiting.Label
 	if len(recent) > 0 {
 		lastLabel = recent[len(recent)-1].Label
 	}
-	controls := buildControlsView(r.status, pendingApprovalCount, len(recent) > 0, lastLabel)
+	controls := buildControlsView(r.status, waiting, pendingApprovalCount, len(recent) > 0, lastLabel)
 
 	return RunView{
-		ID:               r.id,
-		Title:            r.title,
-		Status:           r.status,
-		Provider:         r.provider,
-		Model:            r.model,
-		Summary:          r.summary,
-		Prompt:           r.prompt,
-		StartedAt:        r.startedAt,
-		UpdatedAt:        r.updatedAt,
-		Events:           append([]string(nil), r.events...),
-		RecentActivity:   recent,
-		SessionID:        r.session.ID,
-		Usage:            r.usage,
-		WaitingReason:    waiting.Reason,
-		Waiting:          waiting,
-		PendingApprovals: pending,
-		Controls:         controls,
+		ID:                   r.id,
+		Title:                r.title,
+		Status:               r.status,
+		Provider:             r.provider,
+		Model:                r.model,
+		Summary:              r.summary,
+		Prompt:               r.prompt,
+		StartedAt:            r.startedAt,
+		UpdatedAt:            r.updatedAt,
+		Events:               append([]string(nil), r.events...),
+		RecentProtocolEvents: recentProtocolEvents,
+		RecentActivity:       recent,
+		SessionID:            r.session.ID,
+		Usage:                r.usage,
+		WaitingReason:        waiting.Reason,
+		Waiting:              waiting,
+		PendingApprovals:     pending,
+		Controls:             controls,
 	}
 }
 
@@ -628,6 +631,17 @@ func snapshotRecentActivities(src []RunActivityView) []RunActivityView {
 	return append([]RunActivityView(nil), src[start:]...)
 }
 
+func snapshotRecentProtocolEvents(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	start := 0
+	if len(src) > maxRecentRunActivities {
+		start = len(src) - maxRecentRunActivities
+	}
+	return append([]string(nil), src[start:]...)
+}
+
 func buildWaitingView(status, reason string, pendingApprovalCount int) RunWaitingView {
 	reason = normalizeWaitingReason(status, reason, pendingApprovalCount)
 	if reason == "" {
@@ -645,18 +659,27 @@ func buildWaitingView(status, reason string, pendingApprovalCount int) RunWaitin
 	}
 }
 
-func buildControlsView(status string, pendingApprovalCount int, hasRecentActivity bool, lastLabel string) RunControlsView {
+func buildControlsView(status string, waiting RunWaitingView, pendingApprovalCount int, hasRecentActivity bool, lastLabel string) RunControlsView {
 	statusLabel := humanizeRunStatus(status)
-	lastEventLabel := firstNonEmpty(strings.TrimSpace(lastLabel), statusLabel)
+	lastEventLabel := firstNonEmpty(strings.TrimSpace(lastLabel), waiting.Label, statusLabel)
 	primaryActionLabel := "View run"
 	summary := statusLabel
 	switch {
+	case waiting.Active && pendingApprovalCount > 0:
+		primaryActionLabel = "Review approvals"
+		summary = waiting.Detail
+		if strings.TrimSpace(summary) == "" {
+			summary = fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
+		}
+	case waiting.Active:
+		primaryActionLabel = "Monitor waiting run"
+		summary = firstNonEmpty(waiting.Detail, waiting.Label)
 	case pendingApprovalCount > 0:
 		primaryActionLabel = "Review approvals"
 		summary = fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
 	case statusAllowsAbort(status):
 		primaryActionLabel = "Abort run"
-		summary = "Run in progress"
+		summary = firstNonEmpty(waiting.Detail, "Run in progress")
 	case hasRecentActivity:
 		primaryActionLabel = "Review activity"
 		summary = lastEventLabel
