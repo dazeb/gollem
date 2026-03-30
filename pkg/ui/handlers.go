@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"strconv"
@@ -20,6 +21,8 @@ type pageData struct {
 	Path             string
 	CurrentYear      int
 	IsRunPage        bool
+	SidebarAutoLoad  bool
+	SidebarHTML      template.HTML
 	Runs             []RunView
 	Run              RunView
 	RunStartDefaults RunStartRequest
@@ -62,14 +65,21 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := run.Snapshot()
+	sidebarHTML, err := s.renderFragment("run", "sidebar", pageData{Run: view})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("render sidebar fragment: %v", err), http.StatusInternalServerError)
+		return
+	}
 	s.render(w, "run", pageData{
-		AppTitle:    "gollem",
-		PageTitle:   view.Title,
-		Path:        r.URL.Path,
-		CurrentYear: time.Now().Year(),
-		IsRunPage:   true,
-		Runs:        s.runs.listViews(),
-		Run:         view,
+		AppTitle:        "gollem",
+		PageTitle:       view.Title,
+		Path:            r.URL.Path,
+		CurrentYear:     time.Now().Year(),
+		IsRunPage:       true,
+		SidebarAutoLoad: !view.StatusView.IsTerminal,
+		SidebarHTML:     template.HTML(sidebarHTML),
+		Runs:            s.runs.listViews(),
+		Run:             view,
 	})
 }
 
@@ -161,6 +171,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action.SessionID = run.Session().ID
+	before := run.Snapshot()
 
 	body, err := json.Marshal(action)
 	if err != nil {
@@ -172,6 +183,21 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	clone.Body = ioNopCloser{Reader: bytes.NewReader(body)}
 	clone.ContentLength = int64(len(body))
 	clone.Header.Set("Content-Type", "application/json")
+
+	if isHTMXRequest(r) {
+		rec := newBufferedResponseWriter()
+		run.actionHandler().ServeHTTP(rec, clone)
+		if rec.statusCode >= http.StatusBadRequest {
+			copyHeader(w.Header(), rec.header)
+			w.WriteHeader(rec.statusCode)
+			_, _ = w.Write(rec.body.Bytes())
+			return
+		}
+		waitForRunMutation(run, before, 750*time.Millisecond)
+		s.handleSidebar(w, r)
+		return
+	}
+
 	run.actionHandler().ServeHTTP(w, clone)
 }
 
@@ -186,6 +212,18 @@ func (s *Server) render(w http.ResponseWriter, page string, data any) {
 	if err := tmpl.ExecuteTemplate(w, page, data); err != nil {
 		http.Error(w, fmt.Sprintf("render %s: %v", page, err), http.StatusInternalServerError)
 	}
+}
+
+func (s *Server) renderFragment(page, name string, data any) (string, error) {
+	tmpl, ok := s.pages[page]
+	if !ok {
+		return "", fmt.Errorf("unknown ui page %q", page)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		return "", fmt.Errorf("render %s fragment %s: %w", page, name, err)
+	}
+	return buf.String(), nil
 }
 
 func (s *Server) lookupRun(w http.ResponseWriter, r *http.Request) (*RunRecord, bool) {

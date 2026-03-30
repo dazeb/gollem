@@ -9,9 +9,7 @@
 })();
 </script>
 <div class="run-layout">
-  <aside id="run-sidebar" class="panel panel--sidebar" hx-get="/runs/{{.Run.ID}}/sidebar" hx-trigger="load" hx-swap="innerHTML" data-sidebar-run-id="{{.Run.ID}}">
-    <p class="muted">Loading sidebar…</p>
-  </aside>
+  {{.SidebarHTML}}
 
   <section class="panel panel--main">
     <div class="panel__header panel__header--run">

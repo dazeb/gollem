@@ -1,9 +1,38 @@
 {{define "sidebar"}}
+<aside
+  id="run-sidebar"
+  class="panel panel--sidebar"
+  hx-get="/runs/{{.Run.ID}}/sidebar"
+  {{if .Run.StatusView.IsTerminal}}data-sidebar-live="false"{{else}}hx-trigger="every 2s" data-sidebar-live="true"{{end}}
+  hx-swap="outerHTML"
+  data-sidebar-run-id="{{.Run.ID}}"
+>
+  {{template "sidebar_content" .}}
+</aside>
+{{end}}
+
+{{define "sidebar_content"}}
 <div class="sidebar-fragment" data-renderer-root data-run-id="{{.Run.ID}}" data-run-status="{{.Run.Scene.Status.Code}}" data-run-status-label="{{.Run.Scene.Status.Label}}" data-run-status-tone="{{.Run.Scene.Status.Tone}}" data-run-status-detail="{{.Run.Scene.Status.Detail}}" data-run-status-is-waiting="{{.Run.Scene.Status.IsWaiting}}" data-run-status-is-terminal="{{.Run.Scene.Status.IsTerminal}}" data-run-waiting-active="{{.Run.Scene.Waiting.Active}}" data-run-waiting-reason="{{.Run.Scene.Waiting.Reason}}" data-run-waiting-label="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}" data-run-waiting-detail="{{.Run.Scene.Waiting.Detail}}" data-run-waiting-summary="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}" data-run-waiting-pending-kind="{{.Run.Scene.Waiting.PendingKind}}" data-run-waiting-approval-pending-count="{{.Run.Scene.Waiting.ApprovalPendingCount}}" data-run-waiting-status-label="{{.Run.Scene.Waiting.StatusLabel}}" data-run-last-event-type="{{.Run.Scene.LastEvent.Type}}" data-run-last-event-label="{{.Run.Scene.LastEvent.Label}}" data-run-last-event-summary="{{.Run.Scene.LastEvent.Summary}}" data-run-last-event-detail="{{.Run.Scene.LastEvent.Detail}}" data-run-last-event-occurred-label="{{.Run.Scene.LastEvent.OccurredLabel}}" data-run-last-event-tone="{{.Run.Scene.LastEvent.Tone}}">
   <div>
-    <p class="eyebrow">Run sidebar</p>
-    <h3>{{.Run.ID}}</h3>
+    <div class="sidebar-heading">
+      <div>
+        <p class="eyebrow">Run sidebar</p>
+        <h3>{{.Run.ID}}</h3>
+      </div>
+      <span class="status status--{{.Run.StatusView.Code}}" data-run-status-badge data-status-code="{{.Run.StatusView.Code}}" data-status-label="{{.Run.StatusView.Label}}">{{.Run.StatusView.Label}}</span>
+    </div>
     <p class="muted">{{.Run.Controls.Summary}}</p>
+  </div>
+
+  <div class="sidebar-control-strip">
+    {{if .Run.Controls.CanAbort}}
+    <form class="sidebar-action-form" action="/runs/{{.Run.ID}}/action" method="post" hx-post="/runs/{{.Run.ID}}/action" hx-target="#run-sidebar" hx-swap="outerHTML">
+      <input type="hidden" name="type" value="abort_session">
+      <button class="button button--danger" type="submit">Abort run</button>
+    </form>
+    {{end}}
+    <a class="button" href="/runs/{{.Run.ID}}">Open run</a>
+    <a class="button button--ghost" href="/">Dashboard</a>
   </div>
 
   <dl class="sidebar-metadata">
@@ -73,21 +102,52 @@
     </div>
   </dl>
 
-  <div>
-    <p class="eyebrow">Pending approvals</p>
+  <section class="sidebar-section">
+    <div class="sidebar-section__header">
+      <div>
+        <p class="eyebrow">Pending approvals</p>
+        <h4>{{.Run.Controls.PendingApprovalLabel}}</h4>
+      </div>
+      {{if .Run.Scene.Waiting.Active}}<span class="muted">{{.Run.Scene.Waiting.Label}}</span>{{end}}
+    </div>
     {{if .Run.PendingApprovals}}
-    <ul class="event-list">
+    <div class="sidebar-approvals">
       {{range .Run.PendingApprovals}}
-      <li>
-        <strong>{{.ToolName}}</strong> <code>{{.ToolCallID}}</code>
-        {{if .ArgsJSON}}<div class="muted">{{.ArgsJSON}}</div>{{end}}
-      </li>
+      <article class="approval-card">
+        <div class="approval-card__header">
+          <div>
+            <strong>{{.ToolName}}</strong>
+            <div class="approval-card__meta"><code>{{.ToolCallID}}</code>{{if not .RequestedAt.IsZero}}<span class="muted">Requested {{.RequestedAt.Format "15:04:05 MST"}}</span>{{end}}</div>
+          </div>
+          <span class="status status--pending">Awaiting decision</span>
+        </div>
+        {{if .ArgsJSON}}
+        <div class="approval-card__body">
+          <span class="detail-grid__label">Arguments</span>
+          <pre><code>{{.ArgsJSON}}</code></pre>
+        </div>
+        {{end}}
+        <div class="approval-card__actions">
+          <form class="sidebar-action-form" action="/runs/{{$.Run.ID}}/action" method="post" hx-post="/runs/{{$.Run.ID}}/action" hx-target="#run-sidebar" hx-swap="outerHTML">
+            <input type="hidden" name="type" value="approve_tool_call">
+            <input type="hidden" name="tool_call_id" value="{{.ToolCallID}}">
+            <input type="hidden" name="tool_name" value="{{.ToolName}}">
+            <button class="button button--approve" type="submit">Approve</button>
+          </form>
+          <form class="sidebar-action-form" action="/runs/{{$.Run.ID}}/action" method="post" hx-post="/runs/{{$.Run.ID}}/action" hx-target="#run-sidebar" hx-swap="outerHTML">
+            <input type="hidden" name="type" value="deny_tool_call">
+            <input type="hidden" name="tool_call_id" value="{{.ToolCallID}}">
+            <input type="hidden" name="tool_name" value="{{.ToolName}}">
+            <button class="button button--ghost button--danger" type="submit">Deny</button>
+          </form>
+        </div>
+      </article>
       {{end}}
-    </ul>
+    </div>
     {{else}}
     <p class="muted">No pending approvals.</p>
     {{end}}
-  </div>
+  </section>
 
   <div>
     <p class="eyebrow">Recent activity</p>
@@ -122,11 +182,6 @@
     {{else}}
     <p class="muted">No protocol events yet.</p>
     {{end}}
-  </div>
-
-  <div class="sidebar-actions">
-    <a class="button" href="/runs/{{.Run.ID}}">Refresh run</a>
-    <a class="button button--ghost" href="/">Back to dashboard</a>
   </div>
 </div>
 {{end}}
