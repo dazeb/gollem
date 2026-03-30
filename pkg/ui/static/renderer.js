@@ -99,7 +99,8 @@ const drawRoundedRect = (ctx, x, y, width, height, radius) => {
 
 const drawPill = (ctx, x, y, label, fill, stroke, color) => {
   ctx.font = META_FONT;
-  const metrics = PT.measureText ? PT.measureText(label, { font: META_FONT }) : { width: label.length * 7, height: 14 };
+  const text = String(label || '');
+  const metrics = PT.measureText ? PT.measureText(text, { font: META_FONT }) : { width: text.length * 7, height: 14 };
   const width = metrics.width + 20;
   const height = 22;
   drawRoundedRect(ctx, x, y, width, height, 11);
@@ -110,8 +111,14 @@ const drawPill = (ctx, x, y, label, fill, stroke, color) => {
   ctx.stroke();
   ctx.fillStyle = color;
   ctx.textBaseline = 'middle';
-  ctx.fillText(label.toUpperCase(), x + 10, y + height / 2 + 0.5);
+  ctx.fillText(text.toUpperCase(), x + 10, y + height / 2 + 0.5);
   return width;
+};
+
+const measurePillWidth = (label) => {
+  const text = String(label || '');
+  const metrics = PT.measureText ? PT.measureText(text, { font: META_FONT }) : { width: text.length * 7 };
+  return metrics.width + 20;
 };
 
 class RunSceneRenderer {
@@ -119,7 +126,7 @@ class RunSceneRenderer {
     this.root = root;
     this.canvas = root.querySelector('[data-run-canvas]');
     this.viewport = root.querySelector('[data-run-viewport]') || root.querySelector('.run-scene');
-    this.eventLog = root.querySelector('[data-run-event-log]');
+    this.eventLog = root.querySelector('[data-run-event-log]') || root.closest('.panel--main')?.querySelector('[data-run-event-log]') || document.querySelector('[data-run-event-log]');
     this.statusTargets = [
       ...document.querySelectorAll('[data-run-status-badge]'),
       ...document.querySelectorAll('.panel__header--run .status'),
@@ -208,21 +215,76 @@ class RunSceneRenderer {
       return;
     }
 
-    const seq = Number(event.lastEventId || payload.sequence || 0);
+    const envelope = this.normalizeEnvelope(payload, event.lastEventId);
+    if (!envelope) {
+      return;
+    }
+
+    const seq = Number(envelope.sequence || 0);
     if (Number.isFinite(seq) && seq > 0) {
       this.scene.lastSeq = seq;
     }
 
-    if (payload.type === 'session.snapshot' && payload.data) {
-      this.applySnapshot(payload, seq);
-      this.appendEventLog('session.snapshot', `snapshot seq ${payload.data.snapshot_sequence || seq || '—'}`);
+    if (envelope.type === 'session.snapshot' && envelope.data) {
+      this.applySnapshot(envelope, seq);
+      this.appendEventLog('session.snapshot', `snapshot seq ${envelope.data.snapshot_sequence || seq || '—'}`);
       this.scheduleRender();
       return;
     }
 
-    this.applyAGUIEvent(payload, seq);
-    this.appendEventLog(payload.type || 'unknown', this.describeEvent(payload));
+    const aguiEvent = this.extractAGUIEvent(envelope);
+    if (!aguiEvent) {
+      this.appendEventLog(envelope.type || 'unknown', this.describeEvent(envelope));
+      this.scheduleRender();
+      return;
+    }
+
+    this.applyAGUIEvent(aguiEvent, seq);
+    this.appendEventLog(aguiEvent.type || envelope.type || 'unknown', this.describeEvent(aguiEvent));
     this.scheduleRender();
+  }
+
+  normalizeEnvelope(payload, fallbackLastEventId) {
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const sequence = Number(payload.sequence || fallbackLastEventId || 0);
+    if (payload.type === 'session.snapshot') {
+      return {
+        ...payload,
+        sequence,
+        data: payload.data && typeof payload.data === 'object' ? payload.data : readJSON(payload.data || 'null'),
+      };
+    }
+
+    if (payload.session_id && Object.prototype.hasOwnProperty.call(payload, 'data')) {
+      return {
+        ...payload,
+        sequence,
+        data: payload.data && typeof payload.data === 'object' ? payload.data : readJSON(payload.data || 'null'),
+      };
+    }
+
+    return {
+      type: payload.type || 'agui.raw',
+      sequence,
+      raw: payload,
+      data: payload,
+    };
+  }
+
+  extractAGUIEvent(envelope) {
+    if (!envelope) {
+      return null;
+    }
+    if (envelope.raw && envelope.raw.type && envelope.raw.type !== 'session.snapshot') {
+      return envelope.raw;
+    }
+    if (envelope.data && typeof envelope.data === 'object' && envelope.data.type) {
+      return envelope.data;
+    }
+    return null;
   }
 
   applySnapshot(event, seq) {
@@ -230,7 +292,29 @@ class RunSceneRenderer {
     if (snapshot.run_id) {
       this.runId = snapshot.run_id;
     }
-    this.updateStatus(snapshot.status || this.scene.runStatus);
+    if (snapshot.status) {
+      this.updateStatus(snapshot.status);
+    }
+
+    const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
+    Object.values(approvals).forEach((approval, index) => {
+      if (!approval || typeof approval !== 'object') {
+        return;
+      }
+      const toolId = approval.ToolCallID || approval.tool_call_id || approval.toolCallId || `approval_${index}`;
+      const toolName = approval.ToolName || approval.tool_name || approval.toolName || 'approval';
+      const args = approval.ArgsJSON || approval.args_json || approval.argsJson || '';
+      const tool = this.ensureToolBody(toolId, toolName, Date.now());
+      if (tool) {
+        tool.status = 'approval';
+        tool.args = String(args || tool.args || '');
+      }
+    });
+
+    if (snapshot.waiting_reason && !Object.keys(approvals).length) {
+      this.pushNotice('Run waiting', snapshot.waiting_reason, Date.now());
+    }
+
     this.setLastEventMeta(seq, 'snapshot');
   }
 
@@ -243,7 +327,9 @@ class RunSceneRenderer {
         this.pushNotice('Run started', this.runId || 'live session', timestamp);
         break;
       case 'RUN_FINISHED':
-        this.updateStatus('completed');
+        if (this.scene.runStatus !== 'waiting') {
+          this.updateStatus('completed');
+        }
         this.pushNotice('Run finished', this.runId || 'completed', timestamp);
         break;
       case 'RUN_ERROR':
@@ -323,8 +409,10 @@ class RunSceneRenderer {
         break;
       case 'gollem.approval.requested': {
         const tool = this.ensureToolBody(payload.toolCallId || `approval_${Date.now()}`, payload.toolName || 'approval', timestamp);
-        tool.status = 'approval';
-        tool.args = compactWhitespace(payload.argsJson || tool.args || '');
+        if (tool) {
+          tool.status = 'approval';
+          tool.args = compactWhitespace(payload.argsJson || tool.args || '');
+        }
         break;
       }
       case 'gollem.approval.resolved': {
@@ -471,8 +559,7 @@ class RunSceneRenderer {
     if (!messageId) {
       return null;
     }
-    const store = this.scene.textBodies;
-    let body = store.get(messageId);
+    let body = this.scene.textBodies.get(messageId);
     if (!body) {
       body = this.pushFlow({
         id: `${kind}:${messageId}`,
@@ -486,10 +573,12 @@ class RunSceneRenderer {
         status: 'streaming',
         stepName: this.scene.activeStepName,
       });
-      store.set(messageId, body);
+      this.scene.textBodies.set(messageId, body);
     }
     body.updatedAt = timestamp;
-    body.status = body.status || 'streaming';
+    if (role) {
+      body.role = roleLabel(role, kind);
+    }
     if (!body.stepName && this.scene.activeStepName) {
       body.stepName = this.scene.activeStepName;
     }
@@ -605,10 +694,11 @@ class RunSceneRenderer {
       item.appendChild(span);
     }
 
-    this.eventLog.prepend(item);
+    this.eventLog.appendChild(item);
     while (this.eventLog.children.length > MAX_EVENT_LOG_ITEMS) {
-      this.eventLog.removeChild(this.eventLog.lastElementChild);
+      this.eventLog.removeChild(this.eventLog.firstElementChild);
     }
+    this.eventLog.scrollTop = this.eventLog.scrollHeight;
   }
 
   scheduleRender() {
@@ -641,11 +731,37 @@ class RunSceneRenderer {
   }
 
   computeLayout(width) {
-    const pad = 28;
-    const gap = 24;
-    const railWidth = clamp(width * 0.28, 220, 320);
-    const mainWidth = Math.max(280, width - pad * 2 - railWidth - gap);
-    let cursorY = 86;
+    const compactHeader = width < 640;
+    const headerHeight = compactHeader ? 84 : 52;
+    const pad = clamp(Math.round(width * 0.032), 16, 28);
+    const gap = width < 720 ? 14 : 24;
+    const contentWidth = Math.max(240, width - pad * 2);
+    const singleColumn = width < 860;
+    const desiredRail = clamp(Math.round(contentWidth * (singleColumn ? 0.34 : 0.28)), 150, 320);
+    const minimumMain = singleColumn ? 240 : 320;
+    let railWidth = singleColumn ? Math.min(desiredRail, Math.max(140, Math.round(contentWidth * 0.42))) : desiredRail;
+    let mainWidth = singleColumn ? contentWidth : contentWidth - railWidth - gap;
+
+    if (mainWidth < minimumMain) {
+      if (singleColumn) {
+        railWidth = Math.min(railWidth, Math.max(120, contentWidth - 56));
+        mainWidth = contentWidth;
+      } else {
+        const overflow = minimumMain - mainWidth;
+        railWidth = Math.max(150, railWidth - overflow);
+        mainWidth = contentWidth - railWidth - gap;
+        if (mainWidth < minimumMain || railWidth < 170) {
+          railWidth = Math.min(Math.max(140, Math.round(contentWidth * 0.38)), contentWidth - 40);
+          mainWidth = contentWidth;
+        }
+      }
+    }
+
+    const stackTools = singleColumn || mainWidth >= contentWidth - 8;
+    mainWidth = Math.max(240, Math.min(contentWidth, mainWidth));
+    railWidth = Math.max(120, Math.min(contentWidth, railWidth));
+
+    let cursorY = 16 + headerHeight + 18;
     let lastNarrativeY = cursorY;
 
     const items = this.scene.flow.map((item) => ({ ...item }));
@@ -653,7 +769,7 @@ class RunSceneRenderer {
       if (item.kind === 'step') {
         item.x = pad;
         item.y = cursorY;
-        item.width = width - pad * 2;
+        item.width = contentWidth;
         item.height = 38;
         cursorY += item.height + 18;
         lastNarrativeY = item.y + item.height / 2;
@@ -662,30 +778,32 @@ class RunSceneRenderer {
 
       if (item.kind === 'tool') {
         const preview = this.buildToolPreview(item);
+        const previewWidth = Math.max(120, (stackTools ? Math.min(contentWidth, railWidth) : railWidth) - 42);
         item.previewLayout = ensurePretextLayout(preview, {
-          maxWidth: railWidth - 32,
+          maxWidth: previewWidth,
           font: MONO_FONT,
           lineHeight: 18,
         });
-        item.x = pad + mainWidth + gap;
+        item.width = stackTools ? Math.min(contentWidth, Math.max(220, Math.min(contentWidth, railWidth + 28))) : railWidth;
+        item.x = stackTools ? pad : pad + mainWidth + gap;
         item.y = cursorY;
-        item.width = railWidth;
         item.height = 78 + item.previewLayout.height;
         item.linkY = lastNarrativeY;
-        cursorY += item.height + 14;
+        cursorY += item.height + (stackTools ? 18 : 14);
         return;
       }
 
       const inset = item.kind === 'reasoning' ? 28 : item.kind === 'notice' ? 12 : 0;
+      const bodyWidth = Math.max(220, mainWidth - inset);
       const content = item.kind === 'notice' ? (item.detail || item.content || item.title) : (item.content || '…');
       item.layout = ensurePretextLayout(content, {
-        maxWidth: mainWidth - inset - 32,
+        maxWidth: Math.max(140, bodyWidth - 32),
         font: item.kind === 'reasoning' ? MONO_FONT : TEXT_FONT,
         lineHeight: item.kind === 'reasoning' ? 20 : 22,
       });
       item.x = pad + inset;
       item.y = cursorY;
-      item.width = mainWidth - inset;
+      item.width = bodyWidth;
       item.height = 70 + item.layout.height;
       cursorY += item.height + 18;
       lastNarrativeY = item.y + item.height / 2;
@@ -698,6 +816,7 @@ class RunSceneRenderer {
       railWidth,
       pad,
       gap,
+      stackTools,
     };
   }
 
@@ -746,8 +865,10 @@ class RunSceneRenderer {
   }
 
   renderHeader(width) {
+    const compactHeader = width < 640;
+    const headerHeight = compactHeader ? 84 : 52;
     this.ctx.fillStyle = 'rgba(2, 6, 23, 0.72)';
-    drawRoundedRect(this.ctx, 20, 16, width - 40, 52, 18);
+    drawRoundedRect(this.ctx, 20, 16, width - 40, headerHeight, 18);
     this.ctx.fill();
     this.ctx.strokeStyle = 'rgba(125, 211, 252, 0.18)';
     this.ctx.lineWidth = 1;
@@ -760,11 +881,20 @@ class RunSceneRenderer {
 
     this.ctx.font = META_FONT;
     this.ctx.fillStyle = '#94a3b8';
-    this.ctx.fillText(summarize(this.summary || this.runId || 'Live AG-UI stream', 48), 34, 53);
+    this.ctx.fillText(summarize(this.summary || this.runId || 'Live AG-UI stream', compactHeader ? 56 : 48), 34, 53);
 
-    const statusX = width - 260;
-    const statusWidth = drawPill(this.ctx, statusX, 28, this.scene.runStatus, 'rgba(15, 23, 42, 0.96)', 'rgba(125, 211, 252, 0.24)', '#7dd3fc');
-    drawPill(this.ctx, statusX + statusWidth + 10, 28, this.scene.connection, 'rgba(15, 23, 42, 0.96)', 'rgba(148, 163, 184, 0.24)', '#cbd5e1');
+    if (compactHeader) {
+      const statusWidth = drawPill(this.ctx, 34, 68, this.scene.runStatus, 'rgba(15, 23, 42, 0.96)', 'rgba(125, 211, 252, 0.24)', '#7dd3fc');
+      drawPill(this.ctx, 34 + statusWidth + 10, 68, this.scene.connection, 'rgba(15, 23, 42, 0.96)', 'rgba(148, 163, 184, 0.24)', '#cbd5e1');
+      return;
+    }
+
+    const statusWidth = measurePillWidth(this.scene.runStatus);
+    const connectionWidth = measurePillWidth(this.scene.connection);
+    const totalWidth = statusWidth + connectionWidth + 10;
+    const statusX = Math.max(34, width - 34 - totalWidth);
+    const drawnStatusWidth = drawPill(this.ctx, statusX, 28, this.scene.runStatus, 'rgba(15, 23, 42, 0.96)', 'rgba(125, 211, 252, 0.24)', '#7dd3fc');
+    drawPill(this.ctx, statusX + drawnStatusWidth + 10, 28, this.scene.connection, 'rgba(15, 23, 42, 0.96)', 'rgba(148, 163, 184, 0.24)', '#cbd5e1');
   }
 
   renderStep(item) {
