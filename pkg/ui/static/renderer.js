@@ -328,7 +328,91 @@ const obstacleLayoutSignature = (obstacles) => {
 };
 
 const signatureChanged = (a, b) => a !== b;
-const isResolvedToolStatus = (status) => status === 'returned' || status === 'approved' || status === 'denied' || status === 'failed';
+const isPendingToolStatus = (status) => status === 'approval' || status === 'deferred';
+const isResolvedToolStatus = (status) => status === 'returned' || status === 'approved' || status === 'denied' || status === 'resolved' || status === 'failed';
+const isErroredToolStatus = (status) => status === 'failed' || status === 'denied';
+const isSuccessfulToolStatus = (status) => status === 'returned' || status === 'approved';
+const deriveResolvedToolStatus = (tool) => {
+  const current = tool?.status || '';
+  if (isResolvedToolStatus(current)) {
+    return current;
+  }
+
+  const result = compactWhitespace(tool?.result || '');
+  const lowered = result.toLowerCase();
+  if (/^error:/i.test(result)) {
+    return 'failed';
+  }
+  if (current === 'approval') {
+    if (/(^|\b)(denied|deny|rejected|reject|declined|not approved)(\b|$)/.test(lowered)) {
+      return 'denied';
+    }
+    if (/(^|\b)(approved|approve|allowed|allow|accepted|accept)(\b|$)/.test(lowered)) {
+      return 'approved';
+    }
+  }
+  return 'resolved';
+};
+const toolStatusPalette = (status) => {
+  if (status === 'approval') {
+    return {
+      stroke: 'rgba(251, 191, 36, 0.38)',
+      fill: 'rgba(58, 39, 8, 0.88)',
+      marker: '#fbbf24',
+      halo: 'rgba(251, 191, 36, 0.26)',
+      wire: 'rgba(251, 191, 36, 0.2)',
+      preview: '#fde68a',
+    };
+  }
+  if (status === 'deferred') {
+    return {
+      stroke: 'rgba(167, 139, 250, 0.38)',
+      fill: 'rgba(30, 18, 52, 0.9)',
+      marker: '#c4b5fd',
+      halo: 'rgba(167, 139, 250, 0.24)',
+      wire: 'rgba(167, 139, 250, 0.18)',
+      preview: '#e9d5ff',
+    };
+  }
+  if (status === 'approved' || status === 'returned') {
+    return {
+      stroke: 'rgba(52, 211, 153, 0.38)',
+      fill: 'rgba(8, 34, 26, 0.9)',
+      marker: '#34d399',
+      halo: 'rgba(52, 211, 153, 0.26)',
+      wire: 'rgba(52, 211, 153, 0.18)',
+      preview: '#bbf7d0',
+    };
+  }
+  if (status === 'resolved') {
+    return {
+      stroke: 'rgba(45, 212, 191, 0.34)',
+      fill: 'rgba(8, 29, 30, 0.88)',
+      marker: '#5eead4',
+      halo: 'rgba(45, 212, 191, 0.24)',
+      wire: 'rgba(45, 212, 191, 0.16)',
+      preview: '#ccfbf1',
+    };
+  }
+  if (status === 'denied' || status === 'failed') {
+    return {
+      stroke: 'rgba(248, 113, 113, 0.4)',
+      fill: 'rgba(69, 10, 10, 0.88)',
+      marker: '#f87171',
+      halo: 'rgba(248, 113, 113, 0.28)',
+      wire: 'rgba(248, 113, 113, 0.18)',
+      preview: '#fecaca',
+    };
+  }
+  return {
+    stroke: 'rgba(125, 211, 252, 0.32)',
+    fill: 'rgba(11, 17, 32, 0.94)',
+    marker: '#7dd3fc',
+    halo: 'rgba(125, 211, 252, 0.24)',
+    wire: 'rgba(148, 163, 184, 0.18)',
+    preview: '#cbd5e1',
+  };
+};
 
 class RunSceneRenderer {
   constructor(root) {
@@ -551,7 +635,7 @@ class RunSceneRenderer {
     const pendingToolIds = new Set();
 
     this.scene.toolBodies.forEach((tool) => {
-      if (!tool || (tool.status !== 'approval' && tool.status !== 'deferred')) {
+      if (!tool || !isPendingToolStatus(tool.status)) {
         return;
       }
       const stillPending = Object.prototype.hasOwnProperty.call(approvals, tool.toolCallId)
@@ -559,9 +643,20 @@ class RunSceneRenderer {
       if (stillPending) {
         return;
       }
-      tool.status = tool.result ? (/^error:/i.test(tool.result) ? 'failed' : 'returned') : 'called';
+      tool.status = deriveResolvedToolStatus(tool);
+      if (!tool.result) {
+        tool.result = tool.status === 'approved'
+          ? 'approved'
+          : tool.status === 'denied'
+            ? 'denied'
+            : tool.status === 'failed'
+              ? 'resolution unavailable'
+              : 'resolved';
+      }
       tool.updatedAt = appliedAt;
-      tool.pulseBoost = 0;
+      tool.resolvedAt = tool.resolvedAt || sceneClock();
+      tool.pulseBoost = Math.max(tool.pulseBoost || 0, isErroredToolStatus(tool.status) ? 1.18 : 0.94);
+      tool.flashBoost = Math.max(tool.flashBoost || 0, isErroredToolStatus(tool.status) ? 0.28 : 0.2);
     });
 
     Object.values(approvals).forEach((approval, index) => {
@@ -1289,8 +1384,13 @@ class RunSceneRenderer {
     tool.updatedAt = options.timestamp || Date.now();
     tool.result = String(options.content || tool.result || '');
     tool.resolvedAt = resolvedAt;
-    tool.status = options.status || (/^error:/i.test(tool.result) || options.isError ? 'failed' : 'returned');
-    tool.pulseBoost = Math.max(tool.pulseBoost || 0, tool.status === 'failed' ? 1.6 : 1.2);
+    tool.status = options.status || deriveResolvedToolStatus({
+      ...tool,
+      result: tool.result,
+      status: options.status || tool.status,
+    });
+    tool.pulseBoost = Math.max(tool.pulseBoost || 0, isErroredToolStatus(tool.status) ? 1.6 : 1.2);
+    tool.flashBoost = Math.max(tool.flashBoost || 0, isErroredToolStatus(tool.status) ? 0.36 : 0.24);
     return tool;
   }
 
@@ -1301,7 +1401,7 @@ class RunSceneRenderer {
     }
     tool.args += delta || '';
     tool.updatedAt = timestamp;
-    tool.status = (tool.status === 'approval' || tool.status === 'deferred') ? tool.status : 'running';
+    tool.status = isPendingToolStatus(tool.status) ? tool.status : 'running';
   }
 
   finishToolBody(toolCallId, timestamp) {
@@ -1311,7 +1411,7 @@ class RunSceneRenderer {
     }
     tool.updatedAt = timestamp;
     if (!tool.result) {
-      tool.status = (tool.status === 'approval' || tool.status === 'deferred') ? tool.status : 'called';
+      tool.status = isPendingToolStatus(tool.status) ? tool.status : 'called';
     }
   }
 
@@ -1389,7 +1489,7 @@ class RunSceneRenderer {
     if (!item?.resolvedAt) {
       return 0;
     }
-    const duration = item.status === 'failed' ? 2400 : 900;
+    const duration = isErroredToolStatus(item.status) ? 2400 : item.status === 'resolved' ? 1200 : 900;
     return clamp((now - item.resolvedAt) / duration, 0, 1);
   }
 
@@ -1403,6 +1503,9 @@ class RunSceneRenderer {
     if (item.status === 'deferred') {
       return 1.12;
     }
+    if (item.status === 'approval') {
+      return 1.06;
+    }
     return 1;
   }
 
@@ -1413,11 +1516,13 @@ class RunSceneRenderer {
       ? 8
       : item.status === 'deferred'
         ? 12
-        : item.status === 'failed'
+        : item.status === 'failed' || item.status === 'denied'
           ? 10
-          : item.status === 'returned'
+          : isSuccessfulToolStatus(item.status)
             ? -6
-            : 0;
+            : item.status === 'resolved'
+              ? -2
+              : 0;
     const resolvedShrink = isResolvedToolStatus(item.status)
       ? lerp(1, 0.04, this.toolResolveProgress(item, now))
       : 1;
@@ -1833,13 +1938,16 @@ class RunSceneRenderer {
     item.flashBoost = lerp(item.flashBoost || 0, 0, smoothAmount(6, dt));
 
     const status = this.scene.runStatus;
-    const gravity = status === 'waiting' ? 18 : (status === 'failed' || status === 'aborted') ? 72 : status === 'completed' ? 12 : 32;
-    const stiffness = status === 'waiting' ? 8 : status === 'completed' ? 9 : 10;
-    const damping = (status === 'failed' || item.status === 'failed') ? 0.74 : status === 'completed' ? 0.84 : 0.8;
+    const waitingField = status === 'waiting' || isPendingToolStatus(item.status);
+    const errorField = status === 'failed' || status === 'aborted' || isErroredToolStatus(item.status);
+    const settledField = status === 'completed';
+    const gravity = waitingField ? 18 : errorField ? 72 : settledField ? 12 : 32;
+    const stiffness = waitingField ? 8 : settledField ? 9 : 10;
+    const damping = errorField ? 0.74 : settledField ? 0.84 : 0.8;
     const pulse = 0.4 + Math.sin(now / 280 + item.order * 0.9) * 0.5;
-    const buoyancy = item.status === 'approval' || item.status === 'deferred'
+    const buoyancy = waitingField
       ? pulse * 0.78
-      : item.status === 'failed'
+      : isErroredToolStatus(item.status)
         ? pulse * 0.18
         : pulse * 0.45;
     item.pulseBoost = lerp(item.pulseBoost || 0, 0, smoothAmount(8, dt));
@@ -2029,7 +2137,7 @@ class RunSceneRenderer {
     this.ctx.font = TITLE_FONT;
     this.ctx.fillStyle = '#f8fafc';
     this.ctx.textBaseline = 'middle';
-    this.ctx.fillText(this.title, 42, 44);
+    this.ctx.fillText(summarize(this.title, compactHeader ? 30 : 46), 42, 44);
 
     this.ctx.font = META_FONT;
     this.ctx.fillStyle = '#94a3b8';
@@ -2131,16 +2239,18 @@ class RunSceneRenderer {
     }
 
     const resolveProgress = this.toolResolveProgress(item, now);
-    const stroke = item.status === 'failed' ? 'rgba(248, 113, 113, 0.4)' : item.status === 'returned' ? 'rgba(52, 211, 153, 0.36)' : item.status === 'approval' ? 'rgba(251, 191, 36, 0.36)' : 'rgba(125, 211, 252, 0.3)';
-    const fill = item.status === 'failed' ? 'rgba(69, 10, 10, 0.68)' : 'rgba(11, 17, 32, 0.94)';
-    const markerColor = item.status === 'failed' ? '#f87171' : item.status === 'returned' ? '#34d399' : item.status === 'approval' ? '#fbbf24' : '#7dd3fc';
+    const palette = toolStatusPalette(item.status);
+    const waitingField = isPendingToolStatus(item.status) || this.scene.runStatus === 'waiting';
     const pulse = 0.5 + Math.sin(now / 220 + item.order * 0.7) * 0.5;
-    const outerRadius = item.radius + 8 + pulse * (item.status === 'approval' || this.scene.runStatus === 'waiting' ? 7 : 3);
+    const outerRadius = item.radius + 8 + pulse * (waitingField ? 7 : isResolvedToolStatus(item.status) ? 2 : 3);
 
     this.ctx.save();
     this.ctx.globalAlpha = clamp(item.alpha, 0, 1);
 
-    this.ctx.strokeStyle = `rgba(148, 163, 184, ${0.22 * Math.max(0.2, item.alpha)})`;
+    const wireGradient = this.ctx.createLinearGradient(item.linkX || item.x - item.radius - 20, item.linkY || item.y, item.x, item.y);
+    wireGradient.addColorStop(0, 'rgba(148, 163, 184, 0.05)');
+    wireGradient.addColorStop(1, palette.wire);
+    this.ctx.strokeStyle = wireGradient;
     this.ctx.lineWidth = 1.4;
     this.ctx.beginPath();
     this.ctx.moveTo(item.linkX || item.x - item.radius - 20, item.linkY || item.y);
@@ -2149,27 +2259,31 @@ class RunSceneRenderer {
 
     this.ctx.beginPath();
     this.ctx.arc(item.x, item.y, outerRadius, 0, Math.PI * 2);
-    this.ctx.strokeStyle = markerColor;
+    this.ctx.strokeStyle = palette.marker;
     this.ctx.globalAlpha = clamp(item.alpha * (0.16 + pulse * 0.16 + (item.pulseBoost || 0) * 0.08), 0, 1);
     this.ctx.lineWidth = 1.2;
     this.ctx.stroke();
     this.ctx.globalAlpha = clamp(item.alpha, 0, 1);
 
     const radial = this.ctx.createRadialGradient(item.x - item.radius * 0.24, item.y - item.radius * 0.32, item.radius * 0.2, item.x, item.y, item.radius * 1.2);
-    radial.addColorStop(0, item.status === 'failed' ? 'rgba(248, 113, 113, 0.26)' : 'rgba(125, 211, 252, 0.2)');
-    radial.addColorStop(1, fill);
+    radial.addColorStop(0, palette.halo);
+    radial.addColorStop(1, palette.fill);
     this.ctx.beginPath();
     this.ctx.arc(item.x, item.y, item.radius, 0, Math.PI * 2);
     this.ctx.fillStyle = radial;
     this.ctx.fill();
-    this.ctx.strokeStyle = stroke;
+    this.ctx.strokeStyle = palette.stroke;
     this.ctx.lineWidth = 1.2;
     this.ctx.stroke();
 
-    if (item.status === 'returned' || item.status === 'failed') {
+    if (isResolvedToolStatus(item.status)) {
       this.ctx.beginPath();
       this.ctx.arc(item.x, item.y, item.radius + 18 + resolveProgress * 24, 0, Math.PI * 2);
-      this.ctx.strokeStyle = item.status === 'failed' ? `rgba(248, 113, 113, ${0.24 * (1 - resolveProgress)})` : `rgba(52, 211, 153, ${0.24 * (1 - resolveProgress)})`;
+      this.ctx.strokeStyle = item.status === 'denied' || item.status === 'failed'
+        ? `rgba(248, 113, 113, ${0.24 * (1 - resolveProgress)})`
+        : item.status === 'resolved'
+          ? `rgba(45, 212, 191, ${0.22 * (1 - resolveProgress)})`
+          : `rgba(52, 211, 153, ${0.24 * (1 - resolveProgress)})`;
       this.ctx.lineWidth = 1.4;
       this.ctx.stroke();
     }
@@ -2181,7 +2295,7 @@ class RunSceneRenderer {
     this.ctx.fillText(summarize(item.title || 'tool', 18), item.x, item.y - item.radius * 0.26);
 
     this.ctx.font = META_FONT;
-    this.ctx.fillStyle = markerColor;
+    this.ctx.fillStyle = palette.marker;
     this.ctx.fillText((item.status || 'pending').toUpperCase(), item.x, item.y + item.radius * 0.02);
 
     const preview = ensurePretextLayout(this.buildToolPreview(item), {
@@ -2190,7 +2304,7 @@ class RunSceneRenderer {
       lineHeight: 14,
     });
     this.ctx.font = MONO_FONT;
-    this.ctx.fillStyle = '#cbd5e1';
+    this.ctx.fillStyle = palette.preview;
     preview.lines.slice(0, 3).forEach((line, index) => {
       this.ctx.fillText(summarize(line || ' ', 18), item.x, item.y + item.radius * 0.24 + index * 14);
     });

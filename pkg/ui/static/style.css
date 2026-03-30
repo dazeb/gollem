@@ -272,8 +272,14 @@ body {
   align-items: flex-start;
 }
 
-.run-scene__header h3 {
-  margin-bottom: 6px;
+.run-scene__intro {
+  display: grid;
+  gap: 6px;
+  max-width: 40rem;
+}
+
+.run-scene__intro h3 {
+  margin: 0;
 }
 
 .run-scene__caption {
