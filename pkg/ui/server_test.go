@@ -19,11 +19,11 @@ import (
 
 func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	store := NewRunStateStore()
-	started := make(chan string, 1)
+	started := make(chan RunStartRequest, 1)
 	server := MustNewServer(
 		WithRunStore(store),
 		WithRunStarter(RunStarterFunc(func(_ context.Context, runtime *RunRuntime, req RunStartRequest) error {
-			started <- runtime.RunID + ":" + req.Prompt
+			started <- req
 			core.Publish(runtime.EventBus, core.RunStartedEvent{
 				RunID:     runtime.RunID,
 				Prompt:    req.Prompt,
@@ -34,8 +34,11 @@ func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	)
 
 	form := url.Values{
-		"title":  {"Test run"},
-		"prompt": {"hello world"},
+		"title":    {"Test run"},
+		"summary":  {"test summary"},
+		"prompt":   {"hello world"},
+		"provider": {"test-provider"},
+		"model":    {"test-model"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/runs/start", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -54,18 +57,60 @@ func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	if runID == "" {
 		t.Fatal("expected non-empty run id")
 	}
-	if _, ok := store.get(runID); !ok {
+	run, ok := store.get(runID)
+	if !ok {
 		t.Fatalf("expected run %q in store", runID)
+	}
+	view := run.Snapshot()
+	if view.Title != "Test run" {
+		t.Fatalf("title = %q, want Test run", view.Title)
+	}
+	if view.Summary != "test summary" {
+		t.Fatalf("summary = %q, want test summary", view.Summary)
+	}
+	if view.Provider != "test-provider" {
+		t.Fatalf("provider = %q, want test-provider", view.Provider)
+	}
+	if view.Model != "test-model" {
+		t.Fatalf("model = %q, want test-model", view.Model)
 	}
 
 	select {
 	case got := <-started:
-		if got != runID+":hello world" {
-			t.Fatalf("starter payload = %q, want %q", got, runID+":hello world")
+		if got.Prompt != "hello world" {
+			t.Fatalf("prompt = %q, want hello world", got.Prompt)
+		}
+		if got.Provider != "test-provider" {
+			t.Fatalf("provider = %q, want test-provider", got.Provider)
+		}
+		if got.Model != "test-model" {
+			t.Fatalf("model = %q, want test-model", got.Model)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for async starter")
 	}
+}
+
+func TestHandleIndexRendersRunComposerWithDefaults(t *testing.T) {
+	server := MustNewServer(WithRunStartDefaults(RunStartRequest{Provider: "anthropic", Model: "claude-opus-4-6"}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	assertHTMLContains(t, body,
+		"<form class=\"run-composer\" action=\"/runs/start\" method=\"post\">",
+		"name=\"title\"",
+		"name=\"summary\"",
+		"name=\"prompt\"",
+		"anthropic",
+		"claude-opus-4-6",
+		"Submitting uses the active <strong>anthropic</strong> / <strong>claude-opus-4-6</strong> serve defaults.",
+	)
 }
 
 func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {

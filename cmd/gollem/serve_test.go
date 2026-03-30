@@ -133,7 +133,10 @@ func TestServeHandlerWiringRunsModelAndStreamsToSSE(t *testing.T) {
 		model:     modelutil.NewRetryModel(model, modelutil.DefaultRetryConfig()),
 	}
 
-	server := ui.MustNewServer(ui.WithRunStarter(newServeRunStarter(cfg)))
+	server := ui.MustNewServer(
+		ui.WithRunStarter(newServeRunStarter(cfg)),
+		ui.WithRunStartDefaults(ui.RunStartRequest{Provider: cfg.provider, Model: cfg.modelName}),
+	)
 	handler := withRunStartDefaults(server, ui.RunStartRequest{Provider: cfg.provider, Model: cfg.modelName})
 
 	ts := httptest.NewServer(handler)
@@ -153,7 +156,20 @@ func TestServeHandlerWiringRunsModelAndStreamsToSSE(t *testing.T) {
 	}
 
 	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID+"/sidebar", "completed", "openai", "serve-test")
-	assertServeBodyContains(t, mustServeGETBody(t, client, ts.URL+"/"), "Serve wiring", "openai / serve-test", "/runs/"+runID)
+	assertServeBodyContains(t, mustServeGETBody(t, client, ts.URL+"/"),
+		"Start a run",
+		"Compose launch details",
+		"name=\"title\"",
+		"name=\"summary\"",
+		"name=\"prompt\"",
+		"Provider default",
+		"Model default",
+		"openai",
+		"serve-test",
+		"Serve wiring",
+		"openai / serve-test",
+		"/runs/"+runID,
+	)
 	assertServeBodyContains(t, mustServeGETBody(t, client, ts.URL+"/runs/"+runID), "Serve wiring", "stream this", "/runs/"+runID+"/events")
 
 	eventResp := mustServeOpenSSE(t, client, ts.URL+"/runs/"+runID+"/events")
@@ -183,6 +199,7 @@ func TestServeHandlerStartRouteInjectsDefaultsAndSupportsAbortAction(t *testing.
 			<-ctx.Done()
 			return ctx.Err()
 		})),
+		ui.WithRunStartDefaults(ui.RunStartRequest{Provider: "openai", Model: "serve-test"}),
 	)
 	handler := withRunStartDefaults(server, ui.RunStartRequest{Provider: "openai", Model: "serve-test"})
 
@@ -202,7 +219,14 @@ func TestServeHandlerStartRouteInjectsDefaultsAndSupportsAbortAction(t *testing.
 		t.Fatalf("redirect location = %q, want /runs/<id>", startResp.Header.Get("Location"))
 	}
 
-	waitForServeBodyContains(t, client, ts.URL+"/", "Serve defaults", "openai / serve-test", "/runs/"+runID)
+	waitForServeBodyContains(t, client, ts.URL+"/",
+		"Start a run",
+		"Compose launch details",
+		"Submitting uses the active <strong>openai</strong> / <strong>serve-test</strong> serve defaults.",
+		"Serve defaults",
+		"openai / serve-test",
+		"/runs/"+runID,
+	)
 	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID, "Serve defaults", "wire defaults", "/runs/"+runID+"/events")
 	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID+"/sidebar", "running", "openai", "serve-test")
 

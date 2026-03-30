@@ -85,13 +85,14 @@ var liveSidebarTemplate = template.Must(template.New("live_sidebar").Parse(`
 `))
 
 type pageData struct {
-	AppTitle    string
-	PageTitle   string
-	Path        string
-	CurrentYear int
-	IsRunPage   bool
-	Runs        []RunView
-	Run         RunView
+	AppTitle         string
+	PageTitle        string
+	Path             string
+	CurrentYear      int
+	IsRunPage        bool
+	Runs             []RunView
+	Run              RunView
+	RunStartDefaults RunStartRequest
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -101,11 +102,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "index", pageData{
-		AppTitle:    "gollem",
-		PageTitle:   "Dashboard",
-		Path:        r.URL.Path,
-		CurrentYear: time.Now().Year(),
-		Runs:        s.runs.listViews(),
+		AppTitle:         "gollem",
+		PageTitle:        "Dashboard",
+		Path:             r.URL.Path,
+		CurrentYear:      time.Now().Year(),
+		Runs:             s.runs.listViews(),
+		RunStartDefaults: s.runStartDefaults,
 	})
 }
 
