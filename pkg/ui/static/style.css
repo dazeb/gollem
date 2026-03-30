@@ -441,6 +441,23 @@ body {
   height: 10px;
 }
 
+.run-scene__frame-tag {
+  position: absolute;
+  left: 28px;
+  bottom: 18px;
+  z-index: 2;
+  pointer-events: none;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(2, 6, 23, 0.46);
+  color: rgba(148, 163, 184, 0.72);
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  backdrop-filter: blur(10px);
+}
+
 .run-scene__legend {
   right: 24px;
   bottom: 18px;
@@ -628,6 +645,13 @@ body {
   .run-scene__legend {
     right: 16px;
     left: 16px;
+  }
+
+  .run-scene__frame-tag {
+    left: 16px;
+    right: auto;
+    bottom: 84px;
+    max-width: calc(100% - 32px);
   }
 
   .run-scene__overlay--top {

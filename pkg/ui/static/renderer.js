@@ -804,22 +804,37 @@ class RunSceneRenderer {
   }
 
   triggerTransition(name) {
-    this.scene.transition = { name, startedAt: sceneClock() };
-    const kick = name === 'waiting'
-      ? { x: -10, y: -22 }
+    const startedAt = sceneClock();
+    const profile = name === 'waiting'
+      ? { kick: { x: -12, y: -18 }, pulse: 1.28, flash: 0.44 }
       : name === 'resumed'
-        ? { x: 18, y: -36 }
+        ? { kick: { x: 22, y: -34 }, pulse: 0.92, flash: 0.34 }
         : name === 'finished'
-          ? { x: 0, y: 20 }
+          ? { kick: { x: 0, y: 18 }, pulse: 0.72, flash: 0.26 }
           : name === 'error'
-            ? { x: 28, y: -8 }
-            : { x: 0, y: 0 };
+            ? { kick: { x: 30, y: -6 }, pulse: 1.54, flash: 0.62 }
+            : { kick: { x: 0, y: 0 }, pulse: 0.2, flash: 0.16 };
+
+    this.scene.transition = {
+      name,
+      startedAt,
+      flash: profile.flash,
+      pulse: profile.pulse,
+    };
 
     this.scene.flow.forEach((item) => {
-      item.vx = (item.vx || 0) + (item.kind === 'tool' ? kick.x : kick.x * 0.35) * (item.order % 2 === 0 ? -1 : 1);
-      item.vy = (item.vy || 0) + kick.y * (item.kind === 'tool' ? 1 : 0.45);
-      if (item.kind === 'tool' && name === 'waiting') {
-        item.pulseBoost = 1.2;
+      item.vx = (item.vx || 0) + (item.kind === 'tool' ? profile.kick.x : profile.kick.x * 0.35) * (item.order % 2 === 0 ? -1 : 1);
+      item.vy = (item.vy || 0) + profile.kick.y * (item.kind === 'tool' ? 1 : 0.45);
+      item.flashBoost = Math.max(item.flashBoost || 0, item.kind === 'tool' ? profile.flash : profile.flash * 0.72);
+      if (item.kind === 'tool') {
+        const boost = name === 'error'
+          ? 1.58
+          : name === 'waiting'
+            ? 1.26
+            : name === 'finished'
+              ? 0.9
+              : 0.84;
+        item.pulseBoost = Math.max(item.pulseBoost || 0, boost);
       }
     });
   }
@@ -1027,6 +1042,7 @@ class RunSceneRenderer {
       targetAlpha: typeof item.targetAlpha === 'number' ? item.targetAlpha : 1,
       appearedAt: typeof item.appearedAt === 'number' ? item.appearedAt : now,
       pulseBoost: typeof item.pulseBoost === 'number' ? item.pulseBoost : 0,
+      flashBoost: typeof item.flashBoost === 'number' ? item.flashBoost : 0,
       layoutVersion: typeof item.layoutVersion === 'number' ? item.layoutVersion : 1,
       textLayoutKey: item.textLayoutKey || '',
       vx: 0,
@@ -1053,12 +1069,13 @@ class RunSceneRenderer {
     let removed = false;
     const remaining = [];
     this.scene.flow.forEach((item) => {
-      const dissolveComplete = item.kind === 'tool'
+      const shouldDissolve = item.kind === 'tool'
         && item.resolvedAt
+        && item.status !== 'failed'
         && this.toolResolveProgress(item, now) >= 1
         && (item.alpha || 0) <= 0.06
         && (item.layoutWeight || 0) <= 0.04;
-      if (!dissolveComplete) {
+      if (!shouldDissolve) {
         remaining.push(item);
         return;
       }
@@ -1332,7 +1349,7 @@ class RunSceneRenderer {
     if (!item?.resolvedAt) {
       return 0;
     }
-    const duration = item.status === 'failed' ? 1500 : 900;
+    const duration = item.status === 'failed' ? 2400 : 900;
     return clamp((now - item.resolvedAt) / duration, 0, 1);
   }
 
@@ -1341,7 +1358,7 @@ class RunSceneRenderer {
       return 0;
     }
     if (item.status === 'failed') {
-      return 1 - this.toolResolveProgress(item, now) * 0.72;
+      return 0.94 + (1 - this.toolResolveProgress(item, now)) * 0.24;
     }
     if (item.status === 'returned' || item.status === 'approved' || item.status === 'denied') {
       return 1 - this.toolResolveProgress(item, now);
@@ -1365,15 +1382,18 @@ class RunSceneRenderer {
             ? -6
             : 0;
     const resolvedShrink = (item.status === 'returned' || item.status === 'approved' || item.status === 'denied' || item.status === 'failed')
-      ? lerp(1, item.status === 'failed' ? 0.48 : 0.12, this.toolResolveProgress(item, now))
+      ? lerp(1, item.status === 'failed' ? 0.86 : 0.12, this.toolResolveProgress(item, now))
       : 1;
-    return Math.max(12, (base + statusBoost) * resolvedShrink);
+    return Math.max(18, (base + statusBoost) * resolvedShrink);
   }
 
   toolAlphaTarget(item, now) {
-    const base = item.status === 'failed' ? 0.9 : 1;
-    if (item.status === 'returned' || item.status === 'approved' || item.status === 'denied' || item.status === 'failed') {
+    const base = item.status === 'failed' ? 0.92 : 1;
+    if (item.status === 'returned' || item.status === 'approved' || item.status === 'denied') {
       return lerp(base, 0.04, this.toolResolveProgress(item, now));
+    }
+    if (item.status === 'failed') {
+      return lerp(base, 0.76, this.toolResolveProgress(item, now));
     }
     return base;
   }
@@ -1694,6 +1714,7 @@ class RunSceneRenderer {
     }
     item.alpha = typeof item.alpha === 'number' ? item.alpha : 1;
     item.targetAlpha = typeof item.targetAlpha === 'number' ? item.targetAlpha : 1;
+    item.flashBoost = lerp(item.flashBoost || 0, 0, smoothAmount(7, dt));
 
     const stiffness = item.kind === 'step' ? 18 : 14;
     const damping = item.kind === 'step' ? 0.78 : 0.8;
@@ -1708,8 +1729,6 @@ class RunSceneRenderer {
     item.displayHeight = lerp(item.displayHeight, item.targetHeight, smoothAmount(14, dt));
     item.alpha = lerp(item.alpha, item.targetAlpha, smoothAmount(10, dt));
 
-    const maxX = width - this.lastMeasure.width * 0 + width - width;
-    void maxX;
     const minX = 12;
     const boundRight = width - item.displayWidth - 12;
     const boundBottom = height - item.displayHeight - 10;
@@ -1730,7 +1749,7 @@ class RunSceneRenderer {
       item.vy *= -0.26;
     }
 
-    return Math.abs(item.vx) > 0.08 || Math.abs(item.vy) > 0.08 || !motionSettled(item.x, item.targetX) || !motionSettled(item.y, item.targetY) || !motionSettled(item.displayWidth, item.targetWidth);
+    return Math.abs(item.vx) > 0.08 || Math.abs(item.vy) > 0.08 || (item.flashBoost || 0) > 0.02 || !motionSettled(item.x, item.targetX) || !motionSettled(item.y, item.targetY) || !motionSettled(item.displayWidth, item.targetWidth);
   }
 
   advanceTool(item, dt, width, height, now) {
@@ -1744,16 +1763,22 @@ class RunSceneRenderer {
       item.radius = item.targetRadius;
     }
     item.alpha = typeof item.alpha === 'number' ? item.alpha : 1;
+    item.flashBoost = lerp(item.flashBoost || 0, 0, smoothAmount(6, dt));
 
     const status = this.scene.runStatus;
-    const gravity = status === 'waiting' ? 18 : status === 'failed' ? 72 : status === 'completed' ? 12 : 32;
-    const stiffness = status === 'waiting' ? 8 : 10;
-    const damping = status === 'failed' ? 0.74 : 0.8;
+    const gravity = status === 'waiting' ? 18 : (status === 'failed' || status === 'aborted') ? 72 : status === 'completed' ? 12 : 32;
+    const stiffness = status === 'waiting' ? 8 : status === 'completed' ? 9 : 10;
+    const damping = (status === 'failed' || item.status === 'failed') ? 0.74 : status === 'completed' ? 0.84 : 0.8;
     const pulse = 0.4 + Math.sin(now / 280 + item.order * 0.9) * 0.5;
+    const buoyancy = item.status === 'approval' || item.status === 'deferred'
+      ? pulse * 0.78
+      : item.status === 'failed'
+        ? pulse * 0.18
+        : pulse * 0.45;
     item.pulseBoost = lerp(item.pulseBoost || 0, 0, smoothAmount(8, dt));
 
     item.vx = (item.vx || 0) + (item.targetX - item.x) * stiffness * dt;
-    item.vy = (item.vy || 0) + (item.targetY - item.y) * stiffness * dt + gravity * dt - pulse * 0.45;
+    item.vy = (item.vy || 0) + (item.targetY - item.y) * stiffness * dt + gravity * dt - buoyancy;
     item.vx *= Math.pow(damping, dt * 60);
     item.vy *= Math.pow(damping, dt * 60);
     item.x += item.vx * dt * 60;
@@ -1782,7 +1807,7 @@ class RunSceneRenderer {
       item.vy = -Math.abs(item.vy) * 0.72;
     }
 
-    return item.layoutWeight > 0.04 || item.alpha > 0.05 || Math.abs(item.vx) > 0.08 || Math.abs(item.vy) > 0.08 || !motionSettled(item.x, item.targetX, 1.2) || !motionSettled(item.y, item.targetY, 1.2);
+    return item.layoutWeight > 0.04 || item.alpha > 0.05 || (item.flashBoost || 0) > 0.02 || Math.abs(item.vx) > 0.08 || Math.abs(item.vy) > 0.08 || !motionSettled(item.x, item.targetX, 1.2) || !motionSettled(item.y, item.targetY, 1.2);
   }
 
   advance(layout, now, dt) {
@@ -1847,10 +1872,25 @@ class RunSceneRenderer {
     const progress = clamp(age / 1400, 0, 1);
     const pulse = 0.5 + Math.sin(now / 180) * 0.5;
     const name = this.scene.transition?.name || this.scene.runStatus;
+    const innerX = 18;
+    const innerY = 18;
+    const innerWidth = width - 36;
+    const innerHeight = height - 36;
+
+    this.ctx.save();
 
     if (name === 'waiting') {
-      this.ctx.fillStyle = `rgba(251, 191, 36, ${0.05 + pulse * 0.03})`;
-      this.ctx.fillRect(18, 18, width - 18, height - 18);
+      this.ctx.fillStyle = `rgba(251, 191, 36, ${0.045 + pulse * 0.035})`;
+      this.ctx.fillRect(innerX, innerY, innerWidth, innerHeight);
+      this.ctx.strokeStyle = `rgba(251, 191, 36, ${0.16 + pulse * 0.1})`;
+      this.ctx.lineWidth = 1;
+      for (let y = innerY + 34; y < innerY + innerHeight; y += 28) {
+        this.ctx.beginPath();
+        this.ctx.moveTo(innerX + 12, y + pulse * 4);
+        this.ctx.lineTo(innerX + innerWidth - 12, y - pulse * 4);
+        this.ctx.stroke();
+      }
+      this.ctx.restore();
       return;
     }
     if (name === 'resumed') {
@@ -1861,17 +1901,42 @@ class RunSceneRenderer {
       this.ctx.moveTo(sweepX, 20);
       this.ctx.lineTo(sweepX - 40, height - 18);
       this.ctx.stroke();
+
+      const trail = this.ctx.createLinearGradient(Math.max(18, sweepX - 96), 0, sweepX, 0);
+      trail.addColorStop(0, 'rgba(125, 211, 252, 0)');
+      trail.addColorStop(1, `rgba(125, 211, 252, ${0.12 * (1 - progress)})`);
+      this.ctx.fillStyle = trail;
+      this.ctx.fillRect(Math.max(18, sweepX - 96), 18, 96, height - 36);
+      this.ctx.restore();
       return;
     }
     if (name === 'finished') {
-      this.ctx.fillStyle = `rgba(52, 211, 153, ${0.14 * (1 - progress)})`;
-      this.ctx.fillRect(18, 18, width - 18, height - 18);
+      this.ctx.fillStyle = `rgba(52, 211, 153, ${0.08 * (1 - progress) + pulse * 0.02})`;
+      this.ctx.fillRect(innerX, innerY, innerWidth, innerHeight);
+      this.ctx.strokeStyle = `rgba(52, 211, 153, ${0.24 * (1 - progress)})`;
+      this.ctx.lineWidth = 1.2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(innerX + 20, innerY + innerHeight * 0.58);
+      this.ctx.lineTo(innerX + innerWidth * 0.32, innerY + innerHeight * 0.72);
+      this.ctx.lineTo(innerX + innerWidth - 18, innerY + 38);
+      this.ctx.stroke();
+      this.ctx.restore();
       return;
     }
     if (name === 'error') {
-      this.ctx.fillStyle = `rgba(248, 113, 113, ${0.12 * (1 - progress)})`;
-      this.ctx.fillRect(18, 18, width - 18, height - 18);
+      this.ctx.fillStyle = `rgba(248, 113, 113, ${0.08 * (1 - progress) + pulse * 0.02})`;
+      this.ctx.fillRect(innerX, innerY, innerWidth, innerHeight);
+      this.ctx.strokeStyle = `rgba(248, 113, 113, ${0.24 * (1 - progress)})`;
+      this.ctx.lineWidth = 1.2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(innerX + 28, innerY + 28);
+      this.ctx.lineTo(innerX + innerWidth - 28, innerY + innerHeight - 28);
+      this.ctx.moveTo(innerX + innerWidth - 28, innerY + 28);
+      this.ctx.lineTo(innerX + 28, innerY + innerHeight - 28);
+      this.ctx.stroke();
     }
+
+    this.ctx.restore();
   }
 
   renderHeader(width) {
