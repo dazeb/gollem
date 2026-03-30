@@ -317,6 +317,18 @@ body {
     inset 0 1px 0 rgba(125, 211, 252, 0.08),
     0 24px 60px rgba(2, 6, 23, 0.36);
   isolation: isolate;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    filter 180ms ease;
+}
+
+.run-scene[data-scene-status="running"] .run-scene__viewport {
+  border-color: rgba(125, 211, 252, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(125, 211, 252, 0.1),
+    0 24px 60px rgba(2, 6, 23, 0.36),
+    0 0 0 1px rgba(56, 189, 248, 0.05);
 }
 
 .run-scene[data-scene-status="waiting"] .run-scene__viewport {
@@ -479,6 +491,52 @@ body {
 
 .run-scene__empty[hidden] {
   display: none;
+}
+
+.run-scene[data-scene-status="waiting"] .run-scene__legend {
+  border-color: rgba(251, 191, 36, 0.18);
+  color: rgba(253, 230, 138, 0.84);
+}
+
+.run-scene[data-scene-status="completed"] .run-scene__legend {
+  border-color: rgba(52, 211, 153, 0.18);
+  color: rgba(167, 243, 208, 0.84);
+}
+
+.run-scene[data-scene-status="failed"] .run-scene__legend,
+.run-scene[data-scene-status="aborted"] .run-scene__legend {
+  border-color: rgba(248, 113, 113, 0.2);
+  color: rgba(254, 202, 202, 0.84);
+}
+
+.run-scene[data-scene-status="waiting"] .run-scene__empty {
+  border-color: rgba(251, 191, 36, 0.24);
+}
+
+.run-scene[data-scene-status="completed"] .run-scene__empty {
+  border-color: rgba(52, 211, 153, 0.24);
+}
+
+.run-scene[data-scene-status="failed"] .run-scene__empty,
+.run-scene[data-scene-status="aborted"] .run-scene__empty {
+  border-color: rgba(248, 113, 113, 0.24);
+}
+
+.run-scene[data-scene-status="waiting"] .run-scene__overlay span::before {
+  background: rgba(251, 191, 36, 0.42);
+}
+
+.run-scene[data-scene-status="completed"] .run-scene__overlay span::before {
+  background: rgba(52, 211, 153, 0.38);
+}
+
+.run-scene[data-scene-status="failed"] .run-scene__overlay span::before,
+.run-scene[data-scene-status="aborted"] .run-scene__overlay span::before {
+  background: rgba(248, 113, 113, 0.4);
+}
+
+.run-scene[data-scene-connection="reconnecting"] .run-scene__legend {
+  filter: saturate(1.1);
 }
 
 .transcript--live-log {

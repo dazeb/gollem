@@ -381,6 +381,14 @@ class RunSceneRenderer {
     this.layoutRevision = 0;
     this.lastLayoutKey = '';
     this.layoutCache = new Map();
+    this.layoutCacheLimit = 96;
+
+    this.root.dataset.sceneStatus = this.scene.runStatus;
+    this.root.dataset.sceneConnection = this.scene.connection;
+    this.scene.transition = {
+      name: this.phaseForStatus(this.scene.runStatus),
+      startedAt: sceneClock() - 1800,
+    };
 
     if (!this.canvas || !this.ctx || !this.eventsUrl) {
       return;
@@ -749,9 +757,9 @@ class RunSceneRenderer {
     const next = status || this.scene.runStatus || 'running';
     const changed = next !== this.scene.runStatus;
     this.scene.runStatus = next;
+    this.root.dataset.sceneStatus = next;
     if (changed) {
       this.scene.statusChangedAt = sceneClock();
-      this.root.dataset.sceneStatus = next;
     }
     this.statusTargets.forEach((target) => {
       if (!target) {
@@ -779,9 +787,148 @@ class RunSceneRenderer {
   invalidateLayout(reason = 'update') {
     this.layoutRevision += 1;
     this.lastLayoutKey = '';
-    if (reason === 'resize' || this.layoutCache.size > 320) {
+    if (reason === 'resize' || this.layoutCache.size > this.layoutCacheLimit * 2) {
       this.layoutCache.clear();
     }
+  }
+
+  phaseForStatus(status) {
+    switch (status) {
+      case 'waiting':
+        return 'waiting';
+      case 'completed':
+        return 'finished';
+      case 'failed':
+      case 'aborted':
+      case 'cancelled':
+        return 'error';
+      case 'running':
+        return 'resumed';
+      default:
+        return 'boot';
+    }
+  }
+
+  getLayoutCache(key) {
+    if (!this.layoutCache.has(key)) {
+      return null;
+    }
+    const cached = this.layoutCache.get(key);
+    this.layoutCache.delete(key);
+    this.layoutCache.set(key, cached);
+    return cached;
+  }
+
+  setLayoutCache(key, value) {
+    if (!key || !value) {
+      return;
+    }
+    if (this.layoutCache.has(key)) {
+      this.layoutCache.delete(key);
+    }
+    this.layoutCache.set(key, value);
+    while (this.layoutCache.size > this.layoutCacheLimit) {
+      const oldestKey = this.layoutCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      this.layoutCache.delete(oldestKey);
+    }
+  }
+
+  ensureBackgroundLayer(width, height) {
+    const transitionName = this.scene.transition?.name || this.phaseForStatus(this.scene.runStatus);
+    const key = [width, height, this.dpr, transitionName].join('|');
+    if (this.backgroundLayer?.key === key && this.backgroundLayer.canvas) {
+      return this.backgroundLayer.canvas;
+    }
+
+    const layer = document.createElement('canvas');
+    layer.width = Math.max(1, Math.round(width * this.dpr));
+    layer.height = Math.max(1, Math.round(height * this.dpr));
+    const ctx = layer.getContext('2d');
+    if (!ctx) {
+      return null;
+    }
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+
+    const accent = transitionName === 'waiting'
+      ? 'rgba(251, 191, 36, 0.12)'
+      : transitionName === 'finished'
+        ? 'rgba(52, 211, 153, 0.12)'
+        : transitionName === 'error'
+          ? 'rgba(248, 113, 113, 0.12)'
+          : 'rgba(125, 211, 252, 0.12)';
+
+    const gradient = ctx.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, '#040816');
+    gradient.addColorStop(0.52, '#091120');
+    gradient.addColorStop(1, '#040816');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+
+    const glow = ctx.createRadialGradient(width * 0.24, 24, 12, width * 0.24, 24, width * 0.68);
+    glow.addColorStop(0, accent);
+    glow.addColorStop(0.7, 'rgba(56, 189, 248, 0.03)');
+    glow.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
+    const dotSpacing = 24;
+    for (let x = 20; x < width; x += dotSpacing) {
+      for (let y = 20; y < height; y += dotSpacing) {
+        ctx.globalAlpha = 0.24 + ((x / dotSpacing + y / dotSpacing) % 3) * 0.06;
+        ctx.fillRect(x, y, 1.4, 1.4);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = 'rgba(8, 15, 30, 0.92)';
+    ctx.fillRect(0, 0, width, 18);
+    ctx.fillRect(0, 0, 18, height);
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(18.5, 0);
+    ctx.lineTo(18.5, height);
+    ctx.moveTo(0, 18.5);
+    ctx.lineTo(width, 18.5);
+    ctx.stroke();
+
+    ctx.font = META_FONT;
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.72)';
+    ctx.textBaseline = 'middle';
+    for (let x = 48; x < width; x += 96) {
+      ctx.beginPath();
+      ctx.moveTo(x + 0.5, 0);
+      ctx.lineTo(x + 0.5, 12);
+      ctx.stroke();
+      ctx.fillText(String(x).padStart(3, '0'), x - 10, 10);
+    }
+    for (let y = 56; y < height; y += 96) {
+      ctx.beginPath();
+      ctx.moveTo(0, y + 0.5);
+      ctx.lineTo(12, y + 0.5);
+      ctx.stroke();
+      ctx.save();
+      ctx.translate(10, y + 10);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText(String(y).padStart(3, '0'), 0, 0);
+      ctx.restore();
+    }
+
+    ctx.font = META_FONT;
+    ctx.fillStyle = 'rgba(125, 211, 252, 0.34)';
+    ctx.fillText('FIELD', width - 60, 10);
+    ctx.save();
+    ctx.translate(10, height - 54);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('RUN', 0, 0);
+    ctx.restore();
+
+    this.backgroundLayer = { key, canvas: layer };
+    return layer;
   }
 
   bumpLayoutVersion(item, reason = 'content') {
@@ -1107,13 +1254,14 @@ class RunSceneRenderer {
     const lineHeight = item.kind === 'reasoning' ? 20 : 22;
     const content = item.kind === 'notice' ? (item.detail || item.content || item.title) : (item.content || '…');
     const normalizedObstacles = (Array.isArray(obstacles) ? obstacles : [])
-      .filter((obstacle) => (obstacle.weight || 0) > 0.04 && (obstacle.radius || 0) > 8)
+      .filter((obstacle) => (obstacle.weight || 0) > 0.08 && (obstacle.radius || 0) > 16)
       .map((obstacle) => ({
-        x: quantize(obstacle.x, 6),
-        y: quantize(obstacle.y, 6),
-        radius: quantize(obstacle.radius, 4),
-        weight: Math.round((obstacle.weight || 0) * 100) / 100,
+        x: quantize(obstacle.x, 14),
+        y: quantize(obstacle.y, 14),
+        radius: quantize(obstacle.radius, 12),
+        weight: Math.round((obstacle.weight || 0) * 4) / 4,
       }));
+    const cacheable = normalizedObstacles.length === 0;
     const key = [
       item.id,
       item.layoutVersion || 0,
@@ -1127,11 +1275,13 @@ class RunSceneRenderer {
       return item.textLayout;
     }
 
-    if (this.layoutCache.has(key)) {
-      const cached = this.layoutCache.get(key);
-      item.textLayoutKey = key;
-      item.textLayout = cached;
-      return cached;
+    if (cacheable) {
+      const cached = this.getLayoutCache(key);
+      if (cached) {
+        item.textLayoutKey = key;
+        item.textLayout = cached;
+        return cached;
+      }
     }
 
     const textLeft = left + 28;
@@ -1151,7 +1301,9 @@ class RunSceneRenderer {
       targetWidth: Math.max(236, width - widthReduction),
       targetHeight: 70 + layout.height,
     };
-    this.layoutCache.set(key, result);
+    if (cacheable) {
+      this.setLayoutCache(key, result);
+    }
     item.textLayoutKey = key;
     item.textLayout = result;
     return result;
@@ -1528,73 +1680,21 @@ class RunSceneRenderer {
   }
 
   renderBackground(width, height, now) {
-    const transitionName = this.scene.transition?.name || this.scene.runStatus;
-    const accent = transitionName === 'waiting'
-      ? 'rgba(251, 191, 36, 0.12)'
-      : transitionName === 'finished'
-        ? 'rgba(52, 211, 153, 0.12)'
-        : transitionName === 'error'
-          ? 'rgba(248, 113, 113, 0.12)'
-          : 'rgba(125, 211, 252, 0.12)';
-
-    const gradient = this.ctx.createLinearGradient(0, 0, width, height);
-    gradient.addColorStop(0, '#040816');
-    gradient.addColorStop(0.52, '#091120');
-    gradient.addColorStop(1, '#040816');
-    this.ctx.fillStyle = gradient;
-    this.ctx.fillRect(0, 0, width, height);
-
-    const glow = this.ctx.createRadialGradient(width * 0.24, 24, 12, width * 0.24, 24, width * 0.68);
-    glow.addColorStop(0, accent);
-    glow.addColorStop(0.7, 'rgba(56, 189, 248, 0.03)');
-    glow.addColorStop(1, 'rgba(56, 189, 248, 0)');
-    this.ctx.fillStyle = glow;
-    this.ctx.fillRect(0, 0, width, height);
+    const layer = this.ensureBackgroundLayer(width, height);
+    if (layer) {
+      this.ctx.drawImage(layer, 0, 0, width, height);
+    }
 
     this.ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
     const dotSpacing = 24;
     for (let x = 20; x < width; x += dotSpacing) {
       for (let y = 20; y < height; y += dotSpacing) {
         const phase = Math.sin((now / 900) + x * 0.02 + y * 0.015) * 0.06;
-        this.ctx.globalAlpha = 0.35 + phase;
+        this.ctx.globalAlpha = 0.06 + phase;
         this.ctx.fillRect(x, y, 1.4, 1.4);
       }
     }
     this.ctx.globalAlpha = 1;
-
-    this.ctx.fillStyle = 'rgba(8, 15, 30, 0.92)';
-    this.ctx.fillRect(0, 0, width, 18);
-    this.ctx.fillRect(0, 0, 18, height);
-    this.ctx.strokeStyle = 'rgba(125, 211, 252, 0.12)';
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.moveTo(18.5, 0);
-    this.ctx.lineTo(18.5, height);
-    this.ctx.moveTo(0, 18.5);
-    this.ctx.lineTo(width, 18.5);
-    this.ctx.stroke();
-
-    this.ctx.font = META_FONT;
-    this.ctx.fillStyle = 'rgba(148, 163, 184, 0.72)';
-    this.ctx.textBaseline = 'middle';
-    for (let x = 48; x < width; x += 96) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(x + 0.5, 0);
-      this.ctx.lineTo(x + 0.5, 12);
-      this.ctx.stroke();
-      this.ctx.fillText(String(x).padStart(3, '0'), x - 10, 10);
-    }
-    for (let y = 56; y < height; y += 96) {
-      this.ctx.beginPath();
-      this.ctx.moveTo(0, y + 0.5);
-      this.ctx.lineTo(12, y + 0.5);
-      this.ctx.stroke();
-      this.ctx.save();
-      this.ctx.translate(10, y + 10);
-      this.ctx.rotate(-Math.PI / 2);
-      this.ctx.fillText(String(y).padStart(3, '0'), 0, 0);
-      this.ctx.restore();
-    }
   }
 
   renderSceneFx(width, height, now) {

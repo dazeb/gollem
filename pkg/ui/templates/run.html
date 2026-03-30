@@ -41,13 +41,15 @@
       data-run-title="{{.Run.Title}}"
       data-run-summary="{{.Run.Summary}}"
       data-run-status="{{.Run.Status}}"
+      data-scene-status="{{.Run.Status}}"
+      data-scene-connection="connecting"
       data-events-url="/runs/{{.Run.ID}}/events"
     >
       <div class="run-scene__header">
         <div>
           <p class="eyebrow">Baseline spatial renderer</p>
           <h3>Live stream field</h3>
-          <p class="run-scene__caption">Physics lattice · obstacle-aware text reflow · mission target pass</p>
+          <p class="run-scene__caption">Physics lattice · obstacle-aware text reflow · dissolve/pulse state field</p>
         </div>
         <div class="run-scene__metrics" aria-label="Run scene metrics">
           <article>
