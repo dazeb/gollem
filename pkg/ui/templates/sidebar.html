@@ -3,6 +3,7 @@
   <div>
     <p class="eyebrow">Run sidebar</p>
     <h3>{{.Run.ID}}</h3>
+    <p class="muted">{{.Run.Controls.Summary}}</p>
   </div>
 
   <dl class="sidebar-metadata">
@@ -58,7 +59,8 @@
     <div>
       <dt>Controls</dt>
       <dd>
-        {{if .Run.Controls.CanAbort}}Abort available{{else}}No abort needed{{end}}
+        {{.Run.Controls.PrimaryActionLabel}}
+        {{if .Run.Controls.CanAbort}} · Abort available{{end}}
         {{if .Run.Controls.CanApproveTools}} · {{.Run.Controls.PendingApprovalCount}} approval{{if ne .Run.Controls.PendingApprovalCount 1}}s{{end}} ready{{end}}
       </dd>
     </div>
@@ -85,9 +87,10 @@
     {{if .Run.RecentActivity}}
     <ul class="event-list event-list--dense">
       {{range .Run.RecentActivity}}
-      <li>
+      <li data-activity-kind="{{.Kind}}" data-activity-tone="{{.Tone}}">
         <strong>{{.Label}}</strong>
         {{if .Detail}}<span> {{.Detail}}</span>{{end}}
+        <div class="muted">{{.OccurredLabel}}</div>
       </li>
       {{end}}
     </ul>

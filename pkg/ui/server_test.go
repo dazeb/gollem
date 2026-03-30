@@ -143,12 +143,16 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		"data-run-scene",
 		"data-run-canvas",
 		"data-run-event-log",
+		"1 pending tool approval",
+		"Run started",
 		"/runs/"+runID+"/events",
 	)
 	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
 		"waiting",
 		"dangerous_write",
 		"tool_approve",
+		"Review approvals",
+		"Waiting for approval",
 		">11<",
 		">5<",
 		">1<",
@@ -237,6 +241,8 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 	assertUISSEFrameContains(t, postApprovalFrames, agui.AGUITextMessageContent, "delta", "stream after approval")
 	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
 		"completed",
+		"Review activity",
+		"Run completed",
 		"No pending approvals.",
 		">11<",
 		">5<",
@@ -371,6 +377,51 @@ func TestHandleActionAbortUsesRunSpecificSessionAndMarksRunAborted(t *testing.T)
 	waitForRunStatus(t, store, runID, "aborted")
 	if got := run.Session().GetStatus(); got != agui.SessionStatusAborted {
 		t.Fatalf("session status = %q, want %q", got, agui.SessionStatusAborted)
+	}
+}
+
+func TestRunSnapshotStructuredActivityAndWaitingAfterResumeBeforeApprovalResolved(t *testing.T) {
+	store := NewRunStateStore()
+	run := store.create(RunStartRequest{Prompt: "review the tool call"})
+	now := time.Now().UTC()
+
+	core.Publish(run.EventBus(), core.RunStartedEvent{RunID: run.ID(), Prompt: "review the tool call", StartedAt: now})
+	core.Publish(run.EventBus(), core.ToolCalledEvent{RunID: run.ID(), ToolCallID: "tool_approve", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, CalledAt: now.Add(10 * time.Millisecond)})
+	core.Publish(run.EventBus(), core.ApprovalRequestedEvent{RunID: run.ID(), ToolCallID: "tool_approve", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, RequestedAt: now.Add(20 * time.Millisecond)})
+	core.Publish(run.EventBus(), core.RunWaitingEvent{RunID: run.ID(), Reason: "approval", WaitingAt: now.Add(30 * time.Millisecond)})
+	core.Publish(run.EventBus(), core.RunResumedEvent{RunID: run.ID(), ResumedAt: now.Add(40 * time.Millisecond)})
+
+	snap := run.Snapshot()
+	if snap.Status != "running" {
+		t.Fatalf("status = %q, want running", snap.Status)
+	}
+	if snap.Waiting.Active {
+		t.Fatalf("waiting active = %v, want false", snap.Waiting.Active)
+	}
+	if snap.WaitingReason != "" {
+		t.Fatalf("waiting reason = %q, want empty", snap.WaitingReason)
+	}
+	if !snap.Controls.CanApproveTools {
+		t.Fatal("expected controls to keep approval action available")
+	}
+	if snap.Controls.PendingApprovalCount != 1 {
+		t.Fatalf("pending approvals = %d, want 1", snap.Controls.PendingApprovalCount)
+	}
+	if snap.Controls.PrimaryActionLabel != "Review approvals" {
+		t.Fatalf("primary action = %q, want %q", snap.Controls.PrimaryActionLabel, "Review approvals")
+	}
+	if len(snap.RecentActivity) == 0 {
+		t.Fatal("expected structured recent activity")
+	}
+	last := snap.RecentActivity[len(snap.RecentActivity)-1]
+	if last.Label != "Run resumed" {
+		t.Fatalf("last activity label = %q, want %q", last.Label, "Run resumed")
+	}
+	if last.Summary == "" || last.OccurredLabel == "" {
+		t.Fatalf("expected structured activity summary/time labels, got %+v", last)
+	}
+	if got := run.Session().GetStatus(); got != agui.SessionStatusRunning {
+		t.Fatalf("session status = %q, want %q", got, agui.SessionStatusRunning)
 	}
 }
 

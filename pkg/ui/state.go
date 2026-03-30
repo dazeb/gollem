@@ -68,25 +68,31 @@ type PendingApprovalView struct {
 
 // RunActivityView is a human-readable projection of one recent runtime event.
 type RunActivityView struct {
-	Type        string
-	Label       string
-	Detail      string
-	OccurredAt  time.Time
-	IsWaiting   bool
-	IsError     bool
-	ToolCallID  string
-	ToolName    string
-	TurnNumber  int
-	FinishState string
+	Type          string
+	Kind          string
+	Tone          string
+	Label         string
+	Detail        string
+	Summary       string
+	OccurredAt    time.Time
+	OccurredLabel string
+	IsWaiting     bool
+	IsError       bool
+	ToolCallID    string
+	ToolName      string
+	TurnNumber    int
+	FinishState   string
 }
 
 // RunWaitingView is renderer-friendly waiting context for the current run state.
 type RunWaitingView struct {
-	Active      bool
-	Reason      string
-	Label       string
-	Detail      string
-	PendingKind string
+	Active               bool
+	Reason               string
+	Label                string
+	Detail               string
+	PendingKind          string
+	ApprovalPendingCount int
+	StatusLabel          string
 }
 
 // RunControlsView exposes control-oriented metadata for templates and renderers.
@@ -96,6 +102,9 @@ type RunControlsView struct {
 	PendingApprovalCount int
 	HasRecentActivity    bool
 	LastEventLabel       string
+	StatusLabel          string
+	Summary              string
+	PrimaryActionLabel   string
 }
 
 // RunView is the UI projection for one run.
@@ -256,8 +265,23 @@ func (r *RunRecord) appendActivityLocked(activity RunActivityView) {
 		activity.OccurredAt = time.Now().UTC()
 	}
 	activity.OccurredAt = activity.OccurredAt.UTC()
+	activity.Kind = firstNonEmpty(activity.Kind, activity.Type)
 	activity.Label = firstNonEmpty(activity.Label, humanizeRuntimeEventType(activity.Type))
 	activity.Detail = strings.TrimSpace(activity.Detail)
+	activity.Summary = firstNonEmpty(strings.TrimSpace(activity.Summary), joinActivitySummary(activity.Label, activity.Detail))
+	activity.OccurredLabel = firstNonEmpty(strings.TrimSpace(activity.OccurredLabel), activity.OccurredAt.Format("15:04:05 MST"))
+	if activity.Tone == "" {
+		switch {
+		case activity.IsError:
+			activity.Tone = "error"
+		case activity.IsWaiting:
+			activity.Tone = "waiting"
+		case activity.FinishState != "":
+			activity.Tone = activity.FinishState
+		default:
+			activity.Tone = "info"
+		}
+	}
 	r.activities = append(r.activities, activity)
 	if len(r.activities) > maxStoredRunActivities {
 		start := len(r.activities) - maxStoredRunActivities
@@ -348,11 +372,13 @@ func (r *RunRecord) Snapshot() RunView {
 	})
 
 	recent := snapshotRecentActivities(r.activities)
-	waiting := buildWaitingView(r.status, r.waitingReason, len(pending))
+	pendingApprovalCount := len(pending)
+	waiting := buildWaitingView(r.status, r.waitingReason, pendingApprovalCount)
 	lastLabel := waiting.Label
 	if len(recent) > 0 {
 		lastLabel = recent[len(recent)-1].Label
 	}
+	controls := buildControlsView(r.status, pendingApprovalCount, len(recent) > 0, lastLabel)
 
 	return RunView{
 		ID:               r.id,
@@ -368,16 +394,10 @@ func (r *RunRecord) Snapshot() RunView {
 		RecentActivity:   recent,
 		SessionID:        r.session.ID,
 		Usage:            r.usage,
-		WaitingReason:    r.waitingReason,
+		WaitingReason:    waiting.Reason,
 		Waiting:          waiting,
 		PendingApprovals: pending,
-		Controls: RunControlsView{
-			CanAbort:             statusAllowsAbort(r.status),
-			CanApproveTools:      len(pending) > 0,
-			PendingApprovalCount: len(pending),
-			HasRecentActivity:    len(recent) > 0,
-			LastEventLabel:       firstNonEmpty(lastLabel, humanizeRunStatus(r.status)),
-		},
+		Controls:         controls,
 	}
 }
 
@@ -609,22 +629,69 @@ func snapshotRecentActivities(src []RunActivityView) []RunActivityView {
 }
 
 func buildWaitingView(status, reason string, pendingApprovalCount int) RunWaitingView {
-	reason = strings.TrimSpace(reason)
-	if reason == "" && pendingApprovalCount > 0 {
-		reason = "approval"
-	}
-	active := status == "waiting" || reason != "" || pendingApprovalCount > 0
-	if !active {
+	reason = normalizeWaitingReason(status, reason, pendingApprovalCount)
+	if reason == "" {
 		return RunWaitingView{}
 	}
 	label, detail, kind := waitingPresentation(reason, pendingApprovalCount)
 	return RunWaitingView{
-		Active:      true,
-		Reason:      reason,
-		Label:       label,
-		Detail:      detail,
-		PendingKind: kind,
+		Active:               true,
+		Reason:               reason,
+		Label:                label,
+		Detail:               detail,
+		PendingKind:          kind,
+		ApprovalPendingCount: pendingApprovalCount,
+		StatusLabel:          humanizeRunStatus(status),
 	}
+}
+
+func buildControlsView(status string, pendingApprovalCount int, hasRecentActivity bool, lastLabel string) RunControlsView {
+	statusLabel := humanizeRunStatus(status)
+	lastEventLabel := firstNonEmpty(strings.TrimSpace(lastLabel), statusLabel)
+	primaryActionLabel := "View run"
+	summary := statusLabel
+	switch {
+	case pendingApprovalCount > 0:
+		primaryActionLabel = "Review approvals"
+		summary = fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
+	case statusAllowsAbort(status):
+		primaryActionLabel = "Abort run"
+		summary = "Run in progress"
+	case hasRecentActivity:
+		primaryActionLabel = "Review activity"
+		summary = lastEventLabel
+	}
+	return RunControlsView{
+		CanAbort:             statusAllowsAbort(status),
+		CanApproveTools:      pendingApprovalCount > 0,
+		PendingApprovalCount: pendingApprovalCount,
+		HasRecentActivity:    hasRecentActivity,
+		LastEventLabel:       lastEventLabel,
+		StatusLabel:          statusLabel,
+		Summary:              summary,
+		PrimaryActionLabel:   primaryActionLabel,
+	}
+}
+
+func normalizeWaitingReason(status, reason string, pendingApprovalCount int) string {
+	reason = strings.TrimSpace(reason)
+	status = strings.TrimSpace(status)
+	if status != "waiting" {
+		switch reason {
+		case "approval", "approval_and_deferred":
+			// Preserve explicit approval-oriented reasons only while waiting or when
+			// the reason itself still denotes an approval/deferred mixed wait.
+		default:
+			return ""
+		}
+	}
+	if reason == "" && status == "waiting" && pendingApprovalCount > 0 {
+		return "approval"
+	}
+	if pendingApprovalCount == 0 && reason == "approval" && status != "waiting" {
+		return ""
+	}
+	return reason
 }
 
 func waitingPresentation(reason string, pendingApprovalCount int) (label, detail, kind string) {
@@ -928,6 +995,19 @@ func pluralSuffix(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+func joinActivitySummary(label, detail string) string {
+	label = strings.TrimSpace(label)
+	detail = strings.TrimSpace(detail)
+	switch {
+	case label == "":
+		return detail
+	case detail == "":
+		return label
+	default:
+		return label + " · " + detail
+	}
 }
 
 func humanizeRuntimeEventType(eventType string) string {

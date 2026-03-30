@@ -11,7 +11,7 @@
         <h2>{{.Run.Title}}</h2>
         <p class="lede">{{.Run.Summary}}</p>
       </div>
-      <span class="status status--{{.Run.Status}}" data-run-status-badge>{{.Run.Status}}</span>
+      <span class="status status--{{.Run.Status}}" data-run-status-badge>{{.Run.Controls.StatusLabel}}</span>
     </div>
 
     <div class="detail-grid">
@@ -59,7 +59,7 @@
           </article>
           <article class="run-scene__metric run-scene__metric--stream">
             <span class="detail-grid__label">Stream state</span>
-            <strong data-scene-stream-state>{{.Run.Status}}</strong>
+            <strong data-scene-stream-state>{{.Run.Controls.StatusLabel}}</strong>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Steps</span>
@@ -115,17 +115,23 @@
       <div class="transcript__header">
         <div>
           <h3>Recent activity</h3>
-          <span class="muted">Structured initial view · live updates append at the end</span>
+          <span class="muted">{{.Run.Controls.Summary}}</span>
         </div>
-        {{if .Run.Waiting.Active}}
-        <span class="muted">{{.Run.Waiting.Label}}</span>
-        {{end}}
+        <div>
+          {{if .Run.Waiting.Active}}
+          <strong>{{.Run.Waiting.Label}}</strong>
+          {{if .Run.Waiting.Detail}}<span class="muted"> · {{.Run.Waiting.Detail}}</span>{{end}}
+          {{else}}
+          <span class="muted">{{.Run.Controls.PrimaryActionLabel}}</span>
+          {{end}}
+        </div>
       </div>
       <ol class="event-list event-list--dense" data-run-event-log>
         {{range .Run.RecentActivity}}
-        <li>
+        <li data-activity-kind="{{.Kind}}" data-activity-tone="{{.Tone}}">
           <strong>{{.Label}}</strong>
           {{if .Detail}}<span> {{.Detail}}</span>{{end}}
+          <div class="muted">{{.OccurredLabel}}</div>
         </li>
         {{else}}
         <li class="muted">No activity yet. Live updates will appear here once the run starts.</li>
