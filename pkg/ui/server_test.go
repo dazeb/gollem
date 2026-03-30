@@ -146,16 +146,37 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		"1 pending tool approval",
 		"Run started",
 		"/runs/"+runID+"/events",
+		"data-run-status=\"waiting\"",
+		"data-run-status-label=\"Waiting\"",
+		"data-run-waiting-reason=\"approval\"",
+		"data-run-waiting-label=\"Waiting for approval\"",
+		"data-run-last-event-label=\"Waiting for approval\"",
+		"data-run-last-event-summary=\"Waiting for approval · 1 pending tool approval.\"",
 	)
-	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
+	sidebarBody := mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar")
+	assertHTMLContains(t, sidebarBody,
 		"waiting",
 		"dangerous_write",
 		"tool_approve",
 		"Review approvals",
 		"Waiting for approval",
+		"data-run-status=\"waiting\"",
+		"data-run-waiting-reason=\"approval\"",
+		"data-run-last-event-label=\"Waiting for approval\"",
 		">11<",
 		">5<",
 		">1<",
+	)
+	sidebarResp := mustGET(t, client, ts.URL+"/runs/"+runID+"/sidebar")
+	hxTrigger := sidebarResp.Header.Get("HX-Trigger")
+	sidebarResp.Body.Close()
+	assertStringContains(t, hxTrigger,
+		"\"ui:fragment-loaded\"",
+		"\"runId\":\""+runID+"\"",
+		"\"scene\"",
+		"\"status\":{\"code\":\"waiting\",\"detail\":\"1 pending tool approval.\",\"isTerminal\":false,\"isWaiting\":true,\"label\":\"Waiting\",\"tone\":\"approval\"}",
+		"\"waiting\":{\"active\":true,\"approvalPendingCount\":1,\"detail\":\"1 pending tool approval.\",\"label\":\"Waiting for approval\",\"pendingKind\":\"approval\",\"reason\":\"approval\",\"statusLabel\":\"Waiting\",\"summary\":\"Waiting for approval · 1 pending tool approval.\"}",
+		"\"lastEvent\":{\"detail\":\"1 pending tool approval.\",\"label\":\"Waiting for approval\"",
 	)
 
 	assetReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/static/style.css", nil)
@@ -243,6 +264,8 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		"completed",
 		"Review activity",
 		"Run completed",
+		"data-run-status=\"completed\"",
+		"data-run-last-event-label=\"Run completed\"",
 		"No pending approvals.",
 		">11<",
 		">5<",
@@ -321,6 +344,8 @@ func TestHandleActionDenyFlow(t *testing.T) {
 	waitForRunStatus(t, store, runID, "failed")
 	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
 		"failed",
+		"data-run-status=\"failed\"",
+		"data-run-last-event-label=\"Run failed\"",
 		"No pending approvals.",
 	)
 }
@@ -497,7 +522,7 @@ func mustPOSTJSON(t *testing.T, client *http.Client, target, body string) *http.
 	return resp
 }
 
-func mustGETBody(t *testing.T, client *http.Client, target string) string {
+func mustGET(t *testing.T, client *http.Client, target string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
 	if err != nil {
@@ -507,13 +532,21 @@ func mustGETBody(t *testing.T, client *http.Client, target string) string {
 	if err != nil {
 		t.Fatalf("GET %s: %v", target, err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("GET %s status = %d, body=%s", target, resp.StatusCode, string(body))
+	}
+	return resp
+}
+
+func mustGETBody(t *testing.T, client *http.Client, target string) string {
+	t.Helper()
+	resp := mustGET(t, client, target)
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body %s: %v", target, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s status = %d, body=%s", target, resp.StatusCode, string(body))
 	}
 	return string(body)
 }
@@ -523,6 +556,15 @@ func assertHTMLContains(t *testing.T, body string, wants ...string) {
 	for _, want := range wants {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func assertStringContains(t *testing.T, value string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(value, want) {
+			t.Fatalf("string missing %q:\n%s", want, value)
 		}
 	}
 }

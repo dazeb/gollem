@@ -134,12 +134,32 @@ type RunProtocolEventView struct {
 	Tone          string
 }
 
+// RunEventStateView is structured scene metadata for one user-facing event summary.
+type RunEventStateView struct {
+	Type          string
+	Label         string
+	Summary       string
+	Detail        string
+	OccurredAt    time.Time
+	OccurredLabel string
+	Tone          string
+}
+
+// RunSceneStateView groups the structured status, waiting, and last-event state
+// that initial render and client hydration should consume directly.
+type RunSceneStateView struct {
+	Status    RunStatusView
+	Waiting   RunWaitingView
+	LastEvent RunEventStateView
+}
+
 // RunView is the UI projection for one run.
 type RunView struct {
 	ID                     string
 	Title                  string
 	Status                 string
 	StatusView             RunStatusView
+	Scene                  RunSceneStateView
 	Provider               string
 	Model                  string
 	Summary                string
@@ -411,6 +431,11 @@ func (r *RunRecord) Snapshot() RunView {
 	statusView := buildStatusView(r.status, waiting)
 	latest := latestActivity(recent)
 	latestProtocol := latestProtocolActivity(recentProtocolActivity)
+	scene := RunSceneStateView{
+		Status:    statusView,
+		Waiting:   waiting,
+		LastEvent: buildEventStateView(statusView, waiting, latest, latestProtocol),
+	}
 	controls := buildControlsView(statusView, waiting, pendingApprovalCount, latest, latestProtocol, len(recent) > 0)
 
 	view := RunView{
@@ -418,6 +443,7 @@ func (r *RunRecord) Snapshot() RunView {
 		Title:                  r.title,
 		Status:                 r.status,
 		StatusView:             statusView,
+		Scene:                  scene,
 		Provider:               r.provider,
 		Model:                  r.model,
 		Summary:                r.summary,
@@ -859,6 +885,43 @@ func buildControlsView(status RunStatusView, waiting RunWaitingView, pendingAppr
 		Summary:               summary,
 		PrimaryActionLabel:    primaryActionLabel,
 	}
+}
+
+func buildEventStateView(status RunStatusView, waiting RunWaitingView, latest *RunActivityView, latestProtocol *RunProtocolEventView) RunEventStateView {
+	state := RunEventStateView{
+		Type:    status.Code,
+		Label:   firstNonEmpty(waiting.Label, status.Label),
+		Summary: firstNonEmpty(waiting.Summary, status.Detail, status.Label),
+		Detail:  firstNonEmpty(waiting.Detail, status.Detail),
+		Tone:    firstNonEmpty(waiting.PendingKind, status.Tone, status.Code, "info"),
+	}
+	if latestProtocol != nil {
+		state.Type = firstNonEmpty(latestProtocol.Type, state.Type)
+		state.Label = firstNonEmpty(latestProtocol.Label, state.Label)
+		state.Summary = firstNonEmpty(latestProtocol.Summary, state.Summary)
+		state.OccurredAt = latestProtocol.OccurredAt
+		state.OccurredLabel = firstNonEmpty(latestProtocol.OccurredLabel, state.OccurredLabel)
+		state.Tone = firstNonEmpty(latestProtocol.Tone, state.Tone)
+	}
+	if latest != nil {
+		state.Type = firstNonEmpty(latest.Type, state.Type)
+		state.Label = firstNonEmpty(latest.Label, state.Label)
+		state.Summary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), state.Summary)
+		state.Detail = firstNonEmpty(latest.Detail, state.Detail)
+		state.OccurredAt = latest.OccurredAt
+		state.OccurredLabel = firstNonEmpty(latest.OccurredLabel, state.OccurredLabel)
+		state.Tone = firstNonEmpty(latest.Tone, state.Tone)
+	}
+	if waiting.Active && (state.Type == "" || state.Type == status.Code || state.Type == core.RuntimeEventTypeRunWaiting || state.Type == core.RuntimeEventTypeApprovalRequested || state.Type == core.RuntimeEventTypeDeferredRequested) {
+		state.Label = firstNonEmpty(waiting.Label, state.Label)
+		state.Summary = firstNonEmpty(waiting.Summary, state.Summary)
+		state.Detail = firstNonEmpty(waiting.Detail, state.Detail)
+		state.Tone = firstNonEmpty(waiting.PendingKind, state.Tone)
+	}
+	state.Label = firstNonEmpty(state.Label, state.Summary, humanizeRuntimeEventType(state.Type), status.Label)
+	state.Summary = firstNonEmpty(state.Summary, joinActivitySummary(state.Label, state.Detail), state.Label)
+	state.Tone = firstNonEmpty(state.Tone, "info")
+	return state
 }
 
 func normalizeWaitingReason(status, reason string, pendingApprovalCount int) string {

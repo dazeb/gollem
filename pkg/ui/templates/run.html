@@ -5,363 +5,7 @@
     return;
   }
   window.__gollemRunLabelsInstalled = true;
-
-  const titleize = (value, fallback = '') => {
-    const text = String(value || '')
-      .replace(/[._-]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!text) {
-      return fallback;
-    }
-    return text
-      .split(' ')
-      .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : ''))
-      .join(' ');
-  };
-
-  const statusLabelFor = (status, fallback = '') => fallback || titleize(status, 'Run status');
-
-  const statusDetailFor = (status, fallback = '') => {
-    if (fallback) {
-      return fallback;
-    }
-    switch (String(status || '').trim()) {
-      case 'starting':
-        return 'Preparing run';
-      case 'running':
-        return 'Run in progress';
-      case 'completed':
-        return 'Run finished successfully';
-      case 'failed':
-        return 'Run finished with an error';
-      case 'aborted':
-      case 'cancelled':
-        return 'Run was stopped before completion';
-      default:
-        return '';
-    }
-  };
-
-  const waitingLabelFor = (reason, fallback = '') => {
-    if (fallback && !/^(active|waiting)$/i.test(fallback)) {
-      return fallback;
-    }
-    switch (String(reason || '').trim()) {
-      case 'approval':
-        return 'Waiting for approval';
-      case 'deferred':
-        return 'Waiting for deferred input';
-      case 'approval_and_deferred':
-        return 'Waiting for approval and deferred input';
-      case '':
-        return 'Active';
-      default:
-        return titleize(reason, 'Waiting');
-    }
-  };
-
-  const customEventLabelFor = (name, value) => {
-    switch (name) {
-      case 'gollem.run.waiting':
-        return waitingLabelFor(value && value.reason, 'Waiting');
-      case 'gollem.run.resumed':
-        return 'Run resumed';
-      case 'gollem.approval.requested':
-        return 'Approval requested';
-      case 'gollem.approval.resolved':
-        return value && value.approved === false ? 'Approval denied' : 'Approval granted';
-      case 'gollem.deferred.requested':
-        return 'Deferred input requested';
-      case 'gollem.deferred.resolved':
-        return value && value.isError ? 'Deferred input failed' : 'Deferred input received';
-      default:
-        return titleize(String(name || '').replace(/^gollem\./, ''), 'Custom event');
-    }
-  };
-
-  const eventLabelFor = (eventType, name, value, fallback = '') => {
-    if (fallback && !/^#\d+\s+·\s+/i.test(fallback)) {
-      return fallback;
-    }
-    switch (String(eventType || '').trim()) {
-      case 'RUN_STARTED':
-        return 'Run started';
-      case 'RUN_FINISHED':
-        return 'Run completed';
-      case 'RUN_ERROR':
-        return 'Run failed';
-      case 'STEP_STARTED':
-        return 'Step started';
-      case 'STEP_FINISHED':
-        return 'Step completed';
-      case 'TEXT_MESSAGE_START':
-      case 'TEXT_MESSAGE_CONTENT':
-      case 'TEXT_MESSAGE_END':
-        return 'Text stream';
-      case 'REASONING_START':
-      case 'REASONING_MESSAGE_START':
-      case 'REASONING_MESSAGE_CONTENT':
-      case 'REASONING_MESSAGE_END':
-      case 'REASONING_END':
-        return 'Reasoning update';
-      case 'TOOL_CALL_START':
-        return 'Tool called';
-      case 'TOOL_CALL_ARGS':
-        return 'Tool arguments';
-      case 'TOOL_CALL_END':
-        return 'Tool dispatched';
-      case 'TOOL_CALL_RESULT':
-        return 'Tool completed';
-      case 'CUSTOM':
-        return customEventLabelFor(name, value);
-      case 'snapshot':
-        return fallback || 'Session snapshot';
-      default:
-        return titleize(eventType || name, fallback || 'Event');
-    }
-  };
-
-  const findScene = (url) => {
-    const scenes = Array.from(document.querySelectorAll('[data-run-scene]'));
-    return scenes.find((node) => node.dataset.eventsUrl === url) || scenes[0] || null;
-  };
-
-  const applySceneLabels = (scene) => {
-    if (!scene) {
-      return;
-    }
-    const statusCode = scene.dataset.runStatus || scene.dataset.sceneStatus || 'starting';
-    const statusLabel = scene.dataset.runStatusLabel || scene.dataset.sceneStatusLabel || statusLabelFor(statusCode, '');
-    scene.dataset.runStatusLabel = statusLabel;
-    scene.dataset.sceneStatusLabel = statusLabel;
-
-    document.querySelectorAll('[data-run-status-badge]').forEach((target) => {
-      target.dataset.statusCode = statusCode;
-      target.dataset.statusLabel = statusLabel;
-      target.textContent = target.dataset.statusLabel;
-    });
-
-    const streamState = scene.querySelector('[data-scene-stream-state]');
-    if (streamState) {
-      streamState.dataset.statusCode = statusCode;
-      streamState.dataset.statusLabel = statusLabel;
-      streamState.textContent = streamState.dataset.statusLabel;
-    }
-
-    const waitingReason = scene.dataset.runWaitingReason || scene.dataset.sceneWaitingReason || '';
-    const waitingLabel = scene.dataset.runWaitingLabel || waitingLabelFor(waitingReason, '');
-    scene.dataset.runWaitingLabel = waitingLabel;
-    const waitingTarget = scene.querySelector('[data-scene-waiting-reason]');
-    if (waitingTarget) {
-      waitingTarget.dataset.waitingReason = waitingReason;
-      waitingTarget.dataset.waitingLabel = waitingLabel;
-      waitingTarget.textContent = waitingTarget.dataset.waitingLabel;
-    }
-
-    const lastEventTarget = scene.querySelector('[data-run-last-event]');
-    if (lastEventTarget) {
-      lastEventTarget.dataset.eventType = scene.dataset.runLastEventType || lastEventTarget.dataset.eventType || '';
-      lastEventTarget.dataset.eventLabel = scene.dataset.runLastEventLabel || lastEventTarget.dataset.eventLabel || '';
-      lastEventTarget.dataset.eventSummary = scene.dataset.runLastEventSummary || lastEventTarget.dataset.eventSummary || lastEventTarget.dataset.eventLabel || '';
-      lastEventTarget.textContent = lastEventTarget.dataset.eventLabel || lastEventTarget.dataset.eventSummary || eventLabelFor(
-        lastEventTarget.dataset.eventType || '',
-        scene.dataset.runLastCustomEventName || '',
-        null,
-        ''
-      );
-    }
-  };
-
-  const updateSceneFromPayload = (scene, payload) => {
-    if (!scene || !payload || typeof payload !== 'object') {
-      return;
-    }
-
-    const materialize = (value) => {
-      if (!value) {
-        return null;
-      }
-      if (typeof value === 'object') {
-        return value;
-      }
-      try {
-        return JSON.parse(value);
-      } catch {
-        return null;
-      }
-    };
-
-    const data = materialize(payload.data) || payload.data || null;
-    if (payload.type === 'session.snapshot' && data && typeof data === 'object') {
-      const pendingApprovals = data.pending_approvals && typeof data.pending_approvals === 'object' ? Object.keys(data.pending_approvals).length : 0;
-      const pendingDeferred = data.pending_external_inputs && typeof data.pending_external_inputs === 'object' ? Object.keys(data.pending_external_inputs).length : 0;
-      scene.dataset.runStatus = data.status || scene.dataset.runStatus || 'starting';
-      scene.dataset.runStatusLabel = statusLabelFor(scene.dataset.runStatus, '');
-      scene.dataset.runStatusDetail = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
-      let waitingReason = String(data.waiting_reason || '').trim();
-      if (!waitingReason && scene.dataset.runStatus === 'waiting') {
-        if (pendingApprovals && pendingDeferred) {
-          waitingReason = 'approval_and_deferred';
-        } else if (pendingApprovals) {
-          waitingReason = 'approval';
-        } else if (pendingDeferred) {
-          waitingReason = 'deferred';
-        }
-      }
-      scene.dataset.runWaitingReason = waitingReason;
-      scene.dataset.runWaitingLabel = waitingLabelFor(waitingReason, '');
-      scene.dataset.runWaitingSummary = scene.dataset.runWaitingLabel || statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
-      applySceneLabels(scene);
-      return;
-    }
-
-    const event = data && typeof data === 'object' && data.type ? data : payload;
-    if (!event || typeof event !== 'object') {
-      return;
-    }
-
-    const eventType = String(event.type || '').trim();
-    const customName = eventType === 'CUSTOM' ? String(event.name || '').trim() : '';
-    const customValue = customName ? materialize(event.value) || event.value || null : null;
-    scene.dataset.runLastEventType = eventType || scene.dataset.runLastEventType || '';
-    scene.dataset.runLastCustomEventName = customName;
-
-    switch (eventType) {
-      case 'RUN_STARTED':
-        scene.dataset.runStatus = 'running';
-        scene.dataset.runWaitingReason = '';
-        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, 'Run started');
-        scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Run started';
-        break;
-      case 'RUN_FINISHED':
-        scene.dataset.runStatus = scene.dataset.runWaitingReason ? 'waiting' : 'completed';
-        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, 'Run completed');
-        scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Run completed';
-        break;
-      case 'RUN_ERROR':
-        scene.dataset.runStatus = 'failed';
-        scene.dataset.runWaitingReason = '';
-        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, 'Run failed');
-        scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Run failed';
-        break;
-      case 'CUSTOM':
-        switch (customName) {
-          case 'gollem.run.waiting':
-            scene.dataset.runStatus = 'waiting';
-            scene.dataset.runWaitingReason = String((customValue && customValue.reason) || '').trim();
-            scene.dataset.runWaitingLabel = waitingLabelFor(scene.dataset.runWaitingReason, '');
-            scene.dataset.runWaitingSummary = scene.dataset.runWaitingLabel;
-            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
-            scene.dataset.runLastEventSummary = scene.dataset.runWaitingSummary || scene.dataset.runLastEventLabel;
-            break;
-          case 'gollem.run.resumed':
-            scene.dataset.runStatus = 'running';
-            scene.dataset.runWaitingReason = '';
-            scene.dataset.runWaitingLabel = waitingLabelFor('', '');
-            scene.dataset.runWaitingSummary = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
-            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
-            scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Run resumed';
-            break;
-          case 'gollem.approval.requested':
-            scene.dataset.runStatus = 'waiting';
-            scene.dataset.runWaitingReason = 'approval';
-            scene.dataset.runWaitingLabel = waitingLabelFor(scene.dataset.runWaitingReason, '');
-            scene.dataset.runWaitingSummary = scene.dataset.runWaitingLabel;
-            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
-            scene.dataset.runLastEventSummary = scene.dataset.runWaitingSummary || 'Approval requested';
-            break;
-          case 'gollem.approval.resolved':
-            scene.dataset.runStatus = 'running';
-            scene.dataset.runWaitingReason = '';
-            scene.dataset.runWaitingLabel = waitingLabelFor('', '');
-            scene.dataset.runWaitingSummary = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
-            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
-            scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Approval granted';
-            break;
-          case 'gollem.deferred.requested':
-            scene.dataset.runStatus = 'waiting';
-            scene.dataset.runWaitingReason = 'deferred';
-            scene.dataset.runWaitingLabel = waitingLabelFor(scene.dataset.runWaitingReason, '');
-            scene.dataset.runWaitingSummary = scene.dataset.runWaitingLabel;
-            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
-            scene.dataset.runLastEventSummary = scene.dataset.runWaitingSummary || 'Deferred input requested';
-            break;
-          case 'gollem.deferred.resolved':
-            scene.dataset.runStatus = 'running';
-            scene.dataset.runWaitingReason = '';
-            scene.dataset.runWaitingLabel = waitingLabelFor('', '');
-            scene.dataset.runWaitingSummary = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
-            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
-            scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Deferred input received';
-            break;
-          default:
-            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
-            scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Custom event';
-            break;
-        }
-        break;
-      default:
-        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, 'Event');
-        scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel;
-        break;
-    }
-
-    scene.dataset.runStatusLabel = statusLabelFor(scene.dataset.runStatus, '');
-    scene.dataset.runStatusDetail = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
-    scene.dataset.runWaitingLabel = scene.dataset.runWaitingReason ? waitingLabelFor(scene.dataset.runWaitingReason, '') : waitingLabelFor('', '');
-    scene.dataset.runWaitingSummary = scene.dataset.runWaitingReason ? scene.dataset.runWaitingLabel : statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
-    applySceneLabels(scene);
-  };
-
-  const hydrateLabels = (root = document) => {
-    if (root.matches && root.matches('[data-run-scene]')) {
-      applySceneLabels(root);
-    }
-    root.querySelectorAll?.('[data-run-scene]').forEach((scene) => applySceneLabels(scene));
-  };
-
-  const NativeEventSource = window.EventSource;
-  if (typeof NativeEventSource === 'function' && !window.__gollemRunLabelEventSourceWrapped) {
-    const WrappedEventSource = function(url, init) {
-      const source = new NativeEventSource(url, init);
-      source.addEventListener('message', (event) => {
-        let payload = null;
-        try {
-          payload = JSON.parse(event.data || 'null');
-        } catch {
-          payload = null;
-        }
-        updateSceneFromPayload(findScene(url), payload);
-      });
-      return source;
-    };
-    WrappedEventSource.prototype = NativeEventSource.prototype;
-    WrappedEventSource.CONNECTING = NativeEventSource.CONNECTING;
-    WrappedEventSource.OPEN = NativeEventSource.OPEN;
-    WrappedEventSource.CLOSED = NativeEventSource.CLOSED;
-    window.EventSource = WrappedEventSource;
-    window.__gollemRunLabelEventSourceWrapped = true;
-  }
-
-  document.addEventListener('DOMContentLoaded', () => hydrateLabels(document));
-  document.body?.addEventListener('htmx:load', (event) => hydrateLabels(event.target || document));
-  document.body?.addEventListener('ui:fragment-loaded', (event) => {
-    const detail = event.detail || {};
-    const scene = Array.from(document.querySelectorAll('[data-run-scene]')).find((node) => !detail.runId || node.dataset.runId === detail.runId);
-    if (scene) {
-      if (detail.statusLabel) {
-        scene.dataset.runStatusLabel = detail.statusLabel;
-      }
-      if (detail.waitingLabel) {
-        scene.dataset.runWaitingLabel = detail.waitingLabel;
-      }
-      if (detail.lastEventLabel) {
-        scene.dataset.runLastEventLabel = detail.lastEventLabel;
-      }
-    }
-    hydrateLabels(document);
-  });
+  return;
 })();
 </script>
 <div class="run-layout">
@@ -410,18 +54,29 @@
       data-run-id="{{.Run.ID}}"
       data-run-title="{{.Run.Title}}"
       data-run-summary="{{.Run.Summary}}"
-      data-run-status="{{.Run.StatusView.Code}}"
-      data-run-status-label="{{.Run.StatusView.Label}}"
-      data-run-status-detail="{{.Run.StatusView.Detail}}"
-      data-run-waiting-reason="{{.Run.Waiting.Reason}}"
-      data-run-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}"
-      data-run-waiting-summary="{{if .Run.Waiting.Active}}{{.Run.Waiting.Summary}}{{else}}{{.Run.StatusView.Detail}}{{end}}"
-      data-run-last-event-type="{{.Run.Controls.LastEventType}}"
-      data-run-last-event-label="{{.Run.Controls.LastEventLabel}}"
-      data-run-last-event-summary="{{.Run.Controls.LastEventSummary}}"
+      data-run-status="{{.Run.Scene.Status.Code}}"
+      data-run-status-label="{{.Run.Scene.Status.Label}}"
+      data-run-status-tone="{{.Run.Scene.Status.Tone}}"
+      data-run-status-detail="{{.Run.Scene.Status.Detail}}"
+      data-run-status-is-waiting="{{.Run.Scene.Status.IsWaiting}}"
+      data-run-status-is-terminal="{{.Run.Scene.Status.IsTerminal}}"
+      data-run-waiting-active="{{.Run.Scene.Waiting.Active}}"
+      data-run-waiting-reason="{{.Run.Scene.Waiting.Reason}}"
+      data-run-waiting-label="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}"
+      data-run-waiting-detail="{{.Run.Scene.Waiting.Detail}}"
+      data-run-waiting-summary="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}"
+      data-run-waiting-pending-kind="{{.Run.Scene.Waiting.PendingKind}}"
+      data-run-waiting-approval-pending-count="{{.Run.Scene.Waiting.ApprovalPendingCount}}"
+      data-run-waiting-status-label="{{.Run.Scene.Waiting.StatusLabel}}"
+      data-run-last-event-type="{{.Run.Scene.LastEvent.Type}}"
+      data-run-last-event-label="{{.Run.Scene.LastEvent.Label}}"
+      data-run-last-event-summary="{{.Run.Scene.LastEvent.Summary}}"
+      data-run-last-event-detail="{{.Run.Scene.LastEvent.Detail}}"
+      data-run-last-event-occurred-label="{{.Run.Scene.LastEvent.OccurredLabel}}"
+      data-run-last-event-tone="{{.Run.Scene.LastEvent.Tone}}"
       data-run-last-activity-summary="{{.Run.Controls.LastActivitySummary}}"
-      data-scene-status="{{.Run.StatusView.Code}}"
-      data-scene-status-label="{{.Run.StatusView.Label}}"
+      data-scene-status="{{.Run.Scene.Status.Code}}"
+      data-scene-status-label="{{.Run.Scene.Status.Label}}"
       data-scene-connection="connecting"
       data-events-url="/runs/{{.Run.ID}}/events"
     >
@@ -438,7 +93,7 @@
           </article>
           <article class="run-scene__metric run-scene__metric--stream">
             <span class="detail-grid__label">Stream state</span>
-            <strong data-scene-stream-state data-status-label="{{.Run.StatusView.Label}}">{{.Run.StatusView.Label}}</strong>
+            <strong data-scene-stream-state data-status-label="{{.Run.Scene.Status.Label}}">{{.Run.Scene.Status.Label}}</strong>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Steps</span>
@@ -450,11 +105,11 @@
           </article>
           <article class="run-scene__metric run-scene__metric--waiting">
             <span class="detail-grid__label">Waiting on</span>
-            <strong data-scene-waiting-reason data-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}">{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}</strong>
+            <strong data-scene-waiting-reason data-waiting-label="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}">{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}</strong>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Last event</span>
-            <strong data-run-last-event data-event-type="{{.Run.Controls.LastEventType}}" data-event-label="{{.Run.Controls.LastEventLabel}}">{{.Run.Controls.LastEventLabel}}</strong>
+            <strong data-run-last-event data-event-type="{{.Run.Scene.LastEvent.Type}}" data-event-label="{{.Run.Scene.LastEvent.Label}}" data-event-summary="{{.Run.Scene.LastEvent.Summary}}">{{.Run.Scene.LastEvent.Label}}</strong>
           </article>
         </div>
       </div>
@@ -498,8 +153,8 @@
         </div>
         <div>
           {{if .Run.Waiting.Active}}
-          <strong>{{.Run.Waiting.Label}}</strong>
-          {{if .Run.Waiting.Detail}}<span class="muted"> · {{.Run.Waiting.Detail}}</span>{{end}}
+          <strong>{{.Run.Scene.Waiting.Label}}</strong>
+          {{if .Run.Scene.Waiting.Detail}}<span class="muted"> · {{.Run.Scene.Waiting.Detail}}</span>{{end}}
           {{else}}
           <span class="muted">{{.Run.StatusView.Detail}}</span>
           {{end}}

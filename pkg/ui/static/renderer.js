@@ -70,6 +70,172 @@ const summarize = (value, maxLength = 140) => {
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 };
 
+const humanizeCode = (value, fallback = '') => {
+  const text = compactWhitespace(String(value || '').replace(/[._-]+/g, ' '));
+  if (!text) {
+    return fallback;
+  }
+  return text
+    .split(' ')
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ''))
+    .join(' ');
+};
+
+const boolString = (value, fallback = false) => {
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+  const text = compactWhitespace(String(value || ''));
+  if (!text) {
+    return fallback ? 'true' : 'false';
+  }
+  if (text === 'true' || text === '1' || text === 'yes') {
+    return 'true';
+  }
+  if (text === 'false' || text === '0' || text === 'no') {
+    return 'false';
+  }
+  return fallback ? 'true' : 'false';
+};
+
+const readSceneState = (root) => {
+  if (!root?.dataset) {
+    return { status: {}, waiting: {}, lastEvent: {} };
+  }
+  return {
+    status: {
+      code: root.dataset.runStatus || root.dataset.sceneStatus || '',
+      label: root.dataset.runStatusLabel || root.dataset.sceneStatusLabel || '',
+      tone: root.dataset.runStatusTone || '',
+      detail: root.dataset.runStatusDetail || '',
+      isWaiting: root.dataset.runStatusIsWaiting || '',
+      isTerminal: root.dataset.runStatusIsTerminal || '',
+    },
+    waiting: {
+      active: root.dataset.runWaitingActive || '',
+      reason: root.dataset.runWaitingReason || root.dataset.sceneWaitingReason || '',
+      label: root.dataset.runWaitingLabel || '',
+      detail: root.dataset.runWaitingDetail || '',
+      summary: root.dataset.runWaitingSummary || '',
+      pendingKind: root.dataset.runWaitingPendingKind || '',
+      approvalPendingCount: root.dataset.runWaitingApprovalPendingCount || '',
+      statusLabel: root.dataset.runWaitingStatusLabel || '',
+    },
+    lastEvent: {
+      type: root.dataset.runLastEventType || '',
+      label: root.dataset.runLastEventLabel || '',
+      summary: root.dataset.runLastEventSummary || '',
+      detail: root.dataset.runLastEventDetail || '',
+      occurredLabel: root.dataset.runLastEventOccurredLabel || '',
+      tone: root.dataset.runLastEventTone || '',
+    },
+  };
+};
+
+const applySceneState = (root, sceneState) => {
+  if (!root?.dataset || !sceneState || typeof sceneState !== 'object') {
+    return readSceneState(root);
+  }
+  const doc = root.ownerDocument || document;
+  const status = sceneState.status && typeof sceneState.status === 'object' ? sceneState.status : {};
+  const waiting = sceneState.waiting && typeof sceneState.waiting === 'object' ? sceneState.waiting : {};
+  const lastEvent = sceneState.lastEvent && typeof sceneState.lastEvent === 'object' ? sceneState.lastEvent : {};
+
+  const statusCode = compactWhitespace(status.code || root.dataset.runStatus || root.dataset.sceneStatus || 'starting');
+  const statusLabel = compactWhitespace(status.label || root.dataset.runStatusLabel || root.dataset.sceneStatusLabel || humanizeCode(statusCode, 'Run status'));
+  const statusDetail = compactWhitespace(status.detail || root.dataset.runStatusDetail || '');
+  const statusTone = compactWhitespace(status.tone || root.dataset.runStatusTone || statusCode || 'info');
+  root.dataset.runStatus = statusCode;
+  root.dataset.sceneStatus = statusCode;
+  root.dataset.runStatusLabel = statusLabel;
+  root.dataset.sceneStatusLabel = statusLabel;
+  root.dataset.runStatusDetail = statusDetail;
+  root.dataset.runStatusTone = statusTone;
+  root.dataset.runStatusIsWaiting = boolString(status.isWaiting, statusCode === 'waiting');
+  root.dataset.runStatusIsTerminal = boolString(status.isTerminal, statusCode === 'completed' || statusCode === 'failed' || statusCode === 'aborted' || statusCode === 'cancelled');
+
+  const waitingReason = compactWhitespace(waiting.reason || root.dataset.runWaitingReason || root.dataset.sceneWaitingReason || '');
+  const waitingActive = boolString(waiting.active, !!waitingReason || statusCode === 'waiting');
+  const waitingLabel = compactWhitespace(waiting.label || root.dataset.runWaitingLabel || (waitingReason ? humanizeCode(waitingReason, 'Waiting') : 'Active'));
+  const waitingDetail = compactWhitespace(waiting.detail || root.dataset.runWaitingDetail || '');
+  const waitingSummary = compactWhitespace(waiting.summary || root.dataset.runWaitingSummary || waitingLabel || statusDetail);
+  root.dataset.runWaitingActive = waitingActive;
+  root.dataset.runWaitingReason = waitingReason;
+  root.dataset.sceneWaitingReason = waitingReason;
+  root.dataset.runWaitingLabel = waitingLabel;
+  root.dataset.runWaitingDetail = waitingDetail;
+  root.dataset.runWaitingSummary = waitingSummary;
+  root.dataset.runWaitingPendingKind = compactWhitespace(waiting.pendingKind || root.dataset.runWaitingPendingKind || '');
+  root.dataset.runWaitingApprovalPendingCount = String(waiting.approvalPendingCount ?? root.dataset.runWaitingApprovalPendingCount ?? '');
+  root.dataset.runWaitingStatusLabel = compactWhitespace(waiting.statusLabel || root.dataset.runWaitingStatusLabel || statusLabel);
+  root.dataset.sceneWaiting = waitingActive;
+
+  const lastEventType = compactWhitespace(lastEvent.type || root.dataset.runLastEventType || statusCode);
+  const lastEventLabel = compactWhitespace(lastEvent.label || root.dataset.runLastEventLabel || humanizeCode(lastEventType, statusLabel || 'Activity'));
+  const lastEventSummary = compactWhitespace(lastEvent.summary || root.dataset.runLastEventSummary || lastEventLabel);
+  const lastEventDetail = compactWhitespace(lastEvent.detail || root.dataset.runLastEventDetail || '');
+  const lastEventOccurredLabel = compactWhitespace(lastEvent.occurredLabel || root.dataset.runLastEventOccurredLabel || '');
+  const lastEventTone = compactWhitespace(lastEvent.tone || root.dataset.runLastEventTone || statusTone || 'info');
+  root.dataset.runLastEventType = lastEventType;
+  root.dataset.runLastEventLabel = lastEventLabel;
+  root.dataset.runLastEventSummary = lastEventSummary;
+  root.dataset.runLastEventDetail = lastEventDetail;
+  root.dataset.runLastEventOccurredLabel = lastEventOccurredLabel;
+  root.dataset.runLastEventTone = lastEventTone;
+
+  const statusTargets = [
+    ...(doc?.querySelectorAll?.('[data-run-status-badge]') || []),
+    ...(doc?.querySelectorAll?.('.panel__header--run .status') || []),
+  ];
+  statusTargets.forEach((target) => {
+    if (!target?.dataset) {
+      return;
+    }
+    target.dataset.statusCode = statusCode;
+    target.dataset.statusLabel = statusLabel;
+    target.textContent = statusLabel;
+    const baseClasses = Array.from(target.classList || []).filter((name) => !name.startsWith('status--'));
+    target.className = baseClasses.concat(`status--${statusCode}`).join(' ');
+  });
+
+  const streamStateTarget = root.querySelector?.('[data-scene-stream-state]');
+  if (streamStateTarget?.dataset) {
+    streamStateTarget.dataset.statusCode = statusCode;
+    streamStateTarget.dataset.statusLabel = statusLabel;
+    streamStateTarget.textContent = statusLabel;
+  }
+
+  const waitingTarget = root.querySelector?.('[data-scene-waiting-reason]');
+  if (waitingTarget?.dataset) {
+    waitingTarget.dataset.waitingReason = waitingReason;
+    waitingTarget.dataset.waitingLabel = waitingLabel;
+    waitingTarget.dataset.waitingDetail = waitingDetail;
+    waitingTarget.textContent = waitingLabel || 'Active';
+    waitingTarget.title = waitingSummary || waitingDetail || waitingLabel;
+  }
+
+  const lastEventTarget = root.querySelector?.('[data-run-last-event]');
+  if (lastEventTarget?.dataset) {
+    lastEventTarget.dataset.eventType = lastEventType;
+    lastEventTarget.dataset.eventLabel = lastEventLabel;
+    lastEventTarget.dataset.eventSummary = lastEventSummary;
+    lastEventTarget.dataset.eventDetail = lastEventDetail;
+    lastEventTarget.dataset.eventOccurredLabel = lastEventOccurredLabel;
+    lastEventTarget.textContent = lastEventLabel || lastEventSummary || 'Activity';
+    lastEventTarget.title = [lastEventSummary, lastEventOccurredLabel].filter(Boolean).join(' · ');
+  }
+
+  return readSceneState(root);
+};
+
+const syncRendererSceneState = (renderer) => {
+  if (!renderer?.root?.dataset || !renderer.scene) {
+    return;
+  }
+  renderer.scene.runStatus = renderer.root.dataset.runStatus || renderer.root.dataset.sceneStatus || renderer.scene.runStatus;
+  renderer.scene.waitingReason = renderer.root.dataset.runWaitingReason || renderer.root.dataset.sceneWaitingReason || '';
+};
+
 const roleLabel = (role, kind) => {
   if (role) {
     return role.replace(/_/g, ' ');
@@ -482,6 +648,9 @@ class RunSceneRenderer {
 
     this.root.dataset.sceneStatus = this.scene.runStatus;
     this.root.dataset.sceneConnection = this.scene.connection;
+    applySceneState(this.root, readSceneState(this.root));
+    this.scene.runStatus = this.root.dataset.runStatus || this.scene.runStatus;
+    this.scene.waitingReason = this.root.dataset.runWaitingReason || this.scene.waitingReason;
     this.scene.transition = {
       name: this.phaseForStatus(this.scene.runStatus),
       startedAt: sceneClock() - 1800,
@@ -636,6 +805,37 @@ class RunSceneRenderer {
       this.runId = snapshot.run_id;
     }
 
+    const sceneState = {
+      status: {
+        code: snapshot.status || this.root.dataset.runStatus || 'starting',
+        label: snapshot.status_label || this.root.dataset.runStatusLabel || '',
+        tone: snapshot.status_tone || this.root.dataset.runStatusTone || '',
+        detail: snapshot.status_detail || this.root.dataset.runStatusDetail || '',
+        isWaiting: snapshot.status_is_waiting,
+        isTerminal: snapshot.status_is_terminal,
+      },
+      waiting: {
+        active: snapshot.status === 'waiting' || !!snapshot.waiting_reason,
+        reason: snapshot.waiting_reason || '',
+        label: snapshot.waiting_label || this.root.dataset.runWaitingLabel || '',
+        detail: snapshot.waiting_detail || this.root.dataset.runWaitingDetail || '',
+        summary: snapshot.waiting_summary || this.root.dataset.runWaitingSummary || '',
+        pendingKind: snapshot.waiting_pending_kind || this.root.dataset.runWaitingPendingKind || '',
+        approvalPendingCount: snapshot.waiting_approval_pending_count,
+        statusLabel: snapshot.waiting_status_label || this.root.dataset.runWaitingStatusLabel || '',
+      },
+      lastEvent: {
+        type: snapshot.last_event_type || this.root.dataset.runLastEventType || '',
+        label: snapshot.last_event_label || this.root.dataset.runLastEventLabel || '',
+        summary: snapshot.last_event_summary || this.root.dataset.runLastEventSummary || '',
+        detail: snapshot.last_event_detail || this.root.dataset.runLastEventDetail || '',
+        occurredLabel: snapshot.last_event_occurred_label || this.root.dataset.runLastEventOccurredLabel || '',
+        tone: snapshot.last_event_tone || this.root.dataset.runLastEventTone || '',
+      },
+    };
+    applySceneState(this.root, sceneState);
+    syncRendererSceneState(this);
+
     const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
     const deferredInputs = snapshot.pending_external_inputs && typeof snapshot.pending_external_inputs === 'object' ? snapshot.pending_external_inputs : {};
     this.scene.customEventState.pendingApproval = Object.keys(approvals).length > 0;
@@ -733,7 +933,35 @@ class RunSceneRenderer {
       }
     }
 
-    this.setLastEventMeta(seq, 'snapshot');
+    applySceneState(this.root, {
+      status: {
+        code: this.scene.runStatus,
+        label: this.root.dataset.runStatusLabel || '',
+        tone: this.root.dataset.runStatusTone || this.scene.runStatus,
+        detail: this.root.dataset.runStatusDetail || '',
+        isWaiting: this.scene.runStatus === 'waiting' || this.hasPendingWaitingSignals(),
+      },
+      waiting: {
+        active: this.hasPendingWaitingSignals(),
+        reason: this.scene.waitingReason || snapshot.waiting_reason || '',
+        label: this.root.dataset.runWaitingLabel || '',
+        detail: this.root.dataset.runWaitingDetail || '',
+        summary: this.root.dataset.runWaitingSummary || '',
+        pendingKind: this.root.dataset.runWaitingPendingKind || '',
+        approvalPendingCount: Object.keys(approvals).length,
+        statusLabel: this.root.dataset.runWaitingStatusLabel || this.root.dataset.runStatusLabel || '',
+      },
+      lastEvent: {
+        type: snapshot.last_event_type || this.root.dataset.runLastEventType || 'snapshot',
+        label: snapshot.last_event_label || this.root.dataset.runLastEventLabel || 'Session snapshot',
+        summary: snapshot.last_event_summary || this.root.dataset.runLastEventSummary || `Snapshot seq ${snapshot.snapshot_sequence || seq || '—'}`,
+        detail: snapshot.last_event_detail || this.root.dataset.runLastEventDetail || '',
+        occurredLabel: snapshot.last_event_occurred_label || this.root.dataset.runLastEventOccurredLabel || '',
+        tone: snapshot.last_event_tone || this.root.dataset.runLastEventTone || 'info',
+      },
+    });
+    syncRendererSceneState(this);
+    this.setLastEventMeta(seq, this.root.dataset.runLastEventLabel || 'Session snapshot');
   }
 
   applyAGUIEvent(event, seq) {
@@ -2551,5 +2779,19 @@ document.body?.addEventListener('htmx:load', (event) => {
 });
 
 document.body?.addEventListener('ui:fragment-loaded', (event) => {
+  const detail = event.detail || {};
+  const runId = detail.runId || '';
+  const targetScene = Array.from(document.querySelectorAll('[data-run-scene]')).find((node) => !runId || node.dataset.runId === runId);
+  if (targetScene && detail.scene && typeof detail.scene === 'object') {
+    applySceneState(targetScene, detail.scene);
+    const renderer = runScenes.get(targetScene);
+    if (renderer) {
+      syncRendererSceneState(renderer);
+      renderer.updateStatus(targetScene.dataset.runStatus || renderer.scene.runStatus);
+      renderer.updateWaitingState(targetScene.dataset.runWaitingReason || '', renderer.scene.waitingSnapshot);
+      renderer.setLastEventMeta(renderer.scene.lastSeq || 0, targetScene.dataset.runLastEventLabel || 'Activity');
+      renderer.scheduleRender('fragment-loaded');
+    }
+  }
   hydrate(event.target || document);
 });

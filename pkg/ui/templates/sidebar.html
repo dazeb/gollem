@@ -1,5 +1,5 @@
 {{define "sidebar"}}
-<div class="sidebar-fragment" data-renderer-root data-run-id="{{.Run.ID}}" data-status-code="{{.Run.StatusView.Code}}" data-status-label="{{.Run.StatusView.Label}}" data-waiting-reason="{{.Run.Waiting.Reason}}" data-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}Active{{end}}" data-last-event-type="{{.Run.Controls.LastEventType}}" data-last-event-label="{{.Run.Controls.LastEventLabel}}" data-last-event-summary="{{.Run.Controls.LastEventSummary}}">
+<div class="sidebar-fragment" data-renderer-root data-run-id="{{.Run.ID}}" data-run-status="{{.Run.Scene.Status.Code}}" data-run-status-label="{{.Run.Scene.Status.Label}}" data-run-status-tone="{{.Run.Scene.Status.Tone}}" data-run-status-detail="{{.Run.Scene.Status.Detail}}" data-run-status-is-waiting="{{.Run.Scene.Status.IsWaiting}}" data-run-status-is-terminal="{{.Run.Scene.Status.IsTerminal}}" data-run-waiting-active="{{.Run.Scene.Waiting.Active}}" data-run-waiting-reason="{{.Run.Scene.Waiting.Reason}}" data-run-waiting-label="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}" data-run-waiting-detail="{{.Run.Scene.Waiting.Detail}}" data-run-waiting-summary="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}" data-run-waiting-pending-kind="{{.Run.Scene.Waiting.PendingKind}}" data-run-waiting-approval-pending-count="{{.Run.Scene.Waiting.ApprovalPendingCount}}" data-run-waiting-status-label="{{.Run.Scene.Waiting.StatusLabel}}" data-run-last-event-type="{{.Run.Scene.LastEvent.Type}}" data-run-last-event-label="{{.Run.Scene.LastEvent.Label}}" data-run-last-event-summary="{{.Run.Scene.LastEvent.Summary}}" data-run-last-event-detail="{{.Run.Scene.LastEvent.Detail}}" data-run-last-event-occurred-label="{{.Run.Scene.LastEvent.OccurredLabel}}" data-run-last-event-tone="{{.Run.Scene.LastEvent.Tone}}">
   <div>
     <p class="eyebrow">Run sidebar</p>
     <h3>{{.Run.ID}}</h3>
@@ -49,9 +49,9 @@
     <div>
       <dt>Last activity</dt>
       <dd>
-        <strong>{{.Run.Controls.LastEventLabel}}</strong>
-        {{if and .Run.Controls.LastEventSummary (ne .Run.Controls.LastEventSummary .Run.Controls.LastEventLabel)}}<br><span class="muted">{{.Run.Controls.LastEventSummary}}</span>{{end}}
-        {{if .Run.Controls.LastActivityTimeLabel}}<br><span class="muted">{{.Run.Controls.LastActivityTimeLabel}}</span>{{end}}
+        <strong>{{.Run.Scene.LastEvent.Label}}</strong>
+        {{if and .Run.Scene.LastEvent.Summary (ne .Run.Scene.LastEvent.Summary .Run.Scene.LastEvent.Label)}}<br><span class="muted">{{.Run.Scene.LastEvent.Summary}}</span>{{end}}
+        {{if .Run.Scene.LastEvent.OccurredLabel}}<br><span class="muted">{{.Run.Scene.LastEvent.OccurredLabel}}</span>{{else if .Run.Controls.LastActivityTimeLabel}}<br><span class="muted">{{.Run.Controls.LastActivityTimeLabel}}</span>{{end}}
       </dd>
     </div>
     {{if .Run.Waiting.Active}}
