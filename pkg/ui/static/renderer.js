@@ -34,6 +34,10 @@ const markActiveNavigation = () => {
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const lerp = (from, to, amount) => from + (to - from) * amount;
 const smoothAmount = (rate, dt) => clamp(1 - Math.exp(-rate * dt), 0, 1);
+const quantize = (value, step = 8) => {
+  const numeric = Number.isFinite(value) ? value : 0;
+  return Math.round(numeric / step) * step;
+};
 const motionSettled = (current, target, epsilon = 0.6) => Math.abs((current || 0) - (target || 0)) <= epsilon;
 const sceneClock = () => (window.performance && typeof window.performance.now === 'function' ? window.performance.now() : Date.now());
 
@@ -308,6 +312,23 @@ const layoutTextAroundObstacles = (text, options) => {
   };
 };
 
+const obstacleLayoutSignature = (obstacles) => {
+  if (!Array.isArray(obstacles) || !obstacles.length) {
+    return 'none';
+  }
+  return obstacles
+    .map((obstacle) => [
+      quantize(obstacle.x, 10),
+      quantize(obstacle.y, 10),
+      quantize(obstacle.radius, 6),
+      quantize((obstacle.weight || 0) * 100, 6),
+    ].join(':'))
+    .sort()
+    .join('|');
+};
+
+const signatureChanged = (a, b) => a !== b;
+
 class RunSceneRenderer {
   constructor(root) {
     this.root = root;
@@ -349,11 +370,17 @@ class RunSceneRenderer {
     this.dpr = window.devicePixelRatio || 1;
     this.ctx = this.canvas?.getContext?.('2d');
     this.resizeObserver = null;
-    this.resizeHandler = () => this.scheduleRender();
+    this.resizeHandler = () => {
+      this.invalidateLayout('resize');
+      this.scheduleRender();
+    };
     this.source = null;
     this.frameHandle = 0;
     this.lastFrameAt = 0;
     this.lastMeasure = { width: 0, height: 420 };
+    this.layoutRevision = 0;
+    this.lastLayoutKey = '';
+    this.layoutCache = new Map();
 
     if (!this.canvas || !this.ctx || !this.eventsUrl) {
       return;
@@ -373,7 +400,10 @@ class RunSceneRenderer {
       return;
     }
 
-    this.resizeObserver = new ResizeObserver(() => this.scheduleRender());
+    this.resizeObserver = new ResizeObserver(() => {
+      this.invalidateLayout('resize');
+      this.scheduleRender();
+    });
     this.resizeObserver.observe(this.viewport);
   }
 
@@ -736,6 +766,7 @@ class RunSceneRenderer {
   setConnection(connection) {
     this.scene.connection = connection;
     this.root.dataset.sceneConnection = connection;
+    this.invalidateLayout('connection');
     if (this.connectionTarget) {
       this.connectionTarget.textContent = `SSE ${connection}`;
     }
@@ -743,6 +774,24 @@ class RunSceneRenderer {
       this.streamStateTarget.textContent = connection;
     }
     this.scheduleRender();
+  }
+
+  invalidateLayout(reason = 'update') {
+    this.layoutRevision += 1;
+    this.lastLayoutKey = '';
+    if (reason === 'resize' || this.layoutCache.size > 320) {
+      this.layoutCache.clear();
+    }
+  }
+
+  bumpLayoutVersion(item, reason = 'content') {
+    if (!item) {
+      return;
+    }
+    item.layoutVersion = (item.layoutVersion || 0) + 1;
+    item.textLayoutKey = '';
+    item.textLayout = null;
+    this.invalidateLayout(reason);
   }
 
   pushFlow(item) {
@@ -757,11 +806,14 @@ class RunSceneRenderer {
       targetAlpha: typeof item.targetAlpha === 'number' ? item.targetAlpha : 1,
       appearedAt: typeof item.appearedAt === 'number' ? item.appearedAt : now,
       pulseBoost: typeof item.pulseBoost === 'number' ? item.pulseBoost : 0,
+      layoutVersion: typeof item.layoutVersion === 'number' ? item.layoutVersion : 1,
+      textLayoutKey: item.textLayoutKey || '',
       vx: 0,
       vy: 0,
     };
     this.scene.flowIndex.set(record.id, this.scene.flow.length);
     this.scene.flow.push(record);
+    this.invalidateLayout('flow');
     return record;
   }
 
@@ -803,6 +855,7 @@ class RunSceneRenderer {
     }
     step.status = status || step.status || 'running';
     step.updatedAt = timestamp;
+    this.bumpLayoutVersion(step, 'step');
     return step;
   }
 
@@ -813,6 +866,7 @@ class RunSceneRenderer {
     }
     step.status = 'completed';
     step.updatedAt = timestamp;
+    this.bumpLayoutVersion(step, 'step');
   }
 
   ensureTextBody(messageId, kind, role, timestamp) {
@@ -839,9 +893,11 @@ class RunSceneRenderer {
     body.updatedAt = timestamp;
     if (role) {
       body.role = roleLabel(role, kind);
+      this.bumpLayoutVersion(body, 'role');
     }
     if (!body.stepName && this.scene.activeStepName) {
       body.stepName = this.scene.activeStepName;
+      this.bumpLayoutVersion(body, 'step-link');
     }
     return body;
   }
@@ -854,6 +910,7 @@ class RunSceneRenderer {
     body.content += delta || '';
     body.updatedAt = timestamp;
     body.status = 'streaming';
+    this.bumpLayoutVersion(body, 'content');
   }
 
   finishTextBody(messageId, kind, timestamp) {
@@ -1049,6 +1106,34 @@ class RunSceneRenderer {
     const font = item.kind === 'reasoning' ? MONO_FONT : TEXT_FONT;
     const lineHeight = item.kind === 'reasoning' ? 20 : 22;
     const content = item.kind === 'notice' ? (item.detail || item.content || item.title) : (item.content || '…');
+    const normalizedObstacles = (Array.isArray(obstacles) ? obstacles : [])
+      .filter((obstacle) => (obstacle.weight || 0) > 0.04 && (obstacle.radius || 0) > 8)
+      .map((obstacle) => ({
+        x: quantize(obstacle.x, 6),
+        y: quantize(obstacle.y, 6),
+        radius: quantize(obstacle.radius, 4),
+        weight: Math.round((obstacle.weight || 0) * 100) / 100,
+      }));
+    const key = [
+      item.id,
+      item.layoutVersion || 0,
+      quantize(left, 4),
+      quantize(top, 8),
+      quantize(width, 8),
+      obstacleLayoutSignature(normalizedObstacles),
+    ].join('|');
+
+    if (item.textLayoutKey === key && item.textLayout) {
+      return item.textLayout;
+    }
+
+    if (this.layoutCache.has(key)) {
+      const cached = this.layoutCache.get(key);
+      item.textLayoutKey = key;
+      item.textLayout = cached;
+      return cached;
+    }
+
     const textLeft = left + 28;
     const textTop = top + 48;
     const layout = layoutTextAroundObstacles(content, {
@@ -1057,15 +1142,176 @@ class RunSceneRenderer {
       maxWidth: Math.max(168, width - 56),
       font,
       lineHeight,
-      obstacles,
+      obstacles: normalizedObstacles,
     });
     const pressure = Math.max(layout.maxRightInset, Math.round(layout.maxLeftInset * 0.55));
     const widthReduction = clamp(Math.round(pressure * 0.56), 0, Math.round(width * 0.26));
-    return {
+    const result = {
       ...layout,
       targetWidth: Math.max(236, width - widthReduction),
       targetHeight: 70 + layout.height,
     };
+    this.layoutCache.set(key, result);
+    item.textLayoutKey = key;
+    item.textLayout = result;
+    return result;
+  }
+
+  estimateNarrativeHeight(item, width) {
+    if (item.textLayout?.targetHeight) {
+      return item.textLayout.targetHeight;
+    }
+    if (Number.isFinite(item.targetHeight)) {
+      return item.targetHeight;
+    }
+    if (Number.isFinite(item.displayHeight)) {
+      return item.displayHeight;
+    }
+    if (item.kind === 'step') {
+      return 40;
+    }
+    const content = item.kind === 'notice' ? (item.detail || item.content || item.title || '') : (item.content || '');
+    const font = item.kind === 'reasoning' ? MONO_FONT : TEXT_FONT;
+    const lineHeight = item.kind === 'reasoning' ? 20 : 22;
+    const measured = ensurePretextLayout(content || '…', {
+      maxWidth: Math.max(168, width - 56),
+      font,
+      lineHeight,
+    });
+    return Math.max(92, 70 + (measured?.height || lineHeight));
+  }
+
+  buildNarrativeLayout(width, headerHeight, pad, contentLeft, contentWidth, narrativeWidth, gap, toolObstacles) {
+    let cursorY = 18 + headerHeight + 22;
+    let maxBottom = cursorY;
+    const items = [];
+    const narrativePlacements = [];
+    const placementMap = new Map();
+
+    this.scene.flow.forEach((item) => {
+      if (item.kind === 'tool') {
+        return;
+      }
+
+      if (item.kind === 'step') {
+        item.targetX = contentLeft;
+        item.targetY = cursorY;
+        item.targetWidth = contentWidth;
+        item.targetHeight = 40;
+        cursorY += item.targetHeight + gap;
+        maxBottom = Math.max(maxBottom, item.targetY + item.targetHeight);
+        items.push(item);
+        const placement = {
+          id: item.id,
+          kind: item.kind,
+          stepName: item.stepName,
+          order: item.order,
+          x: item.targetX,
+          y: item.targetY,
+          width: item.targetWidth,
+          height: item.targetHeight,
+          centerY: item.targetY + item.targetHeight / 2,
+          right: item.targetX + item.targetWidth,
+        };
+        narrativePlacements.push(placement);
+        placementMap.set(item.id, placement);
+        return;
+      }
+
+      const inset = item.kind === 'reasoning' ? 26 : item.kind === 'notice' ? 10 : 0;
+      const baseLeft = contentLeft + inset;
+      const baseWidth = Math.max(240, narrativeWidth - inset);
+      const estimatedHeight = this.estimateNarrativeHeight(item, baseWidth);
+      const relevantObstacles = (toolObstacles || []).filter((obstacle) => Math.abs((obstacle.y || 0) - (cursorY + estimatedHeight / 2)) <= (obstacle.radius || 0) + estimatedHeight * 0.9 + 88);
+      const layout = this.buildTextLayout(item, baseLeft, cursorY, baseWidth, relevantObstacles);
+      item.targetX = baseLeft;
+      item.targetY = cursorY;
+      item.targetWidth = layout.targetWidth;
+      item.targetHeight = layout.targetHeight;
+      cursorY += item.targetHeight + gap;
+      maxBottom = Math.max(maxBottom, item.targetY + item.targetHeight);
+      items.push(item);
+      const placement = {
+        id: item.id,
+        kind: item.kind,
+        stepName: item.stepName,
+        order: item.order,
+        x: item.targetX,
+        y: item.targetY,
+        width: item.targetWidth,
+        height: item.targetHeight,
+        centerY: item.targetY + item.targetHeight / 2,
+        right: item.targetX + item.targetWidth,
+      };
+      narrativePlacements.push(placement);
+      placementMap.set(item.id, placement);
+    });
+
+    return { items, narrativePlacements, placementMap, cursorY, maxBottom };
+  }
+
+  findToolAnchor(tool, placements, fallbackY) {
+    const candidates = placements.filter((placement) => {
+      if (tool.stepName && placement.stepName === tool.stepName) {
+        return true;
+      }
+      return placement.kind === 'step' && placement.stepName === tool.stepName;
+    });
+    const scoped = candidates.length ? candidates : placements;
+    if (!scoped.length) {
+      return {
+        centerY: fallbackY,
+        right: this.lastMeasure.width - 140,
+        x: 42,
+        width: Math.max(220, this.lastMeasure.width - 84),
+      };
+    }
+
+    let anchor = scoped[0];
+    let distance = Math.abs((scoped[0].order || 0) - (tool.order || 0));
+    scoped.forEach((placement) => {
+      const nextDistance = Math.abs((placement.order || 0) - (tool.order || 0));
+      if (nextDistance < distance || (nextDistance === distance && placement.order <= tool.order)) {
+        anchor = placement;
+        distance = nextDistance;
+      }
+    });
+    return anchor;
+  }
+
+  buildToolTargets(tools, placements, metrics) {
+    const targets = new Map();
+    const obstacles = [];
+    const { width, pad, headerHeight, contentLeft, narrativeWidth, now } = metrics;
+    const fallbackY = 36 + headerHeight + 64;
+
+    tools.forEach((tool, index) => {
+      const radius = this.toolRadiusTarget(tool, now);
+      const weight = this.toolLayoutWeight(tool, now);
+      const anchor = this.findToolAnchor(tool, placements, fallbackY);
+      const clusterIndex = Math.max(0, placements.indexOf(anchor));
+      const lane = (clusterIndex + index) % (width > 980 ? 3 : 2);
+      const sideBias = tool.order % 2 === 0 ? 1 : -1;
+      const driftX = lane * 24 + (sideBias > 0 ? 10 : -8);
+      const driftY = (lane - 0.5) * 22 + (tool.stepName ? 6 : 0);
+      const anchorRight = anchor.right || (contentLeft + narrativeWidth - 28);
+      const targetX = clamp(anchorRight - radius * 0.46 + driftX, contentLeft + radius + 148, width - pad - radius - 18);
+      const targetY = Math.max(36 + headerHeight + radius * 0.4, (anchor.centerY || fallbackY) + driftY);
+      const target = {
+        x: targetX,
+        y: targetY,
+        radius,
+        weight,
+        linkX: clamp((anchor.x || contentLeft) + Math.max(120, (anchor.width || narrativeWidth) - 42), contentLeft + 120, targetX - radius * 0.24),
+        linkY: anchor.centerY || fallbackY,
+      };
+      targets.set(tool.id, target);
+      if (weight > 0.06 && radius > 8) {
+        obstacles.push(target);
+      }
+    });
+
+    return { targets, obstacles };
   }
 
   computeLayout(width, now) {
@@ -1076,65 +1322,55 @@ class RunSceneRenderer {
     const contentWidth = Math.max(244, width - contentLeft - pad - 8);
     const narrativeWidth = Math.max(244, contentWidth - (compactHeader ? 8 : 18));
     const gap = width < 760 ? 16 : 20;
-    let cursorY = 18 + headerHeight + 22;
-    let lastNarrativeY = cursorY;
-    let maxBottom = cursorY;
-    const items = [];
-    const activeTools = [];
+    const tools = this.scene.flow.filter((item) => item.kind === 'tool');
 
+    const provisionalNarrative = this.buildNarrativeLayout(width, headerHeight, pad, contentLeft, contentWidth, narrativeWidth, gap, []);
+    tools.forEach((tool) => {
+      tool.targetRadius = this.toolRadiusTarget(tool, now);
+      tool.targetAlpha = this.toolAlphaTarget(tool, now);
+      tool.layoutWeight = this.toolLayoutWeight(tool, now);
+    });
+
+    const provisionalTargets = this.buildToolTargets(tools, provisionalNarrative.narrativePlacements, {
+      width,
+      pad,
+      headerHeight,
+      contentLeft,
+      narrativeWidth,
+      now,
+    });
+    const narrative = this.buildNarrativeLayout(width, headerHeight, pad, contentLeft, contentWidth, narrativeWidth, gap, provisionalTargets.obstacles);
+    const finalTargets = this.buildToolTargets(tools, narrative.narrativePlacements, {
+      width,
+      pad,
+      headerHeight,
+      contentLeft,
+      narrativeWidth,
+      now,
+    });
+    const finalNarrative = signatureChanged(
+      obstacleLayoutSignature(provisionalTargets.obstacles),
+      obstacleLayoutSignature(finalTargets.obstacles),
+    )
+      ? this.buildNarrativeLayout(width, headerHeight, pad, contentLeft, contentWidth, narrativeWidth, gap, finalTargets.obstacles)
+      : narrative;
+
+    const items = [];
+    let maxBottom = finalNarrative.maxBottom;
     this.scene.flow.forEach((item) => {
       if (item.kind === 'tool') {
-        const toolIndex = activeTools.length;
-        const radius = this.toolRadiusTarget(item, now);
-        const wobble = toolIndex % 2 === 0 ? 0 : 10;
-        const rise = Math.min(54, toolIndex * 18);
-        item.targetRadius = radius;
-        item.targetAlpha = this.toolAlphaTarget(item, now);
-        item.layoutWeight = this.toolLayoutWeight(item, now);
-        item.linkY = lastNarrativeY;
-        item.linkX = contentLeft + Math.max(160, narrativeWidth - 140);
-        item.targetX = clamp(width - pad - radius - 18 - wobble, contentLeft + radius + 120, width - pad - radius - 10);
-        item.targetY = Math.max(36 + headerHeight, lastNarrativeY + 12 + rise);
-        items.push(item);
-        activeTools.push(item);
-        maxBottom = Math.max(maxBottom, item.targetY + radius + 18);
-        cursorY = Math.max(cursorY, item.targetY - radius * 0.24);
-        return;
+        const target = finalTargets.targets.get(item.id) || provisionalTargets.targets.get(item.id);
+        if (target) {
+          item.targetRadius = target.radius;
+          item.targetAlpha = this.toolAlphaTarget(item, now);
+          item.layoutWeight = this.toolLayoutWeight(item, now);
+          item.linkY = target.linkY;
+          item.linkX = target.linkX;
+          item.targetX = target.x;
+          item.targetY = target.y;
+          maxBottom = Math.max(maxBottom, item.targetY + item.targetRadius + 18);
+        }
       }
-
-      if (item.kind === 'step') {
-        item.targetX = contentLeft;
-        item.targetY = cursorY;
-        item.targetWidth = contentWidth;
-        item.targetHeight = 40;
-        cursorY += item.targetHeight + gap;
-        lastNarrativeY = item.targetY + item.targetHeight / 2;
-        maxBottom = Math.max(maxBottom, item.targetY + item.targetHeight);
-        items.push(item);
-        return;
-      }
-
-      const inset = item.kind === 'reasoning' ? 26 : item.kind === 'notice' ? 10 : 0;
-      const obstacles = activeTools
-        .map((tool) => ({
-          x: Number.isFinite(tool.x) ? tool.x : tool.targetX,
-          y: Number.isFinite(tool.y) ? tool.y : tool.targetY,
-          radius: Number.isFinite(tool.radius) ? tool.radius : tool.targetRadius,
-          weight: this.toolLayoutWeight(tool, now),
-        }))
-        .filter((tool) => tool.weight > 0.06 && tool.radius > 8);
-
-      const baseLeft = contentLeft + inset;
-      const baseWidth = Math.max(240, narrativeWidth - inset);
-      const layout = this.buildTextLayout(item, baseLeft, cursorY, baseWidth, obstacles);
-      item.textLayout = layout;
-      item.targetX = baseLeft;
-      item.targetY = cursorY;
-      item.targetWidth = layout.targetWidth;
-      item.targetHeight = layout.targetHeight;
-      cursorY += item.targetHeight + gap;
-      lastNarrativeY = item.targetY + item.targetHeight / 2;
-      maxBottom = Math.max(maxBottom, item.targetY + item.targetHeight);
       items.push(item);
     });
 
@@ -1144,7 +1380,7 @@ class RunSceneRenderer {
       headerHeight,
       compactHeader,
       items,
-      height: Math.max(440, Math.round(Math.max(cursorY + 34, maxBottom + 24))),
+      height: Math.max(440, Math.round(Math.max(finalNarrative.cursorY + 34, maxBottom + 24))),
     };
   }
 
