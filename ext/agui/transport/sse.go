@@ -267,7 +267,18 @@ func writeSSE(w http.ResponseWriter, ev agui.Event) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", ev.Sequence, payload)
+	if _, err := fmt.Fprintf(w, "id: %d\n", ev.Sequence); err != nil {
+		return err
+	}
+
+	body := strings.ReplaceAll(string(payload), "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
+	for _, line := range strings.Split(body, "\n") {
+		if _, err := fmt.Fprintf(w, "data: %s\n", line); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprint(w, "\n")
 	return err
 }
 
