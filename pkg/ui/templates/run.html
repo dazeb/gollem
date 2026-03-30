@@ -11,7 +11,12 @@
         <h2>{{.Run.Title}}</h2>
         <p class="lede">{{.Run.Summary}}</p>
       </div>
-      <span class="status status--{{.Run.Status}}" data-run-status-badge>{{.Run.Controls.StatusLabel}}</span>
+      <span
+        class="status status--{{.Run.StatusView.Code}}"
+        data-run-status-badge
+        data-status-code="{{.Run.StatusView.Code}}"
+        data-status-label="{{.Run.StatusView.Label}}"
+      >{{.Run.StatusView.Label}}</span>
     </div>
 
     <div class="detail-grid">
@@ -40,9 +45,14 @@
       data-run-id="{{.Run.ID}}"
       data-run-title="{{.Run.Title}}"
       data-run-summary="{{.Run.Summary}}"
-      data-run-status="{{.Run.Status}}"
+      data-run-status="{{.Run.StatusView.Code}}"
+      data-run-status-label="{{.Run.StatusView.Label}}"
       data-run-waiting-reason="{{.Run.Waiting.Reason}}"
-      data-scene-status="{{.Run.Status}}"
+      data-run-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}"
+      data-run-last-event-type="{{.Run.Controls.LastEventType}}"
+      data-run-last-event-label="{{.Run.Controls.LastEventLabel}}"
+      data-scene-status="{{.Run.StatusView.Code}}"
+      data-scene-status-label="{{.Run.StatusView.Label}}"
       data-scene-connection="connecting"
       data-events-url="/runs/{{.Run.ID}}/events"
     >
@@ -59,7 +69,7 @@
           </article>
           <article class="run-scene__metric run-scene__metric--stream">
             <span class="detail-grid__label">Stream state</span>
-            <strong data-scene-stream-state>{{.Run.Controls.StatusLabel}}</strong>
+            <strong data-scene-stream-state data-status-label="{{.Run.StatusView.Label}}">{{.Run.StatusView.Label}}</strong>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Steps</span>
@@ -71,11 +81,11 @@
           </article>
           <article class="run-scene__metric run-scene__metric--waiting">
             <span class="detail-grid__label">Waiting on</span>
-            <strong data-scene-waiting-reason>{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}</strong>
+            <strong data-scene-waiting-reason data-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}">{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}</strong>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Last event</span>
-            <strong data-run-last-event>{{.Run.Controls.LastEventLabel}}</strong>
+            <strong data-run-last-event data-event-type="{{.Run.Controls.LastEventType}}" data-event-label="{{.Run.Controls.LastEventLabel}}">{{.Run.Controls.LastEventLabel}}</strong>
           </article>
         </div>
       </div>
@@ -122,7 +132,7 @@
           <strong>{{.Run.Waiting.Label}}</strong>
           {{if .Run.Waiting.Detail}}<span class="muted"> · {{.Run.Waiting.Detail}}</span>{{end}}
           {{else}}
-          <span class="muted">{{.Run.Controls.PrimaryActionLabel}}</span>
+          <span class="muted">{{.Run.StatusView.Detail}}</span>
           {{end}}
         </div>
       </div>
@@ -143,15 +153,18 @@
       <div class="transcript__header">
         <div>
           <h3>Protocol events</h3>
-          <span class="muted">Low-level AG-UI/runtime event stream for debugging.</span>
+          <span class="muted">Readable AG-UI/runtime event stream for debugging initial hydration.</span>
         </div>
         <div>
-          <span class="muted">{{len .Run.RecentProtocolEvents}} recent</span>
+          <span class="muted">{{len .Run.RecentProtocolActivity}} recent</span>
         </div>
       </div>
       <ol class="event-list event-list--dense" data-run-event-log>
-        {{range .Run.RecentProtocolEvents}}
-        <li><strong>{{.}}</strong></li>
+        {{range .Run.RecentProtocolActivity}}
+        <li data-activity-tone="{{.Tone}}">
+          <strong>{{.Label}}</strong>
+          {{if .Summary}}<span> {{.Summary}}</span>{{end}}
+        </li>
         {{else}}
         <li class="muted">No protocol events yet.</li>
         {{end}}

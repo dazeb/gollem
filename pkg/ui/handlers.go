@@ -73,14 +73,15 @@ func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	view := run.Snapshot()
 
 	w.Header().Set("HX-Trigger", "ui:fragment-loaded")
 	s.render(w, "sidebar", pageData{
 		AppTitle:    "gollem",
-		PageTitle:   "Run sidebar",
+		PageTitle:   view.Title + " sidebar",
 		Path:        r.URL.Path,
 		CurrentYear: time.Now().Year(),
-		Run:         run.Snapshot(),
+		Run:         view,
 	})
 }
 

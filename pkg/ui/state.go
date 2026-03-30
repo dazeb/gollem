@@ -97,36 +97,62 @@ type RunWaitingView struct {
 
 // RunControlsView exposes control-oriented metadata for templates and renderers.
 type RunControlsView struct {
-	CanAbort             bool
-	CanApproveTools      bool
-	PendingApprovalCount int
-	HasRecentActivity    bool
-	LastEventLabel       string
-	StatusLabel          string
-	Summary              string
-	PrimaryActionLabel   string
+	CanAbort              bool
+	CanApproveTools       bool
+	PendingApprovalCount  int
+	PendingApprovalLabel  string
+	HasRecentActivity     bool
+	LastEventType         string
+	LastEventLabel        string
+	LastActivitySummary   string
+	LastActivityTimeLabel string
+	StatusLabel           string
+	Summary               string
+	PrimaryActionLabel    string
+}
+
+// RunStatusView exposes human-readable run status metadata for initial render and hydration.
+type RunStatusView struct {
+	Code       string
+	Label      string
+	Tone       string
+	Detail     string
+	IsWaiting  bool
+	IsTerminal bool
+}
+
+// RunProtocolEventView is a readable debugging projection of one recent protocol/runtime event.
+type RunProtocolEventView struct {
+	Type          string
+	Label         string
+	Summary       string
+	OccurredAt    time.Time
+	OccurredLabel string
+	Tone          string
 }
 
 // RunView is the UI projection for one run.
 type RunView struct {
-	ID                   string
-	Title                string
-	Status               string
-	Provider             string
-	Model                string
-	Summary              string
-	Prompt               string
-	StartedAt            time.Time
-	UpdatedAt            time.Time
-	Events               []string
-	RecentProtocolEvents []string
-	RecentActivity       []RunActivityView
-	SessionID            string
-	Usage                core.RunUsage
-	WaitingReason        string
-	Waiting              RunWaitingView
-	PendingApprovals     []PendingApprovalView
-	Controls             RunControlsView
+	ID                     string
+	Title                  string
+	Status                 string
+	StatusView             RunStatusView
+	Provider               string
+	Model                  string
+	Summary                string
+	Prompt                 string
+	StartedAt              time.Time
+	UpdatedAt              time.Time
+	Events                 []string
+	RecentProtocolEvents   []string
+	RecentProtocolActivity []RunProtocolEventView
+	RecentActivity         []RunActivityView
+	SessionID              string
+	Usage                  core.RunUsage
+	WaitingReason          string
+	Waiting                RunWaitingView
+	PendingApprovals       []PendingApprovalView
+	Controls               RunControlsView
 }
 
 // RunStartRequest is the accepted POST /runs/start payload.
@@ -374,33 +400,34 @@ func (r *RunRecord) Snapshot() RunView {
 
 	recent := snapshotRecentActivities(r.activities)
 	recentProtocolEvents := snapshotRecentProtocolEvents(r.events)
+	recentProtocolActivity := buildProtocolEventViews(recentProtocolEvents, recent)
 	pendingApprovalCount := len(pending)
 	waiting := buildWaitingView(r.status, r.waitingReason, pendingApprovalCount)
-	lastLabel := waiting.Label
-	if len(recent) > 0 {
-		lastLabel = recent[len(recent)-1].Label
-	}
-	controls := buildControlsView(r.status, waiting, pendingApprovalCount, len(recent) > 0, lastLabel)
+	statusView := buildStatusView(r.status, waiting)
+	latest := latestActivity(recent)
+	controls := buildControlsView(statusView, waiting, pendingApprovalCount, latest, len(recent) > 0)
 
 	return RunView{
-		ID:                   r.id,
-		Title:                r.title,
-		Status:               r.status,
-		Provider:             r.provider,
-		Model:                r.model,
-		Summary:              r.summary,
-		Prompt:               r.prompt,
-		StartedAt:            r.startedAt,
-		UpdatedAt:            r.updatedAt,
-		Events:               append([]string(nil), r.events...),
-		RecentProtocolEvents: recentProtocolEvents,
-		RecentActivity:       recent,
-		SessionID:            r.session.ID,
-		Usage:                r.usage,
-		WaitingReason:        waiting.Reason,
-		Waiting:              waiting,
-		PendingApprovals:     pending,
-		Controls:             controls,
+		ID:                     r.id,
+		Title:                  r.title,
+		Status:                 r.status,
+		StatusView:             statusView,
+		Provider:               r.provider,
+		Model:                  r.model,
+		Summary:                r.summary,
+		Prompt:                 r.prompt,
+		StartedAt:              r.startedAt,
+		UpdatedAt:              r.updatedAt,
+		Events:                 append([]string(nil), r.events...),
+		RecentProtocolEvents:   recentProtocolEvents,
+		RecentProtocolActivity: recentProtocolActivity,
+		RecentActivity:         recent,
+		SessionID:              r.session.ID,
+		Usage:                  r.usage,
+		WaitingReason:          waiting.Reason,
+		Waiting:                waiting,
+		PendingApprovals:       pending,
+		Controls:               controls,
 	}
 }
 
@@ -659,40 +686,141 @@ func buildWaitingView(status, reason string, pendingApprovalCount int) RunWaitin
 	}
 }
 
-func buildControlsView(status string, waiting RunWaitingView, pendingApprovalCount int, hasRecentActivity bool, lastLabel string) RunControlsView {
-	statusLabel := humanizeRunStatus(status)
-	lastEventLabel := firstNonEmpty(strings.TrimSpace(lastLabel), waiting.Label, statusLabel)
+func buildStatusView(status string, waiting RunWaitingView) RunStatusView {
+	code := strings.TrimSpace(status)
+	label := humanizeRunStatus(code)
+	detail := ""
+	isWaiting := code == "waiting" || waiting.Active
+	tone := code
+	if tone == "" {
+		tone = "unknown"
+	}
+	switch {
+	case waiting.Active:
+		detail = firstNonEmpty(waiting.Detail, waiting.Label)
+		tone = firstNonEmpty(waiting.PendingKind, "waiting")
+	case statusAllowsAbort(code):
+		detail = "Run in progress"
+		if code == "starting" {
+			detail = "Preparing run"
+		}
+	case code == "completed":
+		detail = "Run finished successfully"
+	case code == "failed":
+		detail = "Run finished with an error"
+	case code == "aborted" || code == "cancelled":
+		detail = "Run was stopped before completion"
+	}
+	return RunStatusView{
+		Code:       code,
+		Label:      label,
+		Tone:       tone,
+		Detail:     detail,
+		IsWaiting:  isWaiting,
+		IsTerminal: !statusAllowsAbort(code),
+	}
+}
+
+func latestActivity(src []RunActivityView) *RunActivityView {
+	if len(src) == 0 {
+		return nil
+	}
+	activity := src[len(src)-1]
+	return &activity
+}
+
+func buildProtocolEventViews(events []string, activities []RunActivityView) []RunProtocolEventView {
+	if len(events) == 0 {
+		return nil
+	}
+	views := make([]RunProtocolEventView, 0, len(events))
+	activityIdx := 0
+	for _, eventType := range events {
+		label := humanizeRuntimeEventType(eventType)
+		view := RunProtocolEventView{
+			Type:    eventType,
+			Label:   label,
+			Summary: firstNonEmpty(label, eventType),
+			Tone:    protocolEventTone(eventType),
+		}
+		for activityIdx < len(activities) {
+			activity := activities[activityIdx]
+			activityIdx++
+			if strings.TrimSpace(activity.Type) != strings.TrimSpace(eventType) {
+				continue
+			}
+			view.Label = firstNonEmpty(activity.Label, view.Label)
+			view.Summary = firstNonEmpty(activity.Summary, joinActivitySummary(activity.Label, activity.Detail), view.Summary)
+			view.OccurredAt = activity.OccurredAt
+			view.OccurredLabel = activity.OccurredLabel
+			view.Tone = firstNonEmpty(activity.Tone, view.Tone)
+			break
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func protocolEventTone(eventType string) string {
+	switch strings.TrimSpace(eventType) {
+	case core.RuntimeEventTypeToolFailed:
+		return "error"
+	case core.RuntimeEventTypeApprovalRequested, core.RuntimeEventTypeDeferredRequested, core.RuntimeEventTypeRunWaiting:
+		return "waiting"
+	case core.RuntimeEventTypeRunCompleted, core.RuntimeEventTypeApprovalResolved, core.RuntimeEventTypeDeferredResolved, core.RuntimeEventTypeRunResumed:
+		return "success"
+	default:
+		return "info"
+	}
+}
+
+func buildControlsView(status RunStatusView, waiting RunWaitingView, pendingApprovalCount int, latest *RunActivityView, hasRecentActivity bool) RunControlsView {
+	lastEventType := status.Code
+	lastEventLabel := firstNonEmpty(waiting.Label, status.Label)
+	lastActivitySummary := lastEventLabel
+	lastActivityTimeLabel := ""
+	if latest != nil {
+		lastEventType = latest.Type
+		lastEventLabel = firstNonEmpty(latest.Label, lastEventLabel)
+		lastActivitySummary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), lastEventLabel)
+		lastActivityTimeLabel = latest.OccurredLabel
+	}
+	pendingApprovalLabel := fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
+	if pendingApprovalCount == 0 {
+		pendingApprovalLabel = "No pending approvals"
+	}
 	primaryActionLabel := "View run"
-	summary := statusLabel
+	summary := status.Label
 	switch {
 	case waiting.Active && pendingApprovalCount > 0:
 		primaryActionLabel = "Review approvals"
-		summary = waiting.Detail
-		if strings.TrimSpace(summary) == "" {
-			summary = fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
-		}
+		summary = firstNonEmpty(waiting.Detail, pendingApprovalLabel)
 	case waiting.Active:
 		primaryActionLabel = "Monitor waiting run"
 		summary = firstNonEmpty(waiting.Detail, waiting.Label)
 	case pendingApprovalCount > 0:
 		primaryActionLabel = "Review approvals"
-		summary = fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
-	case statusAllowsAbort(status):
+		summary = pendingApprovalLabel
+	case statusAllowsAbort(status.Code):
 		primaryActionLabel = "Abort run"
-		summary = firstNonEmpty(waiting.Detail, "Run in progress")
+		summary = firstNonEmpty(status.Detail, "Run in progress")
 	case hasRecentActivity:
 		primaryActionLabel = "Review activity"
-		summary = lastEventLabel
+		summary = lastActivitySummary
 	}
 	return RunControlsView{
-		CanAbort:             statusAllowsAbort(status),
-		CanApproveTools:      pendingApprovalCount > 0,
-		PendingApprovalCount: pendingApprovalCount,
-		HasRecentActivity:    hasRecentActivity,
-		LastEventLabel:       lastEventLabel,
-		StatusLabel:          statusLabel,
-		Summary:              summary,
-		PrimaryActionLabel:   primaryActionLabel,
+		CanAbort:              statusAllowsAbort(status.Code),
+		CanApproveTools:       pendingApprovalCount > 0,
+		PendingApprovalCount:  pendingApprovalCount,
+		PendingApprovalLabel:  pendingApprovalLabel,
+		HasRecentActivity:     hasRecentActivity,
+		LastEventType:         lastEventType,
+		LastEventLabel:        lastEventLabel,
+		LastActivitySummary:   lastActivitySummary,
+		LastActivityTimeLabel: lastActivityTimeLabel,
+		StatusLabel:           status.Label,
+		Summary:               summary,
+		PrimaryActionLabel:    primaryActionLabel,
 	}
 }
 
