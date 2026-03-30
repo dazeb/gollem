@@ -62,12 +62,72 @@ const formatClock = (timestamp) => {
 
 const compactWhitespace = (value) => String(value || '').replace(/\s+/g, ' ').trim();
 
+const connectionNarrative = (connection, lastSeq = 0) => {
+  switch (compactWhitespace(connection)) {
+    case 'connecting':
+      return {
+        label: 'Live stream connecting',
+        summary: 'Opening the AG-UI SSE channel with replay-safe resume.',
+        detail: lastSeq
+          ? `Attempting to continue after event #${lastSeq}.`
+          : 'Opening the live event stream for this run.',
+        tone: 'pending',
+        kind: 'system',
+      };
+    case 'reconnecting':
+      return {
+        label: 'Live stream reconnecting',
+        summary: 'SSE dropped; waiting for replay-safe reconnect.',
+        detail: lastSeq
+          ? `Holding after event #${lastSeq}. Missed frames will replay automatically.`
+          : 'Trying to restore the live stream. Missed frames will replay automatically.',
+        tone: 'waiting',
+        kind: 'system',
+      };
+    case 'reconnected':
+      return {
+        label: 'Live stream resumed',
+        summary: 'SSE reconnected; replay-safe resume is active again.',
+        detail: lastSeq
+          ? `Connection recovered after event #${lastSeq}. Any missed frames will replay from the server.`
+          : 'Connection recovered and live updates are flowing again.',
+        tone: 'running',
+        kind: 'system',
+      };
+    case 'closed':
+      return {
+        label: 'Live stream closed',
+        summary: 'The SSE stream closed and is no longer delivering live updates.',
+        detail: lastSeq
+          ? `Stream closed after event #${lastSeq}. Reload to reconnect and replay from the server.`
+          : 'Stream closed before live updates could continue.',
+        tone: 'error',
+        kind: 'system',
+      };
+    case 'unsupported':
+      return {
+        label: 'Live stream unsupported',
+        summary: 'This browser cannot open the AG-UI SSE stream.',
+        detail: 'Renderer hydration remains intact, but automatic live updates are unavailable.',
+        tone: 'error',
+        kind: 'system',
+      };
+    default:
+      return null;
+  }
+};
+
 const summarize = (value, maxLength = 140) => {
   const text = compactWhitespace(value);
   if (text.length <= maxLength) {
     return text;
   }
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+};
+
+const numericValue = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const humanizeCode = (value, fallback = '') => {
@@ -79,6 +139,52 @@ const humanizeCode = (value, fallback = '') => {
     .split(' ')
     .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : ''))
     .join(' ');
+};
+
+const waitingPresentation = (reason, approvalPendingCount = 0) => {
+  const normalized = compactWhitespace(reason);
+  const count = Number.isFinite(Number(approvalPendingCount)) ? Number(approvalPendingCount) : 0;
+  switch (normalized) {
+    case 'approval':
+      return {
+        label: 'Waiting for approval',
+        detail: count > 0
+          ? `${count} pending tool approval${count === 1 ? '' : 's'}.`
+          : 'A tool call needs approval before the run can continue.',
+        summary: 'Run paused until approval is resolved.',
+        kind: 'approval',
+      };
+    case 'deferred':
+      return {
+        label: 'Waiting for deferred input',
+        detail: 'The run will resume when deferred input is provided.',
+        summary: 'Run paused until deferred input arrives.',
+        kind: 'deferred',
+      };
+    case 'approval_and_deferred':
+      return {
+        label: 'Waiting for approval and deferred input',
+        detail: count > 0
+          ? `${count} tool approval${count === 1 ? '' : 's'} pending and deferred input still required.`
+          : 'Approval and deferred input are both required before the run can continue.',
+        summary: 'Run paused until approval and deferred input are resolved.',
+        kind: 'mixed',
+      };
+    case '':
+      return {
+        label: 'Waiting',
+        detail: 'The run is paused.',
+        summary: 'Run paused.',
+        kind: 'waiting',
+      };
+    default:
+      return {
+        label: 'Waiting',
+        detail: humanizeCode(normalized, normalized),
+        summary: `Run paused · ${humanizeCode(normalized, normalized)}`,
+        kind: 'custom',
+      };
+  }
 };
 
 const boolString = (value, fallback = false) => {
@@ -205,6 +311,13 @@ const applySceneState = (root, sceneState) => {
     streamStateTarget.textContent = statusLabel;
   }
 
+  const streamDetailTarget = root.querySelector?.('[data-scene-stream-detail]');
+  if (streamDetailTarget) {
+    streamDetailTarget.textContent = waitingActive === 'true'
+      ? (waitingSummary || waitingDetail || waitingLabel || statusDetail || statusLabel)
+      : (statusDetail || lastEventSummary || statusLabel || 'Live stream active.');
+  }
+
   const waitingTarget = root.querySelector?.('[data-scene-waiting-reason]');
   if (waitingTarget?.dataset) {
     waitingTarget.dataset.waitingReason = waitingReason;
@@ -212,6 +325,13 @@ const applySceneState = (root, sceneState) => {
     waitingTarget.dataset.waitingDetail = waitingDetail;
     waitingTarget.textContent = waitingLabel || 'Active';
     waitingTarget.title = waitingSummary || waitingDetail || waitingLabel;
+  }
+
+  const waitingDetailTarget = root.querySelector?.('[data-scene-waiting-detail]');
+  if (waitingDetailTarget) {
+    waitingDetailTarget.textContent = waitingActive === 'true'
+      ? (waitingSummary || waitingDetail || waitingLabel || 'Run is waiting.')
+      : (statusDetail || 'No waiting reason.');
   }
 
   const lastEventTarget = root.querySelector?.('[data-run-last-event]');
@@ -225,6 +345,11 @@ const applySceneState = (root, sceneState) => {
     lastEventTarget.title = [lastEventSummary, lastEventOccurredLabel].filter(Boolean).join(' · ');
   }
 
+  const lastEventDetailTarget = root.querySelector?.('[data-run-last-event-detail]');
+  if (lastEventDetailTarget) {
+    lastEventDetailTarget.textContent = [lastEventSummary || lastEventDetail || '', lastEventOccurredLabel || ''].filter(Boolean).join(' · ') || 'Awaiting activity.';
+  }
+
   return readSceneState(root);
 };
 
@@ -234,6 +359,221 @@ const syncRendererSceneState = (renderer) => {
   }
   renderer.scene.runStatus = renderer.root.dataset.runStatus || renderer.root.dataset.sceneStatus || renderer.scene.runStatus;
   renderer.scene.waitingReason = renderer.root.dataset.runWaitingReason || renderer.root.dataset.sceneWaitingReason || '';
+};
+
+const protocolEventLabel = (type, name = '') => {
+  const normalizedType = compactWhitespace(type);
+  if (normalizedType === 'session.snapshot') {
+    return 'Session snapshot';
+  }
+  if (normalizedType === 'CUSTOM' && compactWhitespace(name)) {
+    return humanizeCode(name, name);
+  }
+  return humanizeCode(normalizedType, normalizedType || 'Event');
+};
+
+const protocolEventPayload = (value) => {
+  if (value && typeof value === 'object') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return readJSON(value) || {};
+  }
+  if (value == null) {
+    return {};
+  }
+  return readJSON(JSON.stringify(value)) || {};
+};
+
+const protocolEventTone = (type, detail = '', name = '', value = null) => {
+  const normalizedType = compactWhitespace(type);
+  const normalizedName = compactWhitespace(name);
+  const normalizedDetail = compactWhitespace(detail).toLowerCase();
+  const payload = protocolEventPayload(value);
+  if (normalizedType === 'RUN_ERROR' || normalizedType === 'run_error' || normalizedDetail.startsWith('error:')) {
+    return 'error';
+  }
+  if (normalizedType === 'RUN_FINISHED' || normalizedType === 'STEP_FINISHED') {
+    return 'completed';
+  }
+  if (normalizedType === 'session.snapshot') {
+    return 'pending';
+  }
+  if (normalizedType === 'CUSTOM') {
+    if (normalizedName === 'gollem.run.waiting' || normalizedName === 'gollem.approval.requested' || normalizedName === 'gollem.deferred.requested') {
+      return 'waiting';
+    }
+    if (normalizedName === 'gollem.run.resumed') {
+      return payload.isError || payload.error ? 'error' : 'running';
+    }
+    if (normalizedName === 'gollem.approval.resolved') {
+      return payload.approved === false || payload.isError || payload.error ? 'error' : 'completed';
+    }
+    if (normalizedName === 'gollem.deferred.resolved') {
+      return payload.isError || payload.error ? 'error' : 'completed';
+    }
+  }
+  return 'info';
+};
+
+const customEventSummary = (name = '', value = null) => {
+  const normalizedName = compactWhitespace(name);
+  const payload = protocolEventPayload(value);
+  switch (normalizedName) {
+    case 'gollem.run.waiting': {
+      const waitingMeta = waitingPresentation(payload.reason || '', payload.approvalPendingCount || payload.approval_pending_count || 0);
+      return waitingMeta.summary || 'Run paused.';
+    }
+    case 'gollem.run.resumed':
+      return payload.error || payload.message
+        ? summarize(payload.error || payload.message, 120)
+        : (payload.runId ? `Run resumed · ${payload.runId}` : 'Run resumed after waiting.');
+    case 'gollem.approval.requested':
+      return [payload.toolName || 'approval', summarize(payload.argsJson || payload.args_json || '', 96)].filter(Boolean).join(' · ') || 'Approval requested';
+    case 'gollem.approval.resolved':
+      return payload.approved === false
+        ? `${payload.toolName || payload.toolCallId || 'approval'} denied`
+        : `${payload.toolName || payload.toolCallId || 'approval'} approved`;
+    case 'gollem.deferred.requested':
+      return [payload.toolName || 'deferred input', summarize(payload.argsJson || payload.args_json || '', 96)].filter(Boolean).join(' · ') || 'Deferred input requested';
+    case 'gollem.deferred.resolved':
+      return payload.isError || payload.error
+        ? summarize(payload.content || payload.error || payload.toolName || 'deferred input failed', 120)
+        : summarize(payload.content || payload.toolName || 'deferred input received', 120);
+    default:
+      return '';
+  }
+};
+
+const connectionTone = (connection) => {
+  switch (compactWhitespace(connection)) {
+    case 'live':
+    case 'reconnected':
+      return 'running';
+    case 'connecting':
+      return 'pending';
+    case 'reconnecting':
+      return 'waiting';
+    case 'closed':
+    case 'unsupported':
+      return 'error';
+    default:
+      return 'info';
+  }
+};
+
+const protocolEventNarrative = (event = {}) => {
+  const type = compactWhitespace(event.type || '');
+  const timestamp = event.timestamp || Date.now();
+  const detail = compactWhitespace(event.detail || event.summary || '');
+
+  if (type === 'session.snapshot') {
+    return {
+      label: 'Replay snapshot applied',
+      summary: 'Renderer caught up from the session snapshot before live frames resumed.',
+      detail: detail || 'Replay snapshot applied.',
+      tone: 'pending',
+      kind: 'system',
+      occurredLabel: compactWhitespace(event.occurredLabel || ''),
+      timestamp,
+    };
+  }
+
+  return null;
+};
+
+const mergedWaitingReason = (reason = '', state = {}) => {
+  const normalizedReason = compactWhitespace(reason);
+  const hasApproval = !!state.pendingApproval;
+  const hasDeferred = !!state.pendingDeferred;
+  if (normalizedReason) {
+    return normalizedReason;
+  }
+  if (hasApproval && hasDeferred) {
+    return 'approval_and_deferred';
+  }
+  if (hasApproval) {
+    return 'approval';
+  }
+  if (hasDeferred) {
+    return 'deferred';
+  }
+  return '';
+};
+
+const deriveStatusMeta = (renderer, statusOverride = '') => {
+  const statusCode = compactWhitespace(statusOverride || renderer?.scene?.runStatus || renderer?.root?.dataset?.runStatus || renderer?.root?.dataset?.sceneStatus || 'starting');
+  const waitingReason = compactWhitespace(renderer?.scene?.waitingReason || renderer?.root?.dataset?.runWaitingReason || renderer?.root?.dataset?.sceneWaitingReason || '');
+  const waitingCount = Number(renderer?.root?.dataset?.runWaitingApprovalPendingCount || 0);
+  const waitingMeta = waitingReason ? waitingPresentation(waitingReason, waitingCount) : null;
+  const fallbackDetail = statusCode === 'waiting'
+    ? (waitingMeta?.summary || waitingMeta?.detail || 'Run paused.')
+    : statusCode === 'completed'
+      ? 'Run completed successfully.'
+      : statusCode === 'failed'
+        ? 'Run terminated with an error.'
+        : statusCode === 'aborted' || statusCode === 'cancelled'
+          ? 'Run was stopped before completion.'
+          : statusCode === 'running'
+            ? 'Live execution is in progress.'
+            : 'Preparing live execution.';
+  return {
+    code: statusCode,
+    label: humanizeCode(statusCode, 'Run status'),
+    tone: waitingMeta?.kind || statusCode || 'info',
+    detail: compactWhitespace(waitingMeta?.summary || waitingMeta?.detail || fallbackDetail),
+    isWaiting: statusCode === 'waiting' || !!waitingReason,
+    isTerminal: statusCode === 'completed' || statusCode === 'failed' || statusCode === 'aborted' || statusCode === 'cancelled',
+  };
+};
+
+const syncLiveSceneState = (renderer, partial = {}) => {
+  if (!renderer?.root) {
+    return readSceneState(renderer?.root);
+  }
+  const state = readSceneState(renderer.root);
+  const requestedStatusCode = compactWhitespace(partial.status?.code || renderer.scene?.runStatus || state.status.code || renderer.root.dataset.runStatus || 'starting');
+  const statusMeta = deriveStatusMeta(renderer, requestedStatusCode);
+  const waitingReason = compactWhitespace((partial.waiting && Object.prototype.hasOwnProperty.call(partial.waiting, 'reason'))
+    ? partial.waiting.reason
+    : (renderer.scene?.waitingReason || state.waiting.reason || ''));
+  const waitingCount = Number(partial.waiting?.approvalPendingCount ?? state.waiting.approvalPendingCount ?? renderer.root.dataset.runWaitingApprovalPendingCount ?? 0);
+  const waitingMeta = waitingReason ? waitingPresentation(waitingReason, waitingCount) : null;
+  const waitingActive = boolString(partial.waiting?.active, statusMeta.isWaiting || !!waitingReason);
+  applySceneState(renderer.root, {
+    status: {
+      code: requestedStatusCode,
+      label: compactWhitespace(partial.status?.label || statusMeta.label || state.status.label || humanizeCode(requestedStatusCode, 'Run status')),
+      detail: compactWhitespace(partial.status?.detail || statusMeta.detail || state.status.detail || ''),
+      tone: compactWhitespace(partial.status?.tone || statusMeta.tone || state.status.tone || requestedStatusCode || 'info'),
+      isWaiting: partial.status?.isWaiting ?? (waitingActive === 'true'),
+      isTerminal: partial.status?.isTerminal ?? statusMeta.isTerminal,
+    },
+    waiting: {
+      ...state.waiting,
+      ...(partial.waiting || {}),
+      active: waitingActive,
+      reason: waitingReason,
+      label: compactWhitespace(partial.waiting?.label || (waitingReason ? waitingMeta?.label : 'Active') || state.waiting.label || 'Active'),
+      detail: compactWhitespace(partial.waiting?.detail || (waitingReason ? waitingMeta?.detail : '') || state.waiting.detail || ''),
+      summary: compactWhitespace(partial.waiting?.summary || (waitingReason ? waitingMeta?.summary : statusMeta.detail) || state.waiting.summary || statusMeta.detail),
+      pendingKind: compactWhitespace(partial.waiting?.pendingKind || (waitingReason ? waitingMeta?.kind : '') || state.waiting.pendingKind || ''),
+      approvalPendingCount: partial.waiting?.approvalPendingCount ?? waitingCount,
+      statusLabel: compactWhitespace(partial.waiting?.statusLabel || statusMeta.label),
+    },
+    lastEvent: {
+      ...state.lastEvent,
+      ...(partial.lastEvent || {}),
+      type: compactWhitespace(partial.lastEvent?.type || state.lastEvent.type || requestedStatusCode || 'event'),
+      label: compactWhitespace(partial.lastEvent?.label || state.lastEvent.label || humanizeCode(partial.lastEvent?.type || state.lastEvent.type || requestedStatusCode, statusMeta.label || 'Activity')),
+      summary: compactWhitespace(partial.lastEvent?.summary || state.lastEvent.summary || state.lastEvent.detail || statusMeta.detail || statusMeta.label),
+      detail: compactWhitespace(partial.lastEvent?.detail || state.lastEvent.detail || state.lastEvent.summary || ''),
+      occurredLabel: compactWhitespace(partial.lastEvent?.occurredLabel || state.lastEvent.occurredLabel || ''),
+      tone: compactWhitespace(partial.lastEvent?.tone || state.lastEvent.tone || statusMeta.tone || 'info'),
+    },
+  });
+  syncRendererSceneState(renderer);
+  return readSceneState(renderer.root);
 };
 
 const roleLabel = (role, kind) => {
@@ -586,16 +926,21 @@ class RunSceneRenderer {
     this.canvas = root.querySelector('[data-run-canvas]');
     this.viewport = root.querySelector('[data-run-viewport]') || root.querySelector('.run-scene');
     this.eventLog = root.querySelector('[data-run-event-log]') || root.closest('.panel--main')?.querySelector('[data-run-event-log]') || document.querySelector('[data-run-event-log]');
+    this.activityLog = root.closest('.panel--main')?.querySelector('.event-list--narrative') || document.querySelector('.event-list--narrative');
     this.statusTargets = [
       ...document.querySelectorAll('[data-run-status-badge]'),
       ...document.querySelectorAll('.panel__header--run .status'),
     ];
     this.connectionTarget = root.querySelector('[data-run-connection]');
+    this.connectionDetailTarget = root.querySelector('[data-run-connection-detail]');
     this.streamStateTarget = root.querySelector('[data-scene-stream-state]');
+    this.streamDetailTarget = root.querySelector('[data-scene-stream-detail]');
     this.stepCountTarget = root.querySelector('[data-scene-step-count]');
     this.entityCountTarget = root.querySelector('[data-scene-entity-count]');
     this.lastEventTarget = root.querySelector('[data-run-last-event]');
+    this.lastEventDetailTarget = root.querySelector('[data-run-last-event-detail]');
     this.waitingReasonTarget = root.querySelector('[data-scene-waiting-reason]');
+    this.waitingDetailTarget = root.querySelector('[data-scene-waiting-detail]');
     this.emptyState = root.querySelector('[data-run-empty-state]');
     this.runId = root.dataset.runId || '';
     this.eventsUrl = root.dataset.eventsUrl || '';
@@ -617,6 +962,7 @@ class RunSceneRenderer {
       notices: 0,
       transition: { name: 'boot', startedAt: sceneClock() },
       statusChangedAt: sceneClock(),
+      streamHydrated: false,
       lastEventAt: sceneClock(),
       waitingReason: root.dataset.runWaitingReason || '',
       waitingSnapshot: null,
@@ -702,9 +1048,11 @@ class RunSceneRenderer {
       return;
     }
 
+    this.setConnection('connecting');
     this.source = new EventSource(this.eventsUrl);
     this.source.addEventListener('open', () => {
-      this.setConnection('live');
+      const prior = this.scene.connection;
+      this.setConnection(prior === 'reconnecting' || prior === 'closed' ? 'reconnected' : 'live');
     });
     this.source.addEventListener('message', (event) => {
       this.consumeEnvelope(event);
@@ -737,20 +1085,59 @@ class RunSceneRenderer {
 
     if (envelope.type === 'session.snapshot' && envelope.data) {
       this.applySnapshot(envelope, seq);
-      this.appendEventLog('session.snapshot', `snapshot seq ${envelope.data.snapshot_sequence || seq || '—'}`);
+      this.scene.streamHydrated = true;
+      this.appendEventLog({
+        type: 'session.snapshot',
+        label: protocolEventLabel('session.snapshot'),
+        summary: `Snapshot seq ${envelope.data.snapshot_sequence || seq || '—'}`,
+        detail: this.scene.lastSeq
+          ? `Replay state synchronized through event #${this.scene.lastSeq}.`
+          : 'Snapshot applied before live frames resumed.',
+        timestamp: Date.now(),
+        tone: 'pending',
+      });
+      this.appendNarrativeEvent({
+        label: 'Replay snapshot applied',
+        summary: 'Renderer hydrated from a reconnect snapshot before returning to live SSE.',
+        detail: this.scene.lastSeq
+          ? `Snapshot synchronized state through event #${this.scene.lastSeq}.`
+          : 'Snapshot applied before live frames resumed.',
+        tone: 'pending',
+        kind: 'system',
+        timestamp: Date.now(),
+      });
       this.scheduleRender();
       return;
     }
 
     const aguiEvent = this.extractAGUIEvent(envelope);
     if (!aguiEvent) {
-      this.appendEventLog(envelope.type || 'unknown', this.describeEvent(envelope));
+      const label = protocolEventLabel(envelope.type || 'unknown', envelope.name || '');
+      const summary = this.describeEvent(envelope);
+      this.appendEventLog({
+        type: envelope.type || 'unknown',
+        label,
+        summary,
+        detail: summary,
+        timestamp: Date.now(),
+        tone: protocolEventTone(envelope.type || 'unknown', summary, envelope.name || '', envelope.data || envelope.raw || null),
+      });
       this.scheduleRender();
       return;
     }
 
     this.applyAGUIEvent(aguiEvent, seq);
-    this.appendEventLog(aguiEvent.type || envelope.type || 'unknown', this.describeEvent(aguiEvent));
+    const detail = this.describeEvent(aguiEvent);
+    const occurredLabel = this.narrativeTimeLabel(aguiEvent.timestamp || Date.now());
+    this.appendEventLog({
+      type: aguiEvent.type || envelope.type || 'unknown',
+      label: protocolEventLabel(aguiEvent.type || envelope.type || 'unknown', aguiEvent.name || ''),
+      summary: detail,
+      detail,
+      occurredLabel,
+      timestamp: aguiEvent.timestamp || Date.now(),
+      tone: protocolEventTone(aguiEvent.type || envelope.type || 'unknown', detail, aguiEvent.name || '', aguiEvent.value || aguiEvent),
+    });
     this.scheduleRender();
   }
 
@@ -800,10 +1187,25 @@ class RunSceneRenderer {
   applySnapshot(event, seq) {
     const snapshot = event.data || {};
     const appliedAt = Date.now();
+    const wasHydrated = this.scene.streamHydrated;
     this.scene.waitingSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : null;
     if (snapshot.run_id) {
       this.runId = snapshot.run_id;
     }
+
+    const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
+    const deferredInputs = snapshot.pending_external_inputs && typeof snapshot.pending_external_inputs === 'object' ? snapshot.pending_external_inputs : {};
+    const approvalCount = Object.keys(approvals).length;
+    const deferredCount = Object.keys(deferredInputs).length;
+    const explicitApprovalCount = numericValue(snapshot.waiting_approval_pending_count);
+    const snapshotWaitingReason = compactWhitespace(snapshot.waiting_reason || '');
+    const fallbackWaitingReason = snapshotWaitingReason || (approvalCount > 0 && deferredCount > 0
+      ? 'approval_and_deferred'
+      : approvalCount > 0
+        ? 'approval'
+        : deferredCount > 0
+          ? 'deferred'
+          : '');
 
     const sceneState = {
       status: {
@@ -815,13 +1217,13 @@ class RunSceneRenderer {
         isTerminal: snapshot.status_is_terminal,
       },
       waiting: {
-        active: snapshot.status === 'waiting' || !!snapshot.waiting_reason,
-        reason: snapshot.waiting_reason || '',
+        active: snapshot.status === 'waiting' || !!fallbackWaitingReason,
+        reason: fallbackWaitingReason,
         label: snapshot.waiting_label || this.root.dataset.runWaitingLabel || '',
         detail: snapshot.waiting_detail || this.root.dataset.runWaitingDetail || '',
         summary: snapshot.waiting_summary || this.root.dataset.runWaitingSummary || '',
         pendingKind: snapshot.waiting_pending_kind || this.root.dataset.runWaitingPendingKind || '',
-        approvalPendingCount: snapshot.waiting_approval_pending_count,
+        approvalPendingCount: explicitApprovalCount ?? approvalCount,
         statusLabel: snapshot.waiting_status_label || this.root.dataset.runWaitingStatusLabel || '',
       },
       lastEvent: {
@@ -836,10 +1238,8 @@ class RunSceneRenderer {
     applySceneState(this.root, sceneState);
     syncRendererSceneState(this);
 
-    const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
-    const deferredInputs = snapshot.pending_external_inputs && typeof snapshot.pending_external_inputs === 'object' ? snapshot.pending_external_inputs : {};
-    this.scene.customEventState.pendingApproval = Object.keys(approvals).length > 0;
-    this.scene.customEventState.pendingDeferred = Object.keys(deferredInputs).length > 0;
+    this.scene.customEventState.pendingApproval = approvalCount > 0;
+    this.scene.customEventState.pendingDeferred = deferredCount > 0;
     const pendingToolIds = new Set();
 
     this.scene.toolBodies.forEach((tool) => {
@@ -905,12 +1305,23 @@ class RunSceneRenderer {
       }
     });
 
-    const waitingReason = snapshot.waiting_reason || (pendingToolIds.size ? 'approval/deferred' : '');
+    const waitingReason = fallbackWaitingReason || (pendingToolIds.size ? 'approval_and_deferred' : '');
     if (waitingReason) {
       this.scene.customEventState.waiting = true;
       this.triggerTransition('waiting');
       if (!pendingToolIds.size) {
         this.pushNotice('Run waiting', waitingReason, appliedAt);
+      }
+      if (wasHydrated) {
+        const waitingMeta = waitingPresentation(waitingReason, explicitApprovalCount ?? approvalCount);
+        this.appendNarrativeEvent({
+          label: waitingMeta.label || 'Run waiting',
+          summary: waitingMeta.summary || 'Run paused.',
+          detail: sceneState.waiting.summary || sceneState.waiting.detail || waitingMeta.detail || waitingReason,
+          tone: 'waiting',
+          kind: waitingMeta.kind || 'waiting',
+          timestamp: appliedAt,
+        });
       }
     } else {
       this.scene.customEventState.waiting = false;
@@ -940,11 +1351,12 @@ class RunSceneRenderer {
     }
 
     syncRendererSceneState(this);
-    this.setLastEventMeta(seq, this.root.dataset.runLastEventLabel || 'Session snapshot');
+    this.setLastEventMeta(seq, this.root.dataset.runLastEventLabel || 'Session snapshot', this.root.dataset.runLastEventSummary || 'Session snapshot applied.');
   }
 
   applyAGUIEvent(event, seq) {
     const timestamp = event.timestamp || Date.now();
+    const eventTimeLabel = this.narrativeTimeLabel(timestamp);
     switch (event.type) {
       case 'RUN_STARTED':
         this.runId = event.runId || this.runId;
@@ -955,17 +1367,44 @@ class RunSceneRenderer {
         this.updateStatus('running');
         this.triggerTransition('resumed');
         this.pushNotice('Run started', this.runId || 'live session', timestamp);
+        this.appendNarrativeEvent({
+          label: 'Run started',
+          summary: 'Live execution began.',
+          detail: this.runId || this.title || 'Run is now streaming.',
+          tone: 'running',
+          kind: 'run',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
       case 'RUN_FINISHED':
         if (this.hasPendingWaitingSignals()) {
           this.updateStatus('waiting');
           this.triggerTransition('waiting');
           this.pushNotice('Run deferred', this.scene.waitingReason || 'awaiting approval or external input', timestamp);
+          this.appendNarrativeEvent({
+            label: 'Run deferred',
+            summary: 'Execution paused instead of terminating.',
+            detail: compactWhitespace(this.root.dataset.runWaitingSummary || this.scene.waitingReason || 'Awaiting approval or external input.'),
+            tone: 'waiting',
+            kind: 'run',
+            occurredLabel: eventTimeLabel,
+            timestamp,
+          });
         } else {
           this.clearWaitingState();
           this.updateStatus('completed');
           this.triggerTransition('finished');
           this.pushNotice('Run finished', this.runId || 'completed', timestamp);
+          this.appendNarrativeEvent({
+            label: 'Run finished',
+            summary: 'Execution completed successfully.',
+            detail: this.runId || 'Run completed.',
+            tone: 'completed',
+            kind: 'run',
+            occurredLabel: eventTimeLabel,
+            timestamp,
+          });
         }
         break;
       case 'RUN_ERROR':
@@ -974,6 +1413,15 @@ class RunSceneRenderer {
         this.updateStatus('failed');
         this.triggerTransition('error');
         this.pushNotice('Run error', event.message || 'Unknown failure', timestamp);
+        this.appendNarrativeEvent({
+          label: 'Run error',
+          summary: 'Execution terminated with an error.',
+          detail: summarize(event.message || 'Unknown failure', 180),
+          tone: 'error',
+          kind: 'run',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
       case 'STEP_STARTED':
         this.scene.activeStepName = event.stepName || this.scene.activeStepName;
@@ -1015,6 +1463,15 @@ class RunSceneRenderer {
         break;
       case 'TOOL_CALL_START':
         this.ensureToolBody(event.toolCallId, event.toolCallName || 'tool', timestamp);
+        this.appendNarrativeEvent({
+          label: 'Tool called',
+          summary: humanizeCode(event.toolCallName || 'tool', 'Tool call'),
+          detail: [event.toolCallName || 'tool', event.toolCallId || ''].filter(Boolean).join(' · '),
+          tone: 'pending',
+          kind: 'tool',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
       case 'TOOL_CALL_ARGS':
         this.appendToolArgs(event.toolCallId, event.delta || '', timestamp);
@@ -1022,13 +1479,27 @@ class RunSceneRenderer {
       case 'TOOL_CALL_END':
         this.finishToolBody(event.toolCallId, timestamp);
         break;
-      case 'TOOL_CALL_RESULT':
+      case 'TOOL_CALL_RESULT': {
         this.attachToolResult(event.toolCallId, event.content || '', event.role || 'tool', timestamp);
+        const tool = this.scene.toolBodies.get(event.toolCallId || '');
+        const toolFailed = /^error:/i.test(String(event.content || ''));
+        this.appendNarrativeEvent({
+          label: toolFailed ? 'Tool failed' : 'Tool returned',
+          summary: toolFailed
+            ? `${tool?.title || 'Tool'} returned an error.`
+            : `${tool?.title || 'Tool'} returned output.`,
+          detail: summarize(event.content || tool?.title || event.toolCallId || 'tool result', 180),
+          tone: toolFailed ? 'error' : 'completed',
+          kind: 'tool',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         if (!this.hasPendingWaitingSignals() && this.scene.runStatus === 'waiting') {
           this.clearWaitingState();
           this.updateStatus('running');
         }
         break;
+      }
       case 'CUSTOM':
         this.applyCustomEvent(event.name, event.value, timestamp);
         break;
@@ -1036,19 +1507,32 @@ class RunSceneRenderer {
         break;
     }
 
-    this.setLastEventMeta(seq, event.type || 'event');
+    this.setLastEventMeta(seq, event.type || 'event', this.describeEvent(event));
   }
 
   applyCustomEvent(name, value, timestamp) {
-    const payload = value && typeof value === 'object' ? value : readJSON(JSON.stringify(value || {})) || {};
+    const payload = protocolEventPayload(value);
+    const eventTimeLabel = this.narrativeTimeLabel(timestamp);
     switch (name) {
-      case 'gollem.run.waiting':
+      case 'gollem.run.waiting': {
         this.scene.customEventState.waiting = true;
-        this.updateWaitingState(payload.reason || 'paused', this.scene.waitingSnapshot);
+        const waitingReason = mergedWaitingReason(payload.reason || '', this.scene.customEventState);
+        this.updateWaitingState(waitingReason, this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
-        this.pushNotice('Run waiting', payload.reason || 'paused', timestamp);
+        this.pushNotice('Run waiting', waitingReason || payload.reason || 'paused', timestamp);
+        const waitingMeta = waitingPresentation(waitingReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
+        this.appendNarrativeEvent({
+          label: waitingMeta.label || 'Run waiting',
+          summary: waitingMeta.summary || 'Run paused.',
+          detail: waitingMeta.detail || compactWhitespace(payload.reason || 'paused'),
+          tone: 'waiting',
+          kind: waitingMeta.kind || 'waiting',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
+      }
       case 'gollem.run.resumed':
         this.scene.customEventState.waiting = false;
         this.scene.customEventState.pendingApproval = false;
@@ -1057,6 +1541,15 @@ class RunSceneRenderer {
         this.updateStatus('running');
         this.triggerTransition('resumed');
         this.pushNotice('Run resumed', payload.runId || this.runId || 'stream resumed', timestamp);
+        this.appendNarrativeEvent({
+          label: 'Run resumed',
+          summary: 'Execution continued after waiting.',
+          detail: payload.runId || this.runId || 'Live execution resumed after replay-safe reconnect or user input.',
+          tone: 'running',
+          kind: 'run',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
       case 'gollem.approval.requested': {
         const tool = this.ensureToolBody(payload.toolCallId || `approval_${Date.now()}`, payload.toolName || 'approval', timestamp);
@@ -1070,9 +1563,20 @@ class RunSceneRenderer {
         }
         this.scene.customEventState.waiting = true;
         this.scene.customEventState.pendingApproval = true;
-        this.updateWaitingState('approval', this.scene.waitingSnapshot);
+        const waitingReason = mergedWaitingReason('', this.scene.customEventState);
+        this.updateWaitingState(waitingReason, this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
+        const waitingMeta = waitingPresentation(waitingReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
+        this.appendNarrativeEvent({
+          label: 'Approval requested',
+          summary: waitingMeta.summary || 'A tool call is paused pending approval.',
+          detail: [payload.toolName || 'tool', summarize(payload.argsJson || '', 120)].filter(Boolean).join(' · '),
+          tone: 'waiting',
+          kind: 'approval',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
       }
       case 'gollem.approval.resolved': {
@@ -1090,8 +1594,21 @@ class RunSceneRenderer {
           this.scene.customEventState.waiting = false;
           this.clearWaitingState();
           this.updateStatus('running');
+        } else {
+          this.scene.customEventState.waiting = true;
+          this.updateWaitingState(mergedWaitingReason('', this.scene.customEventState), this.scene.waitingSnapshot);
+          this.updateStatus('waiting');
         }
         this.triggerTransition('resumed');
+        this.appendNarrativeEvent({
+          label: payload.approved ? 'Approval granted' : 'Approval denied',
+          summary: payload.approved ? 'The paused tool call can continue.' : 'The paused tool call was denied.',
+          detail: payload.toolName || payload.toolCallId || 'approval',
+          tone: payload.approved ? 'completed' : 'error',
+          kind: 'approval',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
       }
       case 'gollem.deferred.requested': {
@@ -1106,10 +1623,21 @@ class RunSceneRenderer {
         }
         this.scene.customEventState.waiting = true;
         this.scene.customEventState.pendingDeferred = true;
-        this.updateWaitingState(payload.toolName || 'deferred', this.scene.waitingSnapshot);
+        const waitingReason = mergedWaitingReason('', this.scene.customEventState);
+        this.updateWaitingState(waitingReason, this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
         this.pushNotice('Deferred input', payload.toolName || payload.toolCallId || 'awaiting input', timestamp);
+        const waitingMeta = waitingPresentation(waitingReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
+        this.appendNarrativeEvent({
+          label: 'Deferred input requested',
+          summary: waitingMeta.summary || 'The run is waiting for input before continuing.',
+          detail: [payload.toolName || 'deferred input', summarize(payload.argsJson || '', 120)].filter(Boolean).join(' · '),
+          tone: 'waiting',
+          kind: 'deferred',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
       }
       case 'gollem.deferred.resolved': {
@@ -1126,9 +1654,22 @@ class RunSceneRenderer {
           this.scene.customEventState.waiting = false;
           this.clearWaitingState();
           this.updateStatus('running');
+        } else {
+          this.scene.customEventState.waiting = true;
+          this.updateWaitingState(mergedWaitingReason('', this.scene.customEventState), this.scene.waitingSnapshot);
+          this.updateStatus('waiting');
         }
         this.triggerTransition('resumed');
         this.pushNotice('Deferred resolved', summarize(payload.content || payload.toolName || ''), timestamp);
+        this.appendNarrativeEvent({
+          label: payload.isError ? 'Deferred input failed' : 'Deferred input received',
+          summary: payload.isError ? 'Deferred input returned an error.' : 'Deferred input arrived and the run can continue.',
+          detail: summarize(payload.content || payload.toolName || 'resolved', 180),
+          tone: payload.isError ? 'error' : 'completed',
+          kind: 'deferred',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         break;
       }
       default:
@@ -1162,18 +1703,148 @@ class RunSceneRenderer {
       case 'TOOL_CALL_RESULT':
         return summarize(event.content || '', 120);
       case 'CUSTOM':
-        return event.name || 'custom';
+        return customEventSummary(event.name || '', event.value) || event.name || 'custom';
       default:
         return summarize(JSON.stringify(event), 120);
     }
   }
 
-  setLastEventMeta(seq, label) {
-    if (!this.lastEventTarget) {
+  narrativeTimeLabel(timestamp) {
+    if (!timestamp) {
+      return formatClock(Date.now());
+    }
+    if (timestamp instanceof Date) {
+      return formatClock(timestamp.toISOString());
+    }
+    if (typeof timestamp === 'number') {
+      const normalized = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+      return formatClock(new Date(normalized).toISOString());
+    }
+    return formatClock(timestamp);
+  }
+
+  clearLogPlaceholders(list) {
+    list?.querySelectorAll?.('li[data-log-placeholder="true"]').forEach((node) => {
+      node.remove();
+    });
+  }
+
+  appendNarrativeEvent(entry = {}) {
+    if (!this.activityLog) {
       return;
     }
+    this.clearLogPlaceholders(this.activityLog);
+    const label = compactWhitespace(entry.label || entry.summary || 'Activity');
+    if (!label) {
+      return;
+    }
+    const summary = compactWhitespace(entry.summary || '');
+    const detail = compactWhitespace(entry.detail || '');
+    const tone = compactWhitespace(entry.tone || 'info');
+    const kind = compactWhitespace(entry.kind || 'system');
+    const occurredLabel = compactWhitespace(entry.occurredLabel || this.narrativeTimeLabel(entry.timestamp || Date.now()));
+
+    const existing = entry.id ? this.activityLog.querySelector(`li[data-activity-id="${entry.id}"]`) : null;
+    const item = existing || document.createElement('li');
+    if (entry.id) {
+      item.dataset.activityId = entry.id;
+    }
+    item.dataset.activityTone = tone;
+    item.dataset.activityKind = kind;
+    item.replaceChildren();
+
+    const row = document.createElement('div');
+    row.className = 'event-list__row';
+    const strong = document.createElement('strong');
+    strong.textContent = label;
+    row.appendChild(strong);
+    const time = document.createElement('span');
+    time.className = 'event-list__time';
+    time.textContent = occurredLabel;
+    row.appendChild(time);
+    item.appendChild(row);
+
+    if (summary && summary !== label) {
+      const summaryNode = document.createElement('div');
+      summaryNode.className = 'event-list__summary';
+      summaryNode.textContent = summary;
+      item.appendChild(summaryNode);
+    }
+    if (detail && detail !== summary) {
+      const detailNode = document.createElement('div');
+      detailNode.className = 'event-list__detail';
+      detailNode.textContent = detail;
+      item.appendChild(detailNode);
+    }
+
+    if (!existing) {
+      this.activityLog.appendChild(item);
+    }
+    while (this.activityLog.children.length > MAX_EVENT_LOG_ITEMS) {
+      this.activityLog.removeChild(this.activityLog.firstElementChild);
+    }
+    this.activityLog.scrollTop = this.activityLog.scrollHeight;
+  }
+
+  connectionPresentation(connection) {
+    switch (connection) {
+      case 'live':
+        return {
+          label: 'SSE live',
+          detail: this.scene.lastSeq
+            ? `Connected and streaming from event #${this.scene.lastSeq}.`
+            : 'Connected and streaming live AG-UI events.',
+        };
+      case 'reconnected':
+        return {
+          label: 'SSE reconnected',
+          detail: this.scene.lastSeq
+            ? `Connection recovered. Replay is synchronized through event #${this.scene.lastSeq}.`
+            : 'Connection recovered and replay resumed.',
+        };
+      case 'reconnecting':
+        return {
+          label: 'SSE reconnecting…',
+          detail: this.scene.lastSeq
+            ? `Waiting to resume after event #${this.scene.lastSeq}. Missed frames will replay automatically.`
+            : 'Trying to restore the live stream. Missed frames will replay automatically.',
+        };
+      case 'closed':
+        return {
+          label: 'SSE closed',
+          detail: this.scene.lastSeq
+            ? `Stream closed after event #${this.scene.lastSeq}. Reload to continue watching live updates.`
+            : 'Stream closed before live updates could continue.',
+        };
+      case 'unsupported':
+        return {
+          label: 'SSE unsupported',
+          detail: 'This browser cannot open the live AG-UI event stream.',
+        };
+      case 'connecting':
+      default:
+        return {
+          label: 'SSE connecting…',
+          detail: 'Opening the live AG-UI event stream.',
+        };
+    }
+  }
+
+  setLastEventMeta(seq, label, detail = '', timestamp = null, tone = '') {
+    const eventType = compactWhitespace(label || this.root.dataset.runLastEventType || 'event');
+    const summary = compactWhitespace(detail || this.root.dataset.runLastEventSummary || this.root.dataset.runLastEventDetail || 'Awaiting activity.');
+    const occurredLabel = timestamp ? this.narrativeTimeLabel(timestamp) : compactWhitespace(this.root.dataset.runLastEventOccurredLabel || '');
     const seqLabel = seq ? `#${seq}` : 'live';
-    this.lastEventTarget.textContent = `${seqLabel} · ${label}`;
+    syncLiveSceneState(this, {
+      lastEvent: {
+        type: eventType,
+        label: `${seqLabel} · ${eventType}`,
+        summary,
+        detail: summary,
+        occurredLabel,
+        tone: compactWhitespace(tone || this.root.dataset.runLastEventTone || this.root.dataset.runStatusTone || 'info'),
+      },
+    });
   }
 
   triggerTransition(name) {
@@ -1213,17 +1884,24 @@ class RunSceneRenderer {
   }
 
   updateWaitingState(reason = '', snapshot = null) {
-    const nextReason = compactWhitespace(reason || '');
+    const nextReason = mergedWaitingReason(reason, this.scene.customEventState);
     const changed = nextReason !== this.scene.waitingReason;
-    const waitingLabel = compactWhitespace(this.root.dataset.runWaitingLabel || humanizeCode(nextReason, 'Active'));
+    const waitingMeta = waitingPresentation(nextReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
+    const waitingLabel = compactWhitespace(waitingMeta.label || humanizeCode(nextReason, 'Active'));
+    const waitingDetail = compactWhitespace(waitingMeta.detail || '');
+    const waitingSummary = compactWhitespace(waitingMeta.summary || waitingDetail || waitingLabel);
     this.scene.waitingReason = nextReason;
     this.scene.waitingSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : this.scene.waitingSnapshot;
-    this.root.dataset.sceneWaiting = nextReason ? 'true' : 'false';
-    this.root.dataset.sceneWaitingReason = nextReason || '';
-    if (this.waitingReasonTarget) {
-      this.waitingReasonTarget.textContent = waitingLabel || 'Active';
-      this.waitingReasonTarget.title = compactWhitespace(this.root.dataset.runWaitingSummary || this.root.dataset.runWaitingDetail || waitingLabel);
-    }
+    syncLiveSceneState(this, {
+      waiting: {
+        active: nextReason ? 'true' : 'false',
+        reason: nextReason,
+        label: nextReason ? waitingLabel : 'Active',
+        detail: nextReason ? waitingDetail : '',
+        summary: nextReason ? waitingSummary : compactWhitespace(this.root.dataset.runStatusDetail || 'No waiting reason.'),
+        pendingKind: nextReason ? waitingMeta.kind || 'waiting' : '',
+      },
+    });
     if (changed) {
       this.invalidateLayout('waiting');
     }
@@ -1259,46 +1937,61 @@ class RunSceneRenderer {
   updateStatus(status) {
     const next = status || this.scene.runStatus || 'running';
     const changed = next !== this.scene.runStatus;
-    const statusLabel = compactWhitespace(this.root.dataset.runStatusLabel || humanizeCode(next, 'Run status'));
+    const statusMeta = deriveStatusMeta(this, next);
     this.scene.runStatus = next;
-    this.root.dataset.sceneStatus = next;
     if (changed) {
       this.scene.statusChangedAt = sceneClock();
     }
-    if (next === 'waiting') {
-      this.root.dataset.sceneWaiting = 'true';
-    } else if (next !== 'waiting' && !compactWhitespace(this.scene.waitingReason || '')) {
-      this.root.dataset.sceneWaiting = 'false';
-      this.root.dataset.sceneWaitingReason = '';
-      if (this.waitingReasonTarget) {
-        this.waitingReasonTarget.textContent = compactWhitespace(this.root.dataset.runWaitingLabel || 'Active');
-        this.waitingReasonTarget.title = compactWhitespace(this.root.dataset.runWaitingSummary || this.root.dataset.runWaitingDetail || this.root.dataset.runWaitingLabel || 'Active');
-      }
-    }
-    this.statusTargets.forEach((target) => {
-      if (!target) {
-        return;
-      }
-      target.textContent = statusLabel;
-      const baseClasses = Array.from(target.classList).filter((name) => !name.startsWith('status--'));
-      target.className = baseClasses.concat(`status--${this.scene.runStatus}`).join(' ');
+    syncLiveSceneState(this, {
+      status: statusMeta,
+      waiting: {
+        active: statusMeta.isWaiting ? 'true' : 'false',
+      },
     });
-    if (this.streamStateTarget) {
-      this.streamStateTarget.textContent = statusLabel;
-    }
   }
 
   setConnection(connection) {
+    const previous = this.scene.connection;
     this.scene.connection = connection;
     this.root.dataset.sceneConnection = connection;
     this.invalidateLayout('connection');
+    const presentation = this.connectionPresentation(connection);
     if (this.connectionTarget) {
-      this.connectionTarget.textContent = `SSE ${connection}`;
+      this.connectionTarget.textContent = presentation.label;
     }
+    if (this.connectionDetailTarget) {
+      this.connectionDetailTarget.textContent = presentation.detail;
+    }
+    const sceneState = readSceneState(this.root);
+    const restoreStreamState = connection === 'live' || connection === 'reconnected';
     if (this.streamStateTarget) {
-      this.streamStateTarget.textContent = compactWhitespace(this.root.dataset.runStatusLabel || this.scene.runStatus);
+      this.streamStateTarget.textContent = restoreStreamState
+        ? (sceneState.status.label || this.root.dataset.runStatusLabel || presentation.label)
+        : presentation.label;
+    }
+    if (this.streamDetailTarget) {
+      this.streamDetailTarget.textContent = restoreStreamState
+        ? (sceneState.waiting.active === 'true'
+          ? (sceneState.waiting.summary || sceneState.waiting.detail || sceneState.waiting.label || sceneState.status.detail || sceneState.status.label)
+          : (sceneState.status.detail || sceneState.lastEvent.summary || sceneState.status.label || 'Live stream active.'))
+        : presentation.detail;
     }
     this.scheduleRender();
+
+    if (connection !== previous) {
+      const narrative = connectionNarrative(connection, this.scene.lastSeq);
+      if (narrative) {
+        this.appendNarrativeEvent(narrative);
+        this.appendEventLog({
+          type: 'sse.connection',
+          label: narrative.label,
+          summary: narrative.summary,
+          detail: narrative.detail,
+          tone: connectionTone(connection),
+          kind: 'system',
+        });
+      }
+    }
   }
 
   invalidateLayout(reason = 'update') {
@@ -1768,20 +2461,45 @@ class RunSceneRenderer {
     }
   }
 
-  appendEventLog(type, detail) {
+  appendEventLog(entry = {}) {
     if (!this.eventLog) {
       return;
     }
+    this.clearLogPlaceholders(this.eventLog);
+
+    const label = compactWhitespace(entry.label || entry.type || 'Event');
+    const summary = compactWhitespace(entry.summary || entry.detail || '');
+    const detail = compactWhitespace(entry.detail || '');
+    const occurredLabel = compactWhitespace(entry.occurredLabel || this.narrativeTimeLabel(entry.timestamp || Date.now()));
+    const tone = compactWhitespace(entry.tone || 'info');
+    const kind = compactWhitespace(entry.kind || 'protocol');
 
     const item = document.createElement('li');
-    const strong = document.createElement('strong');
-    strong.textContent = type;
-    item.appendChild(strong);
+    item.dataset.activityTone = tone;
+    item.dataset.activityKind = kind;
 
-    if (detail) {
-      const span = document.createElement('span');
-      span.textContent = ` ${detail}`;
-      item.appendChild(span);
+    const row = document.createElement('div');
+    row.className = 'event-list__row';
+    const strong = document.createElement('strong');
+    strong.textContent = label;
+    row.appendChild(strong);
+    const time = document.createElement('span');
+    time.className = 'event-list__time';
+    time.textContent = occurredLabel;
+    row.appendChild(time);
+    item.appendChild(row);
+
+    if (summary) {
+      const summaryNode = document.createElement('div');
+      summaryNode.className = 'event-list__summary';
+      summaryNode.textContent = summary;
+      item.appendChild(summaryNode);
+    }
+    if (detail && detail !== summary) {
+      const detailNode = document.createElement('div');
+      detailNode.className = 'event-list__detail';
+      detailNode.textContent = detail;
+      item.appendChild(detailNode);
     }
 
     this.eventLog.appendChild(item);

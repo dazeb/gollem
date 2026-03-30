@@ -87,27 +87,33 @@
         <div class="run-scene__metrics" aria-label="Run scene metrics">
           <article class="run-scene__metric run-scene__metric--connection">
             <span class="detail-grid__label">Connection</span>
-            <strong data-run-connection>SSE connecting</strong>
+            <strong data-run-connection>SSE connecting…</strong>
+            <span class="run-scene__metric-note" data-run-connection-detail>Opening the live AG-UI SSE stream with replay-safe resume.</span>
           </article>
           <article class="run-scene__metric run-scene__metric--stream">
             <span class="detail-grid__label">Stream state</span>
             <strong data-scene-stream-state data-status-label="{{.Run.Scene.Status.Label}}">{{.Run.Scene.Status.Label}}</strong>
+            <span class="run-scene__metric-note" data-scene-stream-detail>{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}</span>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Steps</span>
             <strong data-scene-step-count>0</strong>
+            <span class="run-scene__metric-note">Tracked step frames in the renderer.</span>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Entities</span>
             <strong data-scene-entity-count>0</strong>
+            <span class="run-scene__metric-note">Visible text, tool, and notice bodies.</span>
           </article>
           <article class="run-scene__metric run-scene__metric--waiting">
             <span class="detail-grid__label">Waiting on</span>
             <strong data-scene-waiting-reason data-waiting-label="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}">{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}</strong>
+            <span class="run-scene__metric-note" data-scene-waiting-detail>{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}</span>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Last event</span>
             <strong data-run-last-event data-event-type="{{.Run.Scene.LastEvent.Type}}" data-event-label="{{.Run.Scene.LastEvent.Label}}" data-event-summary="{{.Run.Scene.LastEvent.Summary}}">{{.Run.Scene.LastEvent.Label}}</strong>
+            <span class="run-scene__metric-note" data-run-last-event-detail>{{if .Run.Scene.LastEvent.Summary}}{{.Run.Scene.LastEvent.Summary}}{{else}}{{.Run.Scene.LastEvent.OccurredLabel}}{{end}}</span>
           </article>
         </div>
       </div>
@@ -147,27 +153,30 @@
       <div class="transcript__header">
         <div>
           <h3>Recent activity</h3>
-          <span class="muted">{{.Run.Controls.Summary}}</span>
+          <span class="muted">Readable live narration for approvals, waiting, resumes, and tool outcomes.</span>
         </div>
-        <div>
+        <div class="transcript__status-summary">
           {{if .Run.Scene.Waiting.Active}}
           <strong>{{.Run.Scene.Waiting.Label}}</strong>
           {{if .Run.Scene.Waiting.Detail}}<span class="muted"> · {{.Run.Scene.Waiting.Detail}}</span>{{end}}
           {{else}}
-          <span class="muted">{{.Run.StatusView.Detail}}</span>
+          <strong>{{.Run.Scene.Status.Label}}</strong>
+          {{if .Run.StatusView.Detail}}<span class="muted"> · {{.Run.StatusView.Detail}}</span>{{end}}
           {{end}}
         </div>
       </div>
-      <ol class="event-list event-list--dense">
+      <ol class="event-list event-list--dense event-list--narrative">
         {{range .Run.RecentActivity}}
         <li data-activity-kind="{{.Kind}}" data-activity-tone="{{.Tone}}">
-          <strong>{{.Label}}</strong>
-          {{if and .Summary (ne .Summary .Label)}}<div class="muted">{{.Summary}}</div>{{end}}
-          {{if .Detail}}<span>{{if and .Summary (ne .Summary .Detail)}} {{.Detail}}{{end}}</span>{{end}}
-          <div class="muted">{{.OccurredLabel}}</div>
+          <div class="event-list__row">
+            <strong>{{.Label}}</strong>
+            <span class="event-list__time">{{.OccurredLabel}}</span>
+          </div>
+          {{if and .Summary (ne .Summary .Label)}}<div class="event-list__summary">{{.Summary}}</div>{{end}}
+          {{if .Detail}}<div class="event-list__detail">{{if and .Summary (ne .Summary .Detail)}}{{.Detail}}{{end}}</div>{{end}}
         </li>
         {{else}}
-        <li class="muted">No activity yet. Live updates will appear here once the run starts.</li>
+        <li class="muted" data-log-placeholder="true">No activity yet. Live updates will appear here once the run starts.</li>
         {{end}}
       </ol>
     </section>
@@ -176,20 +185,24 @@
       <div class="transcript__header">
         <div>
           <h3>Protocol events</h3>
-          <span class="muted">Readable AG-UI/runtime event stream for debugging initial hydration.</span>
+          <span class="muted">Raw AG-UI/runtime frames for reconnects, replay snapshots, and resume debugging.</span>
         </div>
-        <div>
-          <span class="muted">{{len .Run.RecentProtocolActivity}} recent</span>
+        <div class="transcript__status-summary">
+          <strong>Replay-aware SSE</strong>
+          <span class="muted"> · {{len .Run.RecentProtocolActivity}} recent frames</span>
         </div>
       </div>
-      <ol class="event-list event-list--dense" data-run-event-log>
+      <ol class="event-list event-list--dense event-list--protocol" data-run-event-log>
         {{range .Run.RecentProtocolActivity}}
-        <li data-activity-tone="{{.Tone}}">
-          <strong>{{.Label}}</strong>
-          {{if .Summary}}<span> {{.Summary}}</span>{{end}}
+        <li data-activity-kind="protocol" data-activity-tone="{{.Tone}}">
+          <div class="event-list__row">
+            <strong>{{.Label}}</strong>
+            <span class="event-list__time">{{.OccurredLabel}}</span>
+          </div>
+          {{if .Summary}}<div class="event-list__summary">{{.Summary}}</div>{{end}}
         </li>
         {{else}}
-        <li class="muted">No protocol events yet.</li>
+        <li class="muted" data-log-placeholder="true">No protocol events yet.</li>
         {{end}}
       </ol>
     </section>
