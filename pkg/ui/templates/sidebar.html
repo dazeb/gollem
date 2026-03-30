@@ -26,7 +26,75 @@
       <dt>Model</dt>
       <dd>{{.Run.Model}}</dd>
     </div>
+    <div>
+      <dt>Requests</dt>
+      <dd>{{.Run.Usage.Requests}}</dd>
+    </div>
+    <div>
+      <dt>Input tokens</dt>
+      <dd>{{.Run.Usage.InputTokens}}</dd>
+    </div>
+    <div>
+      <dt>Output tokens</dt>
+      <dd>{{.Run.Usage.OutputTokens}}</dd>
+    </div>
+    <div>
+      <dt>Tool calls</dt>
+      <dd>{{.Run.Usage.ToolCalls}}</dd>
+    </div>
+    <div>
+      <dt>Last activity</dt>
+      <dd>{{.Run.Controls.LastEventLabel}}</dd>
+    </div>
+    {{if .Run.Waiting.Active}}
+    <div>
+      <dt>Waiting</dt>
+      <dd>
+        <strong>{{.Run.Waiting.Label}}</strong>
+        {{if .Run.Waiting.Detail}}<br><span class="muted">{{.Run.Waiting.Detail}}</span>{{end}}
+      </dd>
+    </div>
+    {{end}}
+    <div>
+      <dt>Controls</dt>
+      <dd>
+        {{if .Run.Controls.CanAbort}}Abort available{{else}}No abort needed{{end}}
+        {{if .Run.Controls.CanApproveTools}} · {{.Run.Controls.PendingApprovalCount}} approval{{if ne .Run.Controls.PendingApprovalCount 1}}s{{end}} ready{{end}}
+      </dd>
+    </div>
   </dl>
+
+  <div>
+    <p class="eyebrow">Pending approvals</p>
+    {{if .Run.PendingApprovals}}
+    <ul class="event-list">
+      {{range .Run.PendingApprovals}}
+      <li>
+        <strong>{{.ToolName}}</strong> <code>{{.ToolCallID}}</code>
+        {{if .ArgsJSON}}<div class="muted">{{.ArgsJSON}}</div>{{end}}
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <p class="muted">No pending approvals.</p>
+    {{end}}
+  </div>
+
+  <div>
+    <p class="eyebrow">Recent activity</p>
+    {{if .Run.RecentActivity}}
+    <ul class="event-list event-list--dense">
+      {{range .Run.RecentActivity}}
+      <li>
+        <strong>{{.Label}}</strong>
+        {{if .Detail}}<span> {{.Detail}}</span>{{end}}
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <p class="muted">No activity yet.</p>
+    {{end}}
+  </div>
 
   <div class="sidebar-actions">
     <a class="button" href="/runs/{{.Run.ID}}">Refresh run</a>

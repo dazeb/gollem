@@ -4,85 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/fugue-labs/gollem/ext/agui"
 )
-
-var liveSidebarTemplate = template.Must(template.New("live_sidebar").Parse(`
-<div class="sidebar-fragment" data-renderer-root>
-  <div>
-    <p class="eyebrow">Run sidebar</p>
-    <h3>{{.Run.ID}}</h3>
-  </div>
-
-  <dl class="sidebar-metadata">
-    <div>
-      <dt>Status</dt>
-      <dd><span class="status status--{{.Run.Status}}">{{.Run.Status}}</span></dd>
-    </div>
-    <div>
-      <dt>Started</dt>
-      <dd>{{.Run.StartedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
-    </div>
-    <div>
-      <dt>Updated</dt>
-      <dd>{{.Run.UpdatedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
-    </div>
-    <div>
-      <dt>Provider</dt>
-      <dd>{{.Run.Provider}}</dd>
-    </div>
-    <div>
-      <dt>Model</dt>
-      <dd>{{.Run.Model}}</dd>
-    </div>
-    <div>
-      <dt>Requests</dt>
-      <dd>{{.Run.Usage.Requests}}</dd>
-    </div>
-    <div>
-      <dt>Input tokens</dt>
-      <dd>{{.Run.Usage.InputTokens}}</dd>
-    </div>
-    <div>
-      <dt>Output tokens</dt>
-      <dd>{{.Run.Usage.OutputTokens}}</dd>
-    </div>
-    <div>
-      <dt>Tool calls</dt>
-      <dd>{{.Run.Usage.ToolCalls}}</dd>
-    </div>
-    {{if .Run.WaitingReason}}
-    <div>
-      <dt>Waiting</dt>
-      <dd>{{.Run.WaitingReason}}</dd>
-    </div>
-    {{end}}
-  </dl>
-
-  <div>
-    <p class="eyebrow">Pending approvals</p>
-    {{if .Run.PendingApprovals}}
-    <ul class="event-list">
-      {{range .Run.PendingApprovals}}
-      <li><strong>{{.ToolName}}</strong> <code>{{.ToolCallID}}</code></li>
-      {{end}}
-    </ul>
-    {{else}}
-    <p class="muted">No pending approvals.</p>
-    {{end}}
-  </div>
-
-  <div class="sidebar-actions">
-    <a class="button" href="/runs/{{.Run.ID}}">Refresh run</a>
-    <a class="button button--ghost" href="/">Back to dashboard</a>
-  </div>
-</div>
-`))
 
 type pageData struct {
 	AppTitle    string
@@ -148,10 +75,13 @@ func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("HX-Trigger", "ui:fragment-loaded")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := liveSidebarTemplate.Execute(w, pageData{Run: run.Snapshot()}); err != nil {
-		http.Error(w, fmt.Sprintf("render sidebar: %v", err), http.StatusInternalServerError)
-	}
+	s.render(w, "sidebar", pageData{
+		AppTitle:    "gollem",
+		PageTitle:   "Run sidebar",
+		Path:        r.URL.Path,
+		CurrentYear: time.Now().Year(),
+		Run:         run.Snapshot(),
+	})
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
