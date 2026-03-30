@@ -90,20 +90,14 @@ func parsePageTemplates() (map[string]*template.Template, error) {
 		return nil, fmt.Errorf("parse index templates: %w", err)
 	}
 
-	runPage, err := template.ParseFS(embeddedFiles, "templates/layout.html", "templates/run.html")
+	runPage, err := template.ParseFS(embeddedFiles, "templates/layout.html", "templates/run.html", "templates/sidebar.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse run templates: %w", err)
 	}
 
-	sidebarFragment, err := template.ParseFS(embeddedFiles, "templates/sidebar.html")
-	if err != nil {
-		return nil, fmt.Errorf("parse sidebar templates: %w", err)
-	}
-
 	return map[string]*template.Template{
-		"index":   indexPage,
-		"run":     runPage,
-		"sidebar": sidebarFragment,
+		"index": indexPage,
+		"run":   runPage,
 	}, nil
 }
 

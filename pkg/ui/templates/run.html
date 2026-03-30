@@ -8,10 +8,8 @@
   return;
 })();
 </script>
-<div class="run-layout">
-  <aside id="run-sidebar" class="panel panel--sidebar" hx-get="/runs/{{.Run.ID}}/sidebar" hx-trigger="load" hx-swap="innerHTML" data-sidebar-run-id="{{.Run.ID}}">
-    <p class="muted">Loading sidebar…</p>
-  </aside>
+<div class="run-layout" data-live-control-surface="{{if .Run.StatusView.IsTerminal}}false{{else}}true{{end}}">
+  {{template "sidebar" .}}
 
   <section class="panel panel--main">
     <div class="panel__header panel__header--run">

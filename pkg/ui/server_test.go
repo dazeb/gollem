@@ -264,6 +264,13 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		"data-run-waiting-label=\"Waiting for approval\"",
 		"data-run-last-event-label=\"Waiting for approval\"",
 		"data-run-last-event-summary=\"Waiting for approval · 1 pending tool approval.\"",
+		"id=\"run-sidebar\"",
+		"hx-get=\"/runs/"+runID+"/sidebar\"",
+		"hx-trigger=\"every 2s\"",
+		"hx-swap=\"outerHTML\"",
+		"Approve",
+		"Deny",
+		"Abort run",
 	)
 	sidebarBody := mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar")
 	assertHTMLContains(t, sidebarBody,
@@ -272,6 +279,15 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		"tool_approve",
 		"Review approvals",
 		"Waiting for approval",
+		"Awaiting decision",
+		"Decision",
+		"Approve to continue the run, or deny to keep the tool from executing.",
+		"Tool call",
+		"Approve",
+		"Deny",
+		"Abort run",
+		"hx-trigger=\"every 2s\"",
+		"hx-swap=\"outerHTML\"",
 		"data-run-status=\"waiting\"",
 		"data-run-waiting-reason=\"approval\"",
 		"data-run-last-event-label=\"Waiting for approval\"",
@@ -381,6 +397,8 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		"completed",
 		"Review activity",
 		"Run completed",
+		"id=\"run-sidebar\"",
+		"data-sidebar-live=\"false\"",
 		"data-run-status=\"completed\"",
 		"data-run-last-event-label=\"Run completed\"",
 		"No pending approvals.",
@@ -388,6 +406,80 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		">5<",
 		">1<",
 	)
+}
+
+func TestHandleActionHTMXReturnsSidebarFragment(t *testing.T) {
+	store := NewRunStateStore()
+	server := MustNewServer(
+		WithRunStore(store),
+		WithRunStarter(RunStarterFunc(func(ctx context.Context, runtime *RunRuntime, req RunStartRequest) error {
+			now := time.Now().UTC()
+			core.Publish(runtime.EventBus, core.RunStartedEvent{RunID: runtime.RunID, Prompt: req.Prompt, StartedAt: now})
+			core.Publish(runtime.EventBus, core.ToolCalledEvent{RunID: runtime.RunID, ToolCallID: "tool_htmx", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, CalledAt: now.Add(10 * time.Millisecond)})
+			core.Publish(runtime.EventBus, core.ApprovalRequestedEvent{RunID: runtime.RunID, ToolCallID: "tool_htmx", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, RequestedAt: now.Add(20 * time.Millisecond)})
+			core.Publish(runtime.EventBus, core.RunWaitingEvent{RunID: runtime.RunID, Reason: "approval", WaitingAt: now.Add(30 * time.Millisecond)})
+
+			approved, err := runtime.ApprovalBridge.ToolApprovalFunc()(core.ContextWithToolCallID(ctx, "tool_htmx"), "dangerous_write", `{"path":"/tmp/out.txt"}`)
+			if err != nil {
+				return err
+			}
+
+			resolvedAt := time.Now().UTC()
+			core.Publish(runtime.EventBus, core.RunResumedEvent{RunID: runtime.RunID, ResumedAt: resolvedAt})
+			core.Publish(runtime.EventBus, core.ApprovalResolvedEvent{RunID: runtime.RunID, ToolCallID: "tool_htmx", ToolName: "dangerous_write", Approved: approved, ResolvedAt: resolvedAt})
+			core.Publish(runtime.EventBus, core.RunCompletedEvent{RunID: runtime.RunID, Success: approved, StartedAt: now, CompletedAt: resolvedAt.Add(10 * time.Millisecond)})
+			return nil
+		})),
+	)
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+	client := ts.Client()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+	startResp := mustPOSTForm(t, client, ts.URL+"/runs/start", url.Values{"prompt": {"htmx sidebar"}})
+	defer startResp.Body.Close()
+	runID := strings.TrimPrefix(startResp.Header.Get("Location"), "/runs/")
+	if runID == "" {
+		t.Fatalf("redirect location = %q, want /runs/<id>", startResp.Header.Get("Location"))
+	}
+
+	run := waitForRun(t, store, runID)
+	waitForRunStatus(t, store, runID, "waiting")
+	waitForPendingApprovals(t, run, 1)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/runs/"+runID+"/action", strings.NewReader(url.Values{
+		"type":         {agui.ActionApproveToolCall},
+		"session_id":   {"wrong-session"},
+		"tool_call_id": {"tool_htmx"},
+	}.Encode()))
+	if err != nil {
+		t.Fatalf("new htmx POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST htmx action: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("htmx action status = %d, body=%s", resp.StatusCode, string(body))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read htmx body: %v", err)
+	}
+	assertStringContains(t, string(body),
+		"id=\"run-sidebar\"",
+		"No pending approvals.",
+	)
+	assertStringContains(t, resp.Header.Get("HX-Trigger"),
+		"\"ui:fragment-loaded\"",
+		"\"pendingApprovals\":{}",
+	)
+	waitForRunStatus(t, store, runID, "completed")
 }
 
 func TestHandleActionApproveFlowSupportsDecisionAliasForm(t *testing.T) {
