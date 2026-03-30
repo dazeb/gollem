@@ -365,6 +365,7 @@ class RunSceneRenderer {
       notices: 0,
       transition: { name: 'boot', startedAt: sceneClock() },
       statusChangedAt: sceneClock(),
+      lastEventAt: sceneClock(),
     };
     this.destroyed = false;
     this.dpr = window.devicePixelRatio || 1;
@@ -422,7 +423,9 @@ class RunSceneRenderer {
     this.frameHandle = window.requestAnimationFrame((now) => this.tick(now));
   }
 
-  scheduleRender() {
+  scheduleRender(reason = 'update') {
+    void reason;
+    this.scene.lastEventAt = sceneClock();
     this.updateCounters();
     this.requestFrame();
   }
@@ -1033,6 +1036,47 @@ class RunSceneRenderer {
     this.scene.flow.push(record);
     this.invalidateLayout('flow');
     return record;
+  }
+
+  rebuildFlowIndex() {
+    this.scene.flowIndex.clear();
+    this.scene.flow.forEach((item, index) => {
+      this.scene.flowIndex.set(item.id, index);
+    });
+  }
+
+  pruneDormantItems(now) {
+    if (!this.scene.flow.length) {
+      return false;
+    }
+
+    let removed = false;
+    const remaining = [];
+    this.scene.flow.forEach((item) => {
+      const dissolveComplete = item.kind === 'tool'
+        && item.resolvedAt
+        && this.toolResolveProgress(item, now) >= 1
+        && (item.alpha || 0) <= 0.06
+        && (item.layoutWeight || 0) <= 0.04;
+      if (!dissolveComplete) {
+        remaining.push(item);
+        return;
+      }
+      removed = true;
+      if (item.toolCallId) {
+        this.scene.toolBodies.delete(item.toolCallId);
+      }
+    });
+
+    if (!removed) {
+      return false;
+    }
+
+    this.scene.flow = remaining;
+    this.rebuildFlowIndex();
+    this.invalidateLayout('prune');
+    this.updateCounters();
+    return true;
   }
 
   pushNotice(title, detail, timestamp = Date.now()) {
@@ -1753,10 +1797,12 @@ class RunSceneRenderer {
       moving = this.advanceCard(item, dt, layout.width, layout.height) || moving;
     });
 
+    const pruned = this.pruneDormantItems(now);
     const phaseAge = now - (this.scene.transition?.startedAt || now);
+    const recentEventAge = now - (this.scene.lastEventAt || 0);
     const transitionAlive = phaseAge < 2200;
-    const streamingAlive = this.scene.runStatus === 'running' || this.scene.runStatus === 'waiting' || this.scene.connection === 'reconnecting';
-    return moving || transitionAlive || streamingAlive;
+    const eventWake = recentEventAge < 320;
+    return moving || pruned || transitionAlive || eventWake;
   }
 
   tick(now) {
@@ -2066,6 +2112,23 @@ class RunSceneRenderer {
 
 const runScenes = new WeakMap();
 
+const destroyRunScenes = (root = document) => {
+  const nodes = [];
+  if (root?.matches?.('[data-run-scene]')) {
+    nodes.push(root);
+  }
+  root?.querySelectorAll?.('[data-run-scene]').forEach((node) => nodes.push(node));
+
+  nodes.forEach((node) => {
+    const scene = runScenes.get(node);
+    if (!scene) {
+      return;
+    }
+    scene.destroy();
+    runScenes.delete(node);
+  });
+};
+
 const initRunScenes = (root = document) => {
   const nodes = [];
   if (root?.matches?.('[data-run-scene]')) {
@@ -2090,6 +2153,14 @@ const hydrate = (root = document) => {
 
 document.addEventListener('DOMContentLoaded', () => {
   hydrate(document);
+});
+
+document.body?.addEventListener('htmx:beforeCleanupElement', (event) => {
+  destroyRunScenes(event.detail?.elt || event.target || document);
+});
+
+document.body?.addEventListener('htmx:beforeSwap', (event) => {
+  destroyRunScenes(event.detail?.target || event.target || document);
 });
 
 document.body?.addEventListener('htmx:load', (event) => {
