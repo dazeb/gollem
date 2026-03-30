@@ -148,42 +148,48 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
 		case arg == "--provider":
-			if i+1 >= len(args) {
-				return serveFlags{}, errors.New("--provider requires a value")
+			value, err := requireServeFlagValue(args, i, "--provider")
+			if err != nil {
+				return serveFlags{}, err
 			}
-			f.provider = strings.TrimSpace(args[i+1])
+			f.provider = strings.TrimSpace(value)
 			i++
 		case arg == "--model":
-			if i+1 >= len(args) {
-				return serveFlags{}, errors.New("--model requires a value")
+			value, err := requireServeFlagValue(args, i, "--model")
+			if err != nil {
+				return serveFlags{}, err
 			}
-			f.modelName = strings.TrimSpace(args[i+1])
+			f.modelName = strings.TrimSpace(value)
 			i++
 		case arg == "--location":
-			if i+1 >= len(args) {
-				return serveFlags{}, errors.New("--location requires a value")
+			value, err := requireServeFlagValue(args, i, "--location")
+			if err != nil {
+				return serveFlags{}, err
 			}
-			f.location = strings.TrimSpace(args[i+1])
+			f.location = strings.TrimSpace(value)
 			i++
 		case arg == "--project":
-			if i+1 >= len(args) {
-				return serveFlags{}, errors.New("--project requires a value")
+			value, err := requireServeFlagValue(args, i, "--project")
+			if err != nil {
+				return serveFlags{}, err
 			}
-			f.project = strings.TrimSpace(args[i+1])
+			f.project = strings.TrimSpace(value)
 			i++
 		case arg == "--workdir":
-			if i+1 >= len(args) {
-				return serveFlags{}, errors.New("--workdir requires a value")
+			value, err := requireServeFlagValue(args, i, "--workdir")
+			if err != nil {
+				return serveFlags{}, err
 			}
-			f.workDir = strings.TrimSpace(args[i+1])
+			f.workDir = strings.TrimSpace(value)
 			i++
 		case arg == "--port":
-			if i+1 >= len(args) {
-				return serveFlags{}, errors.New("--port requires a value")
+			value, err := requireServeFlagValue(args, i, "--port")
+			if err != nil {
+				return serveFlags{}, err
 			}
-			port, err := strconv.Atoi(strings.TrimSpace(args[i+1]))
+			port, err := strconv.Atoi(strings.TrimSpace(value))
 			if err != nil || port <= 0 || port > 65535 {
-				return serveFlags{}, fmt.Errorf("invalid --port value %q", args[i+1])
+				return serveFlags{}, fmt.Errorf("invalid --port value %q", value)
 			}
 			f.port = port
 			i++
@@ -222,6 +228,14 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	}
 
 	return f, nil
+}
+
+func requireServeFlagValue(args []string, index int, flag string) (string, error) {
+	next := index + 1
+	if next >= len(args) {
+		return "", fmt.Errorf("%s requires a value", flag)
+	}
+	return args[next], nil
 }
 
 func parseOptionalBoolFlag(args []string, index int) (bool, int, error) {
