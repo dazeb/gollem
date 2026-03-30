@@ -41,7 +41,7 @@ type RunRuntime struct {
 // final typed result after streaming completes.
 func (rt *RunRuntime) ConsumeStream(stream *core.StreamResult[string]) (*core.RunResult[string], error) {
 	if stream == nil {
-		return nil, errors.New("ui: nil stream")
+		return nil, errNilUIStream
 	}
 	defer stream.Close()
 	if err := agui.ConsumeStream(rt.Adapter, stream.StreamEvents()); err != nil {
@@ -49,6 +49,8 @@ func (rt *RunRuntime) ConsumeStream(stream *core.StreamResult[string]) (*core.Ru
 	}
 	return stream.Result()
 }
+
+var errNilUIStream = errors.New("ui: nil stream")
 
 // PendingApprovalView is sidebar-friendly metadata for one unresolved approval.
 type PendingApprovalView struct {
@@ -112,6 +114,7 @@ type RunRecord struct {
 	adapter *agui.Adapter
 	bridge  *agui.ApprovalBridge
 	sse     http.Handler
+	action  http.Handler
 	cancel  context.CancelFunc
 }
 
@@ -139,6 +142,7 @@ func newRunRecord(now time.Time, runID string, req RunStartRequest) *RunRecord {
 		bridge:           bridge,
 	}
 	r.sse = transport.NewSSEHandler(bus, adapter, session)
+	r.action = transport.NewActionHandler(transport.ActionHandlerConfig{Sessions: r})
 	r.attachRuntimeProjection()
 	return r
 }
@@ -173,6 +177,20 @@ func (r *RunRecord) CancelFunc() context.CancelFunc {
 	return r.cancel
 }
 
+// Get resolves this run's transport runtime by session ID.
+func (r *RunRecord) Get(sessionID string) (*transport.SessionRuntime, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.session == nil || strings.TrimSpace(sessionID) != r.session.ID {
+		return nil, false
+	}
+	return &transport.SessionRuntime{
+		Session:        r.session,
+		ApprovalBridge: r.bridge,
+		Cancel:         r.cancel,
+	}, true
+}
+
 func (r *RunRecord) setCancel(cancel context.CancelFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -202,11 +220,11 @@ func (r *RunRecord) markAborted(at time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.setStatusLocked("aborted", at)
+	r.session.SetStatus(agui.SessionStatusAborted)
 	if r.waitingReason != "" {
 		return
 	}
-	switch {
-	case len(r.pendingApprovals) > 0:
+	if len(r.pendingApprovals) > 0 {
 		r.waitingReason = "approval"
 	}
 }
@@ -217,6 +235,7 @@ func (r *RunRecord) failStart(err error) {
 	defer r.mu.Unlock()
 	r.status = "failed"
 	r.updatedAt = at
+	r.session.SetStatus(agui.SessionStatusFailed)
 	r.events = append(r.events, "run_start_failed")
 	if err != nil {
 		r.summary = strings.TrimSpace(err.Error())
@@ -234,15 +253,7 @@ func (r *RunRecord) sseHandler() http.Handler {
 }
 
 func (r *RunRecord) actionHandler() http.Handler {
-	return transport.NewActionHandler(transport.ActionHandlerConfig{
-		Runtimes: map[string]*transport.SessionRuntime{
-			r.session.ID: {
-				Session:        r.session,
-				ApprovalBridge: r.bridge,
-				Cancel:         r.CancelFunc(),
-			},
-		},
-	})
+	return r.action
 }
 
 // Snapshot returns a race-safe read model for templates and handlers.
@@ -282,6 +293,7 @@ func (r *RunRecord) attachRuntimeProjection() {
 			r.setStatusLocked("running", ev.RuntimeOccurredAt())
 			r.prompt = firstNonEmpty(r.prompt, ev.Prompt)
 			r.session.SetRunID(ev.RunID, ev.ParentRunID)
+			r.session.SetStatus(agui.SessionStatusRunning)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.RunCompletedEvent) {
@@ -292,14 +304,18 @@ func (r *RunRecord) attachRuntimeProjection() {
 				if strings.TrimSpace(r.waitingReason) == "" {
 					r.waitingReason = "deferred"
 				}
+				r.session.SetWaiting(r.waitingReason)
 			case ev.Success:
 				r.setStatusLocked("completed", ev.RuntimeOccurredAt())
 				r.waitingReason = ""
+				r.session.SetStatus(agui.SessionStatusCompleted)
 			case isCanceledRunError(ev.Error):
 				r.setStatusLocked("aborted", ev.RuntimeOccurredAt())
+				r.session.SetStatus(agui.SessionStatusAborted)
 			default:
 				r.setStatusLocked("failed", ev.RuntimeOccurredAt())
 				r.waitingReason = ""
+				r.session.SetStatus(agui.SessionStatusFailed)
 			}
 		})
 	})
@@ -338,6 +354,7 @@ func (r *RunRecord) attachRuntimeProjection() {
 				ArgsJSON:    ev.ArgsJSON,
 				RequestedAt: ev.RequestedAt,
 			}
+			r.session.SetWaiting("approval")
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.ApprovalResolvedEvent) {
@@ -346,6 +363,7 @@ func (r *RunRecord) attachRuntimeProjection() {
 			if len(r.pendingApprovals) == 0 && r.status == "waiting" && r.waitingReason == "approval" {
 				r.setStatusLocked("running", ev.RuntimeOccurredAt())
 				r.waitingReason = ""
+				r.session.SetStatus(agui.SessionStatusRunning)
 			}
 		})
 	})
@@ -359,12 +377,14 @@ func (r *RunRecord) attachRuntimeProjection() {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
 			r.setStatusLocked("waiting", ev.RuntimeOccurredAt())
 			r.waitingReason = ev.Reason
+			r.session.SetWaiting(ev.Reason)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.RunResumedEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
 			r.setStatusLocked("running", ev.RuntimeOccurredAt())
 			r.waitingReason = ""
+			r.session.SetStatus(agui.SessionStatusRunning)
 		})
 	})
 }
@@ -405,13 +425,13 @@ func (s *RunStateStore) create(req RunStartRequest) *RunRecord {
 		if runID == "" {
 			runID = newRunID()
 		}
-		record := newRunRecord(s.now().UTC(), runID, req)
 
 		s.mu.Lock()
 		if _, exists := s.runs[runID]; exists {
 			s.mu.Unlock()
 			continue
 		}
+		record := newRunRecord(s.now().UTC(), runID, req)
 		s.runs[runID] = record
 		s.mu.Unlock()
 		return record
@@ -470,9 +490,6 @@ func newRunID() string {
 }
 
 func isCanceledRunError(message string) bool {
-	if strings.TrimSpace(message) == "" {
-		return false
-	}
-	err := errors.New(message)
-	return errors.Is(err, context.Canceled) || strings.Contains(strings.ToLower(message), "context canceled") || strings.Contains(strings.ToLower(message), "context cancelled")
+	message = strings.ToLower(strings.TrimSpace(message))
+	return message == "context canceled" || message == "context cancelled" || strings.Contains(message, "context canceled") || strings.Contains(message, "context cancelled")
 }
