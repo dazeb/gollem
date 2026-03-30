@@ -215,10 +215,7 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		">1<",
 	)
 
-	assetResp, err := client.Get(ts.URL + "/static/style.css")
-	if err != nil {
-		t.Fatalf("GET static asset: %v", err)
-	}
+	assetResp := mustDoRequest(t, client, mustNewRequest(t, http.MethodGet, ts.URL+"/static/style.css", "", nil))
 	assetBody, err := io.ReadAll(assetResp.Body)
 	assetResp.Body.Close()
 	if err != nil {
