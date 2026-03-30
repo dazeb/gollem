@@ -46,7 +46,7 @@
       <div class="run-scene__header">
         <div>
           <p class="eyebrow">Baseline spatial renderer</p>
-          <h3>Live stream</h3>
+          <h3>Live stream field</h3>
         </div>
         <div class="run-scene__metrics" aria-label="Run scene metrics">
           <article>
@@ -73,6 +73,26 @@
       </div>
 
       <div class="run-scene__viewport" data-run-viewport>
+        <div class="run-scene__overlay run-scene__overlay--top" aria-hidden="true">
+          <span>000</span>
+          <span>096</span>
+          <span>192</span>
+          <span>288</span>
+          <span>384</span>
+          <span>480</span>
+        </div>
+        <div class="run-scene__overlay run-scene__overlay--side" aria-hidden="true">
+          <span>000</span>
+          <span>096</span>
+          <span>192</span>
+          <span>288</span>
+          <span>384</span>
+        </div>
+        <div class="run-scene__legend" aria-hidden="true">
+          <span><i></i>text field</span>
+          <span><i></i>tool obstacle</span>
+          <span><i></i>state pulse</span>
+        </div>
         <canvas class="run-scene__canvas" data-run-canvas aria-label="Live run scene"></canvas>
         <div class="run-scene__empty" data-run-empty-state>
           <p class="eyebrow">Awaiting events</p>
