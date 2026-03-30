@@ -87,27 +87,33 @@
         <div class="run-scene__metrics" aria-label="Run scene metrics">
           <article class="run-scene__metric run-scene__metric--connection">
             <span class="detail-grid__label">Connection</span>
-            <strong data-run-connection>SSE connecting</strong>
+            <strong data-run-connection>SSE connecting…</strong>
+            <span class="run-scene__metric-note" data-run-connection-detail>Opening the live AG-UI event stream.</span>
           </article>
           <article class="run-scene__metric run-scene__metric--stream">
             <span class="detail-grid__label">Stream state</span>
             <strong data-scene-stream-state data-status-label="{{.Run.Scene.Status.Label}}">{{.Run.Scene.Status.Label}}</strong>
+            <span class="run-scene__metric-note" data-scene-stream-detail>{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}</span>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Steps</span>
             <strong data-scene-step-count>0</strong>
+            <span class="run-scene__metric-note">Tracked step frames in the renderer.</span>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Entities</span>
             <strong data-scene-entity-count>0</strong>
+            <span class="run-scene__metric-note">Visible text, tool, and notice bodies.</span>
           </article>
           <article class="run-scene__metric run-scene__metric--waiting">
             <span class="detail-grid__label">Waiting on</span>
             <strong data-scene-waiting-reason data-waiting-label="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}">{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}</strong>
+            <span class="run-scene__metric-note" data-scene-waiting-detail>{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}</span>
           </article>
           <article class="run-scene__metric">
             <span class="detail-grid__label">Last event</span>
             <strong data-run-last-event data-event-type="{{.Run.Scene.LastEvent.Type}}" data-event-label="{{.Run.Scene.LastEvent.Label}}" data-event-summary="{{.Run.Scene.LastEvent.Summary}}">{{.Run.Scene.LastEvent.Label}}</strong>
+            <span class="run-scene__metric-note" data-run-last-event-detail>{{if .Run.Scene.LastEvent.Summary}}{{.Run.Scene.LastEvent.Summary}}{{else}}{{.Run.Scene.LastEvent.OccurredLabel}}{{end}}</span>
           </article>
         </div>
       </div>
@@ -158,13 +164,15 @@
           {{end}}
         </div>
       </div>
-      <ol class="event-list event-list--dense">
+      <ol class="event-list event-list--dense event-list--narrative">
         {{range .Run.RecentActivity}}
         <li data-activity-kind="{{.Kind}}" data-activity-tone="{{.Tone}}">
-          <strong>{{.Label}}</strong>
-          {{if and .Summary (ne .Summary .Label)}}<div class="muted">{{.Summary}}</div>{{end}}
-          {{if .Detail}}<span>{{if and .Summary (ne .Summary .Detail)}} {{.Detail}}{{end}}</span>{{end}}
-          <div class="muted">{{.OccurredLabel}}</div>
+          <div class="event-list__row">
+            <strong>{{.Label}}</strong>
+            <span class="event-list__time">{{.OccurredLabel}}</span>
+          </div>
+          {{if and .Summary (ne .Summary .Label)}}<div class="event-list__summary">{{.Summary}}</div>{{end}}
+          {{if .Detail}}<div class="event-list__detail">{{if and .Summary (ne .Summary .Detail)}}{{.Detail}}{{end}}</div>{{end}}
         </li>
         {{else}}
         <li class="muted">No activity yet. Live updates will appear here once the run starts.</li>
@@ -182,11 +190,14 @@
           <span class="muted">{{len .Run.RecentProtocolActivity}} recent</span>
         </div>
       </div>
-      <ol class="event-list event-list--dense" data-run-event-log>
+      <ol class="event-list event-list--dense event-list--protocol" data-run-event-log>
         {{range .Run.RecentProtocolActivity}}
         <li data-activity-tone="{{.Tone}}">
-          <strong>{{.Label}}</strong>
-          {{if .Summary}}<span> {{.Summary}}</span>{{end}}
+          <div class="event-list__row">
+            <strong>{{.Label}}</strong>
+            <span class="event-list__time">{{.OccurredLabel}}</span>
+          </div>
+          {{if .Summary}}<div class="event-list__detail">{{.Summary}}</div>{{end}}
         </li>
         {{else}}
         <li class="muted">No protocol events yet.</li>
