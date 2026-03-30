@@ -301,6 +301,116 @@ const syncRendererSceneState = (renderer) => {
   renderer.scene.waitingReason = renderer.root.dataset.runWaitingReason || renderer.root.dataset.sceneWaitingReason || '';
 };
 
+const protocolEventLabel = (type, name = '') => {
+  const normalizedType = compactWhitespace(type);
+  if (normalizedType === 'session.snapshot') {
+    return 'Session snapshot';
+  }
+  if (normalizedType === 'CUSTOM' && compactWhitespace(name)) {
+    return humanizeCode(name, name);
+  }
+  return humanizeCode(normalizedType, normalizedType || 'Event');
+};
+
+const protocolEventTone = (type, detail = '', name = '') => {
+  const normalizedType = compactWhitespace(type);
+  const normalizedName = compactWhitespace(name);
+  const normalizedDetail = compactWhitespace(detail).toLowerCase();
+  if (normalizedType === 'RUN_ERROR' || normalizedType === 'run_error' || normalizedDetail.startsWith('error:')) {
+    return 'error';
+  }
+  if (normalizedType === 'RUN_FINISHED' || normalizedType === 'STEP_FINISHED') {
+    return 'completed';
+  }
+  if (normalizedType === 'session.snapshot') {
+    return 'pending';
+  }
+  if (normalizedType === 'CUSTOM') {
+    if (normalizedName === 'gollem.run.waiting' || normalizedName === 'gollem.approval.requested' || normalizedName === 'gollem.deferred.requested') {
+      return 'waiting';
+    }
+    if (normalizedName === 'gollem.run.resumed' || normalizedName === 'gollem.approval.resolved' || normalizedName === 'gollem.deferred.resolved') {
+      return normalizedDetail.startsWith('error:') ? 'error' : 'completed';
+    }
+  }
+  return 'info';
+};
+
+const deriveStatusMeta = (renderer, statusOverride = '') => {
+  const statusCode = compactWhitespace(statusOverride || renderer?.scene?.runStatus || renderer?.root?.dataset?.runStatus || renderer?.root?.dataset?.sceneStatus || 'starting');
+  const waitingReason = compactWhitespace(renderer?.scene?.waitingReason || renderer?.root?.dataset?.runWaitingReason || renderer?.root?.dataset?.sceneWaitingReason || '');
+  const waitingCount = Number(renderer?.root?.dataset?.runWaitingApprovalPendingCount || 0);
+  const waitingMeta = waitingReason ? waitingPresentation(waitingReason, waitingCount) : null;
+  const fallbackDetail = statusCode === 'waiting'
+    ? (waitingMeta?.summary || waitingMeta?.detail || 'Run paused.')
+    : statusCode === 'completed'
+      ? 'Run completed successfully.'
+      : statusCode === 'failed'
+        ? 'Run terminated with an error.'
+        : statusCode === 'aborted' || statusCode === 'cancelled'
+          ? 'Run was stopped before completion.'
+          : statusCode === 'running'
+            ? 'Live execution is in progress.'
+            : 'Preparing live execution.';
+  return {
+    code: statusCode,
+    label: humanizeCode(statusCode, 'Run status'),
+    tone: waitingMeta?.kind || statusCode || 'info',
+    detail: compactWhitespace(waitingMeta?.summary || waitingMeta?.detail || fallbackDetail),
+    isWaiting: statusCode === 'waiting' || !!waitingReason,
+    isTerminal: statusCode === 'completed' || statusCode === 'failed' || statusCode === 'aborted' || statusCode === 'cancelled',
+  };
+};
+
+const syncLiveSceneState = (renderer, partial = {}) => {
+  if (!renderer?.root) {
+    return readSceneState(renderer?.root);
+  }
+  const state = readSceneState(renderer.root);
+  const requestedStatusCode = compactWhitespace(partial.status?.code || renderer.scene?.runStatus || state.status.code || renderer.root.dataset.runStatus || 'starting');
+  const statusMeta = deriveStatusMeta(renderer, requestedStatusCode);
+  const waitingReason = compactWhitespace((partial.waiting && Object.prototype.hasOwnProperty.call(partial.waiting, 'reason'))
+    ? partial.waiting.reason
+    : (renderer.scene?.waitingReason || state.waiting.reason || ''));
+  const waitingCount = Number(partial.waiting?.approvalPendingCount ?? state.waiting.approvalPendingCount ?? renderer.root.dataset.runWaitingApprovalPendingCount ?? 0);
+  const waitingMeta = waitingReason ? waitingPresentation(waitingReason, waitingCount) : null;
+  const waitingActive = boolString(partial.waiting?.active, statusMeta.isWaiting || !!waitingReason);
+  applySceneState(renderer.root, {
+    status: {
+      code: requestedStatusCode,
+      label: compactWhitespace(partial.status?.label || statusMeta.label || state.status.label || humanizeCode(requestedStatusCode, 'Run status')),
+      detail: compactWhitespace(partial.status?.detail || statusMeta.detail || state.status.detail || ''),
+      tone: compactWhitespace(partial.status?.tone || statusMeta.tone || state.status.tone || requestedStatusCode || 'info'),
+      isWaiting: partial.status?.isWaiting ?? (waitingActive === 'true'),
+      isTerminal: partial.status?.isTerminal ?? statusMeta.isTerminal,
+    },
+    waiting: {
+      ...state.waiting,
+      ...(partial.waiting || {}),
+      active: waitingActive,
+      reason: waitingReason,
+      label: compactWhitespace(partial.waiting?.label || (waitingReason ? waitingMeta?.label : 'Active') || state.waiting.label || 'Active'),
+      detail: compactWhitespace(partial.waiting?.detail || (waitingReason ? waitingMeta?.detail : '') || state.waiting.detail || ''),
+      summary: compactWhitespace(partial.waiting?.summary || (waitingReason ? waitingMeta?.summary : statusMeta.detail) || state.waiting.summary || statusMeta.detail),
+      pendingKind: compactWhitespace(partial.waiting?.pendingKind || (waitingReason ? waitingMeta?.kind : '') || state.waiting.pendingKind || ''),
+      approvalPendingCount: partial.waiting?.approvalPendingCount ?? waitingCount,
+      statusLabel: compactWhitespace(partial.waiting?.statusLabel || statusMeta.label),
+    },
+    lastEvent: {
+      ...state.lastEvent,
+      ...(partial.lastEvent || {}),
+      type: compactWhitespace(partial.lastEvent?.type || state.lastEvent.type || requestedStatusCode || 'event'),
+      label: compactWhitespace(partial.lastEvent?.label || state.lastEvent.label || humanizeCode(partial.lastEvent?.type || state.lastEvent.type || requestedStatusCode, statusMeta.label || 'Activity')),
+      summary: compactWhitespace(partial.lastEvent?.summary || state.lastEvent.summary || state.lastEvent.detail || statusMeta.detail || statusMeta.label),
+      detail: compactWhitespace(partial.lastEvent?.detail || state.lastEvent.detail || state.lastEvent.summary || ''),
+      occurredLabel: compactWhitespace(partial.lastEvent?.occurredLabel || state.lastEvent.occurredLabel || ''),
+      tone: compactWhitespace(partial.lastEvent?.tone || state.lastEvent.tone || statusMeta.tone || 'info'),
+    },
+  });
+  syncRendererSceneState(renderer);
+  return readSceneState(renderer.root);
+};
+
 const roleLabel = (role, kind) => {
   if (role) {
     return role.replace(/_/g, ' ');
@@ -827,7 +937,16 @@ class RunSceneRenderer {
     if (envelope.type === 'session.snapshot' && envelope.data) {
       this.applySnapshot(envelope, seq);
       this.scene.streamHydrated = true;
-      this.appendEventLog('session.snapshot', `snapshot seq ${envelope.data.snapshot_sequence || seq || '—'}`, Date.now());
+      this.appendEventLog({
+        type: 'session.snapshot',
+        label: protocolEventLabel('session.snapshot'),
+        summary: `Snapshot seq ${envelope.data.snapshot_sequence || seq || '—'}`,
+        detail: this.scene.lastSeq
+          ? `Replay state synchronized through event #${this.scene.lastSeq}.`
+          : 'Snapshot applied before live frames resumed.',
+        timestamp: Date.now(),
+        tone: 'pending',
+      });
       this.appendNarrativeEvent({
         label: 'Session replay snapshot',
         summary: 'Renderer hydrated from an AG-UI reconnect snapshot.',
@@ -844,13 +963,30 @@ class RunSceneRenderer {
 
     const aguiEvent = this.extractAGUIEvent(envelope);
     if (!aguiEvent) {
-      this.appendEventLog(envelope.type || 'unknown', this.describeEvent(envelope), Date.now());
+      const label = protocolEventLabel(envelope.type || 'unknown', envelope.name || '');
+      const summary = this.describeEvent(envelope);
+      this.appendEventLog({
+        type: envelope.type || 'unknown',
+        label,
+        summary,
+        detail: summary,
+        timestamp: Date.now(),
+        tone: protocolEventTone(envelope.type || 'unknown', summary, envelope.name || ''),
+      });
       this.scheduleRender();
       return;
     }
 
     this.applyAGUIEvent(aguiEvent, seq);
-    this.appendEventLog(aguiEvent.type || envelope.type || 'unknown', this.describeEvent(aguiEvent), aguiEvent.timestamp || Date.now());
+    const detail = this.describeEvent(aguiEvent);
+    this.appendEventLog({
+      type: aguiEvent.type || envelope.type || 'unknown',
+      label: protocolEventLabel(aguiEvent.type || envelope.type || 'unknown', aguiEvent.name || ''),
+      summary: detail,
+      detail,
+      timestamp: aguiEvent.timestamp || Date.now(),
+      tone: protocolEventTone(aguiEvent.type || envelope.type || 'unknown', detail, aguiEvent.name || ''),
+    });
     this.scheduleRender();
   }
 
@@ -1497,14 +1633,21 @@ class RunSceneRenderer {
     }
   }
 
-  setLastEventMeta(seq, label, detail = '') {
-    if (this.lastEventTarget) {
-      const seqLabel = seq ? `#${seq}` : 'live';
-      this.lastEventTarget.textContent = `${seqLabel} · ${label}`;
-    }
-    if (this.lastEventDetailTarget) {
-      this.lastEventDetailTarget.textContent = compactWhitespace(detail || this.root.dataset.runLastEventSummary || this.root.dataset.runLastEventDetail || 'Awaiting activity.');
-    }
+  setLastEventMeta(seq, label, detail = '', timestamp = null, tone = '') {
+    const eventType = compactWhitespace(label || this.root.dataset.runLastEventType || 'event');
+    const summary = compactWhitespace(detail || this.root.dataset.runLastEventSummary || this.root.dataset.runLastEventDetail || 'Awaiting activity.');
+    const occurredLabel = timestamp ? this.narrativeTimeLabel(timestamp) : compactWhitespace(this.root.dataset.runLastEventOccurredLabel || '');
+    const seqLabel = seq ? `#${seq}` : 'live';
+    syncLiveSceneState(this, {
+      lastEvent: {
+        type: eventType,
+        label: `${seqLabel} · ${eventType}`,
+        summary,
+        detail: summary,
+        occurredLabel,
+        tone: compactWhitespace(tone || this.root.dataset.runLastEventTone || this.root.dataset.runStatusTone || 'info'),
+      },
+    });
   }
 
   triggerTransition(name) {
@@ -1547,21 +1690,21 @@ class RunSceneRenderer {
     const nextReason = compactWhitespace(reason || '');
     const changed = nextReason !== this.scene.waitingReason;
     const waitingMeta = waitingPresentation(nextReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
-    const waitingLabel = compactWhitespace(this.root.dataset.runWaitingLabel || waitingMeta.label || humanizeCode(nextReason, 'Active'));
-    const waitingSummary = compactWhitespace(this.root.dataset.runWaitingSummary || waitingMeta.summary || waitingMeta.detail || waitingLabel);
+    const waitingLabel = compactWhitespace(waitingMeta.label || humanizeCode(nextReason, 'Active'));
+    const waitingDetail = compactWhitespace(waitingMeta.detail || '');
+    const waitingSummary = compactWhitespace(waitingMeta.summary || waitingDetail || waitingLabel);
     this.scene.waitingReason = nextReason;
     this.scene.waitingSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : this.scene.waitingSnapshot;
-    this.root.dataset.sceneWaiting = nextReason ? 'true' : 'false';
-    this.root.dataset.sceneWaitingReason = nextReason || '';
-    if (this.waitingReasonTarget) {
-      this.waitingReasonTarget.textContent = waitingLabel || 'Active';
-      this.waitingReasonTarget.title = compactWhitespace(waitingSummary || this.root.dataset.runWaitingDetail || waitingLabel);
-    }
-    if (this.waitingDetailTarget) {
-      this.waitingDetailTarget.textContent = nextReason
-        ? waitingSummary
-        : compactWhitespace(this.root.dataset.runStatusDetail || 'No waiting reason.');
-    }
+    syncLiveSceneState(this, {
+      waiting: {
+        active: nextReason ? 'true' : 'false',
+        reason: nextReason,
+        label: nextReason ? waitingLabel : 'Active',
+        detail: nextReason ? waitingDetail : '',
+        summary: nextReason ? waitingSummary : compactWhitespace(this.root.dataset.runStatusDetail || 'No waiting reason.'),
+        pendingKind: nextReason ? waitingMeta.kind || 'waiting' : '',
+      },
+    });
     if (changed) {
       this.invalidateLayout('waiting');
     }
@@ -1597,42 +1740,17 @@ class RunSceneRenderer {
   updateStatus(status) {
     const next = status || this.scene.runStatus || 'running';
     const changed = next !== this.scene.runStatus;
-    const statusLabel = compactWhitespace(this.root.dataset.runStatusLabel || humanizeCode(next, 'Run status'));
-    const statusDetail = compactWhitespace(this.root.dataset.runStatusDetail || this.root.dataset.runWaitingSummary || '');
+    const statusMeta = deriveStatusMeta(this, next);
     this.scene.runStatus = next;
-    this.root.dataset.sceneStatus = next;
     if (changed) {
       this.scene.statusChangedAt = sceneClock();
     }
-    if (next === 'waiting') {
-      this.root.dataset.sceneWaiting = 'true';
-    } else if (next !== 'waiting' && !compactWhitespace(this.scene.waitingReason || '')) {
-      this.root.dataset.sceneWaiting = 'false';
-      this.root.dataset.sceneWaitingReason = '';
-      if (this.waitingReasonTarget) {
-        this.waitingReasonTarget.textContent = compactWhitespace(this.root.dataset.runWaitingLabel || 'Active');
-        this.waitingReasonTarget.title = compactWhitespace(this.root.dataset.runWaitingSummary || this.root.dataset.runWaitingDetail || this.root.dataset.runWaitingLabel || 'Active');
-      }
-      if (this.waitingDetailTarget) {
-        this.waitingDetailTarget.textContent = statusDetail || 'No waiting reason.';
-      }
-    }
-    this.statusTargets.forEach((target) => {
-      if (!target) {
-        return;
-      }
-      target.textContent = statusLabel;
-      const baseClasses = Array.from(target.classList).filter((name) => !name.startsWith('status--'));
-      target.className = baseClasses.concat(`status--${this.scene.runStatus}`).join(' ');
+    syncLiveSceneState(this, {
+      status: statusMeta,
+      waiting: {
+        active: statusMeta.isWaiting ? 'true' : 'false',
+      },
     });
-    if (this.streamStateTarget) {
-      this.streamStateTarget.textContent = statusLabel;
-    }
-    if (this.streamDetailTarget) {
-      this.streamDetailTarget.textContent = this.scene.runStatus === 'waiting'
-        ? compactWhitespace(this.root.dataset.runWaitingSummary || this.root.dataset.runWaitingDetail || statusDetail || 'Run is waiting.')
-        : compactWhitespace(statusDetail || this.root.dataset.runLastEventSummary || 'Live stream active.');
-    }
   }
 
   setConnection(connection) {
@@ -1647,8 +1765,11 @@ class RunSceneRenderer {
     if (this.connectionDetailTarget) {
       this.connectionDetailTarget.textContent = presentation.detail;
     }
-    if (this.streamStateTarget) {
-      this.streamStateTarget.textContent = compactWhitespace(this.root.dataset.runStatusLabel || this.scene.runStatus);
+    if (this.streamStateTarget && (connection === 'reconnecting' || connection === 'closed' || connection === 'unsupported')) {
+      this.streamStateTarget.textContent = presentation.label;
+    }
+    if (this.streamDetailTarget && (connection === 'reconnecting' || connection === 'closed' || connection === 'unsupported')) {
+      this.streamDetailTarget.textContent = presentation.detail;
     }
     this.scheduleRender();
 
@@ -2139,20 +2260,42 @@ class RunSceneRenderer {
     }
   }
 
-  appendEventLog(type, detail) {
+  appendEventLog(entry = {}) {
     if (!this.eventLog) {
       return;
     }
 
-    const item = document.createElement('li');
-    const strong = document.createElement('strong');
-    strong.textContent = type;
-    item.appendChild(strong);
+    const label = compactWhitespace(entry.label || entry.type || 'Event');
+    const summary = compactWhitespace(entry.summary || entry.detail || '');
+    const detail = compactWhitespace(entry.detail || '');
+    const occurredLabel = compactWhitespace(entry.occurredLabel || this.narrativeTimeLabel(entry.timestamp || Date.now()));
+    const tone = compactWhitespace(entry.tone || 'info');
 
-    if (detail) {
-      const span = document.createElement('span');
-      span.textContent = ` ${detail}`;
-      item.appendChild(span);
+    const item = document.createElement('li');
+    item.dataset.activityTone = tone;
+
+    const row = document.createElement('div');
+    row.className = 'event-list__row';
+    const strong = document.createElement('strong');
+    strong.textContent = label;
+    row.appendChild(strong);
+    const time = document.createElement('span');
+    time.className = 'event-list__time';
+    time.textContent = occurredLabel;
+    row.appendChild(time);
+    item.appendChild(row);
+
+    if (summary) {
+      const summaryNode = document.createElement('div');
+      summaryNode.className = 'event-list__summary';
+      summaryNode.textContent = summary;
+      item.appendChild(summaryNode);
+    }
+    if (detail && detail !== summary) {
+      const detailNode = document.createElement('div');
+      detailNode.className = 'event-list__detail';
+      detailNode.textContent = detail;
+      item.appendChild(detailNode);
     }
 
     this.eventLog.appendChild(item);
