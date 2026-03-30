@@ -552,6 +552,30 @@ func assertStartedRunRequest(t *testing.T, started <-chan RunStartRequest, want 
 	}
 }
 
+func assertStartedRunRequestSet(t *testing.T, started <-chan RunStartRequest, wants ...RunStartRequest) {
+	t.Helper()
+	remaining := append([]RunStartRequest(nil), wants...)
+	deadline := time.After(2 * time.Second)
+	for len(remaining) > 0 {
+		select {
+		case got := <-started:
+			matched := false
+			for i, want := range remaining {
+				if got == want {
+					remaining = append(remaining[:i], remaining[i+1:]...)
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				t.Fatalf("unexpected started request %+v; remaining wants %+v", got, remaining)
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for start requests %+v", remaining)
+		}
+	}
+}
+
 func assertHTTPErrorContains(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantText string) {
 	t.Helper()
 	if rec.Code != wantStatus {

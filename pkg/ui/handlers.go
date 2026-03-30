@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -288,7 +289,7 @@ func decodeJSONRequest(r *http.Request, dst any) error {
 	}
 	if err := dec.Decode(new(struct{})); err != io.EOF {
 		if err == nil {
-			return fmt.Errorf("invalid request body: multiple JSON values are not allowed")
+			return errors.New("invalid request body: multiple JSON values are not allowed")
 		}
 		return fmt.Errorf("invalid request body: %w", err)
 	}
