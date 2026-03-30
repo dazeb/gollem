@@ -1,14 +1,18 @@
 {{define "sidebar"}}
-<div class="sidebar-fragment" data-renderer-root>
+<div class="sidebar-fragment" data-renderer-root data-run-id="{{.Run.ID}}" data-run-status="{{.Run.Scene.Status.Code}}" data-run-status-label="{{.Run.Scene.Status.Label}}" data-run-status-tone="{{.Run.Scene.Status.Tone}}" data-run-status-detail="{{.Run.Scene.Status.Detail}}" data-run-status-is-waiting="{{.Run.Scene.Status.IsWaiting}}" data-run-status-is-terminal="{{.Run.Scene.Status.IsTerminal}}" data-run-waiting-active="{{.Run.Scene.Waiting.Active}}" data-run-waiting-reason="{{.Run.Scene.Waiting.Reason}}" data-run-waiting-label="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Label}}{{else}}Active{{end}}" data-run-waiting-detail="{{.Run.Scene.Waiting.Detail}}" data-run-waiting-summary="{{if .Run.Scene.Waiting.Active}}{{.Run.Scene.Waiting.Summary}}{{else}}{{.Run.Scene.Status.Detail}}{{end}}" data-run-waiting-pending-kind="{{.Run.Scene.Waiting.PendingKind}}" data-run-waiting-approval-pending-count="{{.Run.Scene.Waiting.ApprovalPendingCount}}" data-run-waiting-status-label="{{.Run.Scene.Waiting.StatusLabel}}" data-run-last-event-type="{{.Run.Scene.LastEvent.Type}}" data-run-last-event-label="{{.Run.Scene.LastEvent.Label}}" data-run-last-event-summary="{{.Run.Scene.LastEvent.Summary}}" data-run-last-event-detail="{{.Run.Scene.LastEvent.Detail}}" data-run-last-event-occurred-label="{{.Run.Scene.LastEvent.OccurredLabel}}" data-run-last-event-tone="{{.Run.Scene.LastEvent.Tone}}">
   <div>
     <p class="eyebrow">Run sidebar</p>
     <h3>{{.Run.ID}}</h3>
+    <p class="muted">{{.Run.Controls.Summary}}</p>
   </div>
 
   <dl class="sidebar-metadata">
     <div>
       <dt>Status</dt>
-      <dd><span class="status status--{{.Run.Status}}">{{.Run.Status}}</span></dd>
+      <dd>
+        <span class="status status--{{.Run.StatusView.Code}}">{{.Run.StatusView.Label}}</span>
+        {{if .Run.StatusView.Detail}}<br><span class="muted">{{.Run.StatusView.Detail}}</span>{{end}}
+      </dd>
     </div>
     <div>
       <dt>Started</dt>
@@ -26,7 +30,99 @@
       <dt>Model</dt>
       <dd>{{.Run.Model}}</dd>
     </div>
+    <div>
+      <dt>Requests</dt>
+      <dd>{{.Run.Usage.Requests}}</dd>
+    </div>
+    <div>
+      <dt>Input tokens</dt>
+      <dd>{{.Run.Usage.InputTokens}}</dd>
+    </div>
+    <div>
+      <dt>Output tokens</dt>
+      <dd>{{.Run.Usage.OutputTokens}}</dd>
+    </div>
+    <div>
+      <dt>Tool calls</dt>
+      <dd>{{.Run.Usage.ToolCalls}}</dd>
+    </div>
+    <div>
+      <dt>Last activity</dt>
+      <dd>
+        <strong>{{.Run.Scene.LastEvent.Label}}</strong>
+        {{if and .Run.Scene.LastEvent.Summary (ne .Run.Scene.LastEvent.Summary .Run.Scene.LastEvent.Label)}}<br><span class="muted">{{.Run.Scene.LastEvent.Summary}}</span>{{end}}
+        {{if .Run.Scene.LastEvent.OccurredLabel}}<br><span class="muted">{{.Run.Scene.LastEvent.OccurredLabel}}</span>{{else if .Run.Controls.LastActivityTimeLabel}}<br><span class="muted">{{.Run.Controls.LastActivityTimeLabel}}</span>{{end}}
+      </dd>
+    </div>
+    {{if .Run.Scene.Waiting.Active}}
+    <div>
+      <dt>Waiting</dt>
+      <dd>
+        <strong>{{.Run.Scene.Waiting.Label}}</strong>
+        {{if .Run.Scene.Waiting.Detail}}<br><span class="muted">{{.Run.Scene.Waiting.Detail}}</span>{{end}}
+      </dd>
+    </div>
+    {{end}}
+    <div>
+      <dt>Controls</dt>
+      <dd>
+        {{.Run.Controls.PrimaryActionLabel}}
+        {{if .Run.Controls.CanAbort}} · Abort available{{end}}
+        {{if .Run.Controls.CanApproveTools}} · {{.Run.Controls.PendingApprovalLabel}} ready{{end}}
+      </dd>
+    </div>
   </dl>
+
+  <div>
+    <p class="eyebrow">Pending approvals</p>
+    {{if .Run.PendingApprovals}}
+    <ul class="event-list">
+      {{range .Run.PendingApprovals}}
+      <li>
+        <strong>{{.ToolName}}</strong> <code>{{.ToolCallID}}</code>
+        {{if .ArgsJSON}}<div class="muted">{{.ArgsJSON}}</div>{{end}}
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <p class="muted">No pending approvals.</p>
+    {{end}}
+  </div>
+
+  <div>
+    <p class="eyebrow">Recent activity</p>
+    {{if .Run.RecentActivity}}
+    <ul class="event-list event-list--dense">
+      {{range .Run.RecentActivity}}
+      <li data-activity-kind="{{.Kind}}" data-activity-tone="{{.Tone}}">
+        <strong>{{.Label}}</strong>
+        {{if and .Summary (ne .Summary .Label)}}<div class="muted">{{.Summary}}</div>{{end}}
+        {{if .Detail}}<span> {{.Detail}}</span>{{end}}
+        <div class="muted">{{.OccurredLabel}}</div>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <p class="muted">No activity yet.</p>
+    {{end}}
+    </div>
+
+  <div>
+    <p class="eyebrow">Recent protocol events</p>
+    {{if .Run.RecentProtocolActivity}}
+    <ul class="event-list event-list--dense">
+      {{range .Run.RecentProtocolActivity}}
+      <li data-activity-tone="{{.Tone}}">
+        <strong>{{.Label}}</strong>
+        {{if ne .Summary .Label}}<span> {{.Summary}}</span>{{end}}
+        {{if .OccurredLabel}}<div class="muted">{{.OccurredLabel}}</div>{{end}}
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <p class="muted">No protocol events yet.</p>
+    {{end}}
+  </div>
 
   <div class="sidebar-actions">
     <a class="button" href="/runs/{{.Run.ID}}">Refresh run</a>

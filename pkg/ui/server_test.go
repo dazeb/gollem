@@ -2,13 +2,19 @@ package ui
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -249,15 +255,52 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		"data-run-scene",
 		"data-run-canvas",
 		"data-run-event-log",
+		"1 pending tool approval",
+		"Run started",
 		"/runs/"+runID+"/events",
+		"data-run-status=\"waiting\"",
+		"data-run-status-label=\"Waiting\"",
+		"data-run-waiting-reason=\"approval\"",
+		"data-run-waiting-label=\"Waiting for approval\"",
+		"data-run-last-event-label=\"Waiting for approval\"",
+		"data-run-last-event-summary=\"Waiting for approval · 1 pending tool approval.\"",
 	)
-	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
+	sidebarBody := mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar")
+	assertHTMLContains(t, sidebarBody,
 		"waiting",
 		"dangerous_write",
 		"tool_approve",
+		"Review approvals",
+		"Waiting for approval",
+		"data-run-status=\"waiting\"",
+		"data-run-waiting-reason=\"approval\"",
+		"data-run-last-event-label=\"Waiting for approval\"",
 		">11<",
 		">5<",
 		">1<",
+	)
+	sidebarResp := mustGET(t, client, ts.URL+"/runs/"+runID+"/sidebar")
+	hxTrigger := sidebarResp.Header.Get("HX-Trigger")
+	sidebarResp.Body.Close()
+	assertStringContains(t, hxTrigger,
+		"\"ui:fragment-loaded\"",
+		"\"runId\":\""+runID+"\"",
+		"\"scene\"",
+		"\"status\":{",
+		"\"code\":\"waiting\"",
+		"\"detail\":\"1 pending tool approval.\"",
+		"\"isTerminal\":false",
+		"\"isWaiting\":true",
+		"\"label\":\"Waiting\"",
+		"\"tone\":\"approval\"",
+		"\"waiting\":{",
+		"\"reason\":\"approval\"",
+		"\"label\":\"Waiting for approval\"",
+		"\"summary\":\"Waiting for approval · 1 pending tool approval.\"",
+		"\"lastEvent\":{",
+		"\"label\":\"Waiting for approval\"",
+		"\"summary\":\"Waiting for approval · 1 pending tool approval.\"",
+		"\"pendingApprovals\":{",
 	)
 
 	assetResp := mustGET(t, client, ts.URL+"/static/style.css")
@@ -336,6 +379,10 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 	assertUISSEFrameContains(t, postApprovalFrames, agui.AGUITextMessageContent, "delta", "stream after approval")
 	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
 		"completed",
+		"Review activity",
+		"Run completed",
+		"data-run-status=\"completed\"",
+		"data-run-last-event-label=\"Run completed\"",
 		"No pending approvals.",
 		">11<",
 		">5<",
@@ -489,6 +536,8 @@ func TestHandleActionDenyFlow(t *testing.T) {
 	waitForRunStatus(t, store, runID, "failed")
 	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
 		"failed",
+		"data-run-status=\"failed\"",
+		"data-run-last-event-label=\"Run failed\"",
 		"No pending approvals.",
 	)
 }
@@ -545,6 +594,51 @@ func TestHandleActionAbortUsesRunSpecificSessionAndMarksRunAborted(t *testing.T)
 	waitForRunStatus(t, store, runID, "aborted")
 	if got := run.Session().GetStatus(); got != agui.SessionStatusAborted {
 		t.Fatalf("session status = %q, want %q", got, agui.SessionStatusAborted)
+	}
+}
+
+func TestRunSnapshotStructuredActivityAndWaitingAfterResumeBeforeApprovalResolved(t *testing.T) {
+	store := NewRunStateStore()
+	run := store.create(RunStartRequest{Prompt: "review the tool call"})
+	now := time.Now().UTC()
+
+	core.Publish(run.EventBus(), core.RunStartedEvent{RunID: run.ID(), Prompt: "review the tool call", StartedAt: now})
+	core.Publish(run.EventBus(), core.ToolCalledEvent{RunID: run.ID(), ToolCallID: "tool_approve", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, CalledAt: now.Add(10 * time.Millisecond)})
+	core.Publish(run.EventBus(), core.ApprovalRequestedEvent{RunID: run.ID(), ToolCallID: "tool_approve", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, RequestedAt: now.Add(20 * time.Millisecond)})
+	core.Publish(run.EventBus(), core.RunWaitingEvent{RunID: run.ID(), Reason: "approval", WaitingAt: now.Add(30 * time.Millisecond)})
+	core.Publish(run.EventBus(), core.RunResumedEvent{RunID: run.ID(), ResumedAt: now.Add(40 * time.Millisecond)})
+
+	snap := run.Snapshot()
+	if snap.Status != "running" {
+		t.Fatalf("status = %q, want running", snap.Status)
+	}
+	if snap.Waiting.Active {
+		t.Fatalf("waiting active = %v, want false", snap.Waiting.Active)
+	}
+	if snap.WaitingReason != "" {
+		t.Fatalf("waiting reason = %q, want empty", snap.WaitingReason)
+	}
+	if !snap.Controls.CanApproveTools {
+		t.Fatal("expected controls to keep approval action available")
+	}
+	if snap.Controls.PendingApprovalCount != 1 {
+		t.Fatalf("pending approvals = %d, want 1", snap.Controls.PendingApprovalCount)
+	}
+	if snap.Controls.PrimaryActionLabel != "Review approvals" {
+		t.Fatalf("primary action = %q, want %q", snap.Controls.PrimaryActionLabel, "Review approvals")
+	}
+	if len(snap.RecentActivity) == 0 {
+		t.Fatal("expected structured recent activity")
+	}
+	last := snap.RecentActivity[len(snap.RecentActivity)-1]
+	if last.Label != "Run resumed" {
+		t.Fatalf("last activity label = %q, want %q", last.Label, "Run resumed")
+	}
+	if last.Summary == "" || last.OccurredLabel == "" {
+		t.Fatalf("expected structured activity summary/time labels, got %+v", last)
+	}
+	if got := run.Session().GetStatus(); got != agui.SessionStatusRunning {
+		t.Fatalf("session status = %q, want %q", got, agui.SessionStatusRunning)
 	}
 }
 
@@ -616,7 +710,6 @@ func TestHandleActionRejectsBadFormInput(t *testing.T) {
 	server.ServeHTTP(rec, req)
 	assertHTTPErrorContains(t, rec, http.StatusBadRequest, "approved must be a boolean")
 }
-
 func TestRunCompletedDeferredPreservesExistingWaitingReason(t *testing.T) {
 	store := NewRunStateStore()
 	run := store.create(RunStartRequest{Prompt: "wait"})
@@ -632,6 +725,266 @@ func TestRunCompletedDeferredPreservesExistingWaitingReason(t *testing.T) {
 	if snap.WaitingReason != "approval_and_deferred" {
 		t.Fatalf("waiting reason = %q, want approval_and_deferred", snap.WaitingReason)
 	}
+}
+
+func TestRendererFragmentLoadedPreservesStructuredSceneLabels(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+
+	data := structuredHydrationPageData()
+	runHTML, err := os.ReadFile(filepath.Join("templates", "run.html"))
+	if err != nil {
+		t.Fatalf("read run template: %v", err)
+	}
+	sidebarHTML, err := os.ReadFile(filepath.Join("templates", "sidebar.html"))
+	if err != nil {
+		t.Fatalf("read sidebar template: %v", err)
+	}
+	rendererJS, err := os.ReadFile(filepath.Join("static", "renderer.js"))
+	if err != nil {
+		t.Fatalf("read renderer script: %v", err)
+	}
+
+	runSceneHTML := renderTemplateFragment(t, extractSingleTag(t, string(runHTML), "section", `data-run-scene`), data)
+	runStatusHTML := renderTemplateFragment(t, extractSingleTag(t, string(runHTML), "strong", `data-scene-stream-state`), data)
+	runWaitingHTML := renderTemplateFragment(t, extractSingleTag(t, string(runHTML), "strong", `data-scene-waiting-reason`), data)
+	runLastEventHTML := renderTemplateFragment(t, extractSingleTag(t, string(runHTML), "strong", `data-run-last-event`), data)
+	sidebarStatusHTML := renderTemplateFragment(t, extractSingleTag(t, string(sidebarHTML), "span", `status status--{{.Run.StatusView.Code}}`), data)
+	sidebarBodyHTML := renderTemplateFragment(t, extractSingleTag(t, string(sidebarHTML), "div", `sidebar-fragment`), data)
+	assertStringContains(t, sidebarBodyHTML, "Waiting for approval")
+
+	runSceneHTML = strings.ReplaceAll(runSceneHTML, `data-events-url="/runs/{{.Run.ID}}/events"`, `data-events-url=""`)
+	payload, err := json.Marshal(buildSnapshotPayload(data.Run))
+	if err != nil {
+		t.Fatalf("marshal snapshot payload: %v", err)
+	}
+
+	script := fmt.Sprintf(`
+const listeners = {};
+const bodyListeners = {};
+const body = {
+  dataset: { route: '/runs/run_test' },
+  addEventListener(type, cb) { (bodyListeners[type] ||= []).push(cb); },
+  querySelectorAll() { return []; },
+  matches() { return false; },
+  setAttribute() {},
+};
+const document = {
+  body,
+  addEventListener(type, cb) { (listeners[type] ||= []).push(cb); },
+  querySelectorAll(selector) {
+    if (selector === '[data-run-scene]') return [sceneRoot];
+    if (selector === '[data-run-status-badge]' || selector === '.panel__header--run .status') return [runStatusBadge, sidebarStatusBadge];
+    if (selector === '.shell__nav a') return [];
+    return [];
+  },
+  querySelector() { return null; },
+};
+const window = {
+  document,
+  Pretext: {},
+  performance: { now: () => 0 },
+  devicePixelRatio: 1,
+  requestAnimationFrame: () => 1,
+  cancelAnimationFrame: () => {},
+  addEventListener() {},
+  removeEventListener() {},
+};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.ResizeObserver = function ResizeObserver() { this.observe = () => {}; this.disconnect = () => {}; };
+globalThis.EventSource = function EventSource() {};
+
+const datasetFromHTML = (tagHTML) => {
+  const dataset = {};
+  const regex = /([:\w-]+)(?:="([^"]*)")?/g;
+  let match;
+  while ((match = regex.exec(tagHTML)) !== null) {
+    const name = match[1];
+    if (!name || !name.startsWith('data-')) continue;
+    dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = match[2] || '';
+  }
+  return dataset;
+};
+const classListFromHTML = (tagHTML) => ((tagHTML.match(/class="([^"]*)"/) || [,''])[1].split(/\s+/).filter(Boolean));
+const textFromHTML = (tagHTML) => String((tagHTML.match(/>([\s\S]*)<\//) || [,''])[1]).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+const makeElement = (tagHTML) => ({
+  dataset: datasetFromHTML(tagHTML),
+  classList: classListFromHTML(tagHTML),
+  className: (tagHTML.match(/class="([^"]*)"/) || [,''])[1],
+  textContent: textFromHTML(tagHTML),
+  title: '',
+  setAttribute() {},
+  matches() { return false; },
+  querySelectorAll() { return []; },
+});
+
+const sceneRoot = {
+  dataset: datasetFromHTML(%q),
+  ownerDocument: document,
+  querySelector(selector) {
+    if (selector === '[data-scene-stream-state]') return runStatusBadge;
+    if (selector === '[data-scene-waiting-reason]') return runWaitingBadge;
+    if (selector === '[data-run-last-event]') return runLastEventBadge;
+    return null;
+  },
+  querySelectorAll() { return []; },
+  matches(selector) { return selector === '[data-run-scene]'; },
+  setAttribute() {},
+};
+const dummyTarget = { matches() { return false; }, querySelectorAll() { return []; }, setAttribute() {} };
+const runStatusBadge = makeElement(%q);
+const runWaitingBadge = makeElement(%q);
+const runLastEventBadge = makeElement(%q);
+const sidebarStatusBadge = makeElement(%q);
+%s
+const renderer = {
+  root: sceneRoot,
+  scene: {
+    runStatus: sceneRoot.dataset.runStatus || 'starting',
+    waitingReason: sceneRoot.dataset.runWaitingReason || '',
+    waitingSnapshot: { pending_approvals: { tool_approve: { ToolCallID: 'tool_approve' } } },
+    customEventState: { waiting: true, pendingApproval: true, pendingDeferred: false },
+    lastSeq: 0,
+  },
+  statusTargets: [runStatusBadge, sidebarStatusBadge],
+  streamStateTarget: runStatusBadge,
+  waitingReasonTarget: runWaitingBadge,
+  lastEventTarget: runLastEventBadge,
+  invalidateLayout() {},
+  scheduleRender() {},
+  connectionTarget: null,
+};
+renderer.updateStatus = RunSceneRenderer.prototype.updateStatus;
+renderer.updateWaitingState = RunSceneRenderer.prototype.updateWaitingState;
+renderer.setLastEventMeta = RunSceneRenderer.prototype.setLastEventMeta;
+runScenes.set(sceneRoot, renderer);
+const fragmentLoaded = bodyListeners['ui:fragment-loaded'][0];
+fragmentLoaded({ detail: { runId: 'run_test', scene: %s }, target: dummyTarget });
+console.log('RUN_STREAM:' + runStatusBadge.textContent);
+console.log('RUN_WAITING:' + runWaitingBadge.textContent);
+console.log('RUN_LAST:' + runLastEventBadge.textContent);
+console.log('RUN_LAST_TITLE:' + runLastEventBadge.title);
+console.log('SIDEBAR_STATUS:' + sidebarStatusBadge.textContent);
+`, runSceneHTML, runStatusHTML, runWaitingHTML, runLastEventHTML, sidebarStatusHTML, string(rendererJS), string(payload))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "node")
+	cmd.Dir = "."
+	cmd.Stdin = strings.NewReader(script)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("node renderer harness failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+
+	assertStringContains(t, stdout.String(),
+		"RUN_STREAM:Waiting",
+		"RUN_WAITING:Waiting for approval",
+		"RUN_LAST:live · Waiting for approval",
+		"RUN_LAST_TITLE:Waiting for approval · 1 pending tool approval. · 15:06:05 UTC",
+		"SIDEBAR_STATUS:Waiting",
+	)
+}
+
+func structuredHydrationPageData() pageData {
+	startedAt := time.Date(2025, time.January, 2, 15, 4, 5, 0, time.UTC)
+	updatedAt := startedAt.Add(3 * time.Minute)
+	lastAt := startedAt.Add(2 * time.Minute)
+	activity := RunActivityView{
+		Type:          core.RuntimeEventTypeApprovalRequested,
+		Kind:          "approval",
+		Tone:          "waiting",
+		Label:         "Waiting for approval",
+		Detail:        "1 pending tool approval.",
+		Summary:       "Waiting for approval · 1 pending tool approval.",
+		OccurredAt:    lastAt,
+		OccurredLabel: lastAt.Format("15:04:05 MST"),
+		IsWaiting:     true,
+		ToolCallID:    "tool_approve",
+		ToolName:      "dangerous_write",
+	}
+	waiting := RunWaitingView{
+		Active:               true,
+		Reason:               "approval",
+		Label:                "Waiting for approval",
+		Detail:               "1 pending tool approval.",
+		Summary:              "Waiting for approval · 1 pending tool approval.",
+		PendingKind:          "approval",
+		ApprovalPendingCount: 1,
+		StatusLabel:          "Waiting",
+	}
+	status := RunStatusView{
+		Code:       "waiting",
+		Label:      "Waiting",
+		Tone:       "approval",
+		Detail:     "1 pending tool approval.",
+		IsWaiting:  true,
+		IsTerminal: false,
+	}
+	controls := RunControlsView{
+		CanAbort:              true,
+		CanApproveTools:       true,
+		PendingApprovalCount:  1,
+		PendingApprovalLabel:  "1 pending tool approval",
+		HasRecentActivity:     true,
+		LastEventType:         activity.Type,
+		LastEventLabel:        activity.Label,
+		LastEventSummary:      activity.Summary,
+		LastActivitySummary:   activity.Summary,
+		LastEventTimeLabel:    activity.OccurredLabel,
+		LastActivityTimeLabel: activity.OccurredLabel,
+		StatusLabel:           status.Label,
+		Summary:               "1 pending tool approval.",
+		PrimaryActionLabel:    "Review approvals",
+	}
+	return pageData{Run: RunView{
+		ID:               "run_test",
+		Title:            "Approve flow",
+		Status:           "waiting",
+		StatusView:       status,
+		Scene:            RunSceneStateView{Status: status, Waiting: waiting, LastEvent: RunEventStateView{Type: activity.Type, Label: activity.Label, Summary: activity.Summary, Detail: activity.Detail, OccurredAt: activity.OccurredAt, OccurredLabel: activity.OccurredLabel, Tone: activity.Tone}},
+		Provider:         "test",
+		Model:            "serve-test",
+		Summary:          "exercise live dashboard flow",
+		Prompt:           "please verify the UI",
+		StartedAt:        startedAt,
+		UpdatedAt:        updatedAt,
+		RecentActivity:   []RunActivityView{activity},
+		LastActivity:     activity,
+		WaitingReason:    waiting.Reason,
+		Waiting:          waiting,
+		PendingApprovals: []PendingApprovalView{{ToolCallID: "tool_approve", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, RequestedAt: lastAt}},
+		Controls:         controls,
+	}}
+}
+
+func renderTemplateFragment(t *testing.T, source string, data any) string {
+	t.Helper()
+	tmpl, err := template.New("fragment").Parse(source)
+	if err != nil {
+		t.Fatalf("parse template fragment: %v\n%s", err, source)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		t.Fatalf("execute template fragment: %v", err)
+	}
+	return strings.TrimSpace(buf.String())
+}
+
+func extractSingleTag(t *testing.T, source, tagName, needle string) string {
+	t.Helper()
+	pattern := fmt.Sprintf(`(?s)<%s\b[^>]*%s[^>]*>.*?</%s>`, regexp.QuoteMeta(tagName), regexp.QuoteMeta(needle), regexp.QuoteMeta(tagName))
+	re := regexp.MustCompile(pattern)
+	match := strings.TrimSpace(re.FindString(source))
+	if match == "" {
+		t.Fatalf("could not find %s containing %q", tagName, needle)
+	}
+	return match
 }
 
 func TestRunStateStoreCreateRejectsDuplicateIDs(t *testing.T) {
@@ -710,9 +1063,6 @@ func mustGETBody(t *testing.T, client *http.Client, target string) string {
 	if err != nil {
 		t.Fatalf("read body %s: %v", target, err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s status = %d, body=%s", target, resp.StatusCode, string(body))
-	}
 	return string(body)
 }
 
@@ -721,6 +1071,15 @@ func assertHTMLContains(t *testing.T, body string, wants ...string) {
 	for _, want := range wants {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func assertStringContains(t *testing.T, value string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(value, want) {
+			t.Fatalf("string missing %q:\n%s", want, value)
 		}
 	}
 }
@@ -758,7 +1117,6 @@ func assertHTTPErrorContains(t *testing.T, rec *httptest.ResponseRecorder, wantS
 		t.Fatalf("body %q missing %q", rec.Body.String(), wantText)
 	}
 }
-
 func waitForRun(t *testing.T, store *RunStateStore, runID string) *RunRecord {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

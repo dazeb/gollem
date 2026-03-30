@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"net/http"
 	"strconv"
@@ -14,78 +13,6 @@ import (
 
 	"github.com/fugue-labs/gollem/ext/agui"
 )
-
-var liveSidebarTemplate = template.Must(template.New("live_sidebar").Parse(`
-<div class="sidebar-fragment" data-renderer-root>
-  <div>
-    <p class="eyebrow">Run sidebar</p>
-    <h3>{{.Run.ID}}</h3>
-  </div>
-
-  <dl class="sidebar-metadata">
-    <div>
-      <dt>Status</dt>
-      <dd><span class="status status--{{.Run.Status}}">{{.Run.Status}}</span></dd>
-    </div>
-    <div>
-      <dt>Started</dt>
-      <dd>{{.Run.StartedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
-    </div>
-    <div>
-      <dt>Updated</dt>
-      <dd>{{.Run.UpdatedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
-    </div>
-    <div>
-      <dt>Provider</dt>
-      <dd>{{.Run.Provider}}</dd>
-    </div>
-    <div>
-      <dt>Model</dt>
-      <dd>{{.Run.Model}}</dd>
-    </div>
-    <div>
-      <dt>Requests</dt>
-      <dd>{{.Run.Usage.Requests}}</dd>
-    </div>
-    <div>
-      <dt>Input tokens</dt>
-      <dd>{{.Run.Usage.InputTokens}}</dd>
-    </div>
-    <div>
-      <dt>Output tokens</dt>
-      <dd>{{.Run.Usage.OutputTokens}}</dd>
-    </div>
-    <div>
-      <dt>Tool calls</dt>
-      <dd>{{.Run.Usage.ToolCalls}}</dd>
-    </div>
-    {{if .Run.WaitingReason}}
-    <div>
-      <dt>Waiting</dt>
-      <dd>{{.Run.WaitingReason}}</dd>
-    </div>
-    {{end}}
-  </dl>
-
-  <div>
-    <p class="eyebrow">Pending approvals</p>
-    {{if .Run.PendingApprovals}}
-    <ul class="event-list">
-      {{range .Run.PendingApprovals}}
-      <li><strong>{{.ToolName}}</strong> <code>{{.ToolCallID}}</code></li>
-      {{end}}
-    </ul>
-    {{else}}
-    <p class="muted">No pending approvals.</p>
-    {{end}}
-  </div>
-
-  <div class="sidebar-actions">
-    <a class="button" href="/runs/{{.Run.ID}}">Refresh run</a>
-    <a class="button button--ghost" href="/">Back to dashboard</a>
-  </div>
-</div>
-`))
 
 type pageData struct {
 	AppTitle         string
@@ -146,17 +73,72 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func buildSnapshotPayload(view RunView) map[string]any {
+	return map[string]any{
+		"runId": view.ID,
+		"status": map[string]any{
+			"code":       view.Scene.Status.Code,
+			"label":      view.Scene.Status.Label,
+			"tone":       view.Scene.Status.Tone,
+			"detail":     view.Scene.Status.Detail,
+			"isWaiting":  view.Scene.Status.IsWaiting,
+			"isTerminal": view.Scene.Status.IsTerminal,
+		},
+		"waiting": map[string]any{
+			"active":               view.Scene.Waiting.Active,
+			"reason":               view.Scene.Waiting.Reason,
+			"label":                view.Scene.Waiting.Label,
+			"detail":               view.Scene.Waiting.Detail,
+			"summary":              view.Scene.Waiting.Summary,
+			"pendingKind":          view.Scene.Waiting.PendingKind,
+			"approvalPendingCount": view.Scene.Waiting.ApprovalPendingCount,
+			"statusLabel":          view.Scene.Waiting.StatusLabel,
+		},
+		"lastEvent": map[string]any{
+			"type":          view.Scene.LastEvent.Type,
+			"label":         view.Scene.LastEvent.Label,
+			"summary":       view.Scene.LastEvent.Summary,
+			"detail":        view.Scene.LastEvent.Detail,
+			"occurredLabel": view.Scene.LastEvent.OccurredLabel,
+			"tone":          view.Scene.LastEvent.Tone,
+		},
+		"pendingApprovals": pendingApprovalsByID(view.PendingApprovals),
+	}
+}
+
+func pendingApprovalsByID(items []PendingApprovalView) map[string]PendingApprovalView {
+	if len(items) == 0 {
+		return map[string]PendingApprovalView{}
+	}
+	out := make(map[string]PendingApprovalView, len(items))
+	for _, item := range items {
+		out[item.ToolCallID] = item
+	}
+	return out
+}
+
 func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	run, ok := s.lookupRun(w, r)
 	if !ok {
 		return
 	}
-
-	w.Header().Set("HX-Trigger", "ui:fragment-loaded")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := liveSidebarTemplate.Execute(w, pageData{Run: run.Snapshot()}); err != nil {
-		http.Error(w, fmt.Sprintf("render sidebar: %v", err), http.StatusInternalServerError)
+	view := run.Snapshot()
+	trigger, err := json.Marshal(map[string]any{
+		"ui:fragment-loaded": map[string]any{
+			"runId": view.ID,
+			"scene": buildSnapshotPayload(view),
+		},
+	})
+	if err == nil {
+		w.Header().Set("HX-Trigger", string(trigger))
 	}
+	s.render(w, "sidebar", pageData{
+		AppTitle:    "gollem",
+		PageTitle:   view.Title + " sidebar",
+		Path:        r.URL.Path,
+		CurrentYear: time.Now().Year(),
+		Run:         view,
+	})
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

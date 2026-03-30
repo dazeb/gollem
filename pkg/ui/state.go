@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -13,6 +14,11 @@ import (
 	"github.com/fugue-labs/gollem/ext/agui"
 	"github.com/fugue-labs/gollem/ext/agui/transport"
 	"github.com/google/uuid"
+)
+
+const (
+	maxStoredRunActivities = 64
+	maxRecentRunActivities = 12
 )
 
 // RunStarter starts a newly-created UI run against the provided live runtime.
@@ -60,22 +66,118 @@ type PendingApprovalView struct {
 	RequestedAt time.Time
 }
 
+// RunActivityView is a human-readable projection of one recent runtime event.
+type RunActivityView struct {
+	Type          string
+	Kind          string
+	Tone          string
+	Label         string
+	Detail        string
+	Summary       string
+	OccurredAt    time.Time
+	OccurredLabel string
+	IsWaiting     bool
+	IsError       bool
+	ToolCallID    string
+	ToolName      string
+	TurnNumber    int
+	FinishState   string
+}
+
+// RunWaitingView is renderer-friendly waiting context for the current run state.
+type RunWaitingView struct {
+	Active               bool
+	Reason               string
+	Label                string
+	Detail               string
+	Summary              string
+	PendingKind          string
+	ApprovalPendingCount int
+	StatusLabel          string
+}
+
+// RunControlsView exposes control-oriented metadata for templates and renderers.
+type RunControlsView struct {
+	CanAbort              bool
+	CanApproveTools       bool
+	PendingApprovalCount  int
+	PendingApprovalLabel  string
+	HasRecentActivity     bool
+	LastEventType         string
+	LastEventLabel        string
+	LastEventSummary      string
+	LastActivitySummary   string
+	LastEventTimeLabel    string
+	LastActivityTimeLabel string
+	StatusLabel           string
+	Summary               string
+	PrimaryActionLabel    string
+}
+
+// RunStatusView exposes human-readable run status metadata for initial render and hydration.
+type RunStatusView struct {
+	Code       string
+	Label      string
+	Tone       string
+	Detail     string
+	IsWaiting  bool
+	IsTerminal bool
+}
+
+// RunProtocolEventView is a readable debugging projection of one recent protocol/runtime event.
+type RunProtocolEventView struct {
+	Type          string
+	Label         string
+	Summary       string
+	OccurredAt    time.Time
+	OccurredLabel string
+	Tone          string
+}
+
+// RunEventStateView is structured scene metadata for one user-facing event summary.
+type RunEventStateView struct {
+	Type          string
+	Label         string
+	Summary       string
+	Detail        string
+	OccurredAt    time.Time
+	OccurredLabel string
+	Tone          string
+}
+
+// RunSceneStateView groups the structured status, waiting, and last-event state
+// that initial render and client hydration should consume directly.
+type RunSceneStateView struct {
+	Status    RunStatusView
+	Waiting   RunWaitingView
+	LastEvent RunEventStateView
+}
+
 // RunView is the UI projection for one run.
 type RunView struct {
-	ID               string
-	Title            string
-	Status           string
-	Provider         string
-	Model            string
-	Summary          string
-	Prompt           string
-	StartedAt        time.Time
-	UpdatedAt        time.Time
-	Events           []string
-	SessionID        string
-	Usage            core.RunUsage
-	WaitingReason    string
-	PendingApprovals []PendingApprovalView
+	ID                     string
+	Title                  string
+	Status                 string
+	StatusView             RunStatusView
+	Scene                  RunSceneStateView
+	Provider               string
+	Model                  string
+	Summary                string
+	Prompt                 string
+	StartedAt              time.Time
+	UpdatedAt              time.Time
+	Events                 []string
+	RecentProtocolEvents   []string
+	RecentProtocolActivity []RunProtocolEventView
+	LastProtocolActivity   RunProtocolEventView
+	RecentActivity         []RunActivityView
+	LastActivity           RunActivityView
+	SessionID              string
+	Usage                  core.RunUsage
+	WaitingReason          string
+	Waiting                RunWaitingView
+	PendingApprovals       []PendingApprovalView
+	Controls               RunControlsView
 }
 
 // RunStartRequest is the accepted POST /runs/start payload.
@@ -106,6 +208,7 @@ type RunRecord struct {
 	usage         core.RunUsage
 	waitingReason string
 	events        []string
+	activities    []RunActivityView
 
 	pendingApprovals map[string]PendingApprovalView
 
@@ -202,6 +305,42 @@ func (r *RunRecord) setStatusLocked(status string, at time.Time) {
 	r.updatedAt = at.UTC()
 }
 
+func (r *RunRecord) appendActivityLocked(activity RunActivityView) {
+	activity.Type = strings.TrimSpace(activity.Type)
+	if activity.Type == "" {
+		return
+	}
+	if activity.OccurredAt.IsZero() {
+		activity.OccurredAt = r.updatedAt
+	}
+	if activity.OccurredAt.IsZero() {
+		activity.OccurredAt = time.Now().UTC()
+	}
+	activity.OccurredAt = activity.OccurredAt.UTC()
+	activity.Kind = firstNonEmpty(activity.Kind, classifyActivityKind(activity.Type))
+	activity.Label = firstNonEmpty(activity.Label, humanizeRuntimeEventType(activity.Type))
+	activity.Detail = strings.TrimSpace(activity.Detail)
+	activity.Summary = firstNonEmpty(strings.TrimSpace(activity.Summary), joinActivitySummary(activity.Label, activity.Detail))
+	activity.OccurredLabel = firstNonEmpty(strings.TrimSpace(activity.OccurredLabel), activity.OccurredAt.Format("15:04:05 MST"))
+	if activity.Tone == "" {
+		switch {
+		case activity.IsError:
+			activity.Tone = "error"
+		case activity.IsWaiting:
+			activity.Tone = "waiting"
+		case activity.FinishState != "":
+			activity.Tone = activity.FinishState
+		default:
+			activity.Tone = "info"
+		}
+	}
+	r.activities = append(r.activities, activity)
+	if len(r.activities) > maxStoredRunActivities {
+		start := len(r.activities) - maxStoredRunActivities
+		r.activities = append([]RunActivityView(nil), r.activities[start:]...)
+	}
+}
+
 func (r *RunRecord) hasRuntimeEvent(eventType string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -221,12 +360,19 @@ func (r *RunRecord) markAborted(at time.Time) {
 	defer r.mu.Unlock()
 	r.setStatusLocked("aborted", at)
 	r.session.SetStatus(agui.SessionStatusAborted)
-	if r.waitingReason != "" {
-		return
-	}
-	if len(r.pendingApprovals) > 0 {
+	if r.waitingReason == "" && len(r.pendingApprovals) > 0 {
 		r.waitingReason = "approval"
 	}
+	r.updatedAt = at.UTC()
+	r.events = append(r.events, "run_aborted")
+	r.appendActivityLocked(RunActivityView{
+		Type:        "run_aborted",
+		Label:       "Run aborted",
+		Detail:      "Execution stopped before completion.",
+		OccurredAt:  at,
+		IsError:     true,
+		FinishState: "aborted",
+	})
 }
 
 func (r *RunRecord) failStart(err error) {
@@ -240,6 +386,14 @@ func (r *RunRecord) failStart(err error) {
 	if err != nil {
 		r.summary = strings.TrimSpace(err.Error())
 	}
+	r.appendActivityLocked(RunActivityView{
+		Type:        "run_start_failed",
+		Label:       "Run failed to start",
+		Detail:      summarizeInline(errString(err, "starter returned an error"), 120),
+		OccurredAt:  at,
+		IsError:     true,
+		FinishState: "failed",
+	})
 }
 
 func (r *RunRecord) closeRuntime() {
@@ -269,22 +423,52 @@ func (r *RunRecord) Snapshot() RunView {
 		return pending[i].RequestedAt.Before(pending[j].RequestedAt)
 	})
 
-	return RunView{
-		ID:               r.id,
-		Title:            r.title,
-		Status:           r.status,
-		Provider:         r.provider,
-		Model:            r.model,
-		Summary:          r.summary,
-		Prompt:           r.prompt,
-		StartedAt:        r.startedAt,
-		UpdatedAt:        r.updatedAt,
-		Events:           append([]string(nil), r.events...),
-		SessionID:        r.session.ID,
-		Usage:            r.usage,
-		WaitingReason:    r.waitingReason,
-		PendingApprovals: pending,
+	recent := snapshotRecentActivities(r.activities)
+	recentProtocolEvents := snapshotRecentProtocolEvents(r.events)
+	recentProtocolActivity := buildProtocolEventViews(recentProtocolEvents, recent)
+	pendingApprovalCount := len(pending)
+	waiting := buildWaitingView(r.status, r.waitingReason, pendingApprovalCount)
+	statusView := buildStatusView(r.status, waiting)
+	latest := latestActivity(recent)
+	latestProtocol := latestProtocolActivity(recentProtocolActivity)
+	sceneWaiting := buildSceneWaitingView(r.status, waiting, pendingApprovalCount)
+	scene := RunSceneStateView{
+		Status:    statusView,
+		Waiting:   sceneWaiting,
+		LastEvent: buildEventStateView(statusView, sceneWaiting, latest, latestProtocol),
 	}
+	controls := buildControlsView(statusView, sceneWaiting, pendingApprovalCount, latest, latestProtocol, len(recent) > 0)
+
+	view := RunView{
+		ID:                     r.id,
+		Title:                  r.title,
+		Status:                 r.status,
+		StatusView:             statusView,
+		Scene:                  scene,
+		Provider:               r.provider,
+		Model:                  r.model,
+		Summary:                r.summary,
+		Prompt:                 r.prompt,
+		StartedAt:              r.startedAt,
+		UpdatedAt:              r.updatedAt,
+		Events:                 append([]string(nil), r.events...),
+		RecentProtocolEvents:   recentProtocolEvents,
+		RecentProtocolActivity: recentProtocolActivity,
+		RecentActivity:         recent,
+		SessionID:              r.session.ID,
+		Usage:                  r.usage,
+		WaitingReason:          waiting.Reason,
+		Waiting:                waiting,
+		PendingApprovals:       pending,
+		Controls:               controls,
+	}
+	if latest != nil {
+		view.LastActivity = *latest
+	}
+	if latestProtocol != nil {
+		view.LastProtocolActivity = *latestProtocol
+	}
+	return view
 }
 
 func (r *RunRecord) attachRuntimeProjection() {
@@ -294,6 +478,8 @@ func (r *RunRecord) attachRuntimeProjection() {
 			r.prompt = firstNonEmpty(r.prompt, ev.Prompt)
 			r.session.SetRunID(ev.RunID, ev.ParentRunID)
 			r.session.SetStatus(agui.SessionStatusRunning)
+		}, func() RunActivityView {
+			return activityForRunStarted(ev)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.RunCompletedEvent) {
@@ -317,32 +503,48 @@ func (r *RunRecord) attachRuntimeProjection() {
 				r.waitingReason = ""
 				r.session.SetStatus(agui.SessionStatusFailed)
 			}
+		}, func() RunActivityView {
+			return activityForRunCompleted(ev, r.waitingReason)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.TurnStartedEvent) {
-		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil)
+		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil, func() RunActivityView {
+			return activityForTurnStarted(ev)
+		})
 	})
 	core.Subscribe(r.bus, func(ev core.TurnCompletedEvent) {
-		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil)
+		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil, func() RunActivityView {
+			return activityForTurnCompleted(ev)
+		})
 	})
 	core.Subscribe(r.bus, func(ev core.ModelRequestStartedEvent) {
-		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil)
+		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil, func() RunActivityView {
+			return activityForModelRequestStarted(ev)
+		})
 	})
 	core.Subscribe(r.bus, func(ev core.ModelResponseCompletedEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
 			r.usage.IncrRequest(core.Usage{InputTokens: ev.InputTokens, OutputTokens: ev.OutputTokens})
+		}, func() RunActivityView {
+			return activityForModelResponseCompleted(ev)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.ToolCalledEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
 			r.usage.IncrToolCall()
+		}, func() RunActivityView {
+			return activityForToolCalled(ev)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.ToolCompletedEvent) {
-		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil)
+		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil, func() RunActivityView {
+			return activityForToolCompleted(ev)
+		})
 	})
 	core.Subscribe(r.bus, func(ev core.ToolFailedEvent) {
-		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil)
+		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil, func() RunActivityView {
+			return activityForToolFailed(ev)
+		})
 	})
 	core.Subscribe(r.bus, func(ev core.ApprovalRequestedEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
@@ -355,6 +557,8 @@ func (r *RunRecord) attachRuntimeProjection() {
 				RequestedAt: ev.RequestedAt,
 			}
 			r.session.SetWaiting("approval")
+		}, func() RunActivityView {
+			return activityForApprovalRequested(ev)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.ApprovalResolvedEvent) {
@@ -365,19 +569,27 @@ func (r *RunRecord) attachRuntimeProjection() {
 				r.waitingReason = ""
 				r.session.SetStatus(agui.SessionStatusRunning)
 			}
+		}, func() RunActivityView {
+			return activityForApprovalResolved(ev)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.DeferredRequestedEvent) {
-		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil)
+		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil, func() RunActivityView {
+			return activityForDeferredRequested(ev)
+		})
 	})
 	core.Subscribe(r.bus, func(ev core.DeferredResolvedEvent) {
-		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil)
+		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), nil, func() RunActivityView {
+			return activityForDeferredResolved(ev)
+		})
 	})
 	core.Subscribe(r.bus, func(ev core.RunWaitingEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
 			r.setStatusLocked("waiting", ev.RuntimeOccurredAt())
 			r.waitingReason = ev.Reason
 			r.session.SetWaiting(ev.Reason)
+		}, func() RunActivityView {
+			return activityForRunWaiting(ev)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.RunResumedEvent) {
@@ -385,11 +597,13 @@ func (r *RunRecord) attachRuntimeProjection() {
 			r.setStatusLocked("running", ev.RuntimeOccurredAt())
 			r.waitingReason = ""
 			r.session.SetStatus(agui.SessionStatusRunning)
+		}, func() RunActivityView {
+			return activityForRunResumed(ev)
 		})
 	})
 }
 
-func (r *RunRecord) applyRuntimeEvent(eventType string, at time.Time, mutate func()) {
+func (r *RunRecord) applyRuntimeEvent(eventType string, at time.Time, mutate func(), buildActivity func() RunActivityView) {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
@@ -400,6 +614,16 @@ func (r *RunRecord) applyRuntimeEvent(eventType string, at time.Time, mutate fun
 	}
 	r.updatedAt = at.UTC()
 	r.events = append(r.events, eventType)
+	if buildActivity != nil {
+		activity := buildActivity()
+		if activity.Type == "" {
+			activity.Type = eventType
+		}
+		if activity.OccurredAt.IsZero() {
+			activity.OccurredAt = at
+		}
+		r.appendActivityLocked(activity)
+	}
 }
 
 // RunStateStore is an in-memory registry of live runs.
@@ -461,6 +685,664 @@ func (s *RunStateStore) listViews() []RunView {
 		return views[i].UpdatedAt.After(views[j].UpdatedAt)
 	})
 	return views
+}
+
+func snapshotRecentActivities(src []RunActivityView) []RunActivityView {
+	if len(src) == 0 {
+		return nil
+	}
+	start := 0
+	if len(src) > maxRecentRunActivities {
+		start = len(src) - maxRecentRunActivities
+	}
+	return append([]RunActivityView(nil), src[start:]...)
+}
+
+func snapshotRecentProtocolEvents(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	start := 0
+	if len(src) > maxRecentRunActivities {
+		start = len(src) - maxRecentRunActivities
+	}
+	return append([]string(nil), src[start:]...)
+}
+
+func buildSceneWaitingView(status string, waiting RunWaitingView, pendingApprovalCount int) RunWaitingView {
+	if waiting.Active {
+		return waiting
+	}
+	if pendingApprovalCount > 0 {
+		return buildWaitingView(status, "approval", pendingApprovalCount)
+	}
+	return RunWaitingView{}
+}
+
+func buildWaitingView(status, reason string, pendingApprovalCount int) RunWaitingView {
+	reason = normalizeWaitingReason(status, reason, pendingApprovalCount)
+	if reason == "" {
+		return RunWaitingView{}
+	}
+	label, detail, kind := waitingPresentation(reason, pendingApprovalCount)
+	summary := firstNonEmpty(joinActivitySummary(label, detail), label, detail)
+	return RunWaitingView{
+		Active:               true,
+		Reason:               reason,
+		Label:                label,
+		Detail:               detail,
+		Summary:              summary,
+		PendingKind:          kind,
+		ApprovalPendingCount: pendingApprovalCount,
+		StatusLabel:          humanizeRunStatus(status),
+	}
+}
+
+func buildStatusView(status string, waiting RunWaitingView) RunStatusView {
+	code := strings.TrimSpace(status)
+	label := humanizeRunStatus(code)
+	detail := ""
+	isWaiting := code == "waiting" || waiting.Active
+	tone := code
+	if tone == "" {
+		tone = "unknown"
+	}
+	switch {
+	case waiting.Active:
+		detail = firstNonEmpty(waiting.Detail, waiting.Label)
+		tone = firstNonEmpty(waiting.PendingKind, "waiting")
+	case statusAllowsAbort(code):
+		detail = "Run in progress"
+		if code == "starting" {
+			detail = "Preparing run"
+		}
+	case code == "completed":
+		detail = "Run finished successfully"
+	case code == "failed":
+		detail = "Run finished with an error"
+	case code == "aborted" || code == "cancelled":
+		detail = "Run was stopped before completion"
+	}
+	return RunStatusView{
+		Code:       code,
+		Label:      label,
+		Tone:       tone,
+		Detail:     detail,
+		IsWaiting:  isWaiting,
+		IsTerminal: !statusAllowsAbort(code),
+	}
+}
+
+func latestActivity(src []RunActivityView) *RunActivityView {
+	if len(src) == 0 {
+		return nil
+	}
+	activity := src[len(src)-1]
+	return &activity
+}
+
+func latestProtocolActivity(src []RunProtocolEventView) *RunProtocolEventView {
+	if len(src) == 0 {
+		return nil
+	}
+	activity := src[len(src)-1]
+	return &activity
+}
+
+func buildProtocolEventViews(events []string, activities []RunActivityView) []RunProtocolEventView {
+	if len(events) == 0 {
+		return nil
+	}
+	views := make([]RunProtocolEventView, 0, len(events))
+	activityIdx := 0
+	for _, eventType := range events {
+		label := humanizeRuntimeEventType(eventType)
+		view := RunProtocolEventView{
+			Type:    eventType,
+			Label:   label,
+			Summary: firstNonEmpty(label, eventType),
+			Tone:    protocolEventTone(eventType),
+		}
+		for activityIdx < len(activities) {
+			activity := activities[activityIdx]
+			activityIdx++
+			if strings.TrimSpace(activity.Type) != strings.TrimSpace(eventType) {
+				continue
+			}
+			view.Label = firstNonEmpty(activity.Label, view.Label)
+			view.Summary = firstNonEmpty(activity.Summary, joinActivitySummary(activity.Label, activity.Detail), view.Summary)
+			view.OccurredAt = activity.OccurredAt
+			view.OccurredLabel = activity.OccurredLabel
+			view.Tone = firstNonEmpty(activity.Tone, view.Tone)
+			break
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func protocolEventTone(eventType string) string {
+	switch strings.TrimSpace(eventType) {
+	case core.RuntimeEventTypeToolFailed:
+		return "error"
+	case core.RuntimeEventTypeApprovalRequested, core.RuntimeEventTypeDeferredRequested, core.RuntimeEventTypeRunWaiting:
+		return "waiting"
+	case core.RuntimeEventTypeRunCompleted, core.RuntimeEventTypeApprovalResolved, core.RuntimeEventTypeDeferredResolved, core.RuntimeEventTypeRunResumed:
+		return "success"
+	default:
+		return "info"
+	}
+}
+
+func buildControlsView(status RunStatusView, waiting RunWaitingView, pendingApprovalCount int, latest *RunActivityView, latestProtocol *RunProtocolEventView, hasRecentActivity bool) RunControlsView {
+	lastEventType := status.Code
+	lastEventLabel := firstNonEmpty(waiting.Label, status.Label)
+	lastEventSummary := firstNonEmpty(waiting.Summary, status.Detail, lastEventLabel)
+	lastActivitySummary := lastEventSummary
+	lastEventTimeLabel := ""
+	lastActivityTimeLabel := ""
+	if latestProtocol != nil {
+		lastEventType = firstNonEmpty(latestProtocol.Type, lastEventType)
+		lastEventLabel = firstNonEmpty(latestProtocol.Label, lastEventLabel)
+		lastEventSummary = firstNonEmpty(latestProtocol.Summary, joinActivitySummary(latestProtocol.Label, latestProtocol.Summary), lastEventSummary)
+		lastEventTimeLabel = firstNonEmpty(latestProtocol.OccurredLabel, lastEventTimeLabel)
+		lastActivitySummary = firstNonEmpty(lastEventSummary, lastActivitySummary)
+		lastActivityTimeLabel = firstNonEmpty(lastEventTimeLabel, lastActivityTimeLabel)
+	}
+	if latest != nil {
+		lastEventType = firstNonEmpty(latest.Type, lastEventType)
+		lastEventLabel = firstNonEmpty(latest.Label, lastEventLabel)
+		lastEventSummary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), lastEventSummary)
+		lastEventTimeLabel = firstNonEmpty(latest.OccurredLabel, lastEventTimeLabel)
+		lastActivitySummary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), lastActivitySummary, lastEventSummary)
+		lastActivityTimeLabel = firstNonEmpty(latest.OccurredLabel, lastActivityTimeLabel, lastEventTimeLabel)
+	}
+	pendingApprovalLabel := fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
+	if pendingApprovalCount == 0 {
+		pendingApprovalLabel = "No pending approvals"
+	}
+	primaryActionLabel := "View run"
+	summary := status.Label
+	switch {
+	case waiting.Active && pendingApprovalCount > 0:
+		primaryActionLabel = "Review approvals"
+		summary = firstNonEmpty(waiting.Detail, pendingApprovalLabel)
+	case waiting.Active:
+		primaryActionLabel = "Monitor waiting run"
+		summary = firstNonEmpty(waiting.Detail, waiting.Label)
+	case pendingApprovalCount > 0:
+		primaryActionLabel = "Review approvals"
+		summary = pendingApprovalLabel
+	case statusAllowsAbort(status.Code):
+		primaryActionLabel = "Abort run"
+		summary = firstNonEmpty(status.Detail, "Run in progress")
+	case hasRecentActivity:
+		primaryActionLabel = "Review activity"
+		summary = firstNonEmpty(lastActivitySummary, lastEventSummary)
+	}
+	return RunControlsView{
+		CanAbort:              statusAllowsAbort(status.Code),
+		CanApproveTools:       pendingApprovalCount > 0,
+		PendingApprovalCount:  pendingApprovalCount,
+		PendingApprovalLabel:  pendingApprovalLabel,
+		HasRecentActivity:     hasRecentActivity,
+		LastEventType:         lastEventType,
+		LastEventLabel:        lastEventLabel,
+		LastEventSummary:      lastEventSummary,
+		LastActivitySummary:   lastActivitySummary,
+		LastEventTimeLabel:    lastEventTimeLabel,
+		LastActivityTimeLabel: lastActivityTimeLabel,
+		StatusLabel:           status.Label,
+		Summary:               summary,
+		PrimaryActionLabel:    primaryActionLabel,
+	}
+}
+
+func buildEventStateView(status RunStatusView, waiting RunWaitingView, latest *RunActivityView, latestProtocol *RunProtocolEventView) RunEventStateView {
+	state := RunEventStateView{
+		Type:    status.Code,
+		Label:   firstNonEmpty(waiting.Label, status.Label),
+		Summary: firstNonEmpty(waiting.Summary, status.Detail, status.Label),
+		Detail:  firstNonEmpty(waiting.Detail, status.Detail),
+		Tone:    firstNonEmpty(waiting.PendingKind, status.Tone, status.Code, "info"),
+	}
+	if latestProtocol != nil {
+		state.Type = firstNonEmpty(latestProtocol.Type, state.Type)
+		state.Label = firstNonEmpty(latestProtocol.Label, state.Label)
+		state.Summary = firstNonEmpty(latestProtocol.Summary, state.Summary)
+		state.OccurredAt = latestProtocol.OccurredAt
+		state.OccurredLabel = firstNonEmpty(latestProtocol.OccurredLabel, state.OccurredLabel)
+		state.Tone = firstNonEmpty(latestProtocol.Tone, state.Tone)
+	}
+	if latest != nil {
+		state.Type = firstNonEmpty(latest.Type, state.Type)
+		state.Label = firstNonEmpty(latest.Label, state.Label)
+		state.Summary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), state.Summary)
+		state.Detail = firstNonEmpty(latest.Detail, state.Detail)
+		state.OccurredAt = latest.OccurredAt
+		state.OccurredLabel = firstNonEmpty(latest.OccurredLabel, state.OccurredLabel)
+		state.Tone = firstNonEmpty(latest.Tone, state.Tone)
+	}
+	if waiting.Active && (state.Type == "" || state.Type == status.Code || state.Type == core.RuntimeEventTypeRunWaiting || state.Type == core.RuntimeEventTypeApprovalRequested || state.Type == core.RuntimeEventTypeDeferredRequested) {
+		state.Label = firstNonEmpty(waiting.Label, state.Label)
+		state.Summary = firstNonEmpty(waiting.Summary, state.Summary)
+		state.Detail = firstNonEmpty(waiting.Detail, state.Detail)
+		state.Tone = firstNonEmpty(waiting.PendingKind, state.Tone)
+	}
+	state.Label = firstNonEmpty(state.Label, state.Summary, humanizeRuntimeEventType(state.Type), status.Label)
+	state.Summary = firstNonEmpty(state.Summary, joinActivitySummary(state.Label, state.Detail), state.Label)
+	state.Tone = firstNonEmpty(state.Tone, "info")
+	return state
+}
+
+func normalizeWaitingReason(status, reason string, pendingApprovalCount int) string {
+	reason = strings.TrimSpace(reason)
+	status = strings.TrimSpace(status)
+	if status != "waiting" {
+		switch reason {
+		case "approval", "approval_and_deferred":
+			// Preserve explicit approval-oriented reasons only while waiting or when
+			// the reason itself still denotes an approval/deferred mixed wait.
+		default:
+			return ""
+		}
+	}
+	if reason == "" && status == "waiting" && pendingApprovalCount > 0 {
+		return "approval"
+	}
+	if pendingApprovalCount == 0 && reason == "approval" && status != "waiting" {
+		return ""
+	}
+	return reason
+}
+
+func waitingPresentation(reason string, pendingApprovalCount int) (label, detail, kind string) {
+	reason = strings.TrimSpace(reason)
+	switch reason {
+	case "approval":
+		label = "Waiting for approval"
+		kind = "approval"
+		if pendingApprovalCount > 0 {
+			detail = fmt.Sprintf("%d pending tool approval%s.", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
+		} else {
+			detail = "A tool call needs approval before the run can continue."
+		}
+	case "deferred":
+		label = "Waiting for deferred input"
+		kind = "deferred"
+		detail = "The run will resume when deferred input is provided."
+	case "approval_and_deferred":
+		label = "Waiting for approval and deferred input"
+		kind = "mixed"
+		if pendingApprovalCount > 0 {
+			detail = fmt.Sprintf("%d tool approval%s pending and deferred input still required.", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
+		} else {
+			detail = "Approval and deferred input are both required before the run can continue."
+		}
+	case "":
+		label = "Waiting"
+		detail = "The run is paused."
+	default:
+		label = "Waiting"
+		detail = humanizeIdentifier(reason)
+		kind = "custom"
+	}
+	return label, detail, kind
+}
+
+func activityForRunStarted(ev core.RunStartedEvent) RunActivityView {
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Run started",
+		Detail:     summarizeInline(firstNonEmpty(ev.Prompt, "Prompt received."), 120),
+		OccurredAt: ev.RuntimeOccurredAt(),
+	}
+}
+
+func activityForRunCompleted(ev core.RunCompletedEvent, waitingReason string) RunActivityView {
+	activity := RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		OccurredAt: ev.RuntimeOccurredAt(),
+	}
+	switch {
+	case ev.Deferred:
+		label, detail, _ := waitingPresentation(waitingReason, 0)
+		activity.Label = "Run deferred"
+		activity.Detail = firstNonEmpty(detail, label)
+		activity.IsWaiting = true
+		activity.FinishState = "waiting"
+	case ev.Success:
+		activity.Label = "Run completed"
+		activity.Detail = "Finished successfully."
+		activity.FinishState = "completed"
+	case isCanceledRunError(ev.Error):
+		activity.Label = "Run aborted"
+		activity.Detail = summarizeInline(firstNonEmpty(ev.Error, "Execution cancelled."), 120)
+		activity.IsError = true
+		activity.FinishState = "aborted"
+	default:
+		activity.Label = "Run failed"
+		activity.Detail = summarizeInline(firstNonEmpty(ev.Error, "Run failed."), 120)
+		activity.IsError = true
+		activity.FinishState = "failed"
+	}
+	return activity
+}
+
+func activityForTurnStarted(ev core.TurnStartedEvent) RunActivityView {
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Turn started",
+		Detail:     fmt.Sprintf("Turn %d began.", ev.TurnNumber),
+		OccurredAt: ev.RuntimeOccurredAt(),
+		TurnNumber: ev.TurnNumber,
+	}
+}
+
+func activityForTurnCompleted(ev core.TurnCompletedEvent) RunActivityView {
+	detail := fmt.Sprintf("Turn %d finished", ev.TurnNumber)
+	if ev.Error != "" {
+		return RunActivityView{
+			Type:       ev.RuntimeEventType(),
+			Label:      "Turn failed",
+			Detail:     summarizeInline(ev.Error, 120),
+			OccurredAt: ev.RuntimeOccurredAt(),
+			IsError:    true,
+			TurnNumber: ev.TurnNumber,
+		}
+	}
+	flags := make([]string, 0, 2)
+	if ev.HasText {
+		flags = append(flags, "text")
+	}
+	if ev.HasToolCalls {
+		flags = append(flags, "tool calls")
+	}
+	if len(flags) > 0 {
+		detail += " · " + strings.Join(flags, ", ")
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Turn completed",
+		Detail:     detail + ".",
+		OccurredAt: ev.RuntimeOccurredAt(),
+		TurnNumber: ev.TurnNumber,
+	}
+}
+
+func activityForModelRequestStarted(ev core.ModelRequestStartedEvent) RunActivityView {
+	detail := fmt.Sprintf("%d messages sent to the model", ev.MessageCount)
+	if ev.TurnNumber > 0 {
+		detail = fmt.Sprintf("Turn %d · %s", ev.TurnNumber, detail)
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Model request",
+		Detail:     detail + ".",
+		OccurredAt: ev.RuntimeOccurredAt(),
+		TurnNumber: ev.TurnNumber,
+	}
+}
+
+func activityForModelResponseCompleted(ev core.ModelResponseCompletedEvent) RunActivityView {
+	parts := make([]string, 0, 5)
+	if ev.TurnNumber > 0 {
+		parts = append(parts, fmt.Sprintf("Turn %d", ev.TurnNumber))
+	}
+	parts = append(parts, fmt.Sprintf("%d input", ev.InputTokens), fmt.Sprintf("%d output", ev.OutputTokens))
+	if finish := strings.TrimSpace(ev.FinishReason); finish != "" {
+		parts = append(parts, finish)
+	}
+	if ev.HasToolCalls {
+		parts = append(parts, "tools")
+	}
+	if ev.HasText {
+		parts = append(parts, "text")
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Model response",
+		Detail:     strings.Join(parts, " · "),
+		OccurredAt: ev.RuntimeOccurredAt(),
+		TurnNumber: ev.TurnNumber,
+	}
+}
+
+func activityForToolCalled(ev core.ToolCalledEvent) RunActivityView {
+	detail := firstNonEmpty(ev.ToolName, "tool")
+	if args := summarizeInline(ev.ArgsJSON, 96); args != "" {
+		detail += " · " + args
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Tool called",
+		Detail:     detail,
+		OccurredAt: ev.RuntimeOccurredAt(),
+		ToolCallID: ev.ToolCallID,
+		ToolName:   ev.ToolName,
+	}
+}
+
+func activityForToolCompleted(ev core.ToolCompletedEvent) RunActivityView {
+	detail := firstNonEmpty(ev.ToolName, ev.ToolCallID, "tool")
+	if result := summarizeInline(ev.Result, 96); result != "" {
+		detail += " · " + result
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Tool completed",
+		Detail:     detail,
+		OccurredAt: ev.RuntimeOccurredAt(),
+		ToolCallID: ev.ToolCallID,
+		ToolName:   ev.ToolName,
+	}
+}
+
+func activityForToolFailed(ev core.ToolFailedEvent) RunActivityView {
+	detail := firstNonEmpty(ev.ToolName, ev.ToolCallID, "tool")
+	if failure := summarizeInline(ev.Error, 96); failure != "" {
+		detail += " · " + failure
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Tool failed",
+		Detail:     detail,
+		OccurredAt: ev.RuntimeOccurredAt(),
+		IsError:    true,
+		ToolCallID: ev.ToolCallID,
+		ToolName:   ev.ToolName,
+	}
+}
+
+func activityForApprovalRequested(ev core.ApprovalRequestedEvent) RunActivityView {
+	detail := firstNonEmpty(ev.ToolName, ev.ToolCallID, "tool")
+	if args := summarizeInline(ev.ArgsJSON, 96); args != "" {
+		detail += " · " + args
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Approval requested",
+		Detail:     detail,
+		OccurredAt: ev.RuntimeOccurredAt(),
+		IsWaiting:  true,
+		ToolCallID: ev.ToolCallID,
+		ToolName:   ev.ToolName,
+	}
+}
+
+func activityForApprovalResolved(ev core.ApprovalResolvedEvent) RunActivityView {
+	label := "Approval granted"
+	detail := firstNonEmpty(ev.ToolName, ev.ToolCallID, "tool")
+	if !ev.Approved {
+		label = "Approval denied"
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      label,
+		Detail:     detail,
+		OccurredAt: ev.RuntimeOccurredAt(),
+		IsError:    !ev.Approved,
+		ToolCallID: ev.ToolCallID,
+		ToolName:   ev.ToolName,
+	}
+}
+
+func activityForDeferredRequested(ev core.DeferredRequestedEvent) RunActivityView {
+	detail := firstNonEmpty(ev.ToolName, ev.ToolCallID, "deferred input")
+	if args := summarizeInline(ev.ArgsJSON, 96); args != "" {
+		detail += " · " + args
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Deferred input requested",
+		Detail:     detail,
+		OccurredAt: ev.RuntimeOccurredAt(),
+		IsWaiting:  true,
+		ToolCallID: ev.ToolCallID,
+		ToolName:   ev.ToolName,
+	}
+}
+
+func activityForDeferredResolved(ev core.DeferredResolvedEvent) RunActivityView {
+	label := "Deferred input received"
+	if ev.IsError {
+		label = "Deferred input failed"
+	}
+	detail := firstNonEmpty(ev.ToolName, ev.ToolCallID, "deferred input")
+	if content := summarizeInline(ev.Content, 96); content != "" {
+		detail += " · " + content
+	}
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      label,
+		Detail:     detail,
+		OccurredAt: ev.RuntimeOccurredAt(),
+		IsError:    ev.IsError,
+		ToolCallID: ev.ToolCallID,
+		ToolName:   ev.ToolName,
+	}
+}
+
+func activityForRunWaiting(ev core.RunWaitingEvent) RunActivityView {
+	label, detail, _ := waitingPresentation(ev.Reason, 0)
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      label,
+		Detail:     detail,
+		OccurredAt: ev.RuntimeOccurredAt(),
+		IsWaiting:  true,
+	}
+}
+
+func activityForRunResumed(ev core.RunResumedEvent) RunActivityView {
+	return RunActivityView{
+		Type:       ev.RuntimeEventType(),
+		Label:      "Run resumed",
+		Detail:     "Execution continued.",
+		OccurredAt: ev.RuntimeOccurredAt(),
+	}
+}
+
+func statusAllowsAbort(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "completed", "failed", "aborted", "cancelled":
+		return false
+	default:
+		return true
+	}
+}
+
+func pluralSuffix(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func joinActivitySummary(label, detail string) string {
+	label = strings.TrimSpace(label)
+	detail = strings.TrimSpace(detail)
+	switch {
+	case label == "":
+		return detail
+	case detail == "":
+		return label
+	default:
+		return label + " · " + detail
+	}
+}
+
+func classifyActivityKind(eventType string) string {
+	switch strings.TrimSpace(eventType) {
+	case core.RuntimeEventTypeRunStarted, core.RuntimeEventTypeRunCompleted:
+		return "run"
+	case core.RuntimeEventTypeTurnStarted, core.RuntimeEventTypeTurnCompleted:
+		return "turn"
+	case core.RuntimeEventTypeModelRequestStarted, core.RuntimeEventTypeModelResponseCompleted:
+		return "model"
+	case core.RuntimeEventTypeToolCalled, core.RuntimeEventTypeToolCompleted, core.RuntimeEventTypeToolFailed:
+		return "tool"
+	case core.RuntimeEventTypeApprovalRequested, core.RuntimeEventTypeApprovalResolved:
+		return "approval"
+	case core.RuntimeEventTypeDeferredRequested, core.RuntimeEventTypeDeferredResolved:
+		return "deferred"
+	case core.RuntimeEventTypeRunWaiting, core.RuntimeEventTypeRunResumed:
+		return "waiting"
+	default:
+		return firstNonEmpty(strings.TrimSpace(eventType), "activity")
+	}
+}
+
+func humanizeRuntimeEventType(eventType string) string {
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" {
+		return "Activity"
+	}
+	return humanizeIdentifier(eventType)
+}
+
+func humanizeRunStatus(status string) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "Run status"
+	}
+	return humanizeIdentifier(status)
+}
+
+func humanizeIdentifier(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "_", " "))
+	if value == "" {
+		return ""
+	}
+	parts := strings.Fields(value)
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, " ")
+}
+
+func summarizeInline(value string, max int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if value == "" || max <= 0 {
+		return value
+	}
+	if len(value) <= max {
+		return value
+	}
+	if max == 1 {
+		return "…"
+	}
+	return strings.TrimSpace(value[:max-1]) + "…"
+}
+
+func errString(err error, fallback string) string {
+	if err == nil {
+		return fallback
+	}
+	return err.Error()
 }
 
 func trimSummary(prompt string) string {
