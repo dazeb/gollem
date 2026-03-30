@@ -56,6 +56,8 @@ func main() {
 		runAgent()
 	case "debug":
 		runDebug()
+	case "serve":
+		runServe()
 	case "--help", "-h", "help":
 		printUsage()
 		os.Exit(0)
@@ -1744,6 +1746,7 @@ Usage:
 Commands:
   run     Run a coding agent with tools (for benchmarks and automation)
   debug   Run the interactive TUI debugger
+  serve   Start the browser dashboard UI server
 
 Run 'gollem <command> --help' for command-specific help.
 `)
@@ -1805,5 +1808,30 @@ Environment variables:
   LANGFUSE_SECRET_KEY      Langfuse secret key (enables tracing)
   LANGFUSE_PUBLIC_KEY      Langfuse public key
   LANGFUSE_BASE_URL        Langfuse API URL (default: https://cloud.langfuse.com)
+`)
+}
+
+func printServeUsage() {
+	fmt.Fprintf(os.Stderr, `gollem serve - Start the browser dashboard UI server
+
+Usage:
+  gollem serve [options]
+
+Options:
+  --port <n>              Local HTTP port to listen on (default: 8080)
+  --provider <name>       Model provider (auto-detected from API keys if not set)
+                          Available: anthropic, openai, vertexai, vertexai-anthropic
+  --model <name>          Model name (uses provider default if not set)
+  --location <region>     GCP region for vertexai providers (default: us-central1)
+  --project <id>          GCP project ID for vertexai providers (default: GOOGLE_CLOUD_PROJECT)
+  --workdir <path>        Working directory for tool-enabled runs (default: current directory)
+  --tools[=bool]          Enable coding tools in dashboard runs (default: false)
+  --open[=bool]           Open the dashboard URL in the default browser (default: false)
+  -h, --help              Show this help
+
+Examples:
+  gollem serve --provider anthropic --open
+  gollem serve --provider openai --model gpt-5.3 --port 9090
+  gollem serve --provider anthropic --tools --workdir /path/to/project
 `)
 }
