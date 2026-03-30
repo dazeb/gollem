@@ -1,24 +1,59 @@
 {{define "content"}}
-<section class="panel panel--hero">
-  <div>
-    <p class="eyebrow">Dark shell</p>
-    <h2>Dashboard</h2>
-    <p class="lede">A single-binary AGUI shell with embedded templates, CSS, htmx, and browser-side renderer hooks.</p>
+<section class="panel panel--hero panel--hero-grid">
+  <div class="hero-copy">
+    <div>
+      <p class="eyebrow">Launch surface</p>
+      <h2>Start a run</h2>
+      <p class="lede">Create a run, seed the prompt, and confirm which provider/model defaults <code>gollem serve</code> injected into the dashboard.</p>
+    </div>
+    <div class="stat-grid">
+      <article class="stat-card">
+        <span class="stat-card__label">Runs</span>
+        <strong>{{len .Runs}}</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-card__label">Provider default</span>
+        <strong>{{.RunStartDefaults.Provider}}</strong>
+      </article>
+      <article class="stat-card">
+        <span class="stat-card__label">Model default</span>
+        <strong>{{.RunStartDefaults.Model}}</strong>
+      </article>
+    </div>
   </div>
-  <div class="stat-grid">
-    <article class="stat-card">
-      <span class="stat-card__label">Runs</span>
-      <strong>{{len .Runs}}</strong>
-    </article>
-    <article class="stat-card">
-      <span class="stat-card__label">Transport</span>
-      <strong>HTMX-ready</strong>
-    </article>
-    <article class="stat-card">
-      <span class="stat-card__label">Assets</span>
-      <strong>Embedded</strong>
-    </article>
-  </div>
+
+  <form class="run-composer" action="/runs/start" method="post">
+    <div class="run-composer__header">
+      <div>
+        <p class="eyebrow">New run</p>
+        <h3>Compose launch details</h3>
+      </div>
+      <div class="run-defaults" aria-label="Serve defaults">
+        <span class="status status--running">{{.RunStartDefaults.Provider}}</span>
+        <span class="status status--pending">{{.RunStartDefaults.Model}}</span>
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <label class="field field--full">
+        <span class="field__label">Title</span>
+        <input type="text" name="title" placeholder="Bug triage, release review, docs pass…">
+      </label>
+      <label class="field field--full">
+        <span class="field__label">Summary</span>
+        <input type="text" name="summary" placeholder="Short context shown on the dashboard card.">
+      </label>
+      <label class="field field--full">
+        <span class="field__label">Prompt</span>
+        <textarea name="prompt" rows="8" placeholder="Describe what you want the run to do." required></textarea>
+      </label>
+    </div>
+
+    <div class="run-composer__footer">
+      <p class="muted">Submitting uses the active <strong>{{.RunStartDefaults.Provider}}</strong> / <strong>{{.RunStartDefaults.Model}}</strong> serve defaults.</p>
+      <button class="button" type="submit">Start run</button>
+    </div>
+  </form>
 </section>
 
 <section class="panel">
@@ -28,6 +63,7 @@
       <h3>Runs</h3>
     </div>
   </div>
+  {{if .Runs}}
   <div class="run-list">
     {{range .Runs}}
     <article class="run-card">
@@ -44,6 +80,11 @@
     </article>
     {{end}}
   </div>
+  {{else}}
+  <div class="empty-state">
+    <p class="muted">No runs yet. Use the composer above to launch the first one.</p>
+  </div>
+  {{end}}
 </section>
 {{end}}
 

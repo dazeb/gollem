@@ -19,11 +19,11 @@ import (
 
 func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	store := NewRunStateStore()
-	started := make(chan string, 1)
+	started := make(chan RunStartRequest, 1)
 	server := MustNewServer(
 		WithRunStore(store),
 		WithRunStarter(RunStarterFunc(func(_ context.Context, runtime *RunRuntime, req RunStartRequest) error {
-			started <- runtime.RunID + ":" + req.Prompt
+			started <- req
 			core.Publish(runtime.EventBus, core.RunStartedEvent{
 				RunID:     runtime.RunID,
 				Prompt:    req.Prompt,
@@ -34,8 +34,11 @@ func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	)
 
 	form := url.Values{
-		"title":  {"Test run"},
-		"prompt": {"hello world"},
+		"title":    {"Test run"},
+		"summary":  {"test summary"},
+		"prompt":   {"hello world"},
+		"provider": {"test-provider"},
+		"model":    {"test-model"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/runs/start", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -54,14 +57,34 @@ func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	if runID == "" {
 		t.Fatal("expected non-empty run id")
 	}
-	if _, ok := store.get(runID); !ok {
+	run, ok := store.get(runID)
+	if !ok {
 		t.Fatalf("expected run %q in store", runID)
+	}
+	view := run.Snapshot()
+	if view.Title != "Test run" {
+		t.Fatalf("title = %q, want Test run", view.Title)
+	}
+	if view.Summary != "test summary" {
+		t.Fatalf("summary = %q, want test summary", view.Summary)
+	}
+	if view.Provider != "test-provider" {
+		t.Fatalf("provider = %q, want test-provider", view.Provider)
+	}
+	if view.Model != "test-model" {
+		t.Fatalf("model = %q, want test-model", view.Model)
 	}
 
 	select {
 	case got := <-started:
-		if got != runID+":hello world" {
-			t.Fatalf("starter payload = %q, want %q", got, runID+":hello world")
+		if got.Prompt != "hello world" {
+			t.Fatalf("prompt = %q, want hello world", got.Prompt)
+		}
+		if got.Provider != "test-provider" {
+			t.Fatalf("provider = %q, want test-provider", got.Provider)
+		}
+		if got.Model != "test-model" {
+			t.Fatalf("model = %q, want test-model", got.Model)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for async starter")
@@ -127,6 +150,28 @@ func TestHandleStartRunRejectsInvalidBodies(t *testing.T) {
 	missingPromptRec := httptest.NewRecorder()
 	server.ServeHTTP(missingPromptRec, missingPrompt)
 	assertHTTPErrorContains(t, missingPromptRec, http.StatusBadRequest, "prompt is required")
+}
+
+func TestHandleIndexRendersRunComposerWithDefaults(t *testing.T) {
+	server := MustNewServer(WithRunStartDefaults(RunStartRequest{Provider: "anthropic", Model: "claude-opus-4-6"}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	assertHTMLContains(t, body,
+		"<form class=\"run-composer\" action=\"/runs/start\" method=\"post\">",
+		"name=\"title\"",
+		"name=\"summary\"",
+		"name=\"prompt\"",
+		"anthropic",
+		"claude-opus-4-6",
+		"Submitting uses the active <strong>anthropic</strong> / <strong>claude-opus-4-6</strong> serve defaults.",
+	)
 }
 
 func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
@@ -215,7 +260,7 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		">1<",
 	)
 
-	assetResp := mustDoRequest(t, client, mustNewRequest(t, http.MethodGet, ts.URL+"/static/style.css", "", nil))
+	assetResp := mustGET(t, client, ts.URL+"/static/style.css")
 	assetBody, err := io.ReadAll(assetResp.Body)
 	assetResp.Body.Close()
 	if err != nil {
@@ -296,6 +341,81 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		">5<",
 		">1<",
 	)
+}
+
+func TestHandleActionApproveFlowSupportsDecisionAliasForm(t *testing.T) {
+	store := NewRunStateStore()
+	server := MustNewServer(
+		WithRunStore(store),
+		WithRunStarter(RunStarterFunc(func(ctx context.Context, runtime *RunRuntime, req RunStartRequest) error {
+			now := time.Now().UTC()
+			core.Publish(runtime.EventBus, core.RunStartedEvent{RunID: runtime.RunID, Prompt: req.Prompt, StartedAt: now})
+			core.Publish(runtime.EventBus, core.ToolCalledEvent{RunID: runtime.RunID, ToolCallID: "tool_alias", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, CalledAt: now.Add(10 * time.Millisecond)})
+			core.Publish(runtime.EventBus, core.ApprovalRequestedEvent{RunID: runtime.RunID, ToolCallID: "tool_alias", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/out.txt"}`, RequestedAt: now.Add(20 * time.Millisecond)})
+			core.Publish(runtime.EventBus, core.RunWaitingEvent{RunID: runtime.RunID, Reason: "approval", WaitingAt: now.Add(30 * time.Millisecond)})
+
+			approved, err := runtime.ApprovalBridge.ToolApprovalFunc()(core.ContextWithToolCallID(ctx, "tool_alias"), "dangerous_write", `{"path":"/tmp/out.txt"}`)
+			if err != nil {
+				return err
+			}
+			if !approved {
+				return fmt.Errorf("expected approve alias flow")
+			}
+
+			resolvedAt := time.Now().UTC()
+			core.Publish(runtime.EventBus, core.RunResumedEvent{RunID: runtime.RunID, ResumedAt: resolvedAt})
+			core.Publish(runtime.EventBus, core.ApprovalResolvedEvent{RunID: runtime.RunID, ToolCallID: "tool_alias", ToolName: "dangerous_write", Approved: true, ResolvedAt: resolvedAt})
+			core.Publish(runtime.EventBus, core.RunCompletedEvent{RunID: runtime.RunID, Success: true, StartedAt: now, CompletedAt: resolvedAt.Add(10 * time.Millisecond)})
+			return nil
+		})),
+	)
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+	client := ts.Client()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+	startResp := mustPOSTForm(t, client, ts.URL+"/runs/start", url.Values{"prompt": {"alias approve"}})
+	defer startResp.Body.Close()
+	runID := strings.TrimPrefix(startResp.Header.Get("Location"), "/runs/")
+	if runID == "" {
+		t.Fatalf("redirect location = %q, want /runs/<id>", startResp.Header.Get("Location"))
+	}
+
+	run := waitForRun(t, store, runID)
+	waitForRunStatus(t, store, runID, "waiting")
+	waitForPendingApprovals(t, run, 1)
+
+	actionResp := mustPOSTForm(t, client, ts.URL+"/runs/"+runID+"/action", url.Values{
+		"decision":     {"approve"},
+		"session_id":   {"wrong-session"},
+		"tool_call_id": {"tool_alias"},
+		"reason":       {"ship alias"},
+	})
+	defer actionResp.Body.Close()
+	if actionResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(actionResp.Body)
+		t.Fatalf("approve alias status = %d, body=%s", actionResp.StatusCode, string(body))
+	}
+	var actionBody struct {
+		Action    string `json:"action"`
+		SessionID string `json:"session_id"`
+		Message   string `json:"message"`
+	}
+	if err := json.NewDecoder(actionResp.Body).Decode(&actionBody); err != nil {
+		t.Fatalf("decode approve alias response: %v", err)
+	}
+	if actionBody.Action != agui.ActionApproveToolCall {
+		t.Fatalf("approve alias action = %q, want %q", actionBody.Action, agui.ActionApproveToolCall)
+	}
+	if actionBody.SessionID != run.Session().ID {
+		t.Fatalf("approve alias session_id = %q, want %q", actionBody.SessionID, run.Session().ID)
+	}
+	if actionBody.Message != "ship alias" {
+		t.Fatalf("approve alias message = %q, want ship alias", actionBody.Message)
+	}
+
+	waitForRunStatus(t, store, runID, "completed")
 }
 
 func TestHandleActionDenyFlow(t *testing.T) {
@@ -428,6 +548,62 @@ func TestHandleActionAbortUsesRunSpecificSessionAndMarksRunAborted(t *testing.T)
 	}
 }
 
+func TestHandleActionAbortSupportsAbortAliasForm(t *testing.T) {
+	store := NewRunStateStore()
+	server := MustNewServer(
+		WithRunStore(store),
+		WithRunStarter(RunStarterFunc(func(ctx context.Context, runtime *RunRuntime, req RunStartRequest) error {
+			core.Publish(runtime.EventBus, core.RunStartedEvent{RunID: runtime.RunID, Prompt: req.Prompt, StartedAt: time.Now().UTC()})
+			<-ctx.Done()
+			return ctx.Err()
+		})),
+	)
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+	client := ts.Client()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+	startResp := mustPOSTForm(t, client, ts.URL+"/runs/start", url.Values{"prompt": {"abort alias"}})
+	defer startResp.Body.Close()
+	runID := strings.TrimPrefix(startResp.Header.Get("Location"), "/runs/")
+	if runID == "" {
+		t.Fatalf("redirect location = %q, want /runs/<id>", startResp.Header.Get("Location"))
+	}
+
+	run := waitForRun(t, store, runID)
+	waitForRunStatus(t, store, runID, "running")
+
+	actionResp := mustPOSTForm(t, client, ts.URL+"/runs/"+runID+"/action", url.Values{
+		"abort":      {"1"},
+		"session_id": {"wrong-session"},
+	})
+	defer actionResp.Body.Close()
+	if actionResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(actionResp.Body)
+		t.Fatalf("abort alias status = %d, body=%s", actionResp.StatusCode, string(body))
+	}
+	var actionBody struct {
+		Action    string `json:"action"`
+		SessionID string `json:"session_id"`
+		Message   string `json:"message"`
+	}
+	if err := json.NewDecoder(actionResp.Body).Decode(&actionBody); err != nil {
+		t.Fatalf("decode abort alias response: %v", err)
+	}
+	if actionBody.Action != agui.ActionAbortSession {
+		t.Fatalf("abort alias action = %q, want %q", actionBody.Action, agui.ActionAbortSession)
+	}
+	if actionBody.SessionID != run.Session().ID {
+		t.Fatalf("abort alias session_id = %q, want %q", actionBody.SessionID, run.Session().ID)
+	}
+	if actionBody.Message != "session aborted" {
+		t.Fatalf("abort alias message = %q, want session aborted", actionBody.Message)
+	}
+
+	waitForRunStatus(t, store, runID, "aborted")
+}
+
 func TestHandleActionRejectsBadFormInput(t *testing.T) {
 	store := NewRunStateStore()
 	server := MustNewServer(WithRunStore(store))
@@ -485,6 +661,70 @@ func TestRunStateStoreCreateRejectsDuplicateIDs(t *testing.T) {
 	}
 }
 
+func mustPOSTForm(t *testing.T, client *http.Client, target string, form url.Values) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("new POST form request %s: %v", target, err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST form %s: %v", target, err)
+	}
+	return resp
+}
+
+func mustPOSTJSON(t *testing.T, client *http.Client, target, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new POST json request %s: %v", target, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST json %s: %v", target, err)
+	}
+	return resp
+}
+
+func mustGET(t *testing.T, client *http.Client, target string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatalf("new GET request %s: %v", target, err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", target, err)
+	}
+	return resp
+}
+
+func mustGETBody(t *testing.T, client *http.Client, target string) string {
+	t.Helper()
+	resp := mustGET(t, client, target)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body %s: %v", target, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s status = %d, body=%s", target, resp.StatusCode, string(body))
+	}
+	return string(body)
+}
+
+func assertHTMLContains(t *testing.T, body string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func assertStartedRunRequestSet(t *testing.T, started <-chan RunStartRequest, wants ...RunStartRequest) {
 	t.Helper()
 	remaining := append([]RunStartRequest(nil), wants...)
@@ -516,64 +756,6 @@ func assertHTTPErrorContains(t *testing.T, rec *httptest.ResponseRecorder, wantS
 	}
 	if !strings.Contains(rec.Body.String(), wantText) {
 		t.Fatalf("body %q missing %q", rec.Body.String(), wantText)
-	}
-}
-
-func mustNewRequest(t *testing.T, method, target, body string, mutate func(*http.Request)) *http.Request {
-	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("new request %s %s: %v", method, target, err)
-	}
-	if mutate != nil {
-		mutate(req)
-	}
-	return req
-}
-
-func mustDoRequest(t *testing.T, client *http.Client, req *http.Request) *http.Response {
-	t.Helper()
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", req.Method, req.URL.String(), err)
-	}
-	return resp
-}
-
-func mustPOSTForm(t *testing.T, client *http.Client, target string, form url.Values) *http.Response {
-	t.Helper()
-	return mustDoRequest(t, client, mustNewRequest(t, http.MethodPost, target, form.Encode(), func(req *http.Request) {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}))
-}
-
-func mustPOSTJSON(t *testing.T, client *http.Client, target, body string) *http.Response {
-	t.Helper()
-	return mustDoRequest(t, client, mustNewRequest(t, http.MethodPost, target, body, func(req *http.Request) {
-		req.Header.Set("Content-Type", "application/json")
-	}))
-}
-
-func mustGETBody(t *testing.T, client *http.Client, target string) string {
-	t.Helper()
-	resp := mustDoRequest(t, client, mustNewRequest(t, http.MethodGet, target, "", nil))
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body %s: %v", target, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s status = %d, body=%s", target, resp.StatusCode, string(body))
-	}
-	return string(body)
-}
-
-func assertHTMLContains(t *testing.T, body string, wants ...string) {
-	t.Helper()
-	for _, want := range wants {
-		if !strings.Contains(body, want) {
-			t.Fatalf("body missing %q:\n%s", want, body)
-		}
 	}
 }
 
@@ -666,7 +848,14 @@ func (r *uiSSEStreamReader) Next() uiSSEFrame {
 
 func mustOpenUISSE(t *testing.T, client *http.Client, target string) *http.Response {
 	t.Helper()
-	resp := mustDoRequest(t, client, mustNewRequest(t, http.MethodGet, target, "", nil))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatalf("new SSE request: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE stream: %v", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -678,8 +867,7 @@ func mustOpenUISSE(t *testing.T, client *http.Client, target string) *http.Respo
 func readUISSEFrames(t *testing.T, reader *uiSSEStreamReader, count int) []map[string]any {
 	t.Helper()
 	frames := make([]map[string]any, 0, count)
-	for i := range make([]struct{}, count) {
-		_ = i
+	for range count {
 		frame := reader.Next()
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(frame.data), &payload); err != nil {

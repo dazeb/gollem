@@ -142,6 +142,41 @@ func TestActionHandler_ApproveToolCallForm(t *testing.T) {
 	}
 }
 
+func TestActionHandler_ApproveToolCallFormWithDecisionAlias(t *testing.T) {
+	bridge := agui.NewApprovalBridge()
+	approvedCh := waitForApprovalResult(t, bridge, "tc_form_alias")
+
+	h := NewActionHandler(ActionHandlerConfig{
+		Runtimes: map[string]*SessionRuntime{
+			"ses_form": {ApprovalBridge: bridge},
+		},
+	})
+
+	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
+		"decision":     {"approve"},
+		"session_id":   {"ses_form"},
+		"tool_call_id": {"tc_form_alias"},
+		"reason":       {"approved via alias"},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	select {
+	case approved := <-approvedCh:
+		if !approved {
+			t.Fatal("expected approved=true")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for approval resolution")
+	}
+
+	var body successResponse
+	decodeJSONBody(t, resp, &body)
+	if body.Action != agui.ActionApproveToolCall || body.ToolCallID != "tc_form_alias" || body.Message != "approved via alias" {
+		t.Fatalf("unexpected response: %+v", body)
+	}
+}
+
 func TestActionHandler_DenyToolCallForm(t *testing.T) {
 	bridge := agui.NewApprovalBridge()
 	approvedCh := waitForApprovalResult(t, bridge, "tc_deny_form")
@@ -177,6 +212,41 @@ func TestActionHandler_DenyToolCallForm(t *testing.T) {
 	}
 }
 
+func TestActionHandler_DenyToolCallFormWithBooleanFallback(t *testing.T) {
+	bridge := agui.NewApprovalBridge()
+	approvedCh := waitForApprovalResult(t, bridge, "tc_deny_bool")
+
+	h := NewActionHandler(ActionHandlerConfig{
+		Runtimes: map[string]*SessionRuntime{
+			"ses_form": {ApprovalBridge: bridge},
+		},
+	})
+
+	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
+		"session_id":   {"ses_form"},
+		"tool_call_id": {"tc_deny_bool"},
+		"approved":     {"false"},
+		"reason":       {"denied via bool"},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	select {
+	case approved := <-approvedCh:
+		if approved {
+			t.Fatal("expected approved=false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for denial resolution")
+	}
+
+	var body successResponse
+	decodeJSONBody(t, resp, &body)
+	if body.Action != agui.ActionDenyToolCall || body.ToolCallID != "tc_deny_bool" || body.Message != "denied via bool" {
+		t.Fatalf("unexpected response: %+v", body)
+	}
+}
+
 func TestActionHandler_AbortSessionForm(t *testing.T) {
 	session := agui.NewSession(agui.SessionModeCoreRun)
 	var cancelled atomic.Int32
@@ -193,6 +263,35 @@ func TestActionHandler_AbortSessionForm(t *testing.T) {
 
 	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
 		"type":       {agui.ActionAbortSession},
+		"session_id": {"ses_form"},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if cancelled.Load() != 1 {
+		t.Fatalf("cancel called %d times, want 1", cancelled.Load())
+	}
+	if got := session.GetStatus(); got != agui.SessionStatusAborted {
+		t.Fatalf("session status = %q, want %q", got, agui.SessionStatusAborted)
+	}
+}
+
+func TestActionHandler_AbortSessionFormWithAbortAlias(t *testing.T) {
+	session := agui.NewSession(agui.SessionModeCoreRun)
+	var cancelled atomic.Int32
+	h := NewActionHandler(ActionHandlerConfig{
+		Runtimes: map[string]*SessionRuntime{
+			"ses_form": {
+				Session: session,
+				Cancel: func() {
+					cancelled.Add(1)
+				},
+			},
+		},
+	})
+
+	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
+		"abort":      {"1"},
 		"session_id": {"ses_form"},
 	})
 	if resp.Code != http.StatusOK {

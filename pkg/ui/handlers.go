@@ -88,13 +88,14 @@ var liveSidebarTemplate = template.Must(template.New("live_sidebar").Parse(`
 `))
 
 type pageData struct {
-	AppTitle    string
-	PageTitle   string
-	Path        string
-	CurrentYear int
-	IsRunPage   bool
-	Runs        []RunView
-	Run         RunView
+	AppTitle         string
+	PageTitle        string
+	Path             string
+	CurrentYear      int
+	IsRunPage        bool
+	Runs             []RunView
+	Run              RunView
+	RunStartDefaults RunStartRequest
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -104,11 +105,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "index", pageData{
-		AppTitle:    "gollem",
-		PageTitle:   "Dashboard",
-		Path:        r.URL.Path,
-		CurrentYear: time.Now().Year(),
-		Runs:        s.runs.listViews(),
+		AppTitle:         "gollem",
+		PageTitle:        "Dashboard",
+		Path:             r.URL.Path,
+		CurrentYear:      time.Now().Year(),
+		Runs:             s.runs.listViews(),
+		RunStartDefaults: s.runStartDefaults,
 	})
 }
 
@@ -245,18 +247,25 @@ func decodeAction(r *http.Request) (agui.Action, error) {
 	if err := parseRequestForm(r); err != nil {
 		return agui.Action{}, err
 	}
-	action.Type = r.FormValue("type")
+	action.Type = parseFormActionType(r)
 	action.SessionID = r.FormValue("session_id")
 	action.ToolCallID = r.FormValue("tool_call_id")
 	action.ToolName = r.FormValue("tool_name")
 	action.Content = r.FormValue("content")
-	action.Message = r.FormValue("message")
+	action.Message = firstNonEmptyFormValue(r, "message", "reason")
 
 	approved, err := parseOptionalBoolFormValue(r, "approved")
 	if err != nil {
 		return agui.Action{}, err
 	}
 	action.Approved = approved
+	if action.Type == "" && approved != nil {
+		if *approved {
+			action.Type = agui.ActionApproveToolCall
+		} else {
+			action.Type = agui.ActionDenyToolCall
+		}
+	}
 
 	isError, err := parseOptionalBoolFormValue(r, "is_error")
 	if err != nil {
@@ -325,6 +334,47 @@ func parseOptionalUint64FormValue(r *http.Request, key string) (*uint64, error) 
 		return nil, fmt.Errorf("invalid form body: %s must be an unsigned integer", key)
 	}
 	return &parsed, nil
+}
+
+func parseFormActionType(r *http.Request) string {
+	if actionType := strings.TrimSpace(r.FormValue("type")); actionType != "" {
+		return actionType
+	}
+	if actionType := normalizeFormActionType(firstNonEmptyFormValue(r, "decision", "action")); actionType != "" {
+		return actionType
+	}
+	if firstNonEmptyFormValue(r, "approve") != "" {
+		return agui.ActionApproveToolCall
+	}
+	if firstNonEmptyFormValue(r, "deny", "reject") != "" {
+		return agui.ActionDenyToolCall
+	}
+	if firstNonEmptyFormValue(r, "abort", "abort_session") != "" {
+		return agui.ActionAbortSession
+	}
+	return ""
+}
+
+func normalizeFormActionType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case agui.ActionApproveToolCall, "approve", "approved":
+		return agui.ActionApproveToolCall
+	case agui.ActionDenyToolCall, "deny", "denied", "reject", "rejected":
+		return agui.ActionDenyToolCall
+	case agui.ActionAbortSession, "abort", "aborted", "cancel", "cancelled", "canceled":
+		return agui.ActionAbortSession
+	default:
+		return ""
+	}
+}
+
+func firstNonEmptyFormValue(r *http.Request, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(r.FormValue(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type ioNopCloser struct {

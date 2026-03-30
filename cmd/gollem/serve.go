@@ -89,7 +89,10 @@ func runServe() {
 		model:     model,
 	}
 
-	server, err := ui.NewServer(ui.WithRunStarter(newServeRunStarter(runCfg)))
+	server, err := ui.NewServer(
+		ui.WithRunStarter(newServeRunStarter(runCfg)),
+		ui.WithRunStartDefaults(ui.RunStartRequest{Provider: f.provider, Model: f.modelName}),
+	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error creating ui server: %v\n", err)
 		os.Exit(1)

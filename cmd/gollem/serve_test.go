@@ -133,7 +133,10 @@ func TestServeHandlerWiringRunsModelAndStreamsToSSE(t *testing.T) {
 		model:     modelutil.NewRetryModel(model, modelutil.DefaultRetryConfig()),
 	}
 
-	server := ui.MustNewServer(ui.WithRunStarter(newServeRunStarter(cfg)))
+	server := ui.MustNewServer(
+		ui.WithRunStarter(newServeRunStarter(cfg)),
+		ui.WithRunStartDefaults(ui.RunStartRequest{Provider: cfg.provider, Model: cfg.modelName}),
+	)
 	handler := withRunStartDefaults(server, ui.RunStartRequest{Provider: cfg.provider, Model: cfg.modelName})
 
 	ts := httptest.NewServer(handler)
@@ -153,7 +156,20 @@ func TestServeHandlerWiringRunsModelAndStreamsToSSE(t *testing.T) {
 	}
 
 	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID+"/sidebar", "completed", "openai", "serve-test")
-	assertServeBodyContains(t, mustServeGETBody(t, client, ts.URL+"/"), "Serve wiring", "openai / serve-test", "/runs/"+runID)
+	assertServeBodyContains(t, mustServeGETBody(t, client, ts.URL+"/"),
+		"Start a run",
+		"Compose launch details",
+		"name=\"title\"",
+		"name=\"summary\"",
+		"name=\"prompt\"",
+		"Provider default",
+		"Model default",
+		"openai",
+		"serve-test",
+		"Serve wiring",
+		"openai / serve-test",
+		"/runs/"+runID,
+	)
 	assertServeBodyContains(t, mustServeGETBody(t, client, ts.URL+"/runs/"+runID), "Serve wiring", "stream this", "/runs/"+runID+"/events")
 
 	eventResp := mustServeOpenSSE(t, client, ts.URL+"/runs/"+runID+"/events")
@@ -183,6 +199,7 @@ func TestServeHandlerStartRouteInjectsDefaultsAndSupportsAbortAction(t *testing.
 			<-ctx.Done()
 			return ctx.Err()
 		})),
+		ui.WithRunStartDefaults(ui.RunStartRequest{Provider: "openai", Model: "serve-test"}),
 	)
 	handler := withRunStartDefaults(server, ui.RunStartRequest{Provider: "openai", Model: "serve-test"})
 
@@ -202,7 +219,14 @@ func TestServeHandlerStartRouteInjectsDefaultsAndSupportsAbortAction(t *testing.
 		t.Fatalf("redirect location = %q, want /runs/<id>", startResp.Header.Get("Location"))
 	}
 
-	waitForServeBodyContains(t, client, ts.URL+"/", "Serve defaults", "openai / serve-test", "/runs/"+runID)
+	waitForServeBodyContains(t, client, ts.URL+"/",
+		"Start a run",
+		"Compose launch details",
+		"Submitting uses the active <strong>openai</strong> / <strong>serve-test</strong> serve defaults.",
+		"Serve defaults",
+		"openai / serve-test",
+		"/runs/"+runID,
+	)
 	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID, "Serve defaults", "wire defaults", "/runs/"+runID+"/events")
 	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID+"/sidebar", "running", "openai", "serve-test")
 
@@ -335,14 +359,28 @@ func (s *serveStream) Close() error                  { return nil }
 
 func mustServePOSTJSON(t *testing.T, client *http.Client, target, body string) *http.Response {
 	t.Helper()
-	return mustServeDoRequest(t, client, mustServeNewRequest(t, http.MethodPost, target, body, func(req *http.Request) {
-		req.Header.Set("Content-Type", "application/json")
-	}))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new POST request %s: %v", target, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", target, err)
+	}
+	return resp
 }
 
 func mustServeGETBody(t *testing.T, client *http.Client, target string) string {
 	t.Helper()
-	resp := mustServeDoRequest(t, client, mustServeNewRequest(t, http.MethodGet, target, "", nil))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatalf("new GET request %s: %v", target, err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", target, err)
+	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -433,7 +471,14 @@ func (r *serveSSEStreamReader) Next() map[string]any {
 
 func mustServeOpenSSE(t *testing.T, client *http.Client, target string) *http.Response {
 	t.Helper()
-	resp := mustServeDoRequest(t, client, mustServeNewRequest(t, http.MethodGet, target, "", nil))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatalf("new SSE request: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE stream: %v", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -445,32 +490,10 @@ func mustServeOpenSSE(t *testing.T, client *http.Client, target string) *http.Re
 func readServeSSEFrames(t *testing.T, reader *serveSSEStreamReader, count int) []map[string]any {
 	t.Helper()
 	frames := make([]map[string]any, 0, count)
-	for i := range make([]struct{}, count) {
-		_ = i
+	for range count {
 		frames = append(frames, reader.Next())
 	}
 	return frames
-}
-
-func mustServeNewRequest(t *testing.T, method, target, body string, mutate func(*http.Request)) *http.Request {
-	t.Helper()
-	req, err := http.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("new request %s %s: %v", method, target, err)
-	}
-	if mutate != nil {
-		mutate(req)
-	}
-	return req
-}
-
-func mustServeDoRequest(t *testing.T, client *http.Client, req *http.Request) *http.Response {
-	t.Helper()
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", req.Method, req.URL.String(), err)
-	}
-	return resp
 }
 
 func assertServeFrameTypes(t *testing.T, frames []map[string]any, wants ...string) {
