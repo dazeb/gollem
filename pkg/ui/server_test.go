@@ -180,6 +180,101 @@ func TestHandleIndexRendersRunComposerWithDefaults(t *testing.T) {
 	)
 }
 
+func TestDashboardComposerBrowserFlowRendersSubmittedRunAndSidebarControls(t *testing.T) {
+	store := NewRunStateStore()
+	server := MustNewServer(
+		WithRunStore(store),
+		WithRunStarter(RunStarterFunc(func(ctx context.Context, runtime *RunRuntime, req RunStartRequest) error {
+			now := time.Now().UTC()
+			core.Publish(runtime.EventBus, core.RunStartedEvent{RunID: runtime.RunID, Prompt: req.Prompt, StartedAt: now})
+			core.Publish(runtime.EventBus, core.ToolCalledEvent{RunID: runtime.RunID, ToolCallID: "tool_browser", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/browser.txt"}`, CalledAt: now.Add(10 * time.Millisecond)})
+			core.Publish(runtime.EventBus, core.ApprovalRequestedEvent{RunID: runtime.RunID, ToolCallID: "tool_browser", ToolName: "dangerous_write", ArgsJSON: `{"path":"/tmp/browser.txt"}`, RequestedAt: now.Add(20 * time.Millisecond)})
+			core.Publish(runtime.EventBus, core.RunWaitingEvent{RunID: runtime.RunID, Reason: "approval", WaitingAt: now.Add(30 * time.Millisecond)})
+
+			_, err := runtime.ApprovalBridge.ToolApprovalFunc()(core.ContextWithToolCallID(ctx, "tool_browser"), "dangerous_write", `{"path":"/tmp/browser.txt"}`)
+			return err
+		})),
+	)
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+	client := ts.Client()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+	dashboard := mustGETBody(t, client, ts.URL+"/")
+	assertHTMLContains(t, dashboard,
+		"Dashboard",
+		"Start a run",
+		"Compose launch details",
+		"<form class=\"run-composer\" action=\"/runs/start\" method=\"post\">",
+		"name=\"title\"",
+		"name=\"summary\"",
+		"name=\"prompt\"",
+	)
+
+	startResp := mustPOSTForm(t, client, ts.URL+"/runs/start", url.Values{
+		"title":   {"Browser flow"},
+		"summary": {"submitted from the dashboard"},
+		"prompt":  {"wait for approval"},
+	})
+	defer startResp.Body.Close()
+	if startResp.StatusCode != http.StatusSeeOther {
+		body, _ := io.ReadAll(startResp.Body)
+		t.Fatalf("start status = %d, want %d, body=%s", startResp.StatusCode, http.StatusSeeOther, string(body))
+	}
+	runID := strings.TrimPrefix(startResp.Header.Get("Location"), "/runs/")
+	if runID == "" {
+		t.Fatalf("redirect location = %q, want /runs/<id>", startResp.Header.Get("Location"))
+	}
+
+	run := waitForRun(t, store, runID)
+	waitForRunStatus(t, store, runID, "waiting")
+	waitForPendingApprovals(t, run, 1)
+
+	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/"),
+		"Browser flow",
+		"submitted from the dashboard",
+		"ui / stream",
+		"/runs/"+runID,
+	)
+	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID),
+		"Browser flow",
+		"submitted from the dashboard",
+		"data-run-scene",
+		"data-run-canvas",
+		"data-run-event-log",
+		"1 pending tool approval",
+		"Approve",
+		"Deny",
+		"Abort run",
+	)
+	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
+		"sidebar-control-strip",
+		"hx-get=\"/runs/"+runID+"/sidebar\"",
+		"hx-trigger=\"every 2s\"",
+		"data-sidebar-live=\"true\"",
+		"hx-post=\"/runs/"+runID+"/action\"",
+		"name=\"type\" value=\"abort_session\"",
+		"name=\"type\" value=\"approve_tool_call\"",
+		"name=\"type\" value=\"deny_tool_call\"",
+		">Approve</button>",
+		">Deny</button>",
+		">Abort run</button>",
+		">Open run</a>",
+		">Dashboard</a>",
+		"dangerous_write",
+		"tool_browser",
+	)
+
+	abortResp := mustPOSTForm(t, client, ts.URL+"/runs/"+runID+"/action", url.Values{"type": {agui.ActionAbortSession}, "session_id": {"wrong-session"}})
+	defer abortResp.Body.Close()
+	if abortResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(abortResp.Body)
+		t.Fatalf("abort status = %d, body=%s", abortResp.StatusCode, string(body))
+	}
+	waitForRunStatus(t, store, runID, "aborted")
+}
+
 func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 	store := NewRunStateStore()
 	server := MustNewServer(
