@@ -908,58 +908,37 @@ class RunSceneRenderer {
     const waitingReason = snapshot.waiting_reason || (pendingToolIds.size ? 'approval/deferred' : '');
     if (waitingReason) {
       this.scene.customEventState.waiting = true;
-      this.updateWaitingState(waitingReason, snapshot);
-      this.updateStatus('waiting');
       this.triggerTransition('waiting');
       if (!pendingToolIds.size) {
         this.pushNotice('Run waiting', waitingReason, appliedAt);
       }
     } else {
       this.scene.customEventState.waiting = false;
-      this.updateWaitingState('', snapshot);
       if (!this.hasPendingWaitingSignals()) {
         this.clearWaitingState();
       }
     }
 
-    if (snapshot.status) {
-      if (snapshot.status === 'completed' && this.hasPendingWaitingSignals()) {
-        this.updateStatus('waiting');
+    const snapshotStatus = snapshot.status || this.root.dataset.runStatus || this.scene.runStatus;
+    if (snapshotStatus) {
+      if (snapshotStatus === 'completed' && this.hasPendingWaitingSignals()) {
+        this.triggerTransition('waiting');
       } else {
-        this.updateStatus(snapshot.status);
-        if (snapshot.status !== 'waiting' && !this.hasPendingWaitingSignals()) {
+        if (snapshotStatus === 'completed') {
+          this.triggerTransition('finished');
+        } else if (snapshotStatus === 'failed' || snapshotStatus === 'aborted' || snapshotStatus === 'cancelled') {
+          this.triggerTransition('error');
+        } else if (snapshotStatus === 'waiting') {
+          this.triggerTransition('waiting');
+        } else if (snapshotStatus === 'running') {
+          this.triggerTransition('resumed');
+        }
+        if (snapshotStatus !== 'waiting' && !this.hasPendingWaitingSignals()) {
           this.clearWaitingState();
         }
       }
     }
 
-    applySceneState(this.root, {
-      status: {
-        code: this.scene.runStatus,
-        label: this.root.dataset.runStatusLabel || '',
-        tone: this.root.dataset.runStatusTone || this.scene.runStatus,
-        detail: this.root.dataset.runStatusDetail || '',
-        isWaiting: this.scene.runStatus === 'waiting' || this.hasPendingWaitingSignals(),
-      },
-      waiting: {
-        active: this.hasPendingWaitingSignals(),
-        reason: this.scene.waitingReason || snapshot.waiting_reason || '',
-        label: this.root.dataset.runWaitingLabel || '',
-        detail: this.root.dataset.runWaitingDetail || '',
-        summary: this.root.dataset.runWaitingSummary || '',
-        pendingKind: this.root.dataset.runWaitingPendingKind || '',
-        approvalPendingCount: Object.keys(approvals).length,
-        statusLabel: this.root.dataset.runWaitingStatusLabel || this.root.dataset.runStatusLabel || '',
-      },
-      lastEvent: {
-        type: snapshot.last_event_type || this.root.dataset.runLastEventType || 'snapshot',
-        label: snapshot.last_event_label || this.root.dataset.runLastEventLabel || 'Session snapshot',
-        summary: snapshot.last_event_summary || this.root.dataset.runLastEventSummary || `Snapshot seq ${snapshot.snapshot_sequence || seq || '—'}`,
-        detail: snapshot.last_event_detail || this.root.dataset.runLastEventDetail || '',
-        occurredLabel: snapshot.last_event_occurred_label || this.root.dataset.runLastEventOccurredLabel || '',
-        tone: snapshot.last_event_tone || this.root.dataset.runLastEventTone || 'info',
-      },
-    });
     syncRendererSceneState(this);
     this.setLastEventMeta(seq, this.root.dataset.runLastEventLabel || 'Session snapshot');
   }
@@ -1236,12 +1215,14 @@ class RunSceneRenderer {
   updateWaitingState(reason = '', snapshot = null) {
     const nextReason = compactWhitespace(reason || '');
     const changed = nextReason !== this.scene.waitingReason;
+    const waitingLabel = compactWhitespace(this.root.dataset.runWaitingLabel || humanizeCode(nextReason, 'Active'));
     this.scene.waitingReason = nextReason;
     this.scene.waitingSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : this.scene.waitingSnapshot;
     this.root.dataset.sceneWaiting = nextReason ? 'true' : 'false';
     this.root.dataset.sceneWaitingReason = nextReason || '';
     if (this.waitingReasonTarget) {
-      this.waitingReasonTarget.textContent = nextReason || 'active';
+      this.waitingReasonTarget.textContent = waitingLabel || 'Active';
+      this.waitingReasonTarget.title = compactWhitespace(this.root.dataset.runWaitingSummary || this.root.dataset.runWaitingDetail || waitingLabel);
     }
     if (changed) {
       this.invalidateLayout('waiting');
@@ -1278,6 +1259,7 @@ class RunSceneRenderer {
   updateStatus(status) {
     const next = status || this.scene.runStatus || 'running';
     const changed = next !== this.scene.runStatus;
+    const statusLabel = compactWhitespace(this.root.dataset.runStatusLabel || humanizeCode(next, 'Run status'));
     this.scene.runStatus = next;
     this.root.dataset.sceneStatus = next;
     if (changed) {
@@ -1289,19 +1271,20 @@ class RunSceneRenderer {
       this.root.dataset.sceneWaiting = 'false';
       this.root.dataset.sceneWaitingReason = '';
       if (this.waitingReasonTarget) {
-        this.waitingReasonTarget.textContent = 'active';
+        this.waitingReasonTarget.textContent = compactWhitespace(this.root.dataset.runWaitingLabel || 'Active');
+        this.waitingReasonTarget.title = compactWhitespace(this.root.dataset.runWaitingSummary || this.root.dataset.runWaitingDetail || this.root.dataset.runWaitingLabel || 'Active');
       }
     }
     this.statusTargets.forEach((target) => {
       if (!target) {
         return;
       }
-      target.textContent = this.scene.runStatus;
+      target.textContent = statusLabel;
       const baseClasses = Array.from(target.classList).filter((name) => !name.startsWith('status--'));
       target.className = baseClasses.concat(`status--${this.scene.runStatus}`).join(' ');
     });
     if (this.streamStateTarget) {
-      this.streamStateTarget.textContent = this.scene.runStatus;
+      this.streamStateTarget.textContent = statusLabel;
     }
   }
 
@@ -1313,7 +1296,7 @@ class RunSceneRenderer {
       this.connectionTarget.textContent = `SSE ${connection}`;
     }
     if (this.streamStateTarget) {
-      this.streamStateTarget.textContent = this.scene.runStatus;
+      this.streamStateTarget.textContent = compactWhitespace(this.root.dataset.runStatusLabel || this.scene.runStatus);
     }
     this.scheduleRender();
   }
