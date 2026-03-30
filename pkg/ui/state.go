@@ -90,6 +90,7 @@ type RunWaitingView struct {
 	Reason               string
 	Label                string
 	Detail               string
+	Summary              string
 	PendingKind          string
 	ApprovalPendingCount int
 	StatusLabel          string
@@ -104,7 +105,9 @@ type RunControlsView struct {
 	HasRecentActivity     bool
 	LastEventType         string
 	LastEventLabel        string
+	LastEventSummary      string
 	LastActivitySummary   string
+	LastEventTimeLabel    string
 	LastActivityTimeLabel string
 	StatusLabel           string
 	Summary               string
@@ -685,11 +688,13 @@ func buildWaitingView(status, reason string, pendingApprovalCount int) RunWaitin
 		return RunWaitingView{}
 	}
 	label, detail, kind := waitingPresentation(reason, pendingApprovalCount)
+	summary := firstNonEmpty(joinActivitySummary(label, detail), label, detail)
 	return RunWaitingView{
 		Active:               true,
 		Reason:               reason,
 		Label:                label,
 		Detail:               detail,
+		Summary:              summary,
 		PendingKind:          kind,
 		ApprovalPendingCount: pendingApprovalCount,
 		StatusLabel:          humanizeRunStatus(status),
@@ -795,19 +800,25 @@ func protocolEventTone(eventType string) string {
 func buildControlsView(status RunStatusView, waiting RunWaitingView, pendingApprovalCount int, latest *RunActivityView, latestProtocol *RunProtocolEventView, hasRecentActivity bool) RunControlsView {
 	lastEventType := status.Code
 	lastEventLabel := firstNonEmpty(waiting.Label, status.Label)
-	lastActivitySummary := lastEventLabel
+	lastEventSummary := firstNonEmpty(waiting.Summary, status.Detail, lastEventLabel)
+	lastActivitySummary := lastEventSummary
+	lastEventTimeLabel := ""
 	lastActivityTimeLabel := ""
 	if latestProtocol != nil {
 		lastEventType = firstNonEmpty(latestProtocol.Type, lastEventType)
 		lastEventLabel = firstNonEmpty(latestProtocol.Label, lastEventLabel)
-		lastActivitySummary = firstNonEmpty(latestProtocol.Summary, lastActivitySummary)
-		lastActivityTimeLabel = firstNonEmpty(latestProtocol.OccurredLabel, lastActivityTimeLabel)
+		lastEventSummary = firstNonEmpty(latestProtocol.Summary, joinActivitySummary(latestProtocol.Label, latestProtocol.Summary), lastEventSummary)
+		lastEventTimeLabel = firstNonEmpty(latestProtocol.OccurredLabel, lastEventTimeLabel)
+		lastActivitySummary = firstNonEmpty(lastEventSummary, lastActivitySummary)
+		lastActivityTimeLabel = firstNonEmpty(lastEventTimeLabel, lastActivityTimeLabel)
 	}
 	if latest != nil {
 		lastEventType = firstNonEmpty(latest.Type, lastEventType)
 		lastEventLabel = firstNonEmpty(latest.Label, lastEventLabel)
-		lastActivitySummary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), lastActivitySummary)
-		lastActivityTimeLabel = firstNonEmpty(latest.OccurredLabel, lastActivityTimeLabel)
+		lastEventSummary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), lastEventSummary)
+		lastEventTimeLabel = firstNonEmpty(latest.OccurredLabel, lastEventTimeLabel)
+		lastActivitySummary = firstNonEmpty(latest.Summary, joinActivitySummary(latest.Label, latest.Detail), lastActivitySummary, lastEventSummary)
+		lastActivityTimeLabel = firstNonEmpty(latest.OccurredLabel, lastActivityTimeLabel, lastEventTimeLabel)
 	}
 	pendingApprovalLabel := fmt.Sprintf("%d pending tool approval%s", pendingApprovalCount, pluralSuffix(pendingApprovalCount))
 	if pendingApprovalCount == 0 {
@@ -830,7 +841,7 @@ func buildControlsView(status RunStatusView, waiting RunWaitingView, pendingAppr
 		summary = firstNonEmpty(status.Detail, "Run in progress")
 	case hasRecentActivity:
 		primaryActionLabel = "Review activity"
-		summary = lastActivitySummary
+		summary = firstNonEmpty(lastActivitySummary, lastEventSummary)
 	}
 	return RunControlsView{
 		CanAbort:              statusAllowsAbort(status.Code),
@@ -840,7 +851,9 @@ func buildControlsView(status RunStatusView, waiting RunWaitingView, pendingAppr
 		HasRecentActivity:     hasRecentActivity,
 		LastEventType:         lastEventType,
 		LastEventLabel:        lastEventLabel,
+		LastEventSummary:      lastEventSummary,
 		LastActivitySummary:   lastActivitySummary,
+		LastEventTimeLabel:    lastEventTimeLabel,
 		LastActivityTimeLabel: lastActivityTimeLabel,
 		StatusLabel:           status.Label,
 		Summary:               summary,

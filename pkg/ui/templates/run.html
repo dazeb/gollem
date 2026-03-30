@@ -22,6 +22,27 @@
 
   const statusLabelFor = (status, fallback = '') => fallback || titleize(status, 'Run status');
 
+  const statusDetailFor = (status, fallback = '') => {
+    if (fallback) {
+      return fallback;
+    }
+    switch (String(status || '').trim()) {
+      case 'starting':
+        return 'Preparing run';
+      case 'running':
+        return 'Run in progress';
+      case 'completed':
+        return 'Run finished successfully';
+      case 'failed':
+        return 'Run finished with an error';
+      case 'aborted':
+      case 'cancelled':
+        return 'Run was stopped before completion';
+      default:
+        return '';
+    }
+  };
+
   const waitingLabelFor = (reason, fallback = '') => {
     if (fallback && !/^(active|waiting)$/i.test(fallback)) {
       return fallback;
@@ -111,42 +132,44 @@
       return;
     }
     const statusCode = scene.dataset.runStatus || scene.dataset.sceneStatus || 'starting';
-    const statusLabel = statusLabelFor(statusCode, scene.dataset.runStatusLabel || scene.dataset.sceneStatusLabel || '');
+    const statusLabel = scene.dataset.runStatusLabel || scene.dataset.sceneStatusLabel || statusLabelFor(statusCode, '');
     scene.dataset.runStatusLabel = statusLabel;
     scene.dataset.sceneStatusLabel = statusLabel;
 
     document.querySelectorAll('[data-run-status-badge]').forEach((target) => {
       target.dataset.statusCode = statusCode;
       target.dataset.statusLabel = statusLabel;
-      target.textContent = statusLabel;
+      target.textContent = target.dataset.statusLabel;
     });
 
     const streamState = scene.querySelector('[data-scene-stream-state]');
     if (streamState) {
+      streamState.dataset.statusCode = statusCode;
       streamState.dataset.statusLabel = statusLabel;
-      streamState.textContent = statusLabel;
+      streamState.textContent = streamState.dataset.statusLabel;
     }
 
     const waitingReason = scene.dataset.runWaitingReason || scene.dataset.sceneWaitingReason || '';
-    const waitingLabel = waitingLabelFor(waitingReason, scene.dataset.runWaitingLabel || '');
+    const waitingLabel = scene.dataset.runWaitingLabel || waitingLabelFor(waitingReason, '');
     scene.dataset.runWaitingLabel = waitingLabel;
     const waitingTarget = scene.querySelector('[data-scene-waiting-reason]');
     if (waitingTarget) {
+      waitingTarget.dataset.waitingReason = waitingReason;
       waitingTarget.dataset.waitingLabel = waitingLabel;
-      waitingTarget.textContent = waitingLabel;
+      waitingTarget.textContent = waitingTarget.dataset.waitingLabel;
     }
 
     const lastEventTarget = scene.querySelector('[data-run-last-event]');
     if (lastEventTarget) {
-      const lastEventLabel = eventLabelFor(
-        lastEventTarget.dataset.eventType || scene.dataset.runLastEventType || '',
+      lastEventTarget.dataset.eventType = scene.dataset.runLastEventType || lastEventTarget.dataset.eventType || '';
+      lastEventTarget.dataset.eventLabel = scene.dataset.runLastEventLabel || lastEventTarget.dataset.eventLabel || '';
+      lastEventTarget.dataset.eventSummary = scene.dataset.runLastEventSummary || lastEventTarget.dataset.eventSummary || lastEventTarget.dataset.eventLabel || '';
+      lastEventTarget.textContent = lastEventTarget.dataset.eventLabel || lastEventTarget.dataset.eventSummary || eventLabelFor(
+        lastEventTarget.dataset.eventType || '',
         scene.dataset.runLastCustomEventName || '',
         null,
-        scene.dataset.runLastEventLabel || lastEventTarget.dataset.eventLabel || ''
+        ''
       );
-      scene.dataset.runLastEventLabel = lastEventLabel;
-      lastEventTarget.dataset.eventLabel = lastEventLabel;
-      lastEventTarget.textContent = lastEventLabel;
     }
   };
 
@@ -174,7 +197,8 @@
       const pendingApprovals = data.pending_approvals && typeof data.pending_approvals === 'object' ? Object.keys(data.pending_approvals).length : 0;
       const pendingDeferred = data.pending_external_inputs && typeof data.pending_external_inputs === 'object' ? Object.keys(data.pending_external_inputs).length : 0;
       scene.dataset.runStatus = data.status || scene.dataset.runStatus || 'starting';
-      scene.dataset.runStatusLabel = statusLabelFor(scene.dataset.runStatus, scene.dataset.runStatusLabel || '');
+      scene.dataset.runStatusLabel = statusLabelFor(scene.dataset.runStatus, '');
+      scene.dataset.runStatusDetail = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
       let waitingReason = String(data.waiting_reason || '').trim();
       if (!waitingReason && scene.dataset.runStatus === 'waiting') {
         if (pendingApprovals && pendingDeferred) {
@@ -186,7 +210,8 @@
         }
       }
       scene.dataset.runWaitingReason = waitingReason;
-      scene.dataset.runWaitingLabel = waitingLabelFor(waitingReason, scene.dataset.runWaitingLabel || '');
+      scene.dataset.runWaitingLabel = waitingLabelFor(waitingReason, '');
+      scene.dataset.runWaitingSummary = scene.dataset.runWaitingLabel || statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
       applySceneLabels(scene);
       return;
     }
@@ -206,55 +231,86 @@
       case 'RUN_STARTED':
         scene.dataset.runStatus = 'running';
         scene.dataset.runWaitingReason = '';
+        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, 'Run started');
+        scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Run started';
         break;
       case 'RUN_FINISHED':
         scene.dataset.runStatus = scene.dataset.runWaitingReason ? 'waiting' : 'completed';
+        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, 'Run completed');
+        scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Run completed';
         break;
       case 'RUN_ERROR':
         scene.dataset.runStatus = 'failed';
         scene.dataset.runWaitingReason = '';
+        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, 'Run failed');
+        scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Run failed';
         break;
       case 'CUSTOM':
         switch (customName) {
           case 'gollem.run.waiting':
             scene.dataset.runStatus = 'waiting';
             scene.dataset.runWaitingReason = String((customValue && customValue.reason) || '').trim();
+            scene.dataset.runWaitingLabel = waitingLabelFor(scene.dataset.runWaitingReason, '');
+            scene.dataset.runWaitingSummary = scene.dataset.runWaitingLabel;
+            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
+            scene.dataset.runLastEventSummary = scene.dataset.runWaitingSummary || scene.dataset.runLastEventLabel;
             break;
           case 'gollem.run.resumed':
             scene.dataset.runStatus = 'running';
             scene.dataset.runWaitingReason = '';
+            scene.dataset.runWaitingLabel = waitingLabelFor('', '');
+            scene.dataset.runWaitingSummary = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
+            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
+            scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Run resumed';
             break;
           case 'gollem.approval.requested':
             scene.dataset.runStatus = 'waiting';
             scene.dataset.runWaitingReason = 'approval';
+            scene.dataset.runWaitingLabel = waitingLabelFor(scene.dataset.runWaitingReason, '');
+            scene.dataset.runWaitingSummary = scene.dataset.runWaitingLabel;
+            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
+            scene.dataset.runLastEventSummary = scene.dataset.runWaitingSummary || 'Approval requested';
             break;
           case 'gollem.approval.resolved':
             scene.dataset.runStatus = 'running';
             scene.dataset.runWaitingReason = '';
+            scene.dataset.runWaitingLabel = waitingLabelFor('', '');
+            scene.dataset.runWaitingSummary = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
+            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
+            scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Approval granted';
             break;
           case 'gollem.deferred.requested':
             scene.dataset.runStatus = 'waiting';
             scene.dataset.runWaitingReason = 'deferred';
+            scene.dataset.runWaitingLabel = waitingLabelFor(scene.dataset.runWaitingReason, '');
+            scene.dataset.runWaitingSummary = scene.dataset.runWaitingLabel;
+            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
+            scene.dataset.runLastEventSummary = scene.dataset.runWaitingSummary || 'Deferred input requested';
             break;
           case 'gollem.deferred.resolved':
             scene.dataset.runStatus = 'running';
             scene.dataset.runWaitingReason = '';
+            scene.dataset.runWaitingLabel = waitingLabelFor('', '');
+            scene.dataset.runWaitingSummary = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
+            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
+            scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Deferred input received';
             break;
           default:
+            scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
+            scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel || 'Custom event';
             break;
         }
-        scene.dataset.runLastEventLabel = customEventLabelFor(customName, customValue);
         break;
       default:
-        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, scene.dataset.runLastEventLabel || '');
+        scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, 'Event');
+        scene.dataset.runLastEventSummary = scene.dataset.runLastEventLabel;
         break;
     }
 
-    if (eventType !== 'CUSTOM') {
-      scene.dataset.runLastEventLabel = eventLabelFor(eventType, customName, customValue, scene.dataset.runLastEventLabel || '');
-    }
-    scene.dataset.runStatusLabel = statusLabelFor(scene.dataset.runStatus, scene.dataset.runStatusLabel || '');
-    scene.dataset.runWaitingLabel = waitingLabelFor(scene.dataset.runWaitingReason || '', scene.dataset.runWaitingLabel || '');
+    scene.dataset.runStatusLabel = statusLabelFor(scene.dataset.runStatus, '');
+    scene.dataset.runStatusDetail = statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
+    scene.dataset.runWaitingLabel = scene.dataset.runWaitingReason ? waitingLabelFor(scene.dataset.runWaitingReason, '') : waitingLabelFor('', '');
+    scene.dataset.runWaitingSummary = scene.dataset.runWaitingReason ? scene.dataset.runWaitingLabel : statusDetailFor(scene.dataset.runStatus, scene.dataset.runStatusDetail || '');
     applySceneLabels(scene);
   };
 
@@ -356,10 +412,13 @@
       data-run-summary="{{.Run.Summary}}"
       data-run-status="{{.Run.StatusView.Code}}"
       data-run-status-label="{{.Run.StatusView.Label}}"
+      data-run-status-detail="{{.Run.StatusView.Detail}}"
       data-run-waiting-reason="{{.Run.Waiting.Reason}}"
       data-run-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}active{{end}}"
+      data-run-waiting-summary="{{if .Run.Waiting.Active}}{{.Run.Waiting.Summary}}{{else}}{{.Run.StatusView.Detail}}{{end}}"
       data-run-last-event-type="{{.Run.Controls.LastEventType}}"
       data-run-last-event-label="{{.Run.Controls.LastEventLabel}}"
+      data-run-last-event-summary="{{.Run.Controls.LastEventSummary}}"
       data-run-last-activity-summary="{{.Run.Controls.LastActivitySummary}}"
       data-scene-status="{{.Run.StatusView.Code}}"
       data-scene-status-label="{{.Run.StatusView.Label}}"

@@ -74,7 +74,7 @@ func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := run.Snapshot()
-	w.Header().Set("HX-Trigger", fmt.Sprintf(`{"ui:fragment-loaded":{"runId":%q,"statusLabel":%q,"waitingLabel":%q,"lastEventLabel":%q}}`, view.ID, view.StatusView.Label, firstNonEmpty(view.Waiting.Label, "Active"), view.Controls.LastEventLabel))
+	w.Header().Set("HX-Trigger", fmt.Sprintf(`{"ui:fragment-loaded":{"runId":%q,"statusLabel":%q,"waitingLabel":%q,"lastEventLabel":%q}}`, view.ID, view.StatusView.Label, firstNonEmpty(view.Waiting.Label, "Active"), firstNonEmpty(view.Controls.LastEventLabel, view.Controls.LastEventSummary, view.StatusView.Label)))
 	s.render(w, "sidebar", pageData{
 		AppTitle:    "gollem",
 		PageTitle:   view.Title + " sidebar",

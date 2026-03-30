@@ -1,5 +1,5 @@
 {{define "sidebar"}}
-<div class="sidebar-fragment" data-renderer-root data-run-id="{{.Run.ID}}" data-status-code="{{.Run.StatusView.Code}}" data-status-label="{{.Run.StatusView.Label}}" data-waiting-reason="{{.Run.Waiting.Reason}}" data-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}Active{{end}}" data-last-event-type="{{.Run.Controls.LastEventType}}" data-last-event-label="{{.Run.Controls.LastEventLabel}}">
+<div class="sidebar-fragment" data-renderer-root data-run-id="{{.Run.ID}}" data-status-code="{{.Run.StatusView.Code}}" data-status-label="{{.Run.StatusView.Label}}" data-waiting-reason="{{.Run.Waiting.Reason}}" data-waiting-label="{{if .Run.Waiting.Active}}{{.Run.Waiting.Label}}{{else}}Active{{end}}" data-last-event-type="{{.Run.Controls.LastEventType}}" data-last-event-label="{{.Run.Controls.LastEventLabel}}" data-last-event-summary="{{.Run.Controls.LastEventSummary}}">
   <div>
     <p class="eyebrow">Run sidebar</p>
     <h3>{{.Run.ID}}</h3>
@@ -50,6 +50,7 @@
       <dt>Last activity</dt>
       <dd>
         <strong>{{.Run.Controls.LastEventLabel}}</strong>
+        {{if and .Run.Controls.LastEventSummary (ne .Run.Controls.LastEventSummary .Run.Controls.LastEventLabel)}}<br><span class="muted">{{.Run.Controls.LastEventSummary}}</span>{{end}}
         {{if .Run.Controls.LastActivityTimeLabel}}<br><span class="muted">{{.Run.Controls.LastActivityTimeLabel}}</span>{{end}}
       </dd>
     </div>
@@ -95,6 +96,7 @@
       {{range .Run.RecentActivity}}
       <li data-activity-kind="{{.Kind}}" data-activity-tone="{{.Tone}}">
         <strong>{{.Label}}</strong>
+        {{if and .Summary (ne .Summary .Label)}}<div class="muted">{{.Summary}}</div>{{end}}
         {{if .Detail}}<span> {{.Detail}}</span>{{end}}
         <div class="muted">{{.OccurredLabel}}</div>
       </li>
@@ -103,7 +105,7 @@
     {{else}}
     <p class="muted">No activity yet.</p>
     {{end}}
-  </div>
+    </div>
 
   <div>
     <p class="eyebrow">Recent protocol events</p>
