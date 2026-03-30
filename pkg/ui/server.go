@@ -140,7 +140,9 @@ func (s *Server) startRun(req RunStartRequest) *RunRecord {
 		defer record.closeRuntime()
 		if err := s.starter.StartRun(ctx, record.Runtime(), req); err != nil {
 			if ctx.Err() != nil {
-				record.setStatus("aborted", time.Now().UTC())
+				if !record.hasRuntimeEvent(core.RuntimeEventTypeRunCompleted) {
+					record.markAborted(time.Now().UTC())
+				}
 				return
 			}
 			record.failStart(err)

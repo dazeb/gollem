@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/agui"
 	"github.com/fugue-labs/gollem/ext/agui/transport"
+	"github.com/google/uuid"
 )
 
 // RunStarter starts a newly-created UI run against the provided live runtime.
@@ -179,14 +179,36 @@ func (r *RunRecord) setCancel(cancel context.CancelFunc) {
 	r.cancel = cancel
 }
 
-func (r *RunRecord) setStatus(status string, at time.Time) {
+func (r *RunRecord) setStatusLocked(status string, at time.Time) {
+	r.status = status
+	r.updatedAt = at.UTC()
+}
+
+func (r *RunRecord) hasRuntimeEvent(eventType string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, seen := range r.events {
+		if seen == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *RunRecord) markAborted(at time.Time) {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.status = status
-	r.updatedAt = at.UTC()
+	r.setStatusLocked("aborted", at)
+	if r.waitingReason != "" {
+		return
+	}
+	switch {
+	case len(r.pendingApprovals) > 0:
+		r.waitingReason = "approval"
+	}
 }
 
 func (r *RunRecord) failStart(err error) {
@@ -257,21 +279,27 @@ func (r *RunRecord) Snapshot() RunView {
 func (r *RunRecord) attachRuntimeProjection() {
 	core.Subscribe(r.bus, func(ev core.RunStartedEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
-			r.status = "running"
+			r.setStatusLocked("running", ev.RuntimeOccurredAt())
 			r.prompt = firstNonEmpty(r.prompt, ev.Prompt)
 			r.session.SetRunID(ev.RunID, ev.ParentRunID)
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.RunCompletedEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
-			r.waitingReason = ""
 			switch {
 			case ev.Deferred:
-				r.status = "waiting"
+				r.setStatusLocked("waiting", ev.RuntimeOccurredAt())
+				if strings.TrimSpace(r.waitingReason) == "" {
+					r.waitingReason = "deferred"
+				}
 			case ev.Success:
-				r.status = "completed"
+				r.setStatusLocked("completed", ev.RuntimeOccurredAt())
+				r.waitingReason = ""
+			case isCanceledRunError(ev.Error):
+				r.setStatusLocked("aborted", ev.RuntimeOccurredAt())
 			default:
-				r.status = "failed"
+				r.setStatusLocked("failed", ev.RuntimeOccurredAt())
+				r.waitingReason = ""
 			}
 		})
 	})
@@ -302,7 +330,7 @@ func (r *RunRecord) attachRuntimeProjection() {
 	})
 	core.Subscribe(r.bus, func(ev core.ApprovalRequestedEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
-			r.status = "waiting"
+			r.setStatusLocked("waiting", ev.RuntimeOccurredAt())
 			r.waitingReason = "approval"
 			r.pendingApprovals[ev.ToolCallID] = PendingApprovalView{
 				ToolCallID:  ev.ToolCallID,
@@ -316,7 +344,7 @@ func (r *RunRecord) attachRuntimeProjection() {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
 			delete(r.pendingApprovals, ev.ToolCallID)
 			if len(r.pendingApprovals) == 0 && r.status == "waiting" && r.waitingReason == "approval" {
-				r.status = "running"
+				r.setStatusLocked("running", ev.RuntimeOccurredAt())
 				r.waitingReason = ""
 			}
 		})
@@ -329,13 +357,13 @@ func (r *RunRecord) attachRuntimeProjection() {
 	})
 	core.Subscribe(r.bus, func(ev core.RunWaitingEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
-			r.status = "waiting"
+			r.setStatusLocked("waiting", ev.RuntimeOccurredAt())
 			r.waitingReason = ev.Reason
 		})
 	})
 	core.Subscribe(r.bus, func(ev core.RunResumedEvent) {
 		r.applyRuntimeEvent(ev.RuntimeEventType(), ev.RuntimeOccurredAt(), func() {
-			r.status = "running"
+			r.setStatusLocked("running", ev.RuntimeOccurredAt())
 			r.waitingReason = ""
 		})
 	})
@@ -372,11 +400,22 @@ func NewRunStateStore() *RunStateStore {
 }
 
 func (s *RunStateStore) create(req RunStartRequest) *RunRecord {
-	record := newRunRecord(s.now().UTC(), s.nextID(), req)
-	s.mu.Lock()
-	s.runs[record.id] = record
-	s.mu.Unlock()
-	return record
+	for {
+		runID := strings.TrimSpace(s.nextID())
+		if runID == "" {
+			runID = newRunID()
+		}
+		record := newRunRecord(s.now().UTC(), runID, req)
+
+		s.mu.Lock()
+		if _, exists := s.runs[runID]; exists {
+			s.mu.Unlock()
+			continue
+		}
+		s.runs[runID] = record
+		s.mu.Unlock()
+		return record
+	}
 }
 
 func (s *RunStateStore) get(runID string) (*RunRecord, bool) {
@@ -427,5 +466,13 @@ func firstNonEmpty(values ...string) string {
 }
 
 func newRunID() string {
-	return fmt.Sprintf("run_%d", time.Now().UTC().UnixNano())
+	return "run_" + uuid.NewString()
+}
+
+func isCanceledRunError(message string) bool {
+	if strings.TrimSpace(message) == "" {
+		return false
+	}
+	err := errors.New(message)
+	return errors.Is(err, context.Canceled) || strings.Contains(strings.ToLower(message), "context canceled") || strings.Contains(strings.ToLower(message), "context cancelled")
 }

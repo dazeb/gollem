@@ -186,10 +186,6 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	clone.ContentLength = int64(len(body))
 	clone.Header.Set("Content-Type", "application/json")
 	run.actionHandler().ServeHTTP(w, clone)
-
-	if action.Type == agui.ActionAbortSession {
-		run.setStatus("aborted", time.Now().UTC())
-	}
 }
 
 func (s *Server) render(w http.ResponseWriter, page string, data any) {
