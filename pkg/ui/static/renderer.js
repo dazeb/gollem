@@ -531,6 +531,7 @@ class RunSceneRenderer {
 
   applySnapshot(event, seq) {
     const snapshot = event.data || {};
+    const appliedAt = Date.now();
     if (snapshot.run_id) {
       this.runId = snapshot.run_id;
     }
@@ -539,6 +540,23 @@ class RunSceneRenderer {
     }
 
     const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
+    const deferredInputs = snapshot.pending_external_inputs && typeof snapshot.pending_external_inputs === 'object' ? snapshot.pending_external_inputs : {};
+    const pendingToolIds = new Set();
+
+    this.scene.toolBodies.forEach((tool) => {
+      if (!tool || (tool.status !== 'approval' && tool.status !== 'deferred')) {
+        return;
+      }
+      const stillPending = Object.prototype.hasOwnProperty.call(approvals, tool.toolCallId)
+        || Object.prototype.hasOwnProperty.call(deferredInputs, tool.toolCallId);
+      if (stillPending) {
+        return;
+      }
+      tool.status = tool.result ? (/^error:/i.test(tool.result) ? 'failed' : 'returned') : 'called';
+      tool.updatedAt = appliedAt;
+      tool.pulseBoost = 0;
+    });
+
     Object.values(approvals).forEach((approval, index) => {
       if (!approval || typeof approval !== 'object') {
         return;
@@ -546,18 +564,42 @@ class RunSceneRenderer {
       const toolId = approval.ToolCallID || approval.tool_call_id || approval.toolCallId || `approval_${index}`;
       const toolName = approval.ToolName || approval.tool_name || approval.toolName || 'approval';
       const args = approval.ArgsJSON || approval.args_json || approval.argsJson || '';
-      const tool = this.ensureToolBody(toolId, toolName, Date.now());
+      const tool = this.ensureToolBody(toolId, toolName, appliedAt);
       if (tool) {
         tool.status = 'approval';
         tool.args = String(args || tool.args || '');
+        tool.result = '';
+        tool.resolvedAt = 0;
+        tool.updatedAt = appliedAt;
+        tool.pulseBoost = Math.max(tool.pulseBoost || 0, 1.15);
+        pendingToolIds.add(toolId);
+      }
+    });
+
+    Object.values(deferredInputs).forEach((pending, index) => {
+      if (!pending || typeof pending !== 'object') {
+        return;
+      }
+      const toolId = pending.ToolCallID || pending.tool_call_id || pending.toolCallId || `deferred_${index}`;
+      const toolName = pending.ToolName || pending.tool_name || pending.toolName || 'deferred';
+      const args = pending.ArgsJSON || pending.args_json || pending.argsJson || '';
+      const tool = this.ensureToolBody(toolId, toolName, appliedAt);
+      if (tool) {
+        tool.status = 'deferred';
+        tool.args = String(args || tool.args || '');
+        tool.result = '';
+        tool.resolvedAt = 0;
+        tool.updatedAt = appliedAt;
+        tool.pulseBoost = Math.max(tool.pulseBoost || 0, 1.25);
+        pendingToolIds.add(toolId);
       }
     });
 
     if (snapshot.waiting_reason) {
       this.updateStatus('waiting');
       this.triggerTransition('waiting');
-      if (!Object.keys(approvals).length) {
-        this.pushNotice('Run waiting', snapshot.waiting_reason, Date.now());
+      if (!pendingToolIds.size) {
+        this.pushNotice('Run waiting', snapshot.waiting_reason, appliedAt);
       }
     }
 
@@ -661,32 +703,58 @@ class RunSceneRenderer {
         if (tool) {
           tool.status = 'approval';
           tool.args = compactWhitespace(payload.argsJson || tool.args || '');
+          tool.result = '';
+          tool.resolvedAt = 0;
+          tool.updatedAt = timestamp;
+          tool.pulseBoost = Math.max(tool.pulseBoost || 0, 1.15);
         }
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
         break;
       }
       case 'gollem.approval.resolved': {
-        const tool = this.scene.toolBodies.get(payload.toolCallId || '');
+        const tool = this.ensureToolBody(payload.toolCallId || '', payload.toolName || 'approval', timestamp);
         if (tool) {
-          tool.status = payload.approved ? 'approved' : 'denied';
-          tool.updatedAt = timestamp;
-          tool.resolvedAt = sceneClock();
+          this.resolveToolBody(tool.toolCallId, {
+            status: payload.approved ? 'approved' : 'denied',
+            content: payload.approved ? 'approved' : 'denied',
+            timestamp,
+            isError: !payload.approved,
+          });
         }
         this.updateStatus('running');
         this.triggerTransition('resumed');
         break;
       }
-      case 'gollem.deferred.requested':
+      case 'gollem.deferred.requested': {
+        const tool = this.ensureToolBody(payload.toolCallId || `deferred_${Date.now()}`, payload.toolName || 'deferred', timestamp);
+        if (tool) {
+          tool.status = 'deferred';
+          tool.args = compactWhitespace(payload.argsJson || tool.args || '');
+          tool.result = '';
+          tool.resolvedAt = 0;
+          tool.updatedAt = timestamp;
+          tool.pulseBoost = Math.max(tool.pulseBoost || 0, 1.25);
+        }
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
         this.pushNotice('Deferred input', payload.toolName || payload.toolCallId || 'awaiting input', timestamp);
         break;
-      case 'gollem.deferred.resolved':
+      }
+      case 'gollem.deferred.resolved': {
+        const tool = this.ensureToolBody(payload.toolCallId || '', payload.toolName || 'deferred', timestamp);
+        if (tool) {
+          this.resolveToolBody(tool.toolCallId, {
+            content: payload.content || tool.result || payload.toolName || 'resolved',
+            timestamp,
+            isError: !!payload.isError,
+          });
+        }
         this.updateStatus('running');
         this.triggerTransition('resumed');
         this.pushNotice('Deferred resolved', summarize(payload.content || payload.toolName || ''), timestamp);
         break;
+      }
       default:
         break;
     }
@@ -769,6 +837,9 @@ class RunSceneRenderer {
       const baseClasses = Array.from(target.classList).filter((name) => !name.startsWith('status--'));
       target.className = baseClasses.concat(`status--${this.scene.runStatus}`).join(' ');
     });
+    if (this.streamStateTarget) {
+      this.streamStateTarget.textContent = this.scene.runStatus;
+    }
   }
 
   setConnection(connection) {
@@ -779,7 +850,7 @@ class RunSceneRenderer {
       this.connectionTarget.textContent = `SSE ${connection}`;
     }
     if (this.streamStateTarget) {
-      this.streamStateTarget.textContent = connection;
+      this.streamStateTarget.textContent = this.scene.runStatus;
     }
     this.scheduleRender();
   }
@@ -1102,7 +1173,23 @@ class RunSceneRenderer {
     if (!tool.stepName && this.scene.activeStepName) {
       tool.stepName = this.scene.activeStepName;
     }
-    tool.resolvedAt = tool.status === 'returned' || tool.status === 'failed' ? tool.resolvedAt : 0;
+    tool.resolvedAt = (tool.status === 'returned' || tool.status === 'failed' || tool.status === 'approved' || tool.status === 'denied')
+      ? tool.resolvedAt
+      : 0;
+    return tool;
+  }
+
+  resolveToolBody(toolCallId, options = {}) {
+    const tool = this.scene.toolBodies.get(toolCallId || '');
+    if (!tool) {
+      return null;
+    }
+    const resolvedAt = sceneClock();
+    tool.updatedAt = options.timestamp || Date.now();
+    tool.result = String(options.content || tool.result || '');
+    tool.resolvedAt = resolvedAt;
+    tool.status = options.status || (/^error:/i.test(tool.result) || options.isError ? 'failed' : 'returned');
+    tool.pulseBoost = Math.max(tool.pulseBoost || 0, tool.status === 'failed' ? 1.6 : 1.2);
     return tool;
   }
 
@@ -1113,7 +1200,7 @@ class RunSceneRenderer {
     }
     tool.args += delta || '';
     tool.updatedAt = timestamp;
-    tool.status = tool.status === 'approval' ? 'approval' : 'running';
+    tool.status = (tool.status === 'approval' || tool.status === 'deferred') ? tool.status : 'running';
   }
 
   finishToolBody(toolCallId, timestamp) {
@@ -1123,7 +1210,7 @@ class RunSceneRenderer {
     }
     tool.updatedAt = timestamp;
     if (!tool.result) {
-      tool.status = tool.status === 'approval' ? 'approval' : 'called';
+      tool.status = (tool.status === 'approval' || tool.status === 'deferred') ? tool.status : 'called';
     }
   }
 
@@ -1132,10 +1219,11 @@ class RunSceneRenderer {
     if (!tool) {
       return;
     }
-    tool.result = String(content || '');
-    tool.updatedAt = timestamp;
-    tool.resolvedAt = sceneClock();
-    tool.status = /^error:/i.test(tool.result) ? 'failed' : 'returned';
+    this.resolveToolBody(tool.toolCallId, {
+      content,
+      timestamp,
+      isError: /^error:/i.test(String(content || '')),
+    });
   }
 
   updateCounters() {
@@ -1214,13 +1302,24 @@ class RunSceneRenderer {
     if (item.status === 'returned' || item.status === 'approved' || item.status === 'denied') {
       return 1 - this.toolResolveProgress(item, now);
     }
+    if (item.status === 'deferred') {
+      return 1.12;
+    }
     return 1;
   }
 
   toolRadiusTarget(item, now) {
     const previewSize = Math.max(item.args?.length || 0, item.result?.length || 0);
     const base = clamp(44 + Math.round(previewSize / 24), 42, 84);
-    const statusBoost = item.status === 'approval' ? 8 : item.status === 'failed' ? 10 : item.status === 'returned' ? -6 : 0;
+    const statusBoost = item.status === 'approval'
+      ? 8
+      : item.status === 'deferred'
+        ? 12
+        : item.status === 'failed'
+          ? 10
+          : item.status === 'returned'
+            ? -6
+            : 0;
     const resolvedShrink = (item.status === 'returned' || item.status === 'approved' || item.status === 'denied' || item.status === 'failed')
       ? lerp(1, item.status === 'failed' ? 0.48 : 0.12, this.toolResolveProgress(item, now))
       : 1;

@@ -52,23 +52,23 @@
           <p class="run-scene__caption">Physics lattice · obstacle-aware text reflow · dissolve/pulse state field</p>
         </div>
         <div class="run-scene__metrics" aria-label="Run scene metrics">
-          <article>
+          <article class="run-scene__metric run-scene__metric--connection">
             <span class="detail-grid__label">Connection</span>
             <strong data-run-connection>SSE connecting</strong>
           </article>
-          <article>
+          <article class="run-scene__metric run-scene__metric--stream">
             <span class="detail-grid__label">Stream state</span>
-            <strong data-scene-stream-state>connecting</strong>
+            <strong data-scene-stream-state>{{.Run.Status}}</strong>
           </article>
-          <article>
+          <article class="run-scene__metric">
             <span class="detail-grid__label">Steps</span>
             <strong data-scene-step-count>0</strong>
           </article>
-          <article>
+          <article class="run-scene__metric">
             <span class="detail-grid__label">Entities</span>
             <strong data-scene-entity-count>0</strong>
           </article>
-          <article>
+          <article class="run-scene__metric">
             <span class="detail-grid__label">Last event</span>
             <strong data-run-last-event>live</strong>
           </article>
