@@ -1,26 +1,88 @@
 package ui
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/fugue-labs/gollem/ext/agui"
 )
 
-// RunView is placeholder scaffold data for a UI run page until live AGUI state
-// is wired in.
-type RunView struct {
-	ID        string
-	Title     string
-	Status    string
-	Provider  string
-	Model     string
-	Summary   string
-	Prompt    string
-	StartedAt time.Time
-	UpdatedAt time.Time
-	Events    []string
-}
+var liveSidebarTemplate = template.Must(template.New("live_sidebar").Parse(`
+<div class="sidebar-fragment" data-renderer-root>
+  <div>
+    <p class="eyebrow">Run sidebar</p>
+    <h3>{{.Run.ID}}</h3>
+  </div>
+
+  <dl class="sidebar-metadata">
+    <div>
+      <dt>Status</dt>
+      <dd><span class="status status--{{.Run.Status}}">{{.Run.Status}}</span></dd>
+    </div>
+    <div>
+      <dt>Started</dt>
+      <dd>{{.Run.StartedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
+    </div>
+    <div>
+      <dt>Updated</dt>
+      <dd>{{.Run.UpdatedAt.Format "2006-01-02 15:04:05 MST"}}</dd>
+    </div>
+    <div>
+      <dt>Provider</dt>
+      <dd>{{.Run.Provider}}</dd>
+    </div>
+    <div>
+      <dt>Model</dt>
+      <dd>{{.Run.Model}}</dd>
+    </div>
+    <div>
+      <dt>Requests</dt>
+      <dd>{{.Run.Usage.Requests}}</dd>
+    </div>
+    <div>
+      <dt>Input tokens</dt>
+      <dd>{{.Run.Usage.InputTokens}}</dd>
+    </div>
+    <div>
+      <dt>Output tokens</dt>
+      <dd>{{.Run.Usage.OutputTokens}}</dd>
+    </div>
+    <div>
+      <dt>Tool calls</dt>
+      <dd>{{.Run.Usage.ToolCalls}}</dd>
+    </div>
+    {{if .Run.WaitingReason}}
+    <div>
+      <dt>Waiting</dt>
+      <dd>{{.Run.WaitingReason}}</dd>
+    </div>
+    {{end}}
+  </dl>
+
+  <div>
+    <p class="eyebrow">Pending approvals</p>
+    {{if .Run.PendingApprovals}}
+    <ul class="event-list">
+      {{range .Run.PendingApprovals}}
+      <li><strong>{{.ToolName}}</strong> <code>{{.ToolCallID}}</code></li>
+      {{end}}
+    </ul>
+    {{else}}
+    <p class="muted">No pending approvals.</p>
+    {{end}}
+  </div>
+
+  <div class="sidebar-actions">
+    <a class="button" href="/runs/{{.Run.ID}}">Refresh run</a>
+    <a class="button button--ghost" href="/">Back to dashboard</a>
+  </div>
+</div>
+`))
 
 type pageData struct {
 	AppTitle    string
@@ -43,34 +105,87 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		PageTitle:   "Dashboard",
 		Path:        r.URL.Path,
 		CurrentYear: time.Now().Year(),
-		Runs:        sampleRuns(),
+		Runs:        s.runs.listViews(),
 	})
 }
 
+func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeRunStartRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		http.Error(w, "prompt is required", http.StatusBadRequest)
+		return
+	}
+
+	run := s.startRun(req)
+	http.Redirect(w, r, "/runs/"+run.ID(), http.StatusSeeOther)
+}
+
 func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
-	run := findRun(r.PathValue("id"))
+	run, ok := s.lookupRun(w, r)
+	if !ok {
+		return
+	}
+	view := run.Snapshot()
 	s.render(w, "run", pageData{
 		AppTitle:    "gollem",
-		PageTitle:   run.Title,
+		PageTitle:   view.Title,
 		Path:        r.URL.Path,
 		CurrentYear: time.Now().Year(),
 		IsRunPage:   true,
-		Runs:        sampleRuns(),
-		Run:         run,
+		Runs:        s.runs.listViews(),
+		Run:         view,
 	})
 }
 
 func (s *Server) handleSidebar(w http.ResponseWriter, r *http.Request) {
-	run := findRun(r.PathValue("id"))
+	run, ok := s.lookupRun(w, r)
+	if !ok {
+		return
+	}
+
 	w.Header().Set("HX-Trigger", "ui:fragment-loaded")
-	s.render(w, "sidebar", pageData{
-		AppTitle:    "gollem",
-		PageTitle:   run.Title,
-		Path:        r.URL.Path,
-		CurrentYear: time.Now().Year(),
-		IsRunPage:   true,
-		Run:         run,
-	})
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := liveSidebarTemplate.Execute(w, pageData{Run: run.Snapshot()}); err != nil {
+		http.Error(w, fmt.Sprintf("render sidebar: %v", err), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.lookupRun(w, r)
+	if !ok {
+		return
+	}
+	run.sseHandler().ServeHTTP(w, r)
+}
+
+func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.lookupRun(w, r)
+	if !ok {
+		return
+	}
+
+	action, err := decodeAction(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	action.SessionID = run.Session().ID
+
+	body, err := json.Marshal(action)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("encode action: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	clone := r.Clone(r.Context())
+	clone.Body = ioNopCloser{Reader: bytes.NewReader(body)}
+	clone.ContentLength = int64(len(body))
+	clone.Header.Set("Content-Type", "application/json")
+	run.actionHandler().ServeHTTP(w, clone)
 }
 
 func (s *Server) render(w http.ResponseWriter, page string, data any) {
@@ -86,66 +201,47 @@ func (s *Server) render(w http.ResponseWriter, page string, data any) {
 	}
 }
 
-func sampleRuns() []RunView {
-	now := time.Now().UTC()
-	return []RunView{
-		{
-			ID:        "run_01",
-			Title:     "AGUI Dashboard Scaffold",
-			Status:    "running",
-			Provider:  "openai",
-			Model:     "gpt-5.4",
-			Summary:   "Embedding templates, assets, and a shell layout into the binary.",
-			Prompt:    "Create the UI server scaffold with embedded templates and assets.",
-			StartedAt: now.Add(-8 * time.Minute),
-			UpdatedAt: now.Add(-30 * time.Second),
-			Events: []string{
-				"session.opened",
-				"run.started",
-				"model.request.started",
-				"model.response.completed",
-			},
-		},
-		{
-			ID:        "run_02",
-			Title:     "Sidebar Fragment Demo",
-			Status:    "waiting",
-			Provider:  "anthropic",
-			Model:     "claude-opus-4-6",
-			Summary:   "Shows an htmx-loaded sidebar fragment and renderer hydration hook.",
-			Prompt:    "Render the run page chrome and load the sidebar lazily.",
-			StartedAt: now.Add(-27 * time.Minute),
-			UpdatedAt: now.Add(-2 * time.Minute),
-			Events: []string{
-				"session.opened",
-				"run.started",
-				"session.waiting",
-			},
-		},
+func (s *Server) lookupRun(w http.ResponseWriter, r *http.Request) (*RunRecord, bool) {
+	run, ok := s.runs.get(r.PathValue("id"))
+	if !ok {
+		http.NotFound(w, r)
+		return nil, false
 	}
+	return run, true
 }
 
-func findRun(id string) RunView {
-	id = strings.TrimSpace(id)
-	for _, run := range sampleRuns() {
-		if run.ID == id {
-			return run
+func decodeRunStartRequest(r *http.Request) (RunStartRequest, error) {
+	var req RunStartRequest
+	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			return RunStartRequest{}, fmt.Errorf("invalid request body: %w", err)
 		}
+		return req, nil
 	}
 
-	now := time.Now().UTC()
-	return RunView{
-		ID:        id,
-		Title:     "Run " + id,
-		Status:    "pending",
-		Provider:  "unassigned",
-		Model:     "unknown",
-		Summary:   "This scaffold route is live but not yet wired to persisted run data.",
-		Prompt:    "Waiting for runtime data source integration.",
-		StartedAt: now,
-		UpdatedAt: now,
-		Events: []string{
-			"session.opened",
-		},
+	if err := r.ParseForm(); err != nil {
+		return RunStartRequest{}, fmt.Errorf("invalid form body: %w", err)
 	}
+	req.Title = r.FormValue("title")
+	req.Summary = r.FormValue("summary")
+	req.Prompt = r.FormValue("prompt")
+	req.Provider = r.FormValue("provider")
+	req.Model = r.FormValue("model")
+	return req, nil
 }
+
+func decodeAction(r *http.Request) (agui.Action, error) {
+	defer r.Body.Close()
+	var action agui.Action
+	if err := json.NewDecoder(r.Body).Decode(&action); err != nil {
+		return agui.Action{}, fmt.Errorf("invalid request body: %w", err)
+	}
+	return action, nil
+}
+
+type ioNopCloser struct {
+	*bytes.Reader
+}
+
+func (ioNopCloser) Close() error { return nil }
