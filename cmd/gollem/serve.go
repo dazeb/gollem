@@ -99,18 +99,22 @@ func runServe() {
 		Model:    f.modelName,
 	})
 
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	addr := fmt.Sprintf(":%d", f.port)
-	url := fmt.Sprintf("http://localhost:%d/", f.port)
-	listener, err := net.Listen("tcp", addr)
+	dashboardURL := fmt.Sprintf("http://localhost:%d/", f.port)
+	listener, err := (&net.ListenConfig{}).Listen(signalCtx, "tcp", addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error listening on %s: %v\n", addr, err)
 		os.Exit(1)
 	}
 	defer listener.Close()
 
-	httpServer := &http.Server{Handler: handler}
-	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	httpServer := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	go func() {
 		<-signalCtx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -118,13 +122,13 @@ func runServe() {
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
 
-	fmt.Fprintf(os.Stderr, "gollem: serving dashboard at %s (provider=%s, model=%s, tools=%t)\n", url, f.provider, f.modelName, f.tools)
+	fmt.Fprintf(os.Stderr, "gollem: serving dashboard at %s (provider=%s, model=%s, tools=%t)\n", dashboardURL, f.provider, f.modelName, f.tools)
 	if f.openBrowser {
-		go func() {
-			if err := openBrowser(url); err != nil {
+		go func(target string) {
+			if err := openBrowser(context.Background(), target); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: open browser: %v\n", err)
 			}
-		}()
+		}(dashboardURL)
 	}
 
 	if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -368,15 +372,18 @@ func closeServeModel(model core.Model) {
 	}
 }
 
-func openBrowser(target string) error {
+func openBrowser(ctx context.Context, target string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", target)
+		//nolint:gosec // target is an internally-constructed localhost dashboard URL.
+		cmd = exec.CommandContext(ctx, "open", target)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", target)
+		//nolint:gosec // target is an internally-constructed localhost dashboard URL.
+		cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", target)
 	default:
-		cmd = exec.Command("xdg-open", target)
+		//nolint:gosec // target is an internally-constructed localhost dashboard URL.
+		cmd = exec.CommandContext(ctx, "xdg-open", target)
 	}
 	return cmd.Start()
 }
