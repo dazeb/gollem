@@ -153,14 +153,15 @@
       <div class="transcript__header">
         <div>
           <h3>Recent activity</h3>
-          <span class="muted">{{.Run.Controls.Summary}}</span>
+          <span class="muted">Readable live narration for approvals, waiting, resumes, and tool outcomes.</span>
         </div>
-        <div>
+        <div class="transcript__status-summary">
           {{if .Run.Scene.Waiting.Active}}
           <strong>{{.Run.Scene.Waiting.Label}}</strong>
           {{if .Run.Scene.Waiting.Detail}}<span class="muted"> · {{.Run.Scene.Waiting.Detail}}</span>{{end}}
           {{else}}
-          <span class="muted">{{.Run.StatusView.Detail}}</span>
+          <strong>{{.Run.Scene.Status.Label}}</strong>
+          {{if .Run.StatusView.Detail}}<span class="muted"> · {{.Run.StatusView.Detail}}</span>{{end}}
           {{end}}
         </div>
       </div>
@@ -184,20 +185,21 @@
       <div class="transcript__header">
         <div>
           <h3>Protocol events</h3>
-          <span class="muted">Readable AG-UI/runtime stream for reconnects, replay snapshots, and resume debugging.</span>
+          <span class="muted">Raw AG-UI/runtime frames for reconnects, replay snapshots, and resume debugging.</span>
         </div>
-        <div>
-          <span class="muted">{{len .Run.RecentProtocolActivity}} recent</span>
+        <div class="transcript__status-summary">
+          <strong>Replay-aware SSE</strong>
+          <span class="muted"> · {{len .Run.RecentProtocolActivity}} recent frames</span>
         </div>
       </div>
       <ol class="event-list event-list--dense event-list--protocol" data-run-event-log>
         {{range .Run.RecentProtocolActivity}}
-        <li data-activity-tone="{{.Tone}}">
+        <li data-activity-kind="protocol" data-activity-tone="{{.Tone}}">
           <div class="event-list__row">
             <strong>{{.Label}}</strong>
             <span class="event-list__time">{{.OccurredLabel}}</span>
           </div>
-          {{if .Summary}}<div class="event-list__detail">{{.Summary}}</div>{{end}}
+          {{if .Summary}}<div class="event-list__summary">{{.Summary}}</div>{{end}}
         </li>
         {{else}}
         <li class="muted" data-log-placeholder="true">No protocol events yet.</li>

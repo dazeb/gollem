@@ -62,12 +62,72 @@ const formatClock = (timestamp) => {
 
 const compactWhitespace = (value) => String(value || '').replace(/\s+/g, ' ').trim();
 
+const connectionNarrative = (connection, lastSeq = 0) => {
+  switch (compactWhitespace(connection)) {
+    case 'connecting':
+      return {
+        label: 'Live stream connecting',
+        summary: 'Opening the AG-UI SSE channel with replay-safe resume.',
+        detail: lastSeq
+          ? `Attempting to continue after event #${lastSeq}.`
+          : 'Opening the live event stream for this run.',
+        tone: 'pending',
+        kind: 'system',
+      };
+    case 'reconnecting':
+      return {
+        label: 'Live stream reconnecting',
+        summary: 'SSE dropped; waiting for replay-safe reconnect.',
+        detail: lastSeq
+          ? `Holding after event #${lastSeq}. Missed frames will replay automatically.`
+          : 'Trying to restore the live stream. Missed frames will replay automatically.',
+        tone: 'waiting',
+        kind: 'system',
+      };
+    case 'reconnected':
+      return {
+        label: 'Live stream resumed',
+        summary: 'SSE reconnected; replay-safe resume is active again.',
+        detail: lastSeq
+          ? `Connection recovered after event #${lastSeq}. Any missed frames will replay from the server.`
+          : 'Connection recovered and live updates are flowing again.',
+        tone: 'running',
+        kind: 'system',
+      };
+    case 'closed':
+      return {
+        label: 'Live stream closed',
+        summary: 'The SSE stream closed and is no longer delivering live updates.',
+        detail: lastSeq
+          ? `Stream closed after event #${lastSeq}. Reload to reconnect and replay from the server.`
+          : 'Stream closed before live updates could continue.',
+        tone: 'error',
+        kind: 'system',
+      };
+    case 'unsupported':
+      return {
+        label: 'Live stream unsupported',
+        summary: 'This browser cannot open the AG-UI SSE stream.',
+        detail: 'Renderer hydration remains intact, but automatic live updates are unavailable.',
+        tone: 'error',
+        kind: 'system',
+      };
+    default:
+      return null;
+  }
+};
+
 const summarize = (value, maxLength = 140) => {
   const text = compactWhitespace(value);
   if (text.length <= maxLength) {
     return text;
   }
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+};
+
+const numericValue = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const humanizeCode = (value, fallback = '') => {
@@ -383,6 +443,43 @@ const customEventSummary = (name = '', value = null) => {
     default:
       return '';
   }
+};
+
+const connectionTone = (connection) => {
+  switch (compactWhitespace(connection)) {
+    case 'live':
+    case 'reconnected':
+      return 'running';
+    case 'connecting':
+      return 'pending';
+    case 'reconnecting':
+      return 'waiting';
+    case 'closed':
+    case 'unsupported':
+      return 'error';
+    default:
+      return 'info';
+  }
+};
+
+const protocolEventNarrative = (event = {}) => {
+  const type = compactWhitespace(event.type || '');
+  const timestamp = event.timestamp || Date.now();
+  const detail = compactWhitespace(event.detail || event.summary || '');
+
+  if (type === 'session.snapshot') {
+    return {
+      label: 'Replay snapshot applied',
+      summary: 'Renderer caught up from the session snapshot before live frames resumed.',
+      detail: detail || 'Replay snapshot applied.',
+      tone: 'pending',
+      kind: 'system',
+      occurredLabel: compactWhitespace(event.occurredLabel || ''),
+      timestamp,
+    };
+  }
+
+  return null;
 };
 
 const mergedWaitingReason = (reason = '', state = {}) => {
@@ -948,13 +1045,6 @@ class RunSceneRenderer {
     if (typeof EventSource !== 'function') {
       this.setConnection('unsupported');
       this.pushNotice('EventSource unsupported', 'Browser does not support Server-Sent Events.');
-      this.appendNarrativeEvent({
-        label: 'Live stream unsupported',
-        summary: 'This browser cannot open the AG-UI SSE stream.',
-        detail: 'Renderer hydration remains intact, but automatic live updates are unavailable.',
-        tone: 'error',
-        kind: 'system',
-      });
       return;
     }
 
@@ -963,15 +1053,6 @@ class RunSceneRenderer {
     this.source.addEventListener('open', () => {
       const prior = this.scene.connection;
       this.setConnection(prior === 'reconnecting' || prior === 'closed' ? 'reconnected' : 'live');
-      if (prior === 'reconnecting' || prior === 'closed') {
-        this.appendNarrativeEvent({
-          label: 'Live stream resumed',
-          summary: 'SSE reconnected and replayed any missed AG-UI events.',
-          detail: this.scene.lastSeq ? `Resumed after event #${this.scene.lastSeq}.` : 'Connection recovered.',
-          tone: 'running',
-          kind: 'system',
-        });
-      }
     });
     this.source.addEventListener('message', (event) => {
       this.consumeEnvelope(event);
@@ -1016,10 +1097,10 @@ class RunSceneRenderer {
         tone: 'pending',
       });
       this.appendNarrativeEvent({
-        label: 'Session replay snapshot',
-        summary: 'Renderer hydrated from an AG-UI reconnect snapshot.',
+        label: 'Replay snapshot applied',
+        summary: 'Renderer hydrated from a reconnect snapshot before returning to live SSE.',
         detail: this.scene.lastSeq
-          ? `Replay state is synchronized through event #${this.scene.lastSeq}.`
+          ? `Snapshot synchronized state through event #${this.scene.lastSeq}.`
           : 'Snapshot applied before live frames resumed.',
         tone: 'pending',
         kind: 'system',
@@ -1047,11 +1128,13 @@ class RunSceneRenderer {
 
     this.applyAGUIEvent(aguiEvent, seq);
     const detail = this.describeEvent(aguiEvent);
+    const occurredLabel = this.narrativeTimeLabel(aguiEvent.timestamp || Date.now());
     this.appendEventLog({
       type: aguiEvent.type || envelope.type || 'unknown',
       label: protocolEventLabel(aguiEvent.type || envelope.type || 'unknown', aguiEvent.name || ''),
       summary: detail,
       detail,
+      occurredLabel,
       timestamp: aguiEvent.timestamp || Date.now(),
       tone: protocolEventTone(aguiEvent.type || envelope.type || 'unknown', detail, aguiEvent.name || '', aguiEvent.value || aguiEvent),
     });
@@ -1110,6 +1193,20 @@ class RunSceneRenderer {
       this.runId = snapshot.run_id;
     }
 
+    const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
+    const deferredInputs = snapshot.pending_external_inputs && typeof snapshot.pending_external_inputs === 'object' ? snapshot.pending_external_inputs : {};
+    const approvalCount = Object.keys(approvals).length;
+    const deferredCount = Object.keys(deferredInputs).length;
+    const explicitApprovalCount = numericValue(snapshot.waiting_approval_pending_count);
+    const snapshotWaitingReason = compactWhitespace(snapshot.waiting_reason || '');
+    const fallbackWaitingReason = snapshotWaitingReason || (approvalCount > 0 && deferredCount > 0
+      ? 'approval_and_deferred'
+      : approvalCount > 0
+        ? 'approval'
+        : deferredCount > 0
+          ? 'deferred'
+          : '');
+
     const sceneState = {
       status: {
         code: snapshot.status || this.root.dataset.runStatus || 'starting',
@@ -1120,13 +1217,13 @@ class RunSceneRenderer {
         isTerminal: snapshot.status_is_terminal,
       },
       waiting: {
-        active: snapshot.status === 'waiting' || !!snapshot.waiting_reason,
-        reason: snapshot.waiting_reason || '',
+        active: snapshot.status === 'waiting' || !!fallbackWaitingReason,
+        reason: fallbackWaitingReason,
         label: snapshot.waiting_label || this.root.dataset.runWaitingLabel || '',
         detail: snapshot.waiting_detail || this.root.dataset.runWaitingDetail || '',
         summary: snapshot.waiting_summary || this.root.dataset.runWaitingSummary || '',
         pendingKind: snapshot.waiting_pending_kind || this.root.dataset.runWaitingPendingKind || '',
-        approvalPendingCount: snapshot.waiting_approval_pending_count,
+        approvalPendingCount: explicitApprovalCount ?? approvalCount,
         statusLabel: snapshot.waiting_status_label || this.root.dataset.runWaitingStatusLabel || '',
       },
       lastEvent: {
@@ -1141,10 +1238,8 @@ class RunSceneRenderer {
     applySceneState(this.root, sceneState);
     syncRendererSceneState(this);
 
-    const approvals = snapshot.pending_approvals && typeof snapshot.pending_approvals === 'object' ? snapshot.pending_approvals : {};
-    const deferredInputs = snapshot.pending_external_inputs && typeof snapshot.pending_external_inputs === 'object' ? snapshot.pending_external_inputs : {};
-    this.scene.customEventState.pendingApproval = Object.keys(approvals).length > 0;
-    this.scene.customEventState.pendingDeferred = Object.keys(deferredInputs).length > 0;
+    this.scene.customEventState.pendingApproval = approvalCount > 0;
+    this.scene.customEventState.pendingDeferred = deferredCount > 0;
     const pendingToolIds = new Set();
 
     this.scene.toolBodies.forEach((tool) => {
@@ -1210,7 +1305,7 @@ class RunSceneRenderer {
       }
     });
 
-    const waitingReason = snapshot.waiting_reason || (pendingToolIds.size ? 'approval_and_deferred' : '');
+    const waitingReason = fallbackWaitingReason || (pendingToolIds.size ? 'approval_and_deferred' : '');
     if (waitingReason) {
       this.scene.customEventState.waiting = true;
       this.triggerTransition('waiting');
@@ -1218,7 +1313,7 @@ class RunSceneRenderer {
         this.pushNotice('Run waiting', waitingReason, appliedAt);
       }
       if (wasHydrated) {
-        const waitingMeta = waitingPresentation(snapshot.waiting_reason || '', snapshot.waiting_approval_pending_count || Object.keys(approvals).length);
+        const waitingMeta = waitingPresentation(waitingReason, explicitApprovalCount ?? approvalCount);
         this.appendNarrativeEvent({
           label: waitingMeta.label || 'Run waiting',
           summary: waitingMeta.summary || 'Run paused.',
@@ -1883,23 +1978,19 @@ class RunSceneRenderer {
     }
     this.scheduleRender();
 
-    if (connection === 'reconnecting' && previous !== 'reconnecting') {
-      this.appendNarrativeEvent({
-        label: 'Live stream reconnecting',
-        summary: 'SSE dropped; the renderer is waiting for replay-safe reconnect.',
-        detail: presentation.detail,
-        tone: 'waiting',
-        kind: 'system',
-      });
-    }
-    if (connection === 'closed' && previous !== 'closed') {
-      this.appendNarrativeEvent({
-        label: 'Live stream closed',
-        summary: 'The SSE stream closed and will not deliver more live updates.',
-        detail: presentation.detail,
-        tone: 'error',
-        kind: 'system',
-      });
+    if (connection !== previous) {
+      const narrative = connectionNarrative(connection, this.scene.lastSeq);
+      if (narrative) {
+        this.appendNarrativeEvent(narrative);
+        this.appendEventLog({
+          type: 'sse.connection',
+          label: narrative.label,
+          summary: narrative.summary,
+          detail: narrative.detail,
+          tone: connectionTone(connection),
+          kind: 'system',
+        });
+      }
     }
   }
 
@@ -2381,9 +2472,11 @@ class RunSceneRenderer {
     const detail = compactWhitespace(entry.detail || '');
     const occurredLabel = compactWhitespace(entry.occurredLabel || this.narrativeTimeLabel(entry.timestamp || Date.now()));
     const tone = compactWhitespace(entry.tone || 'info');
+    const kind = compactWhitespace(entry.kind || 'protocol');
 
     const item = document.createElement('li');
     item.dataset.activityTone = tone;
+    item.dataset.activityKind = kind;
 
     const row = document.createElement('div');
     row.className = 'event-list__row';

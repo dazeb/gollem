@@ -1031,8 +1031,18 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .run-scene__metrics {
-    min-width: 100%;
+  .transcript__header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .transcript__status-summary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+    text-align: right;
   }
 
   .run-scene__overlay--top,
