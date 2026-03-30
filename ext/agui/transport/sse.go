@@ -56,8 +56,8 @@ func NewSSEHandler(bus *core.EventBus, adapter *agui.Adapter, session *agui.Sess
 	return &SSEHandler{state: newStreamState(bus, adapter, session, cfg)}
 }
 
-// Handler is a convenience alias for NewSSEHandler.
-func Handler(bus *core.EventBus, adapter *agui.Adapter, session *agui.Session, opts ...SSEOption) http.Handler {
+// SSE is a convenience alias for NewSSEHandler.
+func SSE(bus *core.EventBus, adapter *agui.Adapter, session *agui.Session, opts ...SSEOption) http.Handler {
 	return NewSSEHandler(bus, adapter, session, opts...)
 }
 
