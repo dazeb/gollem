@@ -19,11 +19,11 @@ import (
 
 func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	store := NewRunStateStore()
-	started := make(chan string, 1)
+	started := make(chan RunStartRequest, 1)
 	server := MustNewServer(
 		WithRunStore(store),
 		WithRunStarter(RunStarterFunc(func(_ context.Context, runtime *RunRuntime, req RunStartRequest) error {
-			started <- runtime.RunID + ":" + req.Prompt
+			started <- req
 			core.Publish(runtime.EventBus, core.RunStartedEvent{
 				RunID:     runtime.RunID,
 				Prompt:    req.Prompt,
@@ -34,8 +34,11 @@ func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	)
 
 	form := url.Values{
-		"title":  {"Test run"},
-		"prompt": {"hello world"},
+		"title":    {"Test run"},
+		"summary":  {"test summary"},
+		"prompt":   {"hello world"},
+		"provider": {"test-provider"},
+		"model":    {"test-model"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/runs/start", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -54,18 +57,60 @@ func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
 	if runID == "" {
 		t.Fatal("expected non-empty run id")
 	}
-	if _, ok := store.get(runID); !ok {
+	run, ok := store.get(runID)
+	if !ok {
 		t.Fatalf("expected run %q in store", runID)
+	}
+	view := run.Snapshot()
+	if view.Title != "Test run" {
+		t.Fatalf("title = %q, want Test run", view.Title)
+	}
+	if view.Summary != "test summary" {
+		t.Fatalf("summary = %q, want test summary", view.Summary)
+	}
+	if view.Provider != "test-provider" {
+		t.Fatalf("provider = %q, want test-provider", view.Provider)
+	}
+	if view.Model != "test-model" {
+		t.Fatalf("model = %q, want test-model", view.Model)
 	}
 
 	select {
 	case got := <-started:
-		if got != runID+":hello world" {
-			t.Fatalf("starter payload = %q, want %q", got, runID+":hello world")
+		if got.Prompt != "hello world" {
+			t.Fatalf("prompt = %q, want hello world", got.Prompt)
+		}
+		if got.Provider != "test-provider" {
+			t.Fatalf("provider = %q, want test-provider", got.Provider)
+		}
+		if got.Model != "test-model" {
+			t.Fatalf("model = %q, want test-model", got.Model)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for async starter")
 	}
+}
+
+func TestHandleIndexRendersRunComposerWithDefaults(t *testing.T) {
+	server := MustNewServer(WithRunStartDefaults(RunStartRequest{Provider: "anthropic", Model: "claude-opus-4-6"}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	assertHTMLContains(t, body,
+		"<form class=\"run-composer\" action=\"/runs/start\" method=\"post\">",
+		"name=\"title\"",
+		"name=\"summary\"",
+		"name=\"prompt\"",
+		"anthropic",
+		"claude-opus-4-6",
+		"Submitting uses the active <strong>anthropic</strong> / <strong>claude-opus-4-6</strong> serve defaults.",
+	)
 }
 
 func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
@@ -154,10 +199,7 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		">1<",
 	)
 
-	assetResp, err := client.Get(ts.URL + "/static/style.css")
-	if err != nil {
-		t.Fatalf("GET static asset: %v", err)
-	}
+	assetResp := mustGET(t, client, ts.URL+"/static/style.css")
 	assetBody, err := io.ReadAll(assetResp.Body)
 	assetResp.Body.Close()
 	if err != nil {
@@ -416,7 +458,12 @@ func TestRunStateStoreCreateRejectsDuplicateIDs(t *testing.T) {
 
 func mustPOSTForm(t *testing.T, client *http.Client, target string, form url.Values) *http.Response {
 	t.Helper()
-	resp, err := client.Post(target, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("new POST form request %s: %v", target, err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST form %s: %v", target, err)
 	}
@@ -425,19 +472,34 @@ func mustPOSTForm(t *testing.T, client *http.Client, target string, form url.Val
 
 func mustPOSTJSON(t *testing.T, client *http.Client, target, body string) *http.Response {
 	t.Helper()
-	resp, err := client.Post(target, "application/json", strings.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new POST json request %s: %v", target, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST json %s: %v", target, err)
 	}
 	return resp
 }
 
-func mustGETBody(t *testing.T, client *http.Client, target string) string {
+func mustGET(t *testing.T, client *http.Client, target string) *http.Response {
 	t.Helper()
-	resp, err := client.Get(target)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		t.Fatalf("new GET request %s: %v", target, err)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", target, err)
 	}
+	return resp
+}
+
+func mustGETBody(t *testing.T, client *http.Client, target string) string {
+	t.Helper()
+	resp := mustGET(t, client, target)
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -547,7 +609,7 @@ func (r *uiSSEStreamReader) Next() uiSSEFrame {
 
 func mustOpenUISSE(t *testing.T, client *http.Client, target string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, target, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
 	if err != nil {
 		t.Fatalf("new SSE request: %v", err)
 	}
@@ -566,7 +628,7 @@ func mustOpenUISSE(t *testing.T, client *http.Client, target string) *http.Respo
 func readUISSEFrames(t *testing.T, reader *uiSSEStreamReader, count int) []map[string]any {
 	t.Helper()
 	frames := make([]map[string]any, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		frame := reader.Next()
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(frame.data), &payload); err != nil {
