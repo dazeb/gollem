@@ -249,6 +249,86 @@ func TestServeHandlerStartRouteInjectsDefaultsAndSupportsAbortAction(t *testing.
 	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID+"/sidebar", "aborted")
 }
 
+func TestServeHandlerBrowserFormFlowUsesDefaultsAcrossUI(t *testing.T) {
+	started := make(chan ui.RunStartRequest, 1)
+	server := ui.MustNewServer(
+		ui.WithRunStarter(ui.RunStarterFunc(func(_ context.Context, runtime *ui.RunRuntime, req ui.RunStartRequest) error {
+			started <- req
+			now := time.Now().UTC()
+			core.Publish(runtime.EventBus, core.RunStartedEvent{RunID: runtime.RunID, Prompt: req.Prompt, StartedAt: now})
+			core.Publish(runtime.EventBus, core.RunCompletedEvent{RunID: runtime.RunID, Success: true, StartedAt: now, CompletedAt: now.Add(20 * time.Millisecond)})
+			return nil
+		})),
+		ui.WithRunStartDefaults(ui.RunStartRequest{Provider: "anthropic", Model: "claude-opus-4-6"}),
+	)
+	handler := withRunStartDefaults(server, ui.RunStartRequest{Provider: "anthropic", Model: "claude-opus-4-6"})
+
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+	client := ts.Client()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+	dashboard := mustServeGETBody(t, client, ts.URL+"/")
+	assertServeBodyContains(t, dashboard,
+		"Start a run",
+		"Compose launch details",
+		"Provider default",
+		"Model default",
+		"anthropic",
+		"claude-opus-4-6",
+		"Submitting uses the active <strong>anthropic</strong> / <strong>claude-opus-4-6</strong> serve defaults.",
+	)
+	if strings.Contains(dashboard, `name="provider"`) || strings.Contains(dashboard, `name="model"`) {
+		t.Fatalf("dashboard composer unexpectedly exposed provider/model fields:\n%s", dashboard)
+	}
+
+	startResp := mustServePOSTForm(t, client, ts.URL+"/runs/start", url.Values{
+		"title":   {"Browser defaults"},
+		"summary": {"submitted from the served dashboard"},
+		"prompt":  {"use the configured serve defaults"},
+	})
+	defer startResp.Body.Close()
+	if startResp.StatusCode != http.StatusSeeOther {
+		body, _ := io.ReadAll(startResp.Body)
+		t.Fatalf("start status = %d, want %d, body=%s", startResp.StatusCode, http.StatusSeeOther, string(body))
+	}
+	runID := strings.TrimPrefix(startResp.Header.Get("Location"), "/runs/")
+	if runID == "" {
+		t.Fatalf("redirect location = %q, want /runs/<id>", startResp.Header.Get("Location"))
+	}
+
+	select {
+	case got := <-started:
+		if got.Provider != "anthropic" {
+			t.Fatalf("provider = %q, want anthropic", got.Provider)
+		}
+		if got.Model != "claude-opus-4-6" {
+			t.Fatalf("model = %q, want claude-opus-4-6", got.Model)
+		}
+		if got.Title != "Browser defaults" || got.Summary != "submitted from the served dashboard" || got.Prompt != "use the configured serve defaults" {
+			t.Fatalf("unexpected started request: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for served browser form start")
+	}
+
+	waitForServeBodyContains(t, client, ts.URL+"/", "Browser defaults", "anthropic / claude-opus-4-6", "/runs/"+runID)
+	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID,
+		"Browser defaults",
+		"submitted from the served dashboard",
+		"use the configured serve defaults",
+		"anthropic",
+		"claude-opus-4-6",
+	)
+	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID+"/sidebar",
+		"completed",
+		"anthropic",
+		"claude-opus-4-6",
+		"Review activity",
+		"data-sidebar-live=\"false\"",
+	)
+}
+
 func TestNewServeRunStarterClosesPerRunModels(t *testing.T) {
 	base := &serveCountingModel{response: core.TextResponse("done")}
 	cfg := serveRunConfig{
@@ -367,6 +447,20 @@ func mustServePOSTJSON(t *testing.T, client *http.Client, target, body string) *
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", target, err)
+	}
+	return resp
+}
+
+func mustServePOSTForm(t *testing.T, client *http.Client, target string, form url.Values) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("new POST form request %s: %v", target, err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST form %s: %v", target, err)
 	}
 	return resp
 }

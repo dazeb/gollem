@@ -177,6 +177,41 @@ func TestActionHandler_ApproveToolCallFormWithDecisionAlias(t *testing.T) {
 	}
 }
 
+func TestActionHandler_ApproveToolCallFormWithApproveAlias(t *testing.T) {
+	bridge := agui.NewApprovalBridge()
+	approvedCh := waitForApprovalResult(t, bridge, "tc_form_approve")
+
+	h := NewActionHandler(ActionHandlerConfig{
+		Runtimes: map[string]*SessionRuntime{
+			"ses_form": {ApprovalBridge: bridge},
+		},
+	})
+
+	resp := doActionFormRequest(t, h, http.MethodPost, url.Values{
+		"approve":      {"1"},
+		"session_id":   {"ses_form"},
+		"tool_call_id": {"tc_form_approve"},
+		"message":      {"approved via button alias"},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	select {
+	case approved := <-approvedCh:
+		if !approved {
+			t.Fatal("expected approved=true")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for approval resolution")
+	}
+
+	var body successResponse
+	decodeJSONBody(t, resp, &body)
+	if body.Action != agui.ActionApproveToolCall || body.ToolCallID != "tc_form_approve" || body.Message != "approved via button alias" {
+		t.Fatalf("unexpected response: %+v", body)
+	}
+}
+
 func TestActionHandler_DenyToolCallForm(t *testing.T) {
 	bridge := agui.NewApprovalBridge()
 	approvedCh := waitForApprovalResult(t, bridge, "tc_deny_form")
