@@ -107,20 +107,22 @@ func TestHandleStartRunAcceptsJSONAndFormBodies(t *testing.T) {
 		t.Fatalf("form status = %d, want %d", formRec.Code, http.StatusSeeOther)
 	}
 
-	assertStartedRunRequest(t, started, RunStartRequest{
-		Title:    "JSON run",
-		Summary:  "json summary",
-		Prompt:   "json prompt",
-		Provider: "json-provider",
-		Model:    "json-model",
-	})
-	assertStartedRunRequest(t, started, RunStartRequest{
-		Title:    "Form run",
-		Summary:  "form summary",
-		Prompt:   "form prompt",
-		Provider: "form-provider",
-		Model:    "form-model",
-	})
+	assertStartedRunRequestSet(t, started,
+		RunStartRequest{
+			Title:    "JSON run",
+			Summary:  "json summary",
+			Prompt:   "json prompt",
+			Provider: "json-provider",
+			Model:    "json-model",
+		},
+		RunStartRequest{
+			Title:    "Form run",
+			Summary:  "form summary",
+			Prompt:   "form prompt",
+			Provider: "form-provider",
+			Model:    "form-model",
+		},
+	)
 }
 
 func TestHandleStartRunRejectsInvalidBodies(t *testing.T) {
