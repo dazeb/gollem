@@ -312,10 +312,24 @@ const protocolEventLabel = (type, name = '') => {
   return humanizeCode(normalizedType, normalizedType || 'Event');
 };
 
-const protocolEventTone = (type, detail = '', name = '') => {
+const protocolEventPayload = (value) => {
+  if (value && typeof value === 'object') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return readJSON(value) || {};
+  }
+  if (value == null) {
+    return {};
+  }
+  return readJSON(JSON.stringify(value)) || {};
+};
+
+const protocolEventTone = (type, detail = '', name = '', value = null) => {
   const normalizedType = compactWhitespace(type);
   const normalizedName = compactWhitespace(name);
   const normalizedDetail = compactWhitespace(detail).toLowerCase();
+  const payload = protocolEventPayload(value);
   if (normalizedType === 'RUN_ERROR' || normalizedType === 'run_error' || normalizedDetail.startsWith('error:')) {
     return 'error';
   }
@@ -329,11 +343,65 @@ const protocolEventTone = (type, detail = '', name = '') => {
     if (normalizedName === 'gollem.run.waiting' || normalizedName === 'gollem.approval.requested' || normalizedName === 'gollem.deferred.requested') {
       return 'waiting';
     }
-    if (normalizedName === 'gollem.run.resumed' || normalizedName === 'gollem.approval.resolved' || normalizedName === 'gollem.deferred.resolved') {
-      return normalizedDetail.startsWith('error:') ? 'error' : 'completed';
+    if (normalizedName === 'gollem.run.resumed') {
+      return payload.isError || payload.error ? 'error' : 'running';
+    }
+    if (normalizedName === 'gollem.approval.resolved') {
+      return payload.approved === false || payload.isError || payload.error ? 'error' : 'completed';
+    }
+    if (normalizedName === 'gollem.deferred.resolved') {
+      return payload.isError || payload.error ? 'error' : 'completed';
     }
   }
   return 'info';
+};
+
+const customEventSummary = (name = '', value = null) => {
+  const normalizedName = compactWhitespace(name);
+  const payload = protocolEventPayload(value);
+  switch (normalizedName) {
+    case 'gollem.run.waiting': {
+      const waitingMeta = waitingPresentation(payload.reason || '', payload.approvalPendingCount || payload.approval_pending_count || 0);
+      return waitingMeta.summary || 'Run paused.';
+    }
+    case 'gollem.run.resumed':
+      return payload.error || payload.message
+        ? summarize(payload.error || payload.message, 120)
+        : (payload.runId ? `Run resumed · ${payload.runId}` : 'Run resumed after waiting.');
+    case 'gollem.approval.requested':
+      return [payload.toolName || 'approval', summarize(payload.argsJson || payload.args_json || '', 96)].filter(Boolean).join(' · ') || 'Approval requested';
+    case 'gollem.approval.resolved':
+      return payload.approved === false
+        ? `${payload.toolName || payload.toolCallId || 'approval'} denied`
+        : `${payload.toolName || payload.toolCallId || 'approval'} approved`;
+    case 'gollem.deferred.requested':
+      return [payload.toolName || 'deferred input', summarize(payload.argsJson || payload.args_json || '', 96)].filter(Boolean).join(' · ') || 'Deferred input requested';
+    case 'gollem.deferred.resolved':
+      return payload.isError || payload.error
+        ? summarize(payload.content || payload.error || payload.toolName || 'deferred input failed', 120)
+        : summarize(payload.content || payload.toolName || 'deferred input received', 120);
+    default:
+      return '';
+  }
+};
+
+const mergedWaitingReason = (reason = '', state = {}) => {
+  const normalizedReason = compactWhitespace(reason);
+  const hasApproval = !!state.pendingApproval;
+  const hasDeferred = !!state.pendingDeferred;
+  if (normalizedReason) {
+    return normalizedReason;
+  }
+  if (hasApproval && hasDeferred) {
+    return 'approval_and_deferred';
+  }
+  if (hasApproval) {
+    return 'approval';
+  }
+  if (hasDeferred) {
+    return 'deferred';
+  }
+  return '';
 };
 
 const deriveStatusMeta = (renderer, statusOverride = '') => {
@@ -971,7 +1039,7 @@ class RunSceneRenderer {
         summary,
         detail: summary,
         timestamp: Date.now(),
-        tone: protocolEventTone(envelope.type || 'unknown', summary, envelope.name || ''),
+        tone: protocolEventTone(envelope.type || 'unknown', summary, envelope.name || '', envelope.data || envelope.raw || null),
       });
       this.scheduleRender();
       return;
@@ -985,7 +1053,7 @@ class RunSceneRenderer {
       summary: detail,
       detail,
       timestamp: aguiEvent.timestamp || Date.now(),
-      tone: protocolEventTone(aguiEvent.type || envelope.type || 'unknown', detail, aguiEvent.name || ''),
+      tone: protocolEventTone(aguiEvent.type || envelope.type || 'unknown', detail, aguiEvent.name || '', aguiEvent.value || aguiEvent),
     });
     this.scheduleRender();
   }
@@ -1142,7 +1210,7 @@ class RunSceneRenderer {
       }
     });
 
-    const waitingReason = snapshot.waiting_reason || (pendingToolIds.size ? 'approval/deferred' : '');
+    const waitingReason = snapshot.waiting_reason || (pendingToolIds.size ? 'approval_and_deferred' : '');
     if (waitingReason) {
       this.scene.customEventState.waiting = true;
       this.triggerTransition('waiting');
@@ -1316,13 +1384,27 @@ class RunSceneRenderer {
       case 'TOOL_CALL_END':
         this.finishToolBody(event.toolCallId, timestamp);
         break;
-      case 'TOOL_CALL_RESULT':
+      case 'TOOL_CALL_RESULT': {
         this.attachToolResult(event.toolCallId, event.content || '', event.role || 'tool', timestamp);
+        const tool = this.scene.toolBodies.get(event.toolCallId || '');
+        const toolFailed = /^error:/i.test(String(event.content || ''));
+        this.appendNarrativeEvent({
+          label: toolFailed ? 'Tool failed' : 'Tool returned',
+          summary: toolFailed
+            ? `${tool?.title || 'Tool'} returned an error.`
+            : `${tool?.title || 'Tool'} returned output.`,
+          detail: summarize(event.content || tool?.title || event.toolCallId || 'tool result', 180),
+          tone: toolFailed ? 'error' : 'completed',
+          kind: 'tool',
+          occurredLabel: eventTimeLabel,
+          timestamp,
+        });
         if (!this.hasPendingWaitingSignals() && this.scene.runStatus === 'waiting') {
           this.clearWaitingState();
           this.updateStatus('running');
         }
         break;
+      }
       case 'CUSTOM':
         this.applyCustomEvent(event.name, event.value, timestamp);
         break;
@@ -1334,16 +1416,17 @@ class RunSceneRenderer {
   }
 
   applyCustomEvent(name, value, timestamp) {
-    const payload = value && typeof value === 'object' ? value : readJSON(JSON.stringify(value || {})) || {};
+    const payload = protocolEventPayload(value);
     const eventTimeLabel = this.narrativeTimeLabel(timestamp);
     switch (name) {
       case 'gollem.run.waiting': {
         this.scene.customEventState.waiting = true;
-        this.updateWaitingState(payload.reason || 'paused', this.scene.waitingSnapshot);
+        const waitingReason = mergedWaitingReason(payload.reason || '', this.scene.customEventState);
+        this.updateWaitingState(waitingReason, this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
-        this.pushNotice('Run waiting', payload.reason || 'paused', timestamp);
-        const waitingMeta = waitingPresentation(payload.reason || '', this.root.dataset.runWaitingApprovalPendingCount || 0);
+        this.pushNotice('Run waiting', waitingReason || payload.reason || 'paused', timestamp);
+        const waitingMeta = waitingPresentation(waitingReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
         this.appendNarrativeEvent({
           label: waitingMeta.label || 'Run waiting',
           summary: waitingMeta.summary || 'Run paused.',
@@ -1365,8 +1448,8 @@ class RunSceneRenderer {
         this.pushNotice('Run resumed', payload.runId || this.runId || 'stream resumed', timestamp);
         this.appendNarrativeEvent({
           label: 'Run resumed',
-          summary: 'Execution continued after a waiting period.',
-          detail: payload.runId || this.runId || 'Stream resumed.',
+          summary: 'Execution continued after waiting.',
+          detail: payload.runId || this.runId || 'Live execution resumed after replay-safe reconnect or user input.',
           tone: 'running',
           kind: 'run',
           occurredLabel: eventTimeLabel,
@@ -1385,12 +1468,14 @@ class RunSceneRenderer {
         }
         this.scene.customEventState.waiting = true;
         this.scene.customEventState.pendingApproval = true;
-        this.updateWaitingState('approval', this.scene.waitingSnapshot);
+        const waitingReason = mergedWaitingReason('', this.scene.customEventState);
+        this.updateWaitingState(waitingReason, this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
+        const waitingMeta = waitingPresentation(waitingReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
         this.appendNarrativeEvent({
           label: 'Approval requested',
-          summary: 'A tool call is paused pending approval.',
+          summary: waitingMeta.summary || 'A tool call is paused pending approval.',
           detail: [payload.toolName || 'tool', summarize(payload.argsJson || '', 120)].filter(Boolean).join(' · '),
           tone: 'waiting',
           kind: 'approval',
@@ -1414,6 +1499,10 @@ class RunSceneRenderer {
           this.scene.customEventState.waiting = false;
           this.clearWaitingState();
           this.updateStatus('running');
+        } else {
+          this.scene.customEventState.waiting = true;
+          this.updateWaitingState(mergedWaitingReason('', this.scene.customEventState), this.scene.waitingSnapshot);
+          this.updateStatus('waiting');
         }
         this.triggerTransition('resumed');
         this.appendNarrativeEvent({
@@ -1439,13 +1528,15 @@ class RunSceneRenderer {
         }
         this.scene.customEventState.waiting = true;
         this.scene.customEventState.pendingDeferred = true;
-        this.updateWaitingState(payload.toolName || 'deferred', this.scene.waitingSnapshot);
+        const waitingReason = mergedWaitingReason('', this.scene.customEventState);
+        this.updateWaitingState(waitingReason, this.scene.waitingSnapshot);
         this.updateStatus('waiting');
         this.triggerTransition('waiting');
         this.pushNotice('Deferred input', payload.toolName || payload.toolCallId || 'awaiting input', timestamp);
+        const waitingMeta = waitingPresentation(waitingReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
         this.appendNarrativeEvent({
           label: 'Deferred input requested',
-          summary: 'The run is waiting for input before continuing.',
+          summary: waitingMeta.summary || 'The run is waiting for input before continuing.',
           detail: [payload.toolName || 'deferred input', summarize(payload.argsJson || '', 120)].filter(Boolean).join(' · '),
           tone: 'waiting',
           kind: 'deferred',
@@ -1468,6 +1559,10 @@ class RunSceneRenderer {
           this.scene.customEventState.waiting = false;
           this.clearWaitingState();
           this.updateStatus('running');
+        } else {
+          this.scene.customEventState.waiting = true;
+          this.updateWaitingState(mergedWaitingReason('', this.scene.customEventState), this.scene.waitingSnapshot);
+          this.updateStatus('waiting');
         }
         this.triggerTransition('resumed');
         this.pushNotice('Deferred resolved', summarize(payload.content || payload.toolName || ''), timestamp);
@@ -1513,7 +1608,7 @@ class RunSceneRenderer {
       case 'TOOL_CALL_RESULT':
         return summarize(event.content || '', 120);
       case 'CUSTOM':
-        return event.name || 'custom';
+        return customEventSummary(event.name || '', event.value) || event.name || 'custom';
       default:
         return summarize(JSON.stringify(event), 120);
     }
@@ -1533,10 +1628,17 @@ class RunSceneRenderer {
     return formatClock(timestamp);
   }
 
+  clearLogPlaceholders(list) {
+    list?.querySelectorAll?.('li[data-log-placeholder="true"]').forEach((node) => {
+      node.remove();
+    });
+  }
+
   appendNarrativeEvent(entry = {}) {
     if (!this.activityLog) {
       return;
     }
+    this.clearLogPlaceholders(this.activityLog);
     const label = compactWhitespace(entry.label || entry.summary || 'Activity');
     if (!label) {
       return;
@@ -1687,7 +1789,7 @@ class RunSceneRenderer {
   }
 
   updateWaitingState(reason = '', snapshot = null) {
-    const nextReason = compactWhitespace(reason || '');
+    const nextReason = mergedWaitingReason(reason, this.scene.customEventState);
     const changed = nextReason !== this.scene.waitingReason;
     const waitingMeta = waitingPresentation(nextReason, this.root.dataset.runWaitingApprovalPendingCount || 0);
     const waitingLabel = compactWhitespace(waitingMeta.label || humanizeCode(nextReason, 'Active'));
@@ -1765,18 +1867,26 @@ class RunSceneRenderer {
     if (this.connectionDetailTarget) {
       this.connectionDetailTarget.textContent = presentation.detail;
     }
-    if (this.streamStateTarget && (connection === 'reconnecting' || connection === 'closed' || connection === 'unsupported')) {
-      this.streamStateTarget.textContent = presentation.label;
+    const sceneState = readSceneState(this.root);
+    const restoreStreamState = connection === 'live' || connection === 'reconnected';
+    if (this.streamStateTarget) {
+      this.streamStateTarget.textContent = restoreStreamState
+        ? (sceneState.status.label || this.root.dataset.runStatusLabel || presentation.label)
+        : presentation.label;
     }
-    if (this.streamDetailTarget && (connection === 'reconnecting' || connection === 'closed' || connection === 'unsupported')) {
-      this.streamDetailTarget.textContent = presentation.detail;
+    if (this.streamDetailTarget) {
+      this.streamDetailTarget.textContent = restoreStreamState
+        ? (sceneState.waiting.active === 'true'
+          ? (sceneState.waiting.summary || sceneState.waiting.detail || sceneState.waiting.label || sceneState.status.detail || sceneState.status.label)
+          : (sceneState.status.detail || sceneState.lastEvent.summary || sceneState.status.label || 'Live stream active.'))
+        : presentation.detail;
     }
     this.scheduleRender();
 
     if (connection === 'reconnecting' && previous !== 'reconnecting') {
       this.appendNarrativeEvent({
         label: 'Live stream reconnecting',
-        summary: 'SSE connection dropped. The renderer is waiting for replay-safe reconnect.',
+        summary: 'SSE dropped; the renderer is waiting for replay-safe reconnect.',
         detail: presentation.detail,
         tone: 'waiting',
         kind: 'system',
@@ -1785,7 +1895,7 @@ class RunSceneRenderer {
     if (connection === 'closed' && previous !== 'closed') {
       this.appendNarrativeEvent({
         label: 'Live stream closed',
-        summary: 'The SSE stream closed and will not receive more live updates.',
+        summary: 'The SSE stream closed and will not deliver more live updates.',
         detail: presentation.detail,
         tone: 'error',
         kind: 'system',
@@ -2264,6 +2374,7 @@ class RunSceneRenderer {
     if (!this.eventLog) {
       return;
     }
+    this.clearLogPlaceholders(this.eventLog);
 
     const label = compactWhitespace(entry.label || entry.type || 'Event');
     const summary = compactWhitespace(entry.summary || entry.detail || '');

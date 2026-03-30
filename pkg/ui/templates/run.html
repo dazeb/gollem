@@ -88,7 +88,7 @@
           <article class="run-scene__metric run-scene__metric--connection">
             <span class="detail-grid__label">Connection</span>
             <strong data-run-connection>SSE connecting…</strong>
-            <span class="run-scene__metric-note" data-run-connection-detail>Opening the live AG-UI event stream.</span>
+            <span class="run-scene__metric-note" data-run-connection-detail>Opening the live AG-UI SSE stream with replay-safe resume.</span>
           </article>
           <article class="run-scene__metric run-scene__metric--stream">
             <span class="detail-grid__label">Stream state</span>
@@ -175,7 +175,7 @@
           {{if .Detail}}<div class="event-list__detail">{{if and .Summary (ne .Summary .Detail)}}{{.Detail}}{{end}}</div>{{end}}
         </li>
         {{else}}
-        <li class="muted">No activity yet. Live updates will appear here once the run starts.</li>
+        <li class="muted" data-log-placeholder="true">No activity yet. Live updates will appear here once the run starts.</li>
         {{end}}
       </ol>
     </section>
@@ -184,7 +184,7 @@
       <div class="transcript__header">
         <div>
           <h3>Protocol events</h3>
-          <span class="muted">Readable AG-UI/runtime event stream for debugging initial hydration.</span>
+          <span class="muted">Readable AG-UI/runtime stream for reconnects, replay snapshots, and resume debugging.</span>
         </div>
         <div>
           <span class="muted">{{len .Run.RecentProtocolActivity}} recent</span>
@@ -200,7 +200,7 @@
           {{if .Summary}}<div class="event-list__detail">{{.Summary}}</div>{{end}}
         </li>
         {{else}}
-        <li class="muted">No protocol events yet.</li>
+        <li class="muted" data-log-placeholder="true">No protocol events yet.</li>
         {{end}}
       </ol>
     </section>
