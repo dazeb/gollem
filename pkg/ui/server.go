@@ -36,13 +36,22 @@ func WithRunStore(store *RunStateStore) ServerOption {
 	}
 }
 
+// WithRunStartDefaults injects provider/model defaults shown on the dashboard form.
+func WithRunStartDefaults(defaults RunStartRequest) ServerOption {
+	return func(s *Server) {
+		s.runStartDefaults.Provider = firstNonEmpty(defaults.Provider)
+		s.runStartDefaults.Model = firstNonEmpty(defaults.Model)
+	}
+}
+
 // Server serves the AGUI dashboard scaffold from embedded templates and assets.
 type Server struct {
-	mux     *http.ServeMux
-	pages   map[string]*template.Template
-	static  http.Handler
-	runs    *RunStateStore
-	starter RunStarter
+	mux              *http.ServeMux
+	pages            map[string]*template.Template
+	static           http.Handler
+	runs             *RunStateStore
+	starter          RunStarter
+	runStartDefaults RunStartRequest
 }
 
 // NewServer builds a UI server backed by embedded templates and live run state.
@@ -58,11 +67,12 @@ func NewServer(opts ...ServerOption) (*Server, error) {
 	}
 
 	s := &Server{
-		mux:     http.NewServeMux(),
-		pages:   pages,
-		static:  http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))),
-		runs:    NewRunStateStore(),
-		starter: RunStarterFunc(defaultRunStarter),
+		mux:              http.NewServeMux(),
+		pages:            pages,
+		static:           http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))),
+		runs:             NewRunStateStore(),
+		starter:          RunStarterFunc(defaultRunStarter),
+		runStartDefaults: RunStartRequest{Provider: "ui", Model: "stream"},
 	}
 	for _, opt := range opts {
 		if opt != nil {

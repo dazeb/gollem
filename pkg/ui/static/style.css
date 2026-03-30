@@ -632,6 +632,89 @@ body {
   outline: 1px solid rgba(125, 211, 252, 0.08);
 }
 
+.panel--hero-grid {
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  align-items: start;
+}
+
+.hero-copy {
+  display: grid;
+  gap: 20px;
+}
+
+.run-composer {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+
+.run-composer__header,
+.run-composer__footer,
+.run-defaults {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-defaults {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.form-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field--full {
+  grid-column: 1 / -1;
+}
+
+.field__label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
+  padding: 13px 14px;
+  background: rgba(2, 6, 23, 0.72);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: #64748b;
+}
+
+.field input:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: rgba(125, 211, 252, 0.5);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+}
+
+.empty-state {
+  padding: 8px 0;
+}
+
 .shell__footer {
   color: var(--muted);
   font-size: 0.92rem;
@@ -650,12 +733,16 @@ body {
   .run-card__footer,
   .transcript__header,
   .sidebar-actions,
-  .run-scene__header {
+  .run-scene__header,
+  .run-composer__header,
+  .run-composer__footer {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .run-layout {
+  .panel--hero-grid,
+  .run-layout,
+  .form-grid {
     grid-template-columns: 1fr;
   }
 
