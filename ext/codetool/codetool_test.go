@@ -1461,6 +1461,31 @@ func TestSubAgentTool_BackgroundProcessIsolationAndCleanup(t *testing.T) {
 	}
 }
 
+func TestSubagentReasoningConfigForParentPreservesCustomProfile(t *testing.T) {
+	parent := ReasoningSandwichConfig{
+		Planning:              ReasoningLevel{ThinkingBudget: 42000, ReasoningEffort: "xhigh"},
+		Implementation:        ReasoningLevel{ThinkingBudget: 7000, ReasoningEffort: "low"},
+		Verification:          ReasoningLevel{ThinkingBudget: 26000, ReasoningEffort: "medium"},
+		PlanningTurns:         9,
+		VerificationThreshold: 4,
+	}
+
+	got := subagentReasoningConfigForParent(&parent)
+	if got != parent {
+		t.Fatalf("subagent reasoning config mismatch: got %+v want %+v", got, parent)
+	}
+
+	parent.PlanningTurns = 1
+	parent.Implementation.ThinkingBudget = 999
+	if got.PlanningTurns != 9 || got.Implementation.ThinkingBudget != 7000 {
+		t.Fatalf("expected returned config to be an isolated copy, got %+v", got)
+	}
+
+	if defaultGot, wantDefault := subagentReasoningConfigForParent(nil), subagentReasoningConfig(); defaultGot != wantDefault {
+		t.Fatalf("nil parent should use subagent defaults: got %+v want %+v", defaultGot, wantDefault)
+	}
+}
+
 func processExists(pid int) (bool, error) {
 	err := syscall.Kill(pid, 0)
 	switch {
