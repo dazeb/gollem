@@ -1,0 +1,68 @@
+CopilotKit attribution record for gollem AGUI/UI porting review
+=============================================================
+
+This directory records an upstream source inventory and attribution notes for
+selected CopilotKit materials reviewed as potential references for gollem's UI.
+
+Upstream project
+- Name: CopilotKit
+- Repository: https://github.com/CopilotKit/CopilotKit
+- Snapshot commit: ecf67473ad08c47af89a5289839b518c422dc15f
+- License: MIT
+- Upstream NOTICE file: none found in the reviewed snapshot
+
+MIT license requirement summary
+- The upstream project is MIT licensed.
+- If gollem copies or materially adapts substantial portions of CopilotKit
+  source/CSS/templates, the upstream copyright notice and permission notice
+  must remain included with the copied material.
+- This file is the repository-level attribution record for that purpose.
+
+Reviewed upstream areas covered by the local inventory
+- packages/react-ui/src/components/chat/**
+- packages/react-ui/src/css/**
+- packages/react-ui/src/styles.css
+- packages/react-core/src/v2/providers/CopilotKitProvider.tsx
+- packages/react-core/src/v2/providers/CopilotChatConfigurationProvider.tsx
+- packages/react-core/src/v2/hooks/use-agent.tsx
+- packages/react-core/src/v2/hooks/use-interrupt.tsx
+- packages/react-core/src/v2/hooks/use-human-in-the-loop.tsx
+- packages/react-core/src/v2/a2ui/A2UIMessageRenderer.tsx
+- packages/a2ui-renderer/src/react-renderer/**
+- packages/a2ui-renderer/src/theme/**
+- packages/a2ui-renderer/src/A2UIViewer.tsx
+- packages/a2ui-renderer/src/index.ts
+- examples/showcases/todo/src/**
+- examples/showcases/todo/tailwind.config.ts
+- examples/showcases/multi-agent-canvas/frontend/src/**
+- examples/showcases/multi-agent-canvas/frontend/tailwind.config.ts
+- repository metadata: LICENSE, package.json, nx.json
+
+Reference
+- Detailed file-level inventory: contrib/copilotkit/repomix-output.xml
+- Portability/adaptation notes: contrib/copilotkit/PORTING_NOTES.md
+
+Upstream license text (MIT)
+---------------------------
+
+The MIT License
+
+Copyright (c) Atai Barkai
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
