@@ -1,0 +1,233 @@
+<?xml version='1.0' encoding='utf-8'?>
+<repomixInventory format="equivalent-repomix-manifest" generatedAt="2026-03-31T14:52:39Z" upstreamRepo="https://github.com/CopilotKit/CopilotKit" upstreamCommit="ecf67473ad08c47af89a5289839b518c422dc15f" output="contrib/copilotkit/repomix-output.xml">
+  <purpose>Reviewable source inventory for selected CopilotKit packages/examples chosen as porting references for Gollem AGUI and UI work.</purpose>
+  <localContext>
+    <file path="cmd/gollem/serve.go" role="Serve entrypoint; injects provider/model defaults and mounts pkg/ui server." />
+    <file path="ext/agui/DESIGN.md" role="AGUI contract and event taxonomy for Gollem." />
+    <file path="ext/agui/MISSION-AGUI-UI.md" role="Requested input path was not present in this worktree at inventory time." />
+    <file path="pkg/ui/server.go" role="Embeds templates/static assets and wires routes." />
+    <file path="pkg/ui/handlers.go" role="HTML render paths, SSE endpoint, and action POST bridge." />
+    <file path="pkg/ui/state.go" role="Run/session state model, waiting/approval projections, and AG-UI transport bindings." />
+    <file path="pkg/ui/templates/layout.html" role="Outer shell template." />
+    <file path="pkg/ui/templates/index.html" role="Run launch/dashboard template." />
+    <file path="pkg/ui/templates/run.html" role="Run detail/live scene template." />
+    <file path="pkg/ui/templates/sidebar.html" role="Sidebar/live approval controls template." />
+    <file path="pkg/ui/static/renderer.js" role="Vanilla JS renderer, SSE replay/reconnect handling, and live canvas scene." />
+    <file path="pkg/ui/static/style.css" role="Vanilla CSS theme and layout styles." />
+  </localContext>
+  <selectedScopes>
+    <scope id="repo-meta" name="Repository metadata and license root" portability="reference-only" copyMode="reference">
+      <rationale>Carries the MIT license text plus monorepo build metadata used to understand what must be re-expressed outside the React/NX workspace.</rationale>
+      <localTargets>contrib/copilotkit/NOTICE; contrib/copilotkit/PORTING_NOTES.md</localTargets>
+      <patterns>
+        <pattern>LICENSE</pattern>
+        <pattern>package.json</pattern>
+        <pattern>nx.json</pattern>
+      </patterns>
+      <files>
+        <file path="LICENSE" bytes="1067" lines="21" sha256="15a0e5343aea872c0573ad72feb6044b336f162d724cc1673c608e6b37ea071b" />
+        <file path="nx.json" bytes="2340" lines="98" sha256="08624bdaeb78fa0193dd8922540d42f35964a8f4d983e949d2492ce44cb29b7f" />
+        <file path="package.json" bytes="3303" lines="90" sha256="f6f4458a11cd09517d553130f9e663a8975e67c1fcc8e70e0e8e6af3befcb373" />
+      </files>
+      <summary fileCount="3" totalBytes="6710" />
+    </scope>
+    <scope id="react-ui-chat" name="React chat shell and CSS" portability="adapt-layout-and-behavior" copyMode="selective-adaptation">
+      <rationale>Provides chat composition, message scrolling, input/send-stop affordances, modal/sidebar shell behavior, and base CSS tokenization that can inform the Go/HTML/JS dashboard.</rationale>
+      <localTargets>pkg/ui/templates/layout.html; pkg/ui/templates/run.html; pkg/ui/templates/sidebar.html; pkg/ui/static/style.css; pkg/ui/static/renderer.js</localTargets>
+      <patterns>
+        <pattern>packages/react-ui/src/components/chat/**</pattern>
+        <pattern>packages/react-ui/src/css/**</pattern>
+        <pattern>packages/react-ui/src/styles.css</pattern>
+      </patterns>
+      <files>
+        <file path="packages/react-ui/src/components/chat/Button.tsx" bytes="642" lines="22" sha256="97dae7bf4844a50c4c08f2f35d0751e6a71181525b9b8535f7335b467f38c93a" />
+        <file path="packages/react-ui/src/components/chat/Chat.tsx" bytes="23550" lines="822" sha256="2804aea1d3027aa3c6f413a2d1f49de35a2ad3db4e6eccee8e33e806802f7003" />
+        <file path="packages/react-ui/src/components/chat/ChatContext.tsx" bytes="5509" lines="252" sha256="961343eb75f36bf2b8095627878f5aac775df28b8c79ca0113e3ce90068116f6" />
+        <file path="packages/react-ui/src/components/chat/CodeBlock.tsx" bytes="9346" lines="423" sha256="f72ffafc725d133638098978714b266b35c0a2c9ba76680f983ca6082ec5815b" />
+        <file path="packages/react-ui/src/components/chat/Header.tsx" bytes="659" lines="24" sha256="4ec3bf35474410049b3cd9acfe1d523772f397420daa63023f033d160f4010aa" />
+        <file path="packages/react-ui/src/components/chat/Icons.tsx" bytes="7664" lines="272" sha256="834f65561f4d1e218aa2d09c35e0f9b86182a949246f16dc52026006bbb2ca4f" />
+        <file path="packages/react-ui/src/components/chat/ImageUploadQueue.tsx" bytes="2022" lines="77" sha256="992c0817c6432352c37ccd174e84a77bc7c75175cb39e0c50e27f5177f17c6e6" />
+        <file path="packages/react-ui/src/components/chat/Input.tsx" bytes="5578" lines="179" sha256="d8c5aba971f263343a7773659d6b8637671d9cb19a64f009bbf72574c82ad769" />
+        <file path="packages/react-ui/src/components/chat/Markdown.tsx" bytes="4038" lines="157" sha256="cc6c2dda96ca82944dd5fcfd43114678d4f3d2d848b0b077c09d439f9417ef15" />
+        <file path="packages/react-ui/src/components/chat/Messages.tsx" bytes="6043" lines="222" sha256="6782b7e081cb55b159975963120cf7dc3d49fea8188d824d725ed2cf86ee67a9" />
+        <file path="packages/react-ui/src/components/chat/Modal.tsx" bytes="6472" lines="230" sha256="50ad2e57a32646fddd28628ef70908edc3637e4a9e8e976bebb0591e19dd304a" />
+        <file path="packages/react-ui/src/components/chat/Popup.tsx" bytes="2314" lines="79" sha256="e01cf7af8ad0bbde3bb0eb7a746276e7de49487932f6409e963076e93fbd19d2" />
+        <file path="packages/react-ui/src/components/chat/PoweredByTag.tsx" bytes="1219" lines="48" sha256="b449e55b5511ca98a8bd5b9b95d6c7d3c90ec5daf05e1a112f9f42bdeb4aec30" />
+        <file path="packages/react-ui/src/components/chat/Sidebar.tsx" bytes="2792" lines="98" sha256="87ee54415857062f10a7d976afbee93688e040c247cac2c64d573a1687fb000e" />
+        <file path="packages/react-ui/src/components/chat/Suggestion.tsx" bytes="774" lines="35" sha256="75e9c87e8bf7c0279328fa3befda819b7623ce4a20500c1928f63bea1d91853c" />
+        <file path="packages/react-ui/src/components/chat/Suggestions.tsx" bytes="641" lines="23" sha256="663cad8b069ed6aa6a1c3c536a8bbe326264a8565f74fc8770253a987136a6b2" />
+        <file path="packages/react-ui/src/components/chat/Textarea.tsx" bytes="2109" lines="89" sha256="5b6a20c488af68ea8f757ac32df34aed9c46aff236fee1738cc9aa6817a43981" />
+        <file path="packages/react-ui/src/components/chat/Window.tsx" bytes="4612" lines="152" sha256="0b0348db2601f261b9e8b5c5b8519f465c178850f7d1909c18ff117cd6893e15" />
+        <file path="packages/react-ui/src/components/chat/index.tsx" bytes="543" lines="11" sha256="5f39d7d1bcd0074bb33bfafb97072427ba8b30eec2b0c8ac7c3130bee925bec7" />
+        <file path="packages/react-ui/src/components/chat/messages/AssistantMessage.tsx" bytes="4016" lines="130" sha256="deb33421ae4a1ba6ed933d1cdc5b81dc6b486e1abf5296880ed44ded882a1b94" />
+        <file path="packages/react-ui/src/components/chat/messages/ErrorMessage.tsx" bytes="1777" lines="61" sha256="4d057b293a185ce0317d20b987e970a0a1e64e2c83de80ce559d1ea1de3efd3a" />
+        <file path="packages/react-ui/src/components/chat/messages/ImageRenderer.tsx" bytes="1310" lines="49" sha256="b8154dbcd74e3f1048f17482e886cde48609f4ad0a5c6d2f060c3413bfa0ebe7" />
+        <file path="packages/react-ui/src/components/chat/messages/LegacyRenderMessage.tsx" bytes="4195" lines="153" sha256="0e364660c83df22e8bcd725038ec32a8f05d92a9cb9d6fef49435fd28d98e147" />
+        <file path="packages/react-ui/src/components/chat/messages/RenderMessage.tsx" bytes="1747" lines="61" sha256="3aca8465384e228e395409db5211309a5ce05412f7ea0df6818edea2be3301c6" />
+        <file path="packages/react-ui/src/components/chat/messages/UserMessage.tsx" bytes="1305" lines="54" sha256="f397d5a7a9de02cb49a7020ed3a6d924a977190c9c81532a6fc83cda5a479619" />
+        <file path="packages/react-ui/src/components/chat/props.ts" bytes="8257" lines="363" sha256="68fed8656735c03d1db6e47e52f036a5eb2912ee16b5cfde2ad5290226eb0b55" />
+        <file path="packages/react-ui/src/css/animations.css" bytes="667" lines="35" sha256="6cc3d197f8d34243e7c8751ea959d93844ed984f31d0a38a2f61984ed26d8fd8" />
+        <file path="packages/react-ui/src/css/button.css" bytes="1539" lines="67" sha256="d0f43b602f59a7313947a3d823624d06675a5bfa3e2f79bf5d3d4cc0bd73938f" />
+        <file path="packages/react-ui/src/css/colors.css" bytes="3210" lines="78" sha256="112689c98d46277380b0f7c62dc907597b517e7715bb3d4eeb891003ff6cc5e6" />
+        <file path="packages/react-ui/src/css/console.css" bytes="4035" lines="166" sha256="923e38944b6c7dc82f983303706532af2661efb6cfd4f3a0a6a67797e16ca751" />
+        <file path="packages/react-ui/src/css/crew.css" bytes="4674" lines="277" sha256="804c312d425369ebb67b81562182081b8f77f29f6dd6857a76607f4c69c555d2" />
+        <file path="packages/react-ui/src/css/header.css" bytes="1345" lines="65" sha256="962feaeef2b98fa5ea29882868a94f0b1c7326ed68d62111e2524e15df972429" />
+        <file path="packages/react-ui/src/css/input.css" bytes="3722" lines="152" sha256="01c17af48377980a7f56e365c3a7fce6e7c3663c2c4820904df4accbdc4bb91f" />
+        <file path="packages/react-ui/src/css/markdown.css" bytes="3124" lines="150" sha256="0b639ad0a10cb68ec87ef4d49ad7a38ba7ba0312b3e27c05525d8136634df46b" />
+        <file path="packages/react-ui/src/css/messages.css" bytes="5371" lines="244" sha256="21b0fdd92caff070ad43b834f08b37f6cdf3d54e411d63b1ad3edafa4f9ebaee" />
+        <file path="packages/react-ui/src/css/panel.css" bytes="769" lines="39" sha256="f3e98b6ef68c2339b97acf91dc24e4883297720a9fef8ae5cdafec69f3e34e32" />
+        <file path="packages/react-ui/src/css/popup.css" bytes="600" lines="22" sha256="2eb94813e6ed9109e6f46f3ac7a1eef81543badb9a8247e52f3bb6ff9a47f637" />
+        <file path="packages/react-ui/src/css/sidebar.css" bytes="835" lines="34" sha256="1611b72e351601c8db8386ddaba8a9690c2c611423e9134c68b40a6e5d2a3cd5" />
+        <file path="packages/react-ui/src/css/suggestions.css" bytes="1002" lines="43" sha256="2a5b51fdca6de0403d86224bf8d90879966d88e05e6fdbcff72c530550992506" />
+        <file path="packages/react-ui/src/css/window.css" bytes="1221" lines="60" sha256="2c69d39d61b4730795e124786c6c467f6ceb14c691684e8dcebecaf4b24ccbef" />
+        <file path="packages/react-ui/src/styles.css" bytes="401" lines="14" sha256="eb84e66c32678cdbd948431ed0c74d6939f4d7d484157b699e6f5140c0971cce" />
+      </files>
+      <summary fileCount="41" totalBytes="141649" />
+    </scope>
+    <scope id="react-core-v2-agui-hooks" name="React AGUI/A2UI providers and hooks" portability="adapt-runtime-semantics" copyMode="logic-adaptation">
+      <rationale>Contains provider setup, interrupt handling, human-in-the-loop orchestration, agent subscription patterns, and the A2UI bridge worth translating into Gollem session/action/state logic.</rationale>
+      <localTargets>cmd/gollem/serve.go; ext/agui/adapter.go; ext/agui/transport/sse.go; pkg/ui/server.go; pkg/ui/handlers.go; pkg/ui/state.go; pkg/ui/static/renderer.js</localTargets>
+      <patterns>
+        <pattern>packages/react-core/src/v2/providers/CopilotKitProvider.tsx</pattern>
+        <pattern>packages/react-core/src/v2/providers/CopilotChatConfigurationProvider.tsx</pattern>
+        <pattern>packages/react-core/src/v2/hooks/use-agent.tsx</pattern>
+        <pattern>packages/react-core/src/v2/hooks/use-interrupt.tsx</pattern>
+        <pattern>packages/react-core/src/v2/hooks/use-human-in-the-loop.tsx</pattern>
+        <pattern>packages/react-core/src/v2/a2ui/A2UIMessageRenderer.tsx</pattern>
+      </patterns>
+      <files>
+        <file path="packages/react-core/src/v2/a2ui/A2UIMessageRenderer.tsx" bytes="5381" lines="206" sha256="a10db09b157ab07f117be23f8cd403ba9294c6d17dbb012027d389cc7bc2d1ed" />
+        <file path="packages/react-core/src/v2/hooks/use-agent.tsx" bytes="5270" lines="155" sha256="a68082c93ceacac4880d520445adf85fe4fd08412229f62fdfa72e3734053d63" />
+        <file path="packages/react-core/src/v2/hooks/use-human-in-the-loop.tsx" bytes="2751" lines="81" sha256="128f313b0e3296d51ba05ec3ae1794add7c0dd7983b7426593da374bf28b0c82" />
+        <file path="packages/react-core/src/v2/hooks/use-interrupt.tsx" bytes="9926" lines="305" sha256="9fba1a3813d9bf968a5d40b17c66ca1575b83c297020424ad0e36249e39beff4" />
+        <file path="packages/react-core/src/v2/providers/CopilotChatConfigurationProvider.tsx" bytes="5323" lines="162" sha256="9a860e4aba64e2021c9d4afd43b78a031d37500b4b3cbb93d66b960d1c3a72b3" />
+        <file path="packages/react-core/src/v2/providers/CopilotKitProvider.tsx" bytes="19856" lines="600" sha256="41f60c190e70217bcdd636c9ffea0eb162196f8dee6b531c692e29d758746861" />
+      </files>
+      <summary fileCount="6" totalBytes="48507" />
+    </scope>
+    <scope id="a2ui-react-renderer" name="A2UI React renderer implementation and theme" portability="semantic-port" copyMode="algorithm-and-theme-adaptation">
+      <rationale>Defines how A2UI operations are grouped, rendered, themed, and isolated from host CSS. The semantics are portable; the React/DOM implementation is not.</rationale>
+      <localTargets>ext/agui/DESIGN.md; pkg/ui/static/renderer.js; pkg/ui/static/style.css</localTargets>
+      <patterns>
+        <pattern>packages/a2ui-renderer/src/react-renderer/**</pattern>
+        <pattern>packages/a2ui-renderer/src/theme/**</pattern>
+        <pattern>packages/a2ui-renderer/src/A2UIViewer.tsx</pattern>
+        <pattern>packages/a2ui-renderer/src/index.ts</pattern>
+      </patterns>
+      <files>
+        <file path="packages/a2ui-renderer/src/A2UIViewer.tsx" bytes="6010" lines="213" sha256="c89bb1fb1bc1aef7d8acbf867445944d2389ef4ab5d855d4b816222e1e565230" />
+        <file path="packages/a2ui-renderer/src/index.ts" bytes="1309" lines="31" sha256="0fd85255ab942a23ccfd537b1d12aa842aa3b984a938b12055a07479fd5109fd" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/content/AudioPlayer.tsx" bytes="1313" lines="43" sha256="1f2e31745b4ff17729b8630b2aec1876d8800d63d3de4f2e4f3cb99524157bb4" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/content/Divider.tsx" bytes="1145" lines="37" sha256="cb4e0856ebf446e8f2faf6bda01127ea576374317bb5e1f05ffbc54ba11daa08" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/content/Icon.tsx" bytes="1836" lines="61" sha256="c1b69fac19e10a5b856924715445584b82c0572d64691174209c2dc53417b941" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/content/Image.tsx" bytes="2164" lines="70" sha256="c58415e0b7ecf7a8f4b4a72564011e2d98fb32e393fce60e219180dd35adbec8" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/content/Text.tsx" bytes="5697" lines="185" sha256="a633dcd002d43a0f1c8cd6c4796394657327d29f37b8d2dbaec2b0afa15f3841" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/content/Video.tsx" bytes="2127" lines="73" sha256="c9808113797f3da9b028ae9b0aa51b03484983921a7c672853fe374cc8954a36" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/content/index.ts" bytes="210" lines="6" sha256="764a640f6f3226326dcee4283ba61eb7689a79ab23316d86b3d6a48f4780d415" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/interactive/Button.tsx" bytes="1453" lines="46" sha256="7191c76dfb32433a00ab3572d4e24cfee2a298093ed42a316885a53f30ee2e6f" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/interactive/CheckBox.tsx" bytes="3015" lines="97" sha256="30f8a2f6af0df6be606895c8e7b1ebf627c1977fcb98768d6a2e86bda1145e00" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/interactive/DateTimeInput.tsx" bytes="3392" lines="109" sha256="d1c3aa074c7cbd9d247eb79a1fbbfdd03bb48c9028481b3ac9d263202ed0649b" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/interactive/MultipleChoice.tsx" bytes="2982" lines="88" sha256="4d002dce93fcb50ce3547babf64e119088f286acca5e74afb89bfc0ccc50a620" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/interactive/Slider.tsx" bytes="3500" lines="107" sha256="55ba763b4aba6622ae0d922641d711a8ef830bfa53b334a40f13afde9405abf8" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/interactive/TextField.tsx" bytes="3807" lines="119" sha256="176fb0977754d97a69e023a4c6385207db08b2077713d6d48f2f4b1b360d2689" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/interactive/index.ts" bytes="250" lines="6" sha256="2813644f02712905a4814863596fa143eabf55d839cda5617adc6d290aef2edb" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/layout/Card.tsx" bytes="2218" lines="65" sha256="4c31adc9d1d71e278d0b00c3edf11ee8ae8e7a979ae25509888793448982408e" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/layout/Column.tsx" bytes="2060" lines="65" sha256="89a8e671fb297911067c3da236e3f3331535c6095b17053c89951a1011011e8a" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/layout/List.tsx" bytes="1893" lines="59" sha256="867419314dcd13e0696bbc762167ec4693a9af8c88fcb75ad9648005cdf71224" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/layout/Modal.tsx" bytes="3620" lines="114" sha256="3f42cdf797a46139202bdf148c5c18f7cdb196c4b4aa8588e47e826c80286583" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/layout/Row.tsx" bytes="2038" lines="65" sha256="bda782845a88b0097f9e87a13443f68541c1c20ada23fede6983a7f08360f5d9" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/layout/Tabs.tsx" bytes="2403" lines="80" sha256="f6f5dec8d6589da68510d409ec4064e75a063bd9d2f00233233fabeab845143d" />
+        <file path="packages/a2ui-renderer/src/react-renderer/components/layout/index.ts" bytes="190" lines="6" sha256="ca91e61bf34a1ba00911c973a63839c37d8132af9f7b6785336bd814e7103c20" />
+        <file path="packages/a2ui-renderer/src/react-renderer/core/A2UIProvider.tsx" bytes="6473" lines="216" sha256="99053bb6ac62d1aada411f1b41038fe736202f75c95f74b341f9afa6c4ae6c1b" />
+        <file path="packages/a2ui-renderer/src/react-renderer/core/A2UIRenderer.tsx" bytes="4494" lines="130" sha256="2adab82845e41ce0fdf6308124a88ae3e67befc50a578ba07ea2a154833403f0" />
+        <file path="packages/a2ui-renderer/src/react-renderer/core/A2UIViewer.tsx" bytes="5953" lines="217" sha256="a4a2a918db00b9ecd68a1c104a881a8d7535f05fd1d9f3969bd5bc8bcc0c77ce" />
+        <file path="packages/a2ui-renderer/src/react-renderer/core/ComponentNode.tsx" bytes="2556" lines="75" sha256="13c507ea88abc77b709dfc728577c18c0a492e431336a091f84d3c69d2349c9c" />
+        <file path="packages/a2ui-renderer/src/react-renderer/core/store.ts" bytes="1616" lines="56" sha256="cd4d33e8f66e2442a082c7da0e2829029a5c17aa11b34e1215b25d4517170572" />
+        <file path="packages/a2ui-renderer/src/react-renderer/hooks/useA2UI.ts" bytes="1762" lines="63" sha256="a6b412d8e0ac599937b793d5eff9e62816c9ee0bd6e4968b2c6e138de3b1d0bf" />
+        <file path="packages/a2ui-renderer/src/react-renderer/hooks/useA2UIComponent.ts" bytes="7185" lines="250" sha256="bb681153683dfaf19cad4d3253ed81951c1cfadca73961851e34fb279f01632a" />
+        <file path="packages/a2ui-renderer/src/react-renderer/index.ts" bytes="2836" lines="93" sha256="b23a09e1daa66ce618c6799c31629877de58893cf70f219e6a894a12a9815fe3" />
+        <file path="packages/a2ui-renderer/src/react-renderer/lib/utils.ts" bytes="1507" lines="46" sha256="c3881f6ea4c4b1b526fb273bac28d6a1ac276b4082ca6bf9f12581c447b119d0" />
+        <file path="packages/a2ui-renderer/src/react-renderer/registry/ComponentRegistry.ts" bytes="3472" lines="129" sha256="5295ee12d88b3e2e49a2a43b9c2595fc48d8fb5b5dc3b8e847c8987a39266602" />
+        <file path="packages/a2ui-renderer/src/react-renderer/registry/defaultCatalog.ts" bytes="2708" lines="66" sha256="72cf9413e7677f286c313a1fadcb4967c9c32d5ff24a00db9d704ae74411ff69" />
+        <file path="packages/a2ui-renderer/src/react-renderer/styles/README.md" bytes="6343" lines="181" sha256="94c212884eb592c45d983eaec3ac3f4c21dd798835b66cdbc42d4731dd2ba9af" />
+        <file path="packages/a2ui-renderer/src/react-renderer/styles/index.d.ts" bytes="748" lines="23" sha256="a624fd6a35c4e2740abd8dfd84a117d3e144ebe52f62c353dd4a79568a31b106" />
+        <file path="packages/a2ui-renderer/src/react-renderer/styles/index.ts" bytes="16294" lines="484" sha256="a3819dffc3cce1464570067ee559f286ff0759755be859bd560967f01fb5e6c2" />
+        <file path="packages/a2ui-renderer/src/react-renderer/styles/reset.ts" bytes="815" lines="23" sha256="047a066aa7dc3d32590803d8b9f131ee79ec37c12afd4c48bf1a5bae2f331304" />
+        <file path="packages/a2ui-renderer/src/react-renderer/theme/ThemeContext.tsx" bytes="1417" lines="54" sha256="8770cc5bbc8914e8dddde75b7c599852f87b533079746a326c94513de4481b0d" />
+        <file path="packages/a2ui-renderer/src/react-renderer/theme/litTheme.ts" bytes="11628" lines="467" sha256="679e34f647516dee7be0cfc660ab86186a70ce2b57186b010c8139018eab7895" />
+        <file path="packages/a2ui-renderer/src/react-renderer/theme/utils.ts" bytes="1757" lines="50" sha256="4f1e3423ed05ef44cb18567889e9c0b9fce7fac5b57267877117311699bc57cb" />
+        <file path="packages/a2ui-renderer/src/react-renderer/types.ts" bytes="2246" lines="71" sha256="b22ce567fdf60c69045a647b8e60d672ae9d24cb397c9e71ed6493b7e80b2d41" />
+        <file path="packages/a2ui-renderer/src/theme/viewer-theme.ts" bytes="11003" lines="443" sha256="a266c9517a448b3f60ff4dce9d4ca5eb9c44ba24ed6c1ed70736c65f794c98c5" />
+      </files>
+      <summary fileCount="43" totalBytes="147445" />
+    </scope>
+    <scope id="example-todo" name="Todo showcase example" portability="pattern-reference" copyMode="pattern-adaptation">
+      <rationale>Demonstrates Copilot readable state plus tool action wiring in a compact surface that maps well to Gollem run controls and approval flows.</rationale>
+      <localTargets>pkg/ui/templates/index.html; pkg/ui/templates/run.html; pkg/ui/handlers.go; pkg/ui/state.go</localTargets>
+      <patterns>
+        <pattern>examples/showcases/todo/src/**</pattern>
+        <pattern>examples/showcases/todo/tailwind.config.ts</pattern>
+      </patterns>
+      <files>
+        <file path="examples/showcases/todo/src/app/api/copilotkit/route.ts" bytes="428" lines="16" sha256="c1b469ab5e1bead1b325e075e198f8764301628adbfc2280ad67c75b54d8a07d" />
+        <file path="examples/showcases/todo/src/app/favicon.ico" bytes="25931" lines="31" sha256="2b8ad2d33455a8f736fc3a8ebf8f0bdea8848ad4c0db48a2833bd0f9cd775932" />
+        <file path="examples/showcases/todo/src/app/globals.css" bytes="59" lines="3" sha256="cc1a7ad0d019ddb1d32d0ecb588ba0ac26ce41d8625dd6c366348b25f83a28ec" />
+        <file path="examples/showcases/todo/src/app/layout.tsx" bytes="473" lines="22" sha256="c01af76b3fff0fc2a0485a8e593f5a5f93fb4c070bb202269bf6cfaead43673d" />
+        <file path="examples/showcases/todo/src/app/page.tsx" bytes="5804" lines="231" sha256="828382e712268a9df5013ca53f1f37788a19b33c3a6d36fc0becd370cca12ef8" />
+        <file path="examples/showcases/todo/src/components/TodoItem.tsx" bytes="3072" lines="90" sha256="8f64a366dd72bcfd950e1181ae8600f97b5a5c99712647d20b36a501b1397ac9" />
+        <file path="examples/showcases/todo/src/types/todo.ts" bytes="103" lines="6" sha256="0d1f4361289ad6d371f1929b6a3752e1cbc26698e713113cbd5bfc71bb98a6d2" />
+        <file path="examples/showcases/todo/tailwind.config.ts" bytes="510" lines="20" sha256="31e0c50ed0967c36d6f87104e309f6bdd210d0301f7f9e012d42ac77655f0c6a" />
+      </files>
+      <summary fileCount="8" totalBytes="36380" />
+    </scope>
+    <scope id="example-multi-agent-canvas" name="Multi-agent canvas showcase" portability="pattern-reference" copyMode="pattern-adaptation">
+      <rationale>Shows multi-panel layout, chat-plus-canvas composition, running-agent status badges, and a richer A2UI-oriented workspace that can inspire the Gollem AGUI UI.</rationale>
+      <localTargets>pkg/ui/templates/run.html; pkg/ui/templates/sidebar.html; pkg/ui/static/renderer.js; pkg/ui/static/style.css</localTargets>
+      <patterns>
+        <pattern>examples/showcases/multi-agent-canvas/frontend/src/**</pattern>
+        <pattern>examples/showcases/multi-agent-canvas/frontend/tailwind.config.ts</pattern>
+      </patterns>
+      <files>
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/app/(canvas-pages)/layout.tsx" bytes="240" lines="7" sha256="d926a445b4fc67f4f25d0a3e4ccfd8f57bdb00a9384964900ab076c4d8fa1b75" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/app/(canvas-pages)/page.tsx" bytes="271" lines="9" sha256="010a82ce64a2212f04cd24043ae5ca5fb6c1ca56cfb398666a7e4f7ca265c53d" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/app/globals.css" bytes="2484" lines="88" sha256="d350d6fb5a0b6327f09c3bf45281ab6234afddcbb485b24a100944bd943e5696" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/app/icon.png" bytes="130" lines="3" sha256="e8e97f83cf84638d56c3a43b934ac55c01c78fca3d2d7acbbc702e5e784bf774" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/app/layout.tsx" bytes="778" lines="35" sha256="b3a4b967f11f37058e1940e03ecd5f07a50b31a282a184132b848c27b01c677c" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/agents/index.tsx" bytes="85" lines="3" sha256="f7867548d19a5fc4dd7aef0311f0a9519d2203075d8c895a900e04e9fa871b53" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/agents/mcp-agent.tsx" bytes="5487" lines="180" sha256="39783602e08389d1e1ff4d4689aa6fd85758ac6b5e9176192ee947c2b09951a6" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/agents/researcher.tsx" bytes="5660" lines="179" sha256="d804e29a0eac9d54dce9f5d09f60bf8031b15cb74882751543353e4f6730d5ae" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/agents/travel.tsx" bytes="93" lines="5" sha256="ae84ad68e4ecc4bec98d1862a901dd121d7f6815bfc5d295ba9e06bb1919f8ea" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/app-sidebar.tsx" bytes="3736" lines="104" sha256="3b02b39e1ab784f6a7feffb83eb5f28fad82331de174346b38ea437ac8660601" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/canvas.tsx" bytes="4047" lines="129" sha256="0c4fe041048c0ea8ba781f85ec22dc971766c8db438f9660a323204a441f1736" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/chat-window.tsx" bytes="1440" lines="40" sha256="2686274d5fa4901c958cdd06414f9e2779ac4233cd784f22abb1b8489547d3bb" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/coagents-provider.tsx" bytes="3336" lines="156" sha256="28a5c7a6a5c99a9aca661d3215be5d4d86bb346271a07db6a348a219945f99de" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/google-connection.tsx" bytes="0" lines="0" sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/map-container.tsx" bytes="12175" lines="373" sha256="b2fdbe54ce36290bd716ed47c10053cfd36f9fb4b357ac011e08704b537c5ea7" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/map.tsx" bytes="295" lines="11" sha256="b85af9e9ae4acc41eb7b1e7d739ecb25aca317959cea5285513f7e333ff65593" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/mcp-config-modal.tsx" bytes="14620" lines="407" sha256="6f720cfae75096e9af5f5fd81fb93c811bb22420ee82269666b28a511e21f269" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/research-logs.tsx" bytes="915" lines="28" sha256="213c55d545bfe82d316ac877277e8604245c66bf891d82266a6ea3e0eca64745" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/skeletons/index.tsx" bytes="4119" lines="121" sha256="f676ba009ff3568a1e795b25d619a5840b044cb496c7f96762b10d7ded9721e0" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/button.tsx" bytes="1919" lines="58" sha256="8dff7b545d06a0ffce3c2ddf67dedcc654d74f91f5ba4f79590ab436955ac81d" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/card.tsx" bytes="1857" lines="83" sha256="e78fcf14aff878d9aee58eb974bcb2b66cad3ab26da14b152dc459f9bc5b3008" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/checkbox.tsx" bytes="1035" lines="30" sha256="fa731ee7870ea0e364d0ea1e8eb36086fbaecd8f3c41b7fcbbe6d008898ce800" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/dialog.tsx" bytes="3876" lines="122" sha256="b8ed14317571b869933a63bd00bd19d4761bddd905485bc5ab4ac29a6a1802e1" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/input.tsx" bytes="776" lines="22" sha256="92debb7d6d2d96d9e607a42d5ce8f37b2d63384ae5dd9ffbbf5f047b680ffb85" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/separator.tsx" bytes="780" lines="31" sha256="926c7b40d3b20ce52ebdc98851aa4820acd53d0f31b834e35f1c0b001d700fc3" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/sheet.tsx" bytes="4312" lines="141" sha256="1d4fe81616b2c0bb83c23edeaa60010a1afe379c168ad59da6388ea8aec11af9" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/sidebar.tsx" bytes="23720" lines="776" sha256="c1a7922992599059aa679e203f56a02ca72a034b1a1bb84faae880c1017daaab" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/skeleton.tsx" bytes="269" lines="15" sha256="f442b258d40b3cff3cb0eac117886e70680e37c77f20afee08646c1ace6f6ed8" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/textarea.tsx" bytes="656" lines="22" sha256="1f13a5b9055d43961be4d006ef49996e4747e217d21e5c314c72242cb185967c" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/components/ui/tooltip.tsx" bytes="1228" lines="32" sha256="6f6cb785bd57c1b4b5f331841bf31d219266f30623ecc6e7421b124845e39fcb" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/hooks/use-local-storage.tsx" bytes="1973" lines="62" sha256="c7d69885207ca335f2bf28d767c9d09cc5ed8544ab77ac559cb363a7ba08a345" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/hooks/use-mobile.tsx" bytes="585" lines="21" sha256="738d8e4520edeca7caa2ca56a4923839e30be14a00fc32b5a770f5d5b451a63e" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/lib/available-agents.ts" bytes="123" lines="5" sha256="16475b6de4a75bb2a78593a80ccffffda37b82c9a988be4369f9befba53a499d" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/lib/mcp-config-types.ts" bytes="440" lines="21" sha256="4f9883bbe0e7092c1bd2f4f35a591cbf298bcf81b8fe53ee24ea2bb5a089f6b5" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/lib/utils.ts" bytes="169" lines="6" sha256="d1f1e0d62cb8d8d1e04c26e14de842d8a151f75812d81b046c65b5d1fe8e4b27" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/src/providers/Providers.tsx" bytes="772" lines="23" sha256="e4f1de94d90fe3c99baae41a30dbb6e38b7fadb0a26fdbdfa86c381a4c086856" />
+        <file path="examples/showcases/multi-agent-canvas/frontend/tailwind.config.ts" bytes="2295" lines="72" sha256="21e3e8ea9efa8a275477e4287afba9cdee97abbe01ee112e79d523f6387c94c3" />
+      </files>
+      <summary fileCount="37" totalBytes="106696" />
+    </scope>
+  </selectedScopes>
+  <summary scopeCount="6" fileCount="138" totalBytes="487387">This manifest intentionally records only the CopilotKit areas selected for AGUI/UI review, not the full upstream repository.</summary>
+</repomixInventory>
