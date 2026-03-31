@@ -8029,7 +8029,7 @@ func TestReasoningSandwich_Bidirectional(t *testing.T) {
 	}
 }
 
-func TestReasoningSandwich_VerificationThresholdUsesKnownTurnBudget(t *testing.T) {
+func TestReasoningSandwich_VerificationThresholdUsesExplicitTurnBudget(t *testing.T) {
 	cfg := ReasoningSandwichConfig{
 		Planning:              ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
 		Implementation:        ReasoningLevel{ThinkingBudget: 12000, ReasoningEffort: "medium"},
@@ -8038,7 +8038,8 @@ func TestReasoningSandwich_VerificationThresholdUsesKnownTurnBudget(t *testing.T
 		VerificationThreshold: 2,
 	}
 
-	mw := requireRequestMiddleware(t, ReasoningSandwichMiddleware(cfg))
+	const maxTurns = 50
+	mw := requireRequestMiddleware(t, ReasoningSandwichMiddleware(cfg, maxTurns))
 
 	budget := 10000
 	effort := "low"
@@ -8062,21 +8063,21 @@ func TestReasoningSandwich_VerificationThresholdUsesKnownTurnBudget(t *testing.T
 	}
 
 	var last *core.ModelSettings
-	for range 47 {
+	for range 48 {
 		last = callMW()
 	}
 	if *last.ThinkingBudget != 12000 || *last.ReasoningEffort != "medium" {
-		t.Fatalf("turn 47: expected implementation settings, got budget=%d effort=%s", *last.ThinkingBudget, *last.ReasoningEffort)
-	}
-
-	s48 := callMW()
-	if *s48.ThinkingBudget != 64000 || *s48.ReasoningEffort != "xhigh" {
-		t.Fatalf("turn 48: expected threshold-triggered verification settings, got budget=%d effort=%s", *s48.ThinkingBudget, *s48.ReasoningEffort)
+		t.Fatalf("turn 48: expected implementation settings, got budget=%d effort=%s", *last.ThinkingBudget, *last.ReasoningEffort)
 	}
 
 	s49 := callMW()
 	if *s49.ThinkingBudget != 64000 || *s49.ReasoningEffort != "xhigh" {
-		t.Fatalf("turn 49: expected verification settings, got budget=%d effort=%s", *s49.ThinkingBudget, *s49.ReasoningEffort)
+		t.Fatalf("turn 49: expected threshold-triggered verification settings, got budget=%d effort=%s", *s49.ThinkingBudget, *s49.ReasoningEffort)
+	}
+
+	s50 := callMW()
+	if *s50.ThinkingBudget != 64000 || *s50.ReasoningEffort != "xhigh" {
+		t.Fatalf("turn 50: expected verification settings, got budget=%d effort=%s", *s50.ThinkingBudget, *s50.ReasoningEffort)
 	}
 }
 

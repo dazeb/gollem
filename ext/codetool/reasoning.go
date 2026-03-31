@@ -43,9 +43,8 @@ type ReasoningSandwichConfig struct {
 	// PlanningTurns is the number of early turns that get the planning level.
 	PlanningTurns int
 
-	// VerificationThreshold is the turn number (from the end of max turns) at which
-	// we switch to the verification level. If we don't know max turns, we use
-	// a heuristic: switch when verification commands are detected in recent output.
+	// VerificationThreshold applies to the final N turns when maxTurns is known.
+	// Without a turn budget, verification mode still falls back to recent-command detection.
 	VerificationThreshold int
 }
 
@@ -145,11 +144,11 @@ func lowerReasoningEffort(level string) string {
 // LangChain's harness engineering work. The key insight: LLMs benefit from
 // more reasoning compute during planning and verification phases, but waste
 // time/tokens during straightforward implementation.
-func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddleware {
+func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig, maxTurns ...int) core.AgentMiddleware {
 	var mu sync.Mutex
 	turn := 0
 	verificationCooldown := 0 // turns remaining in verification mode after detection
-	maxTurns, hasTurnBudget := reasoningSandwichTurnBudget(cfg)
+	turnBudget, hasTurnBudget := reasoningSandwichTurnBudget(cfg, maxTurns...)
 
 	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
@@ -164,8 +163,7 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddlewa
 
 		thresholdTriggered := false
 		if cfg.VerificationThreshold > 0 && hasTurnBudget {
-			turnsRemaining := maxTurns - currentTurn
-			thresholdTriggered = turnsRemaining <= cfg.VerificationThreshold
+			thresholdTriggered = currentTurn > turnBudget-cfg.VerificationThreshold
 		}
 
 		// Detect verification phase from recent messages every turn when we don't
@@ -227,27 +225,13 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddlewa
 	})
 }
 
-func reasoningSandwichTurnBudget(cfg ReasoningSandwichConfig) (int, bool) {
+func reasoningSandwichTurnBudget(cfg ReasoningSandwichConfig, maxTurns ...int) (int, bool) {
 	if cfg.VerificationThreshold <= 0 {
 		return 0, false
 	}
-
-	// The coding agent wires this middleware into two known turn budgets today:
-	// the main agent (500 turns) and subagents (50 turns). When the config still
-	// matches one of those known sandwich families, honor VerificationThreshold
-	// directly. Otherwise we fall back to recent-command verification detection.
-	mainCfg := DefaultReasoningSandwichConfig()
-	if cfg.PlanningTurns == mainCfg.PlanningTurns &&
-		cfg.Implementation.ThinkingBudget == mainCfg.Implementation.ThinkingBudget {
-		return 500, true
+	if len(maxTurns) > 0 && maxTurns[0] > 0 {
+		return maxTurns[0], true
 	}
-
-	subCfg := subagentReasoningConfig()
-	if cfg.PlanningTurns == subCfg.PlanningTurns &&
-		cfg.Implementation.ThinkingBudget == subCfg.Implementation.ThinkingBudget {
-		return 50, true
-	}
-
 	return 0, false
 }
 
