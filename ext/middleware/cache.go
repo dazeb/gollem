@@ -18,6 +18,22 @@ type cacheEntry struct {
 	createdAt time.Time
 }
 
+func cloneModelResponse(resp *core.ModelResponse) (*core.ModelResponse, error) {
+	if resp == nil {
+		return nil, nil
+	}
+
+	encoded, err := core.EncodeModelResponse(resp)
+	if err != nil {
+		return nil, fmt.Errorf("cache: encode response clone: %w", err)
+	}
+	cloned, err := core.DecodeModelResponse(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("cache: decode response clone: %w", err)
+	}
+	return cloned, nil
+}
+
 // cacheMiddleware implements both Middleware and StreamMiddleware.
 type cacheMiddleware struct {
 	mu      sync.Mutex
@@ -87,8 +103,8 @@ func hashRequest(messages []core.ModelMessage, settings *core.ModelSettings, par
 }
 
 // WrapRequest implements Middleware. It caches responses keyed by a hash of
-// the request. On cache hit, the stored response is returned without calling
-// the model. Expired entries are evicted lazily on access.
+// the request. On cache hit, a cloned copy of the stored response is returned
+// without calling the model. Expired entries are evicted lazily on access.
 func (c *cacheMiddleware) WrapRequest(next RequestFunc) RequestFunc {
 	return func(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
 		key, err := hashRequest(messages, settings, params)
@@ -103,12 +119,15 @@ func (c *cacheMiddleware) WrapRequest(next RequestFunc) RequestFunc {
 		entry, found := c.entries[key]
 		if found {
 			if now.Sub(entry.createdAt) < c.ttl {
-				// Cache hit — return stored response.
+				clonedResp, err := cloneModelResponse(entry.response)
 				c.mu.Unlock()
+				if err != nil {
+					return nil, err
+				}
 				c.stats.mu.Lock()
 				c.stats.Hits++
 				c.stats.mu.Unlock()
-				return entry.response, nil
+				return clonedResp, nil
 			}
 			// Expired — evict the stale entry.
 			delete(c.entries, key)
@@ -125,14 +144,23 @@ func (c *cacheMiddleware) WrapRequest(next RequestFunc) RequestFunc {
 			return nil, err
 		}
 
+		storedResp, err := cloneModelResponse(resp)
+		if err != nil {
+			return nil, err
+		}
+		returnedResp, err := cloneModelResponse(storedResp)
+		if err != nil {
+			return nil, err
+		}
+
 		c.mu.Lock()
 		c.entries[key] = cacheEntry{
-			response:  resp,
+			response:  storedResp,
 			createdAt: now,
 		}
 		c.mu.Unlock()
 
-		return resp, nil
+		return returnedResp, nil
 	}
 }
 
