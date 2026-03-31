@@ -7940,10 +7940,11 @@ func TestDescribeDiffFlags(t *testing.T) {
 // expires, rather than staying in verification forever (the old one-way latch).
 func TestReasoningSandwich_Bidirectional(t *testing.T) {
 	cfg := ReasoningSandwichConfig{
-		Planning:       ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
-		Implementation: ReasoningLevel{ThinkingBudget: 16000, ReasoningEffort: "medium"},
-		Verification:   ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
-		PlanningTurns:  2,
+		Planning:              ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
+		Implementation:        ReasoningLevel{ThinkingBudget: 16000, ReasoningEffort: "medium"},
+		Verification:          ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
+		PlanningTurns:         2,
+		VerificationThreshold: 2, // unknown turn budget here, so heuristic fallback must still work
 	}
 
 	mw := requireRequestMiddleware(t, ReasoningSandwichMiddleware(cfg))
@@ -8025,6 +8026,57 @@ func TestReasoningSandwich_Bidirectional(t *testing.T) {
 	s8 := callMW(basicMsgs)
 	if *s8.ThinkingBudget != 16000 {
 		t.Errorf("turn 8: expected implementation budget 16000, got %d", *s8.ThinkingBudget)
+	}
+}
+
+func TestReasoningSandwich_VerificationThresholdUsesKnownTurnBudget(t *testing.T) {
+	cfg := ReasoningSandwichConfig{
+		Planning:              ReasoningLevel{ThinkingBudget: 48000, ReasoningEffort: "high"},
+		Implementation:        ReasoningLevel{ThinkingBudget: 12000, ReasoningEffort: "medium"},
+		Verification:          ReasoningLevel{ThinkingBudget: 64000, ReasoningEffort: "xhigh"},
+		PlanningTurns:         3,
+		VerificationThreshold: 2,
+	}
+
+	mw := requireRequestMiddleware(t, ReasoningSandwichMiddleware(cfg))
+
+	budget := 10000
+	effort := "low"
+	baseSettings := &core.ModelSettings{
+		ThinkingBudget:  &budget,
+		ReasoningEffort: &effort,
+	}
+	basicMsgs := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "implement the solution"},
+		}},
+	}
+	callMW := func() *core.ModelSettings {
+		var captured *core.ModelSettings
+		mw(context.Background(), basicMsgs, baseSettings, nil,
+			func(_ context.Context, _ []core.ModelMessage, s *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+				captured = s
+				return &core.ModelResponse{}, nil
+			})
+		return captured
+	}
+
+	var last *core.ModelSettings
+	for range 47 {
+		last = callMW()
+	}
+	if *last.ThinkingBudget != 12000 || *last.ReasoningEffort != "medium" {
+		t.Fatalf("turn 47: expected implementation settings, got budget=%d effort=%s", *last.ThinkingBudget, *last.ReasoningEffort)
+	}
+
+	s48 := callMW()
+	if *s48.ThinkingBudget != 64000 || *s48.ReasoningEffort != "xhigh" {
+		t.Fatalf("turn 48: expected threshold-triggered verification settings, got budget=%d effort=%s", *s48.ThinkingBudget, *s48.ReasoningEffort)
+	}
+
+	s49 := callMW()
+	if *s49.ThinkingBudget != 64000 || *s49.ReasoningEffort != "xhigh" {
+		t.Fatalf("turn 49: expected verification settings, got budget=%d effort=%s", *s49.ThinkingBudget, *s49.ReasoningEffort)
 	}
 }
 
