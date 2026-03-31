@@ -24,7 +24,7 @@ func TestTemporalModel_PassThrough(t *testing.T) {
 		},
 	}
 
-	// Outside a workflow, should delegate directly.
+	// Without middleware, Request should pass through to the wrapped model.
 	resp, err := tm.Request(context.Background(), messages, nil, &core.ModelRequestParameters{
 		AllowTextOutput: true,
 	})
@@ -33,6 +33,105 @@ func TestTemporalModel_PassThrough(t *testing.T) {
 	}
 	if resp.TextContent() != "Hello!" {
 		t.Errorf("expected 'Hello!', got %q", resp.TextContent())
+	}
+}
+
+func TestTemporalModel_Request_UsesRequestMiddleware(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("wrapped"))
+	tm := NewTemporalModelWithMiddleware(
+		model,
+		"test-agent",
+		DefaultActivityConfig(),
+		[]core.RequestMiddlewareFunc{
+			func(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error)) (*core.ModelResponse, error) {
+				modified := make([]core.ModelMessage, 0, len(messages)+1)
+				modified = append(modified, core.ModelRequest{
+					Parts:     []core.ModelRequestPart{core.SystemPromptPart{Content: "injected by middleware"}},
+					Timestamp: time.Now(),
+				})
+				modified = append(modified, messages...)
+				return next(ctx, modified, settings, params)
+			},
+		},
+		nil,
+	)
+
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+			Timestamp: time.Now(),
+		},
+	}
+
+	resp, err := tm.Request(context.Background(), messages, nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.TextContent() != "wrapped" {
+		t.Fatalf("expected wrapped response, got %q", resp.TextContent())
+	}
+
+	calls := model.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 model call, got %d", len(calls))
+	}
+	assertLeadingSystemPrompt(t, calls[0].Messages, "injected by middleware")
+}
+
+func TestTemporalModel_RequestStream_UsesStreamMiddleware(t *testing.T) {
+	model := &countingStreamTestModel{
+		response: &core.ModelResponse{
+			Parts:     []core.ModelResponsePart{core.TextPart{Content: "wrapped stream"}},
+			ModelName: "test-model",
+			Usage:     core.Usage{InputTokens: 10, OutputTokens: 5},
+		},
+	}
+
+	tm := NewTemporalModelWithMiddleware(
+		model,
+		"test-agent",
+		DefaultActivityConfig(),
+		nil,
+		[]core.AgentStreamMiddleware{
+			func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters, _ core.AgentStreamFunc) (core.StreamedResponse, error) {
+				resp := core.TextResponse("stream middleware intercepted")
+				return &completedStream{response: resp}, nil
+			},
+		},
+	)
+
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+			Timestamp: time.Now(),
+		},
+	}
+
+	stream, err := tm.RequestStream(context.Background(), messages, nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer stream.Close()
+
+	for {
+		_, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("unexpected stream error: %v", err)
+		}
+	}
+
+	if got := stream.Response().TextContent(); got != "stream middleware intercepted" {
+		t.Fatalf("expected intercepted stream response, got %q", got)
+	}
+	if model.streamCalls != 0 {
+		t.Fatalf("expected underlying stream model to be skipped, got %d calls", model.streamCalls)
 	}
 }
 
@@ -94,6 +193,60 @@ func TestTemporalModel_ModelRequestActivity(t *testing.T) {
 	if resp.TextContent() != "Activity response" {
 		t.Errorf("expected 'Activity response', got %q", resp.TextContent())
 	}
+}
+
+func TestModelRequestActivity_UsesRequestMiddleware(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("activity response"))
+	tm := NewTemporalModelWithMiddleware(
+		model,
+		"test-agent",
+		DefaultActivityConfig(),
+		[]core.RequestMiddlewareFunc{
+			func(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, next func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error)) (*core.ModelResponse, error) {
+				modified := make([]core.ModelMessage, 0, len(messages)+1)
+				modified = append(modified, core.ModelRequest{
+					Parts:     []core.ModelRequestPart{core.SystemPromptPart{Content: "activity middleware"}},
+					Timestamp: time.Now(),
+				})
+				modified = append(modified, messages...)
+				return next(ctx, modified, settings, params)
+			},
+		},
+		nil,
+	)
+
+	messagesJSON, err := core.MarshalMessages([]core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.UserPromptPart{Content: "Hello"},
+			},
+			Timestamp: time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+
+	output, err := tm.ModelRequestActivity(context.Background(), ModelActivityInput{
+		MessagesJSON: messagesJSON,
+		Parameters:   &core.ModelRequestParameters{AllowTextOutput: true},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp, err := decodeModelActivityOutput(output)
+	if err != nil {
+		t.Fatalf("decode model output: %v", err)
+	}
+	if resp.TextContent() != "activity response" {
+		t.Fatalf("expected activity response, got %q", resp.TextContent())
+	}
+
+	calls := model.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 model call, got %d", len(calls))
+	}
+	assertLeadingSystemPrompt(t, calls[0].Messages, "activity middleware")
 }
 
 func TestDefaultActivityConfig(t *testing.T) {
@@ -293,6 +446,25 @@ func TestModelRequestStreamActivity_StreamMiddleware(t *testing.T) {
 	}
 	if model.streamCalls != 0 {
 		t.Fatalf("expected underlying stream model to be skipped, got %d calls", model.streamCalls)
+	}
+}
+
+func assertLeadingSystemPrompt(t *testing.T, messages []core.ModelMessage, want string) {
+	t.Helper()
+
+	if len(messages) != 2 {
+		t.Fatalf("expected 2 messages after middleware injection, got %d", len(messages))
+	}
+	req, ok := messages[0].(core.ModelRequest)
+	if !ok {
+		t.Fatalf("expected injected model request, got %T", messages[0])
+	}
+	if len(req.Parts) != 1 {
+		t.Fatalf("expected 1 injected part, got %d", len(req.Parts))
+	}
+	system, ok := req.Parts[0].(core.SystemPromptPart)
+	if !ok || system.Content != want {
+		t.Fatalf("expected injected system prompt %q, got %#v", want, req.Parts[0])
 	}
 }
 

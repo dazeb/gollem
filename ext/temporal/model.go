@@ -12,7 +12,8 @@ import (
 )
 
 // TemporalModel wraps a core.Model, providing activity functions for Temporal.
-// When used outside a workflow, it passes through directly to the wrapped model.
+// It applies any configured request/stream middleware to both direct calls and
+// exported Temporal model activities.
 type TemporalModel struct {
 	wrapped          core.Model
 	name             string
@@ -58,14 +59,14 @@ type ModelActivityOutput struct {
 	ResponseJSON json.RawMessage         `json:"response_json,omitempty"` // Deprecated: prefer Response.
 }
 
-// Request delegates directly to the wrapped model (used outside workflows).
+// Request runs the wrapped model with the configured request middleware chain.
 func (m *TemporalModel) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
-	return m.wrapped.Request(ctx, messages, settings, params)
+	return m.runRequest(ctx, messages, settings, params)
 }
 
-// RequestStream delegates directly to the wrapped model.
+// RequestStream runs the wrapped model with the configured stream middleware chain.
 func (m *TemporalModel) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
-	return m.wrapped.RequestStream(ctx, messages, settings, params)
+	return m.runRequestStream(ctx, messages, settings, params)
 }
 
 // ModelName returns the name of the wrapped model.
