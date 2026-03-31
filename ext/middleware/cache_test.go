@@ -52,6 +52,74 @@ func TestCacheMiddleware_CacheHit(t *testing.T) {
 	}
 }
 
+func TestCacheMiddleware_CacheHitIsolation(t *testing.T) {
+	callCount := 0
+	handler := RequestFunc(func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		callCount++
+		return &core.ModelResponse{
+			Parts: []core.ModelResponsePart{
+				core.TextPart{Content: "hello"},
+				core.ToolCallPart{
+					ToolName:   "lookup",
+					ArgsJSON:   `{"id":1}`,
+					ToolCallID: "call-1",
+					Metadata: map[string]string{
+						"source": "cached",
+					},
+				},
+			},
+			ModelName: "test-model",
+		}, nil
+	})
+
+	mw := CacheMiddleware(5 * time.Minute)
+	wrapped := mw.WrapRequest(handler)
+
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "say hello"},
+		}},
+	}
+
+	resp1, err := wrapped(context.Background(), messages, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected 1 call, got %d", callCount)
+	}
+
+	resp1.ModelName = "mutated-model"
+	resp1.Parts[0] = core.TextPart{Content: "mutated"}
+	toolCall, ok := resp1.Parts[1].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("expected ToolCallPart, got %T", resp1.Parts[1])
+	}
+	toolCall.Metadata["source"] = "mutated"
+	resp1.Parts[1] = toolCall
+
+	resp2, err := wrapped(context.Background(), messages, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected still 1 call (cached), got %d", callCount)
+	}
+	if resp2.ModelName != "test-model" {
+		t.Fatalf("expected cached model name to remain unchanged, got %q", resp2.ModelName)
+	}
+	if resp2.TextContent() != "hello" {
+		t.Fatalf("expected cached text to remain unchanged, got %q", resp2.TextContent())
+	}
+	toolCall2, ok := resp2.Parts[1].(core.ToolCallPart)
+	if !ok {
+		t.Fatalf("expected ToolCallPart, got %T", resp2.Parts[1])
+	}
+	if toolCall2.Metadata["source"] != "cached" {
+		t.Fatalf("expected cached metadata to remain unchanged, got %q", toolCall2.Metadata["source"])
+	}
+}
+
 func TestCacheMiddleware_CacheMiss(t *testing.T) {
 	callCount := 0
 	handler := RequestFunc(func(_ context.Context, messages []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
