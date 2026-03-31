@@ -74,13 +74,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 			// stagnation, regression, same-error, and stale-test detection without
 			// blocking their completion.
 			verifyMW, _ := VerificationCheckpoint("")
-			reasoningCfg := subagentReasoningConfig()
-			if cfg.ReasoningSandwichConfig != nil {
-				reasoningCfg = subagentReasoningConfigForMaxEffort(
-					cfg.ReasoningSandwichConfig.Planning.ReasoningEffort,
-				)
-				reasoningCfg.VerificationThreshold = cfg.ReasoningSandwichConfig.VerificationThreshold
-			}
+			reasoningCfg := subagentReasoningConfigForParent(cfg.ReasoningSandwichConfig)
 			const maxTurns = 50
 
 			subOpts := []core.AgentOption[string]{

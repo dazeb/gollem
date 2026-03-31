@@ -88,8 +88,19 @@ func subagentReasoningConfig() ReasoningSandwichConfig {
 	}
 }
 
-func subagentReasoningConfigForMaxEffort(maxEffort string) ReasoningSandwichConfig {
-	return withMaxReasoningEffort(subagentReasoningConfig(), maxEffort)
+// subagentReasoningConfigForParent returns the reasoning profile a subagent
+// should use when spawned from a parent code agent.
+//
+// Without an explicit parent override, subagents use the tuned subagent
+// defaults above. When the parent provided a custom reasoning sandwich config,
+// preserve that full per-phase profile instead of collapsing it to a derived
+// max-effort preset. This keeps custom planning turns, verification threshold,
+// and non-planning budgets/efforts intact for delegated work.
+func subagentReasoningConfigForParent(parent *ReasoningSandwichConfig) ReasoningSandwichConfig {
+	if parent == nil {
+		return subagentReasoningConfig()
+	}
+	return *parent
 }
 
 func withMaxReasoningEffort(base ReasoningSandwichConfig, maxEffort string) ReasoningSandwichConfig {
