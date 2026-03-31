@@ -19,6 +19,10 @@
 // over. For workers that host multiple durable agents, temporal.RegisterAll(...)
 // registers every workflow and activity set in one call.
 //
+// TemporalModel applies any request or stream middleware captured at
+// construction to both its direct Request/RequestStream methods and its
+// exported Temporal model activities.
+//
 // The current workflow path also executes dynamic system prompts, history
 // processors, input/turn guardrails, lifecycle hooks, run conditions,
 // tool preparation callbacks, non-streaming request middleware,
