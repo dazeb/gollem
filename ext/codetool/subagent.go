@@ -79,7 +79,9 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				reasoningCfg = subagentReasoningConfigForMaxEffort(
 					cfg.ReasoningSandwichConfig.Planning.ReasoningEffort,
 				)
+				reasoningCfg.VerificationThreshold = cfg.ReasoningSandwichConfig.VerificationThreshold
 			}
+			const maxTurns = 50
 
 			subOpts := []core.AgentOption[string]{
 				core.WithSystemPrompt[string](systemPrompt),
@@ -116,7 +118,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				// Reasoning sandwich: vary thinking budget by phase (planning vs
 				// implementation vs verification). Helps subagent reason carefully
 				// when analyzing errors and verifying fixes.
-				core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(reasoningCfg)),
+				core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(reasoningCfg, maxTurns)),
 				// Verification tracking: detect stagnation, regression, same-error
 				// patterns, and stale tests. Subagents are not blocked from
 				// completing, but they get guidance when stuck in failing loops.

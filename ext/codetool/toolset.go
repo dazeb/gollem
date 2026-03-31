@@ -280,6 +280,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		reasoningCfg = *cfg.ReasoningSandwichConfig
 	}
 
+	const maxTurns = 500
 	opts := []core.AgentOption[string]{}
 	// System prompt with coding agent instructions (+ code mode if enabled).
 	// Skip when empty — gollem's default SystemPrompt is "" so the application
@@ -302,7 +303,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		// 3. Context injection — discover environment on first turn.
 		core.WithAgentMiddleware[string](ContextInjectionMiddleware(workDir, cfg.BenchmarkMode, cfg.Timeout)),
 		// 4. Reasoning sandwich — vary thinking budget by phase.
-		core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(reasoningCfg)),
+		core.WithAgentMiddleware[string](ReasoningSandwichMiddleware(reasoningCfg, maxTurns)),
 		// 5. Verification tracking — track whether agent runs tests.
 		core.WithAgentMiddleware[string](verifyMW),
 		// 6. Context overflow recovery — catches 413 and retries with compressed messages.
@@ -314,10 +315,10 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		core.WithOutputValidator[string](verifyValidator),
 
 		// Override default request limit of 50 — coding tasks need more turns.
-		core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(500)}),
+		core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(maxTurns)}),
 
 		// Guardrails: prevent infinite loops.
-		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(500)),
+		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(maxTurns)),
 
 		// Tool timeout: individual tools get 3 minutes max.
 		// Some compute-heavy tasks (compilation, data processing) need extra time.

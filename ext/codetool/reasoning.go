@@ -43,9 +43,8 @@ type ReasoningSandwichConfig struct {
 	// PlanningTurns is the number of early turns that get the planning level.
 	PlanningTurns int
 
-	// VerificationThreshold is the turn number (from the end of max turns) at which
-	// we switch to the verification level. If we don't know max turns, we use
-	// a heuristic: switch when verification commands are detected in recent output.
+	// VerificationThreshold applies to the final N turns when maxTurns is known.
+	// Without a turn budget, verification mode still falls back to recent-command detection.
 	VerificationThreshold int
 }
 
@@ -145,10 +144,11 @@ func lowerReasoningEffort(level string) string {
 // LangChain's harness engineering work. The key insight: LLMs benefit from
 // more reasoning compute during planning and verification phases, but waste
 // time/tokens during straightforward implementation.
-func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddleware {
+func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig, maxTurns ...int) core.AgentMiddleware {
 	var mu sync.Mutex
 	turn := 0
 	verificationCooldown := 0 // turns remaining in verification mode after detection
+	turnBudget, hasTurnBudget := reasoningSandwichTurnBudget(cfg, maxTurns...)
 
 	return core.RequestOnlyMiddleware(func(
 		ctx context.Context,
@@ -161,18 +161,26 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddlewa
 		turn++
 		currentTurn := turn
 
-		// Detect verification phase from recent messages every turn.
-		// Unlike the old one-way latch (which stayed in verification forever
-		// once triggered), this re-evaluates on each turn with a cooldown.
-		// The 3-turn cooldown ensures high reasoning persists through the
-		// critical test→analyze→fix cycle before dropping back to
-		// implementation-level reasoning.
-		if detectVerificationPhase(messages) {
-			verificationCooldown = 3
-		} else if verificationCooldown > 0 {
-			verificationCooldown--
+		thresholdTriggered := false
+		if cfg.VerificationThreshold > 0 && hasTurnBudget {
+			thresholdTriggered = currentTurn > turnBudget-cfg.VerificationThreshold
 		}
-		isVerifying := verificationCooldown > 0
+
+		// Detect verification phase from recent messages every turn when we don't
+		// have a threshold-driven late-turn trigger for this request.
+		// Unlike the old one-way latch (which stayed in verification forever once
+		// triggered), this re-evaluates on each turn with a cooldown. The 3-turn
+		// cooldown ensures high reasoning persists through the critical
+		// test→analyze→fix cycle before dropping back to implementation-level
+		// reasoning.
+		if !thresholdTriggered {
+			if detectVerificationPhase(messages) {
+				verificationCooldown = 3
+			} else if verificationCooldown > 0 {
+				verificationCooldown--
+			}
+		}
+		isVerifying := thresholdTriggered || verificationCooldown > 0
 		mu.Unlock()
 
 		// Only modify settings if reasoning is configured (either provider).
@@ -215,6 +223,16 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig) core.AgentMiddlewa
 
 		return next(ctx, messages, &s, params)
 	})
+}
+
+func reasoningSandwichTurnBudget(cfg ReasoningSandwichConfig, maxTurns ...int) (int, bool) {
+	if cfg.VerificationThreshold <= 0 {
+		return 0, false
+	}
+	if len(maxTurns) > 0 && maxTurns[0] > 0 {
+		return maxTurns[0], true
+	}
+	return 0, false
 }
 
 // detectVerificationPhase checks if recent messages contain verification commands.
