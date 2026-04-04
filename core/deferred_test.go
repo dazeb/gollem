@@ -328,7 +328,6 @@ func TestDeferredTool_ToolNamePreserved(t *testing.T) {
 	}
 }
 
-
 // TestDeferredTool_ResumeMessageAlternation verifies that resuming with
 // WithDeferredResults does not produce consecutive user-role messages.
 // The Anthropic API rejects conversations where two user messages appear

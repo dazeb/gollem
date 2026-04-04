@@ -58,7 +58,7 @@ func TestParseSSEResponses_StillFailsWithoutTerminalEvent(t *testing.T) {
 	transportErr := errors.New("stream error: stream ID 89; INTERNAL_ERROR; received from peer")
 	body := io.NopCloser(&errAfterDataReader{
 		data: []byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_partial\"}}\n"),
-		err: transportErr,
+		err:  transportErr,
 	})
 
 	p := New(WithModel("gpt-5"))

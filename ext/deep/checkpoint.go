@@ -18,18 +18,18 @@ import (
 // Checkpoint captures the state of an agent run at a point in time.
 type Checkpoint struct {
 	Messages   []core.ModelMessage `json:"-"`
-	Usage      core.RunUsage      `json:"usage"`
-	RunID      string               `json:"run_id"`
-	StepIndex  int                  `json:"step_index"`
-	Timestamp  time.Time            `json:"timestamp"`
-	Metadata   map[string]any       `json:"metadata,omitempty"`
-	ToolStates map[string]any       `json:"tool_states,omitempty"`
+	Usage      core.RunUsage       `json:"usage"`
+	RunID      string              `json:"run_id"`
+	StepIndex  int                 `json:"step_index"`
+	Timestamp  time.Time           `json:"timestamp"`
+	Metadata   map[string]any      `json:"metadata,omitempty"`
+	ToolStates map[string]any      `json:"tool_states,omitempty"`
 }
 
 // checkpointJSON is the serializable form of Checkpoint.
 type checkpointJSON struct {
 	Messages   []messageEnvelope `json:"messages"`
-	Usage      core.RunUsage   `json:"usage"`
+	Usage      core.RunUsage     `json:"usage"`
 	RunID      string            `json:"run_id"`
 	StepIndex  int               `json:"step_index"`
 	Timestamp  time.Time         `json:"timestamp"`
@@ -379,4 +379,3 @@ func copyMap(m map[string]any) map[string]any {
 	}
 	return cp
 }
-

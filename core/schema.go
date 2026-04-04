@@ -19,8 +19,8 @@ type JSONSchemaer interface {
 }
 
 var (
-	timeType        = reflect.TypeOf(time.Time{})
-	rawMessageType  = reflect.TypeOf(json.RawMessage{})
+	timeType         = reflect.TypeOf(time.Time{})
+	rawMessageType   = reflect.TypeOf(json.RawMessage{})
 	jsonSchemaerType = reflect.TypeOf((*JSONSchemaer)(nil)).Elem()
 )
 

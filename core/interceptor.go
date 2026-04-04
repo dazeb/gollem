@@ -118,4 +118,3 @@ func runResponseInterceptors(ctx context.Context, interceptors []ResponseInterce
 	}
 	return false
 }
-

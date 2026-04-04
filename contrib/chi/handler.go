@@ -26,8 +26,8 @@ type Request struct {
 
 // Response is the JSON response body returned by the handler.
 type Response struct {
-	Response string       `json:"response"`
-	Usage    *core.Usage  `json:"usage,omitempty"`
+	Response string      `json:"response"`
+	Usage    *core.Usage `json:"usage,omitempty"`
 }
 
 // Handler returns an http.HandlerFunc that runs the agent with the prompt
@@ -119,4 +119,3 @@ func (w *AgentWrapper) Run(ctx context.Context, prompt string) (*core.RunResult[
 func (w *AgentWrapper) RunStream(ctx context.Context, prompt string) (*core.StreamResult[string], error) {
 	return w.Agent.RunStream(ctx, prompt)
 }
-

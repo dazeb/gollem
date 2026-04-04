@@ -25,7 +25,7 @@ type ModelSettings struct {
 	Temperature     *float64    `json:"temperature,omitempty"`
 	TopP            *float64    `json:"top_p,omitempty"`
 	ToolChoice      *ToolChoice `json:"tool_choice,omitempty"`
-	ThinkingBudget  *int        `json:"thinking_budget,omitempty"`   // Anthropic extended thinking budget tokens
+	ThinkingBudget  *int        `json:"thinking_budget,omitempty"`  // Anthropic extended thinking budget tokens
 	ReasoningEffort *string     `json:"reasoning_effort,omitempty"` // OpenAI o-series: "low", "medium", "high"
 }
 

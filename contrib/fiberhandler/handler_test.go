@@ -47,7 +47,7 @@ func TestHandler_Success(t *testing.T) {
 	app := setupApp(runner)
 
 	body, _ := json.Marshal(fiberhandler.Request{Prompt: "say hi"})
-	req, _ := http.NewRequestWithContext(context.Background(),http.MethodPost, "/agent", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/agent", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
@@ -78,7 +78,7 @@ func TestHandler_EmptyPrompt(t *testing.T) {
 	app := setupApp(runner)
 
 	body, _ := json.Marshal(fiberhandler.Request{Prompt: ""})
-	req, _ := http.NewRequestWithContext(context.Background(),http.MethodPost, "/agent", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/agent", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
@@ -96,7 +96,7 @@ func TestHandler_InvalidJSON(t *testing.T) {
 	runner := &mockRunner{response: "ok"}
 	app := setupApp(runner)
 
-	req, _ := http.NewRequestWithContext(context.Background(),http.MethodPost, "/agent", strings.NewReader("not json"))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/agent", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
@@ -115,7 +115,7 @@ func TestHandler_AgentError(t *testing.T) {
 	app := setupApp(runner)
 
 	body, _ := json.Marshal(fiberhandler.Request{Prompt: "say hi"})
-	req, _ := http.NewRequestWithContext(context.Background(),http.MethodPost, "/agent", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/agent", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)

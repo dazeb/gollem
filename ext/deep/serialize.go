@@ -10,12 +10,12 @@ import (
 
 // requestPartEnvelope wraps a ModelRequestPart for JSON serialization.
 type requestPartEnvelope struct {
-	Kind         string          `json:"kind"`
-	Content      string          `json:"content,omitempty"`
-	ToolName     string          `json:"tool_name,omitempty"`
-	ToolCallID   string          `json:"tool_call_id,omitempty"`
-	ToolContent  json.RawMessage `json:"tool_content,omitempty"`
-	Timestamp    *time.Time      `json:"timestamp,omitempty"`
+	Kind        string          `json:"kind"`
+	Content     string          `json:"content,omitempty"`
+	ToolName    string          `json:"tool_name,omitempty"`
+	ToolCallID  string          `json:"tool_call_id,omitempty"`
+	ToolContent json.RawMessage `json:"tool_content,omitempty"`
+	Timestamp   *time.Time      `json:"timestamp,omitempty"`
 }
 
 // responsePartEnvelope wraps a ModelResponsePart for JSON serialization.
@@ -38,7 +38,7 @@ type serializableRequest struct {
 // serializableResponse is the JSON-safe form of ModelResponse.
 type serializableResponse struct {
 	Parts        []responsePartEnvelope `json:"parts"`
-	Usage        core.Usage           `json:"usage"`
+	Usage        core.Usage             `json:"usage"`
 	ModelName    string                 `json:"model_name"`
 	FinishReason string                 `json:"finish_reason"`
 	Timestamp    time.Time              `json:"timestamp"`

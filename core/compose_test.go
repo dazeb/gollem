@@ -85,4 +85,3 @@ func TestClone_RunsBoth(t *testing.T) {
 		t.Errorf("clone: expected 'from clone', got %q", result2.Output)
 	}
 }
-

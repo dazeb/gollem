@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-
 // TestModel is a mock Model for testing agents without real LLM calls.
 // It returns canned responses in sequence and records all calls for assertions.
 type TestModel struct {

@@ -199,11 +199,11 @@ func (o *OTelMiddleware) WrapStreamRequest(next StreamRequestFunc) StreamRequest
 		}
 
 		return &trackedStreamResponse{
-			inner:     stream,
-			span:      span,
-			start:     start,
-			otel:      o,
-			ctx:       ctx,
+			inner: stream,
+			span:  span,
+			start: start,
+			otel:  o,
+			ctx:   ctx,
 		}, nil
 	}
 }
@@ -214,12 +214,12 @@ var _ StreamMiddleware = (*OTelMiddleware)(nil)
 // trackedStreamResponse wraps a StreamedResponse to finalize the span when
 // the stream is closed or fully consumed.
 type trackedStreamResponse struct {
-	inner  core.StreamedResponse
-	span   trace.Span
-	start  time.Time
-	otel   *OTelMiddleware
-	ctx    context.Context
-	ended  bool
+	inner core.StreamedResponse
+	span  trace.Span
+	start time.Time
+	otel  *OTelMiddleware
+	ctx   context.Context
+	ended bool
 }
 
 func (t *trackedStreamResponse) Next() (core.ModelResponseStreamEvent, error) {

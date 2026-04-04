@@ -62,14 +62,14 @@ type apiStreamError struct {
 }
 
 type apiChunkChoice struct {
-	Index        int            `json:"index"`
-	Delta        apiChunkDelta  `json:"delta"`
-	FinishReason *string        `json:"finish_reason"`
+	Index        int           `json:"index"`
+	Delta        apiChunkDelta `json:"delta"`
+	FinishReason *string       `json:"finish_reason"`
 }
 
 type apiChunkDelta struct {
-	Role      string            `json:"role,omitempty"`
-	Content   string            `json:"content,omitempty"`
+	Role      string             `json:"role,omitempty"`
+	Content   string             `json:"content,omitempty"`
 	ToolCalls []apiChunkToolCall `json:"tool_calls,omitempty"`
 }
 

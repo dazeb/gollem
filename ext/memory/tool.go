@@ -89,8 +89,8 @@ func MemoryTool(store Store, namespace ...string) core.Tool {
 
 	return core.Tool{
 		Definition: core.ToolDefinition{
-			Name:        "memory",
-			Description: "Store and retrieve information from the persistent memory store. Supports save, get, search, and delete operations.",
+			Name:             "memory",
+			Description:      "Store and retrieve information from the persistent memory store. Supports save, get, search, and delete operations.",
 			ParametersSchema: core.SchemaFor[memoryToolParams](),
 			Kind:             core.ToolKindFunction,
 		},

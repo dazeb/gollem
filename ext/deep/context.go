@@ -3,10 +3,10 @@ package deep
 import (
 	"context"
 	"fmt"
-	"unicode/utf8"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/core"
 )

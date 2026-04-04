@@ -8,9 +8,9 @@ import (
 
 // BatchResult holds the result of a single batch item.
 type BatchResult[T any] struct {
-	Index  int            // position in the input slice
-	Result *RunResult[T]  // non-nil on success
-	Err    error          // non-nil on failure
+	Index  int           // position in the input slice
+	Result *RunResult[T] // non-nil on success
+	Err    error         // non-nil on failure
 }
 
 // WithBatchConcurrency sets the maximum number of concurrent batch executions.

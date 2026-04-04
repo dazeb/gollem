@@ -120,10 +120,10 @@ func TestSchemaForStruct(t *testing.T) {
 }
 
 type StructWithTags struct {
-	Query   string  `json:"query" jsonschema:"description=Search query,required"`
-	Limit   int     `json:"limit" jsonschema:"description=Max results,minimum=1,maximum=100"`
-	Offset  *int    `json:"offset,omitempty" jsonschema:"description=Starting offset"`
-	Format  string  `json:"format" jsonschema:"enum=json|csv|xml"`
+	Query  string `json:"query" jsonschema:"description=Search query,required"`
+	Limit  int    `json:"limit" jsonschema:"description=Max results,minimum=1,maximum=100"`
+	Offset *int   `json:"offset,omitempty" jsonschema:"description=Starting offset"`
+	Format string `json:"format" jsonschema:"enum=json|csv|xml"`
 }
 
 func TestSchemaForStructWithTags(t *testing.T) {
@@ -179,7 +179,7 @@ func TestSchemaOmitemptyNotRequired(t *testing.T) {
 }
 
 type NestedStruct struct {
-	Name    string       `json:"name"`
+	Name    string        `json:"name"`
 	Address AddressStruct `json:"address"`
 }
 
@@ -287,7 +287,7 @@ func TestIsObjectSchema(t *testing.T) {
 
 // Test that schema can handle recursive types without infinite loop.
 type RecursiveStruct struct {
-	Name     string           `json:"name"`
+	Name     string            `json:"name"`
 	Children []RecursiveStruct `json:"children"`
 }
 

@@ -90,4 +90,3 @@ type ModelHTTPError struct {
 func (e *ModelHTTPError) Error() string {
 	return fmt.Sprintf("%s (status %d)", e.Message, e.StatusCode)
 }
-

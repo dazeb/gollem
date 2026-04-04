@@ -634,8 +634,8 @@ func (s *errorStreamResponse) Next() (core.ModelResponseStreamEvent, error) {
 }
 
 func (s *errorStreamResponse) Response() *core.ModelResponse { return s.response }
-func (s *errorStreamResponse) Usage() core.Usage              { return s.response.Usage }
-func (s *errorStreamResponse) Close() error                   { return nil }
+func (s *errorStreamResponse) Usage() core.Usage             { return s.response.Usage }
+func (s *errorStreamResponse) Close() error                  { return nil }
 
 // errorStreamModel returns a stream that errors mid-consumption.
 type errorStreamModel struct {

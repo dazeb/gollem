@@ -13,11 +13,11 @@ import (
 
 // streamedResponse implements core.StreamedResponse for Anthropic SSE streams.
 type streamedResponse struct {
-	reader    *bufio.Reader
-	body      io.ReadCloser
-	model     string
-	usage     core.Usage
-	parts     []core.ModelResponsePart
+	reader     *bufio.Reader
+	body       io.ReadCloser
+	model      string
+	usage      core.Usage
+	parts      []core.ModelResponsePart
 	stopReason core.FinishReason
 	done       bool
 	streamErr  error // non-nil if server sent an error event mid-stream

@@ -40,7 +40,7 @@ type StepState struct {
 
 // Score represents an evaluation result.
 type Score struct {
-	Value   float64        // 0.0 to 1.0
+	Value   float64 // 0.0 to 1.0
 	Reason  string
 	Details map[string]any
 }

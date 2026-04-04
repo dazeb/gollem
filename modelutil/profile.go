@@ -12,7 +12,7 @@ type ModelProfile struct {
 	SupportsToolCalls        bool   `json:"supports_tool_calls"`
 	SupportsStructuredOutput bool   `json:"supports_structured_output"`
 	SupportsVision           bool   `json:"supports_vision"`
-	SupportsStreaming         bool   `json:"supports_streaming"`
+	SupportsStreaming        bool   `json:"supports_streaming"`
 	MaxContextTokens         int    `json:"max_context_tokens,omitempty"`
 	MaxOutputTokens          int    `json:"max_output_tokens,omitempty"`
 	ProviderName             string `json:"provider_name,omitempty"`
@@ -34,7 +34,7 @@ func GetProfile(model core.Model) ModelProfile {
 		SupportsToolCalls:        true,
 		SupportsStructuredOutput: true,
 		SupportsVision:           true,
-		SupportsStreaming:         true,
+		SupportsStreaming:        true,
 	}
 }
 

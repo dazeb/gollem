@@ -18,10 +18,10 @@ type LongRunAgent[T any] struct {
 type LongRunOption[T any] func(*longRunConfig[T])
 
 type longRunConfig[T any] struct {
-	contextWindow    int
-	planningEnabled  bool
-	contextOpts      []ContextOption
-	agentOpts        []core.AgentOption[T]
+	contextWindow   int
+	planningEnabled bool
+	contextOpts     []ContextOption
+	agentOpts       []core.AgentOption[T]
 }
 
 // WithContextWindow sets the max context window size for automatic compression.

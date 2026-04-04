@@ -431,14 +431,14 @@ func TestGraph_FanOut_Mermaid(t *testing.T) {
 
 	g.AddNode(Node[testState]{
 		Name: "start",
-		Run: func(_ context.Context, _ *testState) (string, error) { return "scatter", nil },
+		Run:  func(_ context.Context, _ *testState) (string, error) { return "scatter", nil },
 	})
 	g.AddFanOutNode("scatter", func(_ context.Context, _ *testState) ([]Send[testState], string, error) {
 		return nil, EndNode, nil
 	})
 	g.AddNode(Node[testState]{
 		Name: "collect",
-		Run: func(_ context.Context, _ *testState) (string, error) { return EndNode, nil },
+		Run:  func(_ context.Context, _ *testState) (string, error) { return EndNode, nil },
 	})
 	g.SetEntryPoint("start")
 
