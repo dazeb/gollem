@@ -70,7 +70,7 @@ func TestJSONRPCRequestWithParams(t *testing.T) {
 func TestJSONRPCResponseParsing(t *testing.T) {
 	data := `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"test_tool","description":"A test tool","inputSchema":{"type":"object"}}]}}`
 
-	var resp jsonRPCResponse
+	var resp jsonRPCMessage
 	err := json.Unmarshal([]byte(data), &resp)
 	if err != nil {
 		t.Fatal(err)
@@ -79,8 +79,8 @@ func TestJSONRPCResponseParsing(t *testing.T) {
 	if resp.JSONRPC != "2.0" {
 		t.Errorf("expected jsonrpc 2.0, got %s", resp.JSONRPC)
 	}
-	if resp.ID != 1 {
-		t.Errorf("expected id 1, got %d", resp.ID)
+	if got := normalizeID(resp.ID); got != int64(1) {
+		t.Errorf("expected id 1, got %v", resp.ID)
 	}
 	if resp.Error != nil {
 		t.Errorf("expected no error, got %v", resp.Error)
@@ -93,7 +93,7 @@ func TestJSONRPCResponseParsing(t *testing.T) {
 func TestJSONRPCErrorParsing(t *testing.T) {
 	data := `{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}`
 
-	var resp jsonRPCResponse
+	var resp jsonRPCMessage
 	err := json.Unmarshal([]byte(data), &resp)
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestToolsListResultParsing(t *testing.T) {
 
 func TestInitializeParamsSerialization(t *testing.T) {
 	params := map[string]any{
-		"protocolVersion": "2024-11-05",
+		"protocolVersion": ProtocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo": map[string]any{
 			"name":    "gollem",
@@ -234,12 +234,55 @@ func TestInitializeParamsSerialization(t *testing.T) {
 	var parsed map[string]any
 	json.Unmarshal(data, &parsed)
 
-	if parsed["protocolVersion"] != "2024-11-05" {
+	if parsed["protocolVersion"] != ProtocolVersion {
 		t.Errorf("unexpected protocol version: %v", parsed["protocolVersion"])
 	}
 	clientInfo := parsed["clientInfo"].(map[string]any)
 	if clientInfo["name"] != "gollem" {
 		t.Errorf("expected client name gollem, got %v", clientInfo["name"])
+	}
+}
+
+func TestResolveClientCapabilitiesSamplingDefaultsDoNotAdvertiseTools(t *testing.T) {
+	caps := resolveClientCapabilities(ClientConfig{
+		SamplingHandler: func(context.Context, *CreateMessageParams) (*CreateMessageResult, error) {
+			return &CreateMessageResult{}, nil
+		},
+	})
+	if caps.Sampling == nil {
+		t.Fatal("expected sampling capability to be advertised")
+	}
+	if caps.Sampling.Tools != nil {
+		t.Fatalf("expected sampling.tools to be omitted by default, got %+v", caps.Sampling)
+	}
+}
+
+func TestResolveClientCapabilitiesModelSamplingHandlerAdvertisesTools(t *testing.T) {
+	caps := resolveClientCapabilities(ClientConfig{
+		SamplingHandler: ModelSamplingHandler(&recordingModel{
+			requestFn: func(context.Context, []core.ModelMessage, *core.ModelSettings, *core.ModelRequestParameters) (*core.ModelResponse, error) {
+				return &core.ModelResponse{}, nil
+			},
+		}),
+	})
+	if caps.Sampling == nil || caps.Sampling.Tools == nil {
+		t.Fatalf("expected ModelSamplingHandler to advertise sampling.tools, got %+v", caps.Sampling)
+	}
+}
+
+func TestResolveClientCapabilitiesPreservesExplicitSamplingTools(t *testing.T) {
+	caps := resolveClientCapabilities(ClientConfig{
+		Capabilities: ClientCapabilities{
+			Sampling: &ClientSamplingCapability{
+				Tools: &EmptyCapability{},
+			},
+		},
+		SamplingHandler: func(context.Context, *CreateMessageParams) (*CreateMessageResult, error) {
+			return &CreateMessageResult{}, nil
+		},
+	})
+	if caps.Sampling == nil || caps.Sampling.Tools == nil {
+		t.Fatalf("expected explicit sampling.tools capability to be preserved, got %+v", caps.Sampling)
 	}
 }
 
@@ -253,8 +296,8 @@ func (w *nopWriteCloser) Close() error {
 
 func TestClientCallClosedChannel(t *testing.T) {
 	c := &Client{
-		stdin:   &nopWriteCloser{},
-		pending: make(map[int64]chan *jsonRPCResponse),
+		clientState: newClientState(),
+		stdin:       &nopWriteCloser{},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

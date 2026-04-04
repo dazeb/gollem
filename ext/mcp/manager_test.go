@@ -9,16 +9,28 @@ import (
 
 // mockToolSource is a test ToolSource implementation.
 type mockToolSource struct {
-	tools       []Tool
-	toolResults map[string]*ToolResult
-	listErr     error
-	callErr     error
-	closed      bool
+	tools             []Tool
+	toolResults       map[string]*ToolResult
+	resources         []Resource
+	resourceTemplates []ResourceTemplate
+	resourceResults   map[string]*ReadResourceResult
+	prompts           []Prompt
+	promptResults     map[string]*PromptResult
+	listErr           error
+	callErr           error
+	resourceErr       error
+	promptErr         error
+	closed            bool
+	listToolCalls     int
+	handlers          map[string][]NotificationHandler
 }
 
 func newMockToolSource() *mockToolSource {
 	return &mockToolSource{
-		toolResults: make(map[string]*ToolResult),
+		toolResults:     make(map[string]*ToolResult),
+		resourceResults: make(map[string]*ReadResourceResult),
+		promptResults:   make(map[string]*PromptResult),
+		handlers:        make(map[string][]NotificationHandler),
 	}
 }
 
@@ -26,6 +38,7 @@ func (m *mockToolSource) ListTools(_ context.Context) ([]Tool, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
+	m.listToolCalls++
 	return m.tools, nil
 }
 
@@ -43,6 +56,60 @@ func (m *mockToolSource) CallTool(_ context.Context, name string, _ map[string]a
 func (m *mockToolSource) Close() error {
 	m.closed = true
 	return nil
+}
+
+func (m *mockToolSource) ListResources(_ context.Context) ([]Resource, error) {
+	if m.resourceErr != nil {
+		return nil, m.resourceErr
+	}
+	return m.resources, nil
+}
+
+func (m *mockToolSource) ReadResource(_ context.Context, uri string) (*ReadResourceResult, error) {
+	if m.resourceErr != nil {
+		return nil, m.resourceErr
+	}
+	result, ok := m.resourceResults[uri]
+	if !ok {
+		return nil, errors.New("resource not found")
+	}
+	return result, nil
+}
+
+func (m *mockToolSource) ListResourceTemplates(_ context.Context) ([]ResourceTemplate, error) {
+	if m.resourceErr != nil {
+		return nil, m.resourceErr
+	}
+	return m.resourceTemplates, nil
+}
+
+func (m *mockToolSource) ListPrompts(_ context.Context) ([]Prompt, error) {
+	if m.promptErr != nil {
+		return nil, m.promptErr
+	}
+	return m.prompts, nil
+}
+
+func (m *mockToolSource) GetPrompt(_ context.Context, name string, _ map[string]string) (*PromptResult, error) {
+	if m.promptErr != nil {
+		return nil, m.promptErr
+	}
+	result, ok := m.promptResults[name]
+	if !ok {
+		return nil, errors.New("prompt not found")
+	}
+	return result, nil
+}
+
+func (m *mockToolSource) OnNotification(method string, handler NotificationHandler) func() {
+	m.handlers[method] = append(m.handlers[method], handler)
+	return func() {}
+}
+
+func (m *mockToolSource) emit(method string) {
+	for _, handler := range m.handlers[method] {
+		handler(Notification{Method: method})
+	}
 }
 
 func TestManagerAddServer(t *testing.T) {
@@ -346,5 +413,109 @@ func TestManagerEmptyTools(t *testing.T) {
 
 	if len(tools) != 0 {
 		t.Errorf("expected 0 tools, got %d", len(tools))
+	}
+}
+
+func TestManagerListResourcesAndPrompts(t *testing.T) {
+	mgr := NewManager()
+
+	src := newMockToolSource()
+	src.resources = []Resource{{
+		URI:         "file:///workspace/README.md",
+		Name:        "README",
+		Description: "Project readme",
+	}}
+	src.resourceTemplates = []ResourceTemplate{{
+		URITemplate: "file:///workspace/{path}",
+		Name:        "workspace_file",
+	}}
+	src.resourceResults["file:///workspace/README.md"] = &ReadResourceResult{
+		Contents: []ResourceContents{{URI: "file:///workspace/README.md", Text: "# Gollem\n"}},
+	}
+	src.prompts = []Prompt{{Name: "summarize_repo", Description: "Summarize the repo"}}
+	src.promptResults["summarize_repo"] = &PromptResult{
+		Messages: []PromptMessage{{
+			Role:    "assistant",
+			Content: Content{Type: "text", Text: "Repository summary"},
+		}},
+	}
+
+	if err := mgr.AddServer("repo", src); err != nil {
+		t.Fatalf("AddServer failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	resources, err := mgr.ListResources(ctx)
+	if err != nil {
+		t.Fatalf("ListResources failed: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Server != "repo" {
+		t.Fatalf("unexpected resources: %+v", resources)
+	}
+
+	templates, err := mgr.ListResourceTemplates(ctx)
+	if err != nil {
+		t.Fatalf("ListResourceTemplates failed: %v", err)
+	}
+	if len(templates) != 1 || templates[0].Name != "repo__workspace_file" {
+		t.Fatalf("unexpected templates: %+v", templates)
+	}
+
+	readResult, err := mgr.ReadResource(ctx, "repo", "file:///workspace/README.md")
+	if err != nil {
+		t.Fatalf("ReadResource failed: %v", err)
+	}
+	if readResult.TextContent() != "# Gollem\n" {
+		t.Fatalf("unexpected resource content: %q", readResult.TextContent())
+	}
+
+	prompts, err := mgr.ListPrompts(ctx)
+	if err != nil {
+		t.Fatalf("ListPrompts failed: %v", err)
+	}
+	if len(prompts) != 1 || prompts[0].Name != "repo__summarize_repo" || prompts[0].OriginalName != "summarize_repo" {
+		t.Fatalf("unexpected prompts: %+v", prompts)
+	}
+
+	promptResult, err := mgr.GetPrompt(ctx, "repo__summarize_repo", nil)
+	if err != nil {
+		t.Fatalf("GetPrompt failed: %v", err)
+	}
+	if promptResult.TextContent() != "assistant: Repository summary" {
+		t.Fatalf("unexpected prompt content: %q", promptResult.TextContent())
+	}
+}
+
+func TestManagerInvalidatesToolsCacheOnNotification(t *testing.T) {
+	mgr := NewManager()
+
+	src := newMockToolSource()
+	src.tools = []Tool{
+		{Name: "tool1", Description: "Tool 1", InputSchema: json.RawMessage(`{"type":"object"}`)},
+	}
+	if err := mgr.AddServer("srv", src); err != nil {
+		t.Fatalf("AddServer failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	if _, err := mgr.Tools(ctx); err != nil {
+		t.Fatalf("Tools failed: %v", err)
+	}
+	if _, err := mgr.Tools(ctx); err != nil {
+		t.Fatalf("Tools failed on cached read: %v", err)
+	}
+	if src.listToolCalls != 1 {
+		t.Fatalf("expected 1 tool list call before invalidation, got %d", src.listToolCalls)
+	}
+
+	src.emit("notifications/tools/list_changed")
+
+	if _, err := mgr.Tools(ctx); err != nil {
+		t.Fatalf("Tools failed after invalidation: %v", err)
+	}
+	if src.listToolCalls != 2 {
+		t.Fatalf("expected cache invalidation to trigger a new tools/list call, got %d", src.listToolCalls)
 	}
 }

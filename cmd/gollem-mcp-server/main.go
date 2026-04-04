@@ -1,16 +1,11 @@
 // Command gollem-mcp-server exposes gollem agent capabilities as MCP tools
 // over stdio using JSON-RPC 2.0. It implements the Model Context Protocol
-// (protocol version 2024-11-05) so that MCP clients such as Claude Desktop
-// or Claude Code can invoke gollem agents and execute Python code via WASM.
-//
-// Usage:
-//
-//	gollem-mcp-server            # start MCP server on stdin/stdout
-//	gollem-mcp-server --help     # show usage
+// (protocol version 2025-11-25) so MCP clients such as Claude Code can invoke
+// gollem agents, borrow the connected client's model through MCP sampling,
+// and execute Python code via WASM.
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -23,15 +18,14 @@ import (
 	montygo "github.com/fugue-labs/monty-go"
 
 	"github.com/fugue-labs/gollem/core"
+	mcp "github.com/fugue-labs/gollem/ext/mcp"
 	"github.com/fugue-labs/gollem/provider/anthropic"
 	"github.com/fugue-labs/gollem/provider/openai"
 )
 
-// Protocol version we advertise during the MCP handshake.
-const protocolVersion = "2024-11-05"
+const protocolVersion = mcp.ProtocolVersion
 
-// JSON-RPC 2.0 types ---------------------------------------------------
-
+// JSON-RPC 2.0 types used by tests.
 type jsonRPCRequest struct {
 	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
@@ -51,240 +45,126 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-// Standard JSON-RPC error codes.
+type initializeResult = mcp.InitializeResult
+type toolsListResult struct {
+	Tools []mcp.Tool `json:"tools"`
+}
+type contentBlock = mcp.Content
+type toolCallResult = mcp.ToolResult
+
 const (
 	codeParseError     = -32700
 	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 )
 
-// MCP types -------------------------------------------------------------
-
-type serverInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-type capabilities struct {
-	Tools *toolsCap `json:"tools,omitempty"`
-}
-
-type toolsCap struct {
-	ListChanged bool `json:"listChanged"`
-}
-
-type initializeResult struct {
-	ProtocolVersion string       `json:"protocolVersion"`
-	Capabilities    capabilities `json:"capabilities"`
-	ServerInfo      serverInfo   `json:"serverInfo"`
-}
-
-type mcpTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	InputSchema any    `json:"inputSchema"`
-}
-
-type toolsListResult struct {
-	Tools []mcpTool `json:"tools"`
-}
-
-type toolsCallParams struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments,omitempty"`
-}
-
-type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-}
-
-type toolCallResult struct {
-	Content []contentBlock `json:"content"`
-	IsError bool           `json:"isError,omitempty"`
-}
-
-// Server ----------------------------------------------------------------
-
-// Server implements an MCP server over stdio.
+// Server wraps the reusable MCP server with command-specific tool handlers.
 type Server struct {
-	reader *bufio.Reader
+	reader io.Reader
 	writer io.Writer
 	logger *log.Logger
 
-	// Lazily initialized monty-go runner.
+	inner  *mcp.Server
 	runner *montygo.Runner
 }
 
+type nopWriteCloser struct {
+	io.Writer
+}
+
+func (w nopWriteCloser) Close() error { return nil }
+
 // NewServer creates a new MCP server reading from r and writing to w.
-// Logs are written to logW (typically os.Stderr).
 func NewServer(r io.Reader, w io.Writer, logW io.Writer) *Server {
-	return &Server{
-		reader: bufio.NewReader(r),
+	s := &Server{
+		reader: r,
 		writer: w,
 		logger: log.New(logW, "gollem-mcp: ", log.LstdFlags),
+		inner: mcp.NewServer(
+			mcp.WithServerInfo(mcp.ServerInfo{
+				Name:    "gollem-mcp-server",
+				Version: "1.0.0",
+			}),
+		),
 	}
+	s.registerTools()
+	return s
 }
 
-// Run reads JSON-RPC messages from the reader and dispatches them until
-// the reader returns EOF or the context is cancelled.
+// Run serves stdio JSON-RPC until EOF or context cancellation.
 func (s *Server) Run(ctx context.Context) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		line, err := s.reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return fmt.Errorf("read error: %w", err)
-		}
-
-		line = []byte(strings.TrimSpace(string(line)))
-		if len(line) == 0 {
-			continue
-		}
-
-		var req jsonRPCRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			s.sendError(nil, codeParseError, "parse error: "+err.Error())
-			continue
-		}
-
-		s.dispatch(ctx, &req)
-	}
+	transport := mcp.NewStdioServerTransport(s.inner, s.reader, nopWriteCloser{Writer: s.writer})
+	err := transport.Run(ctx)
+	s.inner.WaitIdle()
+	return err
 }
 
-func (s *Server) dispatch(ctx context.Context, req *jsonRPCRequest) {
-	switch req.Method {
-	case "initialize":
-		s.handleInitialize(req)
-	case "notifications/initialized":
-		// Notification; no response needed.
-		s.logger.Println("client initialized")
-	case "tools/list":
-		s.handleToolsList(req)
-	case "tools/call":
-		s.handleToolsCall(ctx, req)
-	default:
-		s.sendError(req.ID, codeMethodNotFound, "method not found: "+req.Method)
-	}
-}
-
-// handleInitialize responds to the MCP initialize handshake.
-func (s *Server) handleInitialize(req *jsonRPCRequest) {
-	result := initializeResult{
-		ProtocolVersion: protocolVersion,
-		Capabilities: capabilities{
-			Tools: &toolsCap{ListChanged: false},
-		},
-		ServerInfo: serverInfo{
-			Name:    "gollem-mcp-server",
-			Version: "1.0.0",
-		},
-	}
-	s.sendResult(req.ID, result)
-}
-
-// handleToolsList returns the list of available MCP tools.
-func (s *Server) handleToolsList(req *jsonRPCRequest) {
-	tools := []mcpTool{
-		{
-			Name:        "run_agent",
-			Description: "Run a gollem agent with a given prompt. Returns the agent's text response.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"prompt": map[string]any{
-						"type":        "string",
-						"description": "The prompt to send to the agent",
-					},
-					"model": map[string]any{
-						"type":        "string",
-						"description": "Model name to use (e.g. 'gpt-4o', 'claude-sonnet-4-5-20250929'). Uses provider default if not set.",
-					},
-					"provider": map[string]any{
-						"type":        "string",
-						"description": "LLM provider to use",
-						"enum":        []string{"openai", "anthropic", "ollama"},
-					},
+func (s *Server) registerTools() {
+	s.inner.AddTool(mcp.Tool{
+		Name:        "run_agent",
+		Description: "Run a gollem agent with a given prompt. Returns the agent's text response.",
+		InputSchema: mustJSON(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"prompt": map[string]any{
+					"type":        "string",
+					"description": "The prompt to send to the agent",
 				},
-				"required": []string{"prompt"},
-			},
-		},
-		{
-			Name:        "execute_python",
-			Description: "Execute Python code in a WASM sandbox using monty-go. The last expression is the return value.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"code": map[string]any{
-						"type":        "string",
-						"description": "Python code to execute",
-					},
-					"timeout_seconds": map[string]any{
-						"type":        "integer",
-						"description": "Maximum execution time in seconds (default: 30)",
-					},
+				"model": map[string]any{
+					"type":        "string",
+					"description": "Model name to use. With provider=mcp this becomes a model preference hint for the connected client.",
 				},
-				"required": []string{"code"},
+				"provider": map[string]any{
+					"type":        "string",
+					"description": "LLM provider to use (default: openai). Use mcp to borrow the connected client's model.",
+					"enum":        []string{"mcp", "openai", "anthropic", "ollama"},
+				},
 			},
-		},
-		{
-			Name:        "list_providers",
-			Description: "List available LLM providers and their default models.",
-			InputSchema: map[string]any{
-				"type":       "object",
-				"properties": map[string]any{},
-			},
-		},
-	}
+			"required": []string{"prompt"},
+		}),
+	}, s.handleRunAgent)
 
-	s.sendResult(req.ID, toolsListResult{Tools: tools})
+	s.inner.AddTool(mcp.Tool{
+		Name:        "execute_python",
+		Description: "Execute Python code in a WASM sandbox using monty-go. The last expression is the return value.",
+		InputSchema: mustJSON(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"code": map[string]any{
+					"type":        "string",
+					"description": "Python code to execute",
+				},
+				"timeout_seconds": map[string]any{
+					"type":        "integer",
+					"description": "Maximum execution time in seconds (default: 30)",
+				},
+			},
+			"required": []string{"code"},
+		}),
+	}, s.handleExecutePython)
+
+	s.inner.AddTool(mcp.Tool{
+		Name:        "list_providers",
+		Description: "List available LLM providers and their default models.",
+		InputSchema: mustJSON(map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		}),
+	}, s.handleListProviders)
 }
 
-// handleToolsCall dispatches a tool call to the appropriate handler.
-func (s *Server) handleToolsCall(ctx context.Context, req *jsonRPCRequest) {
-	var params toolsCallParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		s.sendError(req.ID, codeInvalidRequest, "invalid params: "+err.Error())
-		return
-	}
-
-	switch params.Name {
-	case "run_agent":
-		s.callRunAgent(ctx, req, params.Arguments)
-	case "execute_python":
-		s.callExecutePython(ctx, req, params.Arguments)
-	case "list_providers":
-		s.callListProviders(req)
-	default:
-		s.sendError(req.ID, codeMethodNotFound, "unknown tool: "+params.Name)
-	}
-}
-
-// Tool implementations --------------------------------------------------
-
-func (s *Server) callRunAgent(ctx context.Context, req *jsonRPCRequest, args map[string]any) {
+func (s *Server) handleRunAgent(ctx context.Context, rc *mcp.RequestContext, args map[string]any) (*mcp.ToolResult, error) {
 	prompt, _ := args["prompt"].(string)
 	if prompt == "" {
-		s.sendToolError(req.ID, "prompt is required")
-		return
+		return toolError("prompt is required"), nil
 	}
 
-	providerName, _ := args["provider"].(string)
-	if providerName == "" {
-		providerName = "openai"
-	}
-
+	providerName := resolveProviderName(args)
 	modelName, _ := args["model"].(string)
 
-	model, err := createModel(providerName, modelName)
+	model, err := createModel(providerName, modelName, rc)
 	if err != nil {
-		s.sendToolError(req.ID, err.Error())
-		return
+		return toolError(err.Error()), nil
 	}
 
 	agent := core.NewAgent(model,
@@ -294,18 +174,16 @@ func (s *Server) callRunAgent(ctx context.Context, req *jsonRPCRequest, args map
 
 	result, err := agent.Run(ctx, prompt)
 	if err != nil {
-		s.sendToolError(req.ID, fmt.Sprintf("agent run failed: %v", err))
-		return
+		return toolError(fmt.Sprintf("agent run failed: %v", err)), nil
 	}
 
-	s.sendToolResult(req.ID, result.Output)
+	return textResult(result.Output), nil
 }
 
-func (s *Server) callExecutePython(ctx context.Context, req *jsonRPCRequest, args map[string]any) {
+func (s *Server) handleExecutePython(ctx context.Context, _ *mcp.RequestContext, args map[string]any) (*mcp.ToolResult, error) {
 	code, _ := args["code"].(string)
 	if code == "" {
-		s.sendToolError(req.ID, "code is required")
-		return
+		return toolError("code is required"), nil
 	}
 
 	timeoutSec := 30
@@ -313,12 +191,10 @@ func (s *Server) callExecutePython(ctx context.Context, req *jsonRPCRequest, arg
 		timeoutSec = int(ts)
 	}
 
-	// Lazily initialize monty-go runner.
 	if s.runner == nil {
 		r, err := montygo.New()
 		if err != nil {
-			s.sendToolError(req.ID, fmt.Sprintf("failed to initialize Python runtime: %v", err))
-			return
+			return toolError(fmt.Sprintf("failed to initialize Python runtime: %v", err)), nil
 		}
 		s.runner = r
 	}
@@ -338,25 +214,24 @@ func (s *Server) callExecutePython(ctx context.Context, req *jsonRPCRequest, arg
 
 	result, err := s.runner.Execute(execCtx, code, nil, opts...)
 	if err != nil {
-		s.sendToolError(req.ID, fmt.Sprintf("execution failed: %v", err))
-		return
+		return toolError(fmt.Sprintf("execution failed: %v", err)), nil
 	}
 
-	// Build response combining result and any printed output.
-	var output string
+	resultJSON, _ := json.Marshal(result)
+	output := string(resultJSON)
 	if prints.Len() > 0 {
-		resultJSON, _ := json.Marshal(result)
 		output = fmt.Sprintf("Result: %s\nOutput:\n%s", string(resultJSON), prints.String())
-	} else {
-		resultJSON, _ := json.Marshal(result)
-		output = string(resultJSON)
 	}
-
-	s.sendToolResult(req.ID, output)
+	return textResult(output), nil
 }
 
-func (s *Server) callListProviders(req *jsonRPCRequest) {
+func (s *Server) handleListProviders(context.Context, *mcp.RequestContext, map[string]any) (*mcp.ToolResult, error) {
 	providers := []map[string]string{
+		{
+			"name":          "mcp",
+			"default_model": "client-default",
+			"description":   "Borrow the connected MCP client's configured model via sampling/createMessage",
+		},
 		{
 			"name":          "openai",
 			"default_model": "gpt-4o",
@@ -375,59 +250,44 @@ func (s *Server) callListProviders(req *jsonRPCRequest) {
 	}
 
 	data, _ := json.MarshalIndent(providers, "", "  ")
-	s.sendToolResult(req.ID, string(data))
+	return textResult(string(data)), nil
 }
 
-// Response helpers ------------------------------------------------------
-
-func (s *Server) sendResult(id *json.RawMessage, result any) {
-	resp := jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      normalizeID(id),
-		Result:  result,
+func resolveProviderName(args map[string]any) string {
+	providerName, _ := args["provider"].(string)
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return "openai"
 	}
-	s.writeResponse(resp)
+	return providerName
 }
 
-func (s *Server) sendError(id *json.RawMessage, code int, message string) {
-	resp := jsonRPCResponse{
-		JSONRPC: "2.0",
-		ID:      normalizeID(id),
-		Error:   &rpcError{Code: code, Message: message},
+func mustJSON(v any) json.RawMessage {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
 	}
-	s.writeResponse(resp)
+	return data
 }
 
-func (s *Server) sendToolResult(id *json.RawMessage, text string) {
-	result := toolCallResult{
-		Content: []contentBlock{{Type: "text", Text: text}},
+func textResult(text string) *mcp.ToolResult {
+	return &mcp.ToolResult{
+		Content: []mcp.Content{{Type: "text", Text: text}},
 	}
-	s.sendResult(id, result)
 }
 
-func (s *Server) sendToolError(id *json.RawMessage, text string) {
-	result := toolCallResult{
-		Content: []contentBlock{{Type: "text", Text: text}},
+func toolError(text string) *mcp.ToolResult {
+	return &mcp.ToolResult{
+		Content: []mcp.Content{{Type: "text", Text: text}},
 		IsError: true,
 	}
-	s.sendResult(id, result)
 }
 
-func (s *Server) writeResponse(resp jsonRPCResponse) {
-	data, err := json.Marshal(resp)
-	if err != nil {
-		s.logger.Printf("failed to marshal response: %v", err)
-		return
-	}
-	fmt.Fprintf(s.writer, "%s\n", data)
-}
-
-// normalizeID converts the raw JSON id to a concrete type for serialization.
+// normalizeID converts the raw JSON id to a concrete type for test serialization.
 func normalizeID(raw *json.RawMessage) any {
 	if raw == nil {
 		return nil
 	}
-	// Try integer first, then string, then fall back to raw.
 	var intID int64
 	if err := json.Unmarshal(*raw, &intID); err == nil {
 		return intID
@@ -439,10 +299,22 @@ func normalizeID(raw *json.RawMessage) any {
 	return raw
 }
 
-// Provider creation -----------------------------------------------------
-
-func createModel(provider, modelName string) (core.Model, error) {
+func createModel(provider, modelName string, rc *mcp.RequestContext) (core.Model, error) {
 	switch provider {
+	case "mcp":
+		if rc == nil || rc.ClientCapabilities().Sampling == nil {
+			return nil, fmt.Errorf("provider %q requires an MCP client with sampling support", provider)
+		}
+		var opts []mcp.MCPModelOption
+		if modelName != "" {
+			opts = append(opts,
+				mcp.WithMCPModelName(modelName),
+				mcp.WithMCPModelPreferences(mcp.ModelPreferences{
+					Hints: []mcp.ModelHint{{Name: modelName}},
+				}),
+			)
+		}
+		return mcp.NewMCPModel(rc, opts...), nil
 	case "openai":
 		var opts []openai.Option
 		if modelName != "" {
@@ -462,11 +334,9 @@ func createModel(provider, modelName string) (core.Model, error) {
 		}
 		return openai.NewOllama(opts...), nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q (available: openai, anthropic, ollama)", provider)
+		return nil, fmt.Errorf("unknown provider %q (available: mcp, openai, anthropic, ollama)", provider)
 	}
 }
-
-// main ------------------------------------------------------------------
 
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
@@ -479,6 +349,12 @@ Tools:
   run_agent         Run a gollem agent with a given prompt
   execute_python    Execute Python code in a WASM sandbox
   list_providers    List available LLM providers
+
+Providers:
+  mcp              Borrow the connected client's model via MCP sampling
+  openai           Use OpenAI directly
+  anthropic        Use Anthropic directly
+  ollama           Use a local Ollama instance
 
 Usage:
   gollem-mcp-server              Start the MCP server

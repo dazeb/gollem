@@ -21,9 +21,14 @@ type sseEvent struct {
 // mockSSEServer simulates an MCP server using the SSE transport.
 // It serves SSE events on /sse and accepts JSON-RPC requests on /messages.
 type mockSSEServer struct {
-	mu          sync.Mutex
-	tools       []Tool
-	toolResults map[string]*ToolResult
+	mu                sync.Mutex
+	tools             []Tool
+	toolResults       map[string]*ToolResult
+	resources         []Resource
+	resourceTemplates []ResourceTemplate
+	resourceResults   map[string]*ReadResourceResult
+	prompts           []Prompt
+	promptResults     map[string]*PromptResult
 
 	// eventCh delivers events to the SSE handler for writing.
 	eventCh chan sseEvent
@@ -33,9 +38,11 @@ type mockSSEServer struct {
 
 func newMockSSEServer() *mockSSEServer {
 	return &mockSSEServer{
-		toolResults: make(map[string]*ToolResult),
-		eventCh:     make(chan sseEvent, 100),
-		ready:       make(chan struct{}),
+		toolResults:     make(map[string]*ToolResult),
+		resourceResults: make(map[string]*ReadResourceResult),
+		promptResults:   make(map[string]*PromptResult),
+		eventCh:         make(chan sseEvent, 100),
+		ready:           make(chan struct{}),
 	}
 }
 
@@ -101,8 +108,12 @@ func (m *mockSSEServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "initialize":
 		result = map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{},
+			"protocolVersion": ProtocolVersion,
+			"capabilities": map[string]any{
+				"tools":     map[string]any{"listChanged": true},
+				"resources": map[string]any{"listChanged": true},
+				"prompts":   map[string]any{"listChanged": true},
+			},
 			"serverInfo": map[string]any{
 				"name":    "mock-server",
 				"version": "1.0.0",
@@ -134,13 +145,58 @@ func (m *mockSSEServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		} else {
 			rpcErr = &jsonRPCError{Code: -32601, Message: "tool not found"}
 		}
+	case "resources/list":
+		m.mu.Lock()
+		resources := m.resources
+		m.mu.Unlock()
+		result = map[string]any{"resources": resources}
+	case "resources/read":
+		params, _ := json.Marshal(req.Params)
+		var readParams struct {
+			URI string `json:"uri"`
+		}
+		json.Unmarshal(params, &readParams)
+
+		m.mu.Lock()
+		resourceResult, ok := m.resourceResults[readParams.URI]
+		m.mu.Unlock()
+		if ok {
+			result = resourceResult
+		} else {
+			rpcErr = &jsonRPCError{Code: -32602, Message: "resource not found"}
+		}
+	case "resources/templates/list":
+		m.mu.Lock()
+		templates := m.resourceTemplates
+		m.mu.Unlock()
+		result = map[string]any{"resourceTemplates": templates}
+	case "prompts/list":
+		m.mu.Lock()
+		prompts := m.prompts
+		m.mu.Unlock()
+		result = map[string]any{"prompts": prompts}
+	case "prompts/get":
+		params, _ := json.Marshal(req.Params)
+		var getParams struct {
+			Name string `json:"name"`
+		}
+		json.Unmarshal(params, &getParams)
+
+		m.mu.Lock()
+		promptResult, ok := m.promptResults[getParams.Name]
+		m.mu.Unlock()
+		if ok {
+			result = promptResult
+		} else {
+			rpcErr = &jsonRPCError{Code: -32602, Message: "prompt not found"}
+		}
 	default:
 		rpcErr = &jsonRPCError{Code: -32601, Message: "method not found"}
 	}
 
-	resp := jsonRPCResponse{
+	resp := jsonRPCMessage{
 		JSONRPC: "2.0",
-		ID:      req.ID,
+		ID:      rawJSONID(req.ID),
 	}
 	if rpcErr != nil {
 		resp.Error = rpcErr
@@ -270,6 +326,137 @@ func TestSSEClientCallToolError(t *testing.T) {
 	_, err = client.CallTool(ctx, "nonexistent", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent tool")
+	}
+}
+
+func TestSSEClientResourcesAndPrompts(t *testing.T) {
+	mock := newMockSSEServer()
+	mock.resources = []Resource{
+		{
+			URI:         "file:///workspace/README.md",
+			Name:        "README",
+			Description: "Project readme",
+			MIMEType:    "text/markdown",
+		},
+	}
+	mock.resourceTemplates = []ResourceTemplate{
+		{
+			URITemplate: "file:///workspace/{path}",
+			Name:        "workspace_file",
+			Description: "Template for project files",
+			MIMEType:    "text/plain",
+		},
+	}
+	mock.resourceResults["file:///workspace/README.md"] = &ReadResourceResult{
+		Contents: []ResourceContents{{
+			URI:      "file:///workspace/README.md",
+			MIMEType: "text/markdown",
+			Text:     "# Gollem\n",
+		}},
+	}
+	mock.prompts = []Prompt{
+		{
+			Name:        "summarize_repo",
+			Description: "Summarize the repository",
+		},
+	}
+	mock.promptResults["summarize_repo"] = &PromptResult{
+		Messages: []PromptMessage{{
+			Role:    "assistant",
+			Content: Content{Type: "text", Text: "Repository summary"},
+		}},
+	}
+
+	server := httptest.NewServer(mock.handler())
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := NewSSEClient(ctx, server.URL+"/sse")
+	if err != nil {
+		t.Fatalf("failed to create SSE client: %v", err)
+	}
+	defer client.Close()
+
+	resources, err := client.ListResources(ctx)
+	if err != nil {
+		t.Fatalf("ListResources failed: %v", err)
+	}
+	if len(resources) != 1 || resources[0].URI != "file:///workspace/README.md" {
+		t.Fatalf("unexpected resources: %+v", resources)
+	}
+
+	readResult, err := client.ReadResource(ctx, "file:///workspace/README.md")
+	if err != nil {
+		t.Fatalf("ReadResource failed: %v", err)
+	}
+	if readResult.TextContent() != "# Gollem\n" {
+		t.Fatalf("unexpected read result: %q", readResult.TextContent())
+	}
+
+	templates, err := client.ListResourceTemplates(ctx)
+	if err != nil {
+		t.Fatalf("ListResourceTemplates failed: %v", err)
+	}
+	if len(templates) != 1 || templates[0].Name != "workspace_file" {
+		t.Fatalf("unexpected templates: %+v", templates)
+	}
+
+	prompts, err := client.ListPrompts(ctx)
+	if err != nil {
+		t.Fatalf("ListPrompts failed: %v", err)
+	}
+	if len(prompts) != 1 || prompts[0].Name != "summarize_repo" {
+		t.Fatalf("unexpected prompts: %+v", prompts)
+	}
+
+	promptResult, err := client.GetPrompt(ctx, "summarize_repo", nil)
+	if err != nil {
+		t.Fatalf("GetPrompt failed: %v", err)
+	}
+	if promptResult.TextContent() != "assistant: Repository summary" {
+		t.Fatalf("unexpected prompt content: %q", promptResult.TextContent())
+	}
+}
+
+func TestSSEClientNotificationHandler(t *testing.T) {
+	mock := newMockSSEServer()
+	server := httptest.NewServer(mock.handler())
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := NewSSEClient(ctx, server.URL+"/sse")
+	if err != nil {
+		t.Fatalf("failed to create SSE client: %v", err)
+	}
+	defer client.Close()
+
+	received := make(chan string, 1)
+	unregister := client.OnNotification("notifications/resources/list_changed", func(note Notification) {
+		received <- note.Method
+	})
+	defer unregister()
+
+	notification, _ := json.Marshal(jsonRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "notifications/resources/list_changed",
+		Params:  json.RawMessage(`{"reason":"refresh"}`),
+	})
+	mock.eventCh <- sseEvent{
+		eventType: "message",
+		data:      string(notification),
+	}
+
+	select {
+	case method := <-received:
+		if method != "notifications/resources/list_changed" {
+			t.Fatalf("unexpected notification method: %s", method)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for notification")
 	}
 }
 

@@ -1,0 +1,293 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+	"sync/atomic"
+)
+
+// HTTPServerTransport serves MCP over the streamable HTTP transport.
+// Each MCP session gets its own cloned Server instance.
+type HTTPServerTransport struct {
+	mu       sync.Mutex
+	template *Server
+	sessions map[string]*httpServerSession
+}
+
+type httpServerSession struct {
+	mu      sync.Mutex
+	id      string
+	server  *Server
+	ctx     context.Context
+	cancel  context.CancelFunc
+	outbox  chan []byte
+	backlog [][]byte
+	closed  bool
+}
+
+// NewHTTPServerTransport binds a reusable Server template to an HTTP transport.
+func NewHTTPServerTransport(server *Server) *HTTPServerTransport {
+	if server == nil {
+		server = NewServer()
+	}
+	return &HTTPServerTransport{
+		template: server,
+		sessions: make(map[string]*httpServerSession),
+	}
+}
+
+// Run blocks until ctx is cancelled, then closes all active sessions.
+func (t *HTTPServerTransport) Run(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// Close shuts down all active HTTP MCP sessions.
+func (t *HTTPServerTransport) Close() error {
+	t.mu.Lock()
+	sessions := make([]*httpServerSession, 0, len(t.sessions))
+	for _, session := range t.sessions {
+		sessions = append(sessions, session)
+	}
+	t.sessions = make(map[string]*httpServerSession)
+	t.mu.Unlock()
+
+	for _, session := range sessions {
+		session.close()
+	}
+	return nil
+}
+
+// ServeHTTP implements http.Handler for the streamable HTTP MCP transport.
+func (t *HTTPServerTransport) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		t.handleStream(w, r)
+	case http.MethodPost:
+		t.handlePost(w, r)
+	case http.MethodDelete:
+		t.handleDelete(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (t *HTTPServerTransport) handleStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	sessionID := r.Header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
+		return
+	}
+
+	session, ok := t.getSession(sessionID)
+	if !ok {
+		http.Error(w, "unknown session", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Mcp-Session-Id", sessionID)
+
+	for _, payload := range session.drainBacklog() {
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", payload)
+		flusher.Flush()
+	}
+
+	for {
+		select {
+		case payload, ok := <-session.outbox:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", payload)
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		case <-session.ctx.Done():
+			return
+		}
+	}
+}
+
+func (t *HTTPServerTransport) handlePost(w http.ResponseWriter, r *http.Request) {
+	var msg jsonRPCMessage
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	sessionID := r.Header.Get("Mcp-Session-Id")
+	if msg.Method == "initialize" && sessionID == "" {
+		session := t.newSession()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Mcp-Session-Id", session.id)
+
+		result, rpcErr := session.server.handleInitialize(msg.Params)
+		payload, err := json.Marshal(jsonRPCMessage{
+			JSONRPC: "2.0",
+			ID:      rawJSONID(normalizeID(msg.ID)),
+			Result:  mustRawResult(result, rpcErr == nil),
+			Error:   rpcErr,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(payload)
+		return
+	}
+
+	if sessionID == "" {
+		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
+		return
+	}
+
+	session, ok := t.getSession(sessionID)
+	if !ok {
+		http.Error(w, "unknown session", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Mcp-Session-Id", sessionID)
+
+	go session.server.HandleMessage(session.ctx, &msg)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (t *HTTPServerTransport) handleDelete(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.Header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
+		return
+	}
+
+	session, ok := t.deleteSession(sessionID)
+	if !ok {
+		http.Error(w, "unknown session", http.StatusNotFound)
+		return
+	}
+	session.close()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (t *HTTPServerTransport) newSession() *httpServerSession {
+	sessionID := generateHTTPSessionID()
+	ctx, cancel := context.WithCancel(context.Background())
+	server := cloneServerTemplate(t.template)
+	session := &httpServerSession{
+		id:     sessionID,
+		server: server,
+		ctx:    ctx,
+		cancel: cancel,
+		outbox: make(chan []byte, 256),
+	}
+	server.attachWriter(func(data []byte) error {
+		session.enqueue(data)
+		return nil
+	})
+
+	t.mu.Lock()
+	t.sessions[sessionID] = session
+	t.mu.Unlock()
+	return session
+}
+
+func (t *HTTPServerTransport) getSession(id string) (*httpServerSession, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	session, ok := t.sessions[id]
+	return session, ok
+}
+
+func (t *HTTPServerTransport) deleteSession(id string) (*httpServerSession, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	session, ok := t.sessions[id]
+	if ok {
+		delete(t.sessions, id)
+	}
+	return session, ok
+}
+
+func (s *httpServerSession) enqueue(data []byte) {
+	snapshot := append([]byte(nil), data...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	select {
+	case s.outbox <- snapshot:
+	default:
+		s.backlog = append(s.backlog, snapshot)
+	}
+}
+
+func (s *httpServerSession) drainBacklog() [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.backlog) == 0 {
+		return nil
+	}
+	items := append([][]byte(nil), s.backlog...)
+	s.backlog = nil
+	return items
+}
+
+func (s *httpServerSession) close() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	close(s.outbox)
+	s.mu.Unlock()
+	s.cancel()
+	_ = s.server.Close()
+}
+
+func cloneServerTemplate(template *Server) *Server {
+	template.mu.Lock()
+	defer template.mu.Unlock()
+
+	cloned := NewServer(
+		WithServerInfo(template.serverInfo),
+		WithServerInstructions(template.instructions),
+	)
+	cloned.protocol = template.protocol
+	cloned.tools = append([]serverTool(nil), template.tools...)
+	cloned.resources = append([]Resource(nil), template.resources...)
+	cloned.resourceTemplates = append([]ResourceTemplate(nil), template.resourceTemplates...)
+	cloned.resourceReader = template.resourceReader
+	cloned.prompts = append([]Prompt(nil), template.prompts...)
+	cloned.promptGetter = template.promptGetter
+	return cloned
+}
+
+func generateHTTPSessionID() string {
+	return fmt.Sprintf("mcp-%d", httpSessionCounter.Add(1))
+}
+
+func mustRawResult(result any, ok bool) json.RawMessage {
+	if !ok || result == nil {
+		return nil
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+var httpSessionCounter atomic.Int64

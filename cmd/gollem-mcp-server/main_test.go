@@ -64,7 +64,7 @@ func runServer(t *testing.T, lines ...string) []string {
 
 func TestInitializeHandshake(t *testing.T) {
 	initReq := sendRequest(t, 1, "initialize", map[string]interface{}{
-		"protocolVersion": "2024-11-05",
+		"protocolVersion": protocolVersion,
 		"capabilities":    map[string]interface{}{},
 		"clientInfo": map[string]interface{}{
 			"name":    "test-client",
@@ -94,8 +94,8 @@ func TestInitializeHandshake(t *testing.T) {
 		t.Fatalf("unmarshal init result: %v", err)
 	}
 
-	if initResult.ProtocolVersion != "2024-11-05" {
-		t.Errorf("protocol version = %q, want %q", initResult.ProtocolVersion, "2024-11-05")
+	if initResult.ProtocolVersion != protocolVersion {
+		t.Errorf("protocol version = %q, want %q", initResult.ProtocolVersion, protocolVersion)
 	}
 	if initResult.ServerInfo.Name != "gollem-mcp-server" {
 		t.Errorf("server name = %q, want %q", initResult.ServerInfo.Name, "gollem-mcp-server")
@@ -185,6 +185,21 @@ func TestToolsListSchema(t *testing.T) {
 	}
 }
 
+func TestResolveProviderNameDefaultsToOpenAI(t *testing.T) {
+	if got := resolveProviderName(map[string]any{}); got != "openai" {
+		t.Fatalf("resolveProviderName() = %q, want openai", got)
+	}
+	if got := resolveProviderName(map[string]any{"provider": "   "}); got != "openai" {
+		t.Fatalf("resolveProviderName(whitespace) = %q, want openai", got)
+	}
+}
+
+func TestResolveProviderNamePreservesExplicitProvider(t *testing.T) {
+	if got := resolveProviderName(map[string]any{"provider": "mcp"}); got != "mcp" {
+		t.Fatalf("resolveProviderName(mcp) = %q, want mcp", got)
+	}
+}
+
 func TestCallListProviders(t *testing.T) {
 	callReq := sendRequest(t, 3, "tools/call", map[string]interface{}{
 		"name":      "list_providers",
@@ -219,7 +234,7 @@ func TestCallListProviders(t *testing.T) {
 
 	// Verify the text contains provider info.
 	text := result.Content[0].Text
-	for _, name := range []string{"openai", "anthropic", "ollama"} {
+	for _, name := range []string{"mcp", "openai", "anthropic", "ollama"} {
 		if !strings.Contains(text, name) {
 			t.Errorf("provider list should contain %q", name)
 		}
@@ -369,7 +384,7 @@ func TestUnknownMethod(t *testing.T) {
 
 func TestMultipleRequests(t *testing.T) {
 	initReq := sendRequest(t, 1, "initialize", map[string]interface{}{
-		"protocolVersion": "2024-11-05",
+		"protocolVersion": protocolVersion,
 		"capabilities":    map[string]interface{}{},
 		"clientInfo":      map[string]interface{}{"name": "test", "version": "1.0.0"},
 	})
@@ -388,9 +403,9 @@ func TestMultipleRequests(t *testing.T) {
 		t.Fatalf("expected 3 responses, got %d: %v", len(lines), lines)
 	}
 
-	// Verify each response has the correct ID.
-	for i, expectedID := range []float64{1, 2, 3} {
-		resp := readResponse(t, lines[i])
+	seen := make(map[float64]bool, len(lines))
+	for i, line := range lines {
+		resp := readResponse(t, line)
 		if resp.Error != nil {
 			t.Errorf("response %d: unexpected error: %v", i, resp.Error)
 		}
@@ -399,8 +414,11 @@ func TestMultipleRequests(t *testing.T) {
 			t.Errorf("response %d: expected numeric ID, got %T", i, resp.ID)
 			continue
 		}
-		if id != expectedID {
-			t.Errorf("response %d: id = %v, want %v", i, id, expectedID)
+		seen[id] = true
+	}
+	for _, expectedID := range []float64{1, 2, 3} {
+		if !seen[expectedID] {
+			t.Errorf("missing response id %v in %v", expectedID, lines)
 		}
 	}
 }

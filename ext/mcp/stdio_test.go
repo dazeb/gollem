@@ -23,15 +23,26 @@ type pipeWriteCloser struct {
 func (p *pipeWriteCloser) Write(b []byte) (int, error) { return p.w.Write(b) }
 func (p *pipeWriteCloser) Close() error                { return p.w.Close() }
 
+type discardWriteCloser struct {
+	io.Writer
+}
+
+func (discardWriteCloser) Close() error { return nil }
+
 // mockStdioServer simulates an MCP server process connected via pipes.
 // It reads JSON-RPC requests from the "stdin" pipe and writes responses
 // to the "stdout" pipe, mimicking what a real MCP server subprocess does.
 type mockStdioServer struct {
-	mu          sync.Mutex
-	tools       []Tool
-	toolResults map[string]*ToolResult
-	reader      *bufio.Reader
-	writer      io.Writer
+	mu                sync.Mutex
+	tools             []Tool
+	toolResults       map[string]*ToolResult
+	resources         []Resource
+	resourceTemplates []ResourceTemplate
+	resourceResults   map[string]*ReadResourceResult
+	prompts           []Prompt
+	promptResults     map[string]*PromptResult
+	reader            *bufio.Reader
+	writer            io.Writer
 }
 
 func (m *mockStdioServer) serve() {
@@ -59,8 +70,12 @@ func (m *mockStdioServer) serve() {
 		switch req.Method {
 		case "initialize":
 			result = map[string]any{
-				"protocolVersion": "2024-11-05",
-				"capabilities":    map[string]any{},
+				"protocolVersion": ProtocolVersion,
+				"capabilities": map[string]any{
+					"tools":     map[string]any{"listChanged": true},
+					"resources": map[string]any{"listChanged": true},
+					"prompts":   map[string]any{"listChanged": true},
+				},
 				"serverInfo": map[string]any{
 					"name":    "mock-stdio-server",
 					"version": "1.0.0",
@@ -87,13 +102,58 @@ func (m *mockStdioServer) serve() {
 			} else {
 				rpcErr = &jsonRPCError{Code: -32601, Message: "tool not found"}
 			}
+		case "resources/list":
+			m.mu.Lock()
+			resources := m.resources
+			m.mu.Unlock()
+			result = map[string]any{"resources": resources}
+		case "resources/read":
+			params, _ := json.Marshal(req.Params)
+			var readParams struct {
+				URI string `json:"uri"`
+			}
+			json.Unmarshal(params, &readParams)
+
+			m.mu.Lock()
+			resourceResult, ok := m.resourceResults[readParams.URI]
+			m.mu.Unlock()
+			if ok {
+				result = resourceResult
+			} else {
+				rpcErr = &jsonRPCError{Code: -32602, Message: "resource not found"}
+			}
+		case "resources/templates/list":
+			m.mu.Lock()
+			templates := m.resourceTemplates
+			m.mu.Unlock()
+			result = map[string]any{"resourceTemplates": templates}
+		case "prompts/list":
+			m.mu.Lock()
+			prompts := m.prompts
+			m.mu.Unlock()
+			result = map[string]any{"prompts": prompts}
+		case "prompts/get":
+			params, _ := json.Marshal(req.Params)
+			var getParams struct {
+				Name string `json:"name"`
+			}
+			json.Unmarshal(params, &getParams)
+
+			m.mu.Lock()
+			promptResult, ok := m.promptResults[getParams.Name]
+			m.mu.Unlock()
+			if ok {
+				result = promptResult
+			} else {
+				rpcErr = &jsonRPCError{Code: -32602, Message: "prompt not found"}
+			}
 		default:
 			rpcErr = &jsonRPCError{Code: -32601, Message: "method not found"}
 		}
 
-		resp := jsonRPCResponse{
+		resp := jsonRPCMessage{
 			JSONRPC: "2.0",
-			ID:      req.ID,
+			ID:      rawJSONID(req.ID),
 		}
 		if rpcErr != nil {
 			resp.Error = rpcErr
@@ -123,17 +183,19 @@ func newMockStdioClient(t *testing.T, tools []Tool, results map[string]*ToolResu
 	clientReader, serverWriter := io.Pipe()
 
 	mock := &mockStdioServer{
-		tools:       tools,
-		toolResults: results,
-		reader:      bufio.NewReader(serverReader),
-		writer:      serverWriter,
+		tools:           tools,
+		toolResults:     results,
+		resourceResults: make(map[string]*ReadResourceResult),
+		promptResults:   make(map[string]*PromptResult),
+		reader:          bufio.NewReader(serverReader),
+		writer:          serverWriter,
 	}
 	go mock.serve()
 
 	c := &Client{
-		stdin:   &pipeWriteCloser{w: clientWriter},
-		stdout:  bufio.NewReader(clientReader),
-		pending: make(map[int64]chan *jsonRPCResponse),
+		clientState: newClientState(),
+		stdin:       &pipeWriteCloser{w: clientWriter},
+		stdout:      bufio.NewReader(clientReader),
 	}
 
 	// Start the read loop (same as NewStdioClient).
@@ -334,9 +396,9 @@ func TestStdioClientContextCancellation(t *testing.T) {
 	}()
 
 	c := &Client{
-		stdin:   &pipeWriteCloser{w: clientWriter},
-		stdout:  bufio.NewReader(clientReader),
-		pending: make(map[int64]chan *jsonRPCResponse),
+		clientState: newClientState(),
+		stdin:       &pipeWriteCloser{w: clientWriter},
+		stdout:      bufio.NewReader(clientReader),
 	}
 	go c.readLoop()
 
@@ -522,9 +584,9 @@ func TestStdioClientReadLoopClosePending(t *testing.T) {
 	clientReader, serverWriter := io.Pipe()
 
 	c := &Client{
-		stdin:   &pipeWriteCloser{w: clientWriter},
-		stdout:  bufio.NewReader(clientReader),
-		pending: make(map[int64]chan *jsonRPCResponse),
+		clientState: newClientState(),
+		stdin:       &pipeWriteCloser{w: clientWriter},
+		stdout:      bufio.NewReader(clientReader),
 	}
 	go c.readLoop()
 
@@ -582,6 +644,53 @@ func TestStdioClientReadLoopClosePending(t *testing.T) {
 	})
 }
 
+func TestStdioServerTransportEOFClosesPendingRequests(t *testing.T) {
+	server := NewServer()
+	transport := NewStdioServerTransport(server, strings.NewReader(""), discardWriteCloser{Writer: io.Discard})
+
+	id, ch, err := server.prepareCall()
+	if err != nil {
+		t.Fatalf("prepareCall failed: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := server.awaitResponse(context.Background(), id, ch)
+		errCh <- err
+	}()
+
+	if err := transport.Run(context.Background()); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected pending request to fail on EOF")
+		}
+		if !strings.Contains(err.Error(), "connection closed") {
+			t.Fatalf("unexpected pending-request error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for pending request to unblock")
+	}
+}
+
+func TestStdioServerTransportEOFRejectsNewNestedRequests(t *testing.T) {
+	server := NewServer()
+	transport := NewStdioServerTransport(server, strings.NewReader(""), discardWriteCloser{Writer: io.Discard})
+
+	if err := transport.Run(context.Background()); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if _, _, err := server.prepareCall(); err == nil {
+		t.Fatal("expected prepareCall to fail after EOF")
+	} else if !strings.Contains(err.Error(), "connection closed") {
+		t.Fatalf("unexpected prepareCall error: %v", err)
+	}
+}
+
 func TestStdioClientLargeResponse(t *testing.T) {
 	// Verify stdio client can handle large tool results (>64KB).
 	largeText := strings.Repeat("x", 100*1024) // 100KB
@@ -601,6 +710,180 @@ func TestStdioClientLargeResponse(t *testing.T) {
 	}
 	if len(result.TextContent()) != 100*1024 {
 		t.Errorf("expected 100KB result, got %d bytes", len(result.TextContent()))
+	}
+}
+
+func TestStdioClientResourcesAndPrompts(t *testing.T) {
+	// Client writes to clientWriter -> serverReader reads requests.
+	serverReader, clientWriter := io.Pipe()
+	// Server writes to serverWriter -> clientReader reads responses.
+	clientReader, serverWriter := io.Pipe()
+
+	mock := &mockStdioServer{
+		resources: []Resource{
+			{
+				URI:         "file:///workspace/README.md",
+				Name:        "README",
+				Description: "Project readme",
+				MIMEType:    "text/markdown",
+			},
+		},
+		resourceTemplates: []ResourceTemplate{
+			{
+				URITemplate: "file:///workspace/{path}",
+				Name:        "workspace_file",
+				Description: "Template for project files",
+				MIMEType:    "text/plain",
+			},
+		},
+		resourceResults: map[string]*ReadResourceResult{
+			"file:///workspace/README.md": {
+				Contents: []ResourceContents{{
+					URI:      "file:///workspace/README.md",
+					MIMEType: "text/markdown",
+					Text:     "# Gollem\n",
+				}},
+			},
+		},
+		prompts: []Prompt{
+			{
+				Name:        "summarize_repo",
+				Description: "Summarize the repository",
+				Arguments: []PromptArgument{{
+					Name:        "focus",
+					Description: "Optional focus area",
+				}},
+			},
+		},
+		promptResults: map[string]*PromptResult{
+			"summarize_repo": {
+				Messages: []PromptMessage{{
+					Role:    "user",
+					Content: Content{Type: "text", Text: "Summarize the repository."},
+				}},
+			},
+		},
+		reader:      bufio.NewReader(serverReader),
+		writer:      serverWriter,
+		toolResults: make(map[string]*ToolResult),
+	}
+	go mock.serve()
+
+	c := &Client{
+		clientState: newClientState(),
+		stdin:       &pipeWriteCloser{w: clientWriter},
+		stdout:      bufio.NewReader(clientReader),
+	}
+	go c.readLoop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := c.initialize(ctx); err != nil {
+		t.Fatalf("initialization failed: %v", err)
+	}
+
+	t.Cleanup(func() {
+		c.shutdown()
+		clientWriter.Close()
+		serverWriter.Close()
+		serverReader.Close()
+	})
+
+	resources, err := c.ListResources(ctx)
+	if err != nil {
+		t.Fatalf("ListResources failed: %v", err)
+	}
+	if len(resources) != 1 || resources[0].URI != "file:///workspace/README.md" {
+		t.Fatalf("unexpected resources: %+v", resources)
+	}
+
+	resourceResult, err := c.ReadResource(ctx, "file:///workspace/README.md")
+	if err != nil {
+		t.Fatalf("ReadResource failed: %v", err)
+	}
+	if resourceResult.TextContent() != "# Gollem\n" {
+		t.Fatalf("unexpected resource content: %q", resourceResult.TextContent())
+	}
+
+	templates, err := c.ListResourceTemplates(ctx)
+	if err != nil {
+		t.Fatalf("ListResourceTemplates failed: %v", err)
+	}
+	if len(templates) != 1 || templates[0].URITemplate != "file:///workspace/{path}" {
+		t.Fatalf("unexpected templates: %+v", templates)
+	}
+
+	prompts, err := c.ListPrompts(ctx)
+	if err != nil {
+		t.Fatalf("ListPrompts failed: %v", err)
+	}
+	if len(prompts) != 1 || prompts[0].Name != "summarize_repo" {
+		t.Fatalf("unexpected prompts: %+v", prompts)
+	}
+
+	promptResult, err := c.GetPrompt(ctx, "summarize_repo", map[string]string{"focus": "architecture"})
+	if err != nil {
+		t.Fatalf("GetPrompt failed: %v", err)
+	}
+	if promptResult.TextContent() != "user: Summarize the repository." {
+		t.Fatalf("unexpected prompt content: %q", promptResult.TextContent())
+	}
+
+	if c.ProtocolVersion() != ProtocolVersion {
+		t.Fatalf("unexpected protocol version: %s", c.ProtocolVersion())
+	}
+	if c.ServerInfo() == nil || c.ServerInfo().Name != "mock-stdio-server" {
+		t.Fatalf("unexpected server info: %+v", c.ServerInfo())
+	}
+	if c.Capabilities().Resources == nil || c.Capabilities().Prompts == nil {
+		t.Fatalf("expected resource and prompt capabilities, got %+v", c.Capabilities())
+	}
+}
+
+func TestStdioClientNotificationHandler(t *testing.T) {
+	serverReader, clientWriter := io.Pipe()
+	clientReader, serverWriter := io.Pipe()
+
+	c := &Client{
+		clientState: newClientState(),
+		stdin:       &pipeWriteCloser{w: clientWriter},
+		stdout:      bufio.NewReader(clientReader),
+	}
+	go c.readLoop()
+
+	t.Cleanup(func() {
+		c.shutdown()
+		clientWriter.Close()
+		serverWriter.Close()
+		serverReader.Close()
+	})
+
+	// Drain writes so notify() can succeed if used by future setup changes.
+	go func() {
+		_, _ = io.Copy(io.Discard, serverReader)
+	}()
+
+	received := make(chan string, 1)
+	unregister := c.OnNotification("notifications/tools/list_changed", func(note Notification) {
+		received <- note.Method
+	})
+	defer unregister()
+
+	data, _ := json.Marshal(jsonRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "notifications/tools/list_changed",
+		Params:  json.RawMessage(`{"reason":"refresh"}`),
+	})
+	fmt.Fprintf(serverWriter, "%s\n", data)
+
+	select {
+	case method := <-received:
+		if method != "notifications/tools/list_changed" {
+			t.Fatalf("unexpected notification method: %s", method)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for notification")
 	}
 }
 

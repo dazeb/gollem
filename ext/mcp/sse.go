@@ -5,78 +5,62 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/fugue-labs/gollem/core"
 )
 
-// SSEClient communicates with an MCP server over HTTP Server-Sent Events
-// (SSE) using JSON-RPC 2.0. The client connects to the SSE endpoint to
-// receive responses, and posts JSON-RPC requests to the messages endpoint
-// provided by the server.
+// SSEClient communicates with an MCP server over the deprecated SSE transport.
+// The client connects to an SSE endpoint to receive JSON-RPC messages and posts
+// requests to the messages endpoint announced by the server.
 type SSEClient struct {
+	*clientState
+
 	baseURL    string
 	httpClient *http.Client
+	headers    map[string]string
 
-	mu          sync.Mutex
-	nextID      atomic.Int64
-	pending     map[int64]chan *jsonRPCResponse
-	closed      bool
 	closeOnce   sync.Once
 	cancelSSE   context.CancelFunc
-	messagesURL string // set after receiving the "endpoint" event
+	messagesURL string
 	ready       chan struct{}
 }
 
-// SSEOption configures the SSE client.
-type SSEOption func(*sseConfig)
-
-type sseConfig struct {
-	httpClient *http.Client
-}
-
-// WithHTTPClient sets a custom HTTP client for the SSE transport.
-func WithHTTPClient(client *http.Client) SSEOption {
-	return func(c *sseConfig) {
-		c.httpClient = client
-	}
-}
-
 // NewSSEClient connects to an MCP server over SSE at the given URL.
-// The URL should point to the SSE endpoint (e.g., "http://localhost:8080/sse").
-// The server sends an "endpoint" event with the messages URL, then the client
-// performs the MCP initialization handshake.
+// The URL should point to the SSE endpoint (for example, "http://localhost:8080/sse").
 func NewSSEClient(ctx context.Context, url string, opts ...SSEOption) (*SSEClient, error) {
-	cfg := &sseConfig{
-		httpClient: http.DefaultClient,
-	}
+	return NewSSEClientWithConfig(ctx, url, ClientConfig{}, opts...)
+}
+
+// NewSSEClientWithConfig connects to an MCP server over SSE at the given URL.
+func NewSSEClientWithConfig(ctx context.Context, url string, config ClientConfig, opts ...SSEOption) (*SSEClient, error) {
+	cfg := defaultRemoteConfig()
 	for _, opt := range opts {
-		opt(cfg)
+		if opt != nil {
+			opt(&cfg)
+		}
 	}
 
 	sseCtx, cancel := context.WithCancel(context.Background())
 
 	c := &SSEClient{
-		baseURL:    url,
-		httpClient: cfg.httpClient,
-		pending:    make(map[int64]chan *jsonRPCResponse),
-		cancelSSE:  cancel,
-		ready:      make(chan struct{}),
+		clientState: newClientState(config),
+		baseURL:     url,
+		httpClient:  cfg.httpClient,
+		headers:     cloneStringMap(cfg.headers),
+		cancelSSE:   cancel,
+		ready:       make(chan struct{}),
 	}
 
-	// Connect to SSE stream.
 	if err := c.connectSSE(sseCtx); err != nil {
 		cancel()
 		return nil, fmt.Errorf("mcp: failed to connect SSE: %w", err)
 	}
 
-	// Wait for the endpoint event.
 	select {
 	case <-c.ready:
 	case <-ctx.Done():
@@ -84,7 +68,6 @@ func NewSSEClient(ctx context.Context, url string, opts ...SSEOption) (*SSEClien
 		return nil, fmt.Errorf("mcp: timed out waiting for endpoint event: %w", ctx.Err())
 	}
 
-	// Perform initialization handshake.
 	if err := c.initialize(ctx); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("mcp: initialization failed: %w", err)
@@ -93,13 +76,13 @@ func NewSSEClient(ctx context.Context, url string, opts ...SSEOption) (*SSEClien
 	return c, nil
 }
 
-// connectSSE starts the SSE connection in the background.
 func (c *SSEClient) connectSSE(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	applyHeaders(req, c.headers)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -114,58 +97,17 @@ func (c *SSEClient) connectSSE(ctx context.Context) error {
 	return nil
 }
 
-// readSSE reads SSE events from the response body and dispatches them.
 func (c *SSEClient) readSSE(body io.ReadCloser) {
-	defer body.Close()
-
-	scanner := bufio.NewScanner(body)
-	// MCP tool results can be large (file contents, command output). The
-	// default bufio.Scanner max token size is only 64KB, which would cause
-	// ErrTooLong and kill the SSE connection for any response > 64KB.
-	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024) // 10MB max line
-	var eventType string
-	var dataLines []string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if line == "" {
-			// Empty line = end of event.
-			if eventType != "" && len(dataLines) > 0 {
-				data := strings.Join(dataLines, "\n")
-				c.handleSSEEvent(eventType, data)
-			}
-			eventType = ""
-			dataLines = nil
-			continue
-		}
-
-		if strings.HasPrefix(line, "event:") {
-			// Per SSE spec, the space after the colon is optional.
-			eventType = strings.TrimPrefix(line, "event:")
-			eventType = strings.TrimPrefix(eventType, " ")
-		} else if strings.HasPrefix(line, "data:") {
-			value := strings.TrimPrefix(line, "data:")
-			value = strings.TrimPrefix(value, " ")
-			dataLines = append(dataLines, value)
-		}
+	if err := readEventStream(body, c.handleSSEEvent); err != nil {
+		c.shutdown()
+		return
 	}
-
-	// Connection closed or error.
-	c.mu.Lock()
-	c.closed = true
-	for _, ch := range c.pending {
-		close(ch)
-	}
-	c.pending = make(map[int64]chan *jsonRPCResponse)
-	c.mu.Unlock()
+	c.shutdown()
 }
 
-// handleSSEEvent processes a single SSE event.
 func (c *SSEClient) handleSSEEvent(eventType, data string) {
 	switch eventType {
 	case "endpoint":
-		// The server tells us where to POST messages.
 		c.mu.Lock()
 		c.messagesURL = c.resolveURL(strings.TrimSpace(data))
 		c.mu.Unlock()
@@ -174,40 +116,25 @@ func (c *SSEClient) handleSSEEvent(eventType, data string) {
 		default:
 			close(c.ready)
 		}
-
-	case "message":
-		var resp jsonRPCResponse
-		if err := json.Unmarshal([]byte(data), &resp); err != nil {
+	default:
+		var msg jsonRPCMessage
+		if err := json.Unmarshal([]byte(data), &msg); err != nil {
 			return
 		}
-
-		c.mu.Lock()
-		ch, ok := c.pending[resp.ID]
-		if ok {
-			delete(c.pending, resp.ID)
-		}
-		c.mu.Unlock()
-
-		if ok {
-			ch <- &resp
-		}
+		c.dispatchMessage(&msg, c.respond)
 	}
 }
 
-// resolveURL resolves a potentially relative URL against the base URL.
 func (c *SSEClient) resolveURL(endpoint string) string {
 	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
 		return endpoint
 	}
 
-	// Relative path: combine with base URL's scheme+host.
 	base := c.baseURL
-	// Find the scheme+host portion.
 	idx := strings.Index(base, "://")
 	if idx < 0 {
 		return endpoint
 	}
-	// Find the end of the host portion.
 	hostEnd := strings.Index(base[idx+3:], "/")
 	if hostEnd < 0 {
 		return base + endpoint
@@ -215,29 +142,15 @@ func (c *SSEClient) resolveURL(endpoint string) string {
 	return base[:idx+3+hostEnd] + endpoint
 }
 
-// initialize performs the MCP initialization handshake.
 func (c *SSEClient) initialize(ctx context.Context) error {
-	params := map[string]any{
-		"protocolVersion": "2024-11-05",
-		"capabilities":    map[string]any{},
-		"clientInfo": map[string]any{
-			"name":    "gollem",
-			"version": "1.0.0",
-		},
-	}
-
-	_, err := c.call(ctx, "initialize", params)
-	if err != nil {
-		return err
-	}
-
-	// Send initialized notification.
-	return c.notify(ctx, "notifications/initialized", nil)
+	return initializeClient(ctx, c.clientState, c.call, c.notify)
 }
 
-// call sends a JSON-RPC request and waits for a response.
 func (c *SSEClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	id := c.nextID.Add(1)
+	id, ch, err := c.prepareCall()
+	if err != nil {
+		return nil, err
+	}
 
 	req := jsonRPCRequest{
 		JSONRPC: "2.0",
@@ -246,65 +159,40 @@ func (c *SSEClient) call(ctx context.Context, method string, params any) (json.R
 		Params:  params,
 	}
 
-	ch := make(chan *jsonRPCResponse, 1)
-
 	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return nil, errors.New("mcp: client is closed")
-	}
-	c.pending[id] = ch
 	messagesURL := c.messagesURL
 	c.mu.Unlock()
 
 	data, err := json.Marshal(req)
 	if err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
+		c.removePending(id)
 		return nil, err
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messagesURL, bytes.NewReader(data))
 	if err != nil {
+		c.removePending(id)
 		return nil, fmt.Errorf("mcp: failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	applyHeaders(httpReq, c.headers)
+	applyProtocolVersionHeader(httpReq, c.ProtocolVersion())
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
+		c.removePending(id)
 		return nil, fmt.Errorf("mcp: failed to send request: %w", err)
 	}
 	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
+		c.removePending(id)
 		return nil, fmt.Errorf("mcp: server returned status %d", resp.StatusCode)
 	}
 
-	select {
-	case rpcResp, ok := <-ch:
-		if !ok {
-			return nil, errors.New("mcp: connection closed")
-		}
-		if rpcResp.Error != nil {
-			return nil, rpcResp.Error
-		}
-		return rpcResp.Result, nil
-	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, ctx.Err()
-	}
+	return c.awaitResponse(ctx, id, ch)
 }
 
-// notify sends a JSON-RPC notification over HTTP (no response expected).
 func (c *SSEClient) notify(ctx context.Context, method string, params any) error {
 	req := struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -321,6 +209,24 @@ func (c *SSEClient) notify(ctx context.Context, method string, params any) error
 		return err
 	}
 
+	return c.postMessage(ctx, data)
+}
+
+func (c *SSEClient) respond(ctx context.Context, id any, result any, rpcErr *jsonRPCError) error {
+	resp := jsonRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result,
+		Error:   rpcErr,
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	return c.postMessage(ctx, data)
+}
+
+func (c *SSEClient) postMessage(ctx context.Context, data []byte) error {
 	c.mu.Lock()
 	messagesURL := c.messagesURL
 	c.mu.Unlock()
@@ -330,10 +236,12 @@ func (c *SSEClient) notify(ctx context.Context, method string, params any) error
 		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	applyHeaders(httpReq, c.headers)
+	applyProtocolVersionHeader(httpReq, c.ProtocolVersion())
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("mcp: failed to send notification: %w", err)
+		return fmt.Errorf("mcp: failed to post message: %w", err)
 	}
 	resp.Body.Close()
 	return nil
@@ -341,117 +249,107 @@ func (c *SSEClient) notify(ctx context.Context, method string, params any) error
 
 // ListTools discovers available tools from the MCP server.
 func (c *SSEClient) ListTools(ctx context.Context) ([]Tool, error) {
-	result, err := c.call(ctx, "tools/list", nil)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: tools/list failed: %w", err)
-	}
-
-	var listResult struct {
-		Tools []Tool `json:"tools"`
-	}
-	if err := json.Unmarshal(result, &listResult); err != nil {
-		return nil, fmt.Errorf("mcp: failed to parse tools list: %w", err)
-	}
-
-	return listResult.Tools, nil
+	return listTools(ctx, c.call)
 }
 
 // CallTool invokes a tool on the MCP server.
 func (c *SSEClient) CallTool(ctx context.Context, name string, args map[string]any) (*ToolResult, error) {
-	params := map[string]any{
-		"name":      name,
-		"arguments": args,
-	}
-
-	result, err := c.call(ctx, "tools/call", params)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: tools/call failed: %w", err)
-	}
-
-	var toolResult ToolResult
-	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return nil, fmt.Errorf("mcp: failed to parse tool result: %w", err)
-	}
-
-	return &toolResult, nil
+	return callTool(ctx, c.call, name, args)
 }
 
-// Tools converts MCP tools into core.Tool instances that call back to the
-// MCP server. This method has the same signature as Client.Tools for
-// interchangeable usage.
+// ListResources lists resources exposed by the MCP server.
+func (c *SSEClient) ListResources(ctx context.Context) ([]Resource, error) {
+	return listResources(ctx, c.call)
+}
+
+// ReadResource reads a resource from the MCP server.
+func (c *SSEClient) ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error) {
+	return readResource(ctx, c.call, uri)
+}
+
+// ListResourceTemplates lists URI templates exposed by the MCP server.
+func (c *SSEClient) ListResourceTemplates(ctx context.Context) ([]ResourceTemplate, error) {
+	return listResourceTemplates(ctx, c.call)
+}
+
+// ListPrompts lists prompts exposed by the MCP server.
+func (c *SSEClient) ListPrompts(ctx context.Context) ([]Prompt, error) {
+	return listPrompts(ctx, c.call)
+}
+
+// GetPrompt resolves a prompt from the MCP server.
+func (c *SSEClient) GetPrompt(ctx context.Context, name string, args map[string]string) (*PromptResult, error) {
+	return getPrompt(ctx, c.call, name, args)
+}
+
+// NotifyRootsListChanged emits notifications/roots/list_changed to the server.
+func (c *SSEClient) NotifyRootsListChanged(ctx context.Context) error {
+	return notifyRootsListChanged(ctx, c.notify)
+}
+
+// Tools converts MCP tools into core.Tool instances backed by the SSE client.
 func (c *SSEClient) Tools(ctx context.Context) ([]core.Tool, error) {
-	tools, err := c.ListTools(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var result []core.Tool
-	for _, mt := range tools {
-		tool := convertSSETool(c, mt)
-		result = append(result, tool)
-	}
-	return result, nil
-}
-
-// convertSSETool converts a single MCP tool definition to a core.Tool
-// backed by the SSE client.
-func convertSSETool(client *SSEClient, mt Tool) core.Tool {
-	var schema core.Schema
-	if mt.InputSchema != nil {
-		if err := json.Unmarshal(mt.InputSchema, &schema); err != nil {
-			schema = nil
-		}
-	}
-	if schema == nil {
-		schema = core.Schema{"type": "object"}
-	}
-
-	def := core.ToolDefinition{
-		Name:             mt.Name,
-		Description:      mt.Description,
-		ParametersSchema: schema,
-		Kind:             core.ToolKindFunction,
-	}
-
-	handler := func(ctx context.Context, _ *core.RunContext, argsJSON string) (any, error) {
-		var args map[string]any
-		if argsJSON != "" && argsJSON != "{}" {
-			if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-				return nil, err
-			}
-		}
-		if args == nil {
-			args = make(map[string]any)
-		}
-
-		result, err := client.CallTool(ctx, mt.Name, args)
-		if err != nil {
-			return nil, err
-		}
-
-		if result.IsError {
-			return nil, &core.ModelRetryError{Message: result.TextContent()}
-		}
-
-		return result.TextContent(), nil
-	}
-
-	return core.Tool{
-		Definition: def,
-		Handler:    handler,
-	}
+	return toolsForSource(ctx, c)
 }
 
 // Close shuts down the SSE connection and releases resources.
 func (c *SSEClient) Close() error {
 	c.closeOnce.Do(func() {
-		c.mu.Lock()
-		c.closed = true
-		c.mu.Unlock()
-
+		c.shutdown()
 		if c.cancelSSE != nil {
 			c.cancelSSE()
 		}
 	})
 	return nil
+}
+
+func readEventStream(body io.ReadCloser, onEvent func(eventType, data string)) error {
+	defer body.Close()
+
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+
+	var eventType string
+	var dataLines []string
+
+	dispatch := func() {
+		if len(dataLines) == 0 {
+			eventType = ""
+			dataLines = nil
+			return
+		}
+		currentType := eventType
+		if currentType == "" {
+			currentType = "message"
+		}
+		onEvent(currentType, strings.Join(dataLines, "\n"))
+		eventType = ""
+		dataLines = nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			dispatch()
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "event:"):
+			eventType = strings.TrimPrefix(line, "event:")
+			eventType = strings.TrimPrefix(eventType, " ")
+		case strings.HasPrefix(line, "data:"):
+			value := strings.TrimPrefix(line, "data:")
+			value = strings.TrimPrefix(value, " ")
+			dataLines = append(dataLines, value)
+		}
+	}
+
+	if len(dataLines) > 0 {
+		dispatch()
+	}
+
+	return scanner.Err()
 }

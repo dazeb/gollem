@@ -1,60 +1,30 @@
 // Package mcp provides a Model Context Protocol (MCP) client that discovers
-// and invokes tools from MCP servers via the stdio transport using JSON-RPC 2.0.
+// and invokes tools, prompts, and resources from MCP servers via JSON-RPC 2.0.
 package mcp
 
 import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"sort"
 	"sync"
-	"sync/atomic"
 )
 
 // Client communicates with an MCP server over stdio using JSON-RPC 2.0.
 type Client struct {
+	*clientState
+
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
 	stderr io.ReadCloser
 
-	writeMu   sync.Mutex // serializes writes to stdin (separate from mu to avoid deadlock)
-	mu        sync.Mutex // protects pending map and closed flag
-	nextID    atomic.Int64
-	pending   map[int64]chan *jsonRPCResponse
-	closed    bool
+	writeMu   sync.Mutex
 	closeOnce sync.Once
-}
-
-// jsonRPCRequest is a JSON-RPC 2.0 request.
-type jsonRPCRequest struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      int64  `json:"id"`
-	Method  string `json:"method"`
-	Params  any    `json:"params,omitempty"`
-}
-
-// jsonRPCResponse is a JSON-RPC 2.0 response.
-type jsonRPCResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *jsonRPCError   `json:"error,omitempty"`
-}
-
-// jsonRPCError is a JSON-RPC 2.0 error.
-type jsonRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func (e *jsonRPCError) Error() string {
-	return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message)
 }
 
 // StdioClientOption configures stdio MCP client startup.
@@ -94,8 +64,8 @@ func NewStdioClient(ctx context.Context, command string, args ...string) (*Clien
 	return NewStdioClientWithOptions(ctx, command, WithStdioArgs(args...))
 }
 
-// NewStdioClientWithOptions spawns an MCP server process and connects via stdio.
-func NewStdioClientWithOptions(ctx context.Context, command string, opts ...StdioClientOption) (*Client, error) {
+// NewStdioClientWithConfig spawns an MCP server process and connects via stdio.
+func NewStdioClientWithConfig(ctx context.Context, command string, config ClientConfig, opts ...StdioClientOption) (*Client, error) {
 	cfg := stdioClientConfig{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -137,17 +107,15 @@ func NewStdioClientWithOptions(ctx context.Context, command string, opts ...Stdi
 	}
 
 	c := &Client{
-		cmd:     cmd,
-		stdin:   stdin,
-		stdout:  bufio.NewReader(stdout),
-		stderr:  stderr,
-		pending: make(map[int64]chan *jsonRPCResponse),
+		clientState: newClientState(config),
+		cmd:         cmd,
+		stdin:       stdin,
+		stdout:      bufio.NewReader(stdout),
+		stderr:      stderr,
 	}
 
-	// Start reading responses in background.
 	go c.readLoop()
 
-	// Perform initialization handshake.
 	if err := c.initialize(ctx); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("mcp: initialization failed: %w", err)
@@ -156,29 +124,21 @@ func NewStdioClientWithOptions(ctx context.Context, command string, opts ...Stdi
 	return c, nil
 }
 
-// initialize performs the MCP initialization handshake.
+// NewStdioClientWithOptions spawns an MCP server process and connects via stdio.
+func NewStdioClientWithOptions(ctx context.Context, command string, opts ...StdioClientOption) (*Client, error) {
+	return NewStdioClientWithConfig(ctx, command, ClientConfig{}, opts...)
+}
+
 func (c *Client) initialize(ctx context.Context) error {
-	params := map[string]any{
-		"protocolVersion": "2024-11-05",
-		"capabilities":    map[string]any{},
-		"clientInfo": map[string]any{
-			"name":    "gollem",
-			"version": "1.0.0",
-		},
-	}
-
-	_, err := c.call(ctx, "initialize", params)
-	if err != nil {
-		return err
-	}
-
-	// Send initialized notification (no response expected).
-	return c.notify("notifications/initialized", nil)
+	return initializeClient(ctx, c.clientState, c.call, c.notify)
 }
 
 // call sends a JSON-RPC request and waits for a response.
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	id := c.nextID.Add(1)
+	id, ch, err := c.prepareCall()
+	if err != nil {
+		return nil, err
+	}
 
 	req := jsonRPCRequest{
 		JSONRPC: "2.0",
@@ -187,21 +147,9 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		Params:  params,
 	}
 
-	ch := make(chan *jsonRPCResponse, 1)
-
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return nil, errors.New("mcp: client is closed")
-	}
-	c.pending[id] = ch
-	c.mu.Unlock()
-
 	data, err := json.Marshal(req)
 	if err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
+		c.removePending(id)
 		return nil, err
 	}
 
@@ -209,31 +157,15 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	_, err = fmt.Fprintf(c.stdin, "%s\n", data)
 	c.writeMu.Unlock()
 	if err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
+		c.removePending(id)
 		return nil, fmt.Errorf("mcp: failed to write request: %w", err)
 	}
 
-	select {
-	case resp := <-ch:
-		if resp == nil {
-			return nil, errors.New("mcp: connection closed while waiting for response")
-		}
-		if resp.Error != nil {
-			return nil, resp.Error
-		}
-		return resp.Result, nil
-	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, ctx.Err()
-	}
+	return c.awaitResponse(ctx, id, ch)
 }
 
 // notify sends a JSON-RPC notification (no response expected).
-func (c *Client) notify(method string, params any) error {
+func (c *Client) notify(_ context.Context, method string, params any) error {
 	req := struct {
 		JSONRPC string `json:"jsonrpc"`
 		Method  string `json:"method"`
@@ -249,101 +181,105 @@ func (c *Client) notify(method string, params any) error {
 		return err
 	}
 
+	return c.writeJSON(data)
+}
+
+func (c *Client) respond(_ context.Context, id any, result any, rpcErr *jsonRPCError) error {
+	resp := jsonRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result,
+		Error:   rpcErr,
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	return c.writeJSON(data)
+}
+
+func (c *Client) writeJSON(data []byte) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	_, err = fmt.Fprintf(c.stdin, "%s\n", data)
+	_, err := fmt.Fprintf(c.stdin, "%s\n", data)
 	return err
 }
 
-// readLoop reads JSON-RPC responses from stdout and dispatches them.
+// readLoop reads JSON-RPC messages from stdout and dispatches them.
 func (c *Client) readLoop() {
 	for {
 		line, err := c.stdout.ReadBytes('\n')
 		if err != nil {
-			c.mu.Lock()
-			c.closed = true
-			// Wake up all pending callers.
-			for _, ch := range c.pending {
-				close(ch)
-			}
-			c.pending = make(map[int64]chan *jsonRPCResponse)
-			c.mu.Unlock()
+			c.shutdown()
 			return
 		}
 
-		var resp jsonRPCResponse
-		if err := json.Unmarshal(line, &resp); err != nil {
+		var msg jsonRPCMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
 		}
-
-		// Skip notifications (no ID).
-		if resp.ID == 0 && resp.Result == nil && resp.Error == nil {
-			continue
-		}
-
-		c.mu.Lock()
-		ch, ok := c.pending[resp.ID]
-		if ok {
-			delete(c.pending, resp.ID)
-		}
-		c.mu.Unlock()
-
-		if ok {
-			ch <- &resp
-		}
+		c.dispatchMessage(&msg, c.respond)
 	}
 }
 
 // ListTools discovers available tools from the MCP server.
 func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
-	result, err := c.call(ctx, "tools/list", nil)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: tools/list failed: %w", err)
-	}
-
-	var listResult struct {
-		Tools []Tool `json:"tools"`
-	}
-	if err := json.Unmarshal(result, &listResult); err != nil {
-		return nil, fmt.Errorf("mcp: failed to parse tools list: %w", err)
-	}
-
-	return listResult.Tools, nil
+	return listTools(ctx, c.call)
 }
 
 // CallTool invokes a tool on the MCP server.
 func (c *Client) CallTool(ctx context.Context, name string, args map[string]any) (*ToolResult, error) {
-	params := map[string]any{
-		"name":      name,
-		"arguments": args,
-	}
+	return callTool(ctx, c.call, name, args)
+}
 
-	result, err := c.call(ctx, "tools/call", params)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: tools/call failed: %w", err)
-	}
+// ListResources lists resources exposed by the MCP server.
+func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
+	return listResources(ctx, c.call)
+}
 
-	var toolResult ToolResult
-	if err := json.Unmarshal(result, &toolResult); err != nil {
-		return nil, fmt.Errorf("mcp: failed to parse tool result: %w", err)
-	}
+// ReadResource reads a resource from the MCP server.
+func (c *Client) ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error) {
+	return readResource(ctx, c.call, uri)
+}
 
-	return &toolResult, nil
+// ListResourceTemplates lists URI templates exposed by the MCP server.
+func (c *Client) ListResourceTemplates(ctx context.Context) ([]ResourceTemplate, error) {
+	return listResourceTemplates(ctx, c.call)
+}
+
+// ListPrompts lists prompts exposed by the MCP server.
+func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
+	return listPrompts(ctx, c.call)
+}
+
+// GetPrompt resolves a prompt from the MCP server.
+func (c *Client) GetPrompt(ctx context.Context, name string, args map[string]string) (*PromptResult, error) {
+	return getPrompt(ctx, c.call, name, args)
+}
+
+// NotifyRootsListChanged emits notifications/roots/list_changed to the server.
+func (c *Client) NotifyRootsListChanged(ctx context.Context) error {
+	return notifyRootsListChanged(ctx, c.notify)
 }
 
 // Close shuts down the MCP server process and releases resources.
 func (c *Client) Close() error {
 	var closeErr error
 	c.closeOnce.Do(func() {
-		c.mu.Lock()
-		c.closed = true
-		c.mu.Unlock()
+		c.shutdown()
 
-		c.stdin.Close()
-		if c.cmd.Process != nil {
-			_ = c.cmd.Process.Kill()
+		if c.stdin != nil {
+			_ = c.stdin.Close()
 		}
-		closeErr = c.cmd.Wait()
+		if c.stderr != nil {
+			_ = c.stderr.Close()
+		}
+		if c.cmd != nil {
+			if c.cmd.Process != nil {
+				_ = c.cmd.Process.Kill()
+			}
+			closeErr = c.cmd.Wait()
+		}
 	})
 	return closeErr
 }
