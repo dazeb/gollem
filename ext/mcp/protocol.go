@@ -487,7 +487,7 @@ func (s *clientState) dispatchRequest(msg *jsonRPCMessage, respond rpcRespond) {
 		if handler == nil {
 			_ = respond(context.Background(), requestID, nil, &jsonRPCError{
 				Code:    jsonRPCCodeMethodNotFound,
-				Message: fmt.Sprintf("method not found: %s", msg.Method),
+				Message: "method not found: " + msg.Method,
 			})
 			return
 		}

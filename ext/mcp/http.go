@@ -105,13 +105,17 @@ func (c *HTTPClient) call(ctx context.Context, method string, params any) (json.
 		return nil, fmt.Errorf("mcp: failed to send request: %w", err)
 	}
 	c.captureSessionID(resp)
+	defer func() {
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		c.removePending(id)
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if len(body) > 0 {
-			return nil, fmt.Errorf("mcp: server returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		respBody, _ := io.ReadAll(resp.Body)
+		if len(respBody) > 0 {
+			return nil, fmt.Errorf("mcp: server returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 		}
 		return nil, fmt.Errorf("mcp: server returned status %d", resp.StatusCode)
 	}
@@ -119,19 +123,20 @@ func (c *HTTPClient) call(ctx context.Context, method string, params any) (json.
 	contentType := resp.Header.Get("Content-Type")
 	switch {
 	case strings.Contains(contentType, "text/event-stream"):
-		go func() {
-			_ = readEventStream(resp.Body, c.handleEvent)
-		}()
+		stream := resp.Body
+		resp.Body = nil
+		go func(stream io.ReadCloser) {
+			_ = readEventStream(stream, c.handleEvent)
+		}(stream)
 	case strings.Contains(contentType, "application/json"):
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			c.removePending(id)
 			return nil, fmt.Errorf("mcp: failed to read response body: %w", readErr)
 		}
-		if len(bytes.TrimSpace(body)) > 0 {
+		if len(bytes.TrimSpace(respBody)) > 0 {
 			var msg jsonRPCMessage
-			if err := json.Unmarshal(body, &msg); err != nil {
+			if err := json.Unmarshal(respBody, &msg); err != nil {
 				c.removePending(id)
 				return nil, fmt.Errorf("mcp: failed to decode response: %w", err)
 			}
@@ -139,7 +144,6 @@ func (c *HTTPClient) call(ctx context.Context, method string, params any) (json.
 		}
 	default:
 		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
 		if resp.StatusCode == http.StatusAccepted {
 			c.ensureNotificationStream()
 			if !c.waitForStream(ctx, 250*time.Millisecond) {

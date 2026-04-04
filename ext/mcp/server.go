@@ -645,12 +645,6 @@ func (s *Server) attachWriter(writeFn func([]byte) error) {
 	s.peerEOF = false
 }
 
-func (s *Server) failPending() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.failPendingLocked()
-}
-
 func (s *Server) markPeerClosed() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

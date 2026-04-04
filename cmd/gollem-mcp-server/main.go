@@ -25,14 +25,6 @@ import (
 
 const protocolVersion = mcp.ProtocolVersion
 
-// JSON-RPC 2.0 types used by tests.
-type jsonRPCRequest struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *json.RawMessage `json:"id,omitempty"`
-	Method  string           `json:"method"`
-	Params  json.RawMessage  `json:"params,omitempty"`
-}
-
 type jsonRPCResponse struct {
 	JSONRPC string    `json:"jsonrpc"`
 	ID      any       `json:"id"`
@@ -49,7 +41,6 @@ type initializeResult = mcp.InitializeResult
 type toolsListResult struct {
 	Tools []mcp.Tool `json:"tools"`
 }
-type contentBlock = mcp.Content
 type toolCallResult = mcp.ToolResult
 
 const (
