@@ -86,7 +86,12 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 
 		if !s.scanner.Scan() {
 			if err := s.scanner.Err(); err != nil {
-				return nil, fmt.Errorf("openai: SSE read error: %w", err)
+				// Some providers deliver a terminal response event and then abort the
+				// underlying HTTP/2 stream before sending [DONE]. Once we have the
+				// completed response payload, treat the stream as successfully done.
+				if !s.done {
+					return nil, fmt.Errorf("openai: SSE read error: %w", err)
+				}
 			}
 			// Scanner exhausted without a terminal response event.
 			s.done = true

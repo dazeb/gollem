@@ -343,7 +343,13 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("openai: SSE read error: %w", err)
+		// Some OpenAI-compatible backends can successfully deliver a terminal
+		// response event and then tear down the HTTP/2 stream before [DONE]. In
+		// that case we already have the complete response payload, so prefer it
+		// over surfacing a transport error.
+		if finalResp == nil {
+			return nil, fmt.Errorf("openai: SSE read error: %w", err)
+		}
 	}
 	if finalResp == nil {
 		return nil, errors.New("openai: no terminal response event in stream")
