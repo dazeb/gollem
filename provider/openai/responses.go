@@ -315,12 +315,22 @@ func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRe
 }
 
 // parseSSEResponses reads an SSE stream and returns the final response.
+//
+// The chatgpt.com/backend-api/codex backend sends `response.completed`
+// events with an empty `output:[]` array — the actual message content
+// is delivered via `output_item.done` events with type=message that
+// contain the assembled `content[].text`. We accumulate those item-done
+// events as we go, and merge them into the final response if its own
+// output is empty (which it always is for codex). This is the bug fix
+// for sleepy meta-evolution: without this, every codex call returns
+// empty text and looks like a rate limit.
 func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, error) {
 	scanner := bufio.NewScanner(resp.Body)
 	// Allow large lines (SSE events can be big).
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var finalResp *responsesAPIResponse
+	var streamedItems []responsesOutputItem // accumulated from output_item.done events
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -333,6 +343,7 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		var event struct {
 			Type     string               `json:"type"`
 			Response responsesAPIResponse `json:"response,omitempty"`
+			Item     responsesOutputItem  `json:"item,omitempty"`
 		}
 		if json.Unmarshal([]byte(data), &event) != nil {
 			continue
@@ -340,6 +351,13 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		switch event.Type {
 		case "response.completed", "response.done":
 			finalResp = &event.Response
+		case "response.output_item.done":
+			// Accumulate completed message items so we can recover
+			// the response text even when the terminal event has
+			// output:[] (codex backend behavior).
+			if event.Item.Type == "message" || event.Item.Type == "function_call" {
+				streamedItems = append(streamedItems, event.Item)
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -353,6 +371,11 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 	}
 	if finalResp == nil {
 		return nil, errors.New("openai: no terminal response event in stream")
+	}
+	// Codex backend fix: if the terminal response has no output items
+	// but we accumulated streamed message items, use those instead.
+	if len(finalResp.Output) == 0 && len(streamedItems) > 0 {
+		finalResp.Output = streamedItems
 	}
 	return parseResponsesResponse(finalResp, p.model), nil
 }
