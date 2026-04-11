@@ -14,17 +14,28 @@ import (
 type Mode int
 
 const (
-	// ModeAlways defers every tool marked ShouldDefer=true and is the
-	// default (zero value). The rationale: if a caller stamps
-	// ShouldDefer=true on a tool, they want it deferred — threshold logic
-	// is a second-order convenience.
-	ModeAlways Mode = iota
-	// ModeAuto only defers when the combined size of deferred-eligible
-	// tools exceeds AutoTokenRatio of the configured context window.
-	// Below that threshold the proxy is a pass-through. Useful when a
-	// caller stamps ShouldDefer optimistically and wants deferral to
-	// kick in only once the catalog grows large enough to matter.
-	ModeAuto
+	// ModeAuto is the default (zero value). Deferral kicks in only when
+	// the combined size of deferred-eligible tools exceeds AutoTokenRatio
+	// of the configured context window; below that threshold the proxy
+	// is a pass-through and the full list is sent inline. This is the
+	// safe default because it protects callers with small deferred
+	// pools from accidentally losing tokens to tool-definition cache
+	// busts on dynamic tool admission (see the package docs for the
+	// token math).
+	ModeAuto Mode = iota
+	// ModeAlways defers every tool marked ShouldDefer=true. Use this
+	// when you've verified (or measured) that your deferred pool is
+	// large enough that the per-request savings dominate the cache-
+	// miss cost of growing the tool set via tool_search discovery.
+	//
+	// Rule of thumb: safe when the deferred pool exceeds ~40 tools
+	// (~20k tokens at 500 tokens each) on a 200k context window.
+	// Claude Code's equivalent `tst` default is viable there because
+	// their defer_loading + tool_reference beta features expand tools
+	// server-side and leave the client-sent tool array stable. The
+	// gollem port is portable across providers and does NOT have that
+	// escape hatch, so ModeAlways should be an explicit opt-in.
+	ModeAlways
 	// ModeOff disables deferral entirely. The proxy's PrepareFunc returns
 	// the tool list unchanged and tool_search still works for the model
 	// but has nothing to hide.
@@ -84,7 +95,11 @@ type PendingSourcesFunc func() []string
 
 // Config configures a Proxy instance.
 type Config struct {
-	// Mode selects the deferral strategy. Zero value is ModeAlways.
+	// Mode selects the deferral strategy. Zero value is ModeAuto,
+	// which threshold-gates deferral to protect against cache-bust
+	// token losses on small pools. Opt into ModeAlways only when
+	// you've verified your deferred pool is large enough for
+	// unconditional deferral to pay off.
 	Mode Mode
 	// ToolName is the user-visible name of the tool_search tool. If empty,
 	// DefaultToolName is used.
@@ -391,33 +406,57 @@ func (p *Proxy) WrapPrompt(prompt string, tools []core.Tool) string {
 }
 
 // SystemPromptFuncFor returns a dynamic system-prompt function that
-// emits a proper delta announcement: on the first invocation it lists
-// all deferred tools; on subsequent calls it lists only tools added
+// emits a delta announcement: on the first invocation it lists all
+// deferred tools; on subsequent calls it lists only tools added
 // since the previous call (or empty when nothing is new). Wire the
 // result into the agent with core.WithDynamicSystemPrompt.
 //
-// This mirrors Claude Code's deferred_tools_delta semantics:
+// # ⚠️  CACHE HAZARD — READ BEFORE USING
 //
-//   - Turn 1 — fresh Proxy, deferred pool is {A, B, C}. The returned
-//     prompt lists A, B, C.
-//   - Turn 2 — pool unchanged. The returned prompt is empty.
-//   - Turn 3 — a new deferred tool D appeared (e.g. an MCP server
-//     just reconnected and PrepareFuncFor saw the change). The
-//     returned prompt lists only D.
+// This function changes the system-prompt CONTENT between consecutive
+// turns (full on turn 1, empty on turn 2, delta on later pool-change
+// turns). Under Anthropic prompt caching, that difference is a
+// system-prompt cache MISS on every turn where the content changes.
+// For typical conversations this is a NET LOSS compared to
+// SystemPromptFragment, which ships the same content every turn and
+// gets cache hits after turn 1.
 //
-// When tools are REMOVED from the pool, the delta is still emitted as
-// an empty-added, non-empty-removed PoolChangeEvent so subscribers can
-// log the churn. The system prompt itself reports only additions —
-// dropping a tool doesn't need to be explained to the model, it just
-// stops existing in the next tools array.
+// Rough token math at 500-token base + 600-token fragment:
 //
-// This is a delta-efficient form for providers that support prompt
-// caching (Anthropic, OpenAI): the first-turn full list is cached,
-// then empty subsequent turns cost ~0 tokens.
+//	Turn  SystemPromptFragment   SystemPromptFuncFor
+//	  1   1375 (write)           1375 (write)
+//	  2    110 (read)              625 (MISS — system changed)
+//	  3    110 (read)               50 (read)
+//	  ...
+//	 10    110 each                50 each
+//	Total  2365                   2400    ← barely breaks even
 //
-// For provider-independent one-shot delivery via the user prompt,
-// prefer WrapPrompt. For a static full listing in every turn's
-// system prompt, use SystemPromptFragment directly.
+// SystemPromptFuncFor only pays off for conversations longer than
+// ~11 turns AND when you actually want to avoid the cache overhead
+// of the full fragment on every turn (600 tokens × 0.1 = 60 tokens
+// per turn). For anything shorter, or any caller using a provider
+// with prompt caching, prefer SystemPromptFragment.
+//
+// Legitimate uses of SystemPromptFuncFor:
+//   - Providers without prompt caching (the fragment is not
+//     amortized across turns regardless).
+//   - Very long conversations (20+ turns) where the per-turn
+//     saving of 60 tokens accumulates.
+//   - Debugging / telemetry flows where you want pool-change events
+//     to fire on actual pool changes rather than on every request.
+//
+// For the common case, use either:
+//
+//   - SystemPromptFragment(tools) — static full list in every
+//     request's system prompt. Cache-friendly.
+//   - WrapPrompt(userPrompt, tools) — fragment in messages[0] once.
+//     Equivalent cache cost to SystemPromptFragment, works on any
+//     provider, regardless of system-prompt caching support.
+//
+// When tools are REMOVED from the pool, the delta fires an empty-
+// added, non-empty-removed PoolChangeEvent so subscribers can log
+// churn. The system prompt text itself reports only additions —
+// removed tools just stop existing in the next tools array.
 //
 // Announcement state lives on the Proxy instance and is mutex-guarded.
 // Calling Proxy.Reset clears the announced set, so the next call

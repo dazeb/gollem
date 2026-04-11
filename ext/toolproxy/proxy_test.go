@@ -449,11 +449,55 @@ func TestAgentEndToEnd_DiscoveryFlow(t *testing.T) {
 	}
 }
 
-// TestAgentEndToEnd_ZeroValueConfigDefaultsToAlwaysMode verifies that
-// `New(Config{})` — the zero-value config — defers tools immediately,
-// matching Claude Code's `tst` default.
-func TestAgentEndToEnd_ZeroValueConfigDefaultsToAlwaysMode(t *testing.T) {
-	proxy := New(Config{}) // ModeAlways is the zero value
+// TestCacheSafety_DefaultModeIsAuto documents and enforces the
+// cache-safety property: the zero-value Mode is ModeAuto, not
+// ModeAlways. The reason is documented in the package docs and on
+// the Mode constants — small deferred pools can actually lose
+// tokens under ModeAlways due to tool-cache busts on dynamic
+// admission. ModeAuto is the safe default that gates deferral
+// on pool size.
+func TestCacheSafety_DefaultModeIsAuto(t *testing.T) {
+	p := New(Config{})
+	if p.cfg.Mode != ModeAuto {
+		t.Errorf("zero-value Config.Mode should be ModeAuto (safe default), got %v", p.cfg.Mode)
+	}
+}
+
+// TestCacheSafety_SmallPoolAutoIsPassThrough verifies that a caller
+// who stamps ShouldDefer on a small pool gets pass-through behaviour
+// by default — the pool stays inline and no cache-bust risk exists.
+// Callers who actively want unconditional deferral must opt into
+// ModeAlways explicitly.
+func TestCacheSafety_SmallPoolAutoIsPassThrough(t *testing.T) {
+	p := New(Config{}) // ModeAuto
+	tools := []core.Tool{
+		makeDeferredTool("hide_A", "A"),
+		makeDeferredTool("hide_B", "B"),
+		p.Tool(),
+	}
+
+	defs := make([]core.ToolDefinition, len(tools))
+	for i, t := range tools {
+		defs[i] = t.Definition
+	}
+	got := p.PrepareFuncFor(tools)(context.Background(), nil, defs)
+	names := namesFromDefs(got)
+
+	// All three must be inline in the default config.
+	for _, want := range []string{"hide_A", "hide_B", DefaultToolName} {
+		if !containsString(names, want) {
+			t.Errorf("small pool under ModeAuto should keep %q inline; got %v", want, names)
+		}
+	}
+}
+
+// TestAgentEndToEnd_ZeroValueConfigDefaultsToAutoMode verifies that
+// `New(Config{})` — the zero-value config — is ModeAuto. With a small
+// test pool below the auto threshold, deferral is a pass-through: the
+// deferred tool should remain in the tools array. This protects
+// callers from accidental cache-bust token losses on small pools.
+func TestAgentEndToEnd_ZeroValueConfigDefaultsToAutoMode(t *testing.T) {
+	proxy := New(Config{}) // ModeAuto is the zero value
 
 	type Empty struct{}
 	keepTool := core.FuncTool[Empty]("keep_me", "A non-deferred tool",
@@ -478,11 +522,15 @@ func TestAgentEndToEnd_ZeroValueConfigDefaultsToAlwaysMode(t *testing.T) {
 	}
 
 	names := namesFromDefs(calls[0].Parameters.FunctionTools)
-	if containsString(names, "hide_me") {
-		t.Errorf("zero-value Config should default to ModeAlways and defer hide_me: got %v", names)
+	// Below the auto threshold: the deferred tool should be included
+	// inline so callers don't pay a cache-bust penalty on the small
+	// pool. ModeAlways would hide it — opt into ModeAlways explicitly
+	// when the pool is large enough that dynamic admission pays off.
+	if !containsString(names, "hide_me") {
+		t.Errorf("ModeAuto below threshold should pass hide_me through: got %v", names)
 	}
 	if !containsString(names, "keep_me") || !containsString(names, DefaultToolName) {
-		t.Errorf("zero-value Config should still expose keep_me and tool_search: got %v", names)
+		t.Errorf("all base tools should remain: got %v", names)
 	}
 }
 
@@ -755,9 +803,10 @@ func TestMarkDeferred_SkipsAlwaysLoad(t *testing.T) {
 // TestPrepareFuncFor_AlwaysLoadBypassesDeferral verifies a tool with
 // both ShouldDefer=true and AlwaysLoad=true is included in the request
 // even when it has not been discovered. AlwaysLoad is the escape hatch
-// for "must be available every turn" tools.
+// for "must be available every turn" tools. Runs under ModeAlways
+// because the default ModeAuto is a pass-through on small test pools.
 func TestPrepareFuncFor_AlwaysLoadBypassesDeferral(t *testing.T) {
-	p := New(Config{})
+	p := New(Config{Mode: ModeAlways})
 	critical := makeDeferredTool("critical", "Must be always available")
 	critical.AlwaysLoad = true
 	hidden := makeDeferredTool("hidden", "Normal deferred")
@@ -1152,9 +1201,10 @@ func TestTelemetry_SearchOutcomeEventFiresOnToolSearchCall(t *testing.T) {
 
 // TestTelemetry_ModeDecisionEventFiresPerRequest verifies that
 // ModeDecisionEvent fires for every model request with the right
-// Mode and Deferred fields.
+// Mode and Deferred fields. Explicitly ModeAlways so the assertion
+// below verifies the always-defer reason code.
 func TestTelemetry_ModeDecisionEventFiresPerRequest(t *testing.T) {
-	proxy := New(Config{}) // ModeAlways (default)
+	proxy := New(Config{Mode: ModeAlways})
 	bus := core.NewEventBus()
 
 	hide := makeDeferredTool("hide_me", "Deferred")
