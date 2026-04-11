@@ -571,7 +571,7 @@ func responsesSupportsToolSearch(model string) bool {
 	}
 	rest := strings.TrimPrefix(m, "gpt-5.")
 	var digits []byte
-	for i := 0; i < len(rest); i++ {
+	for i := range len(rest) {
 		c := rest[i]
 		if c < '0' || c > '9' {
 			break
