@@ -163,9 +163,17 @@ func TestBuildRequestBuiltinSkippedWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestBuildRequestCacheControlOnLastUserTool(t *testing.T) {
+func TestBuildRequestCacheControlSkipsDeferredTools(t *testing.T) {
+	// Mix of deferred and non-deferred tools. Anthropic rejects
+	// cache_control + defer_loading on the same tool, so the marker
+	// must go on the last NON-deferred user tool.
 	params := &core.ModelRequestParameters{
 		FunctionTools: []core.ToolDefinition{
+			{
+				Name:             "always_loaded",
+				ParametersSchema: core.Schema{"type": "object"},
+				// NOT deferred — should get cache_control.
+			},
 			{
 				Name:             "search",
 				ParametersSchema: core.Schema{"type": "object"},
@@ -185,27 +193,55 @@ func TestBuildRequestCacheControlOnLastUserTool(t *testing.T) {
 		t.Fatalf("buildRequest: %v", err)
 	}
 
-	// 3 items: builtin + 2 user tools.
-	if len(req.Tools) != 3 {
-		t.Fatalf("expected 3 tools, got %d", len(req.Tools))
+	// 4 items: builtin + 3 user tools.
+	if len(req.Tools) != 4 {
+		t.Fatalf("expected 4 tools, got %d", len(req.Tools))
 	}
 
 	// Built-in at [0] must NOT have cache_control.
 	if _, ok := req.Tools[0].(apiBuiltinTool); !ok {
 		t.Fatalf("tools[0] should be apiBuiltinTool, got %T", req.Tools[0])
 	}
-	// apiBuiltinTool has no CacheControl field — correct by design.
 
-	// Last user tool [2] must have cache_control.
-	lastTool := toolAt(t, req.Tools, 2)
-	if lastTool.CacheControl == nil {
-		t.Error("last user tool should have cache_control set")
+	// [1] always_loaded (non-deferred) — should get cache_control.
+	nonDeferred := toolAt(t, req.Tools, 1)
+	if nonDeferred.CacheControl == nil {
+		t.Error("non-deferred tool should have cache_control set")
 	}
 
-	// First user tool [1] must NOT have cache_control.
-	firstTool := toolAt(t, req.Tools, 1)
-	if firstTool.CacheControl != nil {
-		t.Error("first user tool should not have cache_control")
+	// [2] search (deferred) — must NOT have cache_control.
+	deferred1 := toolAt(t, req.Tools, 2)
+	if deferred1.CacheControl != nil {
+		t.Error("deferred tool must NOT have cache_control (Anthropic rejects this)")
+	}
+
+	// [3] calculate (deferred) — must NOT have cache_control.
+	deferred2 := toolAt(t, req.Tools, 3)
+	if deferred2.CacheControl != nil {
+		t.Error("deferred tool must NOT have cache_control (Anthropic rejects this)")
+	}
+}
+
+func TestBuildRequestCacheControlAllDeferred(t *testing.T) {
+	// All tools are deferred — no user tool should get cache_control.
+	// The system block marker still applies.
+	params := &core.ModelRequestParameters{
+		FunctionTools: []core.ToolDefinition{
+			{Name: "a", ParametersSchema: core.Schema{"type": "object"}, DeferLoading: true},
+			{Name: "b", ParametersSchema: core.Schema{"type": "object"}, DeferLoading: true},
+		},
+	}
+
+	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, true, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+
+	// No tool should have cache_control.
+	for i, tool := range req.Tools {
+		if t2, ok := tool.(apiTool); ok && t2.CacheControl != nil {
+			t.Errorf("tools[%d] (%q) should NOT have cache_control when all tools are deferred", i, t2.Name)
+		}
 	}
 }
 

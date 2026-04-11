@@ -328,20 +328,21 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 	req.System = systemBlocks
 	req.Messages = apiMsgs
 
-	// Apply cache_control markers to the last system block and last user tool.
-	// This enables Anthropic's prompt caching for the stable prefix (system
-	// instructions + tool definitions), which is identical across turns.
-	// Walk backwards through Tools to find the last apiTool (user tool),
-	// skipping any apiBuiltinTool entries. The built-in tool_search tool
-	// must NOT carry the cache marker — it's always at position 0 and
-	// marking it would skip the actual user tool definitions.
+	// Apply cache_control markers to the last system block and last
+	// non-deferred user tool. This enables Anthropic's prompt caching for
+	// the stable prefix (system instructions + tool definitions).
+	//
+	// Walk backwards through Tools skipping:
+	//   - apiBuiltinTool entries (tool_search_tool_regex at position 0)
+	//   - apiTool entries with DeferLoading=true (Anthropic rejects
+	//     cache_control + defer_loading on the same tool)
 	if enableCache {
 		ephemeral := &apiCacheControl{Type: "ephemeral"}
 		if len(req.System) > 0 {
 			req.System[len(req.System)-1].CacheControl = ephemeral
 		}
 		for i := len(req.Tools) - 1; i >= 0; i-- {
-			if t, ok := req.Tools[i].(apiTool); ok {
+			if t, ok := req.Tools[i].(apiTool); ok && !t.DeferLoading {
 				t.CacheControl = ephemeral
 				req.Tools[i] = t
 				break
