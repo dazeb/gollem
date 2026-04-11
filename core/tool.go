@@ -27,6 +27,18 @@ type ToolDefinition struct {
 	Strict            *bool    `json:"strict,omitempty"`
 	Sequential        bool     `json:"sequential,omitempty"`
 	OuterTypedDictKey string   `json:"outer_typed_dict_key,omitempty"`
+	// DeferLoading asks the provider to withhold this tool's schema from
+	// the cached prompt prefix and load it lazily via the provider's
+	// native tool_search mechanism. Supported by Anthropic (Claude
+	// Sonnet/Opus 4+, tool_search_tool_regex) and OpenAI (Responses API,
+	// gpt-5.4+). On unsupported provider/model combinations this field is
+	// silently ignored and the tool ships inline as usual.
+	DeferLoading bool `json:"defer_loading,omitempty"`
+	// Namespace groups tools for OpenAI's Responses API namespace feature.
+	// Tools with the same non-empty Namespace are wrapped in a
+	// {type:"namespace"} object for better tool_search token efficiency.
+	// Anthropic ignores this field. Empty means standalone (no namespace).
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // RunContext provides tools with access to agent run state.
@@ -297,6 +309,40 @@ func FuncTool[P any](name, description string, fn any, opts ...ToolOption) Tool 
 		ResultValidator:  cfg.resultValidator,
 		Timeout:          cfg.timeout,
 	}
+}
+
+// MarkDeferred returns a copy of the given tools with DeferLoading=true on
+// each tool's Definition. The input slice is not mutated.
+//
+// On providers/models that support native tool search (Anthropic Sonnet/Opus 4+,
+// OpenAI Responses API on gpt-5.4+), the provider will exclude the marked tools
+// from the cached prompt prefix and lazily load them via the server-side
+// tool_search mechanism. On any other provider or model, the flag is silently
+// ignored and the tools ship inline.
+func MarkDeferred(tools []Tool) []Tool {
+	out := make([]Tool, len(tools))
+	for i, t := range tools {
+		t.Definition.DeferLoading = true
+		out[i] = t
+	}
+	return out
+}
+
+// MarkDeferredWithNamespace returns a copy of the given tools with
+// DeferLoading=true and Namespace set on each tool's Definition. The input
+// slice is not mutated.
+//
+// On OpenAI's Responses API, tools with the same namespace are wrapped in a
+// {type:"namespace"} object for better tool_search token efficiency. On
+// Anthropic the Namespace field is ignored (but DeferLoading still applies).
+func MarkDeferredWithNamespace(tools []Tool, namespace string) []Tool {
+	out := make([]Tool, len(tools))
+	for i, t := range tools {
+		t.Definition.DeferLoading = true
+		t.Definition.Namespace = namespace
+		out[i] = t
+	}
+	return out
 }
 
 // Toolset groups tools for modular management.

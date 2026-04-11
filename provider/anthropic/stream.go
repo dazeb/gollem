@@ -156,7 +156,16 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 				Signature: blockType.Signature,
 			}
 		default:
-			return nil, false
+			// Preserve unrecognized blocks (server_tool_use,
+			// tool_search_tool_result, tool_reference, etc.) for
+			// round-tripping in conversation history. The API contract
+			// requires assistant content blocks to be sent back exactly
+			// as received.
+			part = core.ProviderMetadataPart{
+				Provider: "anthropic",
+				Kind:     blockType.Type,
+				Payload:  append(json.RawMessage(nil), block.ContentBlock...),
+			}
 		}
 
 		s.currentParts[block.Index] = part

@@ -13,6 +13,27 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
+// toolAt extracts an apiTool from req.Tools[i] (Tools is []any).
+func toolAt(t *testing.T, tools []any, i int) apiTool {
+	t.Helper()
+	v, ok := tools[i].(apiTool)
+	if !ok {
+		t.Fatalf("tools[%d] is %T, want apiTool", i, tools[i])
+	}
+	return v
+}
+
+// rawBlocks marshals apiContentBlock values to json.RawMessage for
+// building test apiResponse.Content slices.
+func rawBlocks(blocks ...apiContentBlock) []json.RawMessage {
+	out := make([]json.RawMessage, len(blocks))
+	for i, b := range blocks {
+		data, _ := json.Marshal(b)
+		out[i] = data
+	}
+	return out
+}
+
 // --- Message mapping tests ---
 
 func TestBuildRequestBasic(t *testing.T) {
@@ -26,7 +47,7 @@ func TestBuildRequestBasic(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,7 +80,7 @@ func TestBuildRequestWithSettings(t *testing.T) {
 		MaxTokens:   &maxTokens,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -89,7 +110,7 @@ func TestBuildRequestWithTools(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,15 +118,15 @@ func TestBuildRequestWithTools(t *testing.T) {
 	if len(req.Tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
 	}
-	if req.Tools[0].Name != "search" {
-		t.Errorf("tool name = %q, want 'search'", req.Tools[0].Name)
+	if toolAt(t, req.Tools, 0).Name != "search" {
+		t.Errorf("tool name = %q, want 'search'", toolAt(t, req.Tools, 0).Name)
 	}
-	if req.Tools[0].Description != "Search the web" {
-		t.Errorf("tool desc = %q, want 'Search the web'", req.Tools[0].Description)
+	if toolAt(t, req.Tools, 0).Description != "Search the web" {
+		t.Errorf("tool desc = %q, want 'Search the web'", toolAt(t, req.Tools, 0).Description)
 	}
 
 	var schema map[string]any
-	if err := json.Unmarshal(req.Tools[0].InputSchema, &schema); err != nil {
+	if err := json.Unmarshal(toolAt(t, req.Tools, 0).InputSchema, &schema); err != nil {
 		t.Fatalf("failed to unmarshal tool schema: %v", err)
 	}
 	if schema["type"] != "object" {
@@ -126,7 +147,7 @@ func TestBuildRequestToolReturn(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,7 +180,7 @@ func TestBuildRequestRetryPrompt(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +208,7 @@ func TestBuildRequestRetryPromptWithoutToolID(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -215,7 +236,7 @@ func TestBuildRequestAssistantMessage(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,7 +260,7 @@ func TestBuildRequestAssistantMessage(t *testing.T) {
 }
 
 func TestBuildRequestStream(t *testing.T) {
-	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, true, false)
+	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, true, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,9 +275,9 @@ func TestParseResponse(t *testing.T) {
 	resp := &apiResponse{
 		ID:   "msg_123",
 		Role: "assistant",
-		Content: []apiContentBlock{
-			{Type: "text", Text: "Hello, world!"},
-		},
+		Content: rawBlocks(
+			apiContentBlock{Type: "text", Text: "Hello, world!"},
+		),
 		Model:      Claude4Sonnet,
 		StopReason: "end_turn",
 		Usage:      apiUsage{InputTokens: 10, OutputTokens: 5},
@@ -319,14 +340,14 @@ func TestMapUsageNoCacheTokens(t *testing.T) {
 
 func TestParseResponseToolCall(t *testing.T) {
 	resp := &apiResponse{
-		Content: []apiContentBlock{
-			{
+		Content: rawBlocks(
+			apiContentBlock{
 				Type:  "tool_use",
 				ID:    "call_abc",
 				Name:  "search",
 				Input: json.RawMessage(`{"query":"test"}`),
 			},
-		},
+		),
 		StopReason: "tool_use",
 	}
 
@@ -351,10 +372,10 @@ func TestParseResponseToolCall(t *testing.T) {
 
 func TestParseResponseThinking(t *testing.T) {
 	resp := &apiResponse{
-		Content: []apiContentBlock{
-			{Type: "thinking", Thinking: "Let me think...", Signature: "sig123"},
-			{Type: "text", Text: "Here's my answer"},
-		},
+		Content: rawBlocks(
+			apiContentBlock{Type: "thinking", Thinking: "Let me think...", Signature: "sig123"},
+			apiContentBlock{Type: "text", Text: "Here's my answer"},
+		),
 		StopReason: "end_turn",
 	}
 
@@ -651,9 +672,9 @@ func TestRequestIntegration(t *testing.T) {
 		resp := apiResponse{
 			ID:   "msg_test",
 			Role: "assistant",
-			Content: []apiContentBlock{
-				{Type: "text", Text: "Hello from test!"},
-			},
+			Content: rawBlocks(
+				apiContentBlock{Type: "text", Text: "Hello from test!"},
+			),
 			Model:      Claude4Sonnet,
 			StopReason: "end_turn",
 			Usage:      apiUsage{InputTokens: 10, OutputTokens: 5},
@@ -786,7 +807,7 @@ func TestBuildRequestWithThinkingBudget(t *testing.T) {
 		ThinkingBudget: &budget,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -810,7 +831,7 @@ func TestBuildRequestThinkingStripsTemperature(t *testing.T) {
 		Temperature:    &temp,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -833,7 +854,7 @@ func TestBuildRequestThinkingAutoAdjustsMaxTokens(t *testing.T) {
 	}
 
 	// Default max tokens is 4096, which is less than the budget (10000).
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -856,7 +877,7 @@ func TestBuildRequestThinkingKeepsExplicitMaxTokens(t *testing.T) {
 		MaxTokens:      &maxTokens,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -867,7 +888,7 @@ func TestBuildRequestThinkingKeepsExplicitMaxTokens(t *testing.T) {
 }
 
 func TestBuildRequestNoThinkingByDefault(t *testing.T) {
-	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -902,7 +923,7 @@ func TestBuildRequestEmptyResponseAlternation(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -932,7 +953,7 @@ func TestBuildRequestRejectsUnsupportedParts(t *testing.T) {
 					Timestamp: time.Now(),
 				},
 			}
-			_, err := buildRequest(messages, nil, &core.ModelRequestParameters{AllowTextOutput: true}, "claude-3", 1024, false, false)
+			_, err := buildRequest(messages, nil, &core.ModelRequestParameters{AllowTextOutput: true}, "claude-3", 1024, false, false, false)
 			if err == nil {
 				t.Errorf("expected error for unsupported %s, got nil", tt.name)
 			}
@@ -977,7 +998,7 @@ func TestBuildRequestSystemOnlyRequestAlternation(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1010,7 +1031,7 @@ func TestAnthropicCacheControl_SystemPrompt(t *testing.T) {
 			},
 		},
 	}
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, true)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1038,21 +1059,21 @@ func TestAnthropicCacheControl_Tools(t *testing.T) {
 			{Name: "tool_b", Description: "B"},
 		},
 	}
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, true)
+	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(req.Tools) != 2 {
 		t.Fatalf("expected 2 tools, got %d", len(req.Tools))
 	}
-	if req.Tools[0].CacheControl != nil {
+	if toolAt(t, req.Tools, 0).CacheControl != nil {
 		t.Error("expected first tool without cache_control")
 	}
-	if req.Tools[1].CacheControl == nil {
+	if toolAt(t, req.Tools, 1).CacheControl == nil {
 		t.Fatal("expected last tool with cache_control")
 	}
-	if req.Tools[1].CacheControl.Type != "ephemeral" {
-		t.Errorf("cache_control type = %q, want 'ephemeral'", req.Tools[1].CacheControl.Type)
+	if toolAt(t, req.Tools, 1).CacheControl.Type != "ephemeral" {
+		t.Errorf("cache_control type = %q, want 'ephemeral'", toolAt(t, req.Tools, 1).CacheControl.Type)
 	}
 }
 
@@ -1064,7 +1085,7 @@ func TestAnthropicCacheControl_NoSystem(t *testing.T) {
 			},
 		},
 	}
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, true)
+	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1074,7 +1095,7 @@ func TestAnthropicCacheControl_NoSystem(t *testing.T) {
 }
 
 func TestAnthropicCacheControl_NoTools(t *testing.T) {
-	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false, true)
+	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1098,7 +1119,7 @@ func TestAnthropicCacheControl_Disabled(t *testing.T) {
 			{Name: "tool_a", Description: "A"},
 		},
 	}
-	req, err := buildRequest(messages, nil, params, Claude4Sonnet, 4096, false, false)
+	req, err := buildRequest(messages, nil, params, Claude4Sonnet, 4096, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1106,7 +1127,7 @@ func TestAnthropicCacheControl_Disabled(t *testing.T) {
 	if len(req.System) > 0 && req.System[0].CacheControl != nil {
 		t.Error("expected no cache_control on system when disabled")
 	}
-	if len(req.Tools) > 0 && req.Tools[0].CacheControl != nil {
+	if len(req.Tools) > 0 && toolAt(t, req.Tools, 0).CacheControl != nil {
 		t.Error("expected no cache_control on tools when disabled")
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
@@ -30,7 +31,30 @@ const (
 	defaultMaxTokens = 4096
 	anthropicVersion = "2023-06-01"
 	messagesEndpoint = "/v1/messages"
+
+	toolSearchToolRegexType = "tool_search_tool_regex_20251119"
+	toolSearchToolRegexName = "tool_search_tool_regex"
 )
+
+// supportsToolSearch reports whether the given model supports Anthropic's
+// server-side tool search feature. Per Anthropic docs, it is available on
+// Claude Sonnet 4.0+, Claude Opus 4.0+, and the Mythos Preview models.
+// NOT available on Haiku 4.x or earlier Claude 3.x models.
+func supportsToolSearch(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(m, "mythos") {
+		return true
+	}
+	for _, family := range []string{"sonnet-", "opus-"} {
+		if idx := strings.Index(m, family); idx >= 0 {
+			rest := m[idx+len(family):]
+			if len(rest) > 0 && rest[0] >= '4' && rest[0] <= '9' {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // Provider implements core.Model for Anthropic's Messages API.
 type Provider struct {
@@ -40,6 +64,7 @@ type Provider struct {
 	httpClient         *http.Client
 	maxTokens          int
 	disablePromptCache bool
+	disableToolSearch  bool
 }
 
 // Option configures the Anthropic provider.
@@ -89,6 +114,19 @@ func WithPromptCacheDisabled() Option {
 	}
 }
 
+// WithToolSearchDisabled disables automatic injection of Anthropic's
+// tool_search_tool_regex built-in when any tool has DeferLoading=true.
+// Use this to opt out of the default regex variant (e.g., to hand-inject
+// the bm25 variant yourself). Has no effect when no tool has DeferLoading=true.
+// Note: per-tool defer_loading: true is still emitted even when the built-in
+// is disabled, so a caller who manually includes a tool_search tool gets
+// deferred tools without the auto-injected built-in.
+func WithToolSearchDisabled() Option {
+	return func(p *Provider) {
+		p.disableToolSearch = true
+	}
+}
+
 // New creates a new Anthropic provider with the given options.
 func New(opts ...Option) *Provider {
 	p := &Provider{
@@ -113,7 +151,7 @@ func (p *Provider) ModelName() string {
 
 // Request sends messages to Anthropic and returns a complete response.
 func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
-	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, false, !p.disablePromptCache)
+	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, false, !p.disablePromptCache, p.disableToolSearch)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: failed to build request: %w", err)
 	}
@@ -139,7 +177,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 
 // RequestStream sends messages and returns a streaming response.
 func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
-	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, true, !p.disablePromptCache)
+	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, true, !p.disablePromptCache, p.disableToolSearch)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: failed to build request: %w", err)
 	}

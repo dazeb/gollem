@@ -199,3 +199,112 @@ func TestFuncToolPanicsOnBadSignature(t *testing.T) {
 	}()
 	FuncTool[SearchParams]("bad", "bad", "not a function")
 }
+
+// --- DeferLoading / Namespace / MarkDeferred tests ---
+
+func TestToolDefinitionDeferLoadingJSONRoundTrip(t *testing.T) {
+	td := ToolDefinition{
+		Name:         "search",
+		Description:  "Search the web",
+		DeferLoading: true,
+		Namespace:    "web",
+	}
+	data, err := json.Marshal(td)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Verify the wire field name is "defer_loading" (both providers use this term).
+	if s := string(data); !contains(s, `"defer_loading":true`) {
+		t.Errorf("expected defer_loading in JSON, got %s", s)
+	}
+	if s := string(data); !contains(s, `"namespace":"web"`) {
+		t.Errorf("expected namespace in JSON, got %s", s)
+	}
+	var roundtripped ToolDefinition
+	if err := json.Unmarshal(data, &roundtripped); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !roundtripped.DeferLoading {
+		t.Error("DeferLoading lost after round-trip")
+	}
+	if roundtripped.Namespace != "web" {
+		t.Errorf("Namespace = %q, want %q", roundtripped.Namespace, "web")
+	}
+}
+
+func TestToolDefinitionDeferLoadingOmittedWhenFalse(t *testing.T) {
+	td := ToolDefinition{Name: "search"}
+	data, err := json.Marshal(td)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(data)
+	if contains(s, "defer_loading") {
+		t.Errorf("defer_loading should be omitted when false, got %s", s)
+	}
+	if contains(s, "namespace") {
+		t.Errorf("namespace should be omitted when empty, got %s", s)
+	}
+}
+
+func TestMarkDeferredSetsFlagOnAllTools(t *testing.T) {
+	tools := []Tool{
+		FuncTool[SearchParams]("a", "", func(_ context.Context, _ SearchParams) (string, error) { return "", nil }),
+		FuncTool[SearchParams]("b", "", func(_ context.Context, _ SearchParams) (string, error) { return "", nil }),
+	}
+
+	out := MarkDeferred(tools)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(out))
+	}
+	for _, tool := range out {
+		if !tool.Definition.DeferLoading {
+			t.Errorf("tool %q should have DeferLoading=true", tool.Definition.Name)
+		}
+	}
+	// Originals must not be mutated.
+	for _, tool := range tools {
+		if tool.Definition.DeferLoading {
+			t.Errorf("original tool %q should NOT have DeferLoading=true (copy semantics)", tool.Definition.Name)
+		}
+	}
+}
+
+func TestMarkDeferredWithNamespace(t *testing.T) {
+	tools := []Tool{
+		FuncTool[SearchParams]("a", "", func(_ context.Context, _ SearchParams) (string, error) { return "", nil }),
+	}
+	out := MarkDeferredWithNamespace(tools, "crm")
+	if !out[0].Definition.DeferLoading {
+		t.Error("DeferLoading should be true")
+	}
+	if out[0].Definition.Namespace != "crm" {
+		t.Errorf("Namespace = %q, want %q", out[0].Definition.Namespace, "crm")
+	}
+	if tools[0].Definition.Namespace != "" {
+		t.Error("original should not be mutated")
+	}
+}
+
+func TestMarkDeferredHandlesEmpty(t *testing.T) {
+	if out := MarkDeferred(nil); len(out) != 0 {
+		t.Errorf("nil input should return empty, got %v", out)
+	}
+	if out := MarkDeferred([]Tool{}); len(out) != 0 {
+		t.Errorf("empty input should return empty, got %v", out)
+	}
+}
+
+// contains is a test helper for substring matching.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
+}
+
+func containsSubstr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

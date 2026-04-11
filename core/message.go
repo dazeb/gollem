@@ -147,6 +147,24 @@ type ThinkingPart struct {
 
 func (p ThinkingPart) responsePartKind() string { return "thinking" }
 
+// ProviderMetadataPart is an opaque passthrough for provider-specific
+// assistant content blocks that must be round-tripped in conversation
+// history but have no gollem-semantic meaning. The agent loop does not
+// execute or interpret these parts; providers that emit them are
+// responsible for serializing them back on subsequent turns.
+//
+// Examples: Anthropic's server_tool_use, tool_search_tool_result, and
+// tool_reference blocks from the tool search feature; any future server
+// tool types either provider adds. Providers that don't recognize the
+// Provider field silently skip these parts on serialization.
+type ProviderMetadataPart struct {
+	Provider string          // e.g., "anthropic", "openai"
+	Kind     string          // e.g., "tool_reference", "server_tool_use"
+	Payload  json.RawMessage // raw JSON, provider-opaque
+}
+
+func (p ProviderMetadataPart) responsePartKind() string { return "provider-metadata" }
+
 // --- Containers ---
 
 // FinishReason indicates why the model stopped generating.

@@ -15,7 +15,7 @@ type apiRequest struct {
 	MaxTokens   int              `json:"max_tokens"`
 	System      []apiSystemBlock `json:"system,omitempty"`
 	Messages    []apiMessage     `json:"messages"`
-	Tools       []apiTool        `json:"tools,omitempty"`
+	Tools       []any            `json:"tools,omitempty"` // apiTool or apiBuiltinTool
 	ToolChoice  *apiToolChoice   `json:"tool_choice,omitempty"`
 	Stream      bool             `json:"stream,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
@@ -63,6 +63,22 @@ type apiContentBlock struct {
 	// thinking block
 	Thinking  string `json:"thinking,omitempty"`
 	Signature string `json:"signature,omitempty"`
+
+	// rawOverride, when non-nil, replaces the entire struct during JSON
+	// marshaling. Used to round-trip opaque provider content blocks
+	// (server_tool_use, tool_reference, etc.) that don't fit the typed
+	// fields above. The block is emitted as-is without interpretation.
+	rawOverride json.RawMessage `json:"-"`
+}
+
+// MarshalJSON emits rawOverride verbatim when set, otherwise falls back
+// to standard struct marshaling.
+func (b apiContentBlock) MarshalJSON() ([]byte, error) {
+	if b.rawOverride != nil {
+		return b.rawOverride, nil
+	}
+	type alias apiContentBlock
+	return json.Marshal(alias(b))
 }
 
 type apiTool struct {
@@ -70,6 +86,15 @@ type apiTool struct {
 	Description  string           `json:"description,omitempty"`
 	InputSchema  json.RawMessage  `json:"input_schema"`
 	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+	DeferLoading bool             `json:"defer_loading,omitempty"`
+}
+
+// apiBuiltinTool represents an Anthropic server-side built-in tool like
+// tool_search_tool_regex_20251119. Different shape from apiTool (has type,
+// no input_schema). Both coexist in apiRequest.Tools via []any.
+type apiBuiltinTool struct {
+	Type string `json:"type"` // e.g., "tool_search_tool_regex_20251119"
+	Name string `json:"name"` // e.g., "tool_search_tool_regex"
 }
 
 // --- API response types ---
@@ -78,7 +103,7 @@ type apiResponse struct {
 	ID         string            `json:"id"`
 	Type       string            `json:"type"`
 	Role       string            `json:"role"`
-	Content    []apiContentBlock `json:"content"`
+	Content    []json.RawMessage `json:"content"` // parsed per-block in parseResponse
 	Model      string            `json:"model"`
 	StopReason string            `json:"stop_reason"`
 	Usage      apiUsage          `json:"usage"`
@@ -94,7 +119,7 @@ type apiUsage struct {
 // buildRequest converts gollem messages into an Anthropic API request.
 // If enableCache is true, cache_control markers are added to the last system
 // block and last tool definition to enable Anthropic's prompt caching.
-func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, model string, defaultMaxTokens int, stream bool, enableCache bool) (*apiRequest, error) {
+func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, model string, defaultMaxTokens int, stream bool, enableCache bool, disableToolSearch bool) (*apiRequest, error) {
 	req := &apiRequest{
 		Model:     model,
 		MaxTokens: defaultMaxTokens,
@@ -126,19 +151,47 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 		}
 	}
 
-	// Convert tool definitions.
+	// Convert tool definitions. If any tool has DeferLoading=true and the
+	// model supports tool search, auto-inject the built-in tool_search
+	// regex tool and emit defer_loading on the wire.
 	if params != nil {
 		allTools := params.AllToolDefs()
+		modelSupports := supportsToolSearch(model)
+
+		// Check if any tool requests deferred loading.
+		anyDeferred := false
+		for _, td := range allTools {
+			if td.DeferLoading {
+				anyDeferred = true
+				break
+			}
+		}
+
+		// Auto-inject the built-in tool_search tool when applicable.
+		if anyDeferred && modelSupports && !disableToolSearch {
+			req.Tools = append(req.Tools, apiBuiltinTool{
+				Type: toolSearchToolRegexType,
+				Name: toolSearchToolRegexName,
+			})
+		}
+
 		for _, td := range allTools {
 			schemaJSON, err := json.Marshal(td.ParametersSchema)
 			if err != nil {
 				return nil, err
 			}
-			req.Tools = append(req.Tools, apiTool{
+			at := apiTool{
 				Name:        td.Name,
 				Description: td.Description,
 				InputSchema: schemaJSON,
-			})
+			}
+			// Only emit defer_loading on models that support it. Silent
+			// degrade on unsupported models: the flag is preserved in core
+			// but never reaches the wire, so the tool ships inline.
+			if td.DeferLoading && modelSupports {
+				at.DeferLoading = true
+			}
+			req.Tools = append(req.Tools, at)
 		}
 	}
 
@@ -249,6 +302,12 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 						Thinking:  p.Content,
 						Signature: p.Signature,
 					})
+				case core.ProviderMetadataPart:
+					if p.Provider == "anthropic" {
+						assistantBlocks = append(assistantBlocks, apiContentBlock{
+							rawOverride: p.Payload,
+						})
+					}
 				}
 			}
 			// Always emit an assistant message for a ModelResponse to maintain
@@ -269,16 +328,24 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 	req.System = systemBlocks
 	req.Messages = apiMsgs
 
-	// Apply cache_control markers to the last system block and last tool.
+	// Apply cache_control markers to the last system block and last user tool.
 	// This enables Anthropic's prompt caching for the stable prefix (system
 	// instructions + tool definitions), which is identical across turns.
+	// Walk backwards through Tools to find the last apiTool (user tool),
+	// skipping any apiBuiltinTool entries. The built-in tool_search tool
+	// must NOT carry the cache marker — it's always at position 0 and
+	// marking it would skip the actual user tool definitions.
 	if enableCache {
 		ephemeral := &apiCacheControl{Type: "ephemeral"}
 		if len(req.System) > 0 {
 			req.System[len(req.System)-1].CacheControl = ephemeral
 		}
-		if len(req.Tools) > 0 {
-			req.Tools[len(req.Tools)-1].CacheControl = ephemeral
+		for i := len(req.Tools) - 1; i >= 0; i-- {
+			if t, ok := req.Tools[i].(apiTool); ok {
+				t.CacheControl = ephemeral
+				req.Tools[i] = t
+				break
+			}
 		}
 	}
 
@@ -286,14 +353,34 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 }
 
 // parseResponse converts an Anthropic API response to a core.ModelResponse.
+// Known content block types (text, tool_use, thinking) are parsed into typed
+// gollem parts. Unknown types (server_tool_use, tool_search_tool_result,
+// tool_reference, and any future server tool types) are preserved as
+// ProviderMetadataPart for lossless round-tripping in conversation history.
 func parseResponse(resp *apiResponse, modelName string) *core.ModelResponse {
 	var parts []core.ModelResponsePart
 
-	for _, block := range resp.Content {
-		switch block.Type {
+	for _, raw := range resp.Content {
+		var typeOnly struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &typeOnly); err != nil {
+			continue
+		}
+
+		switch typeOnly.Type {
 		case "text":
+			var block apiContentBlock
+			if err := json.Unmarshal(raw, &block); err != nil {
+				continue
+			}
 			parts = append(parts, core.TextPart{Content: block.Text})
+
 		case "tool_use":
+			var block apiContentBlock
+			if err := json.Unmarshal(raw, &block); err != nil {
+				continue
+			}
 			argsJSON := "{}"
 			if block.Input != nil {
 				argsJSON = string(block.Input)
@@ -303,10 +390,27 @@ func parseResponse(resp *apiResponse, modelName string) *core.ModelResponse {
 				ArgsJSON:   argsJSON,
 				ToolCallID: block.ID,
 			})
+
 		case "thinking":
+			var block apiContentBlock
+			if err := json.Unmarshal(raw, &block); err != nil {
+				continue
+			}
 			parts = append(parts, core.ThinkingPart{
 				Content:   block.Thinking,
 				Signature: block.Signature,
+			})
+
+		default:
+			// Preserve ALL unknown content blocks for round-tripping.
+			// The Anthropic API contract requires assistant content blocks
+			// to be sent back in conversation history exactly as received.
+			// This covers server_tool_use, tool_search_tool_result,
+			// tool_reference, and any future server tool types.
+			parts = append(parts, core.ProviderMetadataPart{
+				Provider: "anthropic",
+				Kind:     typeOnly.Type,
+				Payload:  append(json.RawMessage(nil), raw...),
 			})
 		}
 	}
