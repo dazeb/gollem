@@ -128,6 +128,16 @@ type Tool struct {
 	Stateful         StatefulTool            // if set, state is saved/restored with checkpoints
 	ResultValidator  ToolResultValidatorFunc // if set, validates tool results before passing to model
 	Timeout          time.Duration           // if > 0, tool execution is limited to this duration
+
+	// ShouldDefer opts this tool into deferred-loading via ext/toolproxy.
+	// When a toolproxy Proxy is attached to the agent, deferred tools are
+	// hidden from each request's tool definitions until the model discovers
+	// them via tool_search. Non-zero only has effect when a Proxy is wired in.
+	ShouldDefer bool
+	// SearchHint is an optional curated phrase used to boost this tool's
+	// score during tool_search keyword matching. Higher-signal than the
+	// tool description; ignored when empty.
+	SearchHint string
 }
 
 // ToolOption configures a tool via functional options.
