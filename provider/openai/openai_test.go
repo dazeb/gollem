@@ -87,7 +87,7 @@ func TestBuildResponsesRequestCodexOmitsSamplingParams(t *testing.T) {
 		TopP:        &topP,
 	}
 
-	req, err := buildResponsesRequest(nil, settings, nil, "gpt-5.2-codex", 4096)
+	req, err := buildResponsesRequest(nil, settings, nil, "gpt-5.2-codex", 4096, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestBuildResponsesRequestNormalizesObjectToolSchema(t *testing.T) {
 		},
 	}
 
-	req, err := buildResponsesRequest(nil, nil, params, "gpt-5.2-codex", 4096)
+	req, err := buildResponsesRequest(nil, nil, params, "gpt-5.2-codex", 4096, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,8 +117,9 @@ func TestBuildResponsesRequestNormalizesObjectToolSchema(t *testing.T) {
 		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
 	}
 
+	tool0 := req.Tools[0].(responsesToolDef)
 	var schema map[string]any
-	if err := json.Unmarshal(req.Tools[0].Parameters, &schema); err != nil {
+	if err := json.Unmarshal(tool0.Parameters, &schema); err != nil {
 		t.Fatalf("unmarshal schema: %v", err)
 	}
 	props, ok := schema["properties"].(map[string]any)

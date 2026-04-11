@@ -65,6 +65,7 @@ type Provider struct {
 	wsHTTPFallback       bool
 	wsHTTPFallbackSet    bool
 	useResponses         bool
+	disableToolSearch    bool
 	wsConn               *responsesWebSocketConn
 	wsPrevResponseID     string
 	wsLastInputSigs      []string
@@ -192,6 +193,16 @@ func WithChatGPTAuth(accessToken, accountID string) Option {
 func WithTokenRefresher(refresher TokenRefresher) Option {
 	return func(p *Provider) {
 		p.tokenRefresher = refresher
+	}
+}
+
+// WithToolSearchDisabled disables automatic injection of OpenAI's
+// tool_search built-in when any tool has DeferLoading=true. Has no
+// effect when no tool has DeferLoading=true or when the model does not
+// support tool_search (Chat Completions, non-gpt-5.4+ models).
+func WithToolSearchDisabled() Option {
+	return func(p *Provider) {
+		p.disableToolSearch = true
 	}
 }
 
@@ -543,6 +554,37 @@ func responsesWebSocketURL(baseURL, endpoint string) (string, error) {
 func modelNeedsResponsesAPI(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
 	return strings.Contains(m, "codex") || strings.Contains(m, "multi-agent") || strings.HasPrefix(m, "gpt-5")
+}
+
+// responsesSupportsToolSearch reports whether the given model supports
+// OpenAI's native Responses API tool_search. Per OpenAI docs, this is
+// available on gpt-5.4 and later. Codex and multi-agent variants are
+// excluded (they use specialized inline tool sets).
+func responsesSupportsToolSearch(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(m, "codex") || strings.Contains(m, "multi-agent") {
+		return false
+	}
+	if !strings.HasPrefix(m, "gpt-5.") {
+		return false
+	}
+	rest := strings.TrimPrefix(m, "gpt-5.")
+	var digits []byte
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if c < '0' || c > '9' {
+			break
+		}
+		digits = append(digits, c)
+	}
+	if len(digits) == 0 {
+		return false
+	}
+	n, err := strconv.Atoi(string(digits))
+	if err != nil {
+		return false
+	}
+	return n >= 4
 }
 
 func isChatCompletionsMismatch(err error) bool {

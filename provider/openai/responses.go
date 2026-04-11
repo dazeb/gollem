@@ -20,7 +20,7 @@ type responsesRequest struct {
 	Stream               *bool               `json:"stream,omitempty"`
 	Input                []map[string]any    `json:"input"`
 	PreviousResponseID   string              `json:"previous_response_id,omitempty"`
-	Tools                []responsesToolDef  `json:"tools,omitempty"`
+	Tools                []any               `json:"tools,omitempty"` // responsesToolDef, responsesNamespace, or tool_search built-in
 	ToolChoice           any                 `json:"tool_choice,omitempty"`
 	ServiceTier          string              `json:"service_tier,omitempty"`
 	PromptCacheKey       string              `json:"prompt_cache_key,omitempty"`
@@ -50,11 +50,23 @@ type responsesTextFormat struct {
 }
 
 type responsesToolDef struct {
-	Type        string          `json:"type"`
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
-	Strict      *bool           `json:"strict,omitempty"`
+	Type         string          `json:"type"`
+	Name         string          `json:"name,omitempty"` // omitempty: tool_search built-in has no name
+	Description  string          `json:"description,omitempty"`
+	Parameters   json.RawMessage `json:"parameters,omitempty"`
+	Strict       *bool           `json:"strict,omitempty"`
+	DeferLoading bool            `json:"defer_loading,omitempty"`
+}
+
+// responsesNamespace wraps related tools for OpenAI's namespace grouping.
+// Tools with the same Namespace are grouped into a namespace object for
+// better tool_search token efficiency. The namespace description is
+// always visible to the model; only deferred function details are hidden.
+type responsesNamespace struct {
+	Type        string             `json:"type"` // "namespace"
+	Name        string             `json:"name"`
+	Description string             `json:"description,omitempty"`
+	Tools       []responsesToolDef `json:"tools"`
 }
 
 type responsesAPIResponse struct {
@@ -74,6 +86,7 @@ type responsesOutputItem struct {
 	Type      string                 `json:"type"`
 	Role      string                 `json:"role,omitempty"`
 	Name      string                 `json:"name,omitempty"`
+	Namespace string                 `json:"namespace,omitempty"` // populated on function_call when tool is in a namespace
 	Arguments string                 `json:"arguments,omitempty"`
 	CallID    string                 `json:"call_id,omitempty"`
 	Refusal   string                 `json:"refusal,omitempty"`
@@ -101,7 +114,7 @@ type responsesOutputTokensDetails struct {
 }
 
 func (p *Provider) requestViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
-	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens)
+	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens, p.disableToolSearch)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
 	}
@@ -153,7 +166,7 @@ func (p *Provider) applyResponsesEndpointSettings(req *responsesRequest) {
 // when configured; RequestStream() falls back to HTTP SSE which provides
 // true incremental event delivery.
 func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
-	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens)
+	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens, p.disableToolSearch)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
 	}
@@ -380,7 +393,7 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 	return parseResponsesResponse(finalResp, p.model), nil
 }
 
-func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, model string, defaultMaxTokens int) (*responsesRequest, error) {
+func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, model string, defaultMaxTokens int, disableToolSearch bool) (*responsesRequest, error) {
 	req := &responsesRequest{
 		Model:           model,
 		MaxOutputTokens: defaultMaxTokens,
@@ -403,18 +416,72 @@ func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSet
 
 	if params != nil {
 		allTools := params.AllToolDefs()
+		modelSupports := responsesSupportsToolSearch(model)
+
+		// Check if any tool requests deferred loading.
+		anyDeferred := false
+		for _, td := range allTools {
+			if td.DeferLoading {
+				anyDeferred = true
+				break
+			}
+		}
+
+		// Auto-inject the built-in tool_search when applicable.
+		if anyDeferred && modelSupports && !disableToolSearch {
+			req.Tools = append(req.Tools, responsesToolDef{Type: "tool_search"})
+		}
+
+		// Group tools by namespace. Empty namespace = standalone.
+		type nsGroup struct {
+			desc  string
+			tools []responsesToolDef
+		}
+		namespaces := make(map[string]*nsGroup)
+		var namespaceOrder []string
+		var standalone []responsesToolDef
+
 		for _, td := range allTools {
 			schemaJSON, err := marshalOpenAISchema(td.ParametersSchema)
 			if err != nil {
 				return nil, err
 			}
-			req.Tools = append(req.Tools, responsesToolDef{
+			rtd := responsesToolDef{
 				Type:        "function",
 				Name:        td.Name,
 				Description: td.Description,
 				Parameters:  schemaJSON,
 				Strict:      td.Strict,
+			}
+			if td.DeferLoading && modelSupports {
+				rtd.DeferLoading = true
+			}
+
+			if td.Namespace != "" {
+				g, ok := namespaces[td.Namespace]
+				if !ok {
+					g = &nsGroup{desc: td.Namespace}
+					namespaces[td.Namespace] = g
+					namespaceOrder = append(namespaceOrder, td.Namespace)
+				}
+				g.tools = append(g.tools, rtd)
+			} else {
+				standalone = append(standalone, rtd)
+			}
+		}
+
+		// Emit namespace groups first, then standalone tools.
+		for _, ns := range namespaceOrder {
+			g := namespaces[ns]
+			req.Tools = append(req.Tools, responsesNamespace{
+				Type:        "namespace",
+				Name:        ns,
+				Description: g.desc,
+				Tools:       g.tools,
 			})
+		}
+		for _, t := range standalone {
+			req.Tools = append(req.Tools, t)
 		}
 
 		if params.OutputMode == core.OutputModeNative && params.OutputObject != nil {
@@ -708,11 +775,15 @@ func parseResponsesResponse(resp *responsesAPIResponse, modelName string) *core.
 			if callID == "" {
 				callID = fmt.Sprintf("call_%d", i)
 			}
-			parts = append(parts, core.ToolCallPart{
+			part := core.ToolCallPart{
 				ToolName:   item.Name,
 				ArgsJSON:   argsJSON,
 				ToolCallID: callID,
-			})
+			}
+			if item.Namespace != "" {
+				part.Metadata = map[string]string{"namespace": item.Namespace}
+			}
+			parts = append(parts, part)
 			hasToolCalls = true
 		}
 	}

@@ -87,6 +87,10 @@ type apiToolDef struct {
 	Function apiToolDefFunc `json:"function"`
 }
 
+// apiToolDefFunc is the Chat Completions function shape. DeferLoading
+// is intentionally NOT included — tool_search is only available on the
+// Responses API (gpt-5.4+). Chat Completions silently ignores the
+// core.ToolDefinition.DeferLoading field.
 type apiToolDefFunc struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
