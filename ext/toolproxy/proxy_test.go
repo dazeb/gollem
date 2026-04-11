@@ -1435,6 +1435,235 @@ func TestTelemetry_PoolChangeEventInitialFlag(t *testing.T) {
 	}
 }
 
+// --------------------------------------------------------------------------
+// Pending tool sources (async MCP / lazy registries)
+// --------------------------------------------------------------------------
+
+// TestPendingSources_AppearsInSearchResult verifies that when the
+// caller configures a PendingSourcesFunc, the names it returns appear
+// in the tool_search result JSON under pending_tool_sources.
+func TestPendingSources_AppearsInSearchResult(t *testing.T) {
+	proxy := New(Config{
+		PendingSourcesFunc: func() []string {
+			return []string{"mcp__slack", "mcp__github"}
+		},
+	})
+	hide := makeDeferredTool("hide", "Deferred")
+	tools := []core.Tool{hide, proxy.Tool()}
+
+	// Arm the pool via PrepareFuncFor so handleSearch can look it up.
+	defs := make([]core.ToolDefinition, len(tools))
+	for i, t := range tools {
+		defs[i] = t.Definition
+	}
+	_ = proxy.PrepareFuncFor(tools)(context.Background(), nil, defs)
+
+	raw, err := proxy.handleSearch(context.Background(), nil, `{"query":"select:hide"}`)
+	if err != nil {
+		t.Fatalf("handleSearch: %v", err)
+	}
+	result, ok := raw.(searchResultJSON)
+	if !ok {
+		t.Fatalf("expected searchResultJSON, got %T", raw)
+	}
+
+	want := []string{"mcp__slack", "mcp__github"}
+	if !stringSliceEqual(result.PendingToolSources, want) {
+		t.Errorf("PendingToolSources: got %v want %v", result.PendingToolSources, want)
+	}
+
+	// The result text should also mention them alongside the match
+	// so the model knows more tools are on the way.
+	if !strings.Contains(result.Text, "mcp__slack") || !strings.Contains(result.Text, "mcp__github") {
+		t.Errorf("result text should mention pending sources, got %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "still initializing") {
+		t.Errorf("result text should include 'still initializing' hint, got %q", result.Text)
+	}
+}
+
+// TestPendingSources_NoMatchHintsRetry verifies the "try again
+// shortly" fallback text that fires when the query finds zero tools
+// AND there are pending sources — the scenario where the model
+// queried for a tool that hasn't been loaded yet.
+func TestPendingSources_NoMatchHintsRetry(t *testing.T) {
+	proxy := New(Config{
+		PendingSourcesFunc: func() []string {
+			return []string{"mcp__slack"}
+		},
+	})
+	// Empty pool — no deferred tools yet.
+	tools := []core.Tool{proxy.Tool()}
+	defs := make([]core.ToolDefinition, len(tools))
+	for i, t := range tools {
+		defs[i] = t.Definition
+	}
+	_ = proxy.PrepareFuncFor(tools)(context.Background(), nil, defs)
+
+	raw, err := proxy.handleSearch(context.Background(), nil, `{"query":"send_message"}`)
+	if err != nil {
+		t.Fatalf("handleSearch: %v", err)
+	}
+	result := raw.(searchResultJSON)
+
+	if len(result.Matches) != 0 {
+		t.Errorf("expected no matches, got %v", result.Matches)
+	}
+	if !strings.Contains(result.Text, "No matching tools found") {
+		t.Errorf("result text should say no matches, got %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "mcp__slack") {
+		t.Errorf("result text should mention pending source, got %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "try searching again") {
+		t.Errorf("result text should suggest retrying, got %q", result.Text)
+	}
+	if !stringSliceEqual(result.PendingToolSources, []string{"mcp__slack"}) {
+		t.Errorf("PendingToolSources: got %v", result.PendingToolSources)
+	}
+}
+
+// TestPendingSources_NilFuncOmitsField verifies that when the caller
+// doesn't supply a PendingSourcesFunc, the result JSON has no
+// pending_tool_sources key (omitempty) and the text doesn't mention
+// pending state.
+func TestPendingSources_NilFuncOmitsField(t *testing.T) {
+	proxy := New(Config{}) // no PendingSourcesFunc
+	hide := makeDeferredTool("hide", "Deferred")
+	tools := []core.Tool{hide, proxy.Tool()}
+
+	defs := make([]core.ToolDefinition, len(tools))
+	for i, t := range tools {
+		defs[i] = t.Definition
+	}
+	_ = proxy.PrepareFuncFor(tools)(context.Background(), nil, defs)
+
+	raw, err := proxy.handleSearch(context.Background(), nil, `{"query":"select:hide"}`)
+	if err != nil {
+		t.Fatalf("handleSearch: %v", err)
+	}
+	result := raw.(searchResultJSON)
+
+	if len(result.PendingToolSources) != 0 {
+		t.Errorf("PendingToolSources should be empty when func is nil, got %v", result.PendingToolSources)
+	}
+	if strings.Contains(result.Text, "still initializing") {
+		t.Errorf("result text should not mention pending sources, got %q", result.Text)
+	}
+}
+
+// TestPendingSources_EmptySliceTreatedAsNone verifies that a
+// PendingSourcesFunc which returns an empty slice (or nil) is
+// treated the same as no function at all — no pending hint in the
+// result.
+func TestPendingSources_EmptySliceTreatedAsNone(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   PendingSourcesFunc
+	}{
+		{"nil", func() []string { return nil }},
+		{"empty", func() []string { return []string{} }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proxy := New(Config{PendingSourcesFunc: tc.fn})
+			hide := makeDeferredTool("hide", "Deferred")
+			tools := []core.Tool{hide, proxy.Tool()}
+			defs := make([]core.ToolDefinition, len(tools))
+			for i, t := range tools {
+				defs[i] = t.Definition
+			}
+			_ = proxy.PrepareFuncFor(tools)(context.Background(), nil, defs)
+
+			raw, err := proxy.handleSearch(context.Background(), nil, `{"query":"select:hide"}`)
+			if err != nil {
+				t.Fatalf("handleSearch: %v", err)
+			}
+			result := raw.(searchResultJSON)
+			if len(result.PendingToolSources) != 0 {
+				t.Errorf("%s: PendingToolSources should be empty, got %v", tc.name, result.PendingToolSources)
+			}
+		})
+	}
+}
+
+// TestPendingSources_CallerMutationIsolation verifies that the slice
+// returned by PendingSourcesFunc is copied before being stored in
+// the result JSON, so callers can't accidentally mutate the result
+// by reusing their own buffer.
+func TestPendingSources_CallerMutationIsolation(t *testing.T) {
+	sharedBuf := []string{"mcp__slack"}
+	proxy := New(Config{
+		PendingSourcesFunc: func() []string {
+			return sharedBuf
+		},
+	})
+	hide := makeDeferredTool("hide", "Deferred")
+	tools := []core.Tool{hide, proxy.Tool()}
+	defs := make([]core.ToolDefinition, len(tools))
+	for i, t := range tools {
+		defs[i] = t.Definition
+	}
+	_ = proxy.PrepareFuncFor(tools)(context.Background(), nil, defs)
+
+	raw, err := proxy.handleSearch(context.Background(), nil, `{"query":"select:hide"}`)
+	if err != nil {
+		t.Fatalf("handleSearch: %v", err)
+	}
+	result := raw.(searchResultJSON)
+
+	// Mutate the shared buffer the caller returned.
+	sharedBuf[0] = "mutated"
+
+	// The result's snapshot should be unaffected.
+	if result.PendingToolSources[0] == "mutated" {
+		t.Errorf("result should be isolated from caller buffer mutations")
+	}
+}
+
+// TestPendingSources_TelemetryCount verifies the PendingSourceCount
+// field is populated on SearchOutcomeEvent.
+func TestPendingSources_TelemetryCount(t *testing.T) {
+	bus := core.NewEventBus()
+	proxy := New(Config{
+		PendingSourcesFunc: func() []string {
+			return []string{"mcp__slack", "mcp__github", "mcp__linear"}
+		},
+	})
+	hide := makeDeferredTool("hide", "Deferred")
+	tools := []core.Tool{hide, proxy.Tool()}
+
+	var events []SearchOutcomeEvent
+	var mu sync.Mutex
+	core.Subscribe(bus, func(e SearchOutcomeEvent) {
+		mu.Lock()
+		events = append(events, e)
+		mu.Unlock()
+	})
+
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(DefaultToolName, `{"query":"select:hide"}`, "call_1"),
+		core.TextResponse("done"),
+	)
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](tools...),
+		core.WithToolsPrepare[string](proxy.PrepareFuncFor(tools)),
+		core.WithEventBus[string](bus),
+	)
+	if _, err := agent.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("agent run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].PendingSourceCount != 3 {
+		t.Errorf("PendingSourceCount: got %d want 3", events[0].PendingSourceCount)
+	}
+}
+
 // TestTelemetry_NilEventBusIsSafe proves the publishers are no-ops
 // when the agent has no EventBus wired in — the common case.
 func TestTelemetry_NilEventBusIsSafe(t *testing.T) {

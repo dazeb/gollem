@@ -56,9 +56,35 @@ const defaultCharsPerToken = 2.5
 // to a character-count heuristic.
 type TokenCounter func(tools []core.Tool) int
 
+// PendingSourcesFunc returns the names of tool sources (MCP servers,
+// remote registries, lazy loaders, anything) that are still
+// initializing and whose tools are not yet available in the proxy's
+// pool. The Proxy calls this on every tool_search invocation and
+// surfaces the result in the structured JSON (`pending_tool_sources`)
+// and in the result text, so the model can retry on a later turn
+// instead of giving up when a query returns no matches.
+//
+// Implementations should be cheap — the function is called on the
+// hot path of every tool_search call. A simple read of an atomic
+// state variable is the common pattern:
+//
+//	var pending atomic.Value // []string
+//	go func() {
+//	    pending.Store([]string{"mcp__slack", "mcp__github"})
+//	    initMCP(...)
+//	    pending.Store([]string(nil))
+//	}()
+//	cfg := toolproxy.Config{
+//	    PendingSourcesFunc: func() []string {
+//	        v, _ := pending.Load().([]string)
+//	        return v
+//	    },
+//	}
+type PendingSourcesFunc func() []string
+
 // Config configures a Proxy instance.
 type Config struct {
-	// Mode selects the deferral strategy. Zero value is ModeAuto.
+	// Mode selects the deferral strategy. Zero value is ModeAlways.
 	Mode Mode
 	// ToolName is the user-visible name of the tool_search tool. If empty,
 	// DefaultToolName is used.
@@ -77,6 +103,12 @@ type Config struct {
 	// TokenCounter optionally provides an exact token count for deferred
 	// tools. Falls back to a character heuristic if nil.
 	TokenCounter TokenCounter
+	// PendingSourcesFunc optionally returns the names of tool sources
+	// still initializing. See the PendingSourcesFunc type docs for the
+	// wiring pattern. When nil, tool_search never reports pending
+	// sources. See Claude Code's pending_mcp_servers field for the
+	// equivalent upstream behaviour.
+	PendingSourcesFunc PendingSourcesFunc
 }
 
 // Proxy is a stateful tool deferral helper. One Proxy instance owns a
@@ -130,6 +162,12 @@ type searchResultJSON struct {
 	Matches            []string `json:"matches"`
 	Query              string   `json:"query"`
 	TotalDeferredTools int      `json:"total_deferred_tools"`
+	// PendingToolSources is the current set of tool sources (MCP
+	// servers, remote registries, lazy loaders, etc.) that are still
+	// initializing. Surfaced so the model can retry on a later turn
+	// rather than giving up when a query finds nothing. Omitted from
+	// the JSON when empty.
+	PendingToolSources []string `json:"pending_tool_sources,omitempty"`
 	Text               string   `json:"text,omitempty"`
 }
 
@@ -188,11 +226,25 @@ func (p *Proxy) handleSearch(_ context.Context, rc *core.RunContext, argsJSON st
 	}
 
 	// Count deferred tools for the status field so the model sees the
-	// size of the hidden catalog.
+	// size of the hidden catalog. AlwaysLoad tools don't count since
+	// they're always inline.
 	deferredCount := 0
 	for _, t := range pool {
-		if t.ShouldDefer {
+		if t.ShouldDefer && !t.AlwaysLoad {
 			deferredCount++
+		}
+	}
+
+	// Pending sources — tool sources still initializing. Caller-supplied,
+	// nil-safe. Copied into a fresh slice so concurrent callers can
+	// mutate their underlying state without affecting the returned
+	// payload.
+	var pending []string
+	if p.cfg.PendingSourcesFunc != nil {
+		raw := p.cfg.PendingSourcesFunc()
+		if len(raw) > 0 {
+			pending = make([]string, len(raw))
+			copy(pending, raw)
 		}
 	}
 
@@ -206,13 +258,15 @@ func (p *Proxy) handleSearch(_ context.Context, rc *core.RunContext, argsJSON st
 		HasMatches:         len(matches) > 0,
 		TotalDeferredTools: deferredCount,
 		MaxResults:         maxResults,
+		PendingSourceCount: len(pending),
 	})
 
 	return searchResultJSON{
 		Matches:            matches,
 		Query:              params.Query,
 		TotalDeferredTools: deferredCount,
-		Text:               buildToolResultText(matches, pool),
+		PendingToolSources: pending,
+		Text:               buildToolResultText(matches, pool, pending),
 	}, nil
 }
 

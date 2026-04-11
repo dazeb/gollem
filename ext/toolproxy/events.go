@@ -51,7 +51,8 @@ const (
 // reports the query, how many matches were returned, and metadata
 // useful for dashboards (TotalDeferredTools, MaxResults). Subscribers
 // can reconstruct search-quality metrics — match rate, average match
-// count per call, how often selections exceed max_results, etc.
+// count per call, how often selections exceed max_results, how often
+// a search coincided with still-initializing tool sources, etc.
 type SearchOutcomeEvent struct {
 	RunID              string
 	ParentRunID        string
@@ -62,6 +63,11 @@ type SearchOutcomeEvent struct {
 	HasMatches         bool
 	TotalDeferredTools int
 	MaxResults         int
+	// PendingSourceCount is the number of tool sources still
+	// initializing at the time of this search (as reported by
+	// Config.PendingSourcesFunc). Useful for correlating
+	// "no matches found" outcomes with known in-flight initialisation.
+	PendingSourceCount int
 	OccurredAt         time.Time
 }
 

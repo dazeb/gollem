@@ -82,18 +82,31 @@ func buildDeferredListFragment(toolName string, names []string, initial bool) st
 }
 
 // buildToolResultText produces the human-readable text returned by
-// tool_search when one or more tools are resolved. The body lists the
-// matched tools with their (possibly truncated) descriptions so the
-// model can plan its next turn; the full schema is delivered through
-// the next request's tool definitions (PrepareFunc re-admits them to
-// the list).
+// tool_search. The body lists matched tools with their (possibly
+// truncated) descriptions so the model can plan its next turn; the
+// full schema is delivered through the next request's tool
+// definitions (PrepareFunc re-admits them to the list).
+//
+// When there are matches AND pending tool sources, the text appends a
+// "more on the way" hint so the model knows the catalog will grow.
+// When there are NO matches AND pending tool sources, the text
+// explicitly tells the model to retry on a later turn — this is the
+// primary value of surfacing async initialisation state, matching
+// Claude Code's pending_mcp_servers behaviour.
 //
 // Wording is neutral ("Matched") rather than "Loaded" because a match
 // may hit a tool that was already non-deferred and therefore already
 // available. Either way, the accurate summary is "you can call these
 // on your next turn".
-func buildToolResultText(matches []string, tools []core.Tool) string {
+func buildToolResultText(matches []string, tools []core.Tool, pendingSources []string) string {
 	if len(matches) == 0 {
+		if len(pendingSources) > 0 {
+			return fmt.Sprintf(
+				"No matching tools found. Some tool sources are still initializing: %s. "+
+					"Their tools will become available on a later turn — try searching again shortly.",
+				strings.Join(pendingSources, ", "),
+			)
+		}
 		return "No matching tools found."
 	}
 
@@ -116,6 +129,11 @@ func buildToolResultText(matches []string, tools []core.Tool) string {
 		} else {
 			fmt.Fprintf(&b, "  - %s — %s\n", name, desc)
 		}
+	}
+	if len(pendingSources) > 0 {
+		fmt.Fprintf(&b, "\nNote: some tool sources are still initializing (%s). "+
+			"More tools may become available on later turns.\n",
+			strings.Join(pendingSources, ", "))
 	}
 	return b.String()
 }
