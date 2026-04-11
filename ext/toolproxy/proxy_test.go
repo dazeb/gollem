@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/fugue-labs/gollem/core"
@@ -64,7 +65,7 @@ func TestSearchTools_SelectDirectLookup(t *testing.T) {
 		makeDeferredTool("Edit", "Make exact edits to files"),
 		makeDeferredTool("Grep", "Search for patterns in files"),
 	}
-	got := searchTools("select:Read,Edit", tools, 5)
+	got := searchTools("select:Read,Edit", tools, 5, nil)
 	want := []string{"Read", "Edit"}
 	if !stringSliceEqual(got, want) {
 		t.Errorf("select: got %v want %v", got, want)
@@ -75,7 +76,7 @@ func TestSearchTools_SelectMissingIgnored(t *testing.T) {
 	tools := []core.Tool{
 		makeDeferredTool("Read", "Read files"),
 	}
-	got := searchTools("select:Read,NonExistent", tools, 5)
+	got := searchTools("select:Read,NonExistent", tools, 5, nil)
 	want := []string{"Read"}
 	if !stringSliceEqual(got, want) {
 		t.Errorf("missing names should be silently dropped: got %v want %v", got, want)
@@ -96,7 +97,7 @@ func TestSearchTools_SelectNonDeferredFallback(t *testing.T) {
 		nonDeferred,
 	}
 
-	got := searchTools("select:already_loaded", tools, 5)
+	got := searchTools("select:already_loaded", tools, 5, nil)
 	want := []string{"already_loaded"}
 	if !stringSliceEqual(got, want) {
 		t.Errorf("select: on a non-deferred tool should fall back as a no-op: got %v want %v", got, want)
@@ -114,7 +115,7 @@ func TestSearchTools_ExactMatchNonDeferredFallback(t *testing.T) {
 		nonDeferred,
 	}
 
-	got := searchTools("already_loaded", tools, 5)
+	got := searchTools("already_loaded", tools, 5, nil)
 	want := []string{"already_loaded"}
 	if !stringSliceEqual(got, want) {
 		t.Errorf("bare exact match on a non-deferred tool should fall back: got %v want %v", got, want)
@@ -127,7 +128,7 @@ func TestSearchTools_KeywordMatch(t *testing.T) {
 		makeDeferredTool("FileWrite", "Write files to disk"),
 		makeDeferredTool("WebFetch", "Download a URL from the web"),
 	}
-	got := searchTools("file read", tools, 5)
+	got := searchTools("file read", tools, 5, nil)
 	// Both File* tools match "file" and FileRead matches "read" too, so it
 	// should rank above FileWrite.
 	if len(got) == 0 {
@@ -145,7 +146,7 @@ func TestSearchTools_RequiredTerm(t *testing.T) {
 		makeDeferredTool("SlackRead", "Read a Slack channel"),
 	}
 	// +slack forces slack to be present, send is the scoring term.
-	got := searchTools("+slack send", tools, 5)
+	got := searchTools("+slack send", tools, 5, nil)
 	if len(got) == 0 {
 		t.Fatal("expected matches for +slack send")
 	}
@@ -168,7 +169,7 @@ func TestSearchTools_MaxResults(t *testing.T) {
 		makeDeferredTool("FileEdit", "Edit files"),
 		makeDeferredTool("FileDelete", "Delete files"),
 	}
-	got := searchTools("file", tools, 2)
+	got := searchTools("file", tools, 2, nil)
 	if len(got) > 2 {
 		t.Errorf("max_results=2 should cap at 2: got %d results", len(got))
 	}
@@ -179,7 +180,7 @@ func TestSearchTools_MCPPrefixScoring(t *testing.T) {
 		makeDeferredTool("mcp__github__create_issue", "Create a GitHub issue"),
 		makeDeferredTool("mcp__slack__send_message", "Send a Slack message"),
 	}
-	got := searchTools("github issue", tools, 5)
+	got := searchTools("github issue", tools, 5, nil)
 	if len(got) == 0 || got[0] != "mcp__github__create_issue" {
 		t.Errorf("expected mcp__github__create_issue on top, got %v", got)
 	}
@@ -193,7 +194,7 @@ func TestSearchTools_SearchHintBoost(t *testing.T) {
 	// Add a curated hint to Beta that should pull it to the top for
 	// "deploy" even though the name and description say nothing about it.
 	tools[1].SearchHint = "deploy production services"
-	got := searchTools("deploy", tools, 5)
+	got := searchTools("deploy", tools, 5, nil)
 	if len(got) == 0 {
 		t.Fatal("expected match via searchHint")
 	}
@@ -485,6 +486,44 @@ func TestAgentEndToEnd_ZeroValueConfigDefaultsToAlwaysMode(t *testing.T) {
 	}
 }
 
+// TestScoringCache_HitAndInvalidate verifies that the per-Proxy
+// scoring cache (a) returns the same entry for repeated lookups of the
+// same tool, and (b) is dropped when setPool observes a pool with a
+// different signature. Without this guard the cache would return stale
+// parsed names after a pool swap.
+func TestScoringCache_HitAndInvalidate(t *testing.T) {
+	p := New(Config{})
+
+	tool := makeDeferredTool("CacheMe", "A tool under test")
+
+	// Prime the cache and verify we get consistent results.
+	entry1 := p.state.lookupScoring(tool)
+	entry2 := p.state.lookupScoring(tool)
+	if entry1.descLower != entry2.descLower || entry1.hintLower != entry2.hintLower {
+		t.Errorf("repeated lookups must return the same entry: %+v vs %+v", entry1, entry2)
+	}
+
+	// Record a pool that includes CacheMe — cache survives (same signature).
+	p.state.setPool([]core.Tool{tool})
+	p.state.lookupScoring(tool) // populate
+	if len(p.state.scoringCache) != 1 {
+		t.Errorf("after lookup, cache should have 1 entry: got %d", len(p.state.scoringCache))
+	}
+
+	// Setting an equivalent pool (same names) must NOT invalidate.
+	p.state.setPool([]core.Tool{tool})
+	if p.state.scoringCache == nil || len(p.state.scoringCache) != 1 {
+		t.Errorf("identical pool signature must preserve cache: got %v", p.state.scoringCache)
+	}
+
+	// Setting a DIFFERENT pool must invalidate.
+	other := makeDeferredTool("Different", "Another tool")
+	p.state.setPool([]core.Tool{other})
+	if p.state.scoringCache != nil {
+		t.Errorf("pool signature change must clear cache: got %v", p.state.scoringCache)
+	}
+}
+
 // TestStatefulToolCheckpointRoundtrip verifies that the discovered set
 // survives a full ExportState → serialize → deserialize → RestoreState
 // cycle on the Tool struct returned by Proxy.Tool().
@@ -556,8 +595,555 @@ func TestSystemPromptFragment_EmptyWhenNoDeferredTools(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
+// MarkDeferred / MarkDeferredIf helpers
+// --------------------------------------------------------------------------
+
+func TestMarkDeferred_StampsAllTools(t *testing.T) {
+	type Empty struct{}
+	in := []core.Tool{
+		core.FuncTool[Empty]("alpha", "",
+			func(_ context.Context, _ Empty) (string, error) { return "", nil }),
+		core.FuncTool[Empty]("beta", "",
+			func(_ context.Context, _ Empty) (string, error) { return "", nil }),
+	}
+
+	out := MarkDeferred(in)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(out))
+	}
+	for _, tool := range out {
+		if !tool.ShouldDefer {
+			t.Errorf("tool %q should be marked deferred", tool.Definition.Name)
+		}
+	}
+
+	// Original slice must not be mutated.
+	for _, tool := range in {
+		if tool.ShouldDefer {
+			t.Errorf("input slice should not be mutated: %q has ShouldDefer=true", tool.Definition.Name)
+		}
+	}
+}
+
+func TestMarkDeferred_PreservesOtherFields(t *testing.T) {
+	type Empty struct{}
+	tool := core.FuncTool[Empty]("alpha", "desc",
+		func(_ context.Context, _ Empty) (string, error) { return "", nil })
+	tool.SearchHint = "important hint"
+	tool.RequiresApproval = true
+
+	out := MarkDeferred([]core.Tool{tool})
+	if out[0].SearchHint != "important hint" {
+		t.Errorf("SearchHint should be preserved, got %q", out[0].SearchHint)
+	}
+	if !out[0].RequiresApproval {
+		t.Error("RequiresApproval should be preserved")
+	}
+	if !out[0].ShouldDefer {
+		t.Error("ShouldDefer should be set")
+	}
+}
+
+func TestMarkDeferredIf_RespectsPredicate(t *testing.T) {
+	type Empty struct{}
+	in := []core.Tool{
+		core.FuncTool[Empty]("mcp__github__create_issue", "",
+			func(_ context.Context, _ Empty) (string, error) { return "", nil }),
+		core.FuncTool[Empty]("mcp__slack__send", "",
+			func(_ context.Context, _ Empty) (string, error) { return "", nil }),
+		core.FuncTool[Empty]("local_tool", "",
+			func(_ context.Context, _ Empty) (string, error) { return "", nil }),
+	}
+
+	out := MarkDeferredIf(in, func(t core.Tool) bool {
+		return strings.HasPrefix(t.Definition.Name, "mcp__")
+	})
+
+	wantDeferred := map[string]bool{
+		"mcp__github__create_issue": true,
+		"mcp__slack__send":          true,
+		"local_tool":                false,
+	}
+	for _, tool := range out {
+		if tool.ShouldDefer != wantDeferred[tool.Definition.Name] {
+			t.Errorf("%q: got ShouldDefer=%v want %v",
+				tool.Definition.Name, tool.ShouldDefer, wantDeferred[tool.Definition.Name])
+		}
+	}
+}
+
+func TestMarkDeferred_EmptyInput(t *testing.T) {
+	if out := MarkDeferred(nil); out != nil {
+		t.Errorf("nil input should return nil, got %v", out)
+	}
+	if out := MarkDeferred([]core.Tool{}); out != nil {
+		t.Errorf("empty input should return nil, got %v", out)
+	}
+}
+
+// --------------------------------------------------------------------------
+// Delta announcement: WrapPrompt + SystemPromptFuncFor
+// --------------------------------------------------------------------------
+
+func TestWrapPrompt_PrependsFragment(t *testing.T) {
+	p := New(Config{})
+	tools := []core.Tool{
+		makeDeferredTool("hide_A", "Deferred A"),
+		makeDeferredTool("hide_B", "Deferred B"),
+	}
+	prompt := "do the thing"
+	got := p.WrapPrompt(prompt, tools)
+
+	if !strings.Contains(got, "hide_A") || !strings.Contains(got, "hide_B") {
+		t.Errorf("wrapped prompt should list deferred tool names, got %q", got)
+	}
+	if !strings.HasSuffix(got, prompt) {
+		t.Errorf("wrapped prompt should end with the original prompt, got %q", got)
+	}
+	if !strings.Contains(got, DefaultToolName) {
+		t.Errorf("wrapped prompt should mention the tool_search tool name, got %q", got)
+	}
+}
+
+func TestWrapPrompt_EmptyWithNoDeferredTools(t *testing.T) {
+	p := New(Config{})
+	type Empty struct{}
+	tools := []core.Tool{
+		core.FuncTool[Empty]("keep", "",
+			func(_ context.Context, _ Empty) (string, error) { return "", nil }),
+	}
+	prompt := "do the thing"
+	got := p.WrapPrompt(prompt, tools)
+	if got != prompt {
+		t.Errorf("no deferred tools → prompt unchanged; got %q", got)
+	}
+}
+
+func TestWrapPrompt_ModeOffPassThrough(t *testing.T) {
+	p := New(Config{Mode: ModeOff})
+	tools := []core.Tool{makeDeferredTool("hide_A", "Deferred")}
+	got := p.WrapPrompt("do", tools)
+	if got != "do" {
+		t.Errorf("ModeOff should pass the prompt through unchanged: got %q", got)
+	}
+}
+
+func TestSystemPromptFuncFor_EmitsOnceThenEmpty(t *testing.T) {
+	p := New(Config{})
+	tools := []core.Tool{
+		makeDeferredTool("hide_A", "Deferred A"),
+		makeDeferredTool("hide_B", "Deferred B"),
+	}
+	fn := p.SystemPromptFuncFor(tools)
+
+	// First call → full fragment.
+	got1, err := fn(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if !strings.Contains(got1, "hide_A") || !strings.Contains(got1, "hide_B") {
+		t.Errorf("first call should emit full fragment; got %q", got1)
+	}
+
+	// Second, third calls → empty (delta).
+	got2, _ := fn(context.Background(), nil)
+	if got2 != "" {
+		t.Errorf("second call should emit empty (delta); got %q", got2)
+	}
+	got3, _ := fn(context.Background(), nil)
+	if got3 != "" {
+		t.Errorf("third call should emit empty (delta); got %q", got3)
+	}
+
+	// Reset re-arms the announcer.
+	p.Reset()
+	got4, _ := fn(context.Background(), nil)
+	if !strings.Contains(got4, "hide_A") {
+		t.Errorf("after Reset, first call should re-announce; got %q", got4)
+	}
+}
+
+func TestSystemPromptFuncFor_RearmsOnPoolChange(t *testing.T) {
+	p := New(Config{})
+	initial := []core.Tool{makeDeferredTool("hide_A", "A")}
+	fn := p.SystemPromptFuncFor(initial)
+
+	// Burn the first announcement.
+	if _, err := fn(context.Background(), nil); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// PrepareFuncFor with a new pool (different signature) should
+	// clear the announcement flag, so the next SystemPromptFuncFor
+	// call re-emits.
+	updated := []core.Tool{
+		makeDeferredTool("hide_A", "A"),
+		makeDeferredTool("hide_B", "B"),
+	}
+	defs := make([]core.ToolDefinition, len(updated))
+	for i, t := range updated {
+		defs[i] = t.Definition
+	}
+	_ = p.PrepareFuncFor(updated)(context.Background(), nil, defs)
+
+	// Use the ORIGINAL closure but expect re-announcement because
+	// the underlying state was re-armed.
+	got, _ := fn(context.Background(), nil)
+	if got == "" {
+		t.Error("pool change should re-arm announcer; got empty fragment")
+	}
+}
+
+// TestAgentEndToEnd_SystemPromptFuncForDelta drives a 3-turn agent with
+// a dynamic system prompt wired through SystemPromptFuncFor and asserts
+// that only the first request's composed system prompt contains the
+// deferred-tools fragment.
+func TestAgentEndToEnd_SystemPromptFuncForDelta(t *testing.T) {
+	proxy := New(Config{})
+	hide := makeDeferredTool("hide_me", "A deferred tool named hide_me")
+	tools := []core.Tool{hide, proxy.Tool()}
+
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(DefaultToolName, `{"query":"select:hide_me"}`, "call_1"),
+		core.ToolCallResponseWithID("hide_me", `{}`, "call_2"),
+		core.TextResponse("done"),
+	)
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](tools...),
+		core.WithToolsPrepare[string](proxy.PrepareFuncFor(tools)),
+		core.WithSystemPrompt[string]("base prompt"),
+		core.WithDynamicSystemPrompt[string](proxy.SystemPromptFuncFor(tools)),
+	)
+
+	if _, err := agent.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("agent run: %v", err)
+	}
+
+	calls := model.Calls()
+	if len(calls) < 2 {
+		t.Fatalf("expected at least 2 calls, got %d", len(calls))
+	}
+
+	// currentTurnSystemPrompt returns the concatenated SystemPromptPart
+	// content from the LAST ModelRequest in the messages slice — i.e.
+	// the new system prompt emitted specifically for this turn. This
+	// is the right thing to inspect when checking whether the dynamic
+	// prompt func added anything fresh. Earlier turns' ModelRequests
+	// naturally remain in the history (that's how the model remembers
+	// the first-turn announcement) but don't count as "this turn's"
+	// system content.
+	currentTurnSystemPrompt := func(call core.TestModelCall) string {
+		var lastReqParts []core.ModelRequestPart
+		for _, msg := range call.Messages {
+			if req, ok := msg.(core.ModelRequest); ok {
+				lastReqParts = req.Parts
+			}
+		}
+		var b strings.Builder
+		for _, part := range lastReqParts {
+			if sp, ok := part.(core.SystemPromptPart); ok {
+				if b.Len() > 0 {
+					b.WriteByte('\n')
+				}
+				b.WriteString(sp.Content)
+			}
+		}
+		return b.String()
+	}
+
+	// historyHasDeferredHeader walks the full message history for the
+	// call and returns true if any ModelRequest contains a
+	// SystemPromptPart mentioning the Deferred Tools header. Used to
+	// verify the fragment was emitted at least once.
+	historyHasDeferredHeader := func(call core.TestModelCall) bool {
+		for _, msg := range call.Messages {
+			req, ok := msg.(core.ModelRequest)
+			if !ok {
+				continue
+			}
+			for _, part := range req.Parts {
+				if sp, ok := part.(core.SystemPromptPart); ok {
+					if strings.Contains(sp.Content, "Deferred Tools") {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+
+	// Turn 1: the fresh SystemPromptPart must contain the fragment.
+	first := currentTurnSystemPrompt(calls[0])
+	if !strings.Contains(first, "hide_me") {
+		t.Errorf("turn 1 current system prompt should contain hide_me, got %q", first)
+	}
+	if !strings.Contains(first, "Deferred Tools") {
+		t.Errorf("turn 1 current system prompt should contain the deferred tools header, got %q", first)
+	}
+
+	// Turn 2+: the NEW SystemPromptPart must NOT repeat the fragment
+	// (delta), but the history must still carry turn 1's fragment so
+	// the model retains context.
+	for i, call := range calls[1:] {
+		current := currentTurnSystemPrompt(call)
+		if strings.Contains(current, "Deferred Tools") {
+			t.Errorf("turn %d's new system prompt should not repeat the deferred tools header, got %q", i+2, current)
+		}
+		if !historyHasDeferredHeader(call) {
+			t.Errorf("turn %d's message history should still carry the turn-1 fragment for model recall", i+2)
+		}
+	}
+}
+
+// --------------------------------------------------------------------------
+// Telemetry via EventBus
+// --------------------------------------------------------------------------
+
+// TestTelemetry_SearchOutcomeEventFiresOnToolSearchCall drives a
+// single agent turn in which the model calls tool_search, and
+// asserts a SearchOutcomeEvent lands with the expected fields.
+func TestTelemetry_SearchOutcomeEventFiresOnToolSearchCall(t *testing.T) {
+	proxy := New(Config{})
+	bus := core.NewEventBus()
+
+	hideA := makeDeferredTool("hide_A", "Deferred A")
+	hideB := makeDeferredTool("hide_B", "Deferred B")
+	hideC := makeDeferredTool("hide_C", "Deferred C")
+	tools := []core.Tool{hideA, hideB, hideC, proxy.Tool()}
+
+	var outcomes []SearchOutcomeEvent
+	var mu sync.Mutex
+	core.Subscribe(bus, func(e SearchOutcomeEvent) {
+		mu.Lock()
+		outcomes = append(outcomes, e)
+		mu.Unlock()
+	})
+
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(DefaultToolName, `{"query":"select:hide_B,hide_C"}`, "call_1"),
+		core.TextResponse("done"),
+	)
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](tools...),
+		core.WithToolsPrepare[string](proxy.PrepareFuncFor(tools)),
+		core.WithEventBus[string](bus),
+	)
+
+	if _, err := agent.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("agent run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(outcomes) != 1 {
+		t.Fatalf("expected 1 SearchOutcomeEvent, got %d", len(outcomes))
+	}
+	out := outcomes[0]
+	if out.ToolName != DefaultToolName {
+		t.Errorf("ToolName: got %q want %q", out.ToolName, DefaultToolName)
+	}
+	if out.Query != "select:hide_B,hide_C" {
+		t.Errorf("Query: got %q", out.Query)
+	}
+	if out.QueryKind != SearchQueryKindSelect {
+		t.Errorf("QueryKind: got %q want %q", out.QueryKind, SearchQueryKindSelect)
+	}
+	if out.MatchCount != 2 {
+		t.Errorf("MatchCount: got %d want 2", out.MatchCount)
+	}
+	if out.TotalDeferredTools != 3 {
+		t.Errorf("TotalDeferredTools: got %d want 3", out.TotalDeferredTools)
+	}
+	if out.OccurredAt.IsZero() {
+		t.Error("OccurredAt should be populated")
+	}
+}
+
+// TestTelemetry_ModeDecisionEventFiresPerRequest verifies that
+// ModeDecisionEvent fires for every model request with the right
+// Mode and Deferred fields.
+func TestTelemetry_ModeDecisionEventFiresPerRequest(t *testing.T) {
+	proxy := New(Config{}) // ModeAlways (default)
+	bus := core.NewEventBus()
+
+	hide := makeDeferredTool("hide_me", "Deferred")
+	type Empty struct{}
+	keep := core.FuncTool[Empty]("keep_me", "Inline",
+		func(_ context.Context, _ Empty) (string, error) { return "", nil })
+	tools := []core.Tool{hide, keep, proxy.Tool()}
+
+	var decisions []ModeDecisionEvent
+	var mu sync.Mutex
+	core.Subscribe(bus, func(e ModeDecisionEvent) {
+		mu.Lock()
+		decisions = append(decisions, e)
+		mu.Unlock()
+	})
+
+	model := core.NewTestModel(core.TextResponse("done"))
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](tools...),
+		core.WithToolsPrepare[string](proxy.PrepareFuncFor(tools)),
+		core.WithEventBus[string](bus),
+	)
+
+	if _, err := agent.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("agent run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(decisions) != 1 {
+		t.Fatalf("expected 1 ModeDecisionEvent, got %d", len(decisions))
+	}
+	d := decisions[0]
+	if d.Mode != ModeAlways {
+		t.Errorf("Mode: got %v want ModeAlways", d.Mode)
+	}
+	if !d.Deferred {
+		t.Error("Deferred should be true in ModeAlways")
+	}
+	if d.DeferredToolCount != 1 {
+		t.Errorf("DeferredToolCount: got %d want 1", d.DeferredToolCount)
+	}
+	if d.InlineToolCount != 2 {
+		// keep_me + tool_search
+		t.Errorf("InlineToolCount: got %d want 2", d.InlineToolCount)
+	}
+}
+
+// TestTelemetry_ModeAutoBelowThresholdReportsNotDeferred exercises
+// the auto-mode pass-through branch and confirms the event reflects
+// estimated tokens and threshold.
+func TestTelemetry_ModeAutoBelowThresholdReportsNotDeferred(t *testing.T) {
+	proxy := New(Config{
+		Mode:           ModeAuto,
+		AutoTokenRatio: 0.10,
+		ContextWindow:  200_000,
+	})
+	bus := core.NewEventBus()
+
+	// A single short deferred tool — well under the 20k-token threshold.
+	tools := []core.Tool{makeDeferredTool("tiny", "Small"), proxy.Tool()}
+
+	var decisions []ModeDecisionEvent
+	var mu sync.Mutex
+	core.Subscribe(bus, func(e ModeDecisionEvent) {
+		mu.Lock()
+		decisions = append(decisions, e)
+		mu.Unlock()
+	})
+
+	model := core.NewTestModel(core.TextResponse("done"))
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](tools...),
+		core.WithToolsPrepare[string](proxy.PrepareFuncFor(tools)),
+		core.WithEventBus[string](bus),
+	)
+	if _, err := agent.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("agent run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(decisions) != 1 {
+		t.Fatalf("expected 1 ModeDecisionEvent, got %d", len(decisions))
+	}
+	d := decisions[0]
+	if d.Mode != ModeAuto {
+		t.Errorf("Mode: got %v want ModeAuto", d.Mode)
+	}
+	if d.Deferred {
+		t.Error("Deferred should be false (below threshold)")
+	}
+	if d.Threshold == 0 {
+		t.Error("Threshold should be populated in ModeAuto")
+	}
+	if d.EstimatedTokens == 0 {
+		// Unlikely — at least the name+description characters should produce a nonzero estimate.
+		t.Error("EstimatedTokens should be populated in ModeAuto")
+	}
+	if d.EstimatedTokens >= d.Threshold {
+		t.Errorf("sanity: estimated %d should be below threshold %d", d.EstimatedTokens, d.Threshold)
+	}
+}
+
+// TestTelemetry_NilEventBusIsSafe proves the publishers are no-ops
+// when the agent has no EventBus wired in — the common case.
+func TestTelemetry_NilEventBusIsSafe(t *testing.T) {
+	proxy := New(Config{})
+	hide := makeDeferredTool("hide", "Deferred")
+	tools := []core.Tool{hide, proxy.Tool()}
+
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(DefaultToolName, `{"query":"select:hide"}`, "call_1"),
+		core.TextResponse("done"),
+	)
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](tools...),
+		core.WithToolsPrepare[string](proxy.PrepareFuncFor(tools)),
+		// no WithEventBus
+	)
+	// Must not panic or error despite no bus.
+	if _, err := agent.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("run without event bus failed: %v", err)
+	}
+}
+
+// --------------------------------------------------------------------------
 // helpers
 // --------------------------------------------------------------------------
+
+// BenchmarkSearchTools_Cached measures cached keyword search latency
+// against a 200-tool pool. Running the same query twice over the same
+// pool should be noticeably faster on the second pass because
+// parseToolName / ToLower on each candidate only runs once.
+func BenchmarkSearchTools_Cached(b *testing.B) {
+	pool := make([]core.Tool, 200)
+	for i := range pool {
+		pool[i] = makeDeferredTool(
+			mockToolName(i),
+			"A moderate-length tool description "+mockToolName(i),
+		)
+	}
+	p := New(Config{})
+	p.state.setPool(pool)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = searchTools("file read", pool, 5, p.state.lookupScoring)
+	}
+}
+
+// BenchmarkSearchTools_Uncached is the reference point — no cache, so
+// parseToolName / ToLower runs on every candidate every call.
+func BenchmarkSearchTools_Uncached(b *testing.B) {
+	pool := make([]core.Tool, 200)
+	for i := range pool {
+		pool[i] = makeDeferredTool(
+			mockToolName(i),
+			"A moderate-length tool description "+mockToolName(i),
+		)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = searchTools("file read", pool, 5, nil)
+	}
+}
+
+func mockToolName(i int) string {
+	// Mix CamelCase, snake_case, and mcp__ shapes so the benchmark
+	// exercises every branch of parseToolName.
+	switch i % 3 {
+	case 0:
+		return "FileReadTool" + string(rune('0'+i%10))
+	case 1:
+		return "file_write_" + string(rune('a'+i%26))
+	default:
+		return "mcp__github__action_" + string(rune('a'+i%26))
+	}
+}
 
 func namesFromDefs(defs []core.ToolDefinition) []string {
 	out := make([]string, len(defs))

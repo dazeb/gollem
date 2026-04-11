@@ -76,12 +76,31 @@ type searchResult struct {
 	score int
 }
 
+// scoringLookup returns the cached scoringEntry for a tool. The Proxy
+// supplies a closure over its per-run cache so searchTools doesn't have
+// to know about state.go internals.
+type scoringLookup func(core.Tool) scoringEntry
+
+// uncachedLookup parses the tool on every call. Used by tests and by
+// the non-state-backed code paths where we don't have a Proxy on hand.
+func uncachedLookup(tool core.Tool) scoringEntry {
+	return scoringEntry{
+		parsed:    parseToolName(tool.Definition.Name),
+		descLower: strings.ToLower(tool.Definition.Description),
+		hintLower: strings.ToLower(tool.SearchHint),
+	}
+}
+
 // searchTools runs the keyword-based search. The `pool` argument is the
 // full tool list (deferred + non-deferred) that the Proxy recorded on
 // the most recent PrepareFunc call. Scoring applies only to deferred
 // tools (the point of the feature) but exact-match / select: lookups
 // fall back to the full list, so the model can ask for a tool it
 // already has and get a harmless no-op instead of "no matches".
+//
+// `lookup` returns a cached per-tool scoringEntry to avoid recomputing
+// parseToolName / ToLower on every search. Pass uncachedLookup when
+// calling from a context without a shared cache (e.g. unit tests).
 //
 // Supported query forms:
 //   - `select:Name1,Name2` → bypass scoring, return the exact names that exist
@@ -93,10 +112,13 @@ type searchResult struct {
 //
 // Scoring weights purposely mirror Claude Code's so agents sharing a
 // mental model of "how does ToolSearch work?" get the same answers.
-func searchTools(query string, pool []core.Tool, maxResults int) []string {
+func searchTools(query string, pool []core.Tool, maxResults int, lookup scoringLookup) []string {
 	qLower := strings.TrimSpace(strings.ToLower(query))
 	if qLower == "" || len(pool) == 0 {
 		return nil
+	}
+	if lookup == nil {
+		lookup = uncachedLookup
 	}
 
 	// Partition pool into deferred (for scoring) and the full set (for
@@ -189,13 +211,11 @@ func searchTools(query string, pool []core.Tool, maxResults int) []string {
 	if len(required) > 0 {
 		var keep []core.Tool
 		for _, t := range deferred {
-			parsed := parseToolName(t.Definition.Name)
-			desc := strings.ToLower(t.Definition.Description)
-			hint := strings.ToLower(t.SearchHint)
+			entry := lookup(t)
 			allMatch := true
 			for _, term := range required {
 				pattern := patterns[term]
-				if !hasTermMatch(parsed, term, pattern, desc, hint) {
+				if !hasTermMatchCached(entry, term, pattern) {
 					allMatch = false
 					break
 				}
@@ -210,23 +230,21 @@ func searchTools(query string, pool []core.Tool, maxResults int) []string {
 	// Score each candidate.
 	scored := make([]searchResult, 0, len(candidates))
 	for _, t := range candidates {
-		parsed := parseToolName(t.Definition.Name)
-		desc := strings.ToLower(t.Definition.Description)
-		hint := strings.ToLower(t.SearchHint)
+		entry := lookup(t)
 		score := 0
 
 		for _, term := range scoringTerms {
 			pattern := patterns[term]
 
 			// Exact part match.
-			if containsEqual(parsed.parts, term) {
-				if parsed.isMcp {
+			if containsEqual(entry.parsed.parts, term) {
+				if entry.parsed.isMcp {
 					score += 12
 				} else {
 					score += 10
 				}
-			} else if containsSubstring(parsed.parts, term) {
-				if parsed.isMcp {
+			} else if containsSubstring(entry.parsed.parts, term) {
+				if entry.parsed.isMcp {
 					score += 6
 				} else {
 					score += 5
@@ -234,17 +252,17 @@ func searchTools(query string, pool []core.Tool, maxResults int) []string {
 			}
 
 			// Full-name fallback (only when nothing else scored yet).
-			if score == 0 && strings.Contains(parsed.full, term) {
+			if score == 0 && strings.Contains(entry.parsed.full, term) {
 				score += 3
 			}
 
 			// searchHint match — curated capability phrase.
-			if hint != "" && pattern.MatchString(hint) {
+			if entry.hintLower != "" && pattern.MatchString(entry.hintLower) {
 				score += 4
 			}
 
 			// Description match (word-boundary).
-			if pattern.MatchString(desc) {
+			if pattern.MatchString(entry.descLower) {
 				score += 2
 			}
 		}
@@ -273,16 +291,17 @@ func searchTools(query string, pool []core.Tool, maxResults int) []string {
 	return out
 }
 
-// hasTermMatch reports whether a term is found in any of the searchable
-// surfaces (name parts, description, or searchHint).
-func hasTermMatch(parsed parsedName, term string, pattern *regexp.Regexp, desc, hint string) bool {
-	if containsEqual(parsed.parts, term) || containsSubstring(parsed.parts, term) {
+// hasTermMatchCached reports whether a term is found in any of the
+// searchable surfaces (name parts, description, or searchHint) of a
+// precomputed scoringEntry.
+func hasTermMatchCached(entry scoringEntry, term string, pattern *regexp.Regexp) bool {
+	if containsEqual(entry.parsed.parts, term) || containsSubstring(entry.parsed.parts, term) {
 		return true
 	}
-	if pattern.MatchString(desc) {
+	if pattern.MatchString(entry.descLower) {
 		return true
 	}
-	if hint != "" && pattern.MatchString(hint) {
+	if entry.hintLower != "" && pattern.MatchString(entry.hintLower) {
 		return true
 	}
 	return false

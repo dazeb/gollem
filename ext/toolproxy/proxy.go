@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -160,7 +161,7 @@ func (p *Proxy) Tool() core.Tool {
 // might invoke tool_search. The pool includes both deferred and
 // non-deferred tools so exact-match / select: lookups can fall back to
 // already-loaded tools (harmless no-op).
-func (p *Proxy) handleSearch(_ context.Context, _ *core.RunContext, argsJSON string) (any, error) {
+func (p *Proxy) handleSearch(_ context.Context, rc *core.RunContext, argsJSON string) (any, error) {
 	var params searchParams
 	if argsJSON != "" && argsJSON != "{}" {
 		if err := json.Unmarshal([]byte(argsJSON), &params); err != nil {
@@ -177,7 +178,7 @@ func (p *Proxy) handleSearch(_ context.Context, _ *core.RunContext, argsJSON str
 	}
 
 	pool := p.loadPool()
-	matches := searchTools(params.Query, pool, maxResults)
+	matches := searchTools(params.Query, pool, maxResults, p.state.lookupScoring)
 
 	// Track newly-discovered tools so subsequent PrepareFunc calls will
 	// include them. Adding a non-deferred tool name is a harmless no-op:
@@ -195,6 +196,17 @@ func (p *Proxy) handleSearch(_ context.Context, _ *core.RunContext, argsJSON str
 		}
 	}
 
+	// Telemetry: report what just happened. Nil-safe — no-op if the
+	// agent has no EventBus configured.
+	publishSearchOutcome(rc, SearchOutcomeEvent{
+		ToolName:           p.cfg.ToolName,
+		Query:              params.Query,
+		QueryKind:          classifyQueryKind(params.Query),
+		MatchCount:         len(matches),
+		TotalDeferredTools: deferredCount,
+		MaxResults:         maxResults,
+	})
+
 	return searchResultJSON{
 		Matches:            matches,
 		Query:              params.Query,
@@ -203,10 +215,76 @@ func (p *Proxy) handleSearch(_ context.Context, _ *core.RunContext, argsJSON str
 	}, nil
 }
 
+// classifyQueryKind returns SearchQueryKindSelect for `select:...`
+// queries and SearchQueryKindKeyword for everything else. Used only
+// by the telemetry path.
+func classifyQueryKind(query string) SearchQueryKind {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(query)), "select:") {
+		return SearchQueryKindSelect
+	}
+	return SearchQueryKindKeyword
+}
+
+// MarkDeferred returns a new slice in which every tool has
+// ShouldDefer=true set. The input slice is not mutated. Existing
+// ShouldDefer / SearchHint fields on each tool are preserved; only
+// the deferred flag is forced on.
+//
+// This is the idiomatic way to stamp all tools from a source that
+// should be hidden until the model explicitly loads them — most
+// commonly MCP servers. Matches Claude Code's auto-defer behaviour
+// for MCP tools (isMcp=true), except the gollem port is explicit so
+// callers can opt in per-source rather than relying on magic.
+//
+// Example with an MCP Manager:
+//
+//	mcpTools, _ := manager.Tools(ctx)
+//	all := append(baseTools, toolproxy.MarkDeferred(mcpTools)...)
+//	all = append(all, proxy.Tool())
+//	agent := core.NewAgent[string](model,
+//	    core.WithTools[string](all...),
+//	    core.WithToolsPrepare[string](proxy.PrepareFuncFor(all)),
+//	    core.WithSystemPrompt[string]("..."+proxy.SystemPromptFragment(all)),
+//	)
+func MarkDeferred(tools []core.Tool) []core.Tool {
+	return MarkDeferredIf(tools, func(core.Tool) bool { return true })
+}
+
+// MarkDeferredIf is like MarkDeferred but only stamps ShouldDefer on
+// tools for which predicate returns true. Useful when importing a
+// mixed set and wanting to defer only some subset — for example,
+// deferring MCP tools whose names match a prefix while leaving the
+// rest inline.
+//
+// Returns a new slice; the input is not mutated.
+func MarkDeferredIf(tools []core.Tool, predicate func(core.Tool) bool) []core.Tool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]core.Tool, len(tools))
+	for i, t := range tools {
+		out[i] = t
+		if predicate(t) {
+			out[i].ShouldDefer = true
+		}
+	}
+	return out
+}
+
 // SystemPromptFragment returns a markdown block listing the names of all
 // deferred tools in the given slice. Append this to your agent's system
-// prompt (directly or via WithDynamicSystemPrompt) so the model knows what
-// it can ask tool_search to load.
+// prompt (directly, via WithSystemPrompt) so the model knows what it
+// can ask tool_search to load.
+//
+// This is the static full-list form: every request's system prompt
+// contains the complete list of deferred tool names. It is
+// cache-friendly — provider prompt caching (Anthropic, OpenAI, etc.)
+// amortises the transmission cost to once per conversation.
+//
+// For callers who want first-turn-only delivery via the user prompt
+// (e.g. to work well with providers that don't cache system prompts),
+// use WrapPrompt. For stateful delta via a dynamic system prompt, use
+// SystemPromptFuncFor.
 //
 // Returns the empty string when no tools are deferred — always safe to
 // concatenate.
@@ -215,6 +293,69 @@ func (p *Proxy) SystemPromptFragment(tools []core.Tool) string {
 		return ""
 	}
 	return buildSystemPromptFragment(p.cfg.ToolName, tools)
+}
+
+// WrapPrompt prepends the deferred-tools fragment to the given user
+// prompt, returning a combined string suitable for passing directly
+// to agent.Run. The fragment is delivered exactly once — the first
+// turn's user message — and persists through the rest of the run via
+// message history, so no subsequent turn re-sends it.
+//
+// This is the delta-efficient delivery mechanism: it works on every
+// provider (no cache dependency) and keeps the per-turn token cost
+// flat across the run, equivalent to Claude Code's one-shot
+// <available-deferred-tools> attachment on the first user message.
+//
+// If the Proxy is in ModeOff, or there are no deferred tools in the
+// list, WrapPrompt returns the prompt unchanged.
+func (p *Proxy) WrapPrompt(prompt string, tools []core.Tool) string {
+	if p.cfg.Mode == ModeOff {
+		return prompt
+	}
+	fragment := buildSystemPromptFragment(p.cfg.ToolName, tools)
+	if fragment == "" {
+		return prompt
+	}
+	// Trim leading newlines on the fragment — SystemPromptFragment
+	// emits them as a separator from prior system prompt content, but
+	// here the fragment is the start of a user message.
+	fragment = strings.TrimLeft(fragment, "\n")
+	if prompt == "" {
+		return fragment
+	}
+	return fragment + "\n" + prompt
+}
+
+// SystemPromptFuncFor returns a dynamic system-prompt function that
+// emits the full deferred-tools fragment on its first invocation for
+// this run and an empty string on every call thereafter. Wire the
+// result into the agent with core.WithDynamicSystemPrompt.
+//
+// This is the stateful delta form: useful with providers that support
+// prompt caching (where the first-turn fragment is cached and costs
+// ~0 on subsequent turns). Not ideal for providers without caching —
+// if the model doesn't "remember" the fragment via cache, it will see
+// a system prompt with no deferred-tools section starting on turn 2,
+// and may fail to discover tools.
+//
+// For a provider-independent delta, prefer WrapPrompt: it puts the
+// fragment in the user message, which naturally persists through
+// message history on every provider.
+//
+// The announcement state is tracked on the Proxy instance (thread-safe,
+// mutex-guarded). Calling Proxy.Reset or mutating the pool via
+// PrepareFuncFor with a different tool set re-arms the announcer so
+// the next call emits the updated list.
+func (p *Proxy) SystemPromptFuncFor(tools []core.Tool) core.SystemPromptFunc {
+	return func(_ context.Context, _ *core.RunContext) (string, error) {
+		if p.cfg.Mode == ModeOff {
+			return "", nil
+		}
+		if !p.state.claimSystemPromptAnnouncement() {
+			return "", nil
+		}
+		return buildSystemPromptFragment(p.cfg.ToolName, tools), nil
+	}
 }
 
 // PrepareFuncFor binds a Proxy to a concrete tool list and returns the
@@ -245,9 +386,25 @@ func (p *Proxy) PrepareFuncFor(tools []core.Tool) core.AgentToolsPrepareFunc {
 		index[t.Definition.Name] = t
 	}
 
-	return func(_ context.Context, _ *core.RunContext, defs []core.ToolDefinition) []core.ToolDefinition {
+	return func(_ context.Context, rc *core.RunContext, defs []core.ToolDefinition) []core.ToolDefinition {
+		// Pre-count deferred/inline in the incoming pool so the decision
+		// event carries a consistent snapshot regardless of branch.
+		totalDeferred := 0
+		for _, t := range tools {
+			if t.ShouldDefer {
+				totalDeferred++
+			}
+		}
+		inline := len(tools) - totalDeferred
+
 		if p.cfg.Mode == ModeOff {
 			p.recordPool(tools)
+			publishModeDecision(rc, ModeDecisionEvent{
+				Mode:              ModeOff,
+				Deferred:          false,
+				DeferredToolCount: totalDeferred,
+				InlineToolCount:   inline,
+			})
 			return defs
 		}
 
@@ -255,8 +412,38 @@ func (p *Proxy) PrepareFuncFor(tools []core.Tool) core.AgentToolsPrepareFunc {
 		p.recordPool(tools)
 
 		// ModeAuto: short-circuit if below the deferral threshold.
-		if p.cfg.Mode == ModeAuto && !p.shouldDefer(tools) {
-			return defs
+		if p.cfg.Mode == ModeAuto {
+			cost := p.estimateDeferredCost(tools)
+			threshold := int(float64(p.cfg.ContextWindow) * p.cfg.AutoTokenRatio)
+			if cost < threshold {
+				publishModeDecision(rc, ModeDecisionEvent{
+					Mode:              ModeAuto,
+					Deferred:          false,
+					DeferredToolCount: totalDeferred,
+					InlineToolCount:   inline,
+					EstimatedTokens:   cost,
+					Threshold:         threshold,
+				})
+				return defs
+			}
+			// Fall through to filtering, but emit the decision event first
+			// with Deferred=true.
+			publishModeDecision(rc, ModeDecisionEvent{
+				Mode:              ModeAuto,
+				Deferred:          true,
+				DeferredToolCount: totalDeferred,
+				InlineToolCount:   inline,
+				EstimatedTokens:   cost,
+				Threshold:         threshold,
+			})
+		} else {
+			// ModeAlways: always defer.
+			publishModeDecision(rc, ModeDecisionEvent{
+				Mode:              ModeAlways,
+				Deferred:          true,
+				DeferredToolCount: totalDeferred,
+				InlineToolCount:   inline,
+			})
 		}
 
 		// ModeAlways (or ModeAuto past threshold): filter deferred tools
@@ -304,9 +491,11 @@ func (p *Proxy) loadPool() []core.Tool {
 	return p.state.getPool()
 }
 
-// shouldDefer reports whether the combined size of deferred tools exceeds
-// the auto-mode threshold.
-func (p *Proxy) shouldDefer(tools []core.Tool) bool {
+// estimateDeferredCost returns the token-cost estimate for the tools
+// in `tools` that have ShouldDefer=true. Uses the caller-supplied
+// TokenCounter if present, else falls back to a character heuristic.
+// Returns 0 when no tools in `tools` are deferred.
+func (p *Proxy) estimateDeferredCost(tools []core.Tool) int {
 	var deferred []core.Tool
 	for _, t := range tools {
 		if t.ShouldDefer {
@@ -314,21 +503,12 @@ func (p *Proxy) shouldDefer(tools []core.Tool) bool {
 		}
 	}
 	if len(deferred) == 0 {
-		return false
+		return 0
 	}
-
-	threshold := int(float64(p.cfg.ContextWindow) * p.cfg.AutoTokenRatio)
-	if threshold <= 0 {
-		return true
-	}
-
-	var cost int
 	if p.cfg.TokenCounter != nil {
-		cost = p.cfg.TokenCounter(deferred)
-	} else {
-		cost = estimateTokens(deferred)
+		return p.cfg.TokenCounter(deferred)
 	}
-	return cost >= threshold
+	return estimateTokens(deferred)
 }
 
 // estimateTokens approximates the token cost of a slice of tool
