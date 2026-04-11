@@ -941,7 +941,7 @@ func TestTracingHooksNestedDelegation(t *testing.T) {
 }
 
 // TestTracingHooksContextCompaction verifies that context compaction events
-// produce spans with before/after token and message count attributes.
+// produce spans with before/after message count attributes.
 func TestTracingHooksContextCompaction(t *testing.T) {
 	hook, exporter := setupTracing(t)
 
@@ -955,11 +955,9 @@ func TestTracingHooksContextCompaction(t *testing.T) {
 
 	// Simulate auto-summary compaction.
 	hook.OnContextCompaction(ctx, rc, core.ContextCompactionStats{
-		Strategy:              "auto_summary",
-		MessagesBefore:        42,
-		MessagesAfter:         6,
-		EstimatedTokensBefore: 150000,
-		EstimatedTokensAfter:  12000,
+		Strategy:       "auto_summary",
+		MessagesBefore: 42,
+		MessagesAfter:  6,
 	})
 
 	hook.OnTurnEnd(ctx, rc, 5, &core.ModelResponse{})
@@ -981,12 +979,6 @@ func TestTracingHooksContextCompaction(t *testing.T) {
 			if v := attrs[AttrCompactionMsgsAfter]; v != int64(6) {
 				t.Errorf("expected messages_after=6, got %v", v)
 			}
-			if v := attrs[AttrCompactionTokensBefore]; v != int64(150000) {
-				t.Errorf("expected tokens_before=150000, got %v", v)
-			}
-			if v := attrs[AttrCompactionTokensAfter]; v != int64(12000) {
-				t.Errorf("expected tokens_after=12000, got %v", v)
-			}
 		}
 	}
 	if !compactionFound {
@@ -1007,11 +999,9 @@ func TestTracingHooksContextCompactionParentage(t *testing.T) {
 	hook.OnRunStart(ctx, rc, "test")
 	hook.OnTurnStart(ctx, rc, 3)
 	hook.OnContextCompaction(ctx, rc, core.ContextCompactionStats{
-		Strategy:              "history_processor",
-		MessagesBefore:        20,
-		MessagesAfter:         20,
-		EstimatedTokensBefore: 80000,
-		EstimatedTokensAfter:  50000,
+		Strategy:       "history_processor",
+		MessagesBefore: 20,
+		MessagesAfter:  20,
 	})
 	hook.OnTurnEnd(ctx, rc, 3, &core.ModelResponse{})
 	hook.OnRunEnd(ctx, rc, nil, nil)
@@ -1055,11 +1045,9 @@ func TestTracingHooksEmergencyTruncation(t *testing.T) {
 
 	// Simulate emergency truncation (what ContextOverflowMiddleware reports).
 	hook.OnContextCompaction(ctx, rc, core.ContextCompactionStats{
-		Strategy:              "emergency_truncation",
-		MessagesBefore:        100,
-		MessagesAfter:         8,
-		EstimatedTokensBefore: 250000,
-		EstimatedTokensAfter:  15000,
+		Strategy:       "emergency_truncation",
+		MessagesBefore: 100,
+		MessagesAfter:  8,
 	})
 
 	hook.OnTurnEnd(ctx, rc, 1, &core.ModelResponse{})
@@ -1080,12 +1068,6 @@ func TestTracingHooksEmergencyTruncation(t *testing.T) {
 			}
 			if v := attrs[AttrCompactionMsgsAfter]; v != int64(8) {
 				t.Errorf("expected messages_after=8, got %v", v)
-			}
-			if v := attrs[AttrCompactionTokensBefore]; v != int64(250000) {
-				t.Errorf("expected tokens_before=250000, got %v", v)
-			}
-			if v := attrs[AttrCompactionTokensAfter]; v != int64(15000) {
-				t.Errorf("expected tokens_after=15000, got %v", v)
 			}
 		}
 	}

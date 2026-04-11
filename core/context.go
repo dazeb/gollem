@@ -40,15 +40,16 @@ func ToolCallIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-// CompactionCallback is a function that middleware can call to notify the
-// agent's hook system about context compaction events.
+// CompactionCallback is a function that middleware or history processors can
+// call to notify the agent's hook system about explicit context compaction
+// events.
 type CompactionCallback func(stats ContextCompactionStats)
 
 type compactionCallbackKey struct{}
 
 // ContextWithCompactionCallback returns a context carrying a compaction callback.
-// The agent framework injects this so middleware (e.g., ContextOverflowMiddleware)
-// can report emergency compression events to hooks.
+// The agent framework injects this so middleware and history processors can
+// report explicit compression events to hooks.
 func ContextWithCompactionCallback(ctx context.Context, cb CompactionCallback) context.Context {
 	return context.WithValue(ctx, compactionCallbackKey{}, cb)
 }

@@ -3,6 +3,7 @@ package deep
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -92,6 +93,19 @@ func (cm *ContextManager) ProcessMessages(ctx context.Context, messages []core.M
 		return messages, nil
 	}
 
+	reportCompaction := func(compacted []core.ModelMessage) {
+		if reflect.DeepEqual(compacted, messages) {
+			return
+		}
+		if cb := core.CompactionCallbackFromContext(ctx); cb != nil {
+			cb(core.ContextCompactionStats{
+				Strategy:       core.CompactionStrategyHistoryProcessor,
+				MessagesBefore: len(messages),
+				MessagesAfter:  len(compacted),
+			})
+		}
+	}
+
 	// Make a copy so we don't mutate the original.
 	result := make([]core.ModelMessage, len(messages))
 	copy(result, messages)
@@ -104,6 +118,7 @@ func (cm *ContextManager) ProcessMessages(ctx context.Context, messages []core.M
 	threshold := int(float64(cm.maxContextTokens) * cm.compressionThreshold)
 
 	if totalTokens < threshold {
+		reportCompaction(result)
 		return result, nil
 	}
 
@@ -112,6 +127,7 @@ func (cm *ContextManager) ProcessMessages(ctx context.Context, messages []core.M
 
 	totalTokens = cm.tokenCounter.CountMessageTokens(result)
 	if totalTokens < threshold {
+		reportCompaction(result)
 		return result, nil
 	}
 
@@ -119,8 +135,10 @@ func (cm *ContextManager) ProcessMessages(ctx context.Context, messages []core.M
 	// On summarization failure, gracefully degrade by returning the current result.
 	summarized, summarizeErr := cm.tier3Summarize(ctx, result)
 	if summarizeErr != nil {
+		reportCompaction(result)
 		return result, nil //nolint:nilerr // graceful degradation on summarization failure
 	}
+	reportCompaction(summarized)
 	return summarized, nil
 }
 

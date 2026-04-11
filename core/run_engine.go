@@ -259,48 +259,51 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			compressed, compErr := autoCompressMessages(e.ctx, e.state.messages, e.agent.autoContext, e.agent.model, beforeTokens)
 			if compErr == nil && len(compressed) < beforeCount {
 				e.state.messages = compressed
-				afterTokens := estimateTokens(compressed)
+				stats := ContextCompactionStats{
+					Strategy:       CompactionStrategyAutoSummary,
+					MessagesBefore: beforeCount,
+					MessagesAfter:  len(compressed),
+				}
 				e.agent.fireHook(func(h Hook) {
 					if h.OnContextCompaction != nil {
-						h.OnContextCompaction(e.ctx, turnRC, ContextCompactionStats{
-							Strategy:              CompactionStrategyAutoSummary,
-							MessagesBefore:        beforeCount,
-							MessagesAfter:         len(compressed),
-							EstimatedTokensBefore: beforeTokens,
-							EstimatedTokensAfter:  afterTokens,
-						})
+						h.OnContextCompaction(e.ctx, turnRC, stats)
 					}
 				})
+				if e.agent.tracingEnabled {
+					e.state.recordCompaction(stats)
+				}
 			}
 		}
 
 		messages := e.state.messages
 		for _, proc := range e.agent.historyProcessors {
 			beforeCount := len(messages)
-			beforeTokens := estimateTokens(messages)
-			processed, procErr := proc(e.ctx, messages)
+			var compactions []ContextCompactionStats
+			procCtx := ContextWithCompactionCallback(e.ctx, func(stats ContextCompactionStats) {
+				compactions = append(compactions, stats)
+			})
+			processed, procErr := proc(procCtx, messages)
 			if procErr != nil {
 				hpErr := fmt.Errorf("history processor failed: %w", procErr)
 				e.emitTurnCompleted(nil, hpErr)
 				return nil, nil, hpErr
 			}
-			afterCount := len(processed)
-			afterTokens := estimateTokens(processed)
-			tokenDelta := beforeTokens - afterTokens
-			meaningfulChange := afterCount < beforeCount ||
-				(beforeTokens > 0 && tokenDelta > 0 && float64(tokenDelta)/float64(beforeTokens) > 0.05)
-			if meaningfulChange {
+			if len(compactions) == 0 && len(processed) < beforeCount {
+				compactions = append(compactions, ContextCompactionStats{
+					Strategy:       CompactionStrategyHistoryProcessor,
+					MessagesBefore: beforeCount,
+					MessagesAfter:  len(processed),
+				})
+			}
+			for _, stats := range compactions {
 				e.agent.fireHook(func(h Hook) {
 					if h.OnContextCompaction != nil {
-						h.OnContextCompaction(e.ctx, turnRC, ContextCompactionStats{
-							Strategy:              CompactionStrategyHistoryProcessor,
-							MessagesBefore:        beforeCount,
-							MessagesAfter:         len(processed),
-							EstimatedTokensBefore: beforeTokens,
-							EstimatedTokensAfter:  afterTokens,
-						})
+						h.OnContextCompaction(e.ctx, turnRC, stats)
 					}
 				})
+				if e.agent.tracingEnabled {
+					e.state.recordCompaction(stats)
+				}
 			}
 			messages = processed
 		}
@@ -365,15 +368,22 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			resp *ModelResponse
 			err  error
 		)
-		if len(e.agent.middleware) > 0 {
+		middleware := e.agent.middleware
+		if e.agent.tracingEnabled {
+			middleware = append(append([]RequestMiddlewareFunc(nil), middleware...), newRequestTraceMiddleware(e.state, e.agent.model.ModelName()).Request)
+		}
+		if len(middleware) > 0 {
 			mwCtx := ContextWithCompactionCallback(e.ctx, func(stats ContextCompactionStats) {
 				e.agent.fireHook(func(h Hook) {
 					if h.OnContextCompaction != nil {
 						h.OnContextCompaction(e.ctx, turnRC, stats)
 					}
 				})
+				if e.agent.tracingEnabled {
+					e.state.recordCompaction(stats)
+				}
 			})
-			chain := buildMiddlewareChain(e.agent.middleware, e.agent.model)
+			chain := buildMiddlewareChain(middleware, e.agent.model)
 			resp, err = chain(mwCtx, messages, settings, params)
 		} else {
 			resp, err = e.agent.model.Request(e.ctx, messages, settings, params)

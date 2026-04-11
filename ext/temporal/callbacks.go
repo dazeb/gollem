@@ -37,8 +37,9 @@ type dynamicPromptActivityOutput struct {
 }
 
 type historyProcessorActivityOutput struct {
-	Messages     []core.SerializedMessage `json:"messages,omitempty"`
-	MessagesJSON json.RawMessage          `json:"messages_json,omitempty"` // Deprecated: prefer Messages.
+	Messages     []core.SerializedMessage      `json:"messages,omitempty"`
+	MessagesJSON json.RawMessage               `json:"messages_json,omitempty"` // Deprecated: prefer Messages.
+	Stats        []core.ContextCompactionStats `json:"stats,omitempty"`
 }
 
 type autoContextActivityInput struct {
@@ -591,17 +592,31 @@ func (ta *TemporalAgent[T]) historyProcessorActivity(ctx context.Context, input 
 	if err != nil {
 		return nil, err
 	}
+	var stats []core.ContextCompactionStats
 	for _, proc := range ta.runtime.HistoryProcessors {
-		messages, err = proc(ctx, messages)
+		beforeCount := len(messages)
+		var processorStats []core.ContextCompactionStats
+		procCtx := core.ContextWithCompactionCallback(ctx, func(stat core.ContextCompactionStats) {
+			processorStats = append(processorStats, stat)
+		})
+		messages, err = proc(procCtx, messages)
 		if err != nil {
 			return nil, err
 		}
+		if len(processorStats) == 0 && len(messages) < beforeCount {
+			processorStats = append(processorStats, core.ContextCompactionStats{
+				Strategy:       core.CompactionStrategyHistoryProcessor,
+				MessagesBefore: beforeCount,
+				MessagesAfter:  len(messages),
+			})
+		}
+		stats = append(stats, processorStats...)
 	}
 	serialized, err := core.EncodeMessages(messages)
 	if err != nil {
 		return nil, fmt.Errorf("marshal processed messages: %w", err)
 	}
-	return &historyProcessorActivityOutput{Messages: serialized}, nil
+	return &historyProcessorActivityOutput{Messages: serialized, Stats: stats}, nil
 }
 
 func (ta *TemporalAgent[T]) autoContextActivity(ctx context.Context, input autoContextActivityInput) (*autoContextActivityOutput, error) {
@@ -632,11 +647,9 @@ func (ta *TemporalAgent[T]) autoContextActivity(ctx context.Context, input autoC
 		Messages: serialized,
 		Changed:  true,
 		Stats: &core.ContextCompactionStats{
-			Strategy:              core.CompactionStrategyAutoSummary,
-			MessagesBefore:        beforeCount,
-			MessagesAfter:         len(compressed),
-			EstimatedTokensBefore: beforeTokens,
-			EstimatedTokensAfter:  core.EstimateTokens(compressed),
+			Strategy:       core.CompactionStrategyAutoSummary,
+			MessagesBefore: beforeCount,
+			MessagesAfter:  len(compressed),
 		},
 	}, nil
 }

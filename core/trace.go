@@ -4,15 +4,16 @@ import "time"
 
 // RunTrace captures the full execution trace of an agent run.
 type RunTrace struct {
-	RunID     string        `json:"run_id"`
-	Prompt    string        `json:"prompt"`
-	StartTime time.Time     `json:"start_time"`
-	EndTime   time.Time     `json:"end_time"`
-	Duration  time.Duration `json:"duration"`
-	Steps     []TraceStep   `json:"steps"`
-	Usage     RunUsage      `json:"usage"`
-	Success   bool          `json:"success"`
-	Error     string        `json:"error,omitempty"`
+	RunID     string         `json:"run_id"`
+	Prompt    string         `json:"prompt"`
+	StartTime time.Time      `json:"start_time"`
+	EndTime   time.Time      `json:"end_time"`
+	Duration  time.Duration  `json:"duration"`
+	Steps     []TraceStep    `json:"steps"`
+	Requests  []RequestTrace `json:"requests,omitempty"`
+	Usage     RunUsage       `json:"usage"`
+	Success   bool           `json:"success"`
+	Error     string         `json:"error,omitempty"`
 }
 
 // TraceStep captures a single step in the agent execution.

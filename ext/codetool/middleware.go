@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -8720,7 +8721,6 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 
 		for _, cfg := range configs {
 			beforeCount := len(current)
-			beforeTokens := core.EstimateTokens(current)
 			compressed := emergencyCompressMessagesWithConfig(current, cfg.maxContentBytes, cfg.keepLast)
 			// Note: we cannot compare compressed[0] == current[0] because
 			// ModelRequest/ModelResponse contain slice fields (Parts) which
@@ -8734,11 +8734,9 @@ func ContextOverflowMiddleware() core.AgentMiddleware {
 			// Notify hooks about the emergency compression via context callback.
 			if cb := core.CompactionCallbackFromContext(ctx); cb != nil {
 				cb(core.ContextCompactionStats{
-					Strategy:              core.CompactionStrategyEmergencyTruncation,
-					MessagesBefore:        beforeCount,
-					MessagesAfter:         len(compressed),
-					EstimatedTokensBefore: beforeTokens,
-					EstimatedTokensAfter:  core.EstimateTokens(compressed),
+					Strategy:       core.CompactionStrategyEmergencyTruncation,
+					MessagesBefore: beforeCount,
+					MessagesAfter:  len(compressed),
 				})
 			}
 
@@ -9424,10 +9422,24 @@ func truncateMessageContent(msg core.ModelMessage, maxBytes int) core.ModelMessa
 // error summaries live. This is critical for preserving test failure
 // details that the agent needs to fix issues.
 func ContentTruncationProcessor(maxBytes int) core.HistoryProcessor {
-	return func(_ context.Context, messages []core.ModelMessage) ([]core.ModelMessage, error) {
+	return func(ctx context.Context, messages []core.ModelMessage) ([]core.ModelMessage, error) {
 		result := make([]core.ModelMessage, len(messages))
+		changed := false
 		for i, msg := range messages {
-			result[i] = truncateMessageContentSmart(msg, maxBytes)
+			truncated := truncateMessageContentSmart(msg, maxBytes)
+			if !changed && !reflect.DeepEqual(truncated, msg) {
+				changed = true
+			}
+			result[i] = truncated
+		}
+		if changed {
+			if cb := core.CompactionCallbackFromContext(ctx); cb != nil {
+				cb(core.ContextCompactionStats{
+					Strategy:       core.CompactionStrategyHistoryProcessor,
+					MessagesBefore: len(messages),
+					MessagesAfter:  len(result),
+				})
+			}
 		}
 		return result, nil
 	}

@@ -12,7 +12,9 @@ import "context"
 //
 // The returned processor does not modify the original slice.
 func NormalizeHistory() HistoryProcessor {
-	return func(_ context.Context, messages []ModelMessage) ([]ModelMessage, error) {
+	return func(ctx context.Context, messages []ModelMessage) ([]ModelMessage, error) {
+		changed := false
+
 		// Collect all tool call IDs from ModelResponse messages.
 		callIDs := make(map[string]bool)
 		for _, msg := range messages {
@@ -50,12 +52,14 @@ func NormalizeHistory() HistoryProcessor {
 				if isTR {
 					// Drop orphaned tool returns.
 					if tr.ToolCallID != "" && !callIDs[tr.ToolCallID] {
+						changed = true
 						continue
 					}
 					// Clear images from completed turns (not the last request).
 					if i != lastReqIdx && len(tr.Images) > 0 {
 						tr.Images = nil
 						part = tr
+						changed = true
 					}
 				}
 				filtered = append(filtered, part)
@@ -63,6 +67,7 @@ func NormalizeHistory() HistoryProcessor {
 
 			// Skip empty requests.
 			if len(filtered) == 0 {
+				changed = true
 				continue
 			}
 
@@ -70,6 +75,15 @@ func NormalizeHistory() HistoryProcessor {
 				Parts:     filtered,
 				Timestamp: req.Timestamp,
 			})
+		}
+		if changed {
+			if cb := CompactionCallbackFromContext(ctx); cb != nil {
+				cb(ContextCompactionStats{
+					Strategy:       CompactionStrategyHistoryProcessor,
+					MessagesBefore: len(messages),
+					MessagesAfter:  len(result),
+				})
+			}
 		}
 		return result, nil
 	}

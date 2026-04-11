@@ -278,6 +278,90 @@ func TestTemporalAgent_RunWorkflow_ToolApprovalCallback(t *testing.T) {
 	})
 }
 
+func TestTemporalAgent_RunWorkflow_HistoryProcessorExplicitCompaction(t *testing.T) {
+	compactions := 0
+	var strategy string
+	model := core.NewTestModel(core.TextResponse("done"))
+	agent := core.NewAgent[string](model,
+		core.WithHistoryProcessor[string](func(ctx context.Context, messages []core.ModelMessage) ([]core.ModelMessage, error) {
+			if cb := core.CompactionCallbackFromContext(ctx); cb != nil {
+				cb(core.ContextCompactionStats{
+					Strategy:       core.CompactionStrategyHistoryProcessor,
+					MessagesBefore: len(messages),
+					MessagesAfter:  len(messages),
+				})
+			}
+			return messages, nil
+		}),
+		core.WithHooks[string](core.Hook{
+			OnContextCompaction: func(_ context.Context, _ *core.RunContext, stats core.ContextCompactionStats) {
+				compactions++
+				strategy = stats.Strategy
+			},
+		}),
+	)
+	ta := NewTemporalAgent(agent, WithName("workflow-history-processor-compaction"))
+
+	runWorkflowTest(t, ta, WorkflowInput{Prompt: "hello"}, func(output WorkflowOutput) {
+		result, err := ta.DecodeWorkflowOutput(&output)
+		if err != nil {
+			t.Fatalf("decode workflow output: %v", err)
+		}
+		if result.Output != "done" {
+			t.Fatalf("expected final output %q, got %q", "done", result.Output)
+		}
+		if compactions != 1 {
+			t.Fatalf("expected 1 explicit history-processor compaction hook, got %d", compactions)
+		}
+		if strategy != core.CompactionStrategyHistoryProcessor {
+			t.Fatalf("unexpected compaction strategy %q", strategy)
+		}
+	})
+}
+
+func TestTemporalAgent_RunWorkflow_HistoryProcessorRewriteDoesNotEmitCompaction(t *testing.T) {
+	compactions := 0
+	model := core.NewTestModel(core.TextResponse("done"))
+	agent := core.NewAgent[string](model,
+		core.WithHistoryProcessor[string](func(_ context.Context, messages []core.ModelMessage) ([]core.ModelMessage, error) {
+			modified := append([]core.ModelMessage(nil), messages...)
+			req, ok := modified[len(modified)-1].(core.ModelRequest)
+			if !ok {
+				return modified, nil
+			}
+			parts := append([]core.ModelRequestPart(nil), req.Parts...)
+			user, ok := parts[len(parts)-1].(core.UserPromptPart)
+			if !ok {
+				return modified, nil
+			}
+			user.Content += " rewritten"
+			parts[len(parts)-1] = user
+			req.Parts = parts
+			modified[len(modified)-1] = req
+			return modified, nil
+		}),
+		core.WithHooks[string](core.Hook{
+			OnContextCompaction: func(_ context.Context, _ *core.RunContext, _ core.ContextCompactionStats) {
+				compactions++
+			},
+		}),
+	)
+	ta := NewTemporalAgent(agent, WithName("workflow-history-processor-rewrite"))
+
+	runWorkflowTest(t, ta, WorkflowInput{Prompt: "hello"}, func(output WorkflowOutput) {
+		result, err := ta.DecodeWorkflowOutput(&output)
+		if err != nil {
+			t.Fatalf("decode workflow output: %v", err)
+		}
+		if result.Output != "done" {
+			t.Fatalf("expected final output %q, got %q", "done", result.Output)
+		}
+		if compactions != 0 {
+			t.Fatalf("expected no compaction hook for count-preserving rewrite, got %d", compactions)
+		}
+	})
+}
+
 func TestTemporalAgent_RunWorkflow_ToolResultValidator(t *testing.T) {
 	type Params struct{}
 

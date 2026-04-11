@@ -555,8 +555,6 @@ func onContextCompaction(tracer trace.Tracer, cfg *tracingConfig) func(ctx conte
 				attribute.String(AttrCompactionStrategy, stats.Strategy),
 				attribute.Int(AttrCompactionMsgsBefore, stats.MessagesBefore),
 				attribute.Int(AttrCompactionMsgsAfter, stats.MessagesAfter),
-				attribute.Int(AttrCompactionTokensBefore, stats.EstimatedTokensBefore),
-				attribute.Int(AttrCompactionTokensAfter, stats.EstimatedTokensAfter),
 			),
 		)
 		defer span.End()

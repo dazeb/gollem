@@ -555,20 +555,7 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 
 	// Build trace if enabled.
 	if a.tracingEnabled {
-		endTime := time.Now()
-		trace := &RunTrace{
-			RunID:     state.runID,
-			Prompt:    prompt,
-			StartTime: state.startTime,
-			EndTime:   endTime,
-			Duration:  endTime.Sub(state.startTime),
-			Steps:     state.traceSteps,
-			Usage:     state.usage,
-			Success:   runErr == nil,
-		}
-		if runErr != nil {
-			trace.Error = runErr.Error()
-		}
+		trace := buildRunTrace(state, prompt, runErr)
 		if result != nil {
 			result.Trace = trace
 		}

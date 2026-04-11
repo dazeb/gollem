@@ -469,7 +469,6 @@ func (ta *TemporalAgent[T]) applyHistoryProcessors(ctx workflow.Context, state *
 	if len(ta.runtime.HistoryProcessors) == 0 {
 		return messages, nil
 	}
-	beforeCount := len(messages)
 	input, err := buildCallbackInput(state, prompt, "", "", 0, 0, messages)
 	if err != nil {
 		return nil, err
@@ -483,21 +482,19 @@ func (ta *TemporalAgent[T]) applyHistoryProcessors(ctx workflow.Context, state *
 	if err != nil {
 		return nil, err
 	}
-	if len(ta.runtime.Hooks) > 0 && len(processed) < beforeCount {
+	if len(ta.runtime.Hooks) > 0 && len(output.Stats) > 0 {
 		hookInput, err := buildCallbackInput(state, prompt, "", "", 0, 0, processed)
 		if err != nil {
 			return nil, err
 		}
-		if err := ta.fireHook(ctx, hookActivityInput{
-			Run:   hookInput,
-			Event: hookEventContextCompaction,
-			Stats: &core.ContextCompactionStats{
-				Strategy:       core.CompactionStrategyHistoryProcessor,
-				MessagesBefore: beforeCount,
-				MessagesAfter:  len(processed),
-			},
-		}); err != nil {
-			return nil, err
+		for _, stats := range output.Stats {
+			if err := ta.fireHook(ctx, hookActivityInput{
+				Run:   hookInput,
+				Event: hookEventContextCompaction,
+				Stats: &stats,
+			}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return processed, nil

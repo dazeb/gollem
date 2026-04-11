@@ -7,20 +7,22 @@ import (
 
 // RunState tracks mutable state across an agent run.
 type RunState struct {
-	messages        []ModelMessage
-	usage           RunUsage
-	lastInputTokens int // input tokens from the most recent model response (0 on first turn)
-	retries         int
-	toolRetries     map[string]int
-	activeApprovals int
-	runStep         int
-	runID           string
-	parentRunID     string
-	startTime       time.Time
-	limits          UsageLimits
-	detach          <-chan struct{} // UI detach signal; nil if not configured
-	mu              sync.Mutex      // protects usage, toolRetries, and traceSteps during concurrent tool execution
-	traceSteps      []TraceStep
+	messages           []ModelMessage
+	usage              RunUsage
+	lastInputTokens    int // input tokens from the most recent model response (0 on first turn)
+	retries            int
+	toolRetries        map[string]int
+	activeApprovals    int
+	runStep            int
+	runID              string
+	parentRunID        string
+	startTime          time.Time
+	limits             UsageLimits
+	detach             <-chan struct{} // UI detach signal; nil if not configured
+	mu                 sync.Mutex      // protects usage, toolRetries, traceSteps, requestTraces, and pendingCompactions during concurrent activity
+	traceSteps         []TraceStep
+	requestTraces      []RequestTrace
+	pendingCompactions []ContextCompactionTrace
 }
 
 // agentRunState is kept as an internal alias during the core refactor to avoid

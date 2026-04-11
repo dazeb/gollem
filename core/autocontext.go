@@ -35,8 +35,8 @@ func AutoCompressMessages(ctx context.Context, messages []ModelMessage, config *
 
 // EstimateTokens estimates the token count of messages using a simple word-based heuristic.
 // Uses ~1.3 tokens per word as a rough approximation.
-// Exported so that middleware (e.g., ContextOverflowMiddleware) can compute
-// before/after token counts for compaction reporting.
+// Exported so pre-request context management code can size history before
+// provider usage totals are available.
 func EstimateTokens(messages []ModelMessage) int {
 	return estimateTokens(messages)
 }

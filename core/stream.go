@@ -375,48 +375,51 @@ func (s *agentStream[T]) startTurn() error {
 		compressed, compErr := autoCompressMessages(s.ctx, s.state.messages, s.agent.autoContext, s.agent.model, beforeTokens)
 		if compErr == nil && len(compressed) < beforeCount {
 			s.state.messages = compressed
-			afterTokens := estimateTokens(compressed)
+			stats := ContextCompactionStats{
+				Strategy:       CompactionStrategyAutoSummary,
+				MessagesBefore: beforeCount,
+				MessagesAfter:  len(compressed),
+			}
 			s.agent.fireHook(func(h Hook) {
 				if h.OnContextCompaction != nil {
-					h.OnContextCompaction(s.ctx, turnRC, ContextCompactionStats{
-						Strategy:              CompactionStrategyAutoSummary,
-						MessagesBefore:        beforeCount,
-						MessagesAfter:         len(compressed),
-						EstimatedTokensBefore: beforeTokens,
-						EstimatedTokensAfter:  afterTokens,
-					})
+					h.OnContextCompaction(s.ctx, turnRC, stats)
 				}
 			})
+			if s.agent.tracingEnabled {
+				s.state.recordCompaction(stats)
+			}
 		}
 	}
 
 	messages := s.state.messages
 	for _, proc := range s.agent.historyProcessors {
 		beforeCount := len(messages)
-		beforeTokens := estimateTokens(messages)
-		processed, procErr := proc(s.ctx, messages)
+		var compactions []ContextCompactionStats
+		procCtx := ContextWithCompactionCallback(s.ctx, func(stats ContextCompactionStats) {
+			compactions = append(compactions, stats)
+		})
+		processed, procErr := proc(procCtx, messages)
 		if procErr != nil {
 			hpErr := fmt.Errorf("history processor failed: %w", procErr)
 			s.emitStreamTurnCompleted(nil, hpErr)
 			return hpErr
 		}
-		afterCount := len(processed)
-		afterTokens := estimateTokens(processed)
-		tokenDelta := beforeTokens - afterTokens
-		meaningfulChange := afterCount < beforeCount ||
-			(beforeTokens > 0 && tokenDelta > 0 && float64(tokenDelta)/float64(beforeTokens) > 0.05)
-		if meaningfulChange {
+		if len(compactions) == 0 && len(processed) < beforeCount {
+			compactions = append(compactions, ContextCompactionStats{
+				Strategy:       CompactionStrategyHistoryProcessor,
+				MessagesBefore: beforeCount,
+				MessagesAfter:  len(processed),
+			})
+		}
+		for _, stats := range compactions {
 			s.agent.fireHook(func(h Hook) {
 				if h.OnContextCompaction != nil {
-					h.OnContextCompaction(s.ctx, turnRC, ContextCompactionStats{
-						Strategy:              CompactionStrategyHistoryProcessor,
-						MessagesBefore:        beforeCount,
-						MessagesAfter:         len(processed),
-						EstimatedTokensBefore: beforeTokens,
-						EstimatedTokensAfter:  afterTokens,
-					})
+					h.OnContextCompaction(s.ctx, turnRC, stats)
 				}
 			})
+			if s.agent.tracingEnabled {
+				s.state.recordCompaction(stats)
+			}
 		}
 		messages = processed
 	}
@@ -481,15 +484,22 @@ func (s *agentStream[T]) startTurn() error {
 		stream StreamedResponse
 		err    error
 	)
-	if len(s.agent.streamMiddleware) > 0 {
+	middleware := s.agent.streamMiddleware
+	if s.agent.tracingEnabled {
+		middleware = append(append([]AgentStreamMiddleware(nil), middleware...), newRequestTraceMiddleware(s.state, s.agent.model.ModelName()).Stream)
+	}
+	if len(middleware) > 0 {
 		mwCtx := ContextWithCompactionCallback(s.ctx, func(stats ContextCompactionStats) {
 			s.agent.fireHook(func(h Hook) {
 				if h.OnContextCompaction != nil {
 					h.OnContextCompaction(s.ctx, turnRC, stats)
 				}
 			})
+			if s.agent.tracingEnabled {
+				s.state.recordCompaction(stats)
+			}
 		})
-		chain := buildStreamMiddlewareChain(s.agent.streamMiddleware, s.agent.model)
+		chain := buildStreamMiddlewareChain(middleware, s.agent.model)
 		stream, err = chain(mwCtx, messages, settings, params)
 	} else {
 		stream, err = s.agent.model.RequestStream(s.ctx, messages, settings, params)
@@ -728,20 +738,7 @@ func (s *agentStream[T]) finish(result *RunResult[T], runErr error) {
 		s.agent.endRun(s.ctx, s.state, s.deps, s.prompt, runErr)
 
 		if s.agent.tracingEnabled {
-			endTime := time.Now()
-			trace := &RunTrace{
-				RunID:     s.state.runID,
-				Prompt:    s.prompt,
-				StartTime: s.state.startTime,
-				EndTime:   endTime,
-				Duration:  endTime.Sub(s.state.startTime),
-				Steps:     s.state.traceSteps,
-				Usage:     s.state.usage,
-				Success:   runErr == nil,
-			}
-			if runErr != nil {
-				trace.Error = runErr.Error()
-			}
+			trace := buildRunTrace(s.state, s.prompt, runErr)
 			if s.result != nil {
 				s.result.Trace = trace
 			}

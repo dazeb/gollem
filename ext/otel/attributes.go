@@ -64,11 +64,9 @@ const (
 	AttrHandoffStepIndex  = "gollem.handoff.step_index"
 
 	// Context compaction attributes.
-	AttrCompactionStrategy     = "gollem.compaction.strategy"
-	AttrCompactionMsgsBefore   = "gollem.compaction.messages_before"
-	AttrCompactionMsgsAfter    = "gollem.compaction.messages_after"
-	AttrCompactionTokensBefore = "gollem.compaction.estimated_tokens_before"
-	AttrCompactionTokensAfter  = "gollem.compaction.estimated_tokens_after"
+	AttrCompactionStrategy   = "gollem.compaction.strategy"
+	AttrCompactionMsgsBefore = "gollem.compaction.messages_before"
+	AttrCompactionMsgsAfter  = "gollem.compaction.messages_after"
 )
 
 // Span names used by the tracing system.
