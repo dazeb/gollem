@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	montygo "github.com/fugue-labs/monty-go"
@@ -57,6 +58,8 @@ type Server struct {
 
 	inner  *mcp.Server
 	runner *montygo.Runner
+
+	runnerMu sync.Mutex
 }
 
 type nopWriteCloser struct {
@@ -182,14 +185,6 @@ func (s *Server) handleExecutePython(ctx context.Context, _ *mcp.RequestContext,
 		timeoutSec = int(ts)
 	}
 
-	if s.runner == nil {
-		r, err := montygo.New()
-		if err != nil {
-			return toolError(fmt.Sprintf("failed to initialize Python runtime: %v", err)), nil
-		}
-		s.runner = r
-	}
-
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
@@ -203,9 +198,12 @@ func (s *Server) handleExecutePython(ctx context.Context, _ *mcp.RequestContext,
 		}),
 	}
 
-	result, err := s.runner.Execute(execCtx, code, nil, opts...)
-	if err != nil {
-		return toolError(fmt.Sprintf("execution failed: %v", err)), nil
+	result, initErr, execErr := s.executePython(execCtx, code, opts...)
+	if initErr != nil {
+		return toolError(fmt.Sprintf("failed to initialize Python runtime: %v", initErr)), nil
+	}
+	if execErr != nil {
+		return toolError(fmt.Sprintf("execution failed: %v", execErr)), nil
 	}
 
 	resultJSON, _ := json.Marshal(result)
@@ -214,6 +212,25 @@ func (s *Server) handleExecutePython(ctx context.Context, _ *mcp.RequestContext,
 		output = fmt.Sprintf("Result: %s\nOutput:\n%s", string(resultJSON), prints.String())
 	}
 	return textResult(output), nil
+}
+
+func (s *Server) executePython(ctx context.Context, code string, opts ...montygo.ExecuteOption) (result any, initErr error, execErr error) {
+	s.runnerMu.Lock()
+	defer s.runnerMu.Unlock()
+
+	if s.runner == nil {
+		r, err := montygo.New()
+		if err != nil {
+			return nil, err, nil
+		}
+		s.runner = r
+	}
+
+	result, err := s.runner.Execute(ctx, code, nil, opts...)
+	if err != nil {
+		return nil, nil, err
+	}
+	return result, nil, nil
 }
 
 func (s *Server) handleListProviders(context.Context, *mcp.RequestContext, map[string]any) (*mcp.ToolResult, error) {

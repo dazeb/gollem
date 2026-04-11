@@ -534,6 +534,22 @@ func (s *clientState) failPending() {
 	}
 }
 
+func (s *clientState) failPendingCall(id int64) {
+	s.mu.Lock()
+	ch, ok := s.pending[id]
+	if ok {
+		delete(s.pending, id)
+	}
+	s.mu.Unlock()
+
+	if ok {
+		select {
+		case ch <- nil:
+		default:
+		}
+	}
+}
+
 func (s *clientState) setInitializeResult(result *InitializeResult) {
 	if result == nil {
 		return

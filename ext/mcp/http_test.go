@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -370,5 +371,109 @@ func TestHTTPClientNotificationHandler(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for notification")
+	}
+}
+
+func TestHTTPClientCallFailsWhenPOSTStreamClosesWithoutResponse(t *testing.T) {
+	streamReady := make(chan struct{})
+	holdStream := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				http.Error(w, "streaming not supported", http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Mcp-Session-Id", "session-123")
+			flusher.Flush()
+
+			select {
+			case <-streamReady:
+			default:
+				close(streamReady)
+			}
+
+			select {
+			case <-holdStream:
+			case <-r.Context().Done():
+			}
+		case http.MethodPost:
+			var req jsonRPCRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid JSON", http.StatusBadRequest)
+				return
+			}
+
+			w.Header().Set("Mcp-Session-Id", "session-123")
+
+			switch req.Method {
+			case "initialize":
+				w.Header().Set("Content-Type", "application/json")
+				payload, _ := json.Marshal(jsonRPCMessage{
+					JSONRPC: "2.0",
+					ID:      rawJSONID(req.ID),
+					Result: mustRawJSON(tMarshal(map[string]any{
+						"protocolVersion": ProtocolVersion,
+						"capabilities": map[string]any{
+							"tools": map[string]any{},
+						},
+						"serverInfo": map[string]any{
+							"name":    "broken-stream-server",
+							"version": "1.0.0",
+						},
+					})),
+				})
+				_, _ = w.Write(payload)
+			case "notifications/initialized":
+				w.WriteHeader(http.StatusAccepted)
+			case "tools/call":
+				w.Header().Set("Content-Type", "text/event-stream")
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
+			default:
+				http.Error(w, "method not found", http.StatusNotFound)
+			}
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer func() {
+		close(holdStream)
+		server.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := NewHTTPClient(ctx, server.URL)
+	if err != nil {
+		t.Fatalf("failed to create HTTP client: %v", err)
+	}
+	defer client.Close()
+
+	select {
+	case <-streamReady:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for HTTP notification stream")
+	}
+
+	callCtx, cancelCall := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancelCall()
+
+	_, err = client.CallTool(callCtx, "broken_stream_tool", nil)
+	if err == nil {
+		t.Fatal("expected CallTool to fail when POST SSE stream closes without a response")
+	}
+	if !strings.Contains(err.Error(), "connection closed while waiting for response") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

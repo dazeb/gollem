@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -87,5 +88,47 @@ func TestHTTPServerTransportSamplingRoundTrip(t *testing.T) {
 	}
 	if got := result.TextContent(); got != "client says hi" {
 		t.Fatalf("unexpected tool result: %q", got)
+	}
+}
+
+func TestHTTPServerTransportRunClosesSessionsOnCancel(t *testing.T) {
+	transport := NewHTTPServerTransport(NewServer())
+	session := transport.newSession()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- transport.Run(ctx)
+	}()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run returned %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for transport.Run to return")
+	}
+
+	select {
+	case <-session.ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for session context to close")
+	}
+
+	transport.mu.Lock()
+	sessionCount := len(transport.sessions)
+	transport.mu.Unlock()
+	if sessionCount != 0 {
+		t.Fatalf("expected all sessions to be closed, found %d", sessionCount)
+	}
+
+	session.mu.Lock()
+	closed := session.closed
+	session.mu.Unlock()
+	if !closed {
+		t.Fatal("expected session to be marked closed")
 	}
 }

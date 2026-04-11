@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -328,6 +329,45 @@ func TestCallExecutePythonMissingCode(t *testing.T) {
 	}
 	if !strings.Contains(result.Content[0].Text, "code is required") {
 		t.Errorf("expected error about missing code, got %q", result.Content[0].Text)
+	}
+}
+
+func TestHandleExecutePythonConcurrent(t *testing.T) {
+	srv := &Server{}
+
+	const workers = 4
+	start := make(chan struct{})
+	errCh := make(chan error, workers)
+
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			result, err := srv.handleExecutePython(context.Background(), nil, map[string]any{
+				"code":            "1 + 2",
+				"timeout_seconds": 10.0,
+			})
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if result == nil || result.IsError || len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "3") {
+				errCh <- io.ErrUnexpectedEOF
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent execute_python failed: %v", err)
+		}
 	}
 }
 

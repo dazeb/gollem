@@ -125,9 +125,10 @@ func (c *HTTPClient) call(ctx context.Context, method string, params any) (json.
 	case strings.Contains(contentType, "text/event-stream"):
 		stream := resp.Body
 		resp.Body = nil
-		go func(stream io.ReadCloser) {
+		go func(callID int64, stream io.ReadCloser) {
 			_ = readEventStream(stream, c.handleEvent)
-		}(stream)
+			c.failPendingCall(callID)
+		}(id, stream)
 	case strings.Contains(contentType, "application/json"):
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {

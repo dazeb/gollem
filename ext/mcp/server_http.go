@@ -42,6 +42,7 @@ func NewHTTPServerTransport(server *Server) *HTTPServerTransport {
 // Run blocks until ctx is cancelled, then closes all active sessions.
 func (t *HTTPServerTransport) Run(ctx context.Context) error {
 	<-ctx.Done()
+	_ = t.Close()
 	return ctx.Err()
 }
 
