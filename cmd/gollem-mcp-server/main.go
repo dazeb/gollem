@@ -184,21 +184,19 @@ func (s *Server) handleExecutePython(ctx context.Context, _ *mcp.RequestContext,
 	if ts, ok := args["timeout_seconds"].(float64); ok && ts > 0 {
 		timeoutSec = int(ts)
 	}
-
-	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-	defer cancel()
+	timeout := time.Duration(timeoutSec) * time.Second
 
 	var prints strings.Builder
 	opts := []montygo.ExecuteOption{
 		montygo.WithLimits(montygo.Limits{
-			MaxDuration: time.Duration(timeoutSec) * time.Second,
+			MaxDuration: timeout,
 		}),
 		montygo.WithPrintFunc(func(s string) {
 			prints.WriteString(s)
 		}),
 	}
 
-	result, initErr, execErr := s.executePython(execCtx, code, opts...)
+	result, initErr, execErr := s.executePython(ctx, timeout, code, opts...)
 	if initErr != nil {
 		return toolError(fmt.Sprintf("failed to initialize Python runtime: %v", initErr)), nil
 	}
@@ -214,7 +212,7 @@ func (s *Server) handleExecutePython(ctx context.Context, _ *mcp.RequestContext,
 	return textResult(output), nil
 }
 
-func (s *Server) executePython(ctx context.Context, code string, opts ...montygo.ExecuteOption) (result any, initErr error, execErr error) {
+func (s *Server) executePython(ctx context.Context, timeout time.Duration, code string, opts ...montygo.ExecuteOption) (result any, initErr error, execErr error) {
 	s.runnerMu.Lock()
 	defer s.runnerMu.Unlock()
 
@@ -226,7 +224,13 @@ func (s *Server) executePython(ctx context.Context, code string, opts ...montygo
 		s.runner = r
 	}
 
-	result, err := s.runner.Execute(ctx, code, nil, opts...)
+	// Start the per-call execution budget only after acquiring the mutex and
+	// initializing the runner, so callers don't lose time to montygo.New() or
+	// to waiting on a prior execution under contention.
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	result, err := s.runner.Execute(execCtx, code, nil, opts...)
 	if err != nil {
 		return nil, nil, err
 	}
