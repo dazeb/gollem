@@ -524,6 +524,42 @@ func TestScoringCache_HitAndInvalidate(t *testing.T) {
 	}
 }
 
+// TestScoringCache_NonDeferredPoolChangePreservesCache makes sure the
+// cache only invalidates when the DEFERRED subset changes. Adding or
+// removing a non-deferred tool should keep cached entries warm, since
+// scoring never touches non-deferred tools anyway.
+func TestScoringCache_NonDeferredPoolChangePreservesCache(t *testing.T) {
+	p := New(Config{})
+	hide := makeDeferredTool("hide", "deferred")
+
+	type Empty struct{}
+	keep := core.FuncTool[Empty]("keep", "non-deferred",
+		func(_ context.Context, _ Empty) (string, error) { return "", nil })
+
+	p.state.setPool([]core.Tool{hide, keep})
+	p.state.lookupScoring(hide) // populate
+
+	if len(p.state.scoringCache) != 1 {
+		t.Fatalf("precondition: cache should have 1 entry, got %d", len(p.state.scoringCache))
+	}
+
+	// Add another non-deferred tool — deferred set is unchanged, so
+	// the signature must not change and the cache must survive.
+	keep2 := core.FuncTool[Empty]("keep_two", "also non-deferred",
+		func(_ context.Context, _ Empty) (string, error) { return "", nil })
+	p.state.setPool([]core.Tool{hide, keep, keep2})
+
+	if p.state.scoringCache == nil || len(p.state.scoringCache) != 1 {
+		t.Errorf("non-deferred addition should preserve cache; got %v", p.state.scoringCache)
+	}
+
+	// Remove a non-deferred tool — same story.
+	p.state.setPool([]core.Tool{hide})
+	if p.state.scoringCache == nil || len(p.state.scoringCache) != 1 {
+		t.Errorf("non-deferred removal should preserve cache; got %v", p.state.scoringCache)
+	}
+}
+
 // TestStatefulToolCheckpointRoundtrip verifies that the discovered set
 // survives a full ExportState → serialize → deserialize → RestoreState
 // cycle on the Tool struct returned by Proxy.Tool().
@@ -681,6 +717,86 @@ func TestMarkDeferred_EmptyInput(t *testing.T) {
 	}
 }
 
+// TestMarkDeferred_SkipsAlwaysLoad verifies that MarkDeferred respects
+// a pre-existing AlwaysLoad=true opt-out: the tool retains its inline
+// status even when the stamper would otherwise mark it.
+func TestMarkDeferred_SkipsAlwaysLoad(t *testing.T) {
+	type Empty struct{}
+	critical := core.FuncTool[Empty]("abort", "",
+		func(_ context.Context, _ Empty) (string, error) { return "", nil })
+	critical.AlwaysLoad = true
+
+	other := core.FuncTool[Empty]("normal", "",
+		func(_ context.Context, _ Empty) (string, error) { return "", nil })
+
+	out := MarkDeferred([]core.Tool{critical, other})
+
+	var gotCritical, gotOther core.Tool
+	for _, t := range out {
+		switch t.Definition.Name {
+		case "abort":
+			gotCritical = t
+		case "normal":
+			gotOther = t
+		}
+	}
+
+	if gotCritical.ShouldDefer {
+		t.Error("AlwaysLoad tool should not be stamped ShouldDefer")
+	}
+	if !gotCritical.AlwaysLoad {
+		t.Error("AlwaysLoad flag should be preserved")
+	}
+	if !gotOther.ShouldDefer {
+		t.Error("non-AlwaysLoad tool should be stamped ShouldDefer")
+	}
+}
+
+// TestPrepareFuncFor_AlwaysLoadBypassesDeferral verifies a tool with
+// both ShouldDefer=true and AlwaysLoad=true is included in the request
+// even when it has not been discovered. AlwaysLoad is the escape hatch
+// for "must be available every turn" tools.
+func TestPrepareFuncFor_AlwaysLoadBypassesDeferral(t *testing.T) {
+	p := New(Config{})
+	critical := makeDeferredTool("critical", "Must be always available")
+	critical.AlwaysLoad = true
+	hidden := makeDeferredTool("hidden", "Normal deferred")
+
+	tools := []core.Tool{critical, hidden, p.Tool()}
+	defs := make([]core.ToolDefinition, len(tools))
+	for i, t := range tools {
+		defs[i] = t.Definition
+	}
+
+	got := p.PrepareFuncFor(tools)(context.Background(), nil, defs)
+	names := namesFromDefs(got)
+
+	if !containsString(names, "critical") {
+		t.Errorf("AlwaysLoad tool must always be included, got %v", names)
+	}
+	if containsString(names, "hidden") {
+		t.Errorf("plain deferred tool should be dropped, got %v", names)
+	}
+}
+
+// TestSystemPromptFragment_SkipsAlwaysLoad verifies the static
+// fragment builder excludes AlwaysLoad tools (they're already inline
+// so listing them in the deferred section would be misleading).
+func TestSystemPromptFragment_SkipsAlwaysLoad(t *testing.T) {
+	p := New(Config{})
+	hide := makeDeferredTool("hide", "Deferred")
+	critical := makeDeferredTool("critical", "AlwaysLoad")
+	critical.AlwaysLoad = true
+
+	frag := p.SystemPromptFragment([]core.Tool{hide, critical})
+	if !strings.Contains(frag, "hide") {
+		t.Errorf("fragment should list hide, got %q", frag)
+	}
+	if strings.Contains(frag, "critical") {
+		t.Errorf("fragment should not list AlwaysLoad tool 'critical', got %q", frag)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Delta announcement: WrapPrompt + SystemPromptFuncFor
 // --------------------------------------------------------------------------
@@ -763,34 +879,109 @@ func TestSystemPromptFuncFor_EmitsOnceThenEmpty(t *testing.T) {
 	}
 }
 
-func TestSystemPromptFuncFor_RearmsOnPoolChange(t *testing.T) {
+// TestSystemPromptFuncFor_DeltaEmitsOnlyAdditions verifies the new
+// delta semantics: when a pool changes mid-run and the caller binds a
+// fresh SystemPromptFuncFor to the new pool, the next call emits
+// ONLY the newly-deferred names, not the full list again. This is the
+// core token-savings property of delta announcement.
+func TestSystemPromptFuncFor_DeltaEmitsOnlyAdditions(t *testing.T) {
 	p := New(Config{})
-	initial := []core.Tool{makeDeferredTool("hide_A", "A")}
-	fn := p.SystemPromptFuncFor(initial)
 
-	// Burn the first announcement.
-	if _, err := fn(context.Background(), nil); err != nil {
+	// Turn 1: initial pool announces hide_A.
+	initial := []core.Tool{makeDeferredTool("hide_A", "A")}
+	fn1 := p.SystemPromptFuncFor(initial)
+	got1, err := fn1(context.Background(), nil)
+	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
+	if !strings.Contains(got1, "hide_A") {
+		t.Errorf("first call should announce hide_A, got %q", got1)
+	}
+	if strings.Contains(got1, "Newly Available") {
+		t.Errorf("initial announcement should use 'Deferred Tools' header, got %q", got1)
+	}
 
-	// PrepareFuncFor with a new pool (different signature) should
-	// clear the announcement flag, so the next SystemPromptFuncFor
-	// call re-emits.
+	// Turn 2: same pool, same Proxy → nothing new.
+	fn2 := p.SystemPromptFuncFor(initial)
+	got2, _ := fn2(context.Background(), nil)
+	if got2 != "" {
+		t.Errorf("unchanged pool should yield empty delta, got %q", got2)
+	}
+
+	// Turn 3: pool grows. New SystemPromptFuncFor closure over the
+	// updated tool list emits ONLY the newly added name.
 	updated := []core.Tool{
 		makeDeferredTool("hide_A", "A"),
 		makeDeferredTool("hide_B", "B"),
+		makeDeferredTool("hide_C", "C"),
 	}
-	defs := make([]core.ToolDefinition, len(updated))
-	for i, t := range updated {
-		defs[i] = t.Definition
-	}
-	_ = p.PrepareFuncFor(updated)(context.Background(), nil, defs)
+	fn3 := p.SystemPromptFuncFor(updated)
+	got3, _ := fn3(context.Background(), nil)
 
-	// Use the ORIGINAL closure but expect re-announcement because
-	// the underlying state was re-armed.
-	got, _ := fn(context.Background(), nil)
-	if got == "" {
-		t.Error("pool change should re-arm announcer; got empty fragment")
+	if !strings.Contains(got3, "hide_B") || !strings.Contains(got3, "hide_C") {
+		t.Errorf("delta should list hide_B and hide_C, got %q", got3)
+	}
+	if strings.Contains(got3, "hide_A") {
+		t.Errorf("delta should NOT re-announce already-announced hide_A, got %q", got3)
+	}
+	if !strings.Contains(got3, "Newly Available") {
+		t.Errorf("delta announcement should use 'Newly Available' header, got %q", got3)
+	}
+
+	// Turn 4: same (updated) pool → empty again.
+	fn4 := p.SystemPromptFuncFor(updated)
+	got4, _ := fn4(context.Background(), nil)
+	if got4 != "" {
+		t.Errorf("after delta, subsequent call should be empty; got %q", got4)
+	}
+}
+
+// TestSystemPromptFuncFor_DeltaTracksRemovals exercises the removal
+// branch: a tool disappears from the deferred pool and the announcer
+// should log the removal via PoolChangeEvent but emit no fragment text
+// (removals are informational; the model just stops seeing the tool).
+func TestSystemPromptFuncFor_DeltaTracksRemovals(t *testing.T) {
+	p := New(Config{})
+	initial := []core.Tool{
+		makeDeferredTool("hide_A", "A"),
+		makeDeferredTool("hide_B", "B"),
+	}
+	fn1 := p.SystemPromptFuncFor(initial)
+	if _, err := fn1(context.Background(), nil); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Pool shrinks — hide_B goes away.
+	shrunk := []core.Tool{makeDeferredTool("hide_A", "A")}
+	bus := core.NewEventBus()
+	var events []PoolChangeEvent
+	var mu sync.Mutex
+	core.Subscribe(bus, func(e PoolChangeEvent) {
+		mu.Lock()
+		events = append(events, e)
+		mu.Unlock()
+	})
+
+	rc := &core.RunContext{EventBus: bus}
+	fn2 := p.SystemPromptFuncFor(shrunk)
+	got, _ := fn2(context.Background(), rc)
+	if got != "" {
+		t.Errorf("removal-only delta should produce no fragment, got %q", got)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 PoolChangeEvent, got %d", len(events))
+	}
+	if len(events[0].Added) != 0 {
+		t.Errorf("Added should be empty for removal-only delta, got %v", events[0].Added)
+	}
+	if len(events[0].Removed) != 1 || events[0].Removed[0] != "hide_B" {
+		t.Errorf("Removed should be [hide_B], got %v", events[0].Removed)
+	}
+	if events[0].Initial {
+		t.Error("delta after initial announcement should have Initial=false")
 	}
 }
 
@@ -1065,6 +1256,182 @@ func TestTelemetry_ModeAutoBelowThresholdReportsNotDeferred(t *testing.T) {
 	}
 	if d.EstimatedTokens >= d.Threshold {
 		t.Errorf("sanity: estimated %d should be below threshold %d", d.EstimatedTokens, d.Threshold)
+	}
+}
+
+// TestTelemetry_SearchOutcomeHasMatchesField verifies the HasMatches
+// bool is populated on the SearchOutcomeEvent, both when the query
+// finds tools and when it finds nothing.
+func TestTelemetry_SearchOutcomeHasMatchesField(t *testing.T) {
+	proxy := New(Config{})
+	bus := core.NewEventBus()
+
+	hide := makeDeferredTool("hide", "Deferred")
+	tools := []core.Tool{hide, proxy.Tool()}
+
+	var events []SearchOutcomeEvent
+	var mu sync.Mutex
+	core.Subscribe(bus, func(e SearchOutcomeEvent) {
+		mu.Lock()
+		events = append(events, e)
+		mu.Unlock()
+	})
+
+	// Two tool_search calls: one that matches, one that doesn't.
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(DefaultToolName, `{"query":"select:hide"}`, "call_1"),
+		core.ToolCallResponseWithID(DefaultToolName, `{"query":"select:nonexistent"}`, "call_2"),
+		core.TextResponse("done"),
+	)
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](tools...),
+		core.WithToolsPrepare[string](proxy.PrepareFuncFor(tools)),
+		core.WithEventBus[string](bus),
+	)
+	if _, err := agent.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("agent run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 2 {
+		t.Fatalf("expected 2 SearchOutcomeEvents, got %d", len(events))
+	}
+	if !events[0].HasMatches {
+		t.Errorf("first event should have HasMatches=true, got %+v", events[0])
+	}
+	if events[1].HasMatches {
+		t.Errorf("second event should have HasMatches=false, got %+v", events[1])
+	}
+}
+
+// TestTelemetry_ModeDecisionReasonField spot-checks that every mode
+// × threshold combination emits the correct named Reason.
+func TestTelemetry_ModeDecisionReasonField(t *testing.T) {
+	cases := []struct {
+		name       string
+		cfg        Config
+		tools      []core.Tool
+		wantReason ModeReason
+	}{
+		{
+			name:       "always-mode emits always_defer",
+			cfg:        Config{Mode: ModeAlways},
+			tools:      []core.Tool{makeDeferredTool("hide", "X")},
+			wantReason: ReasonAlwaysDefer,
+		},
+		{
+			name:       "mode-off emits mode_off",
+			cfg:        Config{Mode: ModeOff},
+			tools:      []core.Tool{makeDeferredTool("hide", "X")},
+			wantReason: ReasonModeOff,
+		},
+		{
+			name:       "auto-below emits auto_below_threshold",
+			cfg:        Config{Mode: ModeAuto, ContextWindow: 200_000, AutoTokenRatio: 0.10},
+			tools:      []core.Tool{makeDeferredTool("hide", "X")},
+			wantReason: ReasonAutoBelowThreshold,
+		},
+		{
+			name: "auto-above emits auto_above_threshold",
+			cfg: Config{
+				Mode:           ModeAuto,
+				AutoTokenRatio: 0.0001,
+				ContextWindow:  1000,
+			},
+			tools: []core.Tool{
+				makeDeferredTool("hide_a", strings.Repeat("long description ", 50)),
+				makeDeferredTool("hide_b", strings.Repeat("long description ", 50)),
+			},
+			wantReason: ReasonAutoAboveThreshold,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proxy := New(tc.cfg)
+			bus := core.NewEventBus()
+
+			allTools := append(append([]core.Tool{}, tc.tools...), proxy.Tool())
+
+			var events []ModeDecisionEvent
+			var mu sync.Mutex
+			core.Subscribe(bus, func(e ModeDecisionEvent) {
+				mu.Lock()
+				events = append(events, e)
+				mu.Unlock()
+			})
+
+			model := core.NewTestModel(core.TextResponse("done"))
+			agent := core.NewAgent[string](model,
+				core.WithTools[string](allTools...),
+				core.WithToolsPrepare[string](proxy.PrepareFuncFor(allTools)),
+				core.WithEventBus[string](bus),
+			)
+			if _, err := agent.Run(context.Background(), "go"); err != nil {
+				t.Fatalf("agent run: %v", err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(events) != 1 {
+				t.Fatalf("expected 1 ModeDecisionEvent, got %d", len(events))
+			}
+			if events[0].Reason != tc.wantReason {
+				t.Errorf("Reason: got %q want %q", events[0].Reason, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestTelemetry_PoolChangeEventInitialFlag verifies the Initial flag
+// distinguishes a first-time full announcement from an incremental
+// mid-run change.
+func TestTelemetry_PoolChangeEventInitialFlag(t *testing.T) {
+	p := New(Config{})
+	bus := core.NewEventBus()
+
+	var events []PoolChangeEvent
+	var mu sync.Mutex
+	core.Subscribe(bus, func(e PoolChangeEvent) {
+		mu.Lock()
+		events = append(events, e)
+		mu.Unlock()
+	})
+
+	rc := &core.RunContext{EventBus: bus}
+
+	// First call — initial announcement.
+	initial := []core.Tool{makeDeferredTool("hide_A", "A")}
+	if _, err := p.SystemPromptFuncFor(initial)(context.Background(), rc); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Second call — pool grew, incremental delta.
+	updated := []core.Tool{
+		makeDeferredTool("hide_A", "A"),
+		makeDeferredTool("hide_B", "B"),
+	}
+	if _, err := p.SystemPromptFuncFor(updated)(context.Background(), rc); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 2 {
+		t.Fatalf("expected 2 PoolChangeEvents, got %d", len(events))
+	}
+	if !events[0].Initial {
+		t.Error("first announcement should have Initial=true")
+	}
+	if len(events[0].Added) != 1 || events[0].Added[0] != "hide_A" {
+		t.Errorf("first event Added: got %v want [hide_A]", events[0].Added)
+	}
+	if events[1].Initial {
+		t.Error("second announcement should have Initial=false")
+	}
+	if len(events[1].Added) != 1 || events[1].Added[0] != "hide_B" {
+		t.Errorf("second event Added: got %v want [hide_B]", events[1].Added)
 	}
 }
 

@@ -50,13 +50,18 @@ type discoveredState struct {
 	poolKey      string
 	scoringCache map[string]scoringEntry
 
-	// announcedInSystemPrompt is a transient flag set by
-	// SystemPromptFuncFor after it emits the "Deferred Tools" fragment
-	// for the first time. Subsequent calls skip the fragment to achieve
-	// a delta announcement. It is NOT persisted by ExportState — a
-	// restored checkpoint re-announces, which is safe: the model may
-	// not have seen the pre-restore system prompt in its context.
-	announcedInSystemPrompt bool
+	// announcedSystemPromptNames tracks every deferred tool name that
+	// SystemPromptFuncFor has emitted so far in this Proxy's lifetime.
+	// On each call the announcer diffs the current deferred pool
+	// against this set and emits only the additions — a proper delta
+	// announcement that stays efficient even when the pool changes
+	// mid-run (e.g. MCP server reconnects).
+	//
+	// NOT persisted by ExportState: if a run is restored with a fresh
+	// Proxy, the announcer re-sends everything on its first call,
+	// which is the safe default since the model may not have the old
+	// system prompts in its context.
+	announcedSystemPromptNames map[string]bool
 }
 
 func newDiscoveredState() *discoveredState {
@@ -65,9 +70,12 @@ func newDiscoveredState() *discoveredState {
 
 // setPool records the current pool of tools (deferred + non-deferred)
 // for later lookup by the tool_search handler. If the pool's signature
-// (sorted, joined names) changed since the last call, the scoring cache
-// is dropped so stale entries can't leak, and the announcement flag is
-// cleared so the delta announcer re-emits the updated list.
+// (sorted joined names of the DEFERRED subset) changed since the last
+// call, the scoring cache is dropped so stale entries can't leak.
+//
+// The announcedSystemPromptNames set is NOT cleared here — the delta
+// announcer handles additions and removals on its own, so a pool
+// change simply surfaces as a non-empty delta on the next call.
 func (s *discoveredState) setPool(pool []core.Tool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -75,24 +83,54 @@ func (s *discoveredState) setPool(pool []core.Tool) {
 	key := poolSignature(pool)
 	if key != s.poolKey {
 		s.scoringCache = nil
-		s.announcedInSystemPrompt = false
 		s.poolKey = key
 	}
 	s.pool = pool
 }
 
-// claimSystemPromptAnnouncement reports whether the caller should emit
-// the full "Deferred Tools" fragment this turn. On the first call it
-// returns true and marks the flag so subsequent calls return false.
+// diffSystemPromptAnnouncement diffs `currentDeferred` (the set of
+// deferred tool names active on the most recent pool) against the
+// previously-announced set. Returns `added` and `removed` (both
+// sorted for deterministic output) plus `initial`, which is true if
+// this call is the very first announcement on this state (i.e. the
+// announced set was empty before the diff).
+//
+// As a side effect the call commits the delta — after it returns, the
+// announced set reflects the current pool. A caller that decides NOT
+// to emit the delta (e.g. a mode short-circuit) must not call this
+// method, or bookkeeping will drift.
+//
 // Safe for concurrent use.
-func (s *discoveredState) claimSystemPromptAnnouncement() bool {
+func (s *discoveredState) diffSystemPromptAnnouncement(currentDeferred []string) (added, removed []string, initial bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.announcedInSystemPrompt {
-		return false
+
+	initial = len(s.announcedSystemPromptNames) == 0
+	if s.announcedSystemPromptNames == nil {
+		s.announcedSystemPromptNames = make(map[string]bool)
 	}
-	s.announcedInSystemPrompt = true
-	return true
+
+	currentSet := make(map[string]bool, len(currentDeferred))
+	for _, n := range currentDeferred {
+		currentSet[n] = true
+		if !s.announcedSystemPromptNames[n] {
+			added = append(added, n)
+		}
+	}
+	for n := range s.announcedSystemPromptNames {
+		if !currentSet[n] {
+			removed = append(removed, n)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+
+	// Commit: announced set now mirrors the current pool.
+	s.announcedSystemPromptNames = make(map[string]bool, len(currentSet))
+	for n := range currentSet {
+		s.announcedSystemPromptNames[n] = true
+	}
+	return added, removed, initial
 }
 
 // getPool returns the most recently recorded pool, or nil if none.
@@ -124,16 +162,23 @@ func (s *discoveredState) lookupScoring(tool core.Tool) scoringEntry {
 	return entry
 }
 
-// poolSignature produces a stable key for a pool based on the sorted
-// set of tool names. Used to invalidate the scoring cache when the pool
-// actually changes, rather than on every setPool call.
+// poolSignature produces a stable key for the *effectively* deferred
+// subset of a pool. Only tools with ShouldDefer=true AND AlwaysLoad=false
+// participate, because those are the only tools the scoring cache
+// actually holds entries for. This matches Claude Code's
+// getDeferredToolsCacheKey: adding or removing a non-deferred (or
+// AlwaysLoad) tool keeps the cache warm, so common scenarios like
+// "caller rotates an inline base toolset while the MCP catalog stays
+// put" don't thrash the cache.
 func poolSignature(pool []core.Tool) string {
-	if len(pool) == 0 {
-		return ""
+	var names []string
+	for _, t := range pool {
+		if t.ShouldDefer && !t.AlwaysLoad {
+			names = append(names, t.Definition.Name)
+		}
 	}
-	names := make([]string, len(pool))
-	for i, t := range pool {
-		names[i] = t.Definition.Name
+	if len(names) == 0 {
+		return ""
 	}
 	sort.Strings(names)
 	return strings.Join(names, "\x00")
@@ -170,13 +215,13 @@ func (s *discoveredState) snapshot() []string {
 	return out
 }
 
-// reset clears the discovered set and the system-prompt announcement
-// flag. Used by tests and when a new run starts with a clean slate.
+// reset clears the discovered set and the announced-names bookkeeping.
+// Used by tests and when a new run starts with a clean slate.
 func (s *discoveredState) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.names = make(map[string]struct{})
-	s.announcedInSystemPrompt = false
+	s.announcedSystemPromptNames = nil
 }
 
 // ExportState implements core.StatefulTool. Returns a map form so the shape

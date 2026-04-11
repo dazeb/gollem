@@ -134,6 +134,13 @@ type Tool struct {
 	// hidden from each request's tool definitions until the model discovers
 	// them via tool_search. Non-zero only has effect when a Proxy is wired in.
 	ShouldDefer bool
+	// AlwaysLoad is the opt-out to ShouldDefer. When true, the tool is
+	// always included in every request's tool definitions regardless of
+	// the proxy's deferral logic. Use it to mark tools that the model
+	// must have immediate access to — things like a Reset or Abort tool
+	// that can't wait for a tool_search round trip to surface. AlwaysLoad
+	// wins over ShouldDefer if both are set.
+	AlwaysLoad bool
 	// SearchHint is an optional curated phrase used to boost this tool's
 	// score during tool_search keyword matching. Higher-signal than the
 	// tool description; ignored when empty.

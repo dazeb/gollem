@@ -203,6 +203,7 @@ func (p *Proxy) handleSearch(_ context.Context, rc *core.RunContext, argsJSON st
 		Query:              params.Query,
 		QueryKind:          classifyQueryKind(params.Query),
 		MatchCount:         len(matches),
+		HasMatches:         len(matches) > 0,
 		TotalDeferredTools: deferredCount,
 		MaxResults:         maxResults,
 	})
@@ -256,6 +257,11 @@ func MarkDeferred(tools []core.Tool) []core.Tool {
 // deferring MCP tools whose names match a prefix while leaving the
 // rest inline.
 //
+// Tools with AlwaysLoad=true are skipped unconditionally: AlwaysLoad
+// is the canonical opt-out and winning it automatically means the
+// stamper can never accidentally override a caller's intent to keep
+// a specific tool in the base toolset.
+//
 // Returns a new slice; the input is not mutated.
 func MarkDeferredIf(tools []core.Tool, predicate func(core.Tool) bool) []core.Tool {
 	if len(tools) == 0 {
@@ -264,6 +270,10 @@ func MarkDeferredIf(tools []core.Tool, predicate func(core.Tool) bool) []core.To
 	out := make([]core.Tool, len(tools))
 	for i, t := range tools {
 		out[i] = t
+		if t.AlwaysLoad {
+			// Never stamp AlwaysLoad tools.
+			continue
+		}
 		if predicate(t) {
 			out[i].ShouldDefer = true
 		}
@@ -327,34 +337,72 @@ func (p *Proxy) WrapPrompt(prompt string, tools []core.Tool) string {
 }
 
 // SystemPromptFuncFor returns a dynamic system-prompt function that
-// emits the full deferred-tools fragment on its first invocation for
-// this run and an empty string on every call thereafter. Wire the
+// emits a proper delta announcement: on the first invocation it lists
+// all deferred tools; on subsequent calls it lists only tools added
+// since the previous call (or empty when nothing is new). Wire the
 // result into the agent with core.WithDynamicSystemPrompt.
 //
-// This is the stateful delta form: useful with providers that support
-// prompt caching (where the first-turn fragment is cached and costs
-// ~0 on subsequent turns). Not ideal for providers without caching —
-// if the model doesn't "remember" the fragment via cache, it will see
-// a system prompt with no deferred-tools section starting on turn 2,
-// and may fail to discover tools.
+// This mirrors Claude Code's deferred_tools_delta semantics:
 //
-// For a provider-independent delta, prefer WrapPrompt: it puts the
-// fragment in the user message, which naturally persists through
-// message history on every provider.
+//   - Turn 1 — fresh Proxy, deferred pool is {A, B, C}. The returned
+//     prompt lists A, B, C.
+//   - Turn 2 — pool unchanged. The returned prompt is empty.
+//   - Turn 3 — a new deferred tool D appeared (e.g. an MCP server
+//     just reconnected and PrepareFuncFor saw the change). The
+//     returned prompt lists only D.
 //
-// The announcement state is tracked on the Proxy instance (thread-safe,
-// mutex-guarded). Calling Proxy.Reset or mutating the pool via
-// PrepareFuncFor with a different tool set re-arms the announcer so
-// the next call emits the updated list.
+// When tools are REMOVED from the pool, the delta is still emitted as
+// an empty-added, non-empty-removed PoolChangeEvent so subscribers can
+// log the churn. The system prompt itself reports only additions —
+// dropping a tool doesn't need to be explained to the model, it just
+// stops existing in the next tools array.
+//
+// This is a delta-efficient form for providers that support prompt
+// caching (Anthropic, OpenAI): the first-turn full list is cached,
+// then empty subsequent turns cost ~0 tokens.
+//
+// For provider-independent one-shot delivery via the user prompt,
+// prefer WrapPrompt. For a static full listing in every turn's
+// system prompt, use SystemPromptFragment directly.
+//
+// Announcement state lives on the Proxy instance and is mutex-guarded.
+// Calling Proxy.Reset clears the announced set, so the next call
+// re-announces everything.
 func (p *Proxy) SystemPromptFuncFor(tools []core.Tool) core.SystemPromptFunc {
-	return func(_ context.Context, _ *core.RunContext) (string, error) {
+	return func(_ context.Context, rc *core.RunContext) (string, error) {
 		if p.cfg.Mode == ModeOff {
 			return "", nil
 		}
-		if !p.state.claimSystemPromptAnnouncement() {
+
+		// Compute current deferred set for the pool closed over by this
+		// function. A tool with AlwaysLoad=true overrides ShouldDefer.
+		var currentDeferred []string
+		for _, t := range tools {
+			if t.ShouldDefer && !t.AlwaysLoad {
+				currentDeferred = append(currentDeferred, t.Definition.Name)
+			}
+		}
+
+		added, removed, initial := p.state.diffSystemPromptAnnouncement(currentDeferred)
+		if len(added) == 0 && len(removed) == 0 {
 			return "", nil
 		}
-		return buildSystemPromptFragment(p.cfg.ToolName, tools), nil
+
+		// Emit a pool-change event for observability even when the
+		// fragment itself won't include anything (removals only). The
+		// Initial flag lets subscribers distinguish the first full
+		// announcement from an incremental delta.
+		publishPoolChange(rc, PoolChangeEvent{
+			ToolName: p.cfg.ToolName,
+			Added:    added,
+			Removed:  removed,
+			Initial:  initial,
+		})
+
+		if len(added) == 0 {
+			return "", nil
+		}
+		return buildDeferredListFragment(p.cfg.ToolName, added, initial), nil
 	}
 }
 
@@ -389,9 +437,11 @@ func (p *Proxy) PrepareFuncFor(tools []core.Tool) core.AgentToolsPrepareFunc {
 	return func(_ context.Context, rc *core.RunContext, defs []core.ToolDefinition) []core.ToolDefinition {
 		// Pre-count deferred/inline in the incoming pool so the decision
 		// event carries a consistent snapshot regardless of branch.
+		// AlwaysLoad wins over ShouldDefer, so tools with both flags
+		// count as inline.
 		totalDeferred := 0
 		for _, t := range tools {
-			if t.ShouldDefer {
+			if t.ShouldDefer && !t.AlwaysLoad {
 				totalDeferred++
 			}
 		}
@@ -401,6 +451,7 @@ func (p *Proxy) PrepareFuncFor(tools []core.Tool) core.AgentToolsPrepareFunc {
 			p.recordPool(tools)
 			publishModeDecision(rc, ModeDecisionEvent{
 				Mode:              ModeOff,
+				Reason:            ReasonModeOff,
 				Deferred:          false,
 				DeferredToolCount: totalDeferred,
 				InlineToolCount:   inline,
@@ -418,6 +469,7 @@ func (p *Proxy) PrepareFuncFor(tools []core.Tool) core.AgentToolsPrepareFunc {
 			if cost < threshold {
 				publishModeDecision(rc, ModeDecisionEvent{
 					Mode:              ModeAuto,
+					Reason:            ReasonAutoBelowThreshold,
 					Deferred:          false,
 					DeferredToolCount: totalDeferred,
 					InlineToolCount:   inline,
@@ -430,6 +482,7 @@ func (p *Proxy) PrepareFuncFor(tools []core.Tool) core.AgentToolsPrepareFunc {
 			// with Deferred=true.
 			publishModeDecision(rc, ModeDecisionEvent{
 				Mode:              ModeAuto,
+				Reason:            ReasonAutoAboveThreshold,
 				Deferred:          true,
 				DeferredToolCount: totalDeferred,
 				InlineToolCount:   inline,
@@ -440,6 +493,7 @@ func (p *Proxy) PrepareFuncFor(tools []core.Tool) core.AgentToolsPrepareFunc {
 			// ModeAlways: always defer.
 			publishModeDecision(rc, ModeDecisionEvent{
 				Mode:              ModeAlways,
+				Reason:            ReasonAlwaysDefer,
 				Deferred:          true,
 				DeferredToolCount: totalDeferred,
 				InlineToolCount:   inline,
@@ -457,8 +511,10 @@ func (p *Proxy) PrepareFuncFor(tools []core.Tool) core.AgentToolsPrepareFunc {
 		out := defs[:0:0] // new slice, do not alias defs
 		for _, d := range defs {
 			t, ok := index[d.Name]
-			if !ok || !t.ShouldDefer {
-				// Non-deferred: always include.
+			if !ok || !t.ShouldDefer || t.AlwaysLoad {
+				// Non-deferred, or AlwaysLoad opt-out: always include.
+				// AlwaysLoad wins over ShouldDefer, matching Claude
+				// Code's tool.alwaysLoad priority.
 				out = append(out, d)
 				continue
 			}
@@ -492,13 +548,14 @@ func (p *Proxy) loadPool() []core.Tool {
 }
 
 // estimateDeferredCost returns the token-cost estimate for the tools
-// in `tools` that have ShouldDefer=true. Uses the caller-supplied
-// TokenCounter if present, else falls back to a character heuristic.
-// Returns 0 when no tools in `tools` are deferred.
+// in `tools` that have ShouldDefer=true and AlwaysLoad=false. Uses the
+// caller-supplied TokenCounter if present, else falls back to a
+// character heuristic. Returns 0 when no tools are eligible for
+// deferral.
 func (p *Proxy) estimateDeferredCost(tools []core.Tool) int {
 	var deferred []core.Tool
 	for _, t := range tools {
-		if t.ShouldDefer {
+		if t.ShouldDefer && !t.AlwaysLoad {
 			deferred = append(deferred, t)
 		}
 	}
