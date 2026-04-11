@@ -133,6 +133,28 @@ func TestBuildResponsesRequestNamespaceGrouping(t *testing.T) {
 	}
 }
 
+func TestBuildResponsesRequestNoBuiltinWhenNoneDeferred(t *testing.T) {
+	params := &core.ModelRequestParameters{
+		FunctionTools: []core.ToolDefinition{
+			{Name: "search", ParametersSchema: core.Schema{"type": "object"}},
+		},
+	}
+
+	req, err := buildResponsesRequest(nil, nil, params, "gpt-5.4", 4096, false)
+	if err != nil {
+		t.Fatalf("buildResponsesRequest: %v", err)
+	}
+
+	// 1 tool only, no built-in.
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(req.Tools))
+	}
+	tool, ok := req.Tools[0].(responsesToolDef)
+	if !ok || tool.Type == "tool_search" {
+		t.Error("should not inject tool_search when no tool is deferred")
+	}
+}
+
 func TestBuildResponsesRequestSilentDegradeOnGPT53(t *testing.T) {
 	params := &core.ModelRequestParameters{
 		FunctionTools: []core.ToolDefinition{

@@ -327,6 +327,7 @@ func (p *Provider) NewSession() core.Model {
 		wsHTTPFallback:       p.wsHTTPFallback,
 		wsHTTPFallbackSet:    p.wsHTTPFallbackSet,
 		useResponses:         p.useResponses,
+		disableToolSearch:    p.disableToolSearch,
 		reasoningSummary:     p.reasoningSummary,
 		textVerbosity:        p.textVerbosity,
 		chatgptAccountID:     p.chatgptAccountID,

@@ -460,6 +460,8 @@ func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSet
 			if td.Namespace != "" {
 				g, ok := namespaces[td.Namespace]
 				if !ok {
+					// Use namespace name as description. A follow-up could add
+					// ToolDefinition.NamespaceDescription for richer descriptions.
 					g = &nsGroup{desc: td.Namespace}
 					namespaces[td.Namespace] = g
 					namespaceOrder = append(namespaceOrder, td.Namespace)
@@ -785,6 +787,14 @@ func parseResponsesResponse(resp *responsesAPIResponse, modelName string) *core.
 			}
 			parts = append(parts, part)
 			hasToolCalls = true
+			// tool_search_call and tool_search_output are server-side plumbing
+			// that execute within a single response turn. The model discovers
+			// a deferred tool and calls it in the same response. On subsequent
+			// requests gollem only needs to send the function_call_output for
+			// the actual tool invocation — the search items are NOT required
+			// to be round-tripped because the Responses API maintains its own
+			// server-side state. Silently dropped here; unknown future item
+			// types also fall through harmlessly.
 		}
 	}
 
