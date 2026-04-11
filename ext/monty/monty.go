@@ -22,7 +22,7 @@ const runContextKey contextKey = iota
 
 // codeParams is the schema for the execute_code tool.
 type codeParams struct {
-	Code string `json:"code" jsonschema:"description=Python code to execute. Call the available functions directly. The last expression is the return value. Note: monty parser does not support multi-module imports (for example: import a, b) or context managers (with ...)."`
+	Code string `json:"code" jsonschema:"description=Python code to execute. Call the available functions directly. The last expression is the return value. Note: monty parser does not support class definitions, match statements, or context managers (with ...)."`
 }
 
 // Option configures a CodeMode.
@@ -117,7 +117,7 @@ func (cm *CodeMode) Tool() core.Tool {
 	return core.Tool{
 		Definition: core.ToolDefinition{
 			Name:             cm.toolName,
-			Description:      "Execute Python code that calls the available functions. The last expression is the return value. Parser limits: no multi-module imports (for example: import a, b) and no context managers (with ...). Use bash/python3 if needed.",
+			Description:      "Execute Python code that calls the available functions. The last expression is the return value. Parser limits: no class definitions, match statements, or context managers (with ...). Use bash/python3 if needed.",
 			ParametersSchema: core.SchemaFor[codeParams](),
 			Kind:             core.ToolKindFunction,
 		},
@@ -225,10 +225,12 @@ func normalizeExecuteError(err error) error {
 	lower := strings.ToLower(err.Error())
 	if strings.Contains(lower, "modulenotfounderror") || strings.Contains(lower, "importerror") {
 		return &core.ModelRetryError{
-			Message: "execute_code sandbox limits from monty-go README: supports loops/comprehensions/try-except/builtins, " +
-				"plus `import os` and `from pathlib import Path` via OS callbacks. " +
-				"Not supported: class definitions, most stdlib modules, third-party libraries, `filter()`, `float('inf')`, `float('nan')`. " +
-				"Use direct tools (`bash`, `view`, `edit`, `write`) instead of imports.",
+			Message: "execute_code sandbox supports: loops, comprehensions, try-except, builtins including " +
+				"`filter`, `getattr`, `max`, `min`, `sum`, `sorted`, `enumerate`, `zip`, `map`, `all`, `any`; " +
+				"stdlib modules `math`, `re`, `datetime`, `json`; and `import os` / `from pathlib import Path` via OS callbacks. " +
+				"Not supported: `class` definitions (only dataclass instances via external I/O), `match` statements, " +
+				"context managers (`with ...`), third-party libraries, `float('inf')` / `float('nan')`. " +
+				"For unsupported stdlib modules, use direct tools (`bash`, `view`, `edit`, `write`) or `bash` with `python3 - <<'PY' ... PY`.",
 		}
 	}
 	return err

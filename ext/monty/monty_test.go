@@ -93,8 +93,8 @@ func TestToolDefinition(t *testing.T) {
 	if tool.Handler == nil {
 		t.Error("handler should not be nil")
 	}
-	if !strings.Contains(tool.Definition.Description, "multi-module imports") {
-		t.Error("tool description should mention multi-module import limitation")
+	if !strings.Contains(tool.Definition.Description, "class definitions") {
+		t.Error("tool description should mention class definition limitation")
 	}
 	if !strings.Contains(tool.Definition.Description, "context managers") {
 		t.Error("tool description should mention context manager limitation")
@@ -135,11 +135,14 @@ func TestSystemPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Search the knowledge base") {
 		t.Error("prompt should contain tool description")
 	}
-	if !strings.Contains(prompt, "multi-module imports") {
-		t.Error("prompt should mention multi-module import limitation")
-	}
 	if !strings.Contains(prompt, "context managers") {
 		t.Error("prompt should mention context manager limitation")
+	}
+	if !strings.Contains(prompt, "`math`") || !strings.Contains(prompt, "`re`") {
+		t.Error("prompt should list supported stdlib modules (math, re, ...)")
+	}
+	if !strings.Contains(prompt, "`filter`") {
+		t.Error("prompt should list filter as a supported builtin (added in monty v0.0.8)")
 	}
 }
 
@@ -285,6 +288,65 @@ func TestUnknownFunction(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for unknown function")
 	}
+}
+
+// TestNewStdlibModules exercises stdlib modules added between monty v0.0.7
+// and v0.0.11 so a future monty downgrade is caught.
+func TestNewStdlibModules(t *testing.T) {
+	runner := newRunner(t)
+	cm := New(runner, nil)
+	tool := cm.Tool()
+
+	cases := []struct {
+		name string
+		code string
+		want any
+	}{
+		{"math", `import math
+math.floor(math.sqrt(17))`, float64(4)},
+		{"re", `import re
+bool(re.match(r"^\d+$", "12345"))`, true},
+		{"json", `import json
+json.loads('{"a": 1}')["a"]`, float64(1)},
+		{"datetime", `import datetime
+datetime.date(2026, 4, 10).isoformat()`, "2026-04-10"},
+		{"filter builtin", `list(filter(lambda x: x % 2 == 0, range(6)))`, []any{float64(0), float64(2), float64(4)}},
+		{"multi-module import", `import math, json
+math.pi > 3 and json.dumps([1, 2])`, "[1, 2]"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args, _ := json.Marshal(codeParams{Code: tc.code})
+			result, err := tool.Handler(context.Background(), &core.RunContext{}, string(args))
+			if err != nil {
+				t.Fatalf("execute failed: %v", err)
+			}
+			// Unwrap print-capture map if needed.
+			if m, ok := result.(map[string]any); ok {
+				if v, ok := m["result"]; ok {
+					result = v
+				}
+			}
+			if !jsonEqual(result, tc.want) {
+				t.Errorf("expected %v (%T), got %v (%T)", tc.want, tc.want, result, result)
+			}
+		})
+	}
+}
+
+// jsonEqual compares two values by round-tripping through JSON so that
+// []any / []float64 / nested maps compare structurally.
+func jsonEqual(a, b any) bool {
+	ab, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return string(ab) == string(bb)
 }
 
 func TestRunContextPropagation(t *testing.T) {

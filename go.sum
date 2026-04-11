@@ -39,8 +39,8 @@ github.com/fugue-labs/gollem-langsmith v0.0.2 h1:h5Kx8A9m0WzpTyasPfBYeuna1y0vKvM
 github.com/fugue-labs/gollem-langsmith v0.0.2/go.mod h1:9KHY48Uoz9YwS1vNll8yykTKnvOYcbZp1Sk5gkb8Vtc=
 github.com/fugue-labs/langfuse-go v0.0.0-20260221064316-0b4a57eccdb7 h1:B9GZ+edEipnEGjEXE89jb4uQcDOza0ocgVHSJwvW7rA=
 github.com/fugue-labs/langfuse-go v0.0.0-20260221064316-0b4a57eccdb7/go.mod h1:cEd2AEZMgBF3BpwvBn5bQXS8Wo78Sqk+RY5e0tQy2+8=
-github.com/fugue-labs/monty-go v0.0.0-20260221005309-f9f147b4245f h1:x1ndjBoWknSP+xffrwNMEB5WFitcHflxWqry1frrgIo=
-github.com/fugue-labs/monty-go v0.0.0-20260221005309-f9f147b4245f/go.mod h1:/IEDxFEvHB+vxZCdJTF3pMv6HwSd5LYLthYIH4uI7gg=
+github.com/fugue-labs/monty-go v0.2.0 h1:AOSrQXLCQw4dMtVB3pBIASMONWQSb5XfoznyT9XOrKc=
+github.com/fugue-labs/monty-go v0.2.0/go.mod h1:/IEDxFEvHB+vxZCdJTF3pMv6HwSd5LYLthYIH4uI7gg=
 github.com/gabriel-vasile/mimetype v1.4.8 h1:FfZ3gj38NjllZIeJAmMhr+qKL8Wu+nOoI3GqacKw1NM=
 github.com/gabriel-vasile/mimetype v1.4.8/go.mod h1:ByKUIKGjh1ODkGM1asKUbQZOLGrPjydw3hYPU2YU9t8=
 github.com/gin-contrib/sse v1.1.0 h1:n0w2GMuUpWDVp7qSpvze6fAu9iRxJY4Hmj6AmBOU05w=

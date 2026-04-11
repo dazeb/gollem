@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/fugue-labs/gollem-langsmith v0.0.2
 	github.com/fugue-labs/langfuse-go v0.0.0-20260221064316-0b4a57eccdb7
-	github.com/fugue-labs/monty-go v0.0.0-20260221005309-f9f147b4245f
+	github.com/fugue-labs/monty-go v0.2.0
 	github.com/gin-gonic/gin v1.11.0
 	github.com/gofiber/fiber/v2 v2.52.11
 	github.com/google/uuid v1.6.0
