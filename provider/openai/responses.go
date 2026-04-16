@@ -190,8 +190,14 @@ func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []cor
 	// If the server returned JSON instead of SSE (e.g., it doesn't support
 	// streaming or ignored the stream=true flag), parse as a complete
 	// response and wrap it so callers always get a valid StreamedResponse.
+	//
+	// Exception: the ChatGPT backend (chatgpt.com) always returns SSE when
+	// stream=true is set, but may not include "text/event-stream" in the
+	// Content-Type header. For ChatGPT endpoints, always parse as SSE to
+	// avoid attempting JSON decode on SSE data (which fails with "invalid
+	// character" errors because SSE lines start with "event:" or "data:").
 	ct := resp.Header.Get("Content-Type")
-	if !strings.Contains(ct, "text/event-stream") {
+	if !strings.Contains(ct, "text/event-stream") && !p.isChatGPTEndpoint() {
 		defer resp.Body.Close()
 		var apiResp responsesAPIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
