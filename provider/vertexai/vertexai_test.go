@@ -73,6 +73,20 @@ func TestBuildRequestWithSettings(t *testing.T) {
 	}
 }
 
+func TestBuildRequestStopSequences(t *testing.T) {
+	settings := &core.ModelSettings{StopSequences: []string{"END", "###"}}
+	req, err := buildRequest(nil, settings, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.GenerationConfig == nil {
+		t.Fatal("expected GenerationConfig to be set")
+	}
+	if got := req.GenerationConfig.StopSequences; len(got) != 2 || got[0] != "END" || got[1] != "###" {
+		t.Errorf("stopSequences = %v, want [END ###]", got)
+	}
+}
+
 func TestBuildRequestWithTools(t *testing.T) {
 	params := &core.ModelRequestParameters{
 		FunctionTools: []core.ToolDefinition{
@@ -1236,21 +1250,80 @@ func TestBuildRequestThoughtSignatureRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBuildRequestUnsupportedPartType(t *testing.T) {
-	// Verify that unsupported request part types return an error.
+// TestBuildRequestImageFileURL verifies that an ImagePart with a URL becomes
+// a fileData part.
+func TestBuildRequestImageFileURL(t *testing.T) {
 	messages := []core.ModelMessage{
 		core.ModelRequest{
 			Parts: []core.ModelRequestPart{
-				core.ImagePart{URL: "http://example.com/img.png", MIMEType: "image/png"},
+				core.UserPromptPart{Content: "what's here?"},
+				core.ImagePart{URL: "gs://my-bucket/img.png", MIMEType: "image/png"},
 			},
 		},
 	}
-	_, err := buildRequest(messages, nil, nil)
-	if err == nil {
-		t.Fatal("expected error for unsupported part type")
+	req, err := buildRequest(messages, nil, nil)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unsupported request part type") {
-		t.Errorf("unexpected error message: %v", err)
+	if len(req.Contents) != 1 || len(req.Contents[0].Parts) != 2 {
+		t.Fatalf("unexpected contents: %+v", req.Contents)
+	}
+	p := req.Contents[0].Parts[1]
+	if p.FileData == nil {
+		t.Fatalf("expected FileData, got %+v", p)
+	}
+	if p.FileData.FileURI != "gs://my-bucket/img.png" || p.FileData.MimeType != "image/png" {
+		t.Errorf("fileData = %+v", p.FileData)
+	}
+}
+
+// TestBuildRequestImageDataURI verifies a data:MIME;base64,... URI becomes
+// an inlineData part.
+func TestBuildRequestImageDataURI(t *testing.T) {
+	dataURI := core.BinaryContent([]byte{1, 2, 3}, "image/jpeg")
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ImagePart{URL: dataURI},
+			},
+		},
+	}
+	req, err := buildRequest(messages, nil, nil)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	p := req.Contents[0].Parts[0]
+	if p.InlineData == nil {
+		t.Fatalf("expected InlineData, got %+v", p)
+	}
+	if p.InlineData.MimeType != "image/jpeg" || p.InlineData.Data == "" {
+		t.Errorf("inlineData = %+v", p.InlineData)
+	}
+}
+
+// TestBuildRequestAudioAndDocument verifies AudioPart and DocumentPart also
+// route through the multimodal helper.
+func TestBuildRequestAudioAndDocument(t *testing.T) {
+	audioURI := core.BinaryContent([]byte{5}, "audio/mp3")
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.AudioPart{URL: audioURI},
+			core.DocumentPart{URL: "gs://my-bucket/doc.pdf", MIMEType: "application/pdf"},
+		}},
+	}
+	req, err := buildRequest(messages, nil, nil)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	parts := req.Contents[0].Parts
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
+	}
+	if parts[0].InlineData == nil || parts[0].InlineData.MimeType != "audio/mp3" {
+		t.Errorf("audio part = %+v", parts[0])
+	}
+	if parts[1].FileData == nil || parts[1].FileData.FileURI != "gs://my-bucket/doc.pdf" {
+		t.Errorf("document part = %+v", parts[1])
 	}
 }
 

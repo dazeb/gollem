@@ -3,6 +3,7 @@ package vertexai
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
@@ -36,6 +37,10 @@ type geminiContent struct {
 type geminiPart struct {
 	// Text part.
 	Text string `json:"text,omitempty"`
+	// Inline binary data (base64-encoded). Used for images, audio, documents.
+	InlineData *geminiBlob `json:"inlineData,omitempty"`
+	// File data references a file by URI (gs:// or https URL).
+	FileData *geminiFileData `json:"fileData,omitempty"`
 	// Function call from model.
 	FunctionCall *geminiFunctionCall `json:"functionCall,omitempty"`
 	// Function response from user.
@@ -43,6 +48,18 @@ type geminiPart struct {
 	// ThoughtSignature is required by Gemini 3.x models. The model returns it
 	// with function calls, and it must be sent back with the conversation history.
 	ThoughtSignature string `json:"thoughtSignature,omitempty"`
+}
+
+// geminiBlob is inline base64-encoded content.
+type geminiBlob struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
+}
+
+// geminiFileData references a file by URI.
+type geminiFileData struct {
+	MimeType string `json:"mimeType,omitempty"`
+	FileURI  string `json:"fileUri"`
 }
 
 type geminiFunctionCall struct {
@@ -69,6 +86,7 @@ type geminiGenerationConfig struct {
 	MaxOutputTokens  int                   `json:"maxOutputTokens,omitempty"`
 	Temperature      *float64              `json:"temperature,omitempty"`
 	TopP             *float64              `json:"topP,omitempty"`
+	StopSequences    []string              `json:"stopSequences,omitempty"`
 	ResponseMimeType string                `json:"responseMimeType,omitempty"`
 	ResponseSchema   any                   `json:"responseSchema,omitempty"`
 	ThinkingConfig   *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
@@ -127,6 +145,10 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 		}
 		if settings.TopP != nil {
 			genConfig.TopP = settings.TopP
+			hasGenConfig = true
+		}
+		if len(settings.StopSequences) > 0 {
+			genConfig.StopSequences = settings.StopSequences
 			hasGenConfig = true
 		}
 		// Enable thinking for Gemini models that support it (2.5+, 3.x).
@@ -250,6 +272,24 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 					} else {
 						userParts = append(userParts, geminiPart{Text: p.Content})
 					}
+				case core.ImagePart:
+					gp, err := toGeminiDataPart(p.URL, p.MIMEType)
+					if err != nil {
+						return nil, fmt.Errorf("vertexai: image: %w", err)
+					}
+					userParts = append(userParts, gp)
+				case core.AudioPart:
+					gp, err := toGeminiDataPart(p.URL, p.MIMEType)
+					if err != nil {
+						return nil, fmt.Errorf("vertexai: audio: %w", err)
+					}
+					userParts = append(userParts, gp)
+				case core.DocumentPart:
+					gp, err := toGeminiDataPart(p.URL, p.MIMEType)
+					if err != nil {
+						return nil, fmt.Errorf("vertexai: document: %w", err)
+					}
+					userParts = append(userParts, gp)
 				default:
 					return nil, fmt.Errorf("vertexai provider: unsupported request part type %T", part)
 				}
@@ -362,6 +402,32 @@ func parseResponse(resp *geminiResponse, modelName string) *core.ModelResponse {
 }
 
 // mapFinishReason maps Gemini finish reasons to gollem FinishReasons.
+// toGeminiDataPart converts a gollem part URL into a geminiPart carrying
+// either inlineData (for data: URIs) or fileData (for gs:// / https URLs).
+// Gemini expects base64 data in inlineData.data and gs:// URIs or publicly
+// accessible HTTPS URLs in fileData.fileUri.
+func toGeminiDataPart(url, mimeOverride string) (geminiPart, error) {
+	if rest, ok := strings.CutPrefix(url, "data:"); ok {
+		semi := strings.Index(rest, ";")
+		if semi < 0 {
+			return geminiPart{}, fmt.Errorf("malformed data URI: missing ';'")
+		}
+		mime := rest[:semi]
+		data, ok := strings.CutPrefix(rest[semi+1:], "base64,")
+		if !ok {
+			return geminiPart{}, fmt.Errorf("data URI must be base64-encoded")
+		}
+		if mimeOverride != "" {
+			mime = mimeOverride
+		}
+		return geminiPart{InlineData: &geminiBlob{MimeType: mime, Data: data}}, nil
+	}
+	if url == "" {
+		return geminiPart{}, fmt.Errorf("empty URL")
+	}
+	return geminiPart{FileData: &geminiFileData{MimeType: mimeOverride, FileURI: url}}, nil
+}
+
 func mapFinishReason(resp *geminiResponse) core.FinishReason {
 	if len(resp.Candidates) == 0 {
 		return core.FinishReasonStop
