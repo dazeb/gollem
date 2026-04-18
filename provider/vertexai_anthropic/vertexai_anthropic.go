@@ -24,19 +24,74 @@ import (
 
 // Model constants for Claude models via Vertex AI.
 // Note: Vertex AI uses model IDs WITHOUT date suffixes, unlike the direct Anthropic API.
+//
+// Only Claude 4.6 and newer are first-class here. Callers targeting older
+// models may still pass the raw model string via WithModel; the provider falls
+// back to the legacy manual-thinking path for those.
 const (
-	Claude4Opus   = "claude-opus-4-6"
-	Claude4Sonnet = "claude-sonnet-4-5"
-	Claude4Haiku  = "claude-haiku-4-5"
+	ClaudeOpus47   = "claude-opus-4-7"
+	ClaudeOpus46   = "claude-opus-4-6"
+	ClaudeSonnet46 = "claude-sonnet-4-6"
+	ClaudeHaiku45  = "claude-haiku-4-5"
 )
 
 const (
 	defaultLocation  = "us-east5"
-	defaultModel     = Claude4Sonnet
+	defaultModel     = ClaudeSonnet46
 	defaultMaxTokens = 4096
 	anthropicVersion = "vertex-2023-10-16"
 	cloudScope       = "https://www.googleapis.com/auth/cloud-platform"
 )
+
+// isOpus47 reports whether the model string identifies Opus 4.7 or Mythos.
+// These models only accept adaptive thinking.
+func isOpus47(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(m, "mythos") {
+		return true
+	}
+	return strings.Contains(m, "opus-4-7")
+}
+
+// isOpus46OrSonnet46 reports whether the model is Opus 4.6 or Sonnet 4.6.
+func isOpus46OrSonnet46(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return strings.Contains(m, "opus-4-6") || strings.Contains(m, "sonnet-4-6")
+}
+
+// supportsEffort reports whether the model accepts the output_config.effort
+// parameter. Per Anthropic docs: Mythos, Opus 4.7/4.6/4.5, Sonnet 4.6.
+// Haiku 4.5 and Claude 3.x do NOT support it.
+func supportsEffort(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(m, "mythos") {
+		return true
+	}
+	if isOpus47(m) || isOpus46OrSonnet46(m) {
+		return true
+	}
+	return strings.Contains(m, "opus-4-5")
+}
+
+// supportsManualThinking reports whether {thinking: {type: "enabled",
+// budget_tokens: N}} is accepted. Opus 4.7 and Mythos reject it.
+func supportsManualThinking(model string) bool {
+	return !isOpus47(model)
+}
+
+// supportsEffortValue reports whether a given effort value is accepted.
+func supportsEffortValue(model, effort string) bool {
+	switch effort {
+	case "low", "medium", "high":
+		return supportsEffort(model)
+	case "xhigh":
+		return isOpus47(model)
+	case "max":
+		return isOpus47(model) || isOpus46OrSonnet46(model)
+	default:
+		return false
+	}
+}
 
 // Provider implements core.Model for Claude via Vertex AI rawPredict.
 type Provider struct {

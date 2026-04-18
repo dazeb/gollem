@@ -6,7 +6,7 @@
 //
 //	model := anthropic.New(
 //	    anthropic.WithAPIKey("sk-..."),    // or set ANTHROPIC_API_KEY env var
-//	    anthropic.WithModel(anthropic.Claude4Sonnet),
+//	    anthropic.WithModel(anthropic.ClaudeSonnet46),
 //	)
 //
 // The provider reads ANTHROPIC_API_KEY from the environment by default.

@@ -47,13 +47,13 @@ func TestBuildRequestBasic(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if req.Model != Claude4Sonnet {
-		t.Errorf("model = %q, want %q", req.Model, Claude4Sonnet)
+	if req.Model != ClaudeSonnet46 {
+		t.Errorf("model = %q, want %q", req.Model, ClaudeSonnet46)
 	}
 	if req.MaxTokens != 4096 {
 		t.Errorf("max_tokens = %d, want 4096", req.MaxTokens)
@@ -80,7 +80,7 @@ func TestBuildRequestWithSettings(t *testing.T) {
 		MaxTokens:   &maxTokens,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -90,6 +90,27 @@ func TestBuildRequestWithSettings(t *testing.T) {
 	}
 	if req.Temperature == nil || *req.Temperature != 0.7 {
 		t.Errorf("temperature = %v, want 0.7", req.Temperature)
+	}
+}
+
+func TestBuildRequestStopSequences(t *testing.T) {
+	settings := &core.ModelSettings{
+		StopSequences: []string{"END", "###"},
+	}
+	req, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(req.StopSequences) != 2 || req.StopSequences[0] != "END" || req.StopSequences[1] != "###" {
+		t.Errorf("stop_sequences = %v, want [END ###]", req.StopSequences)
+	}
+	// Round-trip through JSON to confirm the field name.
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(body), `"stop_sequences":["END","###"]`) {
+		t.Errorf("body missing stop_sequences: %s", body)
 	}
 }
 
@@ -110,7 +131,7 @@ func TestBuildRequestWithTools(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, nil, params, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,7 +168,7 @@ func TestBuildRequestToolReturn(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +201,7 @@ func TestBuildRequestRetryPrompt(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,7 +229,7 @@ func TestBuildRequestRetryPromptWithoutToolID(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -236,7 +257,7 @@ func TestBuildRequestAssistantMessage(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,7 +281,7 @@ func TestBuildRequestAssistantMessage(t *testing.T) {
 }
 
 func TestBuildRequestStream(t *testing.T) {
-	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, true, false, false)
+	req, err := buildRequest(nil, nil, nil, ClaudeSonnet46, 4096, true, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -278,12 +299,12 @@ func TestParseResponse(t *testing.T) {
 		Content: rawBlocks(
 			apiContentBlock{Type: "text", Text: "Hello, world!"},
 		),
-		Model:      Claude4Sonnet,
+		Model:      ClaudeSonnet46,
 		StopReason: "end_turn",
 		Usage:      apiUsage{InputTokens: 10, OutputTokens: 5},
 	}
 
-	result := parseResponse(resp, Claude4Sonnet)
+	result := parseResponse(resp, ClaudeSonnet46)
 	if len(result.Parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(result.Parts))
 	}
@@ -351,7 +372,7 @@ func TestParseResponseToolCall(t *testing.T) {
 		StopReason: "tool_use",
 	}
 
-	result := parseResponse(resp, Claude4Sonnet)
+	result := parseResponse(resp, ClaudeSonnet46)
 	tc, ok := result.Parts[0].(core.ToolCallPart)
 	if !ok {
 		t.Fatalf("expected ToolCallPart, got %T", result.Parts[0])
@@ -379,7 +400,7 @@ func TestParseResponseThinking(t *testing.T) {
 		StopReason: "end_turn",
 	}
 
-	result := parseResponse(resp, Claude4Sonnet)
+	result := parseResponse(resp, ClaudeSonnet46)
 	if len(result.Parts) != 2 {
 		t.Fatalf("expected 2 parts, got %d", len(result.Parts))
 	}
@@ -442,7 +463,7 @@ data: {"type":"message_stop"}
 `
 
 	body := io.NopCloser(strings.NewReader(sseData))
-	stream := newStreamedResponse(body, Claude4Sonnet)
+	stream := newStreamedResponse(body, ClaudeSonnet46)
 
 	var events []core.ModelResponseStreamEvent
 	for {
@@ -512,7 +533,7 @@ func TestParseSSEStreamNoSpaceAfterColon(t *testing.T) {
 	sseData := "event:message_start\ndata:{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\nevent:content_block_start\ndata:{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent:content_block_delta\ndata:{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\nevent:content_block_stop\ndata:{\"type\":\"content_block_stop\",\"index\":0}\n\nevent:message_delta\ndata:{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\nevent:message_stop\ndata:{\"type\":\"message_stop\"}\n\n"
 
 	body := io.NopCloser(strings.NewReader(sseData))
-	stream := newStreamedResponse(body, Claude4Sonnet)
+	stream := newStreamedResponse(body, ClaudeSonnet46)
 
 	var events []core.ModelResponseStreamEvent
 	for {
@@ -569,7 +590,7 @@ data: {"type":"message_stop"}
 `
 
 	body := io.NopCloser(strings.NewReader(sseData))
-	stream := newStreamedResponse(body, Claude4Sonnet)
+	stream := newStreamedResponse(body, ClaudeSonnet46)
 
 	// Drain the stream.
 	for {
@@ -608,8 +629,8 @@ func TestNewProviderDefaults(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 	p := New()
 
-	if p.model != Claude4Sonnet {
-		t.Errorf("model = %q, want %q", p.model, Claude4Sonnet)
+	if p.model != ClaudeSonnet46 {
+		t.Errorf("model = %q, want %q", p.model, ClaudeSonnet46)
 	}
 	if p.baseURL != defaultBaseURL {
 		t.Errorf("baseURL = %q, want %q", p.baseURL, defaultBaseURL)
@@ -617,7 +638,7 @@ func TestNewProviderDefaults(t *testing.T) {
 	if p.apiKey != "test-key" {
 		t.Errorf("apiKey = %q, want 'test-key'", p.apiKey)
 	}
-	if p.ModelName() != Claude4Sonnet {
+	if p.ModelName() != ClaudeSonnet46 {
 		t.Errorf("ModelName() = %q", p.ModelName())
 	}
 }
@@ -625,7 +646,7 @@ func TestNewProviderDefaults(t *testing.T) {
 func TestNewProviderOptions(t *testing.T) {
 	p := New(
 		WithAPIKey("my-key"),
-		WithModel(Claude4Opus),
+		WithModel(ClaudeOpus46),
 		WithBaseURL("https://custom.api.com"),
 		WithMaxTokens(8192),
 	)
@@ -633,7 +654,7 @@ func TestNewProviderOptions(t *testing.T) {
 	if p.apiKey != "my-key" {
 		t.Errorf("apiKey = %q", p.apiKey)
 	}
-	if p.model != Claude4Opus {
+	if p.model != ClaudeOpus46 {
 		t.Errorf("model = %q", p.model)
 	}
 	if p.baseURL != "https://custom.api.com" {
@@ -664,7 +685,7 @@ func TestRequestIntegration(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("failed to decode request: %v", err)
 		}
-		if req.Model != Claude4Sonnet {
+		if req.Model != ClaudeSonnet46 {
 			t.Errorf("model = %q", req.Model)
 		}
 
@@ -675,7 +696,7 @@ func TestRequestIntegration(t *testing.T) {
 			Content: rawBlocks(
 				apiContentBlock{Type: "text", Text: "Hello from test!"},
 			),
-			Model:      Claude4Sonnet,
+			Model:      ClaudeSonnet46,
 			StopReason: "end_turn",
 			Usage:      apiUsage{InputTokens: 10, OutputTokens: 5},
 		}
@@ -807,7 +828,7 @@ func TestBuildRequestWithThinkingBudget(t *testing.T) {
 		ThinkingBudget: &budget,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -831,7 +852,7 @@ func TestBuildRequestThinkingStripsTemperature(t *testing.T) {
 		Temperature:    &temp,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -854,7 +875,7 @@ func TestBuildRequestThinkingAutoAdjustsMaxTokens(t *testing.T) {
 	}
 
 	// Default max tokens is 4096, which is less than the budget (10000).
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -877,7 +898,7 @@ func TestBuildRequestThinkingKeepsExplicitMaxTokens(t *testing.T) {
 		MaxTokens:      &maxTokens,
 	}
 
-	req, err := buildRequest(nil, settings, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -888,12 +909,130 @@ func TestBuildRequestThinkingKeepsExplicitMaxTokens(t *testing.T) {
 }
 
 func TestBuildRequestNoThinkingByDefault(t *testing.T) {
-	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if req.Thinking != nil {
 		t.Errorf("expected Thinking to be nil by default, got %+v", req.Thinking)
+	}
+}
+
+// TestOpus47RejectsThinkingBudget verifies that passing ThinkingBudget with
+// Opus 4.7 fails at request build with a clear message pointing the caller to
+// WithReasoningEffort instead. Opus 4.7 only supports adaptive thinking.
+func TestOpus47RejectsThinkingBudget(t *testing.T) {
+	budget := 2048
+	settings := &core.ModelSettings{ThinkingBudget: &budget}
+
+	_, err := buildRequest(nil, settings, nil, ClaudeOpus47, 4096, false, false, false)
+	if err == nil {
+		t.Fatal("expected error when ThinkingBudget is set on Opus 4.7")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "claude-opus-4-7") {
+		t.Errorf("error should mention the model name, got: %s", msg)
+	}
+	if !strings.Contains(msg, "WithReasoningEffort") {
+		t.Errorf("error should point to WithReasoningEffort, got: %s", msg)
+	}
+}
+
+// TestBuildRequestWithEffort verifies output_config.effort is emitted for each
+// valid value on models that accept it.
+func TestBuildRequestWithEffort(t *testing.T) {
+	cases := []struct {
+		model  string
+		effort string
+	}{
+		{ClaudeOpus47, "low"},
+		{ClaudeOpus47, "medium"},
+		{ClaudeOpus47, "high"},
+		{ClaudeOpus47, "xhigh"},
+		{ClaudeOpus47, "max"},
+		{ClaudeOpus46, "low"},
+		{ClaudeOpus46, "max"},
+		{ClaudeSonnet46, "medium"},
+		{ClaudeSonnet46, "max"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model+"/"+tc.effort, func(t *testing.T) {
+			effort := tc.effort
+			settings := &core.ModelSettings{ReasoningEffort: &effort}
+			req, err := buildRequest(nil, settings, nil, tc.model, 4096, false, false, false)
+			if err != nil {
+				t.Fatalf("buildRequest: %v", err)
+			}
+			if req.OutputConfig == nil {
+				t.Fatal("expected OutputConfig to be set")
+			}
+			if req.OutputConfig.Effort != tc.effort {
+				t.Errorf("effort = %q, want %q", req.OutputConfig.Effort, tc.effort)
+			}
+		})
+	}
+}
+
+// TestEffortGatingPerModel verifies that invalid (model, effort) combos are
+// rejected at build time with a clear error: xhigh on non-4.7, max on <4.6,
+// any effort on Haiku or pre-4.5 models.
+func TestEffortGatingPerModel(t *testing.T) {
+	cases := []struct {
+		name   string
+		model  string
+		effort string
+	}{
+		{"xhigh_on_opus_46", ClaudeOpus46, "xhigh"},
+		{"xhigh_on_sonnet_46", ClaudeSonnet46, "xhigh"},
+		{"max_on_haiku", ClaudeHaiku45, "max"},
+		{"low_on_haiku", ClaudeHaiku45, "low"},
+		{"high_on_haiku", ClaudeHaiku45, "high"},
+		{"any_on_3x", "claude-3-5-sonnet-20241022", "low"},
+		{"unknown_value", ClaudeOpus47, "ultra"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			effort := tc.effort
+			settings := &core.ModelSettings{ReasoningEffort: &effort}
+			_, err := buildRequest(nil, settings, nil, tc.model, 4096, false, false, false)
+			if err == nil {
+				t.Fatalf("expected error for model=%q effort=%q", tc.model, tc.effort)
+			}
+		})
+	}
+}
+
+// TestBuildRequestEffortAndThinkingBudgetCoexistOn46 verifies that on Opus 4.6
+// or Sonnet 4.6, a caller may set both ThinkingBudget (legacy) and effort. The
+// output should carry both fields. No warning is required; just don't crash.
+func TestBuildRequestEffortAndThinkingBudgetCoexistOn46(t *testing.T) {
+	budget := 2048
+	effort := "medium"
+	settings := &core.ModelSettings{
+		ThinkingBudget:  &budget,
+		ReasoningEffort: &effort,
+	}
+
+	req, err := buildRequest(nil, settings, nil, ClaudeOpus46, 4096, false, false, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	if req.Thinking == nil || req.Thinking.Type != "enabled" || req.Thinking.BudgetTokens != 2048 {
+		t.Errorf("expected manual thinking to be emitted, got %+v", req.Thinking)
+	}
+	if req.OutputConfig == nil || req.OutputConfig.Effort != "medium" {
+		t.Errorf("expected effort=medium in output_config, got %+v", req.OutputConfig)
+	}
+}
+
+// TestNoEffortByDefault verifies output_config is omitted when no effort is set.
+func TestNoEffortByDefault(t *testing.T) {
+	req, err := buildRequest(nil, nil, nil, ClaudeOpus47, 4096, false, false, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	if req.OutputConfig != nil {
+		t.Errorf("expected OutputConfig nil by default, got %+v", req.OutputConfig)
 	}
 }
 
@@ -923,7 +1062,7 @@ func TestBuildRequestEmptyResponseAlternation(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -936,31 +1075,177 @@ func TestBuildRequestEmptyResponseAlternation(t *testing.T) {
 	}
 }
 
-func TestBuildRequestRejectsUnsupportedParts(t *testing.T) {
-	tests := []struct {
-		name string
-		part core.ModelRequestPart
-	}{
-		{"ImagePart", core.ImagePart{URL: "https://example.com/img.png", MIMEType: "image/png"}},
-		{"AudioPart", core.AudioPart{URL: "https://example.com/audio.mp3", MIMEType: "audio/mp3"}},
-		{"DocumentPart", core.DocumentPart{URL: "https://example.com/doc.pdf", MIMEType: "application/pdf"}},
+// TestBuildRequestRejectsAudio verifies that AudioPart is explicitly
+// rejected — Anthropic's Messages API does not accept audio input.
+// ImagePart and DocumentPart are now supported (see multimodal tests).
+func TestBuildRequestRejectsAudio(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.AudioPart{URL: "https://example.com/audio.mp3", MIMEType: "audio/mp3"},
+			},
+			Timestamp: time.Now(),
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			messages := []core.ModelMessage{
-				core.ModelRequest{
-					Parts:     []core.ModelRequestPart{tt.part},
-					Timestamp: time.Now(),
-				},
-			}
-			_, err := buildRequest(messages, nil, &core.ModelRequestParameters{AllowTextOutput: true}, "claude-3", 1024, false, false, false)
-			if err == nil {
-				t.Errorf("expected error for unsupported %s, got nil", tt.name)
-			}
-			if err != nil && !strings.Contains(err.Error(), "unsupported request part type") {
-				t.Errorf("expected 'unsupported request part type' in error, got %q", err.Error())
-			}
-		})
+	_, err := buildRequest(messages, nil, &core.ModelRequestParameters{AllowTextOutput: true}, "claude-3", 1024, false, false, false)
+	if err == nil {
+		t.Fatal("expected error for AudioPart, got nil")
+	}
+	if !strings.Contains(err.Error(), "audio input is not supported") {
+		t.Errorf("error should mention audio not supported, got: %q", err.Error())
+	}
+}
+
+// TestBuildRequestImageURL verifies an ImagePart with an https URL serializes
+// as an image block with a url source.
+func TestBuildRequestImageURL(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "What is in this image?"},
+			core.ImagePart{URL: "https://example.com/cat.jpg"},
+		}},
+	}
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 1024, false, false, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	if len(req.Messages) != 1 || len(req.Messages[0].Content) != 2 {
+		t.Fatalf("expected 1 message with 2 content blocks, got %+v", req.Messages)
+	}
+	img := req.Messages[0].Content[1]
+	if img.Type != "image" {
+		t.Errorf("block type = %q, want image", img.Type)
+	}
+	if img.Source == nil || img.Source.Type != "url" || img.Source.URL != "https://example.com/cat.jpg" {
+		t.Errorf("source = %+v, want {type: url, url: https://example.com/cat.jpg}", img.Source)
+	}
+}
+
+// TestBuildRequestImageDataURI verifies a data:MIME;base64,... URI parses
+// into a base64 source block.
+func TestBuildRequestImageDataURI(t *testing.T) {
+	// Tiny valid 1x1 PNG base64 is fine; this test only checks routing.
+	dataURI := core.BinaryContent([]byte{1, 2, 3}, "image/png")
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.ImagePart{URL: dataURI},
+		}},
+	}
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 1024, false, false, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	img := req.Messages[0].Content[0]
+	if img.Type != "image" {
+		t.Errorf("block type = %q, want image", img.Type)
+	}
+	if img.Source == nil || img.Source.Type != "base64" {
+		t.Fatalf("source = %+v, want base64", img.Source)
+	}
+	if img.Source.MediaType != "image/png" {
+		t.Errorf("media_type = %q, want image/png", img.Source.MediaType)
+	}
+	if img.Source.Data == "" {
+		t.Error("expected base64 data to be non-empty")
+	}
+}
+
+// TestBuildRequestDocument verifies DocumentPart emits a document block
+// with optional title.
+func TestBuildRequestDocument(t *testing.T) {
+	dataURI := core.BinaryContent([]byte("fake pdf"), "application/pdf")
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.DocumentPart{URL: dataURI, Title: "My Report"},
+		}},
+	}
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 1024, false, false, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	doc := req.Messages[0].Content[0]
+	if doc.Type != "document" {
+		t.Errorf("block type = %q, want document", doc.Type)
+	}
+	if doc.Title != "My Report" {
+		t.Errorf("title = %q, want My Report", doc.Title)
+	}
+	if doc.Source == nil || doc.Source.Type != "base64" || doc.Source.MediaType != "application/pdf" {
+		t.Errorf("source = %+v", doc.Source)
+	}
+}
+
+// TestBuildRequestToolResultWithImages verifies a ToolReturnPart with
+// Images emits a tool_result whose content is an array: text block first,
+// then one image block per attached image. Round-trips through JSON.
+func TestBuildRequestToolResultWithImages(t *testing.T) {
+	img1 := core.ImagePart{URL: "https://example.com/a.png", MIMEType: "image/png"}
+	img2 := core.ImagePart{URL: core.BinaryContent([]byte{9, 9, 9}, "image/jpeg")}
+	messages := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.ToolReturnPart{
+				ToolCallID: "call_1",
+				Content:    "here are the screenshots",
+				Images:     []core.ImagePart{img1, img2},
+			},
+		}},
+	}
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 1024, false, false, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+
+	// Verify via JSON to exercise the custom MarshalJSON path.
+	raw, err := json.Marshal(req.Messages[0].Content[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded struct {
+		Type      string            `json:"type"`
+		ToolUseID string            `json:"tool_use_id"`
+		Content   []json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Type != "tool_result" {
+		t.Errorf("type = %q", decoded.Type)
+	}
+	if decoded.ToolUseID != "call_1" {
+		t.Errorf("tool_use_id = %q", decoded.ToolUseID)
+	}
+	if len(decoded.Content) != 3 {
+		t.Fatalf("expected 3 content blocks (text + 2 images), got %d", len(decoded.Content))
+	}
+
+	// First block should be text.
+	var textBlock struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(decoded.Content[0], &textBlock)
+	if textBlock.Type != "text" || textBlock.Text != "here are the screenshots" {
+		t.Errorf("text block = %+v", textBlock)
+	}
+
+	// Second block: image with URL source.
+	var imgBlock1 struct {
+		Type   string    `json:"type"`
+		Source apiSource `json:"source"`
+	}
+	_ = json.Unmarshal(decoded.Content[1], &imgBlock1)
+	if imgBlock1.Type != "image" || imgBlock1.Source.Type != "url" {
+		t.Errorf("img1 block = %+v", imgBlock1)
+	}
+
+	// Third block: image with base64 source.
+	var imgBlock2 struct {
+		Type   string    `json:"type"`
+		Source apiSource `json:"source"`
+	}
+	_ = json.Unmarshal(decoded.Content[2], &imgBlock2)
+	if imgBlock2.Type != "image" || imgBlock2.Source.Type != "base64" || imgBlock2.Source.MediaType != "image/jpeg" {
+		t.Errorf("img2 block = %+v", imgBlock2)
 	}
 }
 
@@ -998,7 +1283,7 @@ func TestBuildRequestSystemOnlyRequestAlternation(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1031,7 +1316,7 @@ func TestAnthropicCacheControl_SystemPrompt(t *testing.T) {
 			},
 		},
 	}
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, true, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1059,7 +1344,7 @@ func TestAnthropicCacheControl_Tools(t *testing.T) {
 			{Name: "tool_b", Description: "B"},
 		},
 	}
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, true, false)
+	req, err := buildRequest(nil, nil, params, ClaudeSonnet46, 4096, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1085,7 +1370,7 @@ func TestAnthropicCacheControl_NoSystem(t *testing.T) {
 			},
 		},
 	}
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, true, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1095,7 +1380,7 @@ func TestAnthropicCacheControl_NoSystem(t *testing.T) {
 }
 
 func TestAnthropicCacheControl_NoTools(t *testing.T) {
-	req, err := buildRequest(nil, nil, nil, Claude4Sonnet, 4096, false, true, false)
+	req, err := buildRequest(nil, nil, nil, ClaudeSonnet46, 4096, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1119,7 +1404,7 @@ func TestAnthropicCacheControl_Disabled(t *testing.T) {
 			{Name: "tool_a", Description: "A"},
 		},
 	}
-	req, err := buildRequest(messages, nil, params, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, params, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

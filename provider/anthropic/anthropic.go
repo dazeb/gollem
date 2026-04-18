@@ -19,15 +19,21 @@ import (
 )
 
 // Model constants for Anthropic Claude models.
+//
+// Only Claude 4.6 and newer are first-class here. Callers targeting older
+// models (Sonnet 4.5, Opus 4.5, etc.) may still pass the raw model string via
+// WithModel; the provider falls back to the legacy manual-thinking path for
+// those, but does not expose them as symbolic constants.
 const (
-	Claude4Opus   = "claude-opus-4-6"
-	Claude4Sonnet = "claude-sonnet-4-5-20250929"
-	Claude4Haiku  = "claude-haiku-4-5-20251001"
+	ClaudeOpus47   = "claude-opus-4-7"
+	ClaudeOpus46   = "claude-opus-4-6"
+	ClaudeSonnet46 = "claude-sonnet-4-6"
+	ClaudeHaiku45  = "claude-haiku-4-5-20251001"
 )
 
 const (
 	defaultBaseURL   = "https://api.anthropic.com"
-	defaultModel     = Claude4Sonnet
+	defaultModel     = ClaudeSonnet46
 	defaultMaxTokens = 4096
 	anthropicVersion = "2023-06-01"
 	messagesEndpoint = "/v1/messages"
@@ -54,6 +60,64 @@ func supportsToolSearch(model string) bool {
 		}
 	}
 	return false
+}
+
+// isOpus47 reports whether the model string identifies Claude Opus 4.7 (or
+// Mythos Preview, which behaves the same way for thinking/effort purposes).
+// Opus 4.7 uses adaptive thinking exclusively; manual {type: "enabled",
+// budget_tokens} is rejected by the API.
+func isOpus47(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(m, "mythos") {
+		return true
+	}
+	return strings.Contains(m, "opus-4-7")
+}
+
+// isOpus46OrSonnet46 reports whether the model string identifies Opus 4.6 or
+// Sonnet 4.6. These models accept both manual and adaptive thinking, and
+// support the "max" effort level.
+func isOpus46OrSonnet46(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return strings.Contains(m, "opus-4-6") || strings.Contains(m, "sonnet-4-6")
+}
+
+// supportsEffort reports whether the given model accepts the output_config.effort
+// parameter. Per Anthropic docs, supported on Mythos, Opus 4.7, Opus 4.6,
+// Sonnet 4.6, and Opus 4.5. Notably NOT supported on Haiku 4.5 or any 3.x model.
+func supportsEffort(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if strings.Contains(m, "mythos") {
+		return true
+	}
+	if isOpus47(m) || isOpus46OrSonnet46(m) {
+		return true
+	}
+	return strings.Contains(m, "opus-4-5")
+}
+
+// supportsManualThinking reports whether {thinking: {type: "enabled",
+// budget_tokens: N}} is accepted by the model. Opus 4.7 and Mythos reject it
+// (adaptive thinking is the only mode). Opus 4.6 / Sonnet 4.6 accept it but
+// deprecate it. Older models continue to accept it.
+func supportsManualThinking(model string) bool {
+	return !isOpus47(model)
+}
+
+// supportsEffortValue reports whether a given effort value is accepted by the
+// model. "xhigh" is Opus-4.7/Mythos-only. "max" requires Opus 4.6+, Sonnet 4.6+,
+// or Opus 4.7/Mythos.
+func supportsEffortValue(model, effort string) bool {
+	switch effort {
+	case "low", "medium", "high":
+		return supportsEffort(model)
+	case "xhigh":
+		return isOpus47(model)
+	case "max":
+		return isOpus47(model) || isOpus46OrSonnet46(model)
+	default:
+		return false
+	}
 }
 
 // Provider implements core.Model for Anthropic's Messages API.

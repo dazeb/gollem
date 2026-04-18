@@ -178,7 +178,8 @@ model := gollem.NewRetryModel(anthropic.New(), gollem.DefaultRetryConfig())
 
 // Track costs across all runs.
 tracker := gollem.NewCostTracker(map[string]gollem.ModelPricing{
-    "claude-sonnet-4-5-20250929": {InputTokenCost: 0.003, OutputTokenCost: 0.015},
+    "claude-opus-4-7":            {InputTokenCost: 0.005, OutputTokenCost: 0.025},
+    "claude-sonnet-4-6":          {InputTokenCost: 0.003, OutputTokenCost: 0.015},
 })
 
 agent := gollem.NewAgent[Analysis](model,
@@ -661,7 +662,8 @@ Monitor spend in real-time and enforce hard limits:
 
 ```go
 tracker := gollem.NewCostTracker(map[string]gollem.ModelPricing{
-    "claude-sonnet-4-5-20250929": {InputTokenCost: 0.003, OutputTokenCost: 0.015},
+    "claude-opus-4-7":            {InputTokenCost: 0.005, OutputTokenCost: 0.025},
+    "claude-sonnet-4-6":          {InputTokenCost: 0.003, OutputTokenCost: 0.015},
     "gpt-4o":                    {InputTokenCost: 0.005, OutputTokenCost: 0.015},
 })
 

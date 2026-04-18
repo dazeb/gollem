@@ -249,7 +249,7 @@ func skipOnAccountError(t *testing.T, err error) {
 // newAnthropicProvider returns a tracked Anthropic provider.
 func newAnthropicProvider() core.Model {
 	return tracked("Anthropic", anthropic.New(
-		anthropic.WithModel(anthropic.Claude4Haiku),
+		anthropic.WithModel(anthropic.ClaudeHaiku45),
 		anthropic.WithMaxTokens(200),
 	))
 }
@@ -294,7 +294,7 @@ func newVertexAIAnthropicProvider() core.Model {
 	return tracked("VertexAIAnthropic", vertexai_anthropic.New(
 		vertexai_anthropic.WithProject(os.Getenv("GOOGLE_CLOUD_PROJECT")),
 		vertexai_anthropic.WithLocation(loc),
-		vertexai_anthropic.WithModel(vertexai_anthropic.Claude4Haiku),
+		vertexai_anthropic.WithModel(vertexai_anthropic.ClaudeHaiku45),
 		vertexai_anthropic.WithMaxTokens(200),
 	))
 }

@@ -32,10 +32,10 @@ func allModels() []modelEntry {
 			credEnvVar: "ANTHROPIC_API_KEY",
 		},
 		{
-			name: "Anthropic/claude-sonnet-4-5",
+			name: "Anthropic/claude-sonnet-4-6",
 			newFn: func() core.Model {
 				return tracked("Anthropic", anthropic.New(
-					anthropic.WithModel("claude-sonnet-4-5-20250929"),
+					anthropic.WithModel(anthropic.ClaudeSonnet46),
 					anthropic.WithMaxTokens(200),
 				))
 			},
@@ -136,11 +136,11 @@ func TestModelMatrix(t *testing.T) {
 // TestFeatureCompatibilityMatrix tests which features each provider supports.
 func TestFeatureCompatibilityMatrix(t *testing.T) {
 	type featureResult struct {
-		provider       string
-		toolCalling    string // "pass", "fail", "skip"
-		structuredOut  string
-		streaming      string
-		systemPrompts  string
+		provider      string
+		toolCalling   string // "pass", "fail", "skip"
+		structuredOut string
+		streaming     string
+		systemPrompts string
 	}
 
 	providers := allProviders()
@@ -267,4 +267,3 @@ func TestFeatureCompatibilityMatrix(t *testing.T) {
 			r.provider, r.toolCalling, r.structuredOut, r.streaming, r.systemPrompts)
 	}
 }
-

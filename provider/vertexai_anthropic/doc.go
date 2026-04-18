@@ -8,7 +8,7 @@
 //	model := vertexai_anthropic.New(
 //	    vertexai_anthropic.WithProject("my-project"),
 //	    vertexai_anthropic.WithLocation("us-east5"),
-//	    vertexai_anthropic.WithModel(vertexai_anthropic.Claude4Sonnet),
+//	    vertexai_anthropic.WithModel(vertexai_anthropic.ClaudeSonnet46),
 //	    vertexai_anthropic.WithPromptCaching(true),
 //	)
 //

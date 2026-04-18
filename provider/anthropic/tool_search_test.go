@@ -43,7 +43,7 @@ func TestBuildRequestEmitsDeferLoading(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, nil, params, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestBuildRequestSilentDegradeOnHaiku(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(nil, nil, params, Claude4Haiku, 4096, false, false, false)
+	req, err := buildRequest(nil, nil, params, ClaudeHaiku45, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestBuildRequestNoBuiltinWhenNoneDeferred(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(nil, nil, params, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestBuildRequestBuiltinSkippedWhenDisabled(t *testing.T) {
 	}
 
 	// disableToolSearch = true
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, false, true)
+	req, err := buildRequest(nil, nil, params, ClaudeSonnet46, 4096, false, false, true)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestBuildRequestCacheControlSkipsDeferredTools(t *testing.T) {
 	}
 
 	// enableCache = true
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, true, false)
+	req, err := buildRequest(nil, nil, params, ClaudeSonnet46, 4096, false, true, false)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestBuildRequestCacheControlAllDeferred(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(nil, nil, params, Claude4Sonnet, 4096, false, true, false)
+	req, err := buildRequest(nil, nil, params, ClaudeSonnet46, 4096, false, true, false)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestParseResponseToolReferencePreserved(t *testing.T) {
 		StopReason: "end_turn",
 	}
 
-	result := parseResponse(resp, Claude4Sonnet)
+	result := parseResponse(resp, ClaudeSonnet46)
 	if len(result.Parts) != 2 {
 		t.Fatalf("expected 2 parts, got %d", len(result.Parts))
 	}
@@ -290,7 +290,7 @@ func TestParseResponseServerToolUsePreserved(t *testing.T) {
 		Content: []json.RawMessage{serverBlock},
 	}
 
-	result := parseResponse(resp, Claude4Sonnet)
+	result := parseResponse(resp, ClaudeSonnet46)
 	if len(result.Parts) != 1 {
 		t.Fatalf("expected 1 part (server_tool_use preserved), got %d", len(result.Parts))
 	}
@@ -310,7 +310,7 @@ func TestParseResponseUnknownBlockPreserved(t *testing.T) {
 		Content: []json.RawMessage{unknownBlock},
 	}
 
-	result := parseResponse(resp, Claude4Sonnet)
+	result := parseResponse(resp, ClaudeSonnet46)
 	if len(result.Parts) != 1 {
 		t.Fatalf("expected 1 preserved part, got %d", len(result.Parts))
 	}
@@ -338,7 +338,7 @@ func TestBuildRequestRoundTripsProviderMetadata(t *testing.T) {
 		},
 	}
 
-	req, err := buildRequest(messages, nil, nil, Claude4Sonnet, 4096, false, false, false)
+	req, err := buildRequest(messages, nil, nil, ClaudeSonnet46, 4096, false, false, false)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}

@@ -50,7 +50,7 @@ data: {"type":"message_stop"}
 `
 
 	body := io.NopCloser(strings.NewReader(sseData))
-	stream := newStreamedResponse(body, Claude4Sonnet)
+	stream := newStreamedResponse(body, ClaudeSonnet46)
 
 	var events []core.ModelResponseStreamEvent
 	for {
@@ -174,7 +174,7 @@ data: {"type":"message_stop"}
 `
 
 	body := io.NopCloser(strings.NewReader(sseData))
-	stream := newStreamedResponse(body, Claude4Sonnet)
+	stream := newStreamedResponse(body, ClaudeSonnet46)
 
 	for {
 		_, err := stream.Next()
@@ -240,7 +240,7 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}
 `
 
 	body := io.NopCloser(strings.NewReader(sseData))
-	stream := newStreamedResponse(body, Claude4Sonnet)
+	stream := newStreamedResponse(body, ClaudeSonnet46)
 
 	// First events should be text start and delta.
 	event1, err := stream.Next()
@@ -308,7 +308,7 @@ data: {"type":"message_stop"}
 `
 
 	body := io.NopCloser(strings.NewReader(sseData))
-	stream := newStreamedResponse(body, Claude4Sonnet)
+	stream := newStreamedResponse(body, ClaudeSonnet46)
 
 	for {
 		_, err := stream.Next()

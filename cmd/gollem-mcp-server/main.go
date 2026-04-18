@@ -251,7 +251,7 @@ func (s *Server) handleListProviders(context.Context, *mcp.RequestContext, map[s
 		},
 		{
 			"name":          "anthropic",
-			"default_model": "claude-sonnet-4-5-20250929",
+			"default_model": "claude-sonnet-4-6",
 			"description":   "Anthropic Messages API (Claude Sonnet, Opus, Haiku)",
 		},
 		{
