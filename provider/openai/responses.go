@@ -560,33 +560,7 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 					case core.UserPromptPart:
 						input = append(input, responsesMessage("user", p.Content))
 					case core.ToolReturnPart:
-						content := stringifyToolContent(p.Content)
-						if len(p.Images) > 0 {
-							outputItems := []map[string]any{
-								{"type": "input_text", "text": content},
-							}
-							for _, img := range p.Images {
-								item := map[string]any{
-									"type":      "input_image",
-									"image_url": img.URL,
-								}
-								if img.Detail != "" {
-									item["detail"] = img.Detail
-								}
-								outputItems = append(outputItems, item)
-							}
-							input = append(input, map[string]any{
-								"type":    "function_call_output",
-								"call_id": p.ToolCallID,
-								"output":  outputItems,
-							})
-						} else {
-							input = append(input, map[string]any{
-								"type":    "function_call_output",
-								"call_id": p.ToolCallID,
-								"output":  content,
-							})
-						}
+						input = append(input, toolReturnInputItems(p)...)
 					case core.RetryPromptPart:
 						if p.ToolCallID != "" {
 							input = append(input, map[string]any{
@@ -647,33 +621,7 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 					userContent = append(userContent, item)
 				case core.ToolReturnPart:
 					flushUser()
-					content := stringifyToolContent(p.Content)
-					if len(p.Images) > 0 {
-						outputItems := []map[string]any{
-							{"type": "input_text", "text": content},
-						}
-						for _, img := range p.Images {
-							item := map[string]any{
-								"type":      "input_image",
-								"image_url": img.URL,
-							}
-							if img.Detail != "" {
-								item["detail"] = img.Detail
-							}
-							outputItems = append(outputItems, item)
-						}
-						input = append(input, map[string]any{
-							"type":    "function_call_output",
-							"call_id": p.ToolCallID,
-							"output":  outputItems,
-						})
-					} else {
-						input = append(input, map[string]any{
-							"type":    "function_call_output",
-							"call_id": p.ToolCallID,
-							"output":  content,
-						})
-					}
+					input = append(input, toolReturnInputItems(p)...)
 				case core.RetryPromptPart:
 					if p.ToolCallID != "" {
 						flushUser()
@@ -732,6 +680,39 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 	}
 
 	return input, nil
+}
+
+// toolReturnInputItems renders a ToolReturnPart as Responses-API input items:
+// always a function_call_output (whose "output" must be a plain string), and
+// — when the tool returned images — a follow-up user message carrying them,
+// since the Responses API rejects non-string output payloads.
+func toolReturnInputItems(p core.ToolReturnPart) []map[string]any {
+	items := []map[string]any{{
+		"type":    "function_call_output",
+		"call_id": p.ToolCallID,
+		"output":  stringifyToolContent(p.Content),
+	}}
+	if len(p.Images) == 0 {
+		return items
+	}
+	imgContent := []map[string]any{
+		{"type": "input_text", "text": "Images returned by tool call " + p.ToolCallID + ":"},
+	}
+	for _, img := range p.Images {
+		item := map[string]any{
+			"type":      "input_image",
+			"image_url": img.URL,
+		}
+		if img.Detail != "" {
+			item["detail"] = img.Detail
+		}
+		imgContent = append(imgContent, item)
+	}
+	return append(items, map[string]any{
+		"type":    "message",
+		"role":    "user",
+		"content": imgContent,
+	})
 }
 
 func responsesMessage(role, text string) map[string]any {

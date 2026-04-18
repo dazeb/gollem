@@ -1187,3 +1187,274 @@ func TestRequestViaResponsesWebSocketReconnectsOnPreviousResponseNotFound(t *tes
 		t.Fatalf("third event should resend full context (3 items), got %d", len(received[2].Input))
 	}
 }
+
+// TestRequestViaResponsesWebSocketReasoningSummaryHandler verifies that the
+// WithReasoningSummaryHandler callback fires for each
+// "response.reasoning_summary_text.done" event and receives the event's Text.
+func TestRequestViaResponsesWebSocketReasoningSummaryHandler(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("websocket upgrade failed: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.delta", Delta: "ignored"})
+		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.done", Text: "first thought"})
+		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.done", Text: "second thought"})
+		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.done", Text: ""})
+		_ = conn.WriteJSON(responsesWSEvent{
+			Type: "response.completed",
+			Response: &responsesAPIResponse{
+				ID:    "resp_reasoning_1",
+				Model: "gpt-5.3-codex",
+				Output: []responsesOutputItem{{
+					Type: "message", Role: "assistant",
+					Content: []responsesContentItem{{Type: "output_text", Text: "done"}},
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		mu       sync.Mutex
+		captured []string
+	)
+	handler := func(text string) {
+		mu.Lock()
+		defer mu.Unlock()
+		captured = append(captured, text)
+	}
+
+	p := New(
+		WithAPIKey("test-key"),
+		WithModel("gpt-5.3-codex"),
+		WithBaseURL(server.URL),
+		WithTransport("websocket"),
+		WithReasoningSummaryHandler(handler),
+	)
+
+	if _, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil); err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"first thought", "second thought"}
+	if !reflect.DeepEqual(captured, want) {
+		t.Fatalf("reasoning summary handler captured %#v, want %#v", captured, want)
+	}
+}
+
+func TestRequestViaResponsesWebSocketReasoningSummaryNilHandler(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.done", Text: "nobody home"})
+		_ = conn.WriteJSON(responsesWSEvent{
+			Type: "response.completed",
+			Response: &responsesAPIResponse{
+				ID: "resp_nil_handler", Model: "gpt-5.3-codex",
+				Output: []responsesOutputItem{{
+					Type: "message", Role: "assistant",
+					Content: []responsesContentItem{{Type: "output_text", Text: "ok"}},
+				}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	p := New(
+		WithAPIKey("test-key"),
+		WithModel("gpt-5.3-codex"),
+		WithBaseURL(server.URL),
+		WithTransport("websocket"),
+	)
+	if _, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil); err != nil {
+		t.Fatalf("request with nil handler must not fail: %v", err)
+	}
+}
+
+// TestRequestViaResponsesWebSocketReconstructsFromStreamedItems verifies the
+// Codex-style fallback: when response.completed arrives with an empty Output
+// slice, items accumulated from response.output_item.done events are used.
+func TestRequestViaResponsesWebSocketReconstructsFromStreamedItems(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(responsesWSEvent{
+			Type: "response.output_item.done",
+			Item: &responsesOutputItem{
+				Type: "message", Role: "assistant",
+				Content: []responsesContentItem{{Type: "output_text", Text: "streamed text"}},
+			},
+		})
+		_ = conn.WriteJSON(responsesWSEvent{
+			Type: "response.output_item.done",
+			Item: &responsesOutputItem{
+				Type: "function_call", Name: "read_file",
+				CallID: "call_streamed", Arguments: `{"path":"x"}`,
+			},
+		})
+		_ = conn.WriteJSON(responsesWSEvent{
+			Type: "response.completed",
+			Response: &responsesAPIResponse{
+				ID: "resp_streamed_1", Model: "gpt-5.3-codex",
+			},
+		})
+	}))
+	defer server.Close()
+
+	p := New(
+		WithAPIKey("test-key"),
+		WithModel("gpt-5.3-codex"),
+		WithBaseURL(server.URL),
+		WithTransport("websocket"),
+	)
+	resp, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if got := resp.TextContent(); got != "streamed text" {
+		t.Fatalf("text content = %q, want %q", got, "streamed text")
+	}
+	var toolCalls int
+	for _, part := range resp.Parts {
+		if _, ok := part.(core.ToolCallPart); ok {
+			toolCalls++
+		}
+	}
+	if toolCalls != 1 {
+		t.Fatalf("expected 1 reconstructed tool call, got %d", toolCalls)
+	}
+}
+
+// TestConvertMessagesToResponsesInputToolReturnWithImages verifies the
+// post-fix shape: function_call_output carries a plain string (Responses API
+// requirement), images are emitted as a follow-up user message.
+func TestConvertMessagesToResponsesInputToolReturnWithImages(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{
+					ToolCallID: "call_img_1",
+					ToolName:   "screenshot",
+					Content:    "captured 2 regions",
+					Images: []core.ImagePart{
+						{URL: "https://example.com/a.png", Detail: "high"},
+						{URL: "https://example.com/b.png"},
+					},
+				},
+			},
+		},
+	}
+
+	input, err := convertMessagesToResponsesInput(messages)
+	if err != nil {
+		t.Fatalf("convert failed: %v", err)
+	}
+	if len(input) != 2 {
+		t.Fatalf("expected 2 input items, got %d: %#v", len(input), input)
+	}
+
+	fco := input[0]
+	if got, _ := fco["type"].(string); got != "function_call_output" {
+		t.Fatalf("item[0].type = %q", got)
+	}
+	if got, _ := fco["call_id"].(string); got != "call_img_1" {
+		t.Fatalf("item[0].call_id = %q", got)
+	}
+	output, ok := fco["output"].(string)
+	if !ok {
+		t.Fatalf("item[0].output must be a plain string, got %T: %#v", fco["output"], fco["output"])
+	}
+	if output != "captured 2 regions" {
+		t.Fatalf("item[0].output = %q", output)
+	}
+
+	msg := input[1]
+	if got, _ := msg["type"].(string); got != "message" {
+		t.Fatalf("item[1].type = %q", got)
+	}
+	if got, _ := msg["role"].(string); got != "user" {
+		t.Fatalf("item[1].role = %q", got)
+	}
+	content, ok := msg["content"].([]map[string]any)
+	if !ok {
+		t.Fatalf("item[1].content wrong type: %T", msg["content"])
+	}
+	if len(content) != 3 {
+		t.Fatalf("expected 1 prelude + 2 images, got %d", len(content))
+	}
+	if got, _ := content[0]["type"].(string); got != "input_text" {
+		t.Fatalf("content[0].type = %q", got)
+	}
+	if text, _ := content[0]["text"].(string); !strings.Contains(text, "call_img_1") {
+		t.Fatalf("prelude text should reference call_id, got %q", text)
+	}
+	if got, _ := content[1]["type"].(string); got != "input_image" {
+		t.Fatalf("content[1].type = %q", got)
+	}
+	if got, _ := content[1]["image_url"].(string); got != "https://example.com/a.png" {
+		t.Fatalf("content[1].image_url = %q", got)
+	}
+	if got, _ := content[1]["detail"].(string); got != "high" {
+		t.Fatalf("content[1].detail = %q", got)
+	}
+	if _, present := content[2]["detail"]; present {
+		t.Fatalf("content[2].detail should be absent when Detail is empty, got %#v", content[2]["detail"])
+	}
+}
+
+func TestConvertMessagesToResponsesInputToolReturnWithoutImages(t *testing.T) {
+	messages := []core.ModelMessage{
+		core.ModelRequest{
+			Parts: []core.ModelRequestPart{
+				core.ToolReturnPart{ToolCallID: "call_plain", Content: "plain result"},
+			},
+		},
+	}
+	input, err := convertMessagesToResponsesInput(messages)
+	if err != nil {
+		t.Fatalf("convert failed: %v", err)
+	}
+	if len(input) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(input))
+	}
+	if got, _ := input[0]["type"].(string); got != "function_call_output" {
+		t.Fatalf("type = %q", got)
+	}
+	if got, _ := input[0]["output"].(string); got != "plain result" {
+		t.Fatalf("output = %q", got)
+	}
+}

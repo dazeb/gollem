@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ type responsesWSEvent struct {
 	Response *responsesAPIResponse `json:"response,omitempty"`
 	Code     string                `json:"code,omitempty"`
 	Message  string                `json:"message,omitempty"`
+	Item     *responsesOutputItem  `json:"item,omitempty"`
+	Delta    string                `json:"delta,omitempty"`
+	Text     string                `json:"text,omitempty"`
 }
 
 type responsesWSError struct {
@@ -40,15 +44,32 @@ type responsesWSError struct {
 	Param   string `json:"param,omitempty"`
 }
 
+// wsDebugEnabled is evaluated once at package init; flipping
+// GOLLEM_DEBUG_WS at runtime has no effect. Keeps hot-path reads cheap.
+var wsDebugEnabled = os.Getenv("GOLLEM_DEBUG_WS") != ""
+
+func wsDebugf(format string, args ...any) {
+	if !wsDebugEnabled {
+		return
+	}
+	fmt.Fprintf(os.Stderr, format, args...)
+}
+
 var (
-	// fallbackWebSocketReadTimeout bounds per-turn blocking reads when the
-	// caller does not provide a context deadline, and caps per-read
-	// deadlines when the context deadline is much further out. Empirically,
-	// the longest successful model call observed is ~44s (p99 ~25s) across
-	// 1100+ calls with xhigh reasoning effort. 3 minutes provides headroom
-	// for API load variance and model changes while still detecting hung
-	// connections quickly (vs the full 30-60min task budget).
-	fallbackWebSocketReadTimeout = 3 * time.Minute
+	// fallbackWebSocketReadTimeout bounds per-event blocking reads when
+	// the caller does not provide a context deadline, and caps per-read
+	// deadlines when the context deadline is much further out. It
+	// measures the silence tolerance between any two websocket events
+	// (progress deltas, reasoning chunks, tool deltas, terminal
+	// response.completed, etc.) — not the full turn wall-clock.
+	//
+	// For text-only chat, xhigh reasoning p99 is ~25s and max observed
+	// ~44s (1100+ calls). For vision workloads with accumulated image
+	// context (10+ high-detail images per turn plus long history) the
+	// model can legitimately reason in silence for 5-8 minutes before
+	// emitting the first event. 10 minutes captures that tail without
+	// letting truly hung connections hold the slot forever.
+	fallbackWebSocketReadTimeout = 10 * time.Minute
 	// fallbackWebSocketWriteTimeout bounds writes when the caller does not
 	// provide a context deadline.
 	fallbackWebSocketWriteTimeout = 30 * time.Second
@@ -76,9 +97,15 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 		return nil, fmt.Errorf("openai websocket: failed to hash request input: %w", err)
 	}
 
+	if wsDebugEnabled {
+		wsDebugf("[gollem-ws-full] %s\n", summarizeInputForDebug(req.Input, "(full)"))
+	}
+
 	sendReq := *req
 	if delta, ok := responsesIncrementalInput(p.wsLastInputSigs, currSigs, req.Input); ok && p.wsPrevResponseID != "" {
+		preTrim := delta
 		delta = trimContinuationDelta(delta)
+		wsDebugf("[gollem-ws-delta] pre_trim=%d post_trim=%d\n", len(preTrim), len(delta))
 		if len(delta) > 0 {
 			sendReq.PreviousResponseID = p.wsPrevResponseID
 			sendReq.Input = delta
@@ -116,6 +143,14 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 
 	p.wsPrevResponseID = apiResp.ID
 	p.wsLastInputSigs = append([]string(nil), currSigs...)
+
+	if wsDebugEnabled {
+		wsDebugf("[gollem-ws-recv] id=%s output_items=%d\n", apiResp.ID, len(apiResp.Output))
+		for i, item := range apiResp.Output {
+			wsDebugf("  [%d] type=%s name=%s call_id=%s\n", i, item.Type, item.Name, item.CallID)
+		}
+	}
+
 	return parseResponsesResponse(apiResp, p.model), nil
 }
 
@@ -195,6 +230,10 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 		return nil, fmt.Errorf("openai websocket: marshal create event: %w", err)
 	}
 
+	if wsDebugEnabled {
+		wsDebugf("[gollem-ws-send] %s\n", summarizeInputForDebug(req.Input, req.PreviousResponseID))
+	}
+
 	reqDeadline, hasReqDeadline := p.requestIODeadline(ctx, time.Now())
 	if hasReqDeadline {
 		_ = conn.conn.SetWriteDeadline(reqDeadline)
@@ -206,6 +245,7 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 		return nil, fmt.Errorf("openai websocket write failed: %w", err)
 	}
 
+	var streamedItems []responsesOutputItem
 	for {
 		readDeadline, hasReadDeadline := p.requestIODeadline(ctx, time.Now())
 		if hasReadDeadline {
@@ -222,10 +262,32 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 		if err := json.Unmarshal(data, &event); err != nil {
 			return nil, fmt.Errorf("openai websocket decode failed: %w", err)
 		}
+		if wsDebugEnabled {
+			snippet := data
+			if len(snippet) > 400 {
+				snippet = snippet[:400]
+			}
+			wsDebugf("[gollem-ws-event] type=%s raw=%s\n", event.Type, string(snippet))
+		}
 		switch event.Type {
+		case "response.reasoning_summary_text.done":
+			if p.reasoningSummaryHandler != nil && event.Text != "" {
+				p.reasoningSummaryHandler(event.Text)
+			}
+		case "response.output_item.done":
+			// Codex-style websocket streams output items incrementally and
+			// the terminal response.completed event may arrive with an
+			// empty Output slice. Accumulate completed items so we can
+			// reconstruct the response output.
+			if event.Item != nil {
+				streamedItems = append(streamedItems, *event.Item)
+			}
 		case "response.done", "response.completed":
 			if event.Response == nil {
 				return nil, errors.New("openai websocket: terminal response event missing response payload")
+			}
+			if len(event.Response.Output) == 0 && len(streamedItems) > 0 {
+				event.Response.Output = streamedItems
 			}
 			return event.Response, nil
 		case "response.incomplete":
@@ -423,6 +485,44 @@ func isWebSocketConnectionLimitReached(err error) bool {
 		return strings.Contains(lower, "websocket_connection_limit_reached")
 	}
 	return false
+}
+
+func summarizeInputForDebug(input []map[string]any, prevID string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "prev=%q items=%d", prevID, len(input))
+	for i, item := range input {
+		typ, _ := item["type"].(string)
+		callID, _ := item["call_id"].(string)
+		role, _ := item["role"].(string)
+		name, _ := item["name"].(string)
+		outLen := 0
+		if out, ok := item["output"].(string); ok {
+			outLen = len(out)
+		}
+		contentN := 0
+		if c, ok := item["content"].([]map[string]any); ok {
+			contentN = len(c)
+		} else if c, ok := item["content"].([]any); ok {
+			contentN = len(c)
+		}
+		fmt.Fprintf(&b, "\n  [%d] type=%s", i, typ)
+		if callID != "" {
+			fmt.Fprintf(&b, " call_id=%s", callID)
+		}
+		if role != "" {
+			fmt.Fprintf(&b, " role=%s", role)
+		}
+		if name != "" {
+			fmt.Fprintf(&b, " name=%s", name)
+		}
+		if outLen > 0 {
+			fmt.Fprintf(&b, " output_len=%d", outLen)
+		}
+		if contentN > 0 {
+			fmt.Fprintf(&b, " content_parts=%d", contentN)
+		}
+	}
+	return b.String()
 }
 
 func isWebSocketConnectionError(err error) bool {

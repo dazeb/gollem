@@ -53,27 +53,28 @@ type TokenRefresher func() (accessToken string, err error)
 
 // Provider implements core.Model for OpenAI's Chat Completions API.
 type Provider struct {
-	apiKey               string
-	model                string
-	baseURL              string
-	httpClient           *http.Client
-	maxTokens            int
-	promptCacheKey       string
-	promptCacheRetention string
-	serviceTier          string
-	transport            string
-	wsHTTPFallback       bool
-	wsHTTPFallbackSet    bool
-	useResponses         bool
-	disableToolSearch    bool
-	wsConn               *responsesWebSocketConn
-	wsPrevResponseID     string
-	wsLastInputSigs      []string
-	wsMu                 sync.Mutex
-	reasoningSummary     string
-	textVerbosity        string
-	chatgptAccountID     string
-	tokenRefresher       TokenRefresher
+	apiKey                  string
+	model                   string
+	baseURL                 string
+	httpClient              *http.Client
+	maxTokens               int
+	promptCacheKey          string
+	promptCacheRetention    string
+	serviceTier             string
+	transport               string
+	wsHTTPFallback          bool
+	wsHTTPFallbackSet       bool
+	useResponses            bool
+	disableToolSearch       bool
+	wsConn                  *responsesWebSocketConn
+	wsPrevResponseID        string
+	wsLastInputSigs         []string
+	wsMu                    sync.Mutex
+	reasoningSummary        string
+	textVerbosity           string
+	chatgptAccountID        string
+	tokenRefresher          TokenRefresher
+	reasoningSummaryHandler func(text string)
 }
 
 // Option configures the OpenAI provider.
@@ -161,6 +162,18 @@ func WithWebSocketHTTPFallback(enabled bool) Option {
 func WithReasoningSummary(summary string) Option {
 	return func(p *Provider) {
 		p.reasoningSummary = summary
+	}
+}
+
+// WithReasoningSummaryHandler installs a callback that receives each
+// reasoning summary text chunk as the websocket streams it. The
+// Responses API emits these under "response.reasoning_summary_text.done"
+// (and deltas under ".delta"); this hook lets callers surface the
+// model's thinking to users in real time. Only fires on the websocket
+// transport; no-op on HTTP.
+func WithReasoningSummaryHandler(fn func(text string)) Option {
+	return func(p *Provider) {
+		p.reasoningSummaryHandler = fn
 	}
 }
 
@@ -315,23 +328,24 @@ func NewXAI(opts ...Option) *Provider {
 // when spawning parallel agents that must not share a websocket chain.
 func (p *Provider) NewSession() core.Model {
 	return &Provider{
-		apiKey:               p.apiKey,
-		model:                p.model,
-		baseURL:              p.baseURL,
-		httpClient:           p.httpClient,
-		maxTokens:            p.maxTokens,
-		promptCacheKey:       p.promptCacheKey,
-		promptCacheRetention: p.promptCacheRetention,
-		serviceTier:          p.serviceTier,
-		transport:            p.transport,
-		wsHTTPFallback:       p.wsHTTPFallback,
-		wsHTTPFallbackSet:    p.wsHTTPFallbackSet,
-		useResponses:         p.useResponses,
-		disableToolSearch:    p.disableToolSearch,
-		reasoningSummary:     p.reasoningSummary,
-		textVerbosity:        p.textVerbosity,
-		chatgptAccountID:     p.chatgptAccountID,
-		tokenRefresher:       p.tokenRefresher,
+		apiKey:                  p.apiKey,
+		model:                   p.model,
+		baseURL:                 p.baseURL,
+		httpClient:              p.httpClient,
+		maxTokens:               p.maxTokens,
+		promptCacheKey:          p.promptCacheKey,
+		promptCacheRetention:    p.promptCacheRetention,
+		serviceTier:             p.serviceTier,
+		transport:               p.transport,
+		wsHTTPFallback:          p.wsHTTPFallback,
+		wsHTTPFallbackSet:       p.wsHTTPFallbackSet,
+		useResponses:            p.useResponses,
+		disableToolSearch:       p.disableToolSearch,
+		reasoningSummary:        p.reasoningSummary,
+		textVerbosity:           p.textVerbosity,
+		chatgptAccountID:        p.chatgptAccountID,
+		tokenRefresher:          p.tokenRefresher,
+		reasoningSummaryHandler: p.reasoningSummaryHandler,
 	}
 }
 
