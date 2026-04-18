@@ -25,11 +25,21 @@ import (
 
 // Model constants for OpenAI models.
 const (
+	// GPT-4 family (legacy).
 	GPT4o     = "gpt-4o"
 	GPT4oMini = "gpt-4o-mini"
-	O3        = "o3"
-	O3Mini    = "o3-mini"
-	O4Mini    = "o4-mini"
+
+	// o-series reasoning models.
+	O3     = "o3"
+	O3Mini = "o3-mini"
+	O4Mini = "o4-mini"
+
+	// GPT-5 family. Supports reasoning by default. Use WithReasoningEffort
+	// to control thinking depth (minimal|low|medium|high).
+	GPT5      = "gpt-5"
+	GPT5Mini  = "gpt-5-mini"
+	GPT5Nano  = "gpt-5-nano"
+	GPT5Codex = "gpt-5-codex"
 )
 
 const (
@@ -217,6 +227,56 @@ func WithToolSearchDisabled() Option {
 	return func(p *Provider) {
 		p.disableToolSearch = true
 	}
+}
+
+// WithResumedResponsesChain seeds the Responses API continuation state from a
+// prior process (for example after a sidecar restart). id is a response id
+// previously captured via PreviousResponseID(); inputSigs are the matching
+// input-item signatures previously captured via LastInputSignatures(). When
+// both are set, the first request this provider sends is delivered as a delta
+// on top of id, preserving the server-side reasoning and prompt cache rather
+// than cold-starting.
+//
+// If the chain is no longer valid (the response aged out server-side, or the
+// rebuilt input no longer matches the stored signatures byte-for-byte) the
+// existing recovery path in responses_ws.go drops the id and transparently
+// retries with the full input.
+//
+// Passing id="" or inputSigs=nil is a no-op for that parameter.
+func WithResumedResponsesChain(id string, inputSigs []string) Option {
+	return func(p *Provider) {
+		if id = strings.TrimSpace(id); id != "" {
+			p.wsPrevResponseID = id
+		}
+		if len(inputSigs) > 0 {
+			p.wsLastInputSigs = append([]string(nil), inputSigs...)
+		}
+	}
+}
+
+// PreviousResponseID returns the most recent OpenAI Responses response id this
+// provider has observed, or "" if none. Persist this alongside
+// LastInputSignatures() to resume the Responses chain in a future process;
+// pair with WithResumedResponsesChain on the next construction.
+func (p *Provider) PreviousResponseID() string {
+	p.wsMu.Lock()
+	defer p.wsMu.Unlock()
+	return p.wsPrevResponseID
+}
+
+// LastInputSignatures returns a copy of the signatures of the input items
+// from the most recent Responses API request, in order. Persist these
+// alongside PreviousResponseID() to resume the Responses chain in a future
+// process.
+func (p *Provider) LastInputSignatures() []string {
+	p.wsMu.Lock()
+	defer p.wsMu.Unlock()
+	if len(p.wsLastInputSigs) == 0 {
+		return nil
+	}
+	out := make([]string, len(p.wsLastInputSigs))
+	copy(out, p.wsLastInputSigs)
+	return out
 }
 
 // New creates a new OpenAI provider with the given options.

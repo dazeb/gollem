@@ -1189,8 +1189,9 @@ func TestRequestViaResponsesWebSocketReconnectsOnPreviousResponseNotFound(t *tes
 }
 
 // TestRequestViaResponsesWebSocketReasoningSummaryHandler verifies that the
-// WithReasoningSummaryHandler callback fires for each
-// "response.reasoning_summary_text.done" event and receives the event's Text.
+// WithReasoningSummaryHandler callback fires for each reasoning summary
+// delta and for each .done event, so callers can surface the model's
+// thinking in real time rather than only seeing a single blob per turn.
 func TestRequestViaResponsesWebSocketReasoningSummaryHandler(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1208,7 +1209,8 @@ func TestRequestViaResponsesWebSocketReasoningSummaryHandler(t *testing.T) {
 		if _, _, err := conn.ReadMessage(); err != nil {
 			return
 		}
-		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.delta", Delta: "ignored"})
+		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.delta", Delta: "streamed chunk"})
+		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.delta", Delta: ""})
 		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.done", Text: "first thought"})
 		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.done", Text: "second thought"})
 		_ = conn.WriteJSON(responsesWSEvent{Type: "response.reasoning_summary_text.done", Text: ""})
@@ -1252,7 +1254,7 @@ func TestRequestViaResponsesWebSocketReasoningSummaryHandler(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	want := []string{"first thought", "second thought"}
+	want := []string{"streamed chunk", "first thought", "second thought"}
 	if !reflect.DeepEqual(captured, want) {
 		t.Fatalf("reasoning summary handler captured %#v, want %#v", captured, want)
 	}

@@ -91,10 +91,18 @@ type responsesOutputItem struct {
 	CallID    string                 `json:"call_id,omitempty"`
 	Refusal   string                 `json:"refusal,omitempty"`
 	Content   []responsesContentItem `json:"content,omitempty"`
+	Summary   []responsesSummaryItem `json:"summary,omitempty"` // populated on reasoning items (o-series / GPT-5)
 }
 
 type responsesContentItem struct {
 	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// responsesSummaryItem holds one summary_text chunk of a reasoning item.
+// OpenAI emits them in-order; concatenate to reconstruct the full summary.
+type responsesSummaryItem struct {
+	Type string `json:"type"` // "summary_text"
 	Text string `json:"text,omitempty"`
 }
 
@@ -544,15 +552,18 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 	for _, msg := range messages {
 		switch m := msg.(type) {
 		case core.ModelRequest:
-			hasImage := false
+			hasMultimodal := false
 			for _, part := range m.Parts {
-				if _, ok := part.(core.ImagePart); ok {
-					hasImage = true
+				switch part.(type) {
+				case core.ImagePart, core.AudioPart, core.DocumentPart:
+					hasMultimodal = true
+				}
+				if hasMultimodal {
 					break
 				}
 			}
 
-			if !hasImage {
+			if !hasMultimodal {
 				for _, part := range m.Parts {
 					switch p := part.(type) {
 					case core.SystemPromptPart:
@@ -619,6 +630,21 @@ func convertMessagesToResponsesInput(messages []core.ModelMessage) ([]map[string
 						item["detail"] = p.Detail
 					}
 					userContent = append(userContent, item)
+				case core.AudioPart:
+					audioObj, err := openaiInputAudio(p.URL, p.MIMEType)
+					if err != nil {
+						return nil, fmt.Errorf("openai responses: audio: %w", err)
+					}
+					userContent = append(userContent, map[string]any{
+						"type":        "input_audio",
+						"input_audio": audioObj,
+					})
+				case core.DocumentPart:
+					fileItem, err := openaiInputFile(p.URL, p.MIMEType, p.Title)
+					if err != nil {
+						return nil, fmt.Errorf("openai responses: document: %w", err)
+					}
+					userContent = append(userContent, fileItem)
 				case core.ToolReturnPart:
 					flushUser()
 					input = append(input, toolReturnInputItems(p)...)
@@ -715,6 +741,69 @@ func toolReturnInputItems(p core.ToolReturnPart) []map[string]any {
 	})
 }
 
+// openaiInputAudio converts a gollem AudioPart URL into the input_audio
+// object expected by the Responses API: {data: base64, format: "mp3"|"wav"}.
+// Only data URIs are supported because OpenAI doesn't accept audio URL refs.
+func openaiInputAudio(url, mimeOverride string) (map[string]any, error) {
+	rest, ok := strings.CutPrefix(url, "data:")
+	if !ok {
+		return nil, fmt.Errorf("openai requires base64 data URI for audio; got %q", url)
+	}
+	semi := strings.Index(rest, ";")
+	if semi < 0 {
+		return nil, fmt.Errorf("malformed data URI: missing ';'")
+	}
+	mime := rest[:semi]
+	data, ok := strings.CutPrefix(rest[semi+1:], "base64,")
+	if !ok {
+		return nil, fmt.Errorf("data URI must be base64-encoded")
+	}
+	if mimeOverride != "" {
+		mime = mimeOverride
+	}
+	format := "mp3"
+	switch mime {
+	case "audio/mp3", "audio/mpeg":
+		format = "mp3"
+	case "audio/wav", "audio/x-wav":
+		format = "wav"
+	default:
+		return nil, fmt.Errorf("unsupported audio MIME %q; OpenAI accepts mp3 or wav", mime)
+	}
+	return map[string]any{"data": data, "format": format}, nil
+}
+
+// openaiInputFile builds the input_file content item. Accepts either a
+// bare file_id (prefixed "file-") or a data:...;base64,... URI. For data
+// URIs, OpenAI wants the full URI passed in `file_data` plus a `filename`.
+func openaiInputFile(url, mimeOverride, title string) (map[string]any, error) {
+	item := map[string]any{"type": "input_file"}
+	if strings.HasPrefix(url, "file-") {
+		item["file_id"] = url
+		return item, nil
+	}
+	if !strings.HasPrefix(url, "data:") {
+		return nil, fmt.Errorf("openai requires data URI or file_id for documents; got %q", url)
+	}
+	// Validate the data URI is base64 before passing it through.
+	rest := strings.TrimPrefix(url, "data:")
+	semi := strings.Index(rest, ";")
+	if semi < 0 {
+		return nil, fmt.Errorf("malformed data URI: missing ';'")
+	}
+	if _, ok := strings.CutPrefix(rest[semi+1:], "base64,"); !ok {
+		return nil, fmt.Errorf("data URI must be base64-encoded")
+	}
+	_ = mimeOverride // MIME is embedded in the data URI; OpenAI parses it.
+	item["file_data"] = url
+	if title != "" {
+		item["filename"] = title
+	} else {
+		item["filename"] = "document"
+	}
+	return item, nil
+}
+
 func responsesMessage(role, text string) map[string]any {
 	contentType := "input_text"
 	if role == "assistant" {
@@ -755,6 +844,10 @@ func parseResponsesResponse(resp *responsesAPIResponse, modelName string) *core.
 			} else if item.Refusal != "" {
 				parts = append(parts, core.TextPart{Content: item.Refusal})
 			}
+		case "reasoning":
+			if summary := parseResponsesReasoningSummary(item); summary != "" {
+				parts = append(parts, core.ThinkingPart{Content: summary})
+			}
 		case "function_call":
 			argsJSON := item.Arguments
 			if argsJSON == "" {
@@ -792,6 +885,16 @@ func parseResponsesResponse(resp *responsesAPIResponse, modelName string) *core.
 		FinishReason: mapResponsesFinishReason(resp, hasToolCalls),
 		Timestamp:    time.Now(),
 	}
+}
+
+func parseResponsesReasoningSummary(item responsesOutputItem) string {
+	var text strings.Builder
+	for _, s := range item.Summary {
+		if s.Type == "summary_text" {
+			text.WriteString(s.Text)
+		}
+	}
+	return text.String()
 }
 
 func parseResponsesMessageText(item responsesOutputItem) string {

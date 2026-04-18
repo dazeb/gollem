@@ -51,6 +51,12 @@ type responsesStreamedResponse struct {
 	toolCallByOutputIdx map[int]int              // output_index → part index
 	toolCallArgsBuffers map[int]*strings.Builder // output_index → accumulated args
 
+	// Reasoning summary streaming by output index. o-series / GPT-5 models
+	// emit reasoning items with a summary_text stream; gollem surfaces this
+	// as ThinkingPart.
+	reasoningByOutputIdx map[int]int              // output_index → part index
+	reasoningBuffers     map[int]*strings.Builder // output_index → accumulated summary
+
 	pendingEvents []core.ModelResponseStreamEvent
 }
 
@@ -58,13 +64,15 @@ func newResponsesStreamedResponse(body io.ReadCloser, model string) *responsesSt
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	return &responsesStreamedResponse{
-		scanner:             scanner,
-		body:                body,
-		model:               model,
-		stopReason:          core.FinishReasonStop,
-		partsByIndex:        make(map[int]core.ModelResponsePart),
-		toolCallByOutputIdx: make(map[int]int),
-		toolCallArgsBuffers: make(map[int]*strings.Builder),
+		scanner:              scanner,
+		body:                 body,
+		model:                model,
+		stopReason:           core.FinishReasonStop,
+		partsByIndex:         make(map[int]core.ModelResponsePart),
+		toolCallByOutputIdx:  make(map[int]int),
+		toolCallArgsBuffers:  make(map[int]*strings.Builder),
+		reasoningByOutputIdx: make(map[int]int),
+		reasoningBuffers:     make(map[int]*strings.Builder),
 	}
 }
 
@@ -136,6 +144,9 @@ func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []
 
 	case "response.function_call_arguments.delta":
 		return s.handleFunctionCallArgsDelta(event.OutputIndex, event.Delta)
+
+	case "response.reasoning_summary_text.delta":
+		return s.handleReasoningSummaryDelta(event.OutputIndex, event.Delta)
 
 	case "response.output_item.done":
 		return s.handleOutputItemDone(event.Item, event.OutputIndex)
@@ -215,31 +226,81 @@ func (s *responsesStreamedResponse) handleOutputItemAdded(itemJSON json.RawMessa
 	if json.Unmarshal(itemJSON, &item) != nil {
 		return nil
 	}
-	if item.Type != "function_call" {
+
+	switch item.Type {
+	case "function_call":
+		s.hasToolCalls = true
+		callID := item.CallID
+		if callID == "" {
+			callID = fmt.Sprintf("call_%d", s.nextPartIndex)
+		}
+		idx := s.nextPartIndex
+		s.nextPartIndex++
+		part := core.ToolCallPart{
+			ToolName:   item.Name,
+			ToolCallID: callID,
+		}
+		s.partsByIndex[idx] = part
+
+		if outputIndex != nil {
+			s.toolCallByOutputIdx[*outputIndex] = idx
+			s.toolCallArgsBuffers[*outputIndex] = &strings.Builder{}
+		}
+
+		return []core.ModelResponseStreamEvent{
+			core.PartStartEvent{Index: idx, Part: part},
+		}
+
+	case "reasoning":
+		// Reasoning items are pre-registered here so summary deltas can append
+		// into the same part. Emit PartStartEvent on the first delta (not here)
+		// since the summary text is what users care about.
+		if outputIndex != nil {
+			if _, exists := s.reasoningByOutputIdx[*outputIndex]; !exists {
+				s.reasoningBuffers[*outputIndex] = &strings.Builder{}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *responsesStreamedResponse) handleReasoningSummaryDelta(outputIndex *int, delta string) []core.ModelResponseStreamEvent {
+	if delta == "" || outputIndex == nil {
 		return nil
 	}
-
-	s.hasToolCalls = true
-	callID := item.CallID
-	if callID == "" {
-		callID = fmt.Sprintf("call_%d", s.nextPartIndex)
+	if partIdx, ok := s.reasoningByOutputIdx[*outputIndex]; ok {
+		if buf, ok := s.reasoningBuffers[*outputIndex]; ok {
+			buf.WriteString(delta)
+		}
+		if tp, ok := s.partsByIndex[partIdx].(core.ThinkingPart); ok {
+			tp.Content += delta
+			s.partsByIndex[partIdx] = tp
+		}
+		return []core.ModelResponseStreamEvent{
+			core.PartDeltaEvent{
+				Index: partIdx,
+				Delta: core.ThinkingPartDelta{ContentDelta: delta},
+			},
+		}
 	}
+
+	// First delta for this output_index — emit PartStartEvent.
 	idx := s.nextPartIndex
 	s.nextPartIndex++
-	part := core.ToolCallPart{
-		ToolName:   item.Name,
-		ToolCallID: callID,
+	s.reasoningByOutputIdx[*outputIndex] = idx
+	buf := s.reasoningBuffers[*outputIndex]
+	if buf == nil {
+		buf = &strings.Builder{}
+		s.reasoningBuffers[*outputIndex] = buf
 	}
-	s.partsByIndex[idx] = part
-
-	// Track by output_index for incremental argument streaming.
-	if outputIndex != nil {
-		s.toolCallByOutputIdx[*outputIndex] = idx
-		s.toolCallArgsBuffers[*outputIndex] = &strings.Builder{}
-	}
-
+	buf.WriteString(delta)
+	s.partsByIndex[idx] = core.ThinkingPart{Content: delta}
 	return []core.ModelResponseStreamEvent{
-		core.PartStartEvent{Index: idx, Part: part},
+		core.PartStartEvent{
+			Index: idx,
+			Part:  core.ThinkingPart{Content: delta},
+		},
 	}
 }
 
@@ -326,6 +387,33 @@ func (s *responsesStreamedResponse) handleOutputItemDone(itemJSON json.RawMessag
 					Part:  core.TextPart{Content: text},
 				},
 			}
+		}
+
+	case "reasoning":
+		summary := parseResponsesReasoningSummary(item)
+		if summary == "" {
+			return nil
+		}
+		// If we already surfaced this reasoning item via summary deltas, the
+		// final payload only confirms what we've built — nothing to emit.
+		if outputIndex != nil {
+			if _, tracked := s.reasoningByOutputIdx[*outputIndex]; tracked {
+				return nil
+			}
+		}
+		// No deltas arrived (e.g. non-streaming fallback). Emit the summary
+		// as a single ThinkingPart.
+		idx := s.nextPartIndex
+		s.nextPartIndex++
+		if outputIndex != nil {
+			s.reasoningByOutputIdx[*outputIndex] = idx
+		}
+		s.partsByIndex[idx] = core.ThinkingPart{Content: summary}
+		return []core.ModelResponseStreamEvent{
+			core.PartStartEvent{
+				Index: idx,
+				Part:  core.ThinkingPart{Content: summary},
+			},
 		}
 	}
 

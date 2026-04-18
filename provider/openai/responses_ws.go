@@ -270,6 +270,14 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 			wsDebugf("[gollem-ws-event] type=%s raw=%s\n", event.Type, string(snippet))
 		}
 		switch event.Type {
+		case "response.reasoning_summary_text.delta":
+			// Codex-style WS emits reasoning summaries incrementally as
+			// deltas. Forward each chunk so callers (vcr's progress
+			// printer, etc.) can surface the model's thinking live
+			// rather than only seeing a single blob at .done.
+			if p.reasoningSummaryHandler != nil && event.Delta != "" {
+				p.reasoningSummaryHandler(event.Delta)
+			}
 		case "response.reasoning_summary_text.done":
 			if p.reasoningSummaryHandler != nil && event.Text != "" {
 				p.reasoningSummaryHandler(event.Text)
