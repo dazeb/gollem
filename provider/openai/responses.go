@@ -751,17 +751,17 @@ func openaiInputAudio(url, mimeOverride string) (map[string]any, error) {
 	}
 	semi := strings.Index(rest, ";")
 	if semi < 0 {
-		return nil, fmt.Errorf("malformed data URI: missing ';'")
+		return nil, errors.New("malformed data URI: missing ';'")
 	}
 	mime := rest[:semi]
 	data, ok := strings.CutPrefix(rest[semi+1:], "base64,")
 	if !ok {
-		return nil, fmt.Errorf("data URI must be base64-encoded")
+		return nil, errors.New("data URI must be base64-encoded")
 	}
 	if mimeOverride != "" {
 		mime = mimeOverride
 	}
-	format := "mp3"
+	var format string
 	switch mime {
 	case "audio/mp3", "audio/mpeg":
 		format = "mp3"
@@ -789,10 +789,10 @@ func openaiInputFile(url, mimeOverride, title string) (map[string]any, error) {
 	rest := strings.TrimPrefix(url, "data:")
 	semi := strings.Index(rest, ";")
 	if semi < 0 {
-		return nil, fmt.Errorf("malformed data URI: missing ';'")
+		return nil, errors.New("malformed data URI: missing ';'")
 	}
 	if _, ok := strings.CutPrefix(rest[semi+1:], "base64,"); !ok {
-		return nil, fmt.Errorf("data URI must be base64-encoded")
+		return nil, errors.New("data URI must be base64-encoded")
 	}
 	_ = mimeOverride // MIME is embedded in the data URI; OpenAI parses it.
 	item["file_data"] = url

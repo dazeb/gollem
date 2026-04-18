@@ -2,6 +2,7 @@ package vertexai_anthropic
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -293,7 +294,7 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 						Title:  p.Title,
 					})
 				case core.AudioPart:
-					return nil, fmt.Errorf("vertexai_anthropic: audio input is not supported by the Messages API")
+					return nil, errors.New("vertexai_anthropic: audio input is not supported by the Messages API")
 				case core.RetryPromptPart:
 					if p.ToolCallID != "" {
 						userBlocks = append(userBlocks, apiContentBlock{
@@ -416,12 +417,12 @@ func toAnthropicSource(url, mimeOverride string) (*apiSource, error) {
 	if rest, ok := strings.CutPrefix(url, "data:"); ok {
 		semi := strings.Index(rest, ";")
 		if semi < 0 {
-			return nil, fmt.Errorf("malformed data URI: missing ';'")
+			return nil, errors.New("malformed data URI: missing ';'")
 		}
 		mime := rest[:semi]
 		data, ok := strings.CutPrefix(rest[semi+1:], "base64,")
 		if !ok {
-			return nil, fmt.Errorf("data URI must be base64-encoded")
+			return nil, errors.New("data URI must be base64-encoded")
 		}
 		if mimeOverride != "" {
 			mime = mimeOverride
@@ -429,7 +430,7 @@ func toAnthropicSource(url, mimeOverride string) (*apiSource, error) {
 		return &apiSource{Type: "base64", MediaType: mime, Data: data}, nil
 	}
 	if url == "" {
-		return nil, fmt.Errorf("empty URL")
+		return nil, errors.New("empty URL")
 	}
 	return &apiSource{Type: "url", URL: url}, nil
 }

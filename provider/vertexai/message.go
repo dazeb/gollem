@@ -2,6 +2,7 @@ package vertexai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -410,12 +411,12 @@ func toGeminiDataPart(url, mimeOverride string) (geminiPart, error) {
 	if rest, ok := strings.CutPrefix(url, "data:"); ok {
 		semi := strings.Index(rest, ";")
 		if semi < 0 {
-			return geminiPart{}, fmt.Errorf("malformed data URI: missing ';'")
+			return geminiPart{}, errors.New("malformed data URI: missing ';'")
 		}
 		mime := rest[:semi]
 		data, ok := strings.CutPrefix(rest[semi+1:], "base64,")
 		if !ok {
-			return geminiPart{}, fmt.Errorf("data URI must be base64-encoded")
+			return geminiPart{}, errors.New("data URI must be base64-encoded")
 		}
 		if mimeOverride != "" {
 			mime = mimeOverride
@@ -423,7 +424,7 @@ func toGeminiDataPart(url, mimeOverride string) (geminiPart, error) {
 		return geminiPart{InlineData: &geminiBlob{MimeType: mime, Data: data}}, nil
 	}
 	if url == "" {
-		return geminiPart{}, fmt.Errorf("empty URL")
+		return geminiPart{}, errors.New("empty URL")
 	}
 	return geminiPart{FileData: &geminiFileData{MimeType: mimeOverride, FileURI: url}}, nil
 }
