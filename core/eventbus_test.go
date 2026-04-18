@@ -50,6 +50,34 @@ func (s *noResponseStream) Usage() Usage { return Usage{} }
 
 func (s *noResponseStream) Close() error { return nil }
 
+// TestEventBus_Close verifies that Close stops the dispatch goroutine and
+// subsequent PublishAsync calls are silently dropped.
+func TestEventBus_Close(t *testing.T) {
+	bus := NewEventBus()
+
+	var received atomic.Int32
+	Subscribe(bus, func(e testEvent) { received.Add(1) })
+
+	PublishAsync(bus, testEvent{Value: "first"})
+
+	// Give dispatch a moment to drain.
+	for i := 0; i < 100 && received.Load() == 0; i++ {
+		time.Sleep(time.Millisecond)
+	}
+
+	bus.Close()
+
+	// Post-close publish should be a no-op.
+	PublishAsync(bus, testEvent{Value: "dropped"})
+
+	if got := received.Load(); got != 1 {
+		t.Errorf("received = %d, want 1", got)
+	}
+
+	// Close is idempotent.
+	bus.Close()
+}
+
 func TestEventBus_PublishSubscribe(t *testing.T) {
 	bus := NewEventBus()
 
@@ -399,10 +427,10 @@ func TestEventBus_ConcurrentApprovalsPublishSingleWaitResumePair(t *testing.T) {
 
 	toolOne := FuncTool[struct{}]("tool_one", "first tool", func(context.Context, struct{}) (string, error) {
 		return "one", nil
-	}, WithRequiresApproval())
+	}, WithRequiresApproval(), WithToolConcurrencySafe(true))
 	toolTwo := FuncTool[struct{}]("tool_two", "second tool", func(context.Context, struct{}) (string, error) {
 		return "two", nil
-	}, WithRequiresApproval())
+	}, WithRequiresApproval(), WithToolConcurrencySafe(true))
 
 	model := NewTestModel(
 		MultiToolCallResponse(

@@ -14,6 +14,8 @@ type EventBus struct {
 	queueMu sync.Mutex
 	queueCV *sync.Cond
 	queue   []queuedEvent
+	closed  bool
+	done    chan struct{}
 }
 
 type queuedEvent struct {
@@ -26,14 +28,32 @@ type subscriberEntry struct {
 	fn reflect.Value
 }
 
-// NewEventBus creates a new event bus.
+// NewEventBus creates a new event bus. Callers should invoke Close when the
+// bus is no longer needed to stop the background dispatch goroutine.
 func NewEventBus() *EventBus {
 	bus := &EventBus{
 		subscribers: make(map[reflect.Type][]subscriberEntry),
+		done:        make(chan struct{}),
 	}
 	bus.queueCV = sync.NewCond(&bus.queueMu)
 	go bus.dispatchLoop()
 	return bus
+}
+
+// Close signals the dispatch loop to drain its queue and exit. Subsequent
+// PublishAsync calls become no-ops. Safe to call more than once. Returns
+// after the dispatch goroutine has exited.
+func (bus *EventBus) Close() {
+	bus.queueMu.Lock()
+	if bus.closed {
+		bus.queueMu.Unlock()
+		<-bus.done
+		return
+	}
+	bus.closed = true
+	bus.queueCV.Broadcast()
+	bus.queueMu.Unlock()
+	<-bus.done
 }
 
 // Subscribe registers a handler for events of a specific type.
@@ -102,14 +122,22 @@ func snapshotSubscribers[E any](bus *EventBus, event E) ([]subscriberEntry, refl
 
 func (bus *EventBus) enqueue(event queuedEvent) {
 	bus.queueMu.Lock()
+	if bus.closed {
+		bus.queueMu.Unlock()
+		return
+	}
 	bus.queue = append(bus.queue, event)
 	bus.queueCV.Signal()
 	bus.queueMu.Unlock()
 }
 
 func (bus *EventBus) dispatchLoop() {
+	defer close(bus.done)
 	for {
-		event := bus.dequeue()
+		event, ok := bus.dequeue()
+		if !ok {
+			return
+		}
 		panicValue := dispatchEvent(event)
 		if panicValue != nil {
 			go func(v any) {
@@ -119,11 +147,17 @@ func (bus *EventBus) dispatchLoop() {
 	}
 }
 
-func (bus *EventBus) dequeue() queuedEvent {
+// dequeue returns the next queued event. The second return is false when
+// the bus has been closed and the queue is empty — the dispatch loop uses
+// this to exit.
+func (bus *EventBus) dequeue() (queuedEvent, bool) {
 	bus.queueMu.Lock()
 	defer bus.queueMu.Unlock()
 
 	for len(bus.queue) == 0 {
+		if bus.closed {
+			return queuedEvent{}, false
+		}
 		bus.queueCV.Wait()
 	}
 
@@ -131,7 +165,7 @@ func (bus *EventBus) dequeue() queuedEvent {
 	copy(bus.queue, bus.queue[1:])
 	bus.queue[len(bus.queue)-1] = queuedEvent{}
 	bus.queue = bus.queue[:len(bus.queue)-1]
-	return event
+	return event, true
 }
 
 func dispatchEvent(event queuedEvent) (panicValue any) {

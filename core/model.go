@@ -15,18 +15,28 @@ type Model interface {
 	// should return an error.
 	RequestStream(ctx context.Context, messages []ModelMessage, settings *ModelSettings, params *ModelRequestParameters) (StreamedResponse, error)
 
-	// ModelName returns the identifier of the model (e.g., "claude-sonnet-4-5").
+	// ModelName returns the identifier of the model (e.g., "claude-sonnet-4-6").
 	ModelName() string
 }
 
 // ModelSettings holds provider-specific settings like temperature and max tokens.
 type ModelSettings struct {
-	MaxTokens       *int        `json:"max_tokens,omitempty"`
-	Temperature     *float64    `json:"temperature,omitempty"`
-	TopP            *float64    `json:"top_p,omitempty"`
-	ToolChoice      *ToolChoice `json:"tool_choice,omitempty"`
-	ThinkingBudget  *int        `json:"thinking_budget,omitempty"`  // Anthropic extended thinking budget tokens
-	ReasoningEffort *string     `json:"reasoning_effort,omitempty"` // OpenAI o-series: "low", "medium", "high"
+	MaxTokens      *int        `json:"max_tokens,omitempty"`
+	Temperature    *float64    `json:"temperature,omitempty"`
+	TopP           *float64    `json:"top_p,omitempty"`
+	ToolChoice     *ToolChoice `json:"tool_choice,omitempty"`
+	ThinkingBudget *int        `json:"thinking_budget,omitempty"` // Anthropic extended thinking budget tokens (manual mode)
+	// ReasoningEffort controls thinking depth. Values: "low", "medium", "high",
+	// "xhigh", "max". Supported on OpenAI reasoning models and Anthropic effort-
+	// capable models (Claude 4.5 Opus+, 4.6 Opus/Sonnet, 4.7 Opus). Per-provider
+	// gating rejects values a given model doesn't accept (e.g., "xhigh" is
+	// Opus 4.7-only; "max" requires 4.6+).
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+	// StopSequences causes generation to halt when the model would emit any
+	// listed string. Supported by Anthropic (stop_sequences) and Gemini
+	// (stopSequences). Ignored by providers that don't support it (e.g.,
+	// OpenAI Responses API).
+	StopSequences []string `json:"stop_sequences,omitempty"`
 }
 
 // OutputMode determines how structured output is extracted from the model.
