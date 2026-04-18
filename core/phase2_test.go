@@ -627,6 +627,7 @@ func TestMaxConcurrency(t *testing.T) {
 			currentConcurrent.Add(-1)
 			return "done", nil
 		},
+		WithToolConcurrencySafe(true),
 	)
 
 	agent := NewAgent[string](model,

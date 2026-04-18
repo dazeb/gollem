@@ -1018,8 +1018,9 @@ func (a *Agent[T]) processResponse(
 	return nil, resultParts, nil, nil
 }
 
-// executeFunctionTools executes function tool calls, running non-sequential
-// tools concurrently.
+// executeFunctionTools executes function tool calls using consecutive batches of
+// concurrency-safe tools. Exclusive tools act as barriers and always execute
+// alone in their original position.
 func (a *Agent[T]) executeFunctionTools(
 	ctx context.Context,
 	state *agentRunState,
@@ -1028,103 +1029,129 @@ func (a *Agent[T]) executeFunctionTools(
 	deps any,
 	prompt string,
 ) ([]ModelRequestPart, error) {
-	// Separate sequential and concurrent calls.
 	type indexedCall struct {
 		idx  int
 		call ToolCallPart
 		tool *Tool
 	}
-	var sequentialCalls []indexedCall
-	var concurrentCalls []indexedCall
+	type toolBatch struct {
+		concurrencySafe bool
+		calls           []indexedCall
+	}
 
+	var batches []toolBatch
 	for i, tc := range calls {
 		tool := toolMap[tc.ToolName]
-		if tool.Definition.Sequential {
-			sequentialCalls = append(sequentialCalls, indexedCall{idx: i, call: tc, tool: tool})
+		concurrencySafe := tool.Definition.ConcurrencySafe && !tool.Definition.Sequential
+		ic := indexedCall{idx: i, call: tc, tool: tool}
+		if concurrencySafe && len(batches) > 0 && batches[len(batches)-1].concurrencySafe {
+			batches[len(batches)-1].calls = append(batches[len(batches)-1].calls, ic)
 		} else {
-			concurrentCalls = append(concurrentCalls, indexedCall{idx: i, call: tc, tool: tool})
+			batches = append(batches, toolBatch{
+				concurrencySafe: concurrencySafe,
+				calls:           []indexedCall{ic},
+			})
 		}
 	}
 
 	results := make([]ModelRequestPart, len(calls))
 
-	// Execute concurrent tools.
-	if len(concurrentCalls) > 0 {
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-
-		// Use a semaphore if max concurrency is set.
-		var sem chan struct{}
-		if a.maxConcurrency > 0 {
-			sem = make(chan struct{}, a.maxConcurrency)
+	pendingCallsFrom := func(batchIdx, callIdx int) []indexedCall {
+		var pending []indexedCall
+		for i := batchIdx; i < len(batches); i++ {
+			start := 0
+			if i == batchIdx {
+				start = callIdx
+			}
+			pending = append(pending, batches[i].calls[start:]...)
 		}
-
-		for _, ic := range concurrentCalls {
-			wg.Add(1)
-			go func(ic indexedCall) {
-				defer wg.Done()
-				if sem != nil {
-					select {
-					case sem <- struct{}{}:
-						defer func() { <-sem }()
-					case <-ctx.Done():
-						if a.eventBus != nil {
-							Publish(a.eventBus, ToolCalledEvent{
-								RunID: state.runID, ParentRunID: state.parentRunID,
-								ToolCallID: ic.call.ToolCallID, ToolName: ic.call.ToolName,
-								ArgsJSON: ic.call.ArgsJSON, CalledAt: time.Now(),
-							})
-							Publish(a.eventBus, ToolFailedEvent{
-								RunID: state.runID, ParentRunID: state.parentRunID,
-								ToolCallID: ic.call.ToolCallID, ToolName: ic.call.ToolName,
-								Error: "context cancelled waiting for semaphore", FailedAt: time.Now(),
-							})
-						}
-						mu.Lock()
-						results[ic.idx] = ToolReturnPart{
-							ToolName:   ic.call.ToolName,
-							Content:    "error: " + ctx.Err().Error(),
-							ToolCallID: ic.call.ToolCallID,
-							Timestamp:  time.Now(),
-						}
-						mu.Unlock()
-						return
-					}
-				}
-				part := a.executeSingleTool(ctx, state, ic.call, ic.tool, deps, prompt)
-				mu.Lock()
-				results[ic.idx] = part
-				mu.Unlock()
-			}(ic)
-		}
-		wg.Wait()
+		return pending
 	}
 
-	// Execute sequential tools.
-	for _, ic := range sequentialCalls {
-		if err := ctx.Err(); err != nil {
-			// Emit events for remaining sequential tools that won't execute.
-			if a.eventBus != nil {
-				for _, remaining := range sequentialCalls {
-					if results[remaining.idx] != nil {
-						continue // already executed
-					}
-					Publish(a.eventBus, NewToolCalledEvent(
-						state.runID, state.parentRunID,
-						remaining.call.ToolCallID, remaining.call.ToolName,
-						remaining.call.ArgsJSON, time.Now(),
-					))
-					Publish(a.eventBus, ToolFailedEvent{
-						RunID: state.runID, ParentRunID: state.parentRunID,
-						ToolCallID: remaining.call.ToolCallID, ToolName: remaining.call.ToolName,
-						Error: "context cancelled", FailedAt: time.Now(),
-					})
-				}
+	publishPendingFailures := func(pending []indexedCall, msg string) {
+		if a.eventBus == nil {
+			return
+		}
+		for _, ic := range pending {
+			if results[ic.idx] != nil {
+				continue
 			}
+			Publish(a.eventBus, NewToolCalledEvent(
+				state.runID, state.parentRunID,
+				ic.call.ToolCallID, ic.call.ToolName,
+				ic.call.ArgsJSON, time.Now(),
+			))
+			Publish(a.eventBus, ToolFailedEvent{
+				RunID: state.runID, ParentRunID: state.parentRunID,
+				ToolCallID: ic.call.ToolCallID, ToolName: ic.call.ToolName,
+				Error: msg, FailedAt: time.Now(),
+			})
+		}
+	}
+
+	for batchIdx, batch := range batches {
+		if err := ctx.Err(); err != nil {
+			publishPendingFailures(pendingCallsFrom(batchIdx, 0), err.Error())
 			return nil, err
 		}
-		part := a.executeSingleTool(ctx, state, ic.call, ic.tool, deps, prompt)
-		results[ic.idx] = part
+
+		if batch.concurrencySafe {
+			var wg sync.WaitGroup
+			var mu sync.Mutex
+			var sem chan struct{}
+			if a.maxConcurrency > 0 {
+				sem = make(chan struct{}, a.maxConcurrency)
+			}
+
+			for _, ic := range batch.calls {
+				wg.Add(1)
+				go func(ic indexedCall) {
+					defer wg.Done()
+					if sem != nil {
+						select {
+						case sem <- struct{}{}:
+							defer func() { <-sem }()
+						case <-ctx.Done():
+							if a.eventBus != nil {
+								Publish(a.eventBus, ToolCalledEvent{
+									RunID: state.runID, ParentRunID: state.parentRunID,
+									ToolCallID: ic.call.ToolCallID, ToolName: ic.call.ToolName,
+									ArgsJSON: ic.call.ArgsJSON, CalledAt: time.Now(),
+								})
+								Publish(a.eventBus, ToolFailedEvent{
+									RunID: state.runID, ParentRunID: state.parentRunID,
+									ToolCallID: ic.call.ToolCallID, ToolName: ic.call.ToolName,
+									Error: "context cancelled waiting for semaphore", FailedAt: time.Now(),
+								})
+							}
+							mu.Lock()
+							results[ic.idx] = ToolReturnPart{
+								ToolName:   ic.call.ToolName,
+								Content:    "error: " + ctx.Err().Error(),
+								ToolCallID: ic.call.ToolCallID,
+								Timestamp:  time.Now(),
+							}
+							mu.Unlock()
+							return
+						}
+					}
+					part := a.executeSingleTool(ctx, state, ic.call, ic.tool, deps, prompt)
+					mu.Lock()
+					results[ic.idx] = part
+					mu.Unlock()
+				}(ic)
+			}
+			wg.Wait()
+			continue
+		}
+
+		for callIdx, ic := range batch.calls {
+			if err := ctx.Err(); err != nil {
+				publishPendingFailures(pendingCallsFrom(batchIdx, callIdx), err.Error())
+				return nil, err
+			}
+			results[ic.idx] = a.executeSingleTool(ctx, state, ic.call, ic.tool, deps, prompt)
+		}
 	}
 
 	return results, nil

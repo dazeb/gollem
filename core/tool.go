@@ -26,6 +26,7 @@ type ToolDefinition struct {
 	Kind              ToolKind `json:"kind"`
 	Strict            *bool    `json:"strict,omitempty"`
 	Sequential        bool     `json:"sequential,omitempty"`
+	ConcurrencySafe   bool     `json:"concurrency_safe,omitempty"`
 	OuterTypedDictKey string   `json:"outer_typed_dict_key,omitempty"`
 	// DeferLoading asks the provider to withhold this tool's schema from
 	// the cached prompt prefix and load it lazily via the provider's
@@ -148,6 +149,7 @@ type ToolOption func(*toolConfig)
 type toolConfig struct {
 	maxRetries       *int
 	sequential       bool
+	concurrencySafe  bool
 	strict           *bool
 	requiresApproval bool
 	resultValidator  ToolResultValidatorFunc
@@ -165,6 +167,14 @@ func WithToolMaxRetries(n int) ToolOption {
 func WithToolSequential(seq bool) ToolOption {
 	return func(c *toolConfig) {
 		c.sequential = seq
+	}
+}
+
+// WithToolConcurrencySafe marks a tool as safe to execute concurrently with
+// other concurrency-safe tools. Sequential tools always execute exclusively.
+func WithToolConcurrencySafe(ok bool) ToolOption {
+	return func(c *toolConfig) {
+		c.concurrencySafe = ok
 	}
 }
 
@@ -265,6 +275,7 @@ func FuncTool[P any](name, description string, fn any, opts ...ToolOption) Tool 
 		Kind:             ToolKindFunction,
 		Strict:           cfg.strict,
 		Sequential:       cfg.sequential,
+		ConcurrencySafe:  cfg.concurrencySafe,
 	}
 
 	handler := func(ctx context.Context, rc *RunContext, argsJSON string) (any, error) {

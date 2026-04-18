@@ -63,10 +63,10 @@ func TestToolPanic_ConcurrentTools(t *testing.T) {
 	}
 	panicTool := FuncTool[Params]("explode", "explodes", func(ctx context.Context, p Params) (string, error) {
 		panic("concurrent boom")
-	})
+	}, WithToolConcurrencySafe(true))
 	safeTool := FuncTool[Params]("safe", "safe tool", func(ctx context.Context, p Params) (string, error) {
 		return "safe result", nil
-	})
+	}, WithToolConcurrencySafe(true))
 
 	model := NewTestModel(
 		MultiToolCallResponse(

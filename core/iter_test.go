@@ -259,7 +259,7 @@ func TestIterMultipleToolCalls(t *testing.T) {
 	}
 	addTool := FuncTool[Params]("add", "adds 10", func(ctx context.Context, p Params) (string, error) {
 		return fmt.Sprintf("%d", p.N+10), nil
-	})
+	}, WithToolConcurrencySafe(true))
 
 	model := NewTestModel(
 		MultiToolCallResponse(

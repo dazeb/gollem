@@ -226,6 +226,7 @@ func View(opts ...Option) core.Tool {
 
 			return result, nil
 		},
+		core.WithToolConcurrencySafe(true),
 	)
 }
 

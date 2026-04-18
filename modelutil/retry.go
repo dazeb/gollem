@@ -142,6 +142,12 @@ func (r *RetryModel) ModelName() string {
 	return r.model.ModelName()
 }
 
+// Inner returns the wrapped model so callers can reach provider-specific APIs
+// (for example to capture or restore websocket continuation state on resume).
+func (r *RetryModel) Inner() core.Model {
+	return r.model
+}
+
 // NewSession returns a retry-wrapped model with an isolated inner model
 // session when supported by the wrapped model.
 func (r *RetryModel) NewSession() core.Model {

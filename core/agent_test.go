@@ -219,12 +219,14 @@ func TestAgentRunWithMultipleToolCalls(t *testing.T) {
 			callCount.Add(1)
 			return "a:" + params.X, nil
 		},
+		WithToolConcurrencySafe(true),
 	)
 	toolB := FuncTool[Params]("tool_b", "Tool B",
 		func(_ context.Context, params Params) (string, error) {
 			callCount.Add(1)
 			return "b:" + params.X, nil
 		},
+		WithToolConcurrencySafe(true),
 	)
 
 	agent := NewAgent[string](model,
@@ -1176,12 +1178,12 @@ func TestConcurrentToolSemaphore_RespectsContextCancellation(t *testing.T) {
 	blockingTool := FuncTool[P]("blocker", "blocks", func(ctx context.Context, p P) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
-	})
+	}, WithToolConcurrencySafe(true))
 
 	// Create a tool that returns immediately.
 	quickTool := FuncTool[P]("quick", "returns quickly", func(ctx context.Context, p P) (string, error) {
 		return "done", nil
-	})
+	}, WithToolConcurrencySafe(true))
 
 	model := NewTestModel(
 		// Request both tools simultaneously.
@@ -1211,6 +1213,95 @@ func TestConcurrentToolSemaphore_RespectsContextCancellation(t *testing.T) {
 	_, err := agent.Run(ctx, "test")
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
+	}
+}
+
+func TestToolExecutionBatchesRespectExclusiveBarriers(t *testing.T) {
+	type Params struct {
+		ID string `json:"id"`
+	}
+
+	events := make(chan string, 8)
+	releaseSafe := make(chan struct{})
+	releaseExclusive := make(chan struct{})
+
+	safeTool := FuncTool[Params]("safe", "safe tool", func(ctx context.Context, p Params) (string, error) {
+		events <- "safe:start:" + p.ID
+		<-releaseSafe
+		events <- "safe:end:" + p.ID
+		return "safe:" + p.ID, nil
+	}, WithToolConcurrencySafe(true))
+	exclusiveTool := FuncTool[Params]("exclusive", "exclusive tool", func(ctx context.Context, p Params) (string, error) {
+		events <- "exclusive:start:" + p.ID
+		<-releaseExclusive
+		events <- "exclusive:end:" + p.ID
+		return "exclusive:" + p.ID, nil
+	})
+
+	model := NewTestModel(
+		MultiToolCallResponse(
+			ToolCallPart{ToolName: "safe", ArgsJSON: `{"id":"1"}`, ToolCallID: "call_safe_1"},
+			ToolCallPart{ToolName: "exclusive", ArgsJSON: `{"id":"2"}`, ToolCallID: "call_exclusive_2"},
+			ToolCallPart{ToolName: "safe", ArgsJSON: `{"id":"3"}`, ToolCallID: "call_safe_3"},
+		),
+		TextResponse("done"),
+	)
+
+	agent := NewAgent[string](model,
+		WithTools[string](safeTool, exclusiveTool),
+		WithMaxConcurrency[string](3),
+	)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := agent.Run(context.Background(), "test batches")
+		done <- err
+	}()
+
+	if got := <-events; got != "safe:start:1" {
+		t.Fatalf("first event = %q, want safe:start:1", got)
+	}
+
+	select {
+	case got := <-events:
+		t.Fatalf("unexpected event before releasing first safe batch: %q", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(releaseSafe)
+
+	if got := <-events; got != "safe:end:1" {
+		t.Fatalf("expected safe:end:1 after release, got %q", got)
+	}
+	if got := <-events; got != "exclusive:start:2" {
+		t.Fatalf("expected exclusive:start:2 after first safe batch, got %q", got)
+	}
+
+	select {
+	case got := <-events:
+		t.Fatalf("unexpected event before releasing exclusive batch: %q", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(releaseExclusive)
+
+	if got := <-events; got != "exclusive:end:2" {
+		t.Fatalf("expected exclusive:end:2 after release, got %q", got)
+	}
+	if got := <-events; got != "safe:start:3" {
+		t.Fatalf("expected safe:start:3 after exclusive batch, got %q", got)
+	}
+	if got := <-events; got != "safe:end:3" {
+		t.Fatalf("expected safe:end:3 after automatic second safe release, got %q", got)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("agent.Run returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for run completion")
 	}
 }
 

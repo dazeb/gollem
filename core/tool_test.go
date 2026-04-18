@@ -150,11 +150,15 @@ func TestFuncToolOptions(t *testing.T) {
 			return "", nil
 		},
 		WithToolSequential(true),
+		WithToolConcurrencySafe(true),
 		WithToolMaxRetries(5),
 	)
 
 	if !tool.Definition.Sequential {
 		t.Error("expected sequential=true")
+	}
+	if !tool.Definition.ConcurrencySafe {
+		t.Error("expected concurrency_safe=true")
 	}
 	if tool.MaxRetries == nil || *tool.MaxRetries != 5 {
 		t.Errorf("maxRetries = %v, want 5", tool.MaxRetries)

@@ -81,5 +81,6 @@ func OpenImage(opts ...Option) core.Tool {
 				},
 			}, nil
 		},
+		core.WithToolConcurrencySafe(true),
 	)
 }
