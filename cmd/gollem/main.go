@@ -530,7 +530,7 @@ func runAgent() {
 			req := modelutil.PersonalityRequest{
 				Task:       rc.Prompt,
 				Role:       "terminal coding agent",
-				BasePrompt: "Prioritize verifier-defined success criteria and deliver the minimal correct fix quickly.",
+				BasePrompt: "Prioritize verifier-defined success criteria, finish the user's original request instead of stopping at a clean checkpoint, and deliver the minimal correct fix quickly.",
 				Context: map[string]string{
 					"provider": f.provider,
 					"model":    baseModel.ModelName(),

@@ -1293,6 +1293,13 @@ func TestToolset_AllTools(t *testing.T) {
 }
 
 func TestToolset_IncludesOpenImageForVisionModels(t *testing.T) {
+	if !strings.Contains(BenchmarkSystemPrompt, "## Autonomous Continuation") {
+		t.Fatal("expected benchmark prompt to include autonomous continuation guidance")
+	}
+	if !strings.Contains(BenchmarkSystemPrompt, "autonomous continuation tool") {
+		t.Fatal("expected benchmark prompt to mention continuation tools when available")
+	}
+
 	visionModel := &profiledTestModel{
 		TestModel: core.NewTestModel(core.TextResponse("ok")),
 		profile:   modelutil.ModelProfile{SupportsVision: true},
@@ -1324,6 +1331,15 @@ func TestToolset_IncludesOpenImageForVisionModels(t *testing.T) {
 	}
 	if noVisionNames["open_image"] {
 		t.Fatal("did not expect open_image in toolset for non-vision models")
+	}
+}
+
+func TestSubAgentSystemPrompt_EncouragesAutonomousContinuation(t *testing.T) {
+	if !strings.Contains(subAgentSystemPrompt, "## Autonomous Continuation") {
+		t.Fatal("expected subagent prompt to include autonomous continuation guidance")
+	}
+	if !strings.Contains(subAgentSystemPrompt, "Don't stop at a clean checkpoint") {
+		t.Fatal("expected subagent prompt to discourage stopping at clean checkpoints")
 	}
 }
 

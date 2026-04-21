@@ -168,6 +168,9 @@ Minimize text output. Every character costs tokens. Don't explain what you're ab
 9. If the task is impossible or blocked, explain why immediately — don't waste turns
 10. Never commit, push, or modify git config. Leave git operations to the parent agent.
 
+## Autonomous Continuation
+Don't stop at a clean checkpoint if there is still safe, concrete work you can do in this run. Keep going until the subtask is complete, verified, blocked on missing information, or you are looping.
+
 ## Output First
 Create required output files EARLY — even rough drafts. A wrong answer that exists beats a perfect answer that doesn't. You can iterate.
 
