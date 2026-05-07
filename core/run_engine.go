@@ -320,6 +320,7 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 
 		turnGuardRC := e.agent.buildRunContext(e.state, e.deps, e.prompt)
 		turnGuardRC.Messages = messages
+		turnGuardRC.messagesOverride = true
 		for _, g := range e.agent.turnGuardrails {
 			gErr := g.fn(e.ctx, turnGuardRC, messages)
 			passed := gErr == nil
@@ -340,6 +341,7 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 
 		modelRC := e.agent.buildRunContext(e.state, e.deps, e.prompt)
 		modelRC.Messages = messages
+		modelRC.messagesOverride = true
 		e.agent.fireHook(func(h Hook) {
 			if h.OnModelRequest != nil {
 				h.OnModelRequest(e.ctx, modelRC, messages)
@@ -360,7 +362,7 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			e.state.traceSteps = append(e.state.traceSteps, TraceStep{
 				Kind:      TraceModelRequest,
 				Timestamp: modelReqStart,
-				Data:      map[string]any{"message_count": len(messages)},
+				Data:      map[string]any{"message_count": len(messages), "turn_number": e.state.runStep},
 			})
 		}
 
@@ -445,7 +447,7 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 				Kind:      TraceModelResponse,
 				Timestamp: time.Now(),
 				Duration:  time.Since(modelReqStart),
-				Data:      map[string]any{"text": resp.TextContent(), "tool_calls": len(resp.ToolCalls())},
+				Data:      map[string]any{"text": resp.TextContent(), "tool_calls": len(resp.ToolCalls()), "turn_number": e.state.runStep},
 			})
 		}
 
@@ -487,16 +489,26 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 		}
 
 		result, nextParts, deferredReqs, err := e.agent.processResponse(e.ctx, e.state, resp, e.toolMap, e.outputToolNames, e.deps, e.prompt)
-		e.agent.fireHook(func(h Hook) {
-			if h.OnTurnEnd != nil {
-				h.OnTurnEnd(e.ctx, turnRC, e.state.runStep, resp)
-			}
-		})
+		fireTurnEnd := func() {
+			e.agent.fireHook(func(h Hook) {
+				if h.OnTurnEnd != nil {
+					h.OnTurnEnd(e.ctx, turnRC, e.state.runStep, resp)
+				}
+			})
+		}
 		if err != nil {
+			fireTurnEnd()
 			e.emitTurnCompleted(resp, err)
 			return resp, nil, err
 		}
 		if len(deferredReqs) > 0 {
+			if len(nextParts) > 0 {
+				e.state.messages = append(e.state.messages, ModelRequest{
+					Parts:     nextParts,
+					Timestamp: time.Now(),
+				})
+			}
+			fireTurnEnd()
 			e.emitTurnCompleted(resp, nil)
 			if e.agent.eventBus != nil {
 				for _, dr := range deferredReqs {
@@ -516,12 +528,6 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 					WaitingAt:   time.Now(),
 				})
 			}
-			if len(nextParts) > 0 {
-				e.state.messages = append(e.state.messages, ModelRequest{
-					Parts:     nextParts,
-					Timestamp: time.Now(),
-				})
-			}
 			return resp, nil, &ErrDeferred[T]{
 				Result: RunResultDeferred[T]{
 					DeferredRequests: deferredReqs,
@@ -531,6 +537,7 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			}
 		}
 		if result != nil {
+			fireTurnEnd()
 			if e.agent.kbAutoStore && e.agent.knowledgeBase != nil {
 				responseText := resp.TextContent()
 				if responseText != "" {
@@ -545,13 +552,14 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			return resp, e.agent.buildRunResult(e.state, result.output), nil
 		}
 		// No result — tool calls processed, continue to next turn.
-		e.emitTurnCompleted(resp, nil)
 		if len(nextParts) > 0 {
 			e.state.messages = append(e.state.messages, ModelRequest{
 				Parts:     nextParts,
 				Timestamp: time.Now(),
 			})
 		}
+		fireTurnEnd()
+		e.emitTurnCompleted(resp, nil)
 		return resp, nil, nil
 	}
 }

@@ -42,6 +42,10 @@
     </form>
     {{end}}
     <a class="button" href="/runs/{{.Run.ID}}">Open run</a>
+    {{if .Run.Trace.Available}}
+    <a class="button button--ghost" href="{{.Run.Trace.InspectURL}}">Inspect trace</a>
+    <a class="button button--ghost" href="{{.Run.Trace.URL}}">Export trace</a>
+    {{end}}
     <a class="button button--ghost" href="/">Dashboard</a>
   </div>
 
@@ -84,6 +88,17 @@
     <div>
       <dt>Tool calls</dt>
       <dd>{{.Run.Usage.ToolCalls}}</dd>
+    </div>
+    <div>
+      <dt>Trace</dt>
+      <dd>
+        {{if .Run.Trace.Available}}
+        <strong>{{.Run.Trace.SchemaVersion}}</strong>
+        <br><span class="muted">{{.Run.Trace.Events}} events · {{.Run.Trace.Snapshots}} snapshots</span>
+        {{else}}
+        <span class="muted">Recording until completion</span>
+        {{end}}
+      </dd>
     </div>
     <div>
       <dt>Last activity</dt>

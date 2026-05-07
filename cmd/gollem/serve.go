@@ -22,6 +22,7 @@ import (
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/codetool"
+	traceutil "github.com/fugue-labs/gollem/ext/trace"
 	"github.com/fugue-labs/gollem/modelutil"
 	"github.com/fugue-labs/gollem/pkg/ui"
 )
@@ -269,23 +270,57 @@ func newServeRunStarter(cfg serveRunConfig) ui.RunStarter {
 		runCfg := cfg
 		runCfg.model = modelutil.NewSessionModel(cfg.model)
 
-		agent := newServeAgent(runCfg, runtime)
+		var traceSnapshots []*core.RunSnapshot
+		runtimeRecorder := traceutil.NewRuntimeRecorder(runtime.EventBus)
+		defer runtimeRecorder.Close()
+		agent := newServeAgent(runCfg, runtime, &traceSnapshots)
 		defer closeServeRunModels(runCfg.model, agent.GetModel())
 
 		stream, err := agent.RunStream(ctx, req.Prompt, buildServeRunOptions(runCfg, req)...)
 		if err != nil {
 			return err
 		}
-		_, err = runtime.ConsumeStream(stream)
+		result, err := runtime.ConsumeStream(stream)
+		if result != nil && result.Trace != nil {
+			metadata := map[string]any{
+				"source":           "dashboard",
+				"dashboard_run_id": runtime.RunID,
+				"provider":         runCfg.provider,
+				"model":            runCfg.modelName,
+				"workdir":          runCfg.workDir,
+			}
+			artifact, artifactErr := traceutil.FromRunTraceWithSnapshotsAndEvents(result.Trace, traceSnapshots, runtimeRecorder.EventsForTrace(result.Trace.RunID), metadata)
+			if artifactErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: build dashboard trace artifact: %v\n", artifactErr)
+			} else {
+				artifact.Run.Mode = "serve"
+				traceutil.WithCost(artifact, result.Cost)
+				runtime.StoreTraceArtifact(artifact)
+			}
+		}
 		return err
 	})
 }
 
-func newServeAgent(cfg serveRunConfig, runtime *ui.RunRuntime) *core.Agent[string] {
+func newServeAgent(cfg serveRunConfig, runtime *ui.RunRuntime, traceSnapshots *[]*core.RunSnapshot) *core.Agent[string] {
 	agentOpts := []core.AgentOption[string]{
 		core.WithEventBus[string](runtime.EventBus),
 		core.WithToolApproval[string](runtime.ApprovalBridge.ToolApprovalFunc()),
 		core.WithRunCondition[string](core.MaxRunDuration(cfg.timeout)),
+		core.WithTracing[string](),
+	}
+	if traceSnapshots != nil {
+		agentOpts = append(agentOpts, core.WithHooks[string](core.Hook{
+			OnTurnEnd: func(ctx context.Context, rc *core.RunContext, turnNumber int, response *core.ModelResponse) {
+				if rc == nil {
+					return
+				}
+				if snap := core.Snapshot(rc); snap != nil {
+					*traceSnapshots = append(*traceSnapshots, snap)
+					core.PublishCheckpointCreated(runtime.EventBus, snap)
+				}
+			},
+		}))
 	}
 
 	if cfg.tools {
@@ -293,6 +328,7 @@ func newServeAgent(cfg serveRunConfig, runtime *ui.RunRuntime) *core.Agent[strin
 			codetool.AgentOptions(cfg.workDir,
 				codetool.WithModel(cfg.model),
 				codetool.WithTimeout(cfg.timeout),
+				codetool.WithEventBus(runtime.EventBus),
 			)...,
 		)
 	} else {

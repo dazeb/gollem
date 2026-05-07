@@ -499,19 +499,31 @@ func errorStringToErr(text string) error {
 	return errors.New(text)
 }
 
-func (ta *TemporalAgent[T]) traceExportActivity(ctx context.Context, input traceExportActivityInput) error {
+func (ta *TemporalAgent[T]) traceExportActivity(ctx context.Context, input traceExportActivityInput) (*TraceExportStatus, error) {
+	status := &TraceExportStatus{
+		Attempted:  len(ta.runtime.TraceExporters) > 0,
+		Total:      len(ta.runtime.TraceExporters),
+		ExportedAt: time.Now().UTC(),
+	}
 	if (input.Trace == nil && len(input.TraceJSON) == 0) || len(ta.runtime.TraceExporters) == 0 {
-		return nil
+		return status, nil
 	}
 	trace, err := decodeTrace(input.Trace, input.TraceJSON)
 	if err != nil {
-		return fmt.Errorf("unmarshal trace for export: %w", err)
+		return nil, fmt.Errorf("unmarshal trace for export: %w", err)
 	}
 	for _, exporter := range ta.runtime.TraceExporters {
-		// Exporter errors remain non-fatal to match local agent behavior.
-		_ = exporter.Export(ctx, trace)
+		if err := exporter.Export(ctx, trace); err != nil {
+			status.Failed++
+			status.Errors = append(status.Errors, TraceExportError{
+				Exporter: fmt.Sprintf("%T", exporter),
+				Error:    err.Error(),
+			})
+			continue
+		}
+		status.Succeeded++
 	}
-	return nil
+	return status, nil
 }
 
 func (ta *TemporalAgent[T]) inputGuardrailActivity(ctx context.Context, input inputGuardrailActivityInput) (*inputGuardrailActivityOutput, error) {

@@ -57,7 +57,7 @@ func Edit(opts ...Option) core.Tool {
 			"and the replacement (new_string). The old_string must match exactly, including whitespace and "+
 			"indentation. Always read a file with the view tool before editing to ensure exact matches. "+
 			"The edit will fail if old_string is not found or matches multiple locations (unless replace_all is true).",
-		func(ctx context.Context, params EditParams) (string, error) {
+		func(ctx context.Context, rc *core.RunContext, params EditParams) (string, error) {
 			if params.Path == "" {
 				return "", &core.ModelRetryError{Message: "path must not be empty"}
 			}
@@ -125,7 +125,7 @@ func Edit(opts ...Option) core.Tool {
 					if hasCRLF {
 						writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 					}
-					if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
+					if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 						return "", fmt.Errorf("write file: %w", err)
 					}
 					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -145,7 +145,7 @@ func Edit(opts ...Option) core.Tool {
 						if hasCRLF {
 							writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 						}
-						if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
+						if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
 						result := editResultWithContext(newContent, trimmedNew, 1, params.Path)
@@ -159,7 +159,7 @@ func Edit(opts ...Option) core.Tool {
 						if hasCRLF {
 							writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 						}
-						if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
+						if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
 						result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -179,7 +179,7 @@ func Edit(opts ...Option) core.Tool {
 						if hasCRLF {
 							writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 						}
-						if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
+						if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
 						result := editResultWithContext(newContent, normalizedNew, 1, params.Path)
@@ -203,7 +203,7 @@ func Edit(opts ...Option) core.Tool {
 							if hasCRLF {
 								writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 							}
-							if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
+							if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 								return "", fmt.Errorf("write file: %w", err)
 							}
 							result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -223,7 +223,7 @@ func Edit(opts ...Option) core.Tool {
 					if hasCRLF {
 						writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 					}
-					if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
+					if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 						return "", fmt.Errorf("write file: %w", err)
 					}
 					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
@@ -276,7 +276,7 @@ func Edit(opts ...Option) core.Tool {
 			if hasCRLF {
 				writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 			}
-			if err := os.WriteFile(path, []byte(writeContent), filePerm); err != nil {
+			if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 
@@ -523,7 +523,7 @@ func MultiEdit(opts ...Option) core.Tool {
 			"to find (old_string), and its replacement (new_string). All edits are validated before any "+
 			"files are written — if validation fails, no files are modified. "+
 			"Use this when you need to make coordinated changes across multiple files.",
-		func(ctx context.Context, params MultiEditParams) (string, error) {
+		func(ctx context.Context, rc *core.RunContext, params MultiEditParams) (string, error) {
 			if len(params.Edits) == 0 {
 				return "", &core.ModelRetryError{Message: "edits list must not be empty"}
 			}
@@ -671,7 +671,7 @@ func MultiEdit(opts ...Option) core.Tool {
 				if perm == 0 {
 					perm = 0o644
 				}
-				if err := os.WriteFile(pw.path, []byte(writeContent), perm); err != nil {
+				if err := writeFileAndTrace(ctx, rc, cfg, pw.path, []byte(writeContent), perm, "multi_edit", "multi_edit"); err != nil {
 					return "", fmt.Errorf("edit[%d]: write file: %w", i, err)
 				}
 				if pw.message != "" {

@@ -48,7 +48,8 @@ Gollem ships **50+ composable primitives** in a single framework. Here's what yo
 
 ### Observability & Tracing
 - **Structured run traces** — Full execution capture with timestamps, durations, and step-level detail
-- **Pluggable trace exporters** — `JSONFileExporter`, `ConsoleExporter`, `MultiExporter`, or implement your own
+- **Canonical trace artifacts** — `gollem.trace.v1` files for local inspect, replay, and diff workflows
+- **Pluggable trace exporters** — write canonical artifacts with `NewTraceFileExporter`, or implement your own exporter
 - **Lifecycle hooks** — `OnRunStart`, `OnRunEnd`, `OnModelRequest`, `OnModelResponse`, `OnToolStart`, `OnToolEnd`
 - **OpenTelemetry middleware** — Distributed tracing and metrics for model requests out of the box
 - **Conversation state snapshots** — Serialize mid-run state for time-travel debugging and branching
@@ -205,7 +206,7 @@ agent := gollem.NewAgent[Analysis](model,
 
     // Observability
     gollem.WithTracing[Analysis](),
-    gollem.WithTraceExporter[Analysis](gollem.NewJSONFileExporter("./traces")),
+    gollem.WithTraceExporter[Analysis](gollem.NewTraceFileExporter("./traces")),
     gollem.WithHooks[Analysis](gollem.Hook{
         OnToolStart: func(ctx context.Context, rc *gollem.RunContext, callID, name, args string) {
             log.Printf("tool: %s(%s)", name, args)
@@ -1020,6 +1021,111 @@ data, _ := gollem.MarshalSnapshot(checkpoint)
 restored, _ := gollem.UnmarshalSnapshot(data)
 ```
 
+### Trace Artifacts
+
+The `gollem` CLI can write canonical `gollem.trace.v1` artifacts for local
+inspection, runtime-boundary replay, and trace diffing:
+
+```bash
+gollem run --trace-out run.trace.json "Fix the failing tests"
+gollem trace export --temporal workflow-123 --out workflow.trace.json
+gollem trace inspect run.trace.json
+gollem trace replay run.trace.json
+gollem trace fork run.trace.json --from-kind model.responded --system-prompt planner-v2.txt --append-user "try a simpler fix" --out fork.snapshot.json
+gollem run --resume-snapshot fork.snapshot.json --trace-out fork.trace.json "continue"
+gollem trace diff baseline.trace.json variant.trace.json
+gollem trace redact run.trace.json --pattern "$API_KEY" --out redacted.trace.json
+gollem trace compact run.trace.json --out compact.trace.json
+```
+
+The persisted file format is always `gollem.trace.v1`. `core.RunTrace` is the
+in-memory trace struct used to build that artifact. Older raw trace JSON files
+from previous Gollem versions can still be converted by `gollem trace export`
+for backward compatibility. Forked snapshots use the same snapshot format as
+`core.WithSnapshot`, and resumed runs emit a fresh trace segment rather than
+prepending or appending the source trace. The restored conversation history may
+still appear inside the new segment's outbound model request payload because it
+is part of the resumed agent state. CLI fork/resume traces include source
+lineage metadata such as the source trace run id and source snapshot id. Strict
+replay validates that recorded model/tool/runtime boundaries are internally
+paired before rendering. `redact` and `compact` provide local-only sharing and
+archival workflows for sensitive or large traces.
+
+SDK users can configure a canonical trace directory in code:
+
+```go
+agent := core.NewAgent[string](model,
+    core.WithTraceExporter[string](core.NewTraceFileExporter("./traces")),
+)
+```
+
+When a run needs additional runtime-boundary events from a shared event bus
+(delegate/team child runs, approvals, waits, deferred results), use the
+`ext/trace` directory exporter. It writes the same core `gollem.trace.v1`
+artifact shape with those extra events included:
+
+```go
+bus := core.NewEventBus()
+defer bus.Close()
+recorder := trace.NewRuntimeRecorder(bus)
+defer recorder.Close()
+
+agent := core.NewAgent[string](model,
+    core.WithEventBus[string](bus),
+    core.WithTraceExporter[string](trace.NewDirectoryExporter("./traces",
+        trace.WithRuntimeRecorder(recorder),
+        trace.WithExporterMetadata(map[string]any{"component": "worker"}),
+    )),
+)
+```
+
+For Kubernetes or other multi-worker deployments, prefer durable storage over
+pod-local trace directories. `ext/trace` includes an object-storage exporter
+that writes the same canonical artifact to a deterministic key, so a retried
+Temporal `trace_export` activity overwrites or deduplicates the same object
+rather than creating a new trace form:
+
+```go
+type MyObjectStore struct{}
+
+func (MyObjectStore) PutObject(ctx context.Context, object trace.ObjectPut) error {
+    // Write object.Body to S3, GCS, R2, MinIO, or another durable store.
+    return nil
+}
+
+agent := core.NewAgent[string](model,
+    core.WithTraceExporter[string](trace.NewObjectStorageExporter(MyObjectStore{},
+        trace.WithObjectKeyPrefix("gollem/prod"),
+        trace.WithObjectExporterMetadata(map[string]any{"component": "worker"}),
+    )),
+)
+```
+
+Coding agents built with `codetool.AgentOptions` write canonical trace
+artifacts to `/tmp/gollem-traces` by default. Override or disable that from
+code with:
+
+```go
+opts := codetool.AgentOptions(workDir,
+    codetool.WithTraceDir("./traces"),
+)
+
+// Disable file export while keeping in-memory RunResult.Trace.
+opts = codetool.AgentOptions(workDir,
+    codetool.WithTraceDir(""),
+)
+```
+
+When tracing is enabled, delegate subagents and team teammates share the same
+runtime event bus, so nested agent runs appear in the parent artifact with
+their own run IDs and parent-run causality. Orchestrator-backed task runners can
+persist canonical trace artifacts via `trace.OrchestratorArtifactSpec`; team
+workers do this automatically for completed tasks.
+
+Dashboard runs started with `gollem serve` record the same artifact in memory
+after completion. The run page links to `/runs/<id>/trace` for JSON export and
+`/runs/<id>/trace/inspect` for the human-readable trace summary.
+
 ### Code Mode (monty)
 
 Instead of N sequential tool calls (N model round-trips), the LLM writes a single Python script that calls tools as functions. The [monty-go](https://github.com/fugue-labs/monty-go) WASM interpreter executes the script in a sandbox, pausing at each function call so the corresponding gollem tool handler runs. Result: N tool calls in 1 round-trip.
@@ -1156,7 +1262,10 @@ workflow/activity names a stable deployment suffix, and
 preserving snapshot state. Use `ta.StatusQueryName()` to query
 `WorkflowStatus`, which includes workflow identity, current history metrics,
 continue-as-new counters, and readable structured `Messages`, `Snapshot`, and
-`Trace` payloads for operator-facing inspection. Signal
+`Trace` payloads for operator-facing inspection. `WorkflowStatus` and
+`WorkflowOutput` also expose the logical Temporal workflow id, the current
+Temporal run id, the continue-as-new run chain, and trace export status/errors.
+Signal
 `ta.ApprovalSignalName()` for tools marked with `WithRequiresApproval()`,
 signal `ta.DeferredResultSignalName()` to resolve deferred tool calls, and
 signal `ta.AbortSignalName()` to abort a waiting workflow. The current
@@ -1171,6 +1280,29 @@ The built-in workflow uses non-streaming model requests; the streaming model
 activity is available for custom workflows. JSON-valued workflow/activity
 payloads are emitted as nested JSON so Temporal history stays readable, while
 the legacy raw `*JSON` fields remain as decode fallbacks for older histories.
+
+In a Kubernetes deployment with multiple workers polling the same task queue,
+Temporal, not the worker process, is the trace unifier. Workflow tasks for a
+single workflow execution are serialized through Temporal history, and
+`RunWorkflow` rebuilds its trace state from that history no matter which worker
+pod receives the next workflow task. The cluster-safe export path is to read
+`WorkflowStatus.Trace` / `WorkflowOutput.Trace`, or run:
+
+```bash
+gollem trace export --temporal <workflow-id> --out workflow.trace.json
+```
+
+`core.NewTraceFileExporter(...)` still works with Temporal, but it runs inside
+the final `trace_export` activity on whichever worker pod picks up that
+activity. `WorkflowOutput.TraceExport` records whether that export was
+attempted, how many exporters succeeded or failed, and each non-fatal exporter
+error. In Kubernetes, a local directory is pod-local unless it is a shared
+volume, so production deployments should prefer `gollem trace export
+--temporal`, a shared filesystem, `trace.NewObjectStorageExporter(...)`, or a
+custom exporter that writes to durable storage such as a database. The
+in-memory `EventBus` and `RuntimeRecorder` are process-local conveniences; they
+are not a cluster-wide trace aggregation mechanism.
+
 See [`ext/temporal/README.md`](ext/temporal/README.md) for the full execution
 model, payload shapes, status/signal API, dep override flow, continue-as-new
 behavior, custom workflow hooks, and current caveats. The runnable example is

@@ -62,6 +62,7 @@ type Adapter struct {
 	msgCounter            int64 // only accessed under mu
 	streamBoundaryVersion int64
 
+	emitMu    sync.Mutex             // preserves batch enqueue order across concurrent emitters
 	outCh     chan []json.RawMessage // serializing delivery channel
 	done      chan struct{}          // closed when delivery goroutine exits
 	closeOnce sync.Once              // ensures Close is idempotent
@@ -158,6 +159,20 @@ func (p *pendingEvents) send() {
 // MUST be called with a.mu held.
 func (a *Adapter) beginEmit() *pendingEvents {
 	return &pendingEvents{adapter: a}
+}
+
+// emitBatch serializes state mutation and batch enqueue order. Without this,
+// a handler can release a.mu after building an earlier batch while a later
+// handler builds and sends its batch first.
+func (a *Adapter) emitBatch(fill func(*pendingEvents)) {
+	a.emitMu.Lock()
+	defer a.emitMu.Unlock()
+
+	a.mu.Lock()
+	batch := a.beginEmit()
+	fill(batch)
+	a.mu.Unlock()
+	batch.send()
 }
 
 func nowMillis() int64 {
@@ -342,58 +357,50 @@ type aguiCustom struct {
 // ── Lifecycle ───────────────────────────────────────────────────────
 
 func (a *Adapter) onRunStarted(ev core.RunStartedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiRunStarted{
-		Type: AGUIRunStarted, Timestamp: nowMillis(),
-		ThreadID: a.threadID, RunID: ev.RunID,
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiRunStarted{
+			Type: AGUIRunStarted, Timestamp: nowMillis(),
+			ThreadID: a.threadID, RunID: ev.RunID,
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onRunCompleted(ev core.RunCompletedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	a.enqueueCloseActiveMessage(batch)
-	if ev.Success || ev.Deferred {
-		batch.enqueue(aguiRunFinished{
-			Type: AGUIRunFinished, Timestamp: nowMillis(),
-			ThreadID: a.threadID, RunID: ev.RunID,
-		})
-	} else {
-		batch.enqueue(aguiRunError{
-			Type: AGUIRunError, Timestamp: nowMillis(),
-			Message: ev.Error, RunID: ev.RunID,
-		})
-	}
-	a.mu.Unlock()
-	batch.send()
+	a.emitBatch(func(batch *pendingEvents) {
+		a.enqueueCloseActiveMessage(batch)
+		if ev.Success || ev.Deferred {
+			batch.enqueue(aguiRunFinished{
+				Type: AGUIRunFinished, Timestamp: nowMillis(),
+				ThreadID: a.threadID, RunID: ev.RunID,
+			})
+		} else {
+			batch.enqueue(aguiRunError{
+				Type: AGUIRunError, Timestamp: nowMillis(),
+				Message: ev.Error, RunID: ev.RunID,
+			})
+		}
+	})
 }
 
 // ── Steps (gollem turns → AG-UI steps) ──────────────────────────────
 
 func (a *Adapter) onTurnStarted(ev core.TurnStartedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiStepStarted{
-		Type: AGUIStepStarted, Timestamp: nowMillis(),
-		StepName: fmt.Sprintf("turn_%d", ev.TurnNumber),
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiStepStarted{
+			Type: AGUIStepStarted, Timestamp: nowMillis(),
+			StepName: fmt.Sprintf("turn_%d", ev.TurnNumber),
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onTurnCompleted(ev core.TurnCompletedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	a.enqueueCloseActiveMessage(batch)
-	batch.enqueue(aguiStepFinished{
-		Type: AGUIStepFinished, Timestamp: nowMillis(),
-		StepName: fmt.Sprintf("turn_%d", ev.TurnNumber),
+	a.emitBatch(func(batch *pendingEvents) {
+		a.enqueueCloseActiveMessage(batch)
+		batch.enqueue(aguiStepFinished{
+			Type: AGUIStepFinished, Timestamp: nowMillis(),
+			StepName: fmt.Sprintf("turn_%d", ev.TurnNumber),
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 // ── Text streaming ──────────────────────────────────────────────────
@@ -402,53 +409,45 @@ func (a *Adapter) onTurnCompleted(ev core.TurnCompletedEvent) {
 // tokens arrive. It manages the TextMessageStart/Content/End lifecycle.
 // Safe for concurrent use.
 func (a *Adapter) EmitTextDelta(messageID, delta string) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-
-	if a.activeMessageID != messageID {
-		a.activeMessageID = messageID
-		role := "assistant"
-		batch.enqueue(aguiTextMessageStart{
-			Type: AGUITextMessageStart, Timestamp: nowMillis(),
-			MessageID: messageID, Role: &role,
-		})
-	}
-	if delta != "" {
-		batch.enqueue(aguiTextMessageContent{
-			Type: AGUITextMessageContent, Timestamp: nowMillis(),
-			MessageID: messageID, Delta: delta,
-		})
-	}
-
-	a.mu.Unlock()
-	batch.send()
+	a.emitBatch(func(batch *pendingEvents) {
+		if a.activeMessageID != messageID {
+			a.activeMessageID = messageID
+			role := "assistant"
+			batch.enqueue(aguiTextMessageStart{
+				Type: AGUITextMessageStart, Timestamp: nowMillis(),
+				MessageID: messageID, Role: &role,
+			})
+		}
+		if delta != "" {
+			batch.enqueue(aguiTextMessageContent{
+				Type: AGUITextMessageContent, Timestamp: nowMillis(),
+				MessageID: messageID, Delta: delta,
+			})
+		}
+	})
 }
 
 // EmitReasoningDelta is called when thinking/reasoning tokens arrive.
 // Safe for concurrent use.
 func (a *Adapter) EmitReasoningDelta(messageID, delta string) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-
-	if a.activeReasoningID != messageID {
-		a.activeReasoningID = messageID
-		batch.enqueue(aguiReasoningStart{
-			Type: AGUIReasoningStart, Timestamp: nowMillis(), MessageID: messageID,
-		})
-		batch.enqueue(aguiReasoningMessageStart{
-			Type: AGUIReasoningMessageStart, Timestamp: nowMillis(),
-			MessageID: messageID, Role: "reasoning",
-		})
-	}
-	if delta != "" {
-		batch.enqueue(aguiReasoningMessageContent{
-			Type: AGUIReasoningMessageContent, Timestamp: nowMillis(),
-			MessageID: messageID, Delta: delta,
-		})
-	}
-
-	a.mu.Unlock()
-	batch.send()
+	a.emitBatch(func(batch *pendingEvents) {
+		if a.activeReasoningID != messageID {
+			a.activeReasoningID = messageID
+			batch.enqueue(aguiReasoningStart{
+				Type: AGUIReasoningStart, Timestamp: nowMillis(), MessageID: messageID,
+			})
+			batch.enqueue(aguiReasoningMessageStart{
+				Type: AGUIReasoningMessageStart, Timestamp: nowMillis(),
+				MessageID: messageID, Role: "reasoning",
+			})
+		}
+		if delta != "" {
+			batch.enqueue(aguiReasoningMessageContent{
+				Type: AGUIReasoningMessageContent, Timestamp: nowMillis(),
+				MessageID: messageID, Delta: delta,
+			})
+		}
+	})
 }
 
 // enqueueCloseActiveMessage enqueues End events for any active text/reasoning
@@ -477,140 +476,121 @@ func (a *Adapter) enqueueCloseActiveMessage(batch *pendingEvents) {
 // ── Tool calls ──────────────────────────────────────────────────────
 
 func (a *Adapter) onToolCalled(ev core.ToolCalledEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	a.enqueueCloseActiveMessage(batch)
+	a.emitBatch(func(batch *pendingEvents) {
+		a.enqueueCloseActiveMessage(batch)
 
-	ts := nowMillis()
-	batch.enqueue(aguiToolCallStart{
-		Type: AGUIToolCallStart, Timestamp: ts,
-		ToolCallID: ev.ToolCallID, ToolCallName: ev.ToolName,
-	})
-	if ev.ArgsJSON != "" {
-		batch.enqueue(aguiToolCallArgs{
-			Type: AGUIToolCallArgs, Timestamp: ts,
-			ToolCallID: ev.ToolCallID, Delta: ev.ArgsJSON,
+		ts := nowMillis()
+		batch.enqueue(aguiToolCallStart{
+			Type: AGUIToolCallStart, Timestamp: ts,
+			ToolCallID: ev.ToolCallID, ToolCallName: ev.ToolName,
 		})
-	}
-	batch.enqueue(aguiToolCallEnd{
-		Type: AGUIToolCallEnd, Timestamp: ts, ToolCallID: ev.ToolCallID,
+		if ev.ArgsJSON != "" {
+			batch.enqueue(aguiToolCallArgs{
+				Type: AGUIToolCallArgs, Timestamp: ts,
+				ToolCallID: ev.ToolCallID, Delta: ev.ArgsJSON,
+			})
+		}
+		batch.enqueue(aguiToolCallEnd{
+			Type: AGUIToolCallEnd, Timestamp: ts, ToolCallID: ev.ToolCallID,
+		})
 	})
-
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onToolCompleted(ev core.ToolCompletedEvent) {
 	role := "tool"
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiToolCallResult{
-		Type: AGUIToolCallResult, Timestamp: nowMillis(),
-		MessageID: a.nextMessageID(), ToolCallID: ev.ToolCallID,
-		Content: ev.Result, Role: &role,
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiToolCallResult{
+			Type: AGUIToolCallResult, Timestamp: nowMillis(),
+			MessageID: a.nextMessageID(), ToolCallID: ev.ToolCallID,
+			Content: ev.Result, Role: &role,
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onToolFailed(ev core.ToolFailedEvent) {
 	role := "tool"
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiToolCallResult{
-		Type: AGUIToolCallResult, Timestamp: nowMillis(),
-		MessageID: a.nextMessageID(), ToolCallID: ev.ToolCallID,
-		Content: "error: " + ev.Error, Role: &role,
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiToolCallResult{
+			Type: AGUIToolCallResult, Timestamp: nowMillis(),
+			MessageID: a.nextMessageID(), ToolCallID: ev.ToolCallID,
+			Content: "error: " + ev.Error, Role: &role,
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 // ── Gollem-specific → AG-UI CUSTOM ─────────────────────────────────
 
 func (a *Adapter) onApprovalRequested(ev core.ApprovalRequestedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiCustom{
-		Type: AGUICustom, Timestamp: nowMillis(),
-		Name: "gollem.approval.requested",
-		Value: mustMarshal(map[string]any{
-			"toolCallId": ev.ToolCallID, "toolName": ev.ToolName, "argsJson": ev.ArgsJSON,
-		}),
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiCustom{
+			Type: AGUICustom, Timestamp: nowMillis(),
+			Name: "gollem.approval.requested",
+			Value: mustMarshal(map[string]any{
+				"toolCallId": ev.ToolCallID, "toolName": ev.ToolName, "argsJson": ev.ArgsJSON,
+			}),
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onApprovalResolved(ev core.ApprovalResolvedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiCustom{
-		Type: AGUICustom, Timestamp: nowMillis(),
-		Name: "gollem.approval.resolved",
-		Value: mustMarshal(map[string]any{
-			"toolCallId": ev.ToolCallID, "toolName": ev.ToolName, "approved": ev.Approved,
-		}),
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiCustom{
+			Type: AGUICustom, Timestamp: nowMillis(),
+			Name: "gollem.approval.resolved",
+			Value: mustMarshal(map[string]any{
+				"toolCallId": ev.ToolCallID, "toolName": ev.ToolName, "approved": ev.Approved,
+			}),
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onDeferredRequested(ev core.DeferredRequestedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiCustom{
-		Type: AGUICustom, Timestamp: nowMillis(),
-		Name: "gollem.deferred.requested",
-		Value: mustMarshal(map[string]any{
-			"toolCallId": ev.ToolCallID, "toolName": ev.ToolName, "argsJson": ev.ArgsJSON,
-		}),
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiCustom{
+			Type: AGUICustom, Timestamp: nowMillis(),
+			Name: "gollem.deferred.requested",
+			Value: mustMarshal(map[string]any{
+				"toolCallId": ev.ToolCallID, "toolName": ev.ToolName, "argsJson": ev.ArgsJSON,
+			}),
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onRunWaiting(ev core.RunWaitingEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiCustom{
-		Type: AGUICustom, Timestamp: nowMillis(),
-		Name:  "gollem.run.waiting",
-		Value: mustMarshal(map[string]any{"reason": ev.Reason}),
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiCustom{
+			Type: AGUICustom, Timestamp: nowMillis(),
+			Name:  "gollem.run.waiting",
+			Value: mustMarshal(map[string]any{"reason": ev.Reason}),
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onDeferredResolved(ev core.DeferredResolvedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiCustom{
-		Type: AGUICustom, Timestamp: nowMillis(),
-		Name: "gollem.deferred.resolved",
-		Value: mustMarshal(map[string]any{
-			"toolCallId": ev.ToolCallID,
-			"toolName":   ev.ToolName,
-			"content":    ev.Content,
-			"isError":    ev.IsError,
-		}),
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiCustom{
+			Type: AGUICustom, Timestamp: nowMillis(),
+			Name: "gollem.deferred.resolved",
+			Value: mustMarshal(map[string]any{
+				"toolCallId": ev.ToolCallID,
+				"toolName":   ev.ToolName,
+				"content":    ev.Content,
+				"isError":    ev.IsError,
+			}),
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 func (a *Adapter) onRunResumed(ev core.RunResumedEvent) {
-	a.mu.Lock()
-	batch := a.beginEmit()
-	batch.enqueue(aguiCustom{
-		Type: AGUICustom, Timestamp: nowMillis(),
-		Name: "gollem.run.resumed",
-		Value: mustMarshal(map[string]any{
-			"runId": ev.RunID,
-		}),
+	a.emitBatch(func(batch *pendingEvents) {
+		batch.enqueue(aguiCustom{
+			Type: AGUICustom, Timestamp: nowMillis(),
+			Name: "gollem.run.resumed",
+			Value: mustMarshal(map[string]any{
+				"runId": ev.RunID,
+			}),
+		})
 	})
-	a.mu.Unlock()
-	batch.send()
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

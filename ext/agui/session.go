@@ -55,6 +55,7 @@ type Session struct {
 	Status    SessionStatus `json:"status"`
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
+	statusAt  time.Time
 
 	// Waiting state
 	WaitingReason string `json:"waiting_reason,omitempty"`
@@ -140,8 +141,10 @@ func (s *Session) SetRunID(runID, parentRunID string) {
 func (s *Session) SetStatus(status SessionStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
 	s.Status = status
-	s.UpdatedAt = time.Now()
+	s.UpdatedAt = now
+	s.statusAt = now
 	if status != SessionStatusWaiting {
 		s.WaitingReason = ""
 	}
@@ -151,9 +154,11 @@ func (s *Session) SetStatus(status SessionStatus) {
 func (s *Session) SetWaiting(reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := time.Now()
 	s.Status = SessionStatusWaiting
 	s.WaitingReason = reason
-	s.UpdatedAt = time.Now()
+	s.UpdatedAt = now
+	s.statusAt = now
 }
 
 // GetStatus returns the current session status.
@@ -265,23 +270,35 @@ func (s *Session) applyRawEventLocked(data json.RawMessage, fallbackTime time.Ti
 		occurredAt = time.UnixMilli(env.Timestamp)
 	}
 
-	s.UpdatedAt = occurredAt
+	if s.UpdatedAt.IsZero() || occurredAt.After(s.UpdatedAt) {
+		s.UpdatedAt = occurredAt
+	}
 	if env.RunID != "" {
 		s.RunID = env.RunID
 	}
 
 	switch env.Type {
 	case AGUIRunStarted:
-		s.Status = SessionStatusRunning
-		s.WaitingReason = ""
+		s.applyRawStatusLocked(SessionStatusRunning, "", occurredAt)
 	case AGUIRunFinished:
-		s.Status = SessionStatusCompleted
-		s.WaitingReason = ""
+		s.applyRawStatusLocked(SessionStatusCompleted, "", occurredAt)
 	case AGUIRunError:
-		s.Status = SessionStatusFailed
-		s.WaitingReason = ""
+		s.applyRawStatusLocked(SessionStatusFailed, "", occurredAt)
 	case AGUICustom:
 		s.applyCustomEventLocked(env.Name, env.Value, occurredAt)
+	}
+}
+
+func (s *Session) applyRawStatusLocked(status SessionStatus, waitingReason string, occurredAt time.Time) {
+	if !s.statusAt.IsZero() && occurredAt.Before(s.statusAt) {
+		return
+	}
+	s.Status = status
+	s.statusAt = occurredAt
+	if status == SessionStatusWaiting {
+		s.WaitingReason = waitingReason
+	} else {
+		s.WaitingReason = ""
 	}
 }
 
@@ -326,11 +343,9 @@ func (s *Session) applyCustomEventLocked(name string, value json.RawMessage, occ
 		if err := json.Unmarshal(value, &payload); err != nil {
 			return
 		}
-		s.Status = SessionStatusWaiting
-		s.WaitingReason = payload.Reason
+		s.applyRawStatusLocked(SessionStatusWaiting, payload.Reason, occurredAt)
 	case "gollem.run.resumed":
-		s.Status = SessionStatusRunning
-		s.WaitingReason = ""
+		s.applyRawStatusLocked(SessionStatusRunning, "", occurredAt)
 	}
 }
 

@@ -1,6 +1,7 @@
 package team
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/orchestrator"
 	omemory "github.com/fugue-labs/gollem/ext/orchestrator/memory"
+	traceutil "github.com/fugue-labs/gollem/ext/trace"
 )
 
 func TestTeam_NewTeam(t *testing.T) {
@@ -80,6 +82,75 @@ func TestTeam_SpawnTeammate_CompletesInitialTask(t *testing.T) {
 	}
 	if tasks[0].Result == nil || tasks[0].Result.Output != "task complete" {
 		t.Fatalf("expected task result output to be recorded, got %#v", tasks[0].Result)
+	}
+	artifacts, err := tm.ArtifactStore().ListArtifacts(context.Background(), orchestrator.ArtifactFilter{
+		TaskID: tasks[0].ID,
+		Kind:   traceutil.OrchestratorArtifactKind,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected 1 trace artifact, got %d", len(artifacts))
+	}
+	artifact, err := traceutil.Read(bytes.NewReader(artifacts[0].Body))
+	if err != nil {
+		t.Fatalf("read team trace artifact: %v", err)
+	}
+	if artifact.Run.Mode != "orchestrator" {
+		t.Fatalf("team trace mode = %q, want orchestrator", artifact.Run.Mode)
+	}
+	if artifact.Metadata["teammate_name"] != "worker-1" {
+		t.Fatalf("team trace missing teammate metadata: %+v", artifact.Metadata)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	if err := tm.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTeam_SpawnTeammatePublishesReplayableRuntimeBoundaries(t *testing.T) {
+	bus := core.NewEventBus()
+	defer bus.Close()
+	recorder := traceutil.NewRuntimeRecorder(bus)
+	defer recorder.Close()
+
+	model := core.NewTestModel(core.TextResponse("task complete"))
+	tm := NewTeam(TeamConfig{
+		Name:     "test-team",
+		Leader:   "leader",
+		Model:    model,
+		EventBus: bus,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	teammate, err := tm.SpawnTeammate(ctx, "worker-1", "do something")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, teammate, TeammateIdle, 3*time.Second)
+
+	events := recorder.Events()
+	var workerRunID string
+	for _, event := range events {
+		if event.Kind == "run.started" && event.AgentID != "" {
+			workerRunID = event.AgentID
+			break
+		}
+	}
+	if workerRunID == "" {
+		t.Fatalf("expected worker run.started event, got %+v", events)
+	}
+	for _, want := range []string{"model.requested", "model.responded", "run.completed"} {
+		if !hasTeamRuntimeEvent(events, workerRunID, want) {
+			t.Fatalf("missing worker event %s for %s in %+v", want, workerRunID, events)
+		}
+	}
+	if !hasTeamRuntimeEventKind(events, "topology.transitioned") {
+		t.Fatalf("missing topology transition event in %+v", events)
 	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1070,4 +1141,22 @@ func waitForState(t *testing.T, tm *Teammate, state TeammateState, timeout time.
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+func hasTeamRuntimeEvent(events []traceutil.Event, agentID, kind string) bool {
+	for _, event := range events {
+		if event.AgentID == agentID && event.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTeamRuntimeEventKind(events []traceutil.Event, kind string) bool {
+	for _, event := range events {
+		if event.Kind == kind {
+			return true
+		}
+	}
+	return false
 }

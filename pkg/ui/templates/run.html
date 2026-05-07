@@ -43,6 +43,20 @@
         <span class="detail-grid__label">Updated</span>
         <strong>{{.Run.UpdatedAt.Format "15:04:05 MST"}}</strong>
       </article>
+      <article>
+        <span class="detail-grid__label">Trace</span>
+        {{if .Run.Trace.Available}}
+        <strong>{{.Run.Trace.Events}} events</strong>
+        <span class="detail-grid__note">{{.Run.Trace.SchemaVersion}} · {{.Run.Trace.Snapshots}} snapshots · {{.Run.Trace.Requests}} requests</span>
+        <span class="detail-grid__actions">
+          <a class="button button--ghost" href="{{.Run.Trace.InspectURL}}">Inspect</a>
+          <a class="button" href="{{.Run.Trace.URL}}">Export</a>
+        </span>
+        {{else}}
+        <strong>Recording</strong>
+        <span class="detail-grid__note">Trace artifact will appear when the run completes.</span>
+        {{end}}
+      </article>
     </div>
 
     <section

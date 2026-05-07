@@ -13,6 +13,7 @@ import (
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/agui"
 	"github.com/fugue-labs/gollem/ext/agui/transport"
+	traceutil "github.com/fugue-labs/gollem/ext/trace"
 	"github.com/google/uuid"
 )
 
@@ -41,6 +42,17 @@ type RunRuntime struct {
 	Session        *agui.Session
 	ApprovalBridge *agui.ApprovalBridge
 	Adapter        *agui.Adapter
+
+	traceArtifactSink func(*traceutil.Artifact)
+}
+
+// StoreTraceArtifact attaches a completed canonical trace artifact to this UI
+// run so dashboard routes can expose it after the run finishes.
+func (rt *RunRuntime) StoreTraceArtifact(artifact *traceutil.Artifact) {
+	if rt == nil || rt.traceArtifactSink == nil || artifact == nil {
+		return
+	}
+	rt.traceArtifactSink(artifact)
 }
 
 // ConsumeStream drains a core stream into AG-UI adapter events and returns the
@@ -114,6 +126,20 @@ type RunControlsView struct {
 	PrimaryActionLabel    string
 }
 
+// RunTraceView exposes trace artifact availability and summary metadata.
+type RunTraceView struct {
+	Available     bool
+	URL           string
+	InspectURL    string
+	SchemaVersion string
+	Status        string
+	Steps         int
+	Events        int
+	Snapshots     int
+	Requests      int
+	ToolCalls     int
+}
+
 // RunStatusView exposes human-readable run status metadata for initial render and hydration.
 type RunStatusView struct {
 	Code       string
@@ -178,6 +204,7 @@ type RunView struct {
 	Waiting                RunWaitingView
 	PendingApprovals       []PendingApprovalView
 	Controls               RunControlsView
+	Trace                  RunTraceView
 }
 
 // RunStartRequest is the accepted POST /runs/start payload.
@@ -219,6 +246,8 @@ type RunRecord struct {
 	sse     http.Handler
 	action  http.Handler
 	cancel  context.CancelFunc
+
+	traceArtifact *traceutil.Artifact
 }
 
 func newRunRecord(now time.Time, runID string, req RunStartRequest) *RunRecord {
@@ -256,12 +285,23 @@ func (r *RunRecord) ID() string { return r.id }
 // Runtime returns the live runtime handles for this run.
 func (r *RunRecord) Runtime() *RunRuntime {
 	return &RunRuntime{
-		RunID:          r.id,
-		EventBus:       r.bus,
-		Session:        r.session,
-		ApprovalBridge: r.bridge,
-		Adapter:        r.adapter,
+		RunID:             r.id,
+		EventBus:          r.bus,
+		Session:           r.session,
+		ApprovalBridge:    r.bridge,
+		Adapter:           r.adapter,
+		traceArtifactSink: r.setTraceArtifact,
 	}
+}
+
+func (r *RunRecord) setTraceArtifact(artifact *traceutil.Artifact) {
+	if artifact == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.traceArtifact = artifact
+	r.updatedAt = time.Now().UTC()
 }
 
 // EventBus returns the per-run event bus.
@@ -461,6 +501,7 @@ func (r *RunRecord) Snapshot() RunView {
 		Waiting:                waiting,
 		PendingApprovals:       pending,
 		Controls:               controls,
+		Trace:                  buildRunTraceView(r.id, r.traceArtifact),
 	}
 	if latest != nil {
 		view.LastActivity = *latest

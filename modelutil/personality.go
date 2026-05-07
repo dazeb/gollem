@@ -78,16 +78,37 @@ func CachedPersonalityGenerator(gen PersonalityGeneratorFunc) PersonalityGenerat
 	var cache sync.Map
 	return func(ctx context.Context, req PersonalityRequest) (string, error) {
 		key := personalityCacheKey(req)
-		if val, ok := cache.Load(key); ok {
-			return val.(string), nil
+		entry := &personalityCacheEntry{ready: make(chan struct{})}
+		actual, loaded := cache.LoadOrStore(key, entry)
+		if loaded {
+			cached := actual.(*personalityCacheEntry)
+			select {
+			case <-cached.ready:
+				if cached.err != nil {
+					return "", cached.err
+				}
+				return cached.value, nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
 		}
+
 		result, err := gen(ctx, req)
+		entry.value = result
+		entry.err = err
+		close(entry.ready)
 		if err != nil {
+			cache.Delete(key)
 			return "", err
 		}
-		cache.Store(key, result)
 		return result, nil
 	}
+}
+
+type personalityCacheEntry struct {
+	ready chan struct{}
+	value string
+	err   error
 }
 
 func personalityCacheKey(req PersonalityRequest) string {

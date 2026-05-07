@@ -3,6 +3,7 @@ package temporal
 import (
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -52,10 +53,29 @@ type AbortSignal struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// TraceExportStatus describes the non-fatal trace export activity result.
+type TraceExportStatus struct {
+	Attempted  bool               `json:"attempted"`
+	Total      int                `json:"total,omitempty"`
+	Succeeded  int                `json:"succeeded,omitempty"`
+	Failed     int                `json:"failed,omitempty"`
+	ExportedAt time.Time          `json:"exported_at,omitempty"`
+	Errors     []TraceExportError `json:"errors,omitempty"`
+}
+
+// TraceExportError records one exporter failure without failing the workflow.
+type TraceExportError struct {
+	Exporter string `json:"exporter"`
+	Error    string `json:"error"`
+}
+
 // WorkflowStatus is the queryable state of a Temporal agent run.
 type WorkflowStatus struct {
 	RunID                   string                      `json:"run_id"`
 	ParentRunID             string                      `json:"parent_run_id,omitempty"`
+	TemporalWorkflowID      string                      `json:"temporal_workflow_id,omitempty"`
+	TemporalRunID           string                      `json:"temporal_run_id,omitempty"`
+	TemporalRunChain        []string                    `json:"temporal_run_chain,omitempty"`
 	RunStep                 int                         `json:"run_step"`
 	Usage                   core.RunUsage               `json:"usage"`
 	WorkflowName            string                      `json:"workflow_name,omitempty"`
@@ -67,6 +87,7 @@ type WorkflowStatus struct {
 	SnapshotJSON            json.RawMessage             `json:"snapshot_json,omitempty"` // Deprecated: prefer Snapshot.
 	Trace                   *core.RunTrace              `json:"trace,omitempty"`
 	TraceJSON               json.RawMessage             `json:"trace_json,omitempty"` // Deprecated: prefer Trace.
+	TraceExport             *TraceExportStatus          `json:"trace_export,omitempty"`
 	Cost                    *core.RunCost               `json:"cost,omitempty"`
 	PendingApprovals        []ToolApprovalRequest       `json:"pending_approvals,omitempty"`
 	DeferredRequests        []core.DeferredToolRequest  `json:"deferred_requests,omitempty"`
@@ -102,6 +123,20 @@ func DecodeWorkflowStatusTrace(status *WorkflowStatus) (*core.RunTrace, error) {
 		return nil, errors.New("nil workflow status")
 	}
 	return decodeTrace(status.Trace, status.TraceJSON)
+}
+
+// DecodeWorkflowStatusSnapshot decodes the queried workflow snapshot payload.
+func DecodeWorkflowStatusSnapshot(status *WorkflowStatus) (*core.RunSnapshot, error) {
+	if status == nil {
+		return nil, errors.New("nil workflow status")
+	}
+	return decodeSerializedSnapshot(status.Snapshot, status.SnapshotJSON)
+}
+
+// WorkflowStatusQueryName returns the workflow query name for status lookups
+// when a TemporalAgent instance is not available.
+func WorkflowStatusQueryName() string {
+	return workflowStatusQueryName
 }
 
 // StatusQueryName returns the workflow query name for status lookups.

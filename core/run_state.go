@@ -17,6 +17,9 @@ type RunState struct {
 	runID              string
 	parentRunID        string
 	startTime          time.Time
+	traceStartTime     time.Time
+	sourceTraceRunID   string
+	sourceSnapshotID   string
 	limits             UsageLimits
 	detach             <-chan struct{} // UI detach signal; nil if not configured
 	mu                 sync.Mutex      // protects usage, toolRetries, traceSteps, requestTraces, and pendingCompactions during concurrent activity
@@ -31,27 +34,31 @@ type agentRunState = RunState
 
 // RunStateSnapshot captures the serializable state of an agent run at a point in time.
 type RunStateSnapshot struct {
-	Messages        []ModelMessage `json:"-"` // excluded from default JSON
-	Usage           RunUsage       `json:"usage"`
-	LastInputTokens int            `json:"last_input_tokens"`
-	Retries         int            `json:"retries"`
-	ToolRetries     map[string]int `json:"tool_retries,omitempty"`
-	RunID           string         `json:"run_id"`
-	ParentRunID     string         `json:"parent_run_id,omitempty"`
-	RunStep         int            `json:"run_step"`
-	RunStartTime    time.Time      `json:"run_start_time"`
-	Prompt          string         `json:"prompt"`
-	ToolState       map[string]any `json:"tool_state,omitempty"`
-	Timestamp       time.Time      `json:"timestamp"`
+	Messages         []ModelMessage `json:"-"` // excluded from default JSON
+	Usage            RunUsage       `json:"usage"`
+	LastInputTokens  int            `json:"last_input_tokens"`
+	Retries          int            `json:"retries"`
+	ToolRetries      map[string]int `json:"tool_retries,omitempty"`
+	RunID            string         `json:"run_id"`
+	ParentRunID      string         `json:"parent_run_id,omitempty"`
+	RunStep          int            `json:"run_step"`
+	RunStartTime     time.Time      `json:"run_start_time"`
+	Prompt           string         `json:"prompt"`
+	ToolState        map[string]any `json:"tool_state,omitempty"`
+	Timestamp        time.Time      `json:"timestamp"`
+	SourceTraceRunID string         `json:"source_trace_run_id,omitempty"`
+	SourceSnapshotID string         `json:"source_snapshot_id,omitempty"`
 }
 
 func newRunState(detach <-chan struct{}, limits UsageLimits) *RunState {
+	now := time.Now()
 	return &RunState{
-		toolRetries: make(map[string]int),
-		runID:       newRunID(),
-		startTime:   time.Now(),
-		limits:      limits,
-		detach:      detach,
+		toolRetries:    make(map[string]int),
+		runID:          newRunID(),
+		startTime:      now,
+		traceStartTime: now,
+		limits:         limits,
+		detach:         detach,
 	}
 }
 
@@ -77,6 +84,8 @@ func (s *RunState) applySnapshot(snap *RunStateSnapshot) {
 	if !snap.RunStartTime.IsZero() {
 		s.startTime = snap.RunStartTime
 	}
+	s.sourceTraceRunID = snap.SourceTraceRunID
+	s.sourceSnapshotID = snap.SourceSnapshotID
 }
 
 func (s *RunState) snapshot(prompt string, toolState map[string]any) *RunStateSnapshot {
@@ -89,19 +98,31 @@ func (s *RunState) snapshot(prompt string, toolState map[string]any) *RunStateSn
 	s.mu.Unlock()
 
 	return &RunStateSnapshot{
-		Messages:        cloneMessages(s.messages),
-		Usage:           usage,
-		LastInputTokens: s.lastInputTokens,
-		Retries:         s.retries,
-		ToolRetries:     toolRetries,
-		RunID:           s.runID,
-		ParentRunID:     s.parentRunID,
-		RunStep:         s.runStep,
-		RunStartTime:    s.startTime,
-		Prompt:          prompt,
-		ToolState:       cloneAnyMap(toolState),
-		Timestamp:       time.Now(),
+		Messages:         cloneMessages(s.messages),
+		Usage:            usage,
+		LastInputTokens:  s.lastInputTokens,
+		Retries:          s.retries,
+		ToolRetries:      toolRetries,
+		RunID:            s.runID,
+		ParentRunID:      s.parentRunID,
+		RunStep:          s.runStep,
+		RunStartTime:     s.startTime,
+		Prompt:           prompt,
+		ToolState:        cloneAnyMap(toolState),
+		Timestamp:        time.Now(),
+		SourceTraceRunID: s.sourceTraceRunID,
+		SourceSnapshotID: s.sourceSnapshotID,
 	}
+}
+
+func (s *RunState) currentTraceStartTime() time.Time {
+	if s == nil {
+		return time.Time{}
+	}
+	if !s.traceStartTime.IsZero() {
+		return s.traceStartTime
+	}
+	return s.startTime
 }
 
 func (s *RunState) beginApprovalWait() bool {

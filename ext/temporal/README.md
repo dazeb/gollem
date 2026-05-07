@@ -133,6 +133,7 @@ Most callers only need `Prompt`.
 | `Snapshot` | Advanced/internal: restore a prior run snapshot as `*core.SerializedRunSnapshot`; external resumes behave like `core.WithSnapshot(...)` and append a fresh initial request for the supplied prompt |
 | `DeferredResults` | Advanced/internal: inject deferred tool results on resume |
 | `TraceSteps` | Internal: preserved across continue-as-new |
+| `TemporalRunChain` | Internal: previous Temporal run IDs preserved across continue-as-new |
 | `ContinueAsNew*` | Internal: preserved across continue-as-new |
 
 Legacy compatibility fields still exist on `WorkflowInput`:
@@ -154,9 +155,13 @@ still accepted so older callers and older histories continue to decode cleanly.
 | `OutputJSON` | Serialized final output |
 | `Snapshot` | Full run snapshot as `*core.SerializedRunSnapshot` |
 | `Trace` | Serialized run trace as `*core.RunTrace` |
+| `TraceExport` | Non-fatal trace exporter status and per-exporter errors |
 | `Cost` | Final cost snapshot when cost tracking is enabled |
 | `DeferredRequests` | Present for advanced/manual resume flows |
 | `ContinueAsNewCount` | Number of workflow rollovers |
+| `TemporalWorkflowID` | Stable Temporal workflow ID for the logical run |
+| `TemporalRunID` | Current Temporal run ID for this execution segment |
+| `TemporalRunChain` | Temporal run IDs observed across continue-as-new |
 
 For normal use, call `ta.DecodeWorkflowOutput(&output)` and work with the
 returned `*core.RunResult[T]`.
@@ -226,8 +231,9 @@ Plain local worker shutdown does not trigger remote workflow cancellation.
 includes:
 
 - `RunID`, `RunStep`, and `Usage`
+- `TemporalWorkflowID`, `TemporalRunID`, and `TemporalRunChain`
 - `WorkflowName`, `RegistrationName`, and `Version`
-- `Messages`, `Snapshot`, `Trace`, and `Cost`
+- `Messages`, `Snapshot`, `Trace`, `TraceExport`, and `Cost`
 - `PendingApprovals` and `DeferredRequests`
 - `Waiting`, `WaitingReason`, `Completed`, `Aborted`, and `LastError`
 - Temporal history metrics and continue-as-new counters
@@ -326,17 +332,29 @@ When a rollover happens, the Temporal workflow carries forward:
 
 - messages and run snapshot
 - trace steps
+- trace start time
 - usage
 - tool state
 - dep overrides
+- the observed Temporal run chain
 - continue-as-new counters
 
 The returned `WorkflowOutput` and queryable `WorkflowStatus` both include
-`ContinueAsNewCount`.
+`ContinueAsNewCount`. They also include `TemporalWorkflowID`, `TemporalRunID`,
+and `TemporalRunChain`: the Gollem trace remains one logical run while Temporal
+may assign a fresh run ID to each continue-as-new execution.
 
 Internal continue-as-new resumes restore the logical run in place. They do not
 re-run input guardrails, publish a second `run_start` event, or fire
 `OnRunStart` again on each rollover.
+
+Trace exporters run once at final completion. `WorkflowOutput.TraceExport`
+records total/succeeded/failed exporter counts and any non-fatal exporter
+errors. This is especially important in Kubernetes because a file exporter runs
+on whichever worker pod claims the final `trace_export` activity; use
+`WorkflowOutput.Trace`, `gollem trace export --temporal`, shared storage,
+`trace.NewObjectStorageExporter(...)`, or another durable exporter when trace
+artifacts must survive pod-local filesystems.
 
 ## Activity Configuration
 

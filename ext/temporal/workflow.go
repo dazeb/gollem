@@ -16,6 +16,9 @@ import (
 type WorkflowInput struct {
 	Prompt                        string                      `json:"prompt"`
 	ParentRunID                   string                      `json:"parent_run_id,omitempty"`
+	TemporalWorkflowID            string                      `json:"temporal_workflow_id,omitempty"`
+	TemporalRunID                 string                      `json:"temporal_run_id,omitempty"`
+	TemporalRunChain              []string                    `json:"temporal_run_chain,omitempty"`
 	Snapshot                      *core.SerializedRunSnapshot `json:"snapshot,omitempty"`
 	SnapshotJSON                  json.RawMessage             `json:"snapshot_json,omitempty"` // Deprecated: prefer Snapshot.
 	TraceSteps                    []core.TraceStep            `json:"trace_steps,omitempty"`
@@ -26,6 +29,7 @@ type WorkflowInput struct {
 	DeferredResults               []core.DeferredToolResult   `json:"deferred_results,omitempty"`
 	ModelSettings                 *core.ModelSettings         `json:"model_settings,omitempty"`
 	UsageLimits                   *core.UsageLimits           `json:"usage_limits,omitempty"`
+	TraceStartTime                time.Time                   `json:"trace_start_time,omitempty"`
 	ContinueAsNewCount            int                         `json:"continue_as_new_count,omitempty"`
 	ContinueAsNewBaseRunStep      int                         `json:"continue_as_new_base_run_step,omitempty"`
 	ContinueAsNewBaseMessageCount int                         `json:"continue_as_new_base_message_count,omitempty"`
@@ -39,9 +43,13 @@ type WorkflowOutput struct {
 	SnapshotJSON       json.RawMessage             `json:"snapshot_json,omitempty"` // Deprecated: prefer Snapshot.
 	Trace              *core.RunTrace              `json:"trace,omitempty"`
 	TraceJSON          json.RawMessage             `json:"trace_json,omitempty"` // Deprecated: prefer Trace.
+	TraceExport        *TraceExportStatus          `json:"trace_export,omitempty"`
 	Cost               *core.RunCost               `json:"cost,omitempty"`
 	DeferredRequests   []core.DeferredToolRequest  `json:"deferred_requests,omitempty"`
 	ContinueAsNewCount int                         `json:"continue_as_new_count,omitempty"`
+	TemporalWorkflowID string                      `json:"temporal_workflow_id,omitempty"`
+	TemporalRunID      string                      `json:"temporal_run_id,omitempty"`
+	TemporalRunChain   []string                    `json:"temporal_run_chain,omitempty"`
 }
 
 type workflowSignalState struct {
@@ -69,6 +77,8 @@ type workflowToolCall struct {
 	usageCounted    bool
 	eventPublished  bool
 	waitingDeferred bool
+	approvalTraced  bool
+	deferredTraced  bool
 	traceStart      time.Time
 }
 
@@ -147,18 +157,20 @@ func (s *workflowSignalState) refreshStatus(
 	}
 	now := workflow.Now(ctx)
 	snapshot, err := core.EncodeRunSnapshot(&core.RunSnapshot{
-		Messages:        cloneMessages(state.Messages),
-		Usage:           state.Usage,
-		LastInputTokens: state.LastInputTokens,
-		Retries:         state.Retries,
-		ToolRetries:     cloneIntMap(state.ToolRetries),
-		RunID:           state.RunID,
-		ParentRunID:     state.ParentRunID,
-		RunStep:         state.RunStep,
-		RunStartTime:    state.RunStartTime,
-		Prompt:          prompt,
-		ToolState:       cloneAnyMap(state.ToolState),
-		Timestamp:       now,
+		Messages:         cloneMessages(state.Messages),
+		Usage:            state.Usage,
+		LastInputTokens:  state.LastInputTokens,
+		Retries:          state.Retries,
+		ToolRetries:      cloneIntMap(state.ToolRetries),
+		RunID:            state.RunID,
+		ParentRunID:      state.ParentRunID,
+		RunStep:          state.RunStep,
+		RunStartTime:     state.RunStartTime,
+		Prompt:           prompt,
+		ToolState:        cloneAnyMap(state.ToolState),
+		Timestamp:        now,
+		SourceTraceRunID: state.SourceTraceRunID,
+		SourceSnapshotID: state.SourceSnapshotID,
 	})
 	if err != nil {
 		return fmt.Errorf("encode workflow status snapshot: %w", err)
@@ -168,9 +180,9 @@ func (s *workflowSignalState) refreshStatus(
 		trace = &core.RunTrace{
 			RunID:     state.RunID,
 			Prompt:    prompt,
-			StartTime: state.RunStartTime,
+			StartTime: state.TraceStartTime,
 			EndTime:   now,
-			Duration:  deterministicWorkflowDuration(state.RunStartTime, now),
+			Duration:  deterministicWorkflowDuration(state.TraceStartTime, now),
 			Steps:     cloneTraceSteps(state.TraceSteps),
 			Usage:     state.Usage,
 			Success:   completed && lastErr == nil && !aborted,
@@ -200,10 +212,14 @@ func (s *workflowSignalState) refreshStatus(
 		Completed:               completed,
 		Aborted:                 aborted,
 		ContinueAsNewCount:      state.ContinueAsNewCount,
+		TemporalWorkflowID:      state.TemporalWorkflowID,
+		TemporalRunID:           state.TemporalRunID,
+		TemporalRunChain:        cloneStringSlice(state.TemporalRunChain),
 		CurrentHistoryLength:    info.GetCurrentHistoryLength(),
 		CurrentHistorySize:      info.GetCurrentHistorySize(),
 		ContinueAsNewSuggested:  info.GetContinueAsNewSuggested(),
 		LastContinueAsNewReason: state.LastContinueAsNewReason,
+		TraceExport:             cloneTraceExportStatus(state.TraceExport),
 	}
 	if lastErr != nil {
 		status.LastError = lastErr.Error()
@@ -341,7 +357,7 @@ func (ta *TemporalAgent[T]) appendModelRequestTrace(ctx workflow.Context, state 
 	state.TraceSteps = append(state.TraceSteps, core.TraceStep{
 		Kind:      core.TraceModelRequest,
 		Timestamp: now,
-		Data:      map[string]any{"message_count": messageCount},
+		Data:      map[string]any{"message_count": messageCount, "turn_number": state.RunStep},
 	})
 	return now
 }
@@ -356,8 +372,9 @@ func (ta *TemporalAgent[T]) appendModelResponseTrace(ctx workflow.Context, state
 		Timestamp: now,
 		Duration:  deterministicWorkflowDuration(start, now),
 		Data: map[string]any{
-			"text":       resp.TextContent(),
-			"tool_calls": len(resp.ToolCalls()),
+			"text":        resp.TextContent(),
+			"tool_calls":  len(resp.ToolCalls()),
+			"turn_number": state.RunStep,
 		},
 	})
 }
@@ -371,8 +388,10 @@ func (ta *TemporalAgent[T]) appendToolCallTrace(ctx workflow.Context, state *wor
 		Kind:      core.TraceToolCall,
 		Timestamp: now,
 		Data: map[string]any{
-			"tool_name": call.ToolName,
-			"args":      call.ArgsJSON,
+			"tool_call_id": call.ToolCallID,
+			"tool_name":    call.ToolName,
+			"args":         call.ArgsJSON,
+			"turn_number":  state.RunStep,
 		},
 	})
 	return now
@@ -388,11 +407,36 @@ func (ta *TemporalAgent[T]) appendToolResultTrace(ctx workflow.Context, state *w
 		Timestamp: now,
 		Duration:  deterministicWorkflowDuration(start, now),
 		Data: map[string]any{
-			"tool_name": call.ToolName,
-			"result":    result,
-			"error":     errText,
+			"tool_call_id": call.ToolCallID,
+			"tool_name":    call.ToolName,
+			"result":       result,
+			"error":        errText,
+			"turn_number":  state.RunStep,
 		},
 	})
+}
+
+func (ta *TemporalAgent[T]) appendRuntimeBoundaryTrace(ctx workflow.Context, state *workflowRunState, kind core.TraceStepKind, data map[string]any) {
+	if !ta.runtime.TracingEnabled {
+		return
+	}
+	state.TraceSteps = append(state.TraceSteps, core.TraceStep{
+		Kind:      kind,
+		Timestamp: workflow.Now(ctx),
+		Data:      withWorkflowTurnNumber(data, state.RunStep),
+	})
+}
+
+func withWorkflowTurnNumber(data map[string]any, turnNumber int) map[string]any {
+	if turnNumber <= 0 {
+		return data
+	}
+	out := make(map[string]any, len(data)+1)
+	for key, value := range data {
+		out[key] = value
+	}
+	out["turn_number"] = turnNumber
+	return out
 }
 
 func buildCallbackInput(state *workflowRunState, prompt, toolName, toolCallID string, retry, maxRetries int, messages []core.ModelMessage) (callbackRunInput, error) {
@@ -839,6 +883,10 @@ func (ta *TemporalAgent[T]) continueAsNew(ctx workflow.Context, state *workflowR
 		DepsJSON:                      append([]byte(nil), state.DepsJSON...),
 		ModelSettings:                 settings,
 		UsageLimits:                   &limits,
+		TemporalWorkflowID:            state.TemporalWorkflowID,
+		TemporalRunID:                 state.TemporalRunID,
+		TemporalRunChain:              cloneStringSlice(state.TemporalRunChain),
+		TraceStartTime:                state.TraceStartTime,
 		ContinueAsNewCount:            state.ContinueAsNewCount,
 		ContinueAsNewBaseRunStep:      state.RunStep,
 		ContinueAsNewBaseMessageCount: len(state.Messages),
@@ -846,14 +894,30 @@ func (ta *TemporalAgent[T]) continueAsNew(ctx workflow.Context, state *workflowR
 	return workflow.NewContinueAsNewError(ctx, ta.RunWorkflow, nextInput)
 }
 
-func (ta *TemporalAgent[T]) exportTrace(ctx workflow.Context, trace *core.RunTrace) {
+func (ta *TemporalAgent[T]) exportTrace(ctx workflow.Context, trace *core.RunTrace) *TraceExportStatus {
 	if trace == nil || len(ta.runtime.TraceExporters) == 0 {
-		return
+		return nil
 	}
 	callbackCtx := workflow.WithActivityOptions(ctx, buildActivityOptions(ta.config.defaultConfig))
-	_ = workflow.ExecuteActivity(callbackCtx, ta.traceExportActivityName(), traceExportActivityInput{
+	var status TraceExportStatus
+	if err := workflow.ExecuteActivity(callbackCtx, ta.traceExportActivityName(), traceExportActivityInput{
 		Trace: trace,
-	}).Get(callbackCtx, nil)
+	}).Get(callbackCtx, &status); err != nil {
+		return &TraceExportStatus{
+			Attempted:  true,
+			Total:      len(ta.runtime.TraceExporters),
+			Failed:     len(ta.runtime.TraceExporters),
+			ExportedAt: workflow.Now(ctx),
+			Errors: []TraceExportError{{
+				Exporter: "trace_export_activity",
+				Error:    err.Error(),
+			}},
+		}
+	}
+	if status.Attempted && status.ExportedAt.IsZero() {
+		status.ExportedAt = workflow.Now(ctx)
+	}
+	return &status
 }
 
 func (ta *TemporalAgent[T]) publishEventBus(ctx workflow.Context, input eventBusActivityInput) error {
@@ -976,7 +1040,7 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 			EventType:    hookEventRunEnd,
 			RunID:        state.RunID,
 			ParentRunID:  state.ParentRunID,
-			RunStartTime: state.RunStartTime,
+			RunStartTime: state.TraceStartTime,
 			OccurredAt:   workflow.Now(ctx),
 			Success:      runErr == nil,
 			Error:        errorString(runErr),
@@ -1004,6 +1068,11 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 		if result != nil && result.Completed && ta.runtime.HasCostTracker {
 			result.Cost = buildWorkflowCost(ta.runtime, state.Usage)
 		}
+		if result != nil {
+			result.TemporalWorkflowID = state.TemporalWorkflowID
+			result.TemporalRunID = state.TemporalRunID
+			result.TemporalRunChain = cloneStringSlice(state.TemporalRunChain)
+		}
 
 		if !ta.runtime.TracingEnabled {
 			return
@@ -1012,9 +1081,9 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 		trace := &core.RunTrace{
 			RunID:     state.RunID,
 			Prompt:    prompt,
-			StartTime: state.RunStartTime,
+			StartTime: state.TraceStartTime,
 			EndTime:   workflow.Now(ctx),
-			Duration:  deterministicWorkflowDuration(state.RunStartTime, workflow.Now(ctx)),
+			Duration:  deterministicWorkflowDuration(state.TraceStartTime, workflow.Now(ctx)),
 			Steps:     cloneTraceSteps(state.TraceSteps),
 			Usage:     state.Usage,
 			Success:   runErr == nil && result != nil && result.Completed,
@@ -1025,7 +1094,12 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 		if result != nil && result.Completed {
 			result.Trace = trace
 		}
-		ta.exportTrace(ctx, trace)
+		exportStatus := ta.exportTrace(ctx, trace)
+		state.TraceExport = exportStatus
+		signals.status.TraceExport = cloneTraceExportStatus(exportStatus)
+		if result != nil && result.Completed {
+			result.TraceExport = cloneTraceExportStatus(exportStatus)
+		}
 	}()
 
 	initialParts, err := unmarshalInitialRequestParts(input.InitialRequestParts, input.InitialRequestPartsJSON)
@@ -1070,7 +1144,7 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 			RunID:        state.RunID,
 			ParentRunID:  state.ParentRunID,
 			Prompt:       prompt,
-			RunStartTime: state.RunStartTime,
+			RunStartTime: state.TraceStartTime,
 		}); err != nil {
 			return nil, fmt.Errorf("run start event publish failed: %w", err)
 		}
@@ -1301,27 +1375,33 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 		}
 
 		finalOutput, nextParts, err := ta.processWorkflowResponse(ctx, state, prompt, resp, signals, settings, limits)
-		if response, hookErr := core.EncodeModelResponse(resp); hookErr == nil {
-			if hookInput, hookErr := buildCallbackInput(state, prompt, "", "", 0, 0, state.Messages); hookErr == nil {
-				if hookErr := ta.fireHook(ctx, hookActivityInput{
-					Run:        hookInput,
-					Event:      hookEventTurnEnd,
-					TurnNumber: state.RunStep,
-					Response:   response,
-				}); hookErr != nil {
-					return nil, hookErr
-				}
-			} else {
-				return nil, hookErr
+		fireTurnEnd := func() error {
+			response, hookErr := core.EncodeModelResponse(resp)
+			if hookErr != nil {
+				return hookErr
 			}
-		} else {
-			return nil, hookErr
+			hookInput, hookErr := buildCallbackInput(state, prompt, "", "", 0, 0, state.Messages)
+			if hookErr != nil {
+				return hookErr
+			}
+			return ta.fireHook(ctx, hookActivityInput{
+				Run:        hookInput,
+				Event:      hookEventTurnEnd,
+				TurnNumber: state.RunStep,
+				Response:   response,
+			})
 		}
 		if err != nil {
+			if hookErr := fireTurnEnd(); hookErr != nil {
+				return nil, hookErr
+			}
 			_ = signals.refreshStatus(ctx, state, prompt, "", nil, nil, false, err, false)
 			return nil, err
 		}
 		if finalOutput != nil {
+			if hookErr := fireTurnEnd(); hookErr != nil {
+				return nil, hookErr
+			}
 			if err := ta.storeKnowledgeResult(ctx, resp.TextContent()); err != nil {
 				_ = signals.refreshStatus(ctx, state, prompt, "", nil, nil, false, err, false)
 				return nil, err
@@ -1360,9 +1440,14 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 				Parts:     nextParts,
 				Timestamp: workflow.Now(ctx),
 			})
+			if hookErr := fireTurnEnd(); hookErr != nil {
+				return nil, hookErr
+			}
 			if err := signals.refreshStatus(ctx, state, prompt, "", nil, nil, false, nil, false); err != nil {
 				return nil, err
 			}
+		} else if hookErr := fireTurnEnd(); hookErr != nil {
+			return nil, hookErr
 		}
 	}
 }
@@ -1601,6 +1686,51 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 		return nil
 	}
 
+	traceApprovalRequested := func(callState *workflowToolCall) {
+		if callState.approvalTraced {
+			return
+		}
+		callState.approvalTraced = true
+		ta.appendRuntimeBoundaryTrace(ctx, state, core.TraceApprovalRequested, map[string]any{
+			"parent_run_id": state.ParentRunID,
+			"tool_call_id":  callState.call.ToolCallID,
+			"tool_name":     callState.call.ToolName,
+			"args":          callState.call.ArgsJSON,
+		})
+	}
+	traceApprovalResolved := func(callState *workflowToolCall, approved bool, message, errText string) {
+		ta.appendRuntimeBoundaryTrace(ctx, state, core.TraceApprovalResolved, map[string]any{
+			"parent_run_id": state.ParentRunID,
+			"tool_call_id":  callState.call.ToolCallID,
+			"tool_name":     callState.call.ToolName,
+			"approved":      approved,
+			"message":       message,
+			"error":         errText,
+		})
+	}
+	traceDeferredRequested := func(callState *workflowToolCall, message string) {
+		if callState.deferredTraced {
+			return
+		}
+		callState.deferredTraced = true
+		ta.appendRuntimeBoundaryTrace(ctx, state, core.TraceDeferredRequested, map[string]any{
+			"parent_run_id": state.ParentRunID,
+			"tool_call_id":  callState.call.ToolCallID,
+			"tool_name":     callState.call.ToolName,
+			"args":          callState.call.ArgsJSON,
+			"message":       message,
+		})
+	}
+	traceDeferredResolved := func(callState *workflowToolCall, result DeferredResultSignal) {
+		ta.appendRuntimeBoundaryTrace(ctx, state, core.TraceDeferredResolved, map[string]any{
+			"parent_run_id": state.ParentRunID,
+			"tool_call_id":  callState.call.ToolCallID,
+			"tool_name":     callState.call.ToolName,
+			"result":        result.Content,
+			"is_error":      result.IsError,
+		})
+	}
+
 	for remaining > 0 {
 		signals.drainSignals()
 
@@ -1636,6 +1766,7 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 
 			if callState.waitingDeferred {
 				if deferred, ok := signals.takeDeferredResult(callState.call.ToolCallID); ok {
+					traceDeferredResolved(callState, deferred)
 					if deferred.IsError {
 						results[callState.idx] = core.RetryPromptPart{
 							Content:    deferred.Content,
@@ -1665,13 +1796,16 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 			}
 
 			if callState.tool.Tool.RequiresApproval {
+				traceApprovalRequested(callState)
 				if ta.runtime.ToolApprovalFunc != nil {
 					approvalOutput, err := ta.checkToolApproval(ctx, callState)
 					if err != nil {
+						traceApprovalResolved(callState, false, "", err.Error())
 						return nil, err
 					}
 					if approvalOutput != nil {
 						if approvalOutput.Error != "" {
+							traceApprovalResolved(callState, false, "", approvalOutput.Error)
 							results[callState.idx] = core.ToolReturnPart{
 								ToolName:   callState.call.ToolName,
 								Content:    "error checking tool approval: " + approvalOutput.Error,
@@ -1683,6 +1817,7 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 							continue
 						}
 						if !approvalOutput.Approved {
+							traceApprovalResolved(callState, false, "", "")
 							results[callState.idx] = core.RetryPromptPart{
 								Content:    approvalDeniedMessage(callState.call.ToolName, ""),
 								ToolName:   callState.call.ToolName,
@@ -1694,6 +1829,7 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 							delete(state.ToolRetries, callState.call.ToolName)
 							continue
 						}
+						traceApprovalResolved(callState, true, "", "")
 					}
 				} else {
 					approval, ok := signals.takeApproval(callState.call.ToolCallID)
@@ -1705,6 +1841,7 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 						})
 						continue
 					}
+					traceApprovalResolved(callState, approval.Approved, approval.Message, "")
 					if !approval.Approved {
 						results[callState.idx] = core.RetryPromptPart{
 							Content:    approvalDeniedMessage(callState.call.ToolName, approval.Message),
@@ -1732,8 +1869,28 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 				state.LastContinueAsNewReason = reason
 				return nil, ta.continueAsNew(ctx, state, prompt, settings, limits)
 			}
+			reason := waitingReason(pendingApprovals, pendingDeferred)
+			if reason != "" {
+				ta.appendRuntimeBoundaryTrace(ctx, state, core.TraceRunWaiting, map[string]any{
+					"parent_run_id": state.ParentRunID,
+					"reason":        reason,
+				})
+			}
 			if err := signals.waitForExternalInput(ctx, state, prompt, pendingApprovals, pendingDeferred); err != nil {
+				if reason != "" {
+					ta.appendRuntimeBoundaryTrace(ctx, state, core.TraceRunResumed, map[string]any{
+						"parent_run_id": state.ParentRunID,
+						"reason":        reason,
+						"error":         err.Error(),
+					})
+				}
 				return nil, err
+			}
+			if reason != "" {
+				ta.appendRuntimeBoundaryTrace(ctx, state, core.TraceRunResumed, map[string]any{
+					"parent_run_id": state.ParentRunID,
+					"reason":        reason,
+				})
 			}
 			continue
 		}
@@ -1826,6 +1983,7 @@ func (ta *TemporalAgent[T]) executeFunctionTools(
 				callStates[callState.idx] = nil
 				remaining--
 			case "deferred":
+				traceDeferredRequested(callState, output.Message)
 				callState.waitingDeferred = true
 			default:
 				return fmt.Errorf("unknown tool activity output kind %q", output.Kind)

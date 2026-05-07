@@ -16,11 +16,15 @@ import (
 type mockModel struct {
 	response *core.ModelResponse
 	err      error
+	delay    time.Duration
 	closed   bool
 }
 
 func (m *mockModel) ModelName() string { return "test-model" }
 func (m *mockModel) Request(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
 	return m.response, m.err
 }
 func (m *mockModel) RequestStream(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (core.StreamedResponse, error) {
@@ -28,7 +32,7 @@ func (m *mockModel) RequestStream(_ context.Context, _ []core.ModelMessage, _ *c
 }
 
 func (m *mockModel) NewSession() core.Model {
-	return &mockModel{response: m.response, err: m.err}
+	return &mockModel{response: m.response, err: m.err, delay: m.delay}
 }
 
 func (m *mockModel) Close() error {
@@ -216,7 +220,7 @@ func TestLoggingMiddlewareToolCalls(t *testing.T) {
 
 func TestMetricsMiddleware(t *testing.T) {
 	metrics := &Metrics{}
-	model := &mockModel{response: &core.ModelResponse{
+	model := &mockModel{delay: time.Microsecond, response: &core.ModelResponse{
 		Parts: []core.ModelResponsePart{
 			core.TextPart{Content: "hello"},
 			core.ToolCallPart{ToolName: "tool1", ToolCallID: "c1", ArgsJSON: "{}"},

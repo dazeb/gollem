@@ -362,7 +362,7 @@ func (a *Agent[T]) buildRunContext(state *agentRunState, deps any, prompt string
 func (a *Agent[T]) beginRun(ctx context.Context, state *agentRunState, deps any, prompt string) context.Context {
 	rc := a.buildRunContext(state, deps, prompt)
 	if a.eventBus != nil {
-		Publish(a.eventBus, NewRunStartedEvent(state.runID, state.parentRunID, prompt, state.startTime))
+		Publish(a.eventBus, NewRunStartedEvent(state.runID, state.parentRunID, prompt, state.currentTraceStartTime()))
 	}
 	a.fireHook(func(h Hook) {
 		if h.OnRunStart != nil {
@@ -374,11 +374,32 @@ func (a *Agent[T]) beginRun(ctx context.Context, state *agentRunState, deps any,
 
 func (a *Agent[T]) endRun(ctx context.Context, state *agentRunState, deps any, prompt string, runErr error) {
 	endRC := a.buildRunContext(state, deps, prompt)
+	if runErr != nil && a.tracingEnabled {
+		state.mu.Lock()
+		state.traceSteps = append(state.traceSteps, TraceStep{
+			Kind:      TraceErrorRaised,
+			Timestamp: time.Now(),
+			Data: map[string]any{
+				"turn_number": state.runStep,
+				"error":       runErr.Error(),
+			},
+		})
+		state.mu.Unlock()
+	}
 	if a.eventBus != nil {
+		if runErr != nil {
+			Publish(a.eventBus, ErrorRaisedEvent{
+				RunID:       state.runID,
+				ParentRunID: state.parentRunID,
+				TurnNumber:  state.runStep,
+				Error:       runErr.Error(),
+				RaisedAt:    time.Now(),
+			})
+		}
 		Publish(a.eventBus, NewRunCompletedEvent(
 			state.runID,
 			state.parentRunID,
-			state.startTime,
+			state.currentTraceStartTime(),
 			time.Now(),
 			runErr,
 		))
@@ -824,6 +845,7 @@ func (a *Agent[T]) processResponse(
 				if incErr := incrementRetries(&state.retries, a.maxRetries, state.messages); incErr != nil {
 					return nil, nil, nil, incErr
 				}
+				a.recordRetryScheduled(state, retryErr.Message, "", "")
 				part := buildRetryParts(retryErr.Message, "", "")
 				return nil, []ModelRequestPart{part}, nil, nil
 			}
@@ -851,7 +873,9 @@ func (a *Agent[T]) processResponse(
 		if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
 			return nil, nil, nil, retryErr
 		}
-		part := buildRetryParts("empty response, please provide a result", "", "")
+		reason := "empty response, please provide a result"
+		a.recordRetryScheduled(state, reason, "", "")
+		part := buildRetryParts(reason, "", "")
 		return nil, []ModelRequestPart{part}, nil, nil
 	}
 
@@ -881,11 +905,9 @@ func (a *Agent[T]) processResponse(
 			return nil, nil, nil, retryErr
 		}
 		for _, tc := range unknownCalls {
-			part := buildRetryParts(
-				fmt.Sprintf("unknown tool %q, available tools: %s", tc.ToolName, a.availableToolNames()),
-				tc.ToolName,
-				tc.ToolCallID,
-			)
+			reason := fmt.Sprintf("unknown tool %q, available tools: %s", tc.ToolName, a.availableToolNames())
+			a.recordRetryScheduled(state, reason, tc.ToolName, tc.ToolCallID)
+			part := buildRetryParts(reason, tc.ToolName, tc.ToolCallID)
 			resultParts = append(resultParts, part)
 		}
 	}
@@ -920,11 +942,9 @@ func (a *Agent[T]) processResponse(
 			if retryErr := incrementRetries(&state.retries, a.maxRetries, state.messages); retryErr != nil {
 				return nil, nil, nil, retryErr
 			}
-			part := buildRetryParts(
-				"failed to parse output: "+err.Error(),
-				tc.ToolName,
-				tc.ToolCallID,
-			)
+			reason := "failed to parse output: " + err.Error()
+			a.recordRetryScheduled(state, reason, tc.ToolName, tc.ToolCallID)
+			part := buildRetryParts(reason, tc.ToolName, tc.ToolCallID)
 			resultParts = append(resultParts, part)
 			continue
 		}
@@ -946,6 +966,7 @@ func (a *Agent[T]) processResponse(
 				if incErr := incrementRetries(&state.retries, a.maxRetries, state.messages); incErr != nil {
 					return nil, nil, nil, incErr
 				}
+				a.recordRetryScheduled(state, retryErr.Message, tc.ToolName, tc.ToolCallID)
 				part := buildRetryParts(retryErr.Message, tc.ToolName, tc.ToolCallID)
 				resultParts = append(resultParts, part)
 				continue
@@ -1016,6 +1037,44 @@ func (a *Agent[T]) processResponse(
 	}
 
 	return nil, resultParts, nil, nil
+}
+
+func (a *Agent[T]) recordRetryScheduled(state *agentRunState, reason, toolName, toolCallID string) {
+	if state == nil {
+		return
+	}
+	now := time.Now()
+	retry := state.retries
+	maxRetries := a.maxRetries
+	if a.tracingEnabled {
+		state.mu.Lock()
+		state.traceSteps = append(state.traceSteps, TraceStep{
+			Kind:      TraceRetryScheduled,
+			Timestamp: now,
+			Data: map[string]any{
+				"turn_number":  state.runStep,
+				"tool_name":    toolName,
+				"tool_call_id": toolCallID,
+				"reason":       reason,
+				"retry":        retry,
+				"max_retries":  maxRetries,
+			},
+		})
+		state.mu.Unlock()
+	}
+	if a.eventBus != nil {
+		Publish(a.eventBus, RetryScheduledEvent{
+			RunID:       state.runID,
+			ParentRunID: state.parentRunID,
+			TurnNumber:  state.runStep,
+			ToolName:    toolName,
+			ToolCallID:  toolCallID,
+			Reason:      reason,
+			Retry:       retry,
+			MaxRetries:  maxRetries,
+			ScheduledAt: now,
+		})
+	}
 }
 
 // executeFunctionTools executes function tool calls using consecutive batches of
@@ -1316,7 +1375,7 @@ func (a *Agent[T]) executeSingleTool(
 		state.traceSteps = append(state.traceSteps, TraceStep{
 			Kind:      TraceToolCall,
 			Timestamp: toolStart,
-			Data:      map[string]any{"tool_name": call.ToolName, "args": call.ArgsJSON},
+			Data:      map[string]any{"tool_call_id": call.ToolCallID, "tool_name": call.ToolName, "args": call.ArgsJSON, "turn_number": state.runStep},
 		})
 		state.mu.Unlock()
 	}
@@ -1396,7 +1455,7 @@ func (a *Agent[T]) executeSingleTool(
 				Kind:      TraceToolResult,
 				Timestamp: time.Now(),
 				Duration:  time.Since(toolStart),
-				Data:      map[string]any{"tool_name": call.ToolName, "result": resultStr, "error": errStr},
+				Data:      map[string]any{"tool_call_id": call.ToolCallID, "tool_name": call.ToolName, "result": resultStr, "error": errStr, "turn_number": state.runStep},
 			})
 			state.mu.Unlock()
 		}

@@ -89,6 +89,42 @@ func TestDecodeWorkflowStatusTrace(t *testing.T) {
 	}
 }
 
+func TestDecodeWorkflowStatusSnapshot(t *testing.T) {
+	if _, err := DecodeWorkflowStatusSnapshot(nil); err == nil {
+		t.Fatal("expected error for nil workflow status")
+	}
+
+	snapshot, err := core.EncodeRunSnapshot(&core.RunSnapshot{RunID: "snap-1", Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("encode snapshot: %v", err)
+	}
+	decoded, err := DecodeWorkflowStatusSnapshot(&WorkflowStatus{Snapshot: snapshot})
+	if err != nil {
+		t.Fatalf("decode structured snapshot: %v", err)
+	}
+	if decoded == nil || decoded.RunID != "snap-1" || decoded.Prompt != "hello" {
+		t.Fatalf("unexpected decoded snapshot: %+v", decoded)
+	}
+
+	raw, err := core.MarshalSnapshot(&core.RunSnapshot{RunID: "snap-2", Prompt: "legacy"})
+	if err != nil {
+		t.Fatalf("marshal legacy snapshot: %v", err)
+	}
+	decoded, err = DecodeWorkflowStatusSnapshot(&WorkflowStatus{SnapshotJSON: raw})
+	if err != nil {
+		t.Fatalf("decode legacy snapshot_json: %v", err)
+	}
+	if decoded == nil || decoded.RunID != "snap-2" || decoded.Prompt != "legacy" {
+		t.Fatalf("unexpected decoded legacy snapshot: %+v", decoded)
+	}
+}
+
+func TestWorkflowStatusQueryName(t *testing.T) {
+	if got := WorkflowStatusQueryName(); got != workflowStatusQueryName {
+		t.Fatalf("WorkflowStatusQueryName() = %q, want %q", got, workflowStatusQueryName)
+	}
+}
+
 func TestDecodeTemporalDeps(t *testing.T) {
 	defaultDeps := depsFixture{Name: "default"}
 	got, err := decodeTemporalDeps(nil, nil, defaultDeps, nil)

@@ -2,11 +2,12 @@ package core
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -15,33 +16,45 @@ type TraceExporter interface {
 	Export(ctx context.Context, trace *RunTrace) error
 }
 
-// JSONFileExporter writes traces as JSON files to a directory.
+// JSONFileExporter writes canonical gollem.trace.v1 JSON artifacts to a
+// directory. The name is kept for source compatibility; use
+// NewTraceFileExporter in new code.
 type JSONFileExporter struct {
 	dir string
 }
 
-// NewJSONFileExporter creates a trace exporter that writes JSON files.
+// TraceFileExporter writes canonical gollem.trace.v1 JSON artifacts to a directory.
+type TraceFileExporter = JSONFileExporter
+
+// NewTraceFileExporter creates a trace exporter that writes canonical
+// gollem.trace.v1 artifacts.
+func NewTraceFileExporter(dir string) *TraceFileExporter {
+	return NewJSONFileExporter(dir)
+}
+
+// NewJSONFileExporter creates a trace exporter that writes canonical
+// gollem.trace.v1 artifacts. The function name is kept for compatibility with
+// existing callers.
 func NewJSONFileExporter(dir string) *JSONFileExporter {
 	return &JSONFileExporter{dir: dir}
 }
 
 func (e *JSONFileExporter) Export(_ context.Context, trace *RunTrace) error {
+	if trace == nil {
+		return errors.New("trace exporter: nil run trace")
+	}
 	if err := os.MkdirAll(e.dir, 0o755); err != nil {
-		return fmt.Errorf("json exporter: create dir: %w", err)
+		return fmt.Errorf("trace exporter: create dir: %w", err)
 	}
 
-	filename := fmt.Sprintf("trace_%s_%s.json", trace.RunID, trace.StartTime.Format("20060102T150405"))
+	filename := fmt.Sprintf("trace_%s_%s.trace.json", safeTraceFilenamePart(trace.RunID), trace.StartTime.Format("20060102T150405"))
 	path := filepath.Join(e.dir, filename)
 
-	data, err := json.MarshalIndent(trace, "", "  ")
+	artifact, err := NewTraceArtifact(trace, nil)
 	if err != nil {
-		return fmt.Errorf("json exporter: marshal: %w", err)
+		return fmt.Errorf("trace exporter: build artifact: %w", err)
 	}
-
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("json exporter: write: %w", err)
-	}
-	return nil
+	return WriteTraceArtifactFile(path, artifact)
 }
 
 // ConsoleExporter prints a human-readable trace summary to an io.Writer.
@@ -99,4 +112,27 @@ func WithTraceExporter[T any](exporter TraceExporter) AgentOption[T] {
 		a.traceExporters = append(a.traceExporters, exporter)
 		a.tracingEnabled = true // implicitly enable tracing
 	}
+}
+
+func safeTraceFilenamePart(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	part := strings.Trim(b.String(), "._-")
+	if part == "" {
+		return "run"
+	}
+	return part
 }

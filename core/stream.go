@@ -219,6 +219,7 @@ func (s *agentStream[T]) Next() (ModelResponseStreamEvent, error) {
 
 		event, err := s.current.Next()
 		if err == nil {
+			s.recordStreamDelta(event)
 			return event, nil
 		}
 		if !errors.Is(err, io.EOF) {
@@ -233,6 +234,68 @@ func (s *agentStream[T]) Next() (ModelResponseStreamEvent, error) {
 		if s.done {
 			return nil, io.EOF
 		}
+	}
+}
+
+func (s *agentStream[T]) recordStreamDelta(event ModelResponseStreamEvent) {
+	var (
+		partIndex int
+		deltaKind string
+		content   string
+	)
+	switch ev := event.(type) {
+	case PartDeltaEvent:
+		partIndex = ev.Index
+		switch delta := ev.Delta.(type) {
+		case TextPartDelta:
+			deltaKind = "text"
+			content = delta.ContentDelta
+		case ThinkingPartDelta:
+			deltaKind = "thinking"
+			content = delta.ContentDelta
+		case ToolCallPartDelta:
+			deltaKind = "tool-call"
+			content = delta.ArgsJSONDelta
+		}
+	case PartStartEvent:
+		partIndex = ev.Index
+		switch part := ev.Part.(type) {
+		case TextPart:
+			deltaKind = "text"
+			content = part.Content
+		case ToolCallPart:
+			deltaKind = "tool-call"
+			content = part.ArgsJSON
+		}
+	}
+	if deltaKind == "" || content == "" {
+		return
+	}
+	now := time.Now()
+	if s.agent.tracingEnabled {
+		s.state.mu.Lock()
+		s.state.traceSteps = append(s.state.traceSteps, TraceStep{
+			Kind:      TraceModelDelta,
+			Timestamp: now,
+			Data: map[string]any{
+				"turn_number":   s.state.runStep,
+				"part_index":    partIndex,
+				"delta_kind":    deltaKind,
+				"content_delta": content,
+			},
+		})
+		s.state.mu.Unlock()
+	}
+	if s.agent.eventBus != nil {
+		Publish(s.agent.eventBus, ModelDeltaEvent{
+			RunID:        s.state.runID,
+			ParentRunID:  s.state.parentRunID,
+			TurnNumber:   s.state.runStep,
+			PartIndex:    partIndex,
+			DeltaKind:    deltaKind,
+			ContentDelta: content,
+			DeltaAt:      now,
+		})
 	}
 }
 
@@ -333,15 +396,7 @@ func (s *agentStream[T]) startTurn() error {
 
 	s.state.runStep++
 
-	turnRC := &RunContext{
-		Deps:         s.deps,
-		Usage:        s.state.usage,
-		Prompt:       s.prompt,
-		RunStep:      s.state.runStep,
-		RunID:        s.state.runID,
-		RunStartTime: s.state.startTime,
-		EventBus:     s.agent.eventBus,
-	}
+	turnRC := s.agent.buildRunContext(s.state, s.deps, s.prompt)
 	s.agent.fireHook(func(h Hook) {
 		if h.OnTurnStart != nil {
 			h.OnTurnStart(s.ctx, turnRC, s.state.runStep)
@@ -436,6 +491,7 @@ func (s *agentStream[T]) startTurn() error {
 
 	turnGuardRC := s.agent.buildRunContext(s.state, s.deps, s.prompt)
 	turnGuardRC.Messages = messages
+	turnGuardRC.messagesOverride = true
 	for _, g := range s.agent.turnGuardrails {
 		gErr := g.fn(s.ctx, turnGuardRC, messages)
 		passed := gErr == nil
@@ -456,6 +512,7 @@ func (s *agentStream[T]) startTurn() error {
 
 	modelRC := s.agent.buildRunContext(s.state, s.deps, s.prompt)
 	modelRC.Messages = messages
+	modelRC.messagesOverride = true
 	s.agent.fireHook(func(h Hook) {
 		if h.OnModelRequest != nil {
 			h.OnModelRequest(s.ctx, modelRC, messages)
@@ -476,7 +533,7 @@ func (s *agentStream[T]) startTurn() error {
 		s.state.traceSteps = append(s.state.traceSteps, TraceStep{
 			Kind:      TraceModelRequest,
 			Timestamp: modelReqStart,
-			Data:      map[string]any{"message_count": len(messages)},
+			Data:      map[string]any{"message_count": len(messages), "turn_number": s.state.runStep},
 		})
 	}
 
@@ -586,7 +643,7 @@ func (s *agentStream[T]) completeTurn() error {
 			Kind:      TraceModelResponse,
 			Timestamp: time.Now(),
 			Duration:  time.Since(s.currentReqStart),
-			Data:      map[string]any{"text": resp.TextContent(), "tool_calls": len(resp.ToolCalls())},
+			Data:      map[string]any{"text": resp.TextContent(), "tool_calls": len(resp.ToolCalls()), "turn_number": s.state.runStep},
 		})
 	}
 
@@ -635,18 +692,27 @@ func (s *agentStream[T]) completeTurn() error {
 	}
 
 	result, nextParts, deferredReqs, err := s.agent.processResponse(s.ctx, s.state, resp, s.toolMap, s.outNames, s.deps, s.prompt)
-
-	s.agent.fireHook(func(h Hook) {
-		if h.OnTurnEnd != nil {
-			h.OnTurnEnd(s.ctx, s.currentTurnRC, s.state.runStep, resp)
-		}
-	})
+	fireTurnEnd := func() {
+		s.agent.fireHook(func(h Hook) {
+			if h.OnTurnEnd != nil {
+				h.OnTurnEnd(s.ctx, s.currentTurnRC, s.state.runStep, resp)
+			}
+		})
+	}
 
 	if err != nil {
+		fireTurnEnd()
 		s.completeActiveTurn(resp, err)
 		return err
 	}
 	if len(deferredReqs) > 0 {
+		if len(nextParts) > 0 {
+			s.state.messages = append(s.state.messages, ModelRequest{
+				Parts:     nextParts,
+				Timestamp: time.Now(),
+			})
+		}
+		fireTurnEnd()
 		s.completeActiveTurn(resp, nil)
 		if s.agent.eventBus != nil {
 			for _, dr := range deferredReqs {
@@ -666,12 +732,6 @@ func (s *agentStream[T]) completeTurn() error {
 				WaitingAt:   time.Now(),
 			})
 		}
-		if len(nextParts) > 0 {
-			s.state.messages = append(s.state.messages, ModelRequest{
-				Parts:     nextParts,
-				Timestamp: time.Now(),
-			})
-		}
 		return &ErrDeferred[T]{
 			Result: RunResultDeferred[T]{
 				DeferredRequests: deferredReqs,
@@ -681,6 +741,7 @@ func (s *agentStream[T]) completeTurn() error {
 		}
 	}
 	if result != nil {
+		fireTurnEnd()
 		if s.agent.kbAutoStore && s.agent.knowledgeBase != nil {
 			responseText := resp.TextContent()
 			if responseText != "" {
@@ -703,14 +764,14 @@ func (s *agentStream[T]) completeTurn() error {
 	}
 
 	// No result — tool calls processed, continue to next turn.
-	s.completeActiveTurn(resp, nil)
-
 	if len(nextParts) > 0 {
 		s.state.messages = append(s.state.messages, ModelRequest{
 			Parts:     nextParts,
 			Timestamp: time.Now(),
 		})
 	}
+	fireTurnEnd()
+	s.completeActiveTurn(resp, nil)
 
 	return nil
 }

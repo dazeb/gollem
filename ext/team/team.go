@@ -115,6 +115,18 @@ func NewTeam(cfg TeamConfig) *Team {
 	}
 }
 
+// AttachEventBus connects future teammate agents and team lifecycle events to
+// a shared runtime event bus. Existing teammates keep their current agent
+// wiring, so callers should attach before spawning workers when possible.
+func (t *Team) AttachEventBus(bus *core.EventBus) {
+	if t == nil || bus == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.eventBus = bus
+}
+
 // TeammateOption configures a teammate.
 type TeammateOption func(*teammateConfig)
 
@@ -197,7 +209,9 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 		t.mu.Unlock()
 		return nil, fmt.Errorf("teammate %q already exists", name)
 	}
+	memberCountBefore := len(t.members)
 	t.members[name] = tm
+	memberCountAfter := len(t.members)
 	t.wg.Add(1)
 	t.mu.Unlock()
 
@@ -214,6 +228,7 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 		core.WithUsageLimits[string](core.UsageLimits{RequestLimit: core.IntPtr(200)}),
 		core.WithTurnGuardrail[string]("max-turns", core.MaxTurns(200)),
 		core.WithDefaultToolTimeout[string](2 * time.Minute),
+		core.WithTracing[string](),
 	}
 	maxTokens := t.workerMaxTokens
 	if cfg.maxTokens > 0 {
@@ -256,6 +271,13 @@ func (t *Team) SpawnTeammate(ctx context.Context, name, task string, opts ...Tea
 	go tm.run(tmCtx, startCh)
 
 	if t.eventBus != nil {
+		t.publishTopologyTransition(
+			core.RunIDFromContext(ctx),
+			"",
+			teamTopologyState(t.name, memberCountBefore),
+			teamTopologyState(t.name, memberCountAfter),
+			"spawn_teammate:"+name,
+		)
 		core.PublishAsync(t.eventBus, TeammateSpawnedEvent{
 			TeamName:     t.name,
 			TeammateName: name,
@@ -276,8 +298,18 @@ func (t *Team) leaderName() string {
 
 func (t *Team) removeTeammate(name string) {
 	t.mu.Lock()
+	memberCountBefore := len(t.members)
 	delete(t.members, name)
+	memberCountAfter := len(t.members)
 	t.mu.Unlock()
+
+	t.publishTopologyTransition(
+		"",
+		"",
+		teamTopologyState(t.name, memberCountBefore),
+		teamTopologyState(t.name, memberCountAfter),
+		"teammate_removed:"+name,
+	)
 
 	if err := t.releaseAssignedTasks(context.Background(), name); err != nil {
 		fmt.Fprintf(os.Stderr, "[gollem] team:%s failed to release tasks for teammate:%s: %v\n", t.name, name, err)
@@ -376,6 +408,10 @@ func (t *Team) isTeamTask(task *orchestrator.Task) bool {
 }
 
 func (t *Team) requestShutdown(name, from, reason, correlationID string) (shutdownRequest, error) {
+	return t.requestShutdownForRun(name, from, reason, correlationID, "")
+}
+
+func (t *Team) requestShutdownForRun(name, from, reason, correlationID, runID string) (shutdownRequest, error) {
 	tm := t.GetTeammate(name)
 	if tm == nil {
 		return shutdownRequest{}, fmt.Errorf("teammate %q not found", name)
@@ -384,7 +420,42 @@ func (t *Team) requestShutdown(name, from, reason, correlationID string) (shutdo
 		reason = "work complete"
 	}
 	req := tm.requestShutdown(from, reason, correlationID)
+	topologyBefore := teamTopologyState(t.name, t.memberCount())
+	t.publishTopologyTransition(
+		runID,
+		"",
+		topologyBefore,
+		fmt.Sprintf("%s/shutdown_pending:%s", topologyBefore, name),
+		"shutdown_teammate:"+name,
+	)
 	return req, nil
+}
+
+func (t *Team) memberCount() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.members)
+}
+
+func (t *Team) publishTopologyTransition(runID, parentRunID, from, to, reason string) {
+	if t == nil || t.eventBus == nil {
+		return
+	}
+	core.Publish(t.eventBus, core.TopologyTransitionedEvent{
+		RunID:          runID,
+		ParentRunID:    parentRunID,
+		From:           from,
+		To:             to,
+		Reason:         reason,
+		TransitionedAt: time.Now(),
+	})
+}
+
+func teamTopologyState(teamName string, members int) string {
+	if teamName == "" {
+		teamName = "team"
+	}
+	return fmt.Sprintf("team:%s/members=%d", teamName, members)
 }
 
 // Shutdown gracefully shuts down all teammates.
