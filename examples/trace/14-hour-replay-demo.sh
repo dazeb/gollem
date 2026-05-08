@@ -79,7 +79,7 @@ if [[ ! -s "$KILLED_STREAM" ]] || ! grep -q '"kind":"model.requested"' "$KILLED_
 fi
 grep -q '"kind":"run.started"' "$KILLED_STREAM"
 kill "$KILLED_PID"
-wait "$KILLED_PID" || true
+wait "$KILLED_PID" 2>/dev/null || true
 
 "$BIN" run --provider test --no-code-mode --resume-snapshot "$CRASH_SNAPSHOT" --trace-out "$RESUMED_TRACE" "continue"
 "$BIN" trace validate "$RESUMED_TRACE"
