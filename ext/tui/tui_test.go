@@ -265,6 +265,61 @@ func TestTUI_SplitDetailView(t *testing.T) {
 	}
 }
 
+func TestTUI_SplitViewDoesNotWrapOrMisalignRows(t *testing.T) {
+	m := newModel(DefaultTheme())
+	m.width = 120
+	m.height = 7
+	m.status = "diff succeeded -> succeeded"
+	m.elapsed = "-92ms"
+	m.usage = core.RunUsage{
+		Usage: core.Usage{
+			InputTokens:  1234,
+			OutputTokens: 5678,
+		},
+		Requests:  12,
+		ToolCalls: 4,
+	}
+	m.steps = []step{
+		{kind: "system", eventKind: "run.started", content: strings.Repeat("very-long-left ", 20), detail: "short detail"},
+		{kind: "error", eventKind: "diff.first_divergence", content: strings.Repeat("first divergence ", 20), detail: strings.Repeat("right-pane-detail ", 40)},
+		{kind: "done", eventKind: "diff.done", content: "diff complete", detail: "done"},
+	}
+
+	view := m.View()
+	if got := strings.Count(view, "\n"); got != m.height-1 {
+		t.Fatalf("view rendered %d line breaks, want %d:\n%s", got, m.height-1, view)
+	}
+	for idx, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width > m.width {
+			t.Fatalf("line %d width = %d, want <= %d:\n%q\nfull view:\n%s", idx, width, m.width, line, view)
+		}
+	}
+}
+
+func TestTUI_StatusBarDoesNotWrap(t *testing.T) {
+	m := newModel(DefaultTheme())
+	m.width = 100
+	m.status = "diff succeeded -> succeeded"
+	m.cost = "USD 123456789.000000"
+	m.elapsed = "999h59m59s"
+	m.usage = core.RunUsage{
+		Usage: core.Usage{
+			InputTokens:  999999,
+			OutputTokens: 888888,
+		},
+		Requests:  777,
+		ToolCalls: 666,
+	}
+
+	bar := m.renderStatusBar()
+	if strings.Contains(bar, "\n") {
+		t.Fatalf("status bar wrapped:\n%q", bar)
+	}
+	if width := lipgloss.Width(bar); width != m.width {
+		t.Fatalf("status bar width = %d, want %d:\n%q", width, m.width, bar)
+	}
+}
+
 func TestTUI_TraceDiffSteps(t *testing.T) {
 	diff := traceutil.DiffResult{
 		BaselineID:     "run-a",

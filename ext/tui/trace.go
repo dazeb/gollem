@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 	"github.com/fugue-labs/gollem/core"
 	traceutil "github.com/fugue-labs/gollem/ext/trace"
 )
@@ -23,6 +24,7 @@ func TraceView(artifact *traceutil.Artifact, opts ...Option) error {
 	}
 
 	m := newModel(cfg.theme)
+	applyTerminalSize(&m)
 	m.steps = traceSteps(artifact)
 	if artifact != nil {
 		m.usage = artifact.Summary.Usage
@@ -53,6 +55,7 @@ func TraceCompareView(baseline, variant *traceutil.Artifact, opts ...Option) err
 
 	diff := traceutil.Diff(baseline, variant)
 	m := newModel(cfg.theme)
+	applyTerminalSize(&m)
 	m.steps = traceDiffSteps(diff)
 	if variant != nil {
 		m.usage = variant.Summary.Usage
@@ -70,6 +73,19 @@ func TraceCompareView(baseline, variant *traceutil.Artifact, opts ...Option) err
 		return fmt.Errorf("trace compare TUI error: %w", err)
 	}
 	return nil
+}
+
+func applyTerminalSize(m *model) {
+	width, height, err := term.GetSize(os.Stdout.Fd())
+	if err != nil {
+		return
+	}
+	if width > 0 {
+		m.width = width
+	}
+	if height > 0 {
+		m.height = height
+	}
 }
 
 func waitForStaticTraceQuit() error {

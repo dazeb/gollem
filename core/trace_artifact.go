@@ -42,21 +42,23 @@ type TraceRunMetadata struct {
 
 // TraceEvent is a canonical runtime-boundary event.
 type TraceEvent struct {
-	ID             string                  `json:"id"`
-	Seq            int                     `json:"seq"`
-	Kind           string                  `json:"kind"`
-	Timestamp      time.Time               `json:"timestamp,omitempty"`
-	DurationMillis int64                   `json:"duration_ms,omitempty"`
-	Step           int                     `json:"step,omitempty"`
-	RequestID      string                  `json:"request_id,omitempty"`
-	CausalParentID string                  `json:"causal_parent_id,omitempty"`
-	AgentID        string                  `json:"agent_id,omitempty"`
-	NodeID         string                  `json:"node_id,omitempty"`
-	TopologyID     string                  `json:"topology_id,omitempty"`
-	ReplayPolicy   string                  `json:"replay_policy,omitempty"`
-	Redacted       bool                    `json:"redacted,omitempty"`
-	Redaction      *TraceRedactionMetadata `json:"redaction,omitempty"`
-	Payload        map[string]any          `json:"payload,omitempty"`
+	ID                  string                  `json:"id"`
+	Seq                 int                     `json:"seq"`
+	Kind                string                  `json:"kind"`
+	Timestamp           time.Time               `json:"timestamp,omitempty"`
+	DurationMillis      int64                   `json:"duration_ms,omitempty"`
+	Step                int                     `json:"step,omitempty"`
+	RequestID           string                  `json:"request_id,omitempty"`
+	CausalParentID      string                  `json:"causal_parent_id,omitempty"`
+	CausalParentEventID string                  `json:"causal_parent_event_id,omitempty"`
+	CausalChildEventIDs []string                `json:"causal_child_event_ids,omitempty"`
+	AgentID             string                  `json:"agent_id,omitempty"`
+	NodeID              string                  `json:"node_id,omitempty"`
+	TopologyID          string                  `json:"topology_id,omitempty"`
+	ReplayPolicy        string                  `json:"replay_policy,omitempty"`
+	Redacted            bool                    `json:"redacted,omitempty"`
+	Redaction           *TraceRedactionMetadata `json:"redaction,omitempty"`
+	Payload             map[string]any          `json:"payload,omitempty"`
 }
 
 // TraceRedactionMetadata describes redaction applied to a trace event.
@@ -858,7 +860,62 @@ func NormalizeTraceEvents(events []TraceEvent) []TraceEvent {
 			events[i].ReplayPolicy = traceReplayPolicyForKind(events[i].Kind)
 		}
 	}
+	attachTraceEventCausality(events)
 	return events
+}
+
+func attachTraceEventCausality(events []TraceEvent) {
+	lastByRequest := make(map[string]string)
+	lastByToolCall := make(map[string]string)
+	lastByStep := make(map[int]string)
+	lastByAgent := make(map[string]string)
+	eventIndex := make(map[string]int, len(events))
+	var last string
+
+	for i := range events {
+		eventIndex[events[i].ID] = i
+		events[i].CausalChildEventIDs = nil
+	}
+	for i := range events {
+		event := &events[i]
+		parent := strings.TrimSpace(event.CausalParentEventID)
+		if parent == "" && event.CausalParentID != "" {
+			parent = lastByAgent[event.CausalParentID]
+		}
+		if parent == "" && event.RequestID != "" {
+			parent = lastByRequest[event.RequestID]
+		}
+		if parent == "" {
+			if toolCallID := tracePayloadString(event.Payload, "tool_call_id"); toolCallID != "" {
+				parent = lastByToolCall[toolCallID]
+			}
+		}
+		if parent == "" && event.Step > 0 {
+			parent = lastByStep[event.Step]
+		}
+		if parent == "" {
+			parent = last
+		}
+		if parent != "" && parent != event.ID {
+			event.CausalParentEventID = parent
+			if parentIndex, ok := eventIndex[parent]; ok {
+				events[parentIndex].CausalChildEventIDs = append(events[parentIndex].CausalChildEventIDs, event.ID)
+			}
+		}
+		if event.RequestID != "" {
+			lastByRequest[event.RequestID] = event.ID
+		}
+		if toolCallID := tracePayloadString(event.Payload, "tool_call_id"); toolCallID != "" {
+			lastByToolCall[toolCallID] = event.ID
+		}
+		if event.Step > 0 {
+			lastByStep[event.Step] = event.ID
+		}
+		if event.AgentID != "" {
+			lastByAgent[event.AgentID] = event.ID
+		}
+		last = event.ID
+	}
 }
 
 func traceEventKindSortRank(kind string) int {
