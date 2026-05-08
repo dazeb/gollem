@@ -21,6 +21,9 @@ BASE_TRACE="$OUT/base.trace.json"
 BASE_STREAM="$OUT/base.trace.jsonl"
 EXPORTED_TRACE="$OUT/exported.trace.json"
 CRASH_SNAPSHOT="$OUT/crash-resume.snapshot.json"
+KILLED_TRACE="$OUT/killed.trace.json"
+KILLED_STREAM="$OUT/killed.trace.jsonl"
+KILLED_LOG="$OUT/killed.log"
 RESUMED_TRACE="$OUT/resumed.trace.json"
 FORK_TRACE="$OUT/fork.trace.json"
 LIVE_REEXEC_TRACE="$OUT/live-reexec.trace.json"
@@ -42,12 +45,42 @@ echo "3. inspect and strict replay"
 "$BIN" trace inspect "$EXPORTED_TRACE" --events 20
 "$BIN" trace replay "$EXPORTED_TRACE" --mode strict
 
-echo "4. simulate crash/resume from a stable boundary snapshot"
+echo "4. kill a running process and resume from a stable boundary snapshot"
 "$BIN" trace fork "$EXPORTED_TRACE" \
   --from-kind model.responded \
   --planner-prompt "planner prompt after crash resume" \
   --append-user "continue after simulated crash" \
   --out "$CRASH_SNAPSHOT"
+
+(
+  GOLLEM_TOP_LEVEL_PERSONALITY=0 GOLLEM_TEST_MODEL_DELAY=20s "$BIN" run \
+    --provider test \
+    --team-mode off \
+    --no-code-mode \
+    --resume-snapshot "$CRASH_SNAPSHOT" \
+    --trace-out "$KILLED_TRACE" \
+    --trace-stream "$KILLED_STREAM" \
+    "interrupted worker"
+) >"$KILLED_LOG" 2>&1 &
+KILLED_PID=$!
+
+for _ in $(seq 1 100); do
+  if [[ -s "$KILLED_STREAM" ]] && grep -q '"kind":"model.requested"' "$KILLED_STREAM"; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ ! -s "$KILLED_STREAM" ]] || ! grep -q '"kind":"model.requested"' "$KILLED_STREAM"; then
+  kill "$KILLED_PID" 2>/dev/null || true
+  wait "$KILLED_PID" || true
+  echo "interrupted worker did not emit model.requested; log follows" >&2
+  cat "$KILLED_LOG" >&2
+  exit 1
+fi
+grep -q '"kind":"run.started"' "$KILLED_STREAM"
+kill "$KILLED_PID"
+wait "$KILLED_PID" || true
+
 "$BIN" run --provider test --no-code-mode --resume-snapshot "$CRASH_SNAPSHOT" --trace-out "$RESUMED_TRACE" "continue"
 "$BIN" trace validate "$RESUMED_TRACE"
 

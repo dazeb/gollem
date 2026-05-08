@@ -2087,9 +2087,19 @@ func createModel(provider, modelName, location, project string, requestTimeout t
 
 	switch provider {
 	case "test":
-		return core.NewTestModel(
+		model := core.NewTestModel(
 			core.TextResponse("Hello! I'm a test model. This is a demonstration of the TUI debugger."),
-		), nil
+		)
+		if delayText := strings.TrimSpace(os.Getenv("GOLLEM_TEST_MODEL_DELAY")); delayText != "" {
+			delay, err := time.ParseDuration(delayText)
+			if err != nil || delay < 0 {
+				return nil, fmt.Errorf("invalid GOLLEM_TEST_MODEL_DELAY %q", delayText)
+			}
+			if delay > 0 {
+				return delayedTestModel{inner: model, delay: delay}, nil
+			}
+		}
+		return model, nil
 	case "anthropic":
 		opts := []anthropic.Option{anthropic.WithHTTPClient(httpClient)}
 		if modelName != "" {
@@ -2134,6 +2144,40 @@ func createModel(provider, modelName, location, project string, requestTimeout t
 		return vertexai_anthropic.New(opts...), nil
 	default:
 		return nil, fmt.Errorf("provider %q not supported (available: test, anthropic, openai, xai, vertexai, vertexai-anthropic)", provider)
+	}
+}
+
+type delayedTestModel struct {
+	inner core.Model
+	delay time.Duration
+}
+
+func (m delayedTestModel) ModelName() string {
+	return m.inner.ModelName()
+}
+
+func (m delayedTestModel) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	if err := waitTestModelDelay(ctx, m.delay); err != nil {
+		return nil, err
+	}
+	return m.inner.Request(ctx, messages, settings, params)
+}
+
+func (m delayedTestModel) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	if err := waitTestModelDelay(ctx, m.delay); err != nil {
+		return nil, err
+	}
+	return m.inner.RequestStream(ctx, messages, settings, params)
+}
+
+func waitTestModelDelay(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

@@ -28,6 +28,27 @@ func TestParseTraceInputOutput(t *testing.T) {
 	}
 }
 
+func TestCreateTestModelHonorsDelayEnv(t *testing.T) {
+	t.Setenv("GOLLEM_TEST_MODEL_DELAY", "50ms")
+	model, err := createModel("test", "", "", "", time.Second)
+	if err != nil {
+		t.Fatalf("createModel(test) error = %v", err)
+	}
+	if _, ok := model.(delayedTestModel); !ok {
+		t.Fatalf("expected delayed test model, got %T", model)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := model.Request(ctx, nil, nil, nil); err == nil {
+		t.Fatal("expected canceled delayed test model request to fail")
+	}
+
+	t.Setenv("GOLLEM_TEST_MODEL_DELAY", "not-a-duration")
+	if _, err := createModel("test", "", "", "", time.Second); err == nil {
+		t.Fatal("expected invalid delay error")
+	}
+}
+
 func TestParseTraceExportArgsTemporal(t *testing.T) {
 	t.Setenv("TEMPORAL_ADDRESS", "temporal.example:7233")
 	t.Setenv("TEMPORAL_NAMESPACE", "prod")
