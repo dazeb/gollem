@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -594,6 +595,27 @@ func runAgent() {
 			defer traceStreamWriter.Close()
 			unsubStream := traceRuntimeRecorder.OnEvent(traceStreamWriter.WriteEvent)
 			defer unsubStream()
+			var registryMu sync.Mutex
+			var registeredRunID string
+			unsubStreamRegistry := traceRuntimeRecorder.OnEvent(func(event traceutil.Event) {
+				if event.Kind != "run.started" {
+					return
+				}
+				runID := strings.TrimSpace(event.AgentID)
+				if runID == "" {
+					return
+				}
+				registryMu.Lock()
+				defer registryMu.Unlock()
+				if registeredRunID != "" {
+					return
+				}
+				registeredRunID = runID
+				if err := writeLocalTraceStreamRegistry(traceOut, traceStream, runID, "running"); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: update live trace registry: %v\n", err)
+				}
+			})
+			defer unsubStreamRegistry()
 			fmt.Fprintf(os.Stderr, "gollem: live trace stream enabled (%s)\n", traceStream)
 		}
 	}

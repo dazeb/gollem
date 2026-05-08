@@ -23,6 +23,7 @@ EXPORTED_TRACE="$OUT/exported.trace.json"
 CRASH_SNAPSHOT="$OUT/crash-resume.snapshot.json"
 KILLED_TRACE="$OUT/killed.trace.json"
 KILLED_STREAM="$OUT/killed.trace.jsonl"
+KILLED_EXPORTED_TRACE="$OUT/killed.exported.trace.json"
 KILLED_LOG="$OUT/killed.log"
 RESUMED_TRACE="$OUT/resumed.trace.json"
 FORK_TRACE="$OUT/fork.trace.json"
@@ -80,6 +81,10 @@ fi
 grep -q '"kind":"run.started"' "$KILLED_STREAM"
 kill "$KILLED_PID"
 wait "$KILLED_PID" 2>/dev/null || true
+KILLED_RUN_ID="$(grep -m1 '"kind":"run.started"' "$KILLED_STREAM" | sed -E 's/.*"agent_id":"([^"]+)".*/\1/')"
+"$BIN" trace export "$KILLED_RUN_ID" --trace-dir "$(dirname "$KILLED_STREAM")" --out "$KILLED_EXPORTED_TRACE"
+"$BIN" trace validate "$KILLED_EXPORTED_TRACE"
+grep -q '"status": "running"' "$KILLED_EXPORTED_TRACE"
 
 "$BIN" run --provider test --no-code-mode --resume-snapshot "$CRASH_SNAPSHOT" --trace-out "$RESUMED_TRACE" "continue"
 "$BIN" trace validate "$RESUMED_TRACE"

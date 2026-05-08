@@ -164,6 +164,43 @@ func TestExportLocalTraceArtifactFindsRunIDFromRegistry(t *testing.T) {
 	}
 }
 
+func TestExportLocalTraceArtifactUsesRunningStreamRegistry(t *testing.T) {
+	streamDir := t.TempDir()
+	streamPath := filepath.Join(streamDir, "events.jsonl")
+	stream, err := traceutil.NewJSONLStreamWriter(streamPath)
+	if err != nil {
+		t.Fatalf("NewJSONLStreamWriter() error = %v", err)
+	}
+	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+	stream.WriteEvent(traceutil.Event{
+		Kind:      "run.started",
+		Timestamp: now,
+		AgentID:   "run-stream-registry",
+		Payload:   map[string]any{"prompt": "running"},
+	})
+	stream.WriteEvent(traceutil.Event{
+		Kind:      "model.requested",
+		Timestamp: now.Add(time.Second),
+		Step:      1,
+		AgentID:   "run-stream-registry",
+		RequestID: "req-1",
+	})
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := writeLocalTraceStreamRegistry("", streamPath, "run-stream-registry", "running"); err != nil {
+		t.Fatalf("write live trace registry: %v", err)
+	}
+
+	got, err := exportLocalTraceArtifact(traceExportOptions{input: "run-stream-registry", traceDir: streamDir})
+	if err != nil {
+		t.Fatalf("exportLocalTraceArtifact() error = %v", err)
+	}
+	if got.Run.ID != "run-stream-registry" || got.Summary.Status != "running" || got.Summary.Requests != 1 {
+		t.Fatalf("unexpected stream registry artifact: run=%+v summary=%+v", got.Run, got.Summary)
+	}
+}
+
 func TestParseTraceInspectArgs(t *testing.T) {
 	input, limit, err := parseTraceInspectArgs([]string{"run.trace.json", "--events", "12"})
 	if err != nil {

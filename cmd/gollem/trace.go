@@ -959,33 +959,45 @@ func findLocalTraceByRunID(runID string, dirs []string) (*traceutil.Artifact, st
 }
 
 type localTraceRegistryEntry struct {
-	RunID     string    `json:"run_id"`
-	Path      string    `json:"path"`
-	Status    string    `json:"status,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	RunID        string    `json:"run_id"`
+	Path         string    `json:"path,omitempty"`
+	ArtifactPath string    `json:"artifact_path,omitempty"`
+	StreamPath   string    `json:"stream_path,omitempty"`
+	Status       string    `json:"status,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 func writeLocalTraceRegistry(path, runID, status string) error {
+	return writeLocalTraceRegistryPaths(path, "", runID, status)
+}
+
+func writeLocalTraceStreamRegistry(artifactPath, streamPath, runID, status string) error {
+	return writeLocalTraceRegistryPaths(artifactPath, streamPath, runID, status)
+}
+
+func writeLocalTraceRegistryPaths(artifactPath, streamPath, runID, status string) error {
 	runID = strings.TrimSpace(runID)
-	path = strings.TrimSpace(path)
-	if runID == "" || path == "" || path == "-" {
+	artifactPath = normalizeLocalTracePath(artifactPath)
+	streamPath = normalizeLocalTracePath(streamPath)
+	if runID == "" || (artifactPath == "" && streamPath == "") {
 		return nil
 	}
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
-	}
 	entry := localTraceRegistryEntry{
-		RunID:     runID,
-		Path:      path,
-		Status:    strings.TrimSpace(status),
-		UpdatedAt: time.Now(),
+		RunID:        runID,
+		Path:         artifactPath,
+		ArtifactPath: artifactPath,
+		StreamPath:   streamPath,
+		Status:       strings.TrimSpace(status),
+		UpdatedAt:    time.Now(),
 	}
 	data, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
 		return err
 	}
+	dirs := traceRegistryWriteDirs(artifactPath, streamPath)
 	var lastErr error
-	for _, dir := range traceLookupDirs("") {
+	wrote := false
+	for _, dir := range dirs {
 		if strings.TrimSpace(dir) == "" {
 			continue
 		}
@@ -998,6 +1010,9 @@ func writeLocalTraceRegistry(path, runID, status string) error {
 			lastErr = err
 			continue
 		}
+		wrote = true
+	}
+	if wrote {
 		return nil
 	}
 	return lastErr
@@ -1014,16 +1029,63 @@ func findLocalTraceByRegistry(runID string, dirs []string) (*traceutil.Artifact,
 			continue
 		}
 		var entry localTraceRegistryEntry
-		if err := json.Unmarshal(data, &entry); err != nil || entry.RunID != runID || strings.TrimSpace(entry.Path) == "" {
+		if err := json.Unmarshal(data, &entry); err != nil || entry.RunID != runID {
 			continue
 		}
-		artifact, err := traceutil.ReadFile(entry.Path)
-		if err != nil || !traceMatchesRunID(artifact, runID) {
-			continue
+		artifactPath := strings.TrimSpace(entry.ArtifactPath)
+		if artifactPath == "" {
+			artifactPath = strings.TrimSpace(entry.Path)
 		}
-		return artifact, entry.Path, true
+		if artifactPath != "" {
+			if artifact, err := traceutil.ReadFile(artifactPath); err == nil && traceMatchesRunID(artifact, runID) {
+				return artifact, artifactPath, true
+			}
+		}
+		streamPath := strings.TrimSpace(entry.StreamPath)
+		if streamPath != "" {
+			if artifact, err := traceutil.ReadJSONLStreamFile(streamPath); err == nil && traceMatchesRunID(artifact, runID) {
+				return artifact, streamPath, true
+			}
+		}
 	}
 	return nil, "", false
+}
+
+func normalizeLocalTracePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "-" {
+		return ""
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
+
+func traceRegistryWriteDirs(paths ...string) []string {
+	var dirs []string
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		for _, existing := range dirs {
+			if existing == dir {
+				return
+			}
+		}
+		dirs = append(dirs, dir)
+	}
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path != "" && path != "-" {
+			add(filepath.Dir(path))
+		}
+	}
+	for _, dir := range traceLookupDirs("") {
+		add(dir)
+	}
+	return dirs
 }
 
 func localTraceRegistryName(runID string) string {

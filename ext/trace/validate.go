@@ -109,6 +109,7 @@ func traceLineageIDs(artifact *Artifact) []string {
 	}
 	add(metadataString(artifact.Metadata, "resume_parent_run_id"))
 	add(metadataString(artifact.Metadata, "resume_source_trace_run_id"))
+	add(metadataString(artifact.Metadata, "stream_parent_run_id"))
 	for _, record := range artifact.Snapshots {
 		add(record.RunID)
 		add(record.ParentRunID)

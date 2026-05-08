@@ -1472,6 +1472,49 @@ func TestJSONLStreamWriterWritesCanonicalRuntimeEvents(t *testing.T) {
 	}
 }
 
+func TestReadJSONLStreamFileBuildsRunningArtifact(t *testing.T) {
+	path := t.TempDir() + "/events.jsonl"
+	stream, err := NewJSONLStreamWriter(path)
+	if err != nil {
+		t.Fatalf("NewJSONLStreamWriter() error = %v", err)
+	}
+	now := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+	stream.WriteEvent(Event{
+		Kind:           "run.started",
+		Timestamp:      now,
+		AgentID:        "run-stream",
+		CausalParentID: "source-run",
+		Payload:        map[string]any{"prompt": "live export"},
+	})
+	stream.WriteEvent(Event{
+		Kind:      "model.requested",
+		Timestamp: now.Add(time.Second),
+		Step:      1,
+		AgentID:   "run-stream",
+		RequestID: "req-1",
+	})
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	artifact, err := ReadJSONLStreamFile(path)
+	if err != nil {
+		t.Fatalf("ReadJSONLStreamFile() error = %v", err)
+	}
+	if artifact.Run.ID != "run-stream" || artifact.Run.Prompt != "live export" {
+		t.Fatalf("unexpected stream artifact run: %+v", artifact.Run)
+	}
+	if artifact.Summary.Status != "running" || artifact.Summary.Requests != 1 {
+		t.Fatalf("unexpected stream summary: %+v", artifact.Summary)
+	}
+	if artifact.Metadata["stream_parent_run_id"] != "source-run" {
+		t.Fatalf("missing stream parent metadata: %+v", artifact.Metadata)
+	}
+	if err := ValidateArtifact(artifact); err != nil {
+		t.Fatalf("ValidateArtifact(stream artifact) error = %v", err)
+	}
+}
+
 func TestJSONLStreamWriterLifecycleAndReplayPolicies(t *testing.T) {
 	if _, err := NewJSONLStreamWriter(""); err == nil {
 		t.Fatal("expected empty path error")
@@ -1508,6 +1551,7 @@ func TestJSONLStreamWriterLifecycleAndReplayPolicies(t *testing.T) {
 	for kind, want := range map[string]string{
 		"snapshot.created": "snapshot",
 		"run.started":      "inspect",
+		"turn.failed":      "inspect",
 		"model.responded":  "recorded",
 	} {
 		if got := streamReplayPolicy(kind); got != want {
