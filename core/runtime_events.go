@@ -358,14 +358,19 @@ func (e RunResumedEvent) RuntimeOccurredAt() time.Time { return e.ResumedAt }
 
 // ArtifactChangedEvent is published after a tool mutates a workspace artifact.
 type ArtifactChangedEvent struct {
-	RunID       string
-	ParentRunID string
-	ToolCallID  string
-	ToolName    string
-	Path        string
-	Operation   string
-	Bytes       int64
-	ChangedAt   time.Time
+	RunID             string
+	ParentRunID       string
+	ToolCallID        string
+	ToolName          string
+	Path              string
+	Operation         string
+	Bytes             int64
+	BeforeSHA256      string
+	AfterSHA256       string
+	Diff              string
+	DiffTruncated     bool
+	DiffOmittedReason string
+	ChangedAt         time.Time
 }
 
 func (e ArtifactChangedEvent) RuntimeEventType() string     { return RuntimeEventTypeArtifactChanged }

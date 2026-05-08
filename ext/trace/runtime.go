@@ -416,12 +416,17 @@ func (r *RuntimeRecorder) recordArtifactChanged(ev core.ArtifactChangedEvent) {
 		CausalParentID: ev.ParentRunID,
 		RequestID:      ev.ToolCallID,
 		Payload: compactMap(map[string]any{
-			"parent_run_id": ev.ParentRunID,
-			"tool_call_id":  ev.ToolCallID,
-			"tool_name":     ev.ToolName,
-			"path":          ev.Path,
-			"operation":     ev.Operation,
-			"bytes":         ev.Bytes,
+			"parent_run_id":       ev.ParentRunID,
+			"tool_call_id":        ev.ToolCallID,
+			"tool_name":           ev.ToolName,
+			"path":                ev.Path,
+			"operation":           ev.Operation,
+			"bytes":               ev.Bytes,
+			"before_sha256":       ev.BeforeSHA256,
+			"after_sha256":        ev.AfterSHA256,
+			"diff":                ev.Diff,
+			"diff_truncated":      ev.DiffTruncated,
+			"diff_omitted_reason": ev.DiffOmittedReason,
 		}),
 	})
 }

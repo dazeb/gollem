@@ -399,11 +399,8 @@ func runTraceValidate(args []string) error {
 	if err != nil {
 		return fmt.Errorf("read trace: %w", err)
 	}
-	if artifact.SchemaVersion != traceutil.SchemaVersion {
-		return fmt.Errorf("unexpected schema version %q", artifact.SchemaVersion)
-	}
-	if artifact.Run.ID == "" && (artifact.Trace == nil || artifact.Trace.RunID == "") {
-		return fmt.Errorf("trace is missing run id")
+	if err := traceutil.ValidateArtifact(artifact); err != nil {
+		return err
 	}
 	fmt.Fprintf(os.Stdout, "ok: %s (%d events)\n", traceutil.SchemaVersion, len(artifact.Events))
 	return nil
@@ -1122,7 +1119,7 @@ Commands:
       Export Sleepy-compatible trace evidence for mutation ranking, drift checks, replay lineage, and evaluator-gaming detection.
 
   validate <trace.json>
-      Validate that a trace can be loaded as gollem.trace.v1.
+      Validate schema, event sequence, replay policies, lineage, snapshots, and replay boundaries.
 
   redact <trace.json> [--key name] [--pattern text] [--drop-trace] [--out redacted.trace.json]
       Redact sensitive keys or literal values while preserving trace structure.

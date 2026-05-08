@@ -12,6 +12,7 @@ type RunTrace struct {
 	Steps     []TraceStep    `json:"steps"`
 	Requests  []RequestTrace `json:"requests,omitempty"`
 	Usage     RunUsage       `json:"usage"`
+	Cost      *RunCost       `json:"cost,omitempty"`
 	Success   bool           `json:"success"`
 	Error     string         `json:"error,omitempty"`
 }

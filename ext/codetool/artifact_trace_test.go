@@ -3,6 +3,7 @@ package codetool
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fugue-labs/gollem/core"
@@ -72,5 +73,17 @@ func TestMutationToolsPublishArtifactChangedEvents(t *testing.T) {
 		if events[i].Bytes <= 0 || events[i].ChangedAt.IsZero() {
 			t.Fatalf("event %d missing mutation metadata: %#v", i, events[i])
 		}
+		if events[i].AfterSHA256 == "" {
+			t.Fatalf("event %d missing after hash: %#v", i, events[i])
+		}
+		if events[i].Diff == "" {
+			t.Fatalf("event %d missing diff: %#v", i, events[i])
+		}
+	}
+	if events[0].BeforeSHA256 != "" || !strings.Contains(events[0].Diff, "+++ b/") || !strings.Contains(events[0].Diff, "+one") {
+		t.Fatalf("create diff missing new content: %#v", events[0])
+	}
+	if events[1].BeforeSHA256 == "" || strings.Contains(events[1].Diff, "-one") || strings.Contains(events[1].Diff, "+one") || !strings.Contains(events[1].Diff, " one") || !strings.Contains(events[1].Diff, "-two") || !strings.Contains(events[1].Diff, "+three") {
+		t.Fatalf("edit diff missing before/after content: %#v", events[1])
 	}
 }

@@ -309,6 +309,7 @@ func buildTraceSummary(runTrace *RunTrace) TraceSummary {
 		Requests:       traceRequestCount(runTrace),
 		ToolCalls:      traceToolCallCount(runTrace),
 		Usage:          runTrace.Usage,
+		Cost:           runTrace.Cost,
 		DurationMillis: runTrace.Duration.Milliseconds(),
 	}
 }

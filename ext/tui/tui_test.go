@@ -371,6 +371,68 @@ func TestTUI_TraceStepsIncludeUsageAccumulation(t *testing.T) {
 	}
 }
 
+func TestTUI_TraceStepsIncludeModelRequestResponseDetail(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	messages, err := core.EncodeMessages([]core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "inspect this request", Timestamp: now}}, Timestamp: now},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseMessage, err := core.EncodeModelResponse(&core.ModelResponse{
+		Parts:        []core.ModelResponsePart{core.TextPart{Content: "inspected response"}},
+		ModelName:    "test-model",
+		FinishReason: core.FinishReasonStop,
+		Timestamp:    now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := traceutil.FromRunTrace(&core.RunTrace{
+		RunID:     "run-request-detail",
+		StartTime: now,
+		EndTime:   now.Add(time.Second),
+		Success:   true,
+		Requests: []core.RequestTrace{
+			{
+				RequestID:    "req-1",
+				TurnNumber:   1,
+				Sequence:     1,
+				ModelName:    "test-model",
+				StartedAt:    now,
+				EndedAt:      now.Add(time.Second),
+				MessageCount: len(messages),
+				Messages:     messages,
+				Response: &core.RequestTraceResponse{
+					ModelName:    "test-model",
+					FinishReason: core.FinishReasonStop,
+					Message:      responseMessage,
+				},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("FromRunTrace() error = %v", err)
+	}
+
+	steps := traceSteps(artifact)
+	var found bool
+	for _, step := range steps {
+		if step.eventKind != "model.responded" {
+			continue
+		}
+		found = true
+		for _, want := range []string{"request trace:", "messages:", "inspect this request", "response:", "inspected response"} {
+			if !strings.Contains(step.detail, want) {
+				t.Fatalf("model detail missing %q:\n%s", want, step.detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("missing model.responded step: %+v", steps)
+	}
+}
+
 func TestTUI_TraceStepsFallBackToSummaryUsageAccumulation(t *testing.T) {
 	artifact := &traceutil.Artifact{
 		SchemaVersion: traceutil.SchemaVersion,

@@ -612,6 +612,11 @@ func runAgent() {
 				if snap := rc.RunStateSnapshot(); snap != nil {
 					traceSnapshots = append(traceSnapshots, snap)
 					core.PublishCheckpointCreated(traceEventBus, snap)
+					if traceOut != "" && traceOut != "-" {
+						if err := writeCLIPartialTrace(traceOut, traceMetadata, traceSnapshots, traceRuntimeRecorder, snap); err != nil {
+							fmt.Fprintf(os.Stderr, "warning: write partial trace artifact: %v\n", err)
+						}
+					}
 				}
 			},
 		}))
@@ -1052,6 +1057,53 @@ func (e *cliTraceFileExporter) Export(_ context.Context, runTrace *core.RunTrace
 	}
 	fmt.Fprintf(os.Stderr, "gollem: trace artifact written to %s\n", e.path)
 	return nil
+}
+
+func writeCLIPartialTrace(path string, metadata map[string]any, snapshots []*core.RunSnapshot, recorder *traceutil.RuntimeRecorder, snap *core.RunSnapshot) error {
+	if strings.TrimSpace(path) == "" || path == "-" {
+		return nil
+	}
+	if snap == nil {
+		return errors.New("partial trace snapshot is nil")
+	}
+	ended := snap.Timestamp
+	if ended.IsZero() {
+		ended = time.Now()
+	}
+	started := snap.RunStartTime
+	if started.IsZero() {
+		started = ended
+	}
+	runID := strings.TrimSpace(snap.RunID)
+	if runID == "" {
+		runID = "running"
+	}
+	trace := &core.RunTrace{
+		RunID:     runID,
+		Prompt:    snap.Prompt,
+		StartTime: started,
+		Duration:  ended.Sub(started),
+		Usage:     snap.Usage,
+		Success:   false,
+	}
+	if trace.Duration < 0 {
+		trace.Duration = 0
+	}
+	var runtimeEvents []traceutil.Event
+	if recorder != nil {
+		runtimeEvents = recorder.EventsForTrace(runID)
+	}
+	partialMetadata := cloneTraceMetadata(metadata)
+	partialMetadata["partial"] = true
+	partialMetadata["partial_reason"] = "running"
+	artifact, err := traceutil.FromRunTraceWithSnapshotsAndEvents(trace, snapshots, runtimeEvents, partialMetadata)
+	if err != nil {
+		return err
+	}
+	artifact.Summary.Status = "running"
+	artifact.Summary.Success = false
+	artifact.Summary.Error = ""
+	return traceutil.WriteFile(path, artifact)
 }
 
 func buildCLITraceMetadata(f flags, resumeSnapshot *core.RunSnapshot, resumeSnapshotPath string) map[string]any {

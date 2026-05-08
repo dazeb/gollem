@@ -46,14 +46,20 @@ func ForkSnapshot(artifact *Artifact, opts ForkOptions) (*core.RunSnapshot, Snap
 			return nil, SnapshotRecord{}, err
 		}
 	} else {
-		step, err := resolveForkStep(artifact, opts)
+		step, anchor, err := resolveForkAnchor(artifact, opts)
 		if err != nil {
 			return nil, SnapshotRecord{}, err
 		}
 		var selectErr error
 		record, selectErr = selectSnapshot(artifact.Snapshots, step)
 		if selectErr != nil {
-			return nil, SnapshotRecord{}, selectErr
+			var synthErr error
+			var snap *core.RunSnapshot
+			snap, record, synthErr = synthesizeForkSnapshot(artifact, step, anchor)
+			if synthErr != nil {
+				return nil, SnapshotRecord{}, fmt.Errorf("%w; synthetic trace snapshot unavailable: %w", selectErr, synthErr)
+			}
+			return finishForkSnapshot(artifact, snap, record, opts), record, nil
 		}
 	}
 	snap, err := DecodeSnapshotRecord(record)
@@ -61,6 +67,10 @@ func ForkSnapshot(artifact *Artifact, opts ForkOptions) (*core.RunSnapshot, Snap
 		return nil, SnapshotRecord{}, err
 	}
 
+	return finishForkSnapshot(artifact, snap, record, opts), record, nil
+}
+
+func finishForkSnapshot(artifact *Artifact, snap *core.RunSnapshot, record SnapshotRecord, opts ForkOptions) *core.RunSnapshot {
 	if strings.TrimSpace(opts.AppendUser) != "" {
 		snap = snap.Branch(func(messages []core.ModelMessage) []core.ModelMessage {
 			return append(messages, core.ModelRequest{
@@ -101,7 +111,7 @@ func ForkSnapshot(artifact *Artifact, opts ForkOptions) (*core.RunSnapshot, Snap
 	snap.SourceTraceRunID = displayRunID(artifact)
 	snap.SourceSnapshotID = record.ID
 	snap.Timestamp = time.Now()
-	return snap, record, nil
+	return snap
 }
 
 func applyForkOverrides(snap *core.RunSnapshot, opts ForkOptions) {
@@ -217,24 +227,252 @@ func selectSnapshotByCheckpoint(artifact *Artifact, checkpoint string) (Snapshot
 }
 
 func resolveForkStep(artifact *Artifact, opts ForkOptions) (int, error) {
+	step, _, err := resolveForkAnchor(artifact, opts)
+	return step, err
+}
+
+func resolveForkAnchor(artifact *Artifact, opts ForkOptions) (int, *Event, error) {
 	if strings.TrimSpace(opts.FromEventID) != "" {
 		for _, event := range artifact.Events {
 			if event.ID == opts.FromEventID {
-				return event.Step, nil
+				eventCopy := event
+				return event.Step, &eventCopy, nil
 			}
 		}
-		return 0, fmt.Errorf("event %q not found", opts.FromEventID)
+		return 0, nil, fmt.Errorf("event %q not found", opts.FromEventID)
 	}
 	if strings.TrimSpace(opts.FromKind) != "" {
 		for i := len(artifact.Events) - 1; i >= 0; i-- {
 			event := artifact.Events[i]
 			if event.Kind == opts.FromKind {
-				return event.Step, nil
+				eventCopy := event
+				return event.Step, &eventCopy, nil
 			}
 		}
-		return 0, fmt.Errorf("event kind %q not found", opts.FromKind)
+		return 0, nil, fmt.Errorf("event kind %q not found", opts.FromKind)
 	}
-	return opts.FromStep, nil
+	if opts.FromStep > 0 {
+		for i := len(artifact.Events) - 1; i >= 0; i-- {
+			event := artifact.Events[i]
+			if event.Step <= opts.FromStep {
+				eventCopy := event
+				return opts.FromStep, &eventCopy, nil
+			}
+		}
+	}
+	return opts.FromStep, nil, nil
+}
+
+func synthesizeForkSnapshot(artifact *Artifact, step int, anchor *Event) (*core.RunSnapshot, SnapshotRecord, error) {
+	if artifact == nil || artifact.Trace == nil || len(artifact.Trace.Requests) == 0 {
+		return nil, SnapshotRecord{}, errors.New("embedded request trace is missing")
+	}
+	messages, timestamp, err := forkMessagesForBoundary(artifact.Trace.Requests, step, anchor)
+	if err != nil {
+		return nil, SnapshotRecord{}, err
+	}
+	if step <= 0 {
+		step = traceLastRequestStep(artifact.Trace.Requests)
+	}
+	if timestamp.IsZero() {
+		timestamp = artifact.Run.EndedAt
+	}
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	donor, donorRecord, _ := syntheticStateDonor(artifact.Snapshots, step)
+	snap := &core.RunSnapshot{
+		Messages:         messages,
+		Usage:            artifact.Summary.Usage,
+		RunID:            displayRunID(artifact),
+		ParentRunID:      "",
+		RunStep:          step,
+		RunStartTime:     artifact.Run.StartedAt,
+		Prompt:           artifact.Run.Prompt,
+		ToolState:        map[string]any{},
+		Timestamp:        timestamp,
+		SourceTraceRunID: displayRunID(artifact),
+	}
+	if donor != nil {
+		snap.Usage = donor.Usage
+		snap.LastInputTokens = donor.LastInputTokens
+		snap.Retries = donor.Retries
+		snap.ToolRetries = cloneSyntheticIntMap(donor.ToolRetries)
+		snap.ParentRunID = donor.ParentRunID
+		if snap.RunStartTime.IsZero() {
+			snap.RunStartTime = donor.RunStartTime
+		}
+		if snap.Prompt == "" {
+			snap.Prompt = donor.Prompt
+		}
+		snap.ToolState = cloneSyntheticAnyMap(donor.ToolState)
+		if snap.ToolState == nil {
+			snap.ToolState = map[string]any{}
+		}
+		snap.ToolState["_gollem_synthetic_state_source"] = map[string]any{
+			"snapshot_id":    donorRecord.ID,
+			"snapshot_step":  donorRecord.Step,
+			"requested_step": step,
+		}
+	}
+	recordID := fmt.Sprintf("synthetic_step_%06d", step)
+	encoded, err := core.EncodeRunSnapshot(snap)
+	if err != nil {
+		return nil, SnapshotRecord{}, err
+	}
+	return snap, SnapshotRecord{
+		ID:        recordID,
+		Step:      step,
+		RunID:     snap.RunID,
+		Timestamp: timestamp,
+		Snapshot:  encoded,
+	}, nil
+}
+
+func syntheticStateDonor(records []SnapshotRecord, step int) (*core.RunSnapshot, SnapshotRecord, error) {
+	if len(records) == 0 {
+		return nil, SnapshotRecord{}, errors.New("no stored snapshots")
+	}
+	var selected *SnapshotRecord
+	for _, record := range records {
+		if step > 0 && record.Step < step {
+			continue
+		}
+		if selected == nil || record.Step < selected.Step {
+			recordCopy := record
+			selected = &recordCopy
+		}
+	}
+	if selected == nil {
+		record := records[len(records)-1]
+		selected = &record
+	}
+	snap, err := DecodeSnapshotRecord(*selected)
+	if err != nil {
+		return nil, SnapshotRecord{}, err
+	}
+	return snap, *selected, nil
+}
+
+func forkMessagesForBoundary(requests []core.RequestTrace, step int, anchor *Event) ([]core.ModelMessage, time.Time, error) {
+	if len(requests) == 0 {
+		return nil, time.Time{}, errors.New("no request traces")
+	}
+	reqIdx := requestTraceIndexForBoundary(requests, step, anchor)
+	if reqIdx < 0 {
+		return nil, time.Time{}, fmt.Errorf("no request trace for step %d", step)
+	}
+	req := requests[reqIdx]
+	if len(req.Messages) == 0 {
+		return nil, time.Time{}, fmt.Errorf("request trace %s has no serialized messages", req.RequestID)
+	}
+	if anchor == nil && step <= 0 {
+		return messagesAfterRequest(requests, reqIdx)
+	}
+	if anchor != nil {
+		switch anchor.Kind {
+		case "model.requested":
+			messages, err := core.DecodeMessages(req.Messages)
+			return messages, nonZeroTime(req.StartedAt, anchor.Timestamp), err
+		case "model.responded", "model.failed":
+			return messagesWithResponse(req)
+		case "tool.called", "tool.completed", "tool.failed", "approval.requested", "approval.resolved", "deferred.requested", "deferred.resolved", "wait.started", "wait.resolved":
+			if reqIdx+1 < len(requests) {
+				next := requests[reqIdx+1]
+				messages, err := core.DecodeMessages(next.Messages)
+				return messages, nonZeroTime(next.StartedAt, anchor.Timestamp), err
+			}
+			return messagesWithResponse(req)
+		}
+	}
+	return messagesAfterRequest(requests, reqIdx)
+}
+
+func messagesAfterRequest(requests []core.RequestTrace, idx int) ([]core.ModelMessage, time.Time, error) {
+	if idx+1 < len(requests) {
+		next := requests[idx+1]
+		messages, err := core.DecodeMessages(next.Messages)
+		return messages, next.StartedAt, err
+	}
+	return messagesWithResponse(requests[idx])
+}
+
+func messagesWithResponse(req core.RequestTrace) ([]core.ModelMessage, time.Time, error) {
+	messages, err := core.DecodeMessages(req.Messages)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if req.Response != nil && req.Response.Message != nil {
+		resp, err := core.DecodeModelResponse(req.Response.Message)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		messages = append(messages, *resp)
+	}
+	return messages, nonZeroTime(req.EndedAt, req.StartedAt), nil
+}
+
+func requestTraceIndexForBoundary(requests []core.RequestTrace, step int, anchor *Event) int {
+	if anchor != nil && anchor.RequestID != "" {
+		for i, req := range requests {
+			if req.RequestID == anchor.RequestID {
+				return i
+			}
+		}
+	}
+	if step <= 0 {
+		return len(requests) - 1
+	}
+	selected := -1
+	for i, req := range requests {
+		if req.TurnNumber == step {
+			return i
+		}
+		if req.TurnNumber < step {
+			selected = i
+		}
+	}
+	return selected
+}
+
+func traceLastRequestStep(requests []core.RequestTrace) int {
+	for i := len(requests) - 1; i >= 0; i-- {
+		if requests[i].TurnNumber > 0 {
+			return requests[i].TurnNumber
+		}
+	}
+	return len(requests)
+}
+
+func cloneSyntheticAnyMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func cloneSyntheticIntMap(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]int, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func nonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
 }
 
 func payloadString(payload map[string]any, key string) string {

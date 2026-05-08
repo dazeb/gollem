@@ -185,6 +185,7 @@ func (s *workflowSignalState) refreshStatus(
 			Duration:  deterministicWorkflowDuration(state.TraceStartTime, now),
 			Steps:     cloneTraceSteps(state.TraceSteps),
 			Usage:     state.Usage,
+			Cost:      buildWorkflowCostSnapshot(s.hasCostTracker, s.modelName, s.costPricing, s.costCurrency, state.Usage),
 			Success:   completed && lastErr == nil && !aborted,
 		}
 		if lastErr != nil {
@@ -1086,6 +1087,7 @@ func (ta *TemporalAgent[T]) RunWorkflow(ctx workflow.Context, input WorkflowInpu
 			Duration:  deterministicWorkflowDuration(state.TraceStartTime, workflow.Now(ctx)),
 			Steps:     cloneTraceSteps(state.TraceSteps),
 			Usage:     state.Usage,
+			Cost:      buildWorkflowCost(ta.runtime, state.Usage),
 			Success:   runErr == nil && result != nil && result.Completed,
 		}
 		if runErr != nil {

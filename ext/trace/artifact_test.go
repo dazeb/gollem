@@ -252,6 +252,163 @@ func TestForkSnapshotFromEventAndSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestForkSnapshotSynthesizesFromRequestTraceWithoutStoredSnapshot(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	initial := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "write file", Timestamp: now}}, Timestamp: now},
+	}
+	assistantTool := core.ModelResponse{
+		Parts:        []core.ModelResponsePart{core.ToolCallPart{ToolName: "write", ArgsJSON: `{"path":"out.txt"}`, ToolCallID: "call-1"}},
+		FinishReason: core.FinishReasonToolCall,
+		Timestamp:    now.Add(time.Second),
+	}
+	nextRequest := append(append([]core.ModelMessage(nil), initial...), assistantTool, core.ModelRequest{
+		Parts:     []core.ModelRequestPart{core.ToolReturnPart{ToolName: "write", ToolCallID: "call-1", Content: "ok", Timestamp: now.Add(2 * time.Second)}},
+		Timestamp: now.Add(2 * time.Second),
+	})
+	initialMessages, err := core.EncodeMessages(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextMessages, err := core.EncodeMessages(nextRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := core.EncodeModelResponse(&assistantTool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := FromRunTrace(&core.RunTrace{
+		RunID:     "run-synthetic-fork",
+		Prompt:    "write file",
+		StartTime: now,
+		EndTime:   now.Add(3 * time.Second),
+		Success:   true,
+		Requests: []core.RequestTrace{
+			{
+				RequestID:  "req-1",
+				TurnNumber: 1,
+				Sequence:   1,
+				StartedAt:  now,
+				EndedAt:    now.Add(time.Second),
+				Messages:   initialMessages,
+				Response:   &core.RequestTraceResponse{Message: response, FinishReason: core.FinishReasonToolCall},
+			},
+			{
+				RequestID:  "req-2",
+				TurnNumber: 2,
+				Sequence:   2,
+				StartedAt:  now.Add(2 * time.Second),
+				Messages:   nextMessages,
+			},
+		},
+		Steps: []core.TraceStep{
+			{Kind: core.TraceToolResult, Timestamp: now.Add(1500 * time.Millisecond), Data: map[string]any{"turn_number": 1, "tool_call_id": "call-1", "tool_name": "write", "result": "ok"}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("FromRunTrace() error = %v", err)
+	}
+	var toolCompleted string
+	for _, event := range artifact.Events {
+		if event.Kind == "tool.completed" {
+			toolCompleted = event.ID
+			break
+		}
+	}
+	if toolCompleted == "" {
+		t.Fatal("missing tool.completed event")
+	}
+
+	forked, record, err := ForkSnapshot(artifact, ForkOptions{FromEventID: toolCompleted, NewRunID: "fork-synthetic"})
+	if err != nil {
+		t.Fatalf("ForkSnapshot() error = %v", err)
+	}
+	if !strings.HasPrefix(record.ID, "synthetic_step_") {
+		t.Fatalf("record id = %q, want synthetic", record.ID)
+	}
+	if forked.RunID != "fork-synthetic" || forked.SourceSnapshotID != record.ID {
+		t.Fatalf("unexpected fork metadata: snap=%+v record=%+v", forked, record)
+	}
+	if len(forked.Messages) != 3 {
+		t.Fatalf("fork messages = %d, want post-tool history: %#v", len(forked.Messages), forked.Messages)
+	}
+	req, ok := forked.Messages[2].(core.ModelRequest)
+	if !ok || len(req.Parts) != 1 {
+		t.Fatalf("third message = %#v, want tool return request", forked.Messages[2])
+	}
+	if tr, ok := req.Parts[0].(core.ToolReturnPart); !ok || tr.ToolCallID != "call-1" {
+		t.Fatalf("tool return not preserved: %#v", req.Parts[0])
+	}
+}
+
+func TestForkSnapshotSyntheticUsesFutureSnapshotAsStateDonor(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	initial := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "inspect", Timestamp: now}}, Timestamp: now},
+	}
+	initialMessages, err := core.EncodeMessages(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	donor := &core.RunSnapshot{
+		Messages:        initial,
+		RunID:           "run-synthetic-state",
+		RunStep:         3,
+		RunStartTime:    now,
+		Prompt:          "inspect",
+		Timestamp:       now.Add(3 * time.Second),
+		LastInputTokens: 11,
+		Retries:         2,
+		ToolRetries:     map[string]int{"write": 1},
+		ToolState:       map[string]any{"counter": "7"},
+	}
+	artifact, err := FromRunTraceWithSnapshots(&core.RunTrace{
+		RunID:     "run-synthetic-state",
+		Prompt:    "inspect",
+		StartTime: now,
+		EndTime:   now.Add(4 * time.Second),
+		Success:   true,
+		Requests: []core.RequestTrace{
+			{
+				RequestID:  "req-1",
+				TurnNumber: 1,
+				Sequence:   1,
+				StartedAt:  now,
+				Messages:   initialMessages,
+			},
+		},
+	}, []*core.RunSnapshot{donor}, nil)
+	if err != nil {
+		t.Fatalf("FromRunTraceWithSnapshots() error = %v", err)
+	}
+	var requestedEvent string
+	for _, event := range artifact.Events {
+		if event.Kind == "model.requested" {
+			requestedEvent = event.ID
+			break
+		}
+	}
+	if requestedEvent == "" {
+		t.Fatal("missing model.requested event")
+	}
+
+	forked, record, err := ForkSnapshot(artifact, ForkOptions{FromEventID: requestedEvent})
+	if err != nil {
+		t.Fatalf("ForkSnapshot() error = %v", err)
+	}
+	if record.ID != "synthetic_step_000001" {
+		t.Fatalf("record id = %q, want synthetic step 1", record.ID)
+	}
+	if forked.ToolState["counter"] != "7" || forked.LastInputTokens != 11 || forked.Retries != 2 || forked.ToolRetries["write"] != 1 {
+		t.Fatalf("synthetic fork did not use donor state: %+v", forked)
+	}
+	source, ok := forked.ToolState["_gollem_synthetic_state_source"].(map[string]any)
+	if !ok || source["snapshot_id"] != "snap_000001" {
+		t.Fatalf("missing synthetic state source marker: %+v", forked.ToolState)
+	}
+}
+
 func TestForkSnapshotAppliesPlannerOverridesAndMemoryEdits(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	snap := &core.RunSnapshot{
@@ -1504,6 +1661,38 @@ func TestReplayModes(t *testing.T) {
 		if !strings.Contains(buf.String(), mode) {
 			t.Fatalf("replay output for %s missing mode:\n%s", mode, buf.String())
 		}
+	}
+}
+
+func TestValidateArtifactChecksStructuralInvariants(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	artifact, err := FromRunTrace(sampleRunTrace(now), nil)
+	if err != nil {
+		t.Fatalf("FromRunTrace() error = %v", err)
+	}
+	if err := ValidateArtifact(artifact); err != nil {
+		t.Fatalf("ValidateArtifact() error = %v", err)
+	}
+
+	badSeq := *artifact
+	badSeq.Events = append([]Event(nil), artifact.Events...)
+	badSeq.Events[0].Seq = 99
+	if err := ValidateArtifact(&badSeq); err == nil || !strings.Contains(err.Error(), "event sequence") {
+		t.Fatalf("bad sequence error = %v", err)
+	}
+
+	badKind := *artifact
+	badKind.Events = append([]Event(nil), artifact.Events...)
+	badKind.Events[0].Kind = "missing.kind"
+	if err := ValidateArtifact(&badKind); err == nil || !strings.Contains(err.Error(), "unknown kind") {
+		t.Fatalf("bad kind error = %v", err)
+	}
+
+	badPolicy := *artifact
+	badPolicy.Events = append([]Event(nil), artifact.Events...)
+	badPolicy.Events[0].ReplayPolicy = "recorded"
+	if err := ValidateArtifact(&badPolicy); err == nil || !strings.Contains(err.Error(), "replay policy") {
+		t.Fatalf("bad policy error = %v", err)
 	}
 }
 

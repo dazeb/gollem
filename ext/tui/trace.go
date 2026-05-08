@@ -68,14 +68,29 @@ func traceSteps(artifact *traceutil.Artifact) []step {
 		return []step{{kind: "error", content: "nil trace artifact"}}
 	}
 	steps := make([]step, 0, len(artifact.Events)+len(artifact.Events)/2+2)
+	requests := traceRequestLookup(artifact)
 	for _, event := range artifact.Events {
-		steps = append(steps, traceEventStep(event))
+		steps = append(steps, traceEventStepWithRequest(event, requests[event.RequestID]))
 	}
 	steps = append(steps, traceAccumulationSteps(artifact)...)
 	if artifact.Summary.Status != "" {
 		steps = append(steps, step{kind: "done", content: fmt.Sprintf("trace %s (%d events)", artifact.Summary.Status, len(artifact.Events))})
 	}
 	return steps
+}
+
+func traceRequestLookup(artifact *traceutil.Artifact) map[string]*core.RequestTrace {
+	if artifact == nil || artifact.Trace == nil || len(artifact.Trace.Requests) == 0 {
+		return nil
+	}
+	requests := make(map[string]*core.RequestTrace, len(artifact.Trace.Requests))
+	for i := range artifact.Trace.Requests {
+		req := &artifact.Trace.Requests[i]
+		if req.RequestID != "" {
+			requests[req.RequestID] = req
+		}
+	}
+	return requests
 }
 
 func traceAccumulationSteps(artifact *traceutil.Artifact) []step {
@@ -216,7 +231,14 @@ func traceDiffSteps(diff traceutil.DiffResult) []step {
 }
 
 func traceEventStep(event traceutil.Event) step {
+	return traceEventStepWithRequest(event, nil)
+}
+
+func traceEventStepWithRequest(event traceutil.Event, req *core.RequestTrace) step {
 	detail := traceEventDetail(event.Kind, event.Seq, event.ReplayPolicy, event.Step, event.RequestID, event.Payload)
+	if req != nil {
+		detail = appendTraceRequestDetail(detail, req)
+	}
 	switch event.Kind {
 	case "run.started":
 		return step{kind: "system", eventKind: event.Kind, content: fmt.Sprintf("#%03d %s", event.Seq, event.Kind), detail: detail}
@@ -243,6 +265,54 @@ func traceEventStep(event traceutil.Event) step {
 	default:
 		return step{kind: "system", eventKind: event.Kind, content: fmt.Sprintf("#%03d %s %s", event.Seq, event.Kind, tracePayloadSummary(event)), detail: detail}
 	}
+}
+
+func appendTraceRequestDetail(detail string, req *core.RequestTrace) string {
+	if req == nil {
+		return detail
+	}
+	var b strings.Builder
+	if strings.TrimSpace(detail) != "" {
+		b.WriteString(detail)
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "request trace:\n")
+	fmt.Fprintf(&b, "  id: %s\n", req.RequestID)
+	if req.ModelName != "" {
+		fmt.Fprintf(&b, "  model: %s\n", req.ModelName)
+	}
+	if req.TurnNumber > 0 {
+		fmt.Fprintf(&b, "  turn: %d\n", req.TurnNumber)
+	}
+	if req.Sequence > 0 {
+		fmt.Fprintf(&b, "  sequence: %d\n", req.Sequence)
+	}
+	if req.Duration > 0 {
+		fmt.Fprintf(&b, "  duration: %s\n", req.Duration)
+	}
+	fmt.Fprintf(&b, "  message_count: %d\n", req.MessageCount)
+	if req.FunctionToolCount > 0 || req.OutputToolCount > 0 {
+		fmt.Fprintf(&b, "  function_tools: %d\n  output_tools: %d\n", req.FunctionToolCount, req.OutputToolCount)
+	}
+	appendJSONSection(&b, "  settings", req.Settings)
+	appendJSONSection(&b, "  parameters", req.Parameters)
+	appendJSONSection(&b, "  messages", req.Messages)
+	appendJSONSection(&b, "  response", req.Response)
+	if req.Error != "" {
+		fmt.Fprintf(&b, "  error: %s\n", req.Error)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func appendJSONSection(b *strings.Builder, label string, value any) {
+	if value == nil {
+		return
+	}
+	data, err := json.MarshalIndent(value, "    ", "  ")
+	if err != nil || string(data) == "null" || string(data) == "[]" || string(data) == "{}" {
+		return
+	}
+	fmt.Fprintf(b, "%s:\n%s\n", label, data)
 }
 
 func tracePayloadSummary(event traceutil.Event) string {

@@ -411,6 +411,13 @@ func (a *Agent[T]) endRun(ctx context.Context, state *agentRunState, deps any, p
 	})
 }
 
+func (a *Agent[T]) runCostSnapshot() *RunCost {
+	if a == nil || a.costTracker == nil {
+		return nil
+	}
+	return a.costTracker.buildRunCost()
+}
+
 // restoreToolState restores state to stateful tools from a previous export.
 func (a *Agent[T]) restoreToolState(state map[string]any) {
 	for i := range a.tools {
@@ -574,9 +581,15 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	result, runErr := a.runLoop(ctx, state, prompt, settings, limits, deps)
 	a.endRun(ctx, state, deps, prompt, runErr)
 
+	runCost := a.runCostSnapshot()
+	if result != nil {
+		result.Cost = runCost
+	}
+
 	// Build trace if enabled.
 	if a.tracingEnabled {
 		trace := buildRunTrace(state, prompt, runErr)
+		trace.Cost = runCost
 		if result != nil {
 			result.Trace = trace
 		}
@@ -586,11 +599,6 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 			// Exporter errors are non-fatal — don't break the run.
 			_ = exporter.Export(ctx, trace)
 		}
-	}
-
-	// Attach cost to result if cost tracker is configured.
-	if result != nil && a.costTracker != nil {
-		result.Cost = a.costTracker.buildRunCost()
 	}
 
 	return result, runErr

@@ -359,6 +359,45 @@ func TestCLITraceFileExporterWritesFailedRunTrace(t *testing.T) {
 	}
 }
 
+func TestWriteCLIPartialTraceWritesRunningArtifact(t *testing.T) {
+	tmp := t.TempDir()
+	out := filepath.Join(tmp, "partial.trace.json")
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snap := &core.RunSnapshot{
+		Messages: []core.ModelMessage{
+			core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "keep going", Timestamp: now}}, Timestamp: now},
+		},
+		RunID:        "run-partial",
+		RunStep:      1,
+		RunStartTime: now,
+		Prompt:       "keep going",
+		Timestamp:    now.Add(time.Second),
+		Usage:        core.RunUsage{Usage: core.Usage{InputTokens: 3, OutputTokens: 4}, Requests: 1},
+	}
+
+	if err := writeCLIPartialTrace(out, map[string]any{"provider": "test"}, []*core.RunSnapshot{snap}, nil, snap); err != nil {
+		t.Fatalf("writeCLIPartialTrace() error = %v", err)
+	}
+	artifact, err := traceutil.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read partial trace: %v", err)
+	}
+	if artifact.Summary.Status != "running" || artifact.Summary.Success {
+		t.Fatalf("partial summary = %+v, want running unsuccessful", artifact.Summary)
+	}
+	if artifact.Metadata["partial"] != true || artifact.Metadata["partial_reason"] != "running" {
+		t.Fatalf("partial metadata = %+v", artifact.Metadata)
+	}
+	if len(artifact.Snapshots) != 1 {
+		t.Fatalf("partial snapshots = %+v, want one", artifact.Snapshots)
+	}
+	for _, event := range artifact.Events {
+		if event.Kind == "run.failed" || event.Kind == "run.completed" {
+			t.Fatalf("partial trace should not emit terminal run event: %+v", artifact.Events)
+		}
+	}
+}
+
 func TestCLITraceExporterRunsOnAgentErrorWithoutRunResult(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "agent-error.trace.json")
 	agent := core.NewAgent[string](

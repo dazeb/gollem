@@ -125,6 +125,7 @@ func synthesizeTraceFromStatus(status *temporalext.WorkflowStatus, snapshot *cor
 		EndTime:   ended,
 		Duration:  ended.Sub(started),
 		Usage:     status.Usage,
+		Cost:      status.Cost,
 		Success:   success,
 		Error:     status.LastError,
 	}

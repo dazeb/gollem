@@ -798,18 +798,20 @@ func (s *agentStream[T]) finish(result *RunResult[T], runErr error) {
 	s.endOnce.Do(func() {
 		s.agent.endRun(s.ctx, s.state, s.deps, s.prompt, runErr)
 
+		runCost := s.agent.runCostSnapshot()
+		if s.result != nil {
+			s.result.Cost = runCost
+		}
+
 		if s.agent.tracingEnabled {
 			trace := buildRunTrace(s.state, s.prompt, runErr)
+			trace.Cost = runCost
 			if s.result != nil {
 				s.result.Trace = trace
 			}
 			for _, exporter := range s.agent.traceExporters {
 				_ = exporter.Export(s.ctx, trace)
 			}
-		}
-
-		if s.result != nil && s.agent.costTracker != nil {
-			s.result.Cost = s.agent.costTracker.buildRunCost()
 		}
 	})
 }
