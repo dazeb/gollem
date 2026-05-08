@@ -267,7 +267,7 @@ func TestTraceArtifactNormalizationAndPayloadHelpers(t *testing.T) {
 			t.Fatalf("negative rank for %s", kind)
 		}
 	}
-	if traceReplayPolicyForKind("checkpoint.created") != "checkpoint" || traceReplayPolicyForKind("snapshot.created") != "snapshot" || traceReplayPolicyForKind("model.delta") != "recorded" || traceReplayPolicyForKind("other") != "inspect" {
+	if traceReplayPolicyForKind("checkpoint.created") != "checkpoint" || traceReplayPolicyForKind("snapshot.created") != "snapshot" || traceReplayPolicyForKind("model.delta") != "recorded" || traceReplayPolicyForKind("guardrail.evaluated") != "recorded" || traceReplayPolicyForKind("other") != "inspect" {
 		t.Fatal("unexpected replay policy")
 	}
 

@@ -111,6 +111,38 @@ func TestExportLocalTraceArtifactFindsRunIDInTraceDir(t *testing.T) {
 	}
 }
 
+func TestExportLocalTraceArtifactFindsRunIDFromRegistry(t *testing.T) {
+	registryDir := t.TempDir()
+	artifactDir := t.TempDir()
+	t.Setenv("GOLLEM_TRACE_DIR", registryDir)
+	start := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	artifact, err := traceutil.FromRunTrace(&core.RunTrace{
+		RunID:     "run-registry",
+		Prompt:    "registry",
+		StartTime: start,
+		EndTime:   start.Add(time.Second),
+		Success:   true,
+	}, nil)
+	if err != nil {
+		t.Fatalf("build artifact: %v", err)
+	}
+	tracePath := filepath.Join(artifactDir, "outside.trace.json")
+	if err := traceutil.WriteFile(tracePath, artifact); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	if err := writeLocalTraceRegistry(tracePath, "run-registry", "running"); err != nil {
+		t.Fatalf("write local trace registry: %v", err)
+	}
+
+	got, err := exportLocalTraceArtifact(traceExportOptions{input: "run-registry", traceDir: registryDir})
+	if err != nil {
+		t.Fatalf("exportLocalTraceArtifact() error = %v", err)
+	}
+	if got.Run.ID != "run-registry" {
+		t.Fatalf("run id = %q, want run-registry", got.Run.ID)
+	}
+}
+
 func TestParseTraceInspectArgs(t *testing.T) {
 	input, limit, err := parseTraceInspectArgs([]string{"run.trace.json", "--events", "12"})
 	if err != nil {
@@ -156,6 +188,54 @@ func TestParseTraceReplayArgsPRDModes(t *testing.T) {
 		if input != "run.trace.json" || got != mode {
 			t.Fatalf("parseTraceReplayArgs(%s) = %q/%q", mode, input, got)
 		}
+	}
+}
+
+func TestParseTraceReplayCommandArgsLiveReexecFromEvent(t *testing.T) {
+	opts, err := parseTraceReplayCommandArgs([]string{
+		"run.trace.json",
+		"--mode", "live-reexec",
+		"--out", "fork.trace.json",
+		"--from-event", "evt_000007",
+		"--append-user", "try again",
+		"--planner-prompt", "planner prompt",
+		"--model", "gpt-next",
+		"--tool-policy", "read-only",
+		"--evaluator", "unit",
+		"--provider", "test",
+		"--workdir", "/tmp/work",
+		"--timeout", "5m",
+		"--run-arg", "--no-code-mode",
+	})
+	if err != nil {
+		t.Fatalf("parseTraceReplayCommandArgs() error = %v", err)
+	}
+	if opts.input != "run.trace.json" || opts.mode != "live-reexec" || opts.out != "fork.trace.json" {
+		t.Fatalf("unexpected replay opts: %+v", opts)
+	}
+	if opts.fork.FromEventID != "evt_000007" || opts.fork.AppendUser != "try again" || opts.fork.PlannerPrompt != "planner prompt" || opts.fork.Model != "gpt-next" || opts.fork.ToolPolicy != "read-only" || opts.fork.Evaluator != "unit" {
+		t.Fatalf("unexpected fork opts: %+v", opts.fork)
+	}
+	if opts.run.Provider != "test" || opts.run.WorkDir != "/tmp/work" || opts.run.Timeout != "5m" || len(opts.run.ExtraArgs) != 1 || opts.run.ExtraArgs[0] != "--no-code-mode" {
+		t.Fatalf("unexpected run opts: %+v", opts.run)
+	}
+}
+
+func TestParseTraceEvaluateArgs(t *testing.T) {
+	input, out, opts, err := parseTraceEvaluateArgs([]string{
+		"run.trace.json",
+		"--evaluator", "contains-output",
+		"--expected", "ok",
+		"--out", "evaluated.trace.json",
+	})
+	if err != nil {
+		t.Fatalf("parseTraceEvaluateArgs() error = %v", err)
+	}
+	if input != "run.trace.json" || out != "evaluated.trace.json" {
+		t.Fatalf("input/out = %q/%q", input, out)
+	}
+	if opts.Evaluator != "contains-output" || opts.Expected != "ok" {
+		t.Fatalf("opts = %+v", opts)
 	}
 }
 
@@ -280,6 +360,59 @@ func TestContinueTraceForkInvokesRunWithSnapshotAndTraceOut(t *testing.T) {
 	}
 	if _, err := traceutil.ReadFile(out); err != nil {
 		t.Fatalf("continued trace not written: %v", err)
+	}
+}
+
+func TestRunTraceReplayLiveReexecContinuesFork(t *testing.T) {
+	tmp := t.TempDir()
+	tracePath := filepath.Join(tmp, "source.trace.json")
+	out := filepath.Join(tmp, "live.trace.json")
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	snap := &core.RunSnapshot{
+		Messages: []core.ModelMessage{
+			core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "resume"}}},
+		},
+		RunID:        "live-source",
+		RunStep:      1,
+		RunStartTime: now,
+		Prompt:       "resume",
+		Timestamp:    now.Add(time.Second),
+	}
+	artifact, err := traceutil.FromRunTraceWithSnapshots(&core.RunTrace{RunID: "live-source", StartTime: now, EndTime: now.Add(time.Second), Success: true}, []*core.RunSnapshot{snap}, nil)
+	if err != nil {
+		t.Fatalf("source trace: %v", err)
+	}
+	if err := traceutil.WriteFile(tracePath, artifact); err != nil {
+		t.Fatalf("write source trace: %v", err)
+	}
+
+	var gotArgs []string
+	oldExec := traceForkRunExec
+	traceForkRunExec = func(args []string, _ io.Reader, _ io.Writer, _ io.Writer, _ []string) error {
+		gotArgs = append([]string(nil), args...)
+		traceOut := argAfter(args, "--trace-out")
+		if traceOut != out {
+			t.Fatalf("trace out = %q, want %q in args %+v", traceOut, out, args)
+		}
+		continued, buildErr := traceutil.FromRunTrace(&core.RunTrace{
+			RunID:   "live-fork",
+			Success: true,
+		}, map[string]any{"resume_trace_policy": "fresh_segment"})
+		if buildErr != nil {
+			t.Fatalf("build continued trace: %v", buildErr)
+		}
+		return traceutil.WriteFile(traceOut, continued)
+	}
+	defer func() { traceForkRunExec = oldExec }()
+
+	if err := runTraceReplay([]string{tracePath, "--mode", "live-reexec", "--from-step", "1", "--append-user", "try live", "--provider", "test", "--out", out}); err != nil {
+		t.Fatalf("runTraceReplay(live-reexec) error = %v", err)
+	}
+	if got := strings.Join(gotArgs, " "); !strings.Contains(got, "run --resume-snapshot") || !strings.Contains(got, "--provider test") {
+		t.Fatalf("unexpected run args: %q", got)
+	}
+	if _, err := traceutil.ReadFile(out); err != nil {
+		t.Fatalf("continued live trace not written: %v", err)
 	}
 }
 
@@ -463,6 +596,43 @@ func TestRunTraceSleepyWritesEvidence(t *testing.T) {
 	}
 }
 
+func TestRunTraceEvaluateWritesEvaluatorEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	input := filepath.Join(tmp, "run.trace.json")
+	out := filepath.Join(tmp, "evaluated.trace.json")
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	artifact, err := traceutil.FromRunTrace(&core.RunTrace{
+		RunID:     "eval-run",
+		StartTime: now,
+		EndTime:   now.Add(time.Second),
+		Success:   true,
+		Steps: []core.TraceStep{{
+			Kind:      core.TraceModelResponse,
+			Timestamp: now.Add(500 * time.Millisecond),
+			Data:      map[string]any{"text": "all good"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("build trace: %v", err)
+	}
+	if err := traceutil.WriteFile(input, artifact); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	if err := runTraceEvaluate([]string{input, "--evaluator", "contains-output", "--expected", "good", "--out", out}); err != nil {
+		t.Fatalf("runTraceEvaluate() error = %v", err)
+	}
+	evaluated, err := traceutil.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read evaluated trace: %v", err)
+	}
+	if evaluated.Summary.Evaluator == nil || evaluated.Summary.Evaluator.Passed == nil || !*evaluated.Summary.Evaluator.Passed {
+		t.Fatalf("unexpected evaluator summary: %+v", evaluated.Summary.Evaluator)
+	}
+	if countTraceEvents(evaluated.Events, "evaluator.completed") != 1 {
+		t.Fatalf("missing evaluator.completed event: %+v", evaluated.Events)
+	}
+}
+
 func TestTraceParsersRejectMissingValues(t *testing.T) {
 	for _, flag := range []string{
 		"--out", "--snapshot-out", "--provider", "--workdir", "--timeout", "--run-arg", "--from-step",
@@ -506,6 +676,16 @@ func TestTraceParsersRejectMissingValues(t *testing.T) {
 	if _, _, err := parseTraceReplayArgs([]string{"run.trace.json", "--mode"}); err == nil {
 		t.Fatal("expected replay mode missing value error")
 	}
+	for _, flag := range []string{"--out", "--evaluator", "--expected"} {
+		t.Run("evaluate "+flag, func(t *testing.T) {
+			if _, _, _, err := parseTraceEvaluateArgs([]string{"run.trace.json", flag}); err == nil {
+				t.Fatalf("expected error for %s", flag)
+			}
+		})
+	}
+	if _, _, _, err := parseTraceEvaluateArgs([]string{"run.trace.json"}); err == nil {
+		t.Fatal("expected evaluate missing evaluator error")
+	}
 	if _, _, _, err := parseTraceRedactArgs([]string{"run.trace.json", "--drop-trace=maybe"}); err == nil {
 		t.Fatal("expected redact bool parse error")
 	}
@@ -538,6 +718,10 @@ func TestTraceParsersReadPromptFilesAndRejectDuplicates(t *testing.T) {
 		{"export duplicate", func() error { _, err := parseTraceExportArgs([]string{"a.trace.json", "b.trace.json"}); return err }},
 		{"inspect duplicate", func() error { _, _, err := parseTraceInspectArgs([]string{"a.trace.json", "b.trace.json"}); return err }},
 		{"replay duplicate", func() error { _, _, err := parseTraceReplayArgs([]string{"a.trace.json", "b.trace.json"}); return err }},
+		{"evaluate duplicate", func() error {
+			_, _, _, err := parseTraceEvaluateArgs([]string{"a.trace.json", "b.trace.json", "--evaluator", "status-succeeded"})
+			return err
+		}},
 		{"view too many", func() error {
 			_, err := parseTraceViewArgs([]string{"a.trace.json", "b.trace.json", "c.trace.json"})
 			return err
@@ -567,6 +751,7 @@ func TestRunTraceFileCommands(t *testing.T) {
 	exported := filepath.Join(tmp, "exported.trace.json")
 	redacted := filepath.Join(tmp, "redacted.trace.json")
 	compacted := filepath.Join(tmp, "compacted.trace.json")
+	evaluated := filepath.Join(tmp, "evaluated.trace.json")
 	forkTrace := filepath.Join(tmp, "fork-source.trace.json")
 	forkSnapshot := filepath.Join(tmp, "fork.snapshot.json")
 
@@ -624,6 +809,12 @@ func TestRunTraceFileCommands(t *testing.T) {
 	if err := runTraceRegress([]string{base, variant, "--format", "json", "--require-status", "succeeded", "--max-token-delta", "10"}); err != nil {
 		t.Fatalf("runTraceRegress() error = %v", err)
 	}
+	if err := runTraceEvaluate([]string{base, "--evaluator", "contains-output", "--expected", "ok", "--out", evaluated}); err != nil {
+		t.Fatalf("runTraceEvaluate() error = %v", err)
+	}
+	if _, err := traceutil.ReadFile(evaluated); err != nil {
+		t.Fatalf("read evaluated trace: %v", err)
+	}
 	if err := runTraceRedact([]string{base, "--pattern", "secret", "--out", redacted}); err != nil {
 		t.Fatalf("runTraceRedact() error = %v", err)
 	}
@@ -674,6 +865,7 @@ func TestDispatchTraceCommandRoutesSubcommands(t *testing.T) {
 	redacted := filepath.Join(tmp, "redacted.trace.json")
 	compacted := filepath.Join(tmp, "compacted.trace.json")
 	sleepyOut := filepath.Join(tmp, "sleepy.json")
+	evaluated := filepath.Join(tmp, "evaluated.trace.json")
 	forkTrace := filepath.Join(tmp, "fork.trace.json")
 	forkSnapshot := filepath.Join(tmp, "fork.snapshot.json")
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
@@ -732,6 +924,7 @@ func TestDispatchTraceCommandRoutesSubcommands(t *testing.T) {
 		{"diff", "diff", []string{base, variant}},
 		{"regress", "regress", []string{base, variant}},
 		{"sleepy", "sleepy", []string{base, variant, "--out", sleepyOut}},
+		{"evaluate", "evaluate", []string{base, "--evaluator", "status-succeeded", "--out", evaluated}},
 		{"validate", "validate", []string{base}},
 		{"redact", "redact", []string{base, "--pattern", "secret", "--out", redacted}},
 		{"compact", "compact", []string{base, "--out", compacted}},
@@ -773,6 +966,7 @@ func TestRunTraceFormatAndThresholdErrors(t *testing.T) {
 		{"regress missing format value", runTraceRegress([]string{"--format"}), "--format requires"},
 		{"diff missing format value", runTraceDiff([]string{"--format"}), "--format requires"},
 		{"sleepy unknown", runTraceSleepy([]string{base, variant, "--wat"}), "unknown sleepy"},
+		{"evaluate unknown", runTraceEvaluate([]string{base, "--evaluator", "missing"}), "unknown trace evaluator"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.err == nil || !strings.Contains(tt.err.Error(), tt.want) {
@@ -1292,4 +1486,14 @@ func TestParseTraceCompactArgs(t *testing.T) {
 	if opts.DropTrace {
 		t.Fatal("drop trace = true, want false")
 	}
+}
+
+func countTraceEvents(events []traceutil.Event, kind string) int {
+	count := 0
+	for _, event := range events {
+		if event.Kind == kind {
+			count++
+		}
+	}
+	return count
 }

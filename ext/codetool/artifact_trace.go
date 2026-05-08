@@ -19,11 +19,16 @@ import (
 const artifactTraceDiffMaxBytes = 64 * 1024
 
 type artifactChangeEvidence struct {
-	BeforeSHA256      string
-	AfterSHA256       string
-	Diff              string
-	DiffTruncated     bool
-	DiffOmittedReason string
+	BeforeSHA256         string
+	AfterSHA256          string
+	Diff                 string
+	DiffTruncated        bool
+	DiffOmittedReason    string
+	BeforeContent        string
+	AfterContent         string
+	ContentEncoding      string
+	ContentTruncated     bool
+	ContentOmittedReason string
 }
 
 func writeFileAndTrace(ctx context.Context, rc *core.RunContext, cfg *Config, path string, content []byte, perm os.FileMode, operation, toolName string) error {
@@ -34,6 +39,15 @@ func writeFileAndTrace(ctx context.Context, rc *core.RunContext, cfg *Config, pa
 	evidence.DiffTruncated = truncated
 	if evidence.DiffOmittedReason == "" {
 		evidence.DiffOmittedReason = omitted
+	}
+	beforeContent, afterContent, contentTruncated, contentOmitted := buildArtifactContentSnapshot(before, content, beforeExists)
+	evidence.BeforeContent = beforeContent
+	evidence.AfterContent = afterContent
+	evidence.ContentEncoding = "utf-8"
+	evidence.ContentTruncated = contentTruncated
+	if contentOmitted != "" {
+		evidence.ContentOmittedReason = contentOmitted
+		evidence.ContentEncoding = ""
 	}
 
 	if err := os.WriteFile(path, content, perm); err != nil {
@@ -75,19 +89,24 @@ func publishArtifactChanged(ctx context.Context, rc *core.RunContext, cfg *Confi
 	}
 
 	core.Publish(bus, core.ArtifactChangedEvent{
-		RunID:             runID,
-		ParentRunID:       parentRunID,
-		ToolCallID:        toolCallID,
-		ToolName:          toolName,
-		Path:              path,
-		Operation:         operation,
-		Bytes:             bytes,
-		BeforeSHA256:      evidence.BeforeSHA256,
-		AfterSHA256:       evidence.AfterSHA256,
-		Diff:              evidence.Diff,
-		DiffTruncated:     evidence.DiffTruncated,
-		DiffOmittedReason: evidence.DiffOmittedReason,
-		ChangedAt:         time.Now(),
+		RunID:                runID,
+		ParentRunID:          parentRunID,
+		ToolCallID:           toolCallID,
+		ToolName:             toolName,
+		Path:                 path,
+		Operation:            operation,
+		Bytes:                bytes,
+		BeforeSHA256:         evidence.BeforeSHA256,
+		AfterSHA256:          evidence.AfterSHA256,
+		Diff:                 evidence.Diff,
+		DiffTruncated:        evidence.DiffTruncated,
+		DiffOmittedReason:    evidence.DiffOmittedReason,
+		BeforeContent:        evidence.BeforeContent,
+		AfterContent:         evidence.AfterContent,
+		ContentEncoding:      evidence.ContentEncoding,
+		ContentTruncated:     evidence.ContentTruncated,
+		ContentOmittedReason: evidence.ContentOmittedReason,
+		ChangedAt:            time.Now(),
 	})
 }
 
@@ -150,6 +169,25 @@ func buildArtifactDiff(path string, before, after []byte, beforeExists bool) (st
 		return diff, false, ""
 	}
 	return diff[:artifactTraceDiffMaxBytes] + "\n... diff truncated ...\n", true, ""
+}
+
+func buildArtifactContentSnapshot(before, after []byte, beforeExists bool) (string, string, bool, string) {
+	if beforeExists && before == nil {
+		return "", "", false, "before content unavailable"
+	}
+	if !traceDiffText(before) || !traceDiffText(after) {
+		return "", "", false, "binary content omitted"
+	}
+	beforeContent, beforeTruncated := boundedArtifactContent(before)
+	afterContent, afterTruncated := boundedArtifactContent(after)
+	return beforeContent, afterContent, beforeTruncated || afterTruncated, ""
+}
+
+func boundedArtifactContent(data []byte) (string, bool) {
+	if len(data) <= artifactTraceDiffMaxBytes {
+		return string(data), false
+	}
+	return string(data[:artifactTraceDiffMaxBytes]), true
 }
 
 func splitDiffLines(content string) []string {

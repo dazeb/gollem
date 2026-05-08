@@ -906,7 +906,7 @@ func traceEventKindSortRank(kind string) int {
 
 func traceReplayPolicyForKind(kind string) string {
 	switch kind {
-	case "model.requested", "model.delta", "model.responded", "model.failed", "tool.called", "tool.completed", "tool.failed", "approval.requested", "approval.resolved", "deferred.requested", "deferred.resolved", "retry.scheduled", "topology.transitioned", "evaluator.completed", "artifact.changed", "error.raised":
+	case "model.requested", "model.delta", "model.responded", "model.failed", "guardrail.evaluated", "tool.called", "tool.completed", "tool.failed", "approval.requested", "approval.resolved", "deferred.requested", "deferred.resolved", "retry.scheduled", "topology.transitioned", "evaluator.completed", "artifact.changed", "error.raised":
 		return "recorded"
 	case "checkpoint.created":
 		return "checkpoint"

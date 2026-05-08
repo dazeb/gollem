@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -29,8 +30,12 @@ func TraceView(artifact *traceutil.Artifact, opts ...Option) error {
 		m.cost = formatTraceCost(artifact.Summary.Cost)
 		m.elapsed = formatTraceDuration(artifact.Summary.DurationMillis)
 	}
+	if os.Getenv("GOLLEM_TRACE_TUI_STATIC") == "1" {
+		fmt.Fprint(os.Stdout, m.View())
+		return waitForStaticTraceQuit()
+	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := newTraceProgram(m)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("trace TUI error: %w", err)
 	}
@@ -55,12 +60,49 @@ func TraceCompareView(baseline, variant *traceutil.Artifact, opts ...Option) err
 	m.status = fmt.Sprintf("diff %s -> %s", diff.BaselineStatus, diff.VariantStatus)
 	m.cost = formatCostDelta(diff.CostDelta)
 	m.elapsed = formatMillisDelta(diff.DurationDeltaMillis)
+	if os.Getenv("GOLLEM_TRACE_TUI_STATIC") == "1" {
+		fmt.Fprint(os.Stdout, m.View())
+		return waitForStaticTraceQuit()
+	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := newTraceProgram(m)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("trace compare TUI error: %w", err)
 	}
 	return nil
+}
+
+func waitForStaticTraceQuit() error {
+	done := make(chan struct{})
+	go func() {
+		var buf [1]byte
+		for {
+			n, err := os.Stdin.Read(buf[:])
+			if n > 0 && (buf[0] == 'q' || buf[0] == 3) {
+				close(done)
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(24 * time.Hour):
+	}
+	return nil
+}
+
+func newTraceProgram(m model) *tea.Program {
+	opts := []tea.ProgramOption(nil)
+	if os.Getenv("GOLLEM_TRACE_TUI_ALT_SCREEN") != "0" {
+		opts = append(opts, tea.WithAltScreen())
+	}
+	if os.Getenv("GOLLEM_TRACE_TUI_INPUT_TTY") == "1" {
+		opts = append(opts, tea.WithInputTTY())
+	}
+	return tea.NewProgram(m, opts...)
 }
 
 func traceSteps(artifact *traceutil.Artifact) []step {

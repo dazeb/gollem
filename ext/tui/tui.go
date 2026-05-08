@@ -67,6 +67,8 @@ type doneMsg struct {
 	err error
 }
 
+type readyMsg struct{}
+
 // model is the bubbletea model for the TUI.
 type model struct {
 	theme    Theme
@@ -94,11 +96,13 @@ func newModel(theme Theme) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return func() tea.Msg { return readyMsg{} }
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case readyMsg:
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -138,8 +142,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll = scrollToFirstContent(m.steps, m.height, "first divergence")
 		}
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		if msg.Width > 0 {
+			m.width = msg.Width
+		}
+		if msg.Height > 0 {
+			m.height = msg.Height
+		}
 	case stepMsg:
 		m.steps = append(m.steps, msg.step)
 		// Auto-scroll to bottom on new step.

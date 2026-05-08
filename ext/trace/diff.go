@@ -15,6 +15,7 @@ type DiffResult struct {
 	VariantID           string            `json:"variant_id"`
 	FirstDivergence     *Divergence       `json:"first_divergence,omitempty"`
 	CausalDivergence    *CausalDivergence `json:"causal_divergence,omitempty"`
+	CausalGraphDelta    *CausalGraphDelta `json:"causal_graph_delta,omitempty"`
 	PathDivergence      PathDelta         `json:"path_divergence"`
 	SemanticDelta       SemanticDelta     `json:"semantic_delta"`
 	UsageDelta          UsageDelta        `json:"usage_delta"`
@@ -40,6 +41,20 @@ type CausalDivergence struct {
 	Index    int    `json:"index"`
 	Baseline string `json:"baseline,omitempty"`
 	Variant  string `json:"variant,omitempty"`
+}
+
+// CausalGraphDelta compares inferred event-to-event causal edges rather than
+// only the ordered boundary path.
+type CausalGraphDelta struct {
+	BaselineNodes       int               `json:"baseline_nodes"`
+	VariantNodes        int               `json:"variant_nodes"`
+	BaselineEdges       int               `json:"baseline_edges"`
+	VariantEdges        int               `json:"variant_edges"`
+	NodeDelta           int               `json:"node_delta"`
+	EdgeDelta           int               `json:"edge_delta"`
+	FirstEdgeDivergence *CausalDivergence `json:"first_edge_divergence,omitempty"`
+	BaselineOnlyEdges   []string          `json:"baseline_only_edges,omitempty"`
+	VariantOnlyEdges    []string          `json:"variant_only_edges,omitempty"`
 }
 
 // PathDelta summarizes the causal event path on both sides of a diff.
@@ -104,6 +119,8 @@ type UsageDelta struct {
 func Diff(baseline, variant *Artifact) DiffResult {
 	baselinePath := causalPath(baseline.Events)
 	variantPath := causalPath(variant.Events)
+	baselineGraph := buildCausalGraph(baseline.Events)
+	variantGraph := buildCausalGraph(variant.Events)
 	result := DiffResult{
 		BaselineID:     displayRunID(baseline),
 		VariantID:      displayRunID(variant),
@@ -121,6 +138,7 @@ func Diff(baseline, variant *Artifact) DiffResult {
 			Variant:  variantPath,
 		},
 		CausalDivergence: firstCausalDivergence(baselinePath, variantPath),
+		CausalGraphDelta: causalGraphDelta(baselineGraph, variantGraph),
 		SemanticDelta:    semanticDelta(baseline, variant),
 		KindDelta:        kindDelta(baseline.Events, variant.Events),
 		TopologyDelta:    boundaryDelta("topology.transitioned", baseline.Events, variant.Events),
@@ -192,6 +210,21 @@ func WriteDiff(w io.Writer, diff DiffResult) error {
 		fmt.Fprintf(w, "causal divergence: path %d\n", diff.CausalDivergence.Index+1)
 		fmt.Fprintf(w, "  baseline: %s\n", nonEmpty(diff.CausalDivergence.Baseline, "<missing>"))
 		fmt.Fprintf(w, "  variant:  %s\n", nonEmpty(diff.CausalDivergence.Variant, "<missing>"))
+	}
+	if diff.CausalGraphDelta != nil {
+		fmt.Fprintf(w, "causal graph: nodes=%d->%d edges=%d->%d edge_delta=%+d\n",
+			diff.CausalGraphDelta.BaselineNodes,
+			diff.CausalGraphDelta.VariantNodes,
+			diff.CausalGraphDelta.BaselineEdges,
+			diff.CausalGraphDelta.VariantEdges,
+			diff.CausalGraphDelta.EdgeDelta,
+		)
+		if diff.CausalGraphDelta.FirstEdgeDivergence != nil {
+			fmt.Fprintf(w, "  first edge divergence: %s -> %s\n",
+				nonEmpty(diff.CausalGraphDelta.FirstEdgeDivergence.Baseline, "<missing>"),
+				nonEmpty(diff.CausalGraphDelta.FirstEdgeDivergence.Variant, "<missing>"),
+			)
+		}
 	}
 	if diff.SemanticDelta.Changed {
 		fmt.Fprintln(w, "semantic delta:")
@@ -334,6 +367,9 @@ func buildDiffNarrative(diff DiffResult) []string {
 	} else {
 		lines = append(lines, fmt.Sprintf("causal path divergence at boundary %d", diff.CausalDivergence.Index+1))
 	}
+	if diff.CausalGraphDelta != nil && diff.CausalGraphDelta.FirstEdgeDivergence != nil {
+		lines = append(lines, fmt.Sprintf("causal graph edge divergence at edge %d", diff.CausalGraphDelta.FirstEdgeDivergence.Index+1))
+	}
 	if diff.SemanticDelta.Changed {
 		lines = append(lines, "semantic delta: "+strings.Join(diff.SemanticDelta.Notes, "; "))
 	}
@@ -440,6 +476,128 @@ func causalPath(events []Event) []string {
 		}
 	}
 	return path
+}
+
+type causalGraph struct {
+	nodes []string
+	edges []string
+}
+
+func buildCausalGraph(events []Event) causalGraph {
+	graph := causalGraph{nodes: make([]string, 0, len(events))}
+	lastByRequest := make(map[string]string)
+	lastByToolCall := make(map[string]string)
+	lastByStep := make(map[int]string)
+	lastByAgent := make(map[string]string)
+	var last string
+
+	for _, event := range events {
+		node := eventGraphKey(event)
+		graph.nodes = append(graph.nodes, node)
+		parent := ""
+		if event.CausalParentID != "" {
+			parent = lastByAgent[event.CausalParentID]
+		}
+		if parent == "" && event.RequestID != "" {
+			parent = lastByRequest[event.RequestID]
+		}
+		if parent == "" {
+			if toolCallID := firstPayloadString(event, "tool_call_id"); toolCallID != "" {
+				parent = lastByToolCall[toolCallID]
+			}
+		}
+		if parent == "" && event.Step > 0 {
+			parent = lastByStep[event.Step]
+		}
+		if parent == "" {
+			parent = last
+		}
+		if parent != "" && parent != node {
+			graph.edges = append(graph.edges, parent+" -> "+node)
+		}
+		if event.RequestID != "" {
+			lastByRequest[event.RequestID] = node
+		}
+		if toolCallID := firstPayloadString(event, "tool_call_id"); toolCallID != "" {
+			lastByToolCall[toolCallID] = node
+		}
+		if event.Step > 0 {
+			lastByStep[event.Step] = node
+		}
+		if event.AgentID != "" {
+			lastByAgent[event.AgentID] = node
+		}
+		last = node
+	}
+	return graph
+}
+
+func eventGraphKey(event Event) string {
+	key := event.Kind
+	if event.Step > 0 {
+		key += fmt.Sprintf("@step:%d", event.Step)
+	}
+	switch {
+	case boundaryKey(event) != "":
+		key += ":" + shortID(boundaryKey(event))
+	case firstPayloadString(event, "tool_name") != "":
+		key += ":" + firstPayloadString(event, "tool_name")
+	case firstPayloadString(event, "to") != "":
+		key += ":to=" + firstPayloadString(event, "to")
+	case firstPayloadString(event, "path") != "":
+		key += ":" + firstPayloadString(event, "path")
+	case event.RequestID != "":
+		key += ":" + shortID(event.RequestID)
+	case event.ID != "":
+		key += ":" + shortID(event.ID)
+	default:
+		key += fmt.Sprintf(":%03d", event.Seq)
+	}
+	return key
+}
+
+func causalGraphDelta(baseline, variant causalGraph) *CausalGraphDelta {
+	out := &CausalGraphDelta{
+		BaselineNodes: len(baseline.nodes),
+		VariantNodes:  len(variant.nodes),
+		BaselineEdges: len(baseline.edges),
+		VariantEdges:  len(variant.edges),
+		NodeDelta:     len(variant.nodes) - len(baseline.nodes),
+		EdgeDelta:     len(variant.edges) - len(baseline.edges),
+	}
+	out.FirstEdgeDivergence = firstCausalDivergence(baseline.edges, variant.edges)
+	out.BaselineOnlyEdges, out.VariantOnlyEdges = stringSetDelta(baseline.edges, variant.edges)
+	if out.FirstEdgeDivergence == nil && out.NodeDelta == 0 && out.EdgeDelta == 0 && len(out.BaselineOnlyEdges) == 0 && len(out.VariantOnlyEdges) == 0 {
+		return nil
+	}
+	return out
+}
+
+func stringSetDelta(baseline, variant []string) ([]string, []string) {
+	leftCounts := make(map[string]int, len(baseline))
+	rightCounts := make(map[string]int, len(variant))
+	for _, value := range baseline {
+		leftCounts[value]++
+	}
+	for _, value := range variant {
+		rightCounts[value]++
+	}
+	var leftOnly, rightOnly []string
+	for _, value := range baseline {
+		if rightCounts[value] > 0 {
+			rightCounts[value]--
+			continue
+		}
+		leftOnly = append(leftOnly, value)
+	}
+	for _, value := range variant {
+		if leftCounts[value] > 0 {
+			leftCounts[value]--
+			continue
+		}
+		rightOnly = append(rightOnly, value)
+	}
+	return leftOnly, rightOnly
 }
 
 func kindDelta(baseline, variant []Event) map[string]int {

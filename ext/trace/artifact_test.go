@@ -342,7 +342,7 @@ func TestForkSnapshotSynthesizesFromRequestTraceWithoutStoredSnapshot(t *testing
 	}
 }
 
-func TestForkSnapshotSyntheticUsesFutureSnapshotAsStateDonor(t *testing.T) {
+func TestForkSnapshotSyntheticDoesNotUseFutureSnapshotAsStateDonor(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	initial := []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "inspect", Timestamp: now}}, Timestamp: now},
@@ -354,7 +354,7 @@ func TestForkSnapshotSyntheticUsesFutureSnapshotAsStateDonor(t *testing.T) {
 	donor := &core.RunSnapshot{
 		Messages:        initial,
 		RunID:           "run-synthetic-state",
-		RunStep:         3,
+		RunStep:         1,
 		RunStartTime:    now,
 		Prompt:          "inspect",
 		Timestamp:       now.Add(3 * time.Second),
@@ -400,12 +400,12 @@ func TestForkSnapshotSyntheticUsesFutureSnapshotAsStateDonor(t *testing.T) {
 	if record.ID != "synthetic_step_000001" {
 		t.Fatalf("record id = %q, want synthetic step 1", record.ID)
 	}
-	if forked.ToolState["counter"] != "7" || forked.LastInputTokens != 11 || forked.Retries != 2 || forked.ToolRetries["write"] != 1 {
-		t.Fatalf("synthetic fork did not use donor state: %+v", forked)
+	if forked.ToolState["counter"] == "7" || forked.LastInputTokens != 0 || forked.Retries != 0 || len(forked.ToolRetries) != 0 {
+		t.Fatalf("synthetic fork imported future donor state: %+v", forked)
 	}
 	source, ok := forked.ToolState["_gollem_synthetic_state_source"].(map[string]any)
-	if !ok || source["snapshot_id"] != "snap_000001" {
-		t.Fatalf("missing synthetic state source marker: %+v", forked.ToolState)
+	if !ok || source["state"] != "messages_only" || source["reason"] != "no_snapshot_at_or_before_boundary" {
+		t.Fatalf("missing messages-only synthetic state marker: %+v", forked.ToolState)
 	}
 }
 
@@ -472,7 +472,19 @@ func TestRuntimeRecorderCapturesApprovalWaitAndDeferredEvents(t *testing.T) {
 	core.Publish(bus, core.ApprovalResolvedEvent{RunID: "run-1", ToolCallID: "call-denied", ToolName: "write", Approved: false, ResolvedAt: now.Add(4500 * time.Millisecond)})
 	core.Publish(bus, core.DeferredRequestedEvent{RunID: "run-1", ToolCallID: "call-2", ToolName: "human", ArgsJSON: `{}`, RequestedAt: now.Add(5 * time.Second)})
 	core.Publish(bus, core.DeferredResolvedEvent{RunID: "run-1", ToolCallID: "call-2", ToolName: "human", Content: "ok", ResolvedAt: now.Add(6 * time.Second)})
-	core.Publish(bus, core.ArtifactChangedEvent{RunID: "run-1", ToolCallID: "call-1", ToolName: "write", Path: "/tmp/out", Operation: "create", Bytes: 12, ChangedAt: now.Add(7 * time.Second)})
+	core.Publish(bus, core.ArtifactChangedEvent{
+		RunID:           "run-1",
+		ToolCallID:      "call-1",
+		ToolName:        "write",
+		Path:            "/tmp/out",
+		Operation:       "create",
+		Bytes:           12,
+		AfterSHA256:     "after",
+		Diff:            "--- /dev/null\n+++ b/tmp/out\n@@ -0,0 +1,1 @@\n+hello\n",
+		AfterContent:    "hello\n",
+		ContentEncoding: "utf-8",
+		ChangedAt:       now.Add(7 * time.Second),
+	})
 
 	artifact, err := FromRunTraceWithSnapshotsAndEvents(sampleRunTrace(now), nil, recorder.Events(), nil)
 	if err != nil {
@@ -488,6 +500,15 @@ func TestRuntimeRecorderCapturesApprovalWaitAndDeferredEvents(t *testing.T) {
 			if approved, ok := event.Payload["approved"].(bool); !ok || approved {
 				t.Fatalf("denied approval payload lost approved=false: %+v", event.Payload)
 			}
+		}
+		if event.Kind == "artifact.changed" {
+			if event.Payload["after_content"] != "hello\n" || event.Payload["content_encoding"] != "utf-8" {
+				t.Fatalf("artifact content snapshot missing from payload: %+v", event.Payload)
+			}
+		}
+	}
+	for _, event := range artifact.Events {
+		if event.Kind == "approval.resolved" && event.RequestID == "call-denied" {
 			return
 		}
 	}
@@ -1062,6 +1083,9 @@ func TestDiffFindsFirstDivergenceAndUsageDelta(t *testing.T) {
 	if diff.CausalDivergence == nil {
 		t.Fatalf("expected causal divergence: %+v", diff)
 	}
+	if diff.CausalGraphDelta == nil || diff.CausalGraphDelta.FirstEdgeDivergence == nil {
+		t.Fatalf("expected causal graph divergence: %+v", diff.CausalGraphDelta)
+	}
 	if !diff.SemanticDelta.Changed || !diff.SemanticDelta.ToolSequenceChanged {
 		t.Fatalf("expected semantic tool sequence delta: %+v", diff.SemanticDelta)
 	}
@@ -1096,10 +1120,38 @@ func TestDiffFindsFirstDivergenceAndUsageDelta(t *testing.T) {
 	if err := WriteDiff(&buf, diff); err != nil {
 		t.Fatalf("WriteDiff() error = %v", err)
 	}
-	for _, want := range []string{"causal divergence:", "semantic delta:"} {
+	for _, want := range []string{"causal divergence:", "causal graph:", "semantic delta:"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Fatalf("diff output missing %q:\n%s", want, buf.String())
 		}
+	}
+}
+
+func TestEvaluateTraceAddsEvaluatorEvidence(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	artifact, err := FromRunTrace(sampleRunTrace(now), nil)
+	if err != nil {
+		t.Fatalf("FromRunTrace() error = %v", err)
+	}
+	evaluated, err := EvaluateTrace(artifact, EvaluateOptions{Evaluator: "contains-output", Expected: "ok"})
+	if err != nil {
+		t.Fatalf("EvaluateTrace() error = %v", err)
+	}
+	if evaluated.Summary.Evaluator == nil || evaluated.Summary.Evaluator.Passed == nil || !*evaluated.Summary.Evaluator.Passed {
+		t.Fatalf("missing passing evaluator summary: %+v", evaluated.Summary.Evaluator)
+	}
+	if countEventsByKind(evaluated, "evaluator.completed") != 1 {
+		t.Fatalf("expected evaluator.completed event: %+v", evaluated.Events)
+	}
+	if err := ValidateArtifact(evaluated); err != nil {
+		t.Fatalf("ValidateArtifact(evaluated) error = %v", err)
+	}
+
+	if _, err := EvaluateTrace(artifact, EvaluateOptions{Evaluator: "contains-output"}); err == nil || !strings.Contains(err.Error(), "requires --expected") {
+		t.Fatalf("expected missing expected error, got %v", err)
+	}
+	if _, err := EvaluateTrace(artifact, EvaluateOptions{Evaluator: "missing"}); err == nil || !strings.Contains(err.Error(), "unknown trace evaluator") {
+		t.Fatalf("expected unknown evaluator error, got %v", err)
 	}
 }
 
@@ -1655,12 +1707,20 @@ func TestReplayModes(t *testing.T) {
 			t.Fatalf("mode %q should be supported", mode)
 		}
 		var buf bytes.Buffer
-		if err := ReplayWithOptions(&buf, artifact, ReplayOptions{Mode: mode}); err != nil {
+		opts := ReplayOptions{Mode: mode}
+		if mode == "live-reexec" {
+			opts.LiveReexec = func(*ReplayState) error { return nil }
+		}
+		if err := ReplayWithOptions(&buf, artifact, opts); err != nil {
 			t.Fatalf("ReplayWithOptions(%s) error = %v", mode, err)
 		}
 		if !strings.Contains(buf.String(), mode) {
 			t.Fatalf("replay output for %s missing mode:\n%s", mode, buf.String())
 		}
+	}
+	var buf bytes.Buffer
+	if err := ReplayWithOptions(&buf, artifact, ReplayOptions{Mode: "live-reexec"}); err == nil || !strings.Contains(err.Error(), "live runner") {
+		t.Fatalf("ReplayWithOptions(live-reexec without runner) error = %v", err)
 	}
 }
 
@@ -1672,6 +1732,37 @@ func TestValidateArtifactChecksStructuralInvariants(t *testing.T) {
 	}
 	if err := ValidateArtifact(artifact); err != nil {
 		t.Fatalf("ValidateArtifact() error = %v", err)
+	}
+
+	withRuntimeFailures := *artifact
+	withRuntimeFailures.Events = append([]Event(nil), artifact.Events...)
+	withRuntimeFailures.Events = append(withRuntimeFailures.Events,
+		Event{
+			ID:           "event-turn-failed",
+			Seq:          len(withRuntimeFailures.Events) + 1,
+			Kind:         "turn.failed",
+			AgentID:      artifact.Run.ID,
+			ReplayPolicy: "inspect",
+		},
+		Event{
+			ID:           "event-guardrail",
+			Seq:          len(withRuntimeFailures.Events) + 2,
+			Kind:         "guardrail.evaluated",
+			AgentID:      artifact.Run.ID,
+			ReplayPolicy: "recorded",
+			Payload:      map[string]any{"name": "policy", "passed": false},
+		},
+	)
+	if err := ValidateArtifact(&withRuntimeFailures); err != nil {
+		t.Fatalf("ValidateArtifact() rejected runtime failure/policy events: %v", err)
+	}
+
+	withResumeLineage := *artifact
+	withResumeLineage.Metadata = map[string]any{"resume_source_trace_run_id": "source-run"}
+	withResumeLineage.Events = append([]Event(nil), artifact.Events...)
+	withResumeLineage.Events[0].CausalParentID = "source-run"
+	if err := ValidateArtifact(&withResumeLineage); err != nil {
+		t.Fatalf("ValidateArtifact() rejected resume source lineage: %v", err)
 	}
 
 	badSeq := *artifact

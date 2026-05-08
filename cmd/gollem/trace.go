@@ -64,6 +64,8 @@ func dispatchTraceCommand(cmd string, args []string) error {
 		return runTraceRegress(args)
 	case "sleepy":
 		return runTraceSleepy(args)
+	case "evaluate":
+		return runTraceEvaluate(args)
 	case "validate":
 		return runTraceValidate(args)
 	case "redact":
@@ -136,18 +138,34 @@ func runTraceView(args []string) error {
 }
 
 func runTraceReplay(args []string) error {
-	input, mode, err := parseTraceReplayArgs(args)
+	opts, err := parseTraceReplayCommandArgs(args)
 	if err != nil {
 		return err
 	}
+	mode := opts.mode
 	if !traceutil.SupportedReplayMode(mode) {
 		return fmt.Errorf("unsupported replay mode %q (supported: inspect, strict, simulated, fork, live-reexec)", mode)
 	}
-	artifact, err := traceutil.ReadFile(input)
+	artifact, err := traceutil.ReadFile(opts.input)
 	if err != nil {
 		return fmt.Errorf("read trace: %w", err)
 	}
-	return traceutil.ReplayWithOptions(os.Stdout, artifact, traceutil.ReplayOptions{Mode: mode})
+	replayOpts := traceutil.ReplayOptions{Mode: mode}
+	if mode == "live-reexec" {
+		if strings.TrimSpace(opts.out) == "" || opts.out == "-" {
+			return fmt.Errorf("replay --mode live-reexec requires --out <forked.trace.json>")
+		}
+		replayOpts.LiveReexec = func(_ *traceutil.ReplayState) error {
+			snap, record, forkErr := traceutil.ForkSnapshot(artifact, opts.fork)
+			if forkErr != nil {
+				return forkErr
+			}
+			return continueTraceFork(opts.out, snap, record, opts.run)
+		}
+	} else if strings.TrimSpace(opts.out) != "" {
+		return fmt.Errorf("replay --out is only supported with --mode live-reexec")
+	}
+	return traceutil.ReplayWithOptions(os.Stdout, artifact, replayOpts)
 }
 
 func runTraceFork(args []string) error {
@@ -388,6 +406,25 @@ func runTraceSleepy(args []string) error {
 		return err
 	}
 	return traceutil.WriteSleepyEvidenceFile(out, evidence)
+}
+
+func runTraceEvaluate(args []string) error {
+	input, out, opts, err := parseTraceEvaluateArgs(args)
+	if err != nil {
+		return err
+	}
+	artifact, err := traceutil.ReadFile(input)
+	if err != nil {
+		return fmt.Errorf("read trace: %w", err)
+	}
+	evaluated, err := traceutil.EvaluateTrace(artifact, opts)
+	if err != nil {
+		return err
+	}
+	if out == "" {
+		out = "-"
+	}
+	return traceutil.WriteFile(out, evaluated)
 }
 
 func runTraceValidate(args []string) error {
@@ -877,6 +914,9 @@ func findLocalTraceByRunID(runID string, dirs []string) (*traceutil.Artifact, st
 	if runID == "" {
 		return nil, "", fmt.Errorf("local trace export requires a trace path or run id")
 	}
+	if artifact, path, ok := findLocalTraceByRegistry(runID, dirs); ok {
+		return artifact, path, nil
+	}
 	var bestArtifact *traceutil.Artifact
 	var bestPath string
 	var bestStarted time.Time
@@ -916,6 +956,101 @@ func findLocalTraceByRunID(runID string, dirs []string) (*traceutil.Artifact, st
 		return nil, "", fmt.Errorf("local trace run %q not found in trace dirs: %s", runID, strings.Join(dirs, ", "))
 	}
 	return bestArtifact, bestPath, nil
+}
+
+type localTraceRegistryEntry struct {
+	RunID     string    `json:"run_id"`
+	Path      string    `json:"path"`
+	Status    string    `json:"status,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func writeLocalTraceRegistry(path, runID, status string) error {
+	runID = strings.TrimSpace(runID)
+	path = strings.TrimSpace(path)
+	if runID == "" || path == "" || path == "-" {
+		return nil
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	entry := localTraceRegistryEntry{
+		RunID:     runID,
+		Path:      path,
+		Status:    strings.TrimSpace(status),
+		UpdatedAt: time.Now(),
+	}
+	data, err := json.MarshalIndent(entry, "", "  ")
+	if err != nil {
+		return err
+	}
+	var lastErr error
+	for _, dir := range traceLookupDirs("") {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		registryDir := filepath.Join(dir, "active")
+		if err := os.MkdirAll(registryDir, 0o755); err != nil {
+			lastErr = err
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(registryDir, localTraceRegistryName(runID)), append(data, '\n'), 0o600); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
+}
+
+func findLocalTraceByRegistry(runID string, dirs []string) (*traceutil.Artifact, string, bool) {
+	for _, dir := range dirs {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		path := filepath.Join(dir, "active", localTraceRegistryName(runID))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var entry localTraceRegistryEntry
+		if err := json.Unmarshal(data, &entry); err != nil || entry.RunID != runID || strings.TrimSpace(entry.Path) == "" {
+			continue
+		}
+		artifact, err := traceutil.ReadFile(entry.Path)
+		if err != nil || !traceMatchesRunID(artifact, runID) {
+			continue
+		}
+		return artifact, entry.Path, true
+	}
+	return nil, "", false
+}
+
+func localTraceRegistryName(runID string) string {
+	safe := localTraceFileSafe(runID)
+	if safe == "" {
+		safe = "run"
+	}
+	return safe + ".json"
+}
+
+func localTraceFileSafe(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), "._-")
 }
 
 func traceMatchesRunID(artifact *traceutil.Artifact, runID string) bool {
@@ -1019,33 +1154,230 @@ func parseTraceInspectArgs(args []string) (input string, limit int, err error) {
 	return input, limit, nil
 }
 
+type traceReplayCommandOptions struct {
+	input string
+	mode  string
+	out   string
+	fork  traceutil.ForkOptions
+	run   traceForkRunOptions
+}
+
 func parseTraceReplayArgs(args []string) (input string, mode string, err error) {
-	mode = "strict"
+	opts, err := parseTraceReplayCommandArgs(args)
+	if err != nil {
+		return "", "", err
+	}
+	return opts.input, opts.mode, nil
+}
+
+func parseTraceReplayCommandArgs(args []string) (traceReplayCommandOptions, error) {
+	opts := traceReplayCommandOptions{mode: "strict"}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--mode":
 			if i+1 >= len(args) {
-				return "", "", fmt.Errorf("--mode requires a value")
+				return traceReplayCommandOptions{}, fmt.Errorf("--mode requires a value")
 			}
-			mode = strings.TrimSpace(args[i+1])
+			opts.mode = strings.TrimSpace(args[i+1])
+			i++
+		case "--out", "-o":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("%s requires a value", args[i])
+			}
+			opts.out = args[i+1]
+			i++
+		case "--from-step":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--from-step requires a value")
+			}
+			if _, scanErr := fmt.Sscanf(args[i+1], "%d", &opts.fork.FromStep); scanErr != nil || opts.fork.FromStep < 0 {
+				return traceReplayCommandOptions{}, fmt.Errorf("invalid --from-step value %q", args[i+1])
+			}
+			i++
+		case "--from-event":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--from-event requires a value")
+			}
+			opts.fork.FromEventID = args[i+1]
+			i++
+		case "--from-checkpoint", "--from-snapshot":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("%s requires a value", args[i])
+			}
+			opts.fork.FromCheckpoint = args[i+1]
+			i++
+		case "--from-kind":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--from-kind requires a value")
+			}
+			opts.fork.FromKind = args[i+1]
+			i++
+		case "--run-id":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--run-id requires a value")
+			}
+			opts.fork.NewRunID = args[i+1]
+			i++
+		case "--prompt":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--prompt requires a value")
+			}
+			opts.fork.Prompt = args[i+1]
+			i++
+		case "--system-prompt":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--system-prompt requires a value")
+			}
+			prompt, readErr := readTraceTextOrFile(args[i+1])
+			if readErr != nil {
+				return traceReplayCommandOptions{}, fmt.Errorf("read --system-prompt: %w", readErr)
+			}
+			opts.fork.SystemPrompt = prompt
+			i++
+		case "--planner-prompt":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--planner-prompt requires a value")
+			}
+			prompt, readErr := readTraceTextOrFile(args[i+1])
+			if readErr != nil {
+				return traceReplayCommandOptions{}, fmt.Errorf("read --planner-prompt: %w", readErr)
+			}
+			opts.fork.PlannerPrompt = prompt
+			i++
+		case "--append-user":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--append-user requires a value")
+			}
+			opts.fork.AppendUser = args[i+1]
+			i++
+		case "--model":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--model requires a value")
+			}
+			opts.fork.Model = args[i+1]
+			i++
+		case "--topology":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--topology requires a value")
+			}
+			opts.fork.Topology = args[i+1]
+			i++
+		case "--middleware":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--middleware requires a value")
+			}
+			opts.fork.Middleware = args[i+1]
+			i++
+		case "--tool-policy":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--tool-policy requires a value")
+			}
+			opts.fork.ToolPolicy = args[i+1]
+			i++
+		case "--evaluator":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--evaluator requires a value")
+			}
+			opts.fork.Evaluator = args[i+1]
+			i++
+		case "--memory-edit":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--memory-edit requires key=value")
+			}
+			opts.fork.MemoryEdits = append(opts.fork.MemoryEdits, args[i+1])
+			i++
+		case "--snapshot-out":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--snapshot-out requires a value")
+			}
+			opts.run.SnapshotOut = args[i+1]
+			i++
+		case "--provider":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--provider requires a value")
+			}
+			opts.run.Provider = args[i+1]
+			i++
+		case "--workdir":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--workdir requires a value")
+			}
+			opts.run.WorkDir = args[i+1]
+			i++
+		case "--timeout":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--timeout requires a value")
+			}
+			opts.run.Timeout = args[i+1]
+			i++
+		case "--run-arg":
+			if i+1 >= len(args) {
+				return traceReplayCommandOptions{}, fmt.Errorf("--run-arg requires a value")
+			}
+			opts.run.ExtraArgs = append(opts.run.ExtraArgs, args[i+1])
+			i++
+		case "--continue":
+			opts.run.Continue = true
+		case "--help", "-h":
+			printTraceUsage()
+			os.Exit(0)
+		default:
+			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
+				return traceReplayCommandOptions{}, fmt.Errorf("unknown replay argument %q", args[i])
+			}
+			if opts.input != "" {
+				return traceReplayCommandOptions{}, fmt.Errorf("replay accepts exactly one trace path")
+			}
+			opts.input = args[i]
+		}
+	}
+	if opts.input == "" {
+		return traceReplayCommandOptions{}, fmt.Errorf("replay requires a trace path")
+	}
+	return opts, nil
+}
+
+func parseTraceEvaluateArgs(args []string) (input string, out string, opts traceutil.EvaluateOptions, err error) {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--out", "-o":
+			if i+1 >= len(args) {
+				return "", "", opts, fmt.Errorf("%s requires a value", args[i])
+			}
+			out = args[i+1]
+			i++
+		case "--evaluator":
+			if i+1 >= len(args) {
+				return "", "", opts, fmt.Errorf("--evaluator requires a value")
+			}
+			opts.Evaluator = args[i+1]
+			i++
+		case "--expected":
+			if i+1 >= len(args) {
+				return "", "", opts, fmt.Errorf("--expected requires a value")
+			}
+			opts.Expected = args[i+1]
 			i++
 		case "--help", "-h":
 			printTraceUsage()
 			os.Exit(0)
 		default:
 			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
-				return "", "", fmt.Errorf("unknown replay argument %q", args[i])
+				return "", "", opts, fmt.Errorf("unknown evaluate argument %q", args[i])
 			}
 			if input != "" {
-				return "", "", fmt.Errorf("replay accepts exactly one trace path")
+				return "", "", opts, fmt.Errorf("evaluate accepts exactly one trace path")
 			}
 			input = args[i]
 		}
 	}
 	if input == "" {
-		return "", "", fmt.Errorf("replay requires a trace path")
+		return "", "", opts, fmt.Errorf("evaluate requires a trace path")
 	}
-	return input, mode, nil
+	if strings.TrimSpace(opts.Evaluator) == "" {
+		return "", "", opts, fmt.Errorf("evaluate requires --evaluator")
+	}
+	return input, out, opts, nil
 }
 
 func parseSingleTracePath(args []string) (string, error) {
@@ -1103,6 +1435,9 @@ Commands:
   replay <trace.json> [--mode inspect|strict|simulated|fork|live-reexec]
       Replay recorded runtime-boundary events into reconstructed state without pretending model sampling is deterministic.
 
+  replay <trace.json> --mode live-reexec --out fork.trace.json [--from-step n|--from-event id|--from-checkpoint id|--from-kind kind] [--system-prompt text-or-file] [--planner-prompt text-or-file] [--append-user text] [--model name] [--topology name] [--middleware name] [--tool-policy name] [--evaluator name] [--memory-edit key=value] [--provider name] [--workdir path] [--timeout duration] [--snapshot-out path] [--run-arg arg]
+      Reconstruct a fork boundary, then continue a fresh live run segment that writes fork.trace.json.
+
   fork <trace.json> [--from-step n|--from-event id|--from-checkpoint id|--from-kind kind] [--system-prompt text-or-file] [--planner-prompt text-or-file] [--append-user text] [--model name] [--topology name] [--middleware name] [--tool-policy name] [--evaluator name] [--memory-edit key=value] [--out fork.snapshot.json]
       Extract a snapshot anchor for a branch run.
 
@@ -1117,6 +1452,9 @@ Commands:
 
   sleepy <baseline.trace.json> <candidate.trace.json>... [--out evidence.json]
       Export Sleepy-compatible trace evidence for mutation ranking, drift checks, replay lineage, and evaluator-gaming detection.
+
+  evaluate <trace.json> --evaluator status-succeeded|no-errors|contains-output|exact-output|status:<value> [--expected text] [--out evaluated.trace.json]
+      Run a named trace evaluator and write evaluator.completed evidence into the artifact.
 
   validate <trace.json>
       Validate schema, event sequence, replay policies, lineage, snapshots, and replay boundaries.
@@ -1141,5 +1479,6 @@ Examples:
   gollem trace diff baseline.trace.json variant.trace.json
   gollem trace regress baseline.trace.json fork.trace.json --require-status succeeded
   gollem trace sleepy baseline.trace.json fork.trace.json --out sleepy-evidence.json
+  gollem trace evaluate fork.trace.json --evaluator status-succeeded --out evaluated.trace.json
 `)
 }

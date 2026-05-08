@@ -79,11 +79,20 @@ func TestMutationToolsPublishArtifactChangedEvents(t *testing.T) {
 		if events[i].Diff == "" {
 			t.Fatalf("event %d missing diff: %#v", i, events[i])
 		}
+		if events[i].ContentEncoding != "utf-8" || events[i].AfterContent == "" || events[i].ContentOmittedReason != "" {
+			t.Fatalf("event %d missing content snapshot: %#v", i, events[i])
+		}
 	}
 	if events[0].BeforeSHA256 != "" || !strings.Contains(events[0].Diff, "+++ b/") || !strings.Contains(events[0].Diff, "+one") {
 		t.Fatalf("create diff missing new content: %#v", events[0])
 	}
+	if events[0].BeforeContent != "" || events[0].AfterContent != "one\ntwo\n" {
+		t.Fatalf("create content snapshot mismatch: %#v", events[0])
+	}
 	if events[1].BeforeSHA256 == "" || strings.Contains(events[1].Diff, "-one") || strings.Contains(events[1].Diff, "+one") || !strings.Contains(events[1].Diff, " one") || !strings.Contains(events[1].Diff, "-two") || !strings.Contains(events[1].Diff, "+three") {
 		t.Fatalf("edit diff missing before/after content: %#v", events[1])
+	}
+	if events[1].BeforeContent != "one\ntwo\n" || events[1].AfterContent != "one\nthree\n" {
+		t.Fatalf("edit content snapshot mismatch: %#v", events[1])
 	}
 }

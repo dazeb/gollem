@@ -51,7 +51,7 @@ func ForkSnapshot(artifact *Artifact, opts ForkOptions) (*core.RunSnapshot, Snap
 			return nil, SnapshotRecord{}, err
 		}
 		var selectErr error
-		record, selectErr = selectSnapshot(artifact.Snapshots, step)
+		record, selectErr = selectSnapshotForAnchor(artifact.Snapshots, step, anchor)
 		if selectErr != nil {
 			var synthErr error
 			var snap *core.RunSnapshot
@@ -178,6 +178,10 @@ func WriteSnapshotFile(path string, snap *core.RunSnapshot) error {
 }
 
 func selectSnapshot(records []SnapshotRecord, step int) (SnapshotRecord, error) {
+	return selectSnapshotForAnchor(records, step, nil)
+}
+
+func selectSnapshotForAnchor(records []SnapshotRecord, step int, anchor *Event) (SnapshotRecord, error) {
 	if len(records) == 0 {
 		return SnapshotRecord{}, errors.New("trace artifact has no snapshots; create it with `gollem run --trace-out` after snapshot capture support")
 	}
@@ -186,6 +190,9 @@ func selectSnapshot(records []SnapshotRecord, step int) (SnapshotRecord, error) 
 	}
 	var selected *SnapshotRecord
 	for _, record := range records {
+		if snapshotAfterAnchor(record, anchor) {
+			continue
+		}
 		if record.Step == step {
 			return record, nil
 		}
@@ -202,6 +209,13 @@ func selectSnapshot(records []SnapshotRecord, step int) (SnapshotRecord, error) 
 		steps = append(steps, strconv.Itoa(record.Step))
 	}
 	return SnapshotRecord{}, fmt.Errorf("no snapshot available at or before step %d (available: %s)", step, strings.Join(steps, ", "))
+}
+
+func snapshotAfterAnchor(record SnapshotRecord, anchor *Event) bool {
+	if anchor == nil || anchor.Timestamp.IsZero() || record.Timestamp.IsZero() {
+		return false
+	}
+	return record.Step == anchor.Step && record.Timestamp.After(anchor.Timestamp)
 }
 
 func selectSnapshotByCheckpoint(artifact *Artifact, checkpoint string) (SnapshotRecord, error) {
@@ -280,7 +294,7 @@ func synthesizeForkSnapshot(artifact *Artifact, step int, anchor *Event) (*core.
 	if timestamp.IsZero() {
 		timestamp = time.Now()
 	}
-	donor, donorRecord, _ := syntheticStateDonor(artifact.Snapshots, step)
+	donor, donorRecord, _ := syntheticStateDonor(artifact.Snapshots, step, anchor)
 	snap := &core.RunSnapshot{
 		Messages:         messages,
 		Usage:            artifact.Summary.Usage,
@@ -314,6 +328,12 @@ func synthesizeForkSnapshot(artifact *Artifact, step int, anchor *Event) (*core.
 			"snapshot_step":  donorRecord.Step,
 			"requested_step": step,
 		}
+	} else {
+		snap.ToolState["_gollem_synthetic_state_source"] = map[string]any{
+			"state":          "messages_only",
+			"reason":         "no_snapshot_at_or_before_boundary",
+			"requested_step": step,
+		}
 	}
 	recordID := fmt.Sprintf("synthetic_step_%06d", step)
 	encoded, err := core.EncodeRunSnapshot(snap)
@@ -329,23 +349,25 @@ func synthesizeForkSnapshot(artifact *Artifact, step int, anchor *Event) (*core.
 	}, nil
 }
 
-func syntheticStateDonor(records []SnapshotRecord, step int) (*core.RunSnapshot, SnapshotRecord, error) {
+func syntheticStateDonor(records []SnapshotRecord, step int, anchor *Event) (*core.RunSnapshot, SnapshotRecord, error) {
 	if len(records) == 0 {
 		return nil, SnapshotRecord{}, errors.New("no stored snapshots")
 	}
 	var selected *SnapshotRecord
 	for _, record := range records {
-		if step > 0 && record.Step < step {
+		if snapshotAfterAnchor(record, anchor) {
 			continue
 		}
-		if selected == nil || record.Step < selected.Step {
+		if step > 0 && record.Step > step {
+			continue
+		}
+		if selected == nil || record.Step > selected.Step {
 			recordCopy := record
 			selected = &recordCopy
 		}
 	}
 	if selected == nil {
-		record := records[len(records)-1]
-		selected = &record
+		return nil, SnapshotRecord{}, fmt.Errorf("no state snapshot at or before step %d", step)
 	}
 	snap, err := DecodeSnapshotRecord(*selected)
 	if err != nil {

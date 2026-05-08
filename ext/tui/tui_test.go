@@ -39,10 +39,15 @@ func TestTUI_ModelCreation(t *testing.T) {
 		t.Errorf("expected height 24, got %d", m.height)
 	}
 
-	// Verify Init returns nil (no initial command).
+	// Verify Init schedules an initial no-op message so preloaded trace views
+	// render a first frame in scripted PTYs.
 	cmd := m.Init()
-	if cmd != nil {
-		t.Error("expected Init to return nil cmd")
+	if cmd == nil {
+		t.Fatal("expected Init to return a ready command")
+	}
+	msg := cmd()
+	if _, ok := msg.(readyMsg); !ok {
+		t.Fatalf("Init command returned %T, want readyMsg", msg)
 	}
 }
 

@@ -1055,6 +1055,9 @@ func (e *cliTraceFileExporter) Export(_ context.Context, runTrace *core.RunTrace
 		fmt.Fprintf(os.Stderr, "warning: write trace artifact: %v\n", err)
 		return err
 	}
+	if err := writeLocalTraceRegistry(e.path, runTrace.RunID, artifact.Summary.Status); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: update local trace registry: %v\n", err)
+	}
 	fmt.Fprintf(os.Stderr, "gollem: trace artifact written to %s\n", e.path)
 	return nil
 }
@@ -1103,7 +1106,10 @@ func writeCLIPartialTrace(path string, metadata map[string]any, snapshots []*cor
 	artifact.Summary.Status = "running"
 	artifact.Summary.Success = false
 	artifact.Summary.Error = ""
-	return traceutil.WriteFile(path, artifact)
+	if err := traceutil.WriteFile(path, artifact); err != nil {
+		return err
+	}
+	return writeLocalTraceRegistry(path, runID, "running")
 }
 
 func buildCLITraceMetadata(f flags, resumeSnapshot *core.RunSnapshot, resumeSnapshotPath string) map[string]any {

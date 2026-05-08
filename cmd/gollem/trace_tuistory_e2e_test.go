@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -14,6 +15,9 @@ import (
 func TestTraceViewTuistoryEndToEnd(t *testing.T) {
 	if _, err := exec.LookPath("tuistory"); err != nil {
 		t.Skip("tuistory is not installed")
+	}
+	if !tuistorySmokeWorks(t) {
+		t.Skip("tuistory is installed but did not capture a basic terminal frame")
 	}
 
 	root := repoRootForTest(t)
@@ -26,7 +30,7 @@ func TestTraceViewTuistoryEndToEnd(t *testing.T) {
 	session := fmt.Sprintf("gollem-trace-%d", time.Now().UnixNano())
 	defer func() { _ = exec.Command("tuistory", "-s", session, "close").Run() }()
 
-	runTuistory(t, "launch", strconv.Quote(bin)+" trace view "+strconv.Quote(tracePath), "-s", session, "--cols", "100", "--rows", "28")
+	runTuistory(t, "launch", strconv.Quote(bin)+" trace view "+strconv.Quote(tracePath), "-s", session, "--cols", "100", "--rows", "28", "--env", "GOLLEM_TRACE_TUI_ALT_SCREEN=0", "--env", "GOLLEM_TRACE_TUI_STATIC=1")
 	runTuistory(t, "-s", session, "wait", "model.requested", "--timeout", "15000")
 	initial := runTuistory(t, "-s", session, "snapshot", "--trim")
 	assertContains(t, initial, "model.requested", "model.responded", "n/p:step")
@@ -44,12 +48,21 @@ func TestTraceViewTuistoryEndToEnd(t *testing.T) {
 	compareSession := fmt.Sprintf("gollem-trace-compare-%d", time.Now().UnixNano())
 	defer func() { _ = exec.Command("tuistory", "-s", compareSession, "close").Run() }()
 
-	runTuistory(t, "launch", strconv.Quote(bin)+" trace view "+strconv.Quote(tracePath)+" "+strconv.Quote(tracePath), "-s", compareSession, "--cols", "110", "--rows", "28")
+	runTuistory(t, "launch", strconv.Quote(bin)+" trace view "+strconv.Quote(tracePath)+" "+strconv.Quote(tracePath), "-s", compareSession, "--cols", "110", "--rows", "28", "--env", "GOLLEM_TRACE_TUI_ALT_SCREEN=0", "--env", "GOLLEM_TRACE_TUI_STATIC=1")
 	runTuistory(t, "-s", compareSession, "wait", "diff", "--timeout", "15000")
 	compare := runTuistory(t, "-s", compareSession, "snapshot", "--trim")
 	assertContains(t, compare, "diff", "first divergence", "d:diverge")
 
 	runTuistory(t, "-s", compareSession, "type", "q")
+}
+
+func tuistorySmokeWorks(t *testing.T) bool {
+	t.Helper()
+	session := fmt.Sprintf("gollem-trace-smoke-%d", time.Now().UnixNano())
+	defer func() { _ = exec.Command("tuistory", "-s", session, "close").Run() }()
+	runTuistory(t, "launch", "sh -c 'printf tuistory-smoke; sleep 5'", "-s", session, "--cols", "40", "--rows", "8")
+	snapshot := runTuistory(t, "-s", session, "snapshot", "--trim", "--immediate")
+	return strings.Contains(snapshot, "tuistory-smoke")
 }
 
 func runTuistory(t *testing.T, args ...string) string {

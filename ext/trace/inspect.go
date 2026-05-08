@@ -18,7 +18,8 @@ type InspectOptions struct {
 
 // ReplayOptions configures recorded-boundary replay behavior.
 type ReplayOptions struct {
-	Mode string
+	Mode       string
+	LiveReexec func(*ReplayState) error `json:"-"`
 }
 
 // ReplayState is the deterministic runtime-boundary state reconstructed from a
@@ -186,6 +187,15 @@ func ReplayWithOptions(w io.Writer, artifact *Artifact, opts ReplayOptions) erro
 		state.SnapshotCount,
 		nonEmpty(state.RestoredSnapshotID, "<none>"),
 	)
+	if mode == "live-reexec" {
+		if opts.LiveReexec == nil {
+			return errors.New("live-reexec mode requires a configured live runner")
+		}
+		if err := opts.LiveReexec(state); err != nil {
+			return err
+		}
+		fmt.Fprintln(w, "live re-execution: completed")
+	}
 	for _, boundary := range state.Boundaries {
 		fmt.Fprintf(w, "%03d %-18s %s\n", boundary.Seq, boundary.Kind, replayBoundarySummary(boundary))
 	}

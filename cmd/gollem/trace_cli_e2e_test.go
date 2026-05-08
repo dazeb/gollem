@@ -17,7 +17,7 @@ import (
 
 const traceCLIE2ECommandTimeout = 2 * time.Minute
 
-func TestTraceCLIEndToEndLocalForkDiffRedactCompact(t *testing.T) {
+func TestTraceCLI14HourReplayDemoPath(t *testing.T) {
 	root := repoRootForTest(t)
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "gollem")
@@ -28,7 +28,9 @@ func TestTraceCLIEndToEndLocalForkDiffRedactCompact(t *testing.T) {
 	forkSnapshot := filepath.Join(tmp, "fork.snapshot.json")
 	forkTrace := filepath.Join(tmp, "fork.trace.json")
 	continuedForkTrace := filepath.Join(tmp, "continued-fork.trace.json")
+	liveReexecTrace := filepath.Join(tmp, "live-reexec.trace.json")
 	sleepyEvidence := filepath.Join(tmp, "sleepy-evidence.json")
+	evaluatedTrace := filepath.Join(tmp, "evaluated.trace.json")
 	redactedTrace := filepath.Join(tmp, "redacted.trace.json")
 	compactTrace := filepath.Join(tmp, "compact.trace.json")
 
@@ -59,6 +61,16 @@ func TestTraceCLIEndToEndLocalForkDiffRedactCompact(t *testing.T) {
 		"--run-arg", "--no-code-mode",
 		"--out", continuedForkTrace,
 	)
+	liveReexec := runCmd(t, root, bin, "trace", "replay", baseTrace,
+		"--mode", "live-reexec",
+		"--from-kind", "model.responded",
+		"--planner-prompt", "try a live re-exec planner",
+		"--append-user", "try a live replay branch",
+		"--provider", "test",
+		"--run-arg", "--no-code-mode",
+		"--out", liveReexecTrace,
+	)
+	assertContains(t, liveReexec, "live-reexec runtime-boundary replay", "live re-execution: completed")
 
 	baseArtifact, err := traceutil.ReadFile(baseTrace)
 	if err != nil {
@@ -77,8 +89,8 @@ func TestTraceCLIEndToEndLocalForkDiffRedactCompact(t *testing.T) {
 	if got := metadataString(forkArtifact.Metadata, "resume_source_trace_run_id"); got != baseArtifact.Run.ID {
 		t.Fatalf("resume source trace run id = %q, want %q", got, baseArtifact.Run.ID)
 	}
-	if got := metadataString(forkArtifact.Metadata, "resume_source_snapshot_id"); got != "snap_000001" {
-		t.Fatalf("resume source snapshot id = %q, want snap_000001", got)
+	if got := metadataString(forkArtifact.Metadata, "resume_source_snapshot_id"); !strings.HasPrefix(got, "synthetic_step_") {
+		t.Fatalf("resume source snapshot id = %q, want synthetic boundary snapshot", got)
 	}
 	if forkArtifact.Summary.Requests != 1 {
 		t.Fatalf("expected fork trace to contain only fresh segment requests, got %d", forkArtifact.Summary.Requests)
@@ -102,6 +114,16 @@ func TestTraceCLIEndToEndLocalForkDiffRedactCompact(t *testing.T) {
 	if continuedArtifact.Run.ID == baseArtifact.Run.ID {
 		t.Fatalf("expected continued fork trace to have a distinct run id, got %q", continuedArtifact.Run.ID)
 	}
+	liveReexecArtifact, err := traceutil.ReadFile(liveReexecTrace)
+	if err != nil {
+		t.Fatalf("read live reexec trace: %v", err)
+	}
+	if got := metadataString(liveReexecArtifact.Metadata, "resume_trace_policy"); got != "fresh_segment" {
+		t.Fatalf("live reexec resume trace policy = %q, want fresh_segment", got)
+	}
+	if liveReexecArtifact.Run.ID == baseArtifact.Run.ID {
+		t.Fatalf("expected live reexec trace to have a distinct run id, got %q", liveReexecArtifact.Run.ID)
+	}
 
 	diffJSON := runCmd(t, root, bin, "trace", "diff", baseTrace, forkTrace, "--format", "json")
 	var diff traceutil.DiffResult
@@ -121,6 +143,14 @@ func TestTraceCLIEndToEndLocalForkDiffRedactCompact(t *testing.T) {
 	}
 	if !regress.Passed || len(regress.Cases) != 1 {
 		t.Fatalf("unexpected regression report:\n%s", regressJSON)
+	}
+	runCmd(t, root, bin, "trace", "evaluate", forkTrace, "--evaluator", "status-succeeded", "--out", evaluatedTrace)
+	evaluatedArtifact, err := traceutil.ReadFile(evaluatedTrace)
+	if err != nil {
+		t.Fatalf("read evaluated trace: %v", err)
+	}
+	if evaluatedArtifact.Summary.Evaluator == nil || evaluatedArtifact.Summary.Evaluator.Passed == nil || !*evaluatedArtifact.Summary.Evaluator.Passed {
+		t.Fatalf("unexpected evaluated summary: %+v", evaluatedArtifact.Summary.Evaluator)
 	}
 	runCmd(t, root, bin, "trace", "sleepy", baseTrace, forkTrace, "--out", sleepyEvidence)
 	sleepyData, err := os.ReadFile(sleepyEvidence)

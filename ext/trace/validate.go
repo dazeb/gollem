@@ -27,7 +27,7 @@ func ValidateArtifact(artifact *Artifact) error {
 	if artifact.Summary.Status != "" && !validTraceStatus(artifact.Summary.Status) {
 		return fmt.Errorf("invalid summary status %q", artifact.Summary.Status)
 	}
-	if err := validateTraceEvents(runID, artifact.Events); err != nil {
+	if err := validateTraceEvents(runID, traceLineageIDs(artifact), artifact.Events); err != nil {
 		return err
 	}
 	if err := validateTraceSnapshots(artifact.Snapshots); err != nil {
@@ -43,8 +43,13 @@ func ValidateArtifact(artifact *Artifact) error {
 	return nil
 }
 
-func validateTraceEvents(runID string, events []Event) error {
+func validateTraceEvents(runID string, lineageIDs []string, events []Event) error {
 	agentIDs := map[string]bool{runID: true}
+	for _, id := range lineageIDs {
+		if strings.TrimSpace(id) != "" {
+			agentIDs[strings.TrimSpace(id)] = true
+		}
+	}
 	seenIDs := make(map[string]bool, len(events))
 	for _, event := range events {
 		if strings.TrimSpace(event.AgentID) != "" {
@@ -89,6 +94,31 @@ func validateTraceEvents(runID string, events []Event) error {
 		}
 	}
 	return nil
+}
+
+func traceLineageIDs(artifact *Artifact) []string {
+	if artifact == nil {
+		return nil
+	}
+	var ids []string
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			ids = append(ids, value)
+		}
+	}
+	add(metadataString(artifact.Metadata, "resume_parent_run_id"))
+	add(metadataString(artifact.Metadata, "resume_source_trace_run_id"))
+	for _, record := range artifact.Snapshots {
+		add(record.RunID)
+		add(record.ParentRunID)
+		if record.Snapshot != nil {
+			add(record.Snapshot.RunID)
+			add(record.Snapshot.ParentRunID)
+			add(record.Snapshot.SourceTraceRunID)
+		}
+	}
+	return ids
 }
 
 func validateTraceSnapshots(records []SnapshotRecord) error {
@@ -153,7 +183,7 @@ func validTraceStatus(status string) bool {
 func knownTraceEventKind(kind string) bool {
 	switch kind {
 	case "run.started", "run.completed", "run.failed",
-		"turn.started", "turn.completed",
+		"turn.started", "turn.completed", "turn.failed",
 		"model.requested", "model.delta", "model.responded", "model.failed",
 		"guardrail.evaluated",
 		"tool.called", "tool.completed", "tool.failed",
@@ -183,7 +213,7 @@ func expectedReplayPolicy(kind string) string {
 		return "checkpoint"
 	case "snapshot.created":
 		return "snapshot"
-	case "run.started", "run.completed", "run.failed", "turn.started", "turn.completed", "wait.started", "wait.resolved":
+	case "run.started", "run.completed", "run.failed", "turn.started", "turn.completed", "turn.failed", "wait.started", "wait.resolved":
 		return "inspect"
 	default:
 		return ""
