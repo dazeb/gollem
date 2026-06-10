@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestJSONFileExporter(t *testing.T) {
@@ -36,15 +37,52 @@ func TestJSONFileExporter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var trace RunTrace
-	if err := json.Unmarshal(data, &trace); err != nil {
+	var artifact TraceArtifact
+	if err := json.Unmarshal(data, &artifact); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if trace.Prompt != "test" {
-		t.Errorf("expected prompt 'test', got %q", trace.Prompt)
+	if artifact.SchemaVersion != TraceArtifactSchemaVersion {
+		t.Fatalf("schema version = %q, want %q", artifact.SchemaVersion, TraceArtifactSchemaVersion)
 	}
-	if !trace.Success {
+	if artifact.Run.Prompt != "test" {
+		t.Errorf("expected prompt 'test', got %q", artifact.Run.Prompt)
+	}
+	if !artifact.Summary.Success {
 		t.Error("expected trace success=true")
+	}
+	if artifact.Trace == nil {
+		t.Fatal("expected embedded core trace")
+	}
+}
+
+func TestTraceExportersCoverErrorAndFanoutBranches(t *testing.T) {
+	if err := NewJSONFileExporter(t.TempDir()).Export(context.Background(), nil); err == nil {
+		t.Fatal("expected nil run trace export error")
+	}
+	if got := safeTraceFilenamePart(" ../bad run!* "); got != "bad_run" {
+		t.Fatalf("safe filename = %q", got)
+	}
+	if got := safeTraceFilenamePart("..."); got != "run" {
+		t.Fatalf("empty safe filename = %q", got)
+	}
+	var buf bytes.Buffer
+	console := NewConsoleExporter(&buf)
+	if err := console.Export(context.Background(), &RunTrace{
+		RunID:   "failed-run",
+		Prompt:  "prompt",
+		Error:   "boom",
+		Success: false,
+		Usage:   RunUsage{Usage: Usage{InputTokens: 1, OutputTokens: 2}, Requests: 1},
+		Steps:   []TraceStep{{Kind: TraceToolCall, Duration: time.Millisecond}},
+	}); err != nil {
+		t.Fatalf("console export: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Error: boom") || !strings.Contains(buf.String(), "tool_call") {
+		t.Fatalf("console output missing error/step:\n%s", buf.String())
+	}
+	err := NewMultiExporter(&failingExporter{}, console).Export(context.Background(), &RunTrace{RunID: "fanout"})
+	if err == nil {
+		t.Fatal("expected first exporter error")
 	}
 }
 
@@ -108,6 +146,51 @@ func TestWithTraceExporter_ImplicitTracing(t *testing.T) {
 	}
 	if result.Trace == nil {
 		t.Error("expected trace to be set when exporter is configured")
+	}
+}
+
+func TestTraceArtifactProjectedToolEventsUseTurnNumbers(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	trace := &RunTrace{
+		RunID:     "run-step-test",
+		Prompt:    "step mapping",
+		StartTime: now,
+		EndTime:   now.Add(3 * time.Second),
+		Success:   true,
+		Requests: []RequestTrace{
+			{
+				RequestID:  "req-1",
+				TurnNumber: 1,
+				StartedAt:  now.Add(100 * time.Millisecond),
+				EndedAt:    now.Add(200 * time.Millisecond),
+				Response:   &RequestTraceResponse{FinishReason: FinishReasonToolCall},
+			},
+			{
+				RequestID:  "req-2",
+				TurnNumber: 2,
+				StartedAt:  now.Add(2 * time.Second),
+				EndedAt:    now.Add(2100 * time.Millisecond),
+				Response:   &RequestTraceResponse{FinishReason: FinishReasonStop},
+			},
+		},
+		Steps: []TraceStep{
+			{Kind: TraceModelRequest, Timestamp: now.Add(100 * time.Millisecond)},
+			{Kind: TraceModelResponse, Timestamp: now.Add(200 * time.Millisecond)},
+			{Kind: TraceToolCall, Timestamp: now.Add(300 * time.Millisecond), Data: map[string]any{"tool_call_id": "call-1", "tool_name": "write"}},
+			{Kind: TraceToolResult, Timestamp: now.Add(400 * time.Millisecond), Data: map[string]any{"tool_call_id": "call-1", "tool_name": "write"}},
+		},
+	}
+	artifact, err := NewTraceArtifact(trace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range artifact.Events {
+		switch event.Kind {
+		case "tool.called", "tool.completed":
+			if event.Step != 1 {
+				t.Fatalf("%s step = %d, want turn 1: %+v", event.Kind, event.Step, artifact.Events)
+			}
+		}
 	}
 }
 

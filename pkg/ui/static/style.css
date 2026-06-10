@@ -200,6 +200,31 @@ body {
   padding: 18px;
 }
 
+.detail-grid article {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.detail-grid__note {
+  color: var(--muted);
+  font-size: 0.86rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.detail-grid__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.detail-grid__actions .button {
+  padding: 8px 10px;
+  font-size: 0.82rem;
+}
+
 .run-card h4 {
   margin-bottom: 8px;
 }

@@ -135,7 +135,14 @@ func (r *AgentRunner[T]) RunTask(ctx context.Context, claim *ClaimedTask) (*Task
 	}
 	outcome := &TaskOutcome{Result: taskResult}
 	if r.artifacts != nil {
-		outcome.Artifacts = cloneArtifactSpecs(r.artifacts(task, result))
+		artifactTask := task
+		if task != nil && run.ID != "" {
+			taskCopy := *task
+			runCopy := run
+			taskCopy.Run = &runCopy
+			artifactTask = &taskCopy
+		}
+		outcome.Artifacts = cloneArtifactSpecs(r.artifacts(artifactTask, result))
 	}
 	return outcome, nil
 }

@@ -1,7 +1,9 @@
 package agui
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestSession_NewEvent_UniqueIDs(t *testing.T) {
@@ -78,6 +80,47 @@ func TestSession_StatusTransitions(t *testing.T) {
 	}
 }
 
+func TestSession_CaptureRawEventDoesNotRegressNewerStatus(t *testing.T) {
+	s := NewSession(SessionModeCoreStream)
+	s.SetStatus(SessionStatusRunning)
+
+	staleWaiting := rawEvent(t, map[string]any{
+		"type":      AGUICustom,
+		"name":      "gollem.run.waiting",
+		"value":     map[string]any{"reason": "approval"},
+		"timestamp": time.Now().Add(-time.Second).UnixMilli(),
+	})
+	s.CaptureRawEvent("raw", staleWaiting, time.Now())
+
+	if got := s.GetStatus(); got != SessionStatusRunning {
+		t.Fatalf("status = %q, want %q", got, SessionStatusRunning)
+	}
+	s.mu.RLock()
+	waitingReason := s.WaitingReason
+	s.mu.RUnlock()
+	if waitingReason != "" {
+		t.Fatalf("waiting reason = %q, want empty", waitingReason)
+	}
+
+	freshWaiting := rawEvent(t, map[string]any{
+		"type":      AGUICustom,
+		"name":      "gollem.run.waiting",
+		"value":     map[string]any{"reason": "deferred"},
+		"timestamp": time.Now().Add(time.Second).UnixMilli(),
+	})
+	s.CaptureRawEvent("raw", freshWaiting, time.Now().Add(time.Second))
+
+	if got := s.GetStatus(); got != SessionStatusWaiting {
+		t.Fatalf("status = %q, want %q", got, SessionStatusWaiting)
+	}
+	s.mu.RLock()
+	waitingReason = s.WaitingReason
+	s.mu.RUnlock()
+	if waitingReason != "deferred" {
+		t.Fatalf("waiting reason = %q, want deferred", waitingReason)
+	}
+}
+
 func TestNewSession_HasValidID(t *testing.T) {
 	s := NewSession(SessionModeCoreRun)
 	if len(s.ID) < 10 {
@@ -86,4 +129,13 @@ func TestNewSession_HasValidID(t *testing.T) {
 	if s.ID[:4] != "ses_" {
 		t.Errorf("session ID should start with ses_, got %q", s.ID)
 	}
+}
+
+func rawEvent(t *testing.T, payload any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal raw event: %v", err)
+	}
+	return data
 }

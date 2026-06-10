@@ -111,7 +111,7 @@ func buildRunTrace(state *RunState, prompt string, runErr error) *RunTrace {
 
 	state.mu.Lock()
 	runID := state.runID
-	startTime := state.startTime
+	startTime := state.currentTraceStartTime()
 	usage := state.usage
 	steps := append([]TraceStep(nil), state.traceSteps...)
 	requests := cloneRequestTraces(state.requestTraces)

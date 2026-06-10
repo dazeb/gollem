@@ -222,3 +222,48 @@ func TestRunner_MultipleEvaluators(t *testing.T) {
 		t.Errorf("expected 2 scores, got %d", len(report.Results[0].Scores))
 	}
 }
+
+func TestRunner_PublishesEvaluatorCompletedEvent(t *testing.T) {
+	bus := core.NewEventBus()
+	defer bus.Close()
+	var events []core.EvaluatorCompletedEvent
+	core.Subscribe(bus, func(event core.EvaluatorCompletedEvent) {
+		events = append(events, event)
+	})
+
+	model := core.NewTestModel(core.TextResponse("Hello World"))
+	agent := core.NewAgent[string](model)
+	dataset := Dataset[string]{
+		Name: "trace-eval",
+		Cases: []Case[string]{
+			{Name: "contains", Prompt: "Say hello world", Expected: "World"},
+		},
+	}
+
+	report, err := NewRunner(agent, Contains()).WithEventBus(bus).Run(context.Background(), dataset)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if report.PassedCases != 1 {
+		t.Fatalf("passed cases = %d, want 1", report.PassedCases)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1: %+v", len(events), events)
+	}
+	event := events[0]
+	if event.RunID == "" {
+		t.Fatal("expected evaluator event to include run id")
+	}
+	if event.Name != "trace-eval/contains" {
+		t.Fatalf("event name = %q, want trace-eval/contains", event.Name)
+	}
+	if event.Score == nil || *event.Score != 1 {
+		t.Fatalf("event score = %+v, want 1", event.Score)
+	}
+	if event.Passed == nil || !*event.Passed {
+		t.Fatalf("event passed = %+v, want true", event.Passed)
+	}
+	if event.Results["dataset"] != "trace-eval" || event.Results["case"] != "contains" {
+		t.Fatalf("unexpected event results: %+v", event.Results)
+	}
+}

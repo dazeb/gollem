@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -171,6 +173,14 @@ func TestServeHandlerWiringRunsModelAndStreamsToSSE(t *testing.T) {
 		"/runs/"+runID,
 	)
 	assertServeBodyContains(t, mustServeGETBody(t, client, ts.URL+"/runs/"+runID), "Serve wiring", "stream this", "/runs/"+runID+"/events")
+	waitForServeBodyContains(t, client, ts.URL+"/runs/"+runID+"/sidebar", "gollem.trace.v1", "Export trace")
+	assertServeBodyContains(t, mustServeGETBody(t, client, ts.URL+"/runs/"+runID+"/trace"),
+		`"schema_version": "gollem.trace.v1"`,
+		`"mode": "serve"`,
+		`"prompt": "stream this"`,
+		`"source": "dashboard"`,
+		`"dashboard_run_id": "`+runID+`"`,
+	)
 
 	eventResp := mustServeOpenSSE(t, client, ts.URL+"/runs/"+runID+"/events")
 	defer eventResp.Body.Close()
@@ -360,6 +370,54 @@ func TestNewServeRunStarterClosesPerRunModels(t *testing.T) {
 	}
 }
 
+func TestNewServeAgentTraceSnapshotAfterToolResults(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "seed.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("view", `{"path":"seed.txt","limit":1}`, "call-view"),
+		core.TextResponse("done"),
+	)
+	runtime := &ui.RunRuntime{
+		RunID:          "run-trace-snapshot",
+		EventBus:       core.NewEventBus(),
+		Session:        agui.NewSession(agui.SessionModeCoreStream),
+		ApprovalBridge: agui.NewApprovalBridge(),
+		Adapter:        agui.NewAdapter("run-trace-snapshot"),
+	}
+	defer runtime.EventBus.Close()
+	defer runtime.Adapter.Close()
+
+	var snapshots []*core.RunSnapshot
+	agent := newServeAgent(serveRunConfig{
+		provider:  "test",
+		modelName: "serve-test",
+		timeout:   time.Minute,
+		model:     model,
+		tools:     true,
+		workDir:   workDir,
+	}, runtime, &snapshots)
+
+	stream, err := agent.RunStream(context.Background(), "read the seed file")
+	if err != nil {
+		t.Fatalf("RunStream() error = %v", err)
+	}
+	result, err := runtime.ConsumeStream(stream)
+	if err != nil {
+		t.Fatalf("ConsumeStream() error = %v", err)
+	}
+	if result == nil || result.Output != "done" {
+		t.Fatalf("result = %+v, want done", result)
+	}
+	if len(snapshots) == 0 {
+		t.Fatal("expected at least one dashboard trace snapshot")
+	}
+	if !snapshotContainsToolReturn(snapshots[0], "call-view") {
+		t.Fatalf("first dashboard snapshot should include post-tool result state, got %+v", snapshots[0].Messages)
+	}
+}
+
 type serveCountingModel struct {
 	response        *core.ModelResponse
 	newSessionCalls atomic.Int32
@@ -436,6 +494,25 @@ func (s *serveStream) Next() (core.ModelResponseStreamEvent, error) {
 func (s *serveStream) Response() *core.ModelResponse { return s.response }
 func (s *serveStream) Usage() core.Usage             { return s.response.Usage }
 func (s *serveStream) Close() error                  { return nil }
+
+func snapshotContainsToolReturn(snapshot *core.RunSnapshot, toolCallID string) bool {
+	if snapshot == nil {
+		return false
+	}
+	for _, msg := range snapshot.Messages {
+		req, ok := msg.(core.ModelRequest)
+		if !ok {
+			continue
+		}
+		for _, part := range req.Parts {
+			ret, ok := part.(core.ToolReturnPart)
+			if ok && ret.ToolCallID == toolCallID {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func mustServePOSTJSON(t *testing.T, client *http.Client, target, body string) *http.Response {
 	t.Helper()

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/codetool"
 	"github.com/fugue-labs/gollem/ext/middleware"
+	traceutil "github.com/fugue-labs/gollem/ext/trace"
 	"github.com/fugue-labs/gollem/ext/tui"
 	"github.com/fugue-labs/gollem/modelutil"
 	"github.com/fugue-labs/gollem/provider/anthropic"
@@ -58,6 +60,8 @@ func main() {
 		runDebug()
 	case "serve":
 		runServe()
+	case "trace":
+		runTraceCommand()
 	case "--help", "-h", "help":
 		printUsage()
 		os.Exit(0)
@@ -75,12 +79,19 @@ type flags struct {
 	project         string // GCP project ID for vertexai providers
 	workDir         string
 	prompt          string
+	traceOut        string
+	traceStream     string
+	resumeSnapshot  string
 	timeout         time.Duration
 	thinkingBudget  int
 	reasoningEffort string // OpenAI: "low", "medium", "high", "xhigh"
 	teamMode        string // "auto", "on", "off"
+	toolPolicy      string
+	evaluator       string
 	noCodeMode      bool
 	noReasoning     bool // Disable all reasoning (thinking + effort)
+	modelExplicit   bool
+	teamExplicit    bool
 }
 
 func parseFlags(args []string) flags {
@@ -104,6 +115,7 @@ func parseFlags(args []string) flags {
 		case "--model":
 			if i+1 < len(args) {
 				f.modelName = args[i+1]
+				f.modelExplicit = true
 				i++
 			}
 		case "--location":
@@ -119,6 +131,21 @@ func parseFlags(args []string) flags {
 		case "--workdir":
 			if i+1 < len(args) {
 				f.workDir = args[i+1]
+				i++
+			}
+		case "--trace-out":
+			if i+1 < len(args) {
+				f.traceOut = args[i+1]
+				i++
+			}
+		case "--trace-stream":
+			if i+1 < len(args) {
+				f.traceStream = args[i+1]
+				i++
+			}
+		case "--resume-snapshot":
+			if i+1 < len(args) {
+				f.resumeSnapshot = args[i+1]
 				i++
 			}
 		case "--timeout":
@@ -143,6 +170,7 @@ func parseFlags(args []string) flags {
 		case "--team-mode":
 			if i+1 < len(args) {
 				f.teamMode = normalizeTeamMode(args[i+1])
+				f.teamExplicit = true
 				if f.teamMode == "" {
 					f.teamMode = "auto"
 				}
@@ -171,6 +199,35 @@ func parseFlags(args []string) flags {
 
 func runAgent() {
 	f := parseFlags(os.Args[2:])
+
+	resumeSnapshotPath := strings.TrimSpace(f.resumeSnapshot)
+	if resumeSnapshotPath == "" {
+		resumeSnapshotPath = strings.TrimSpace(os.Getenv("GOLLEM_RESUME_SNAPSHOT"))
+	}
+	var resumeSnapshot *core.RunSnapshot
+	if resumeSnapshotPath != "" {
+		var err error
+		resumeSnapshot, err = loadRunSnapshotFile(resumeSnapshotPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error loading resume snapshot: %v\n", err)
+			os.Exit(1)
+		}
+		if f.prompt == "" {
+			f.prompt = resumeSnapshot.Prompt
+		}
+		if f.prompt == "" {
+			f.prompt = "resume"
+		}
+		overrides, overrideErr := applyResumeSnapshotOverrides(&f, resumeSnapshot)
+		if overrideErr != nil {
+			fmt.Fprintf(os.Stderr, "error applying resume snapshot overrides: %v\n", overrideErr)
+			os.Exit(1)
+		}
+		if len(overrides.Applied) > 0 {
+			fmt.Fprintf(os.Stderr, "gollem: fork overrides applied (%s)\n", strings.Join(overrides.Applied, ", "))
+		}
+		fmt.Fprintf(os.Stderr, "gollem: resume snapshot loaded (%s, step=%d)\n", resumeSnapshotPath, resumeSnapshot.RunStep)
+	}
 
 	if f.prompt == "" {
 		fmt.Fprintln(os.Stderr, "error: prompt is required")
@@ -409,6 +466,10 @@ func runAgent() {
 	if runner != nil {
 		defer runner.Close()
 	}
+	if f.toolPolicy != "" {
+		toolOpts = append(toolOpts, codetool.WithToolPolicy(f.toolPolicy))
+		fmt.Fprintf(os.Stderr, "gollem: tool policy enabled (%s)\n", f.toolPolicy)
+	}
 
 	// Pass the model so the coding agent can spawn subagents for delegation.
 	toolOpts = append(toolOpts, codetool.WithModel(model))
@@ -504,9 +565,95 @@ func runAgent() {
 		}
 	}
 
+	traceOut := strings.TrimSpace(f.traceOut)
+	if traceOut == "" {
+		traceOut = strings.TrimSpace(os.Getenv("GOLLEM_TRACE_OUT"))
+	}
+	traceStream := strings.TrimSpace(f.traceStream)
+	if traceStream == "" {
+		traceStream = strings.TrimSpace(os.Getenv("GOLLEM_TRACE_STREAM"))
+	}
+	traceEnabled := traceOut != "" || traceStream != ""
+	traceMetadata := buildCLITraceMetadata(f, resumeSnapshot, resumeSnapshotPath)
+	var traceSnapshots []*core.RunSnapshot
+	var traceRuntimeRecorder *traceutil.RuntimeRecorder
+	var traceEventBus *core.EventBus
+	var traceStreamWriter *traceutil.JSONLStreamWriter
+	if traceEnabled {
+		traceEventBus = core.NewEventBus()
+		defer traceEventBus.Close()
+		traceRuntimeRecorder = traceutil.NewRuntimeRecorder(traceEventBus)
+		defer traceRuntimeRecorder.Close()
+		toolOpts = append(toolOpts, codetool.WithEventBus(traceEventBus))
+		if traceStream != "" {
+			var streamErr error
+			traceStreamWriter, streamErr = traceutil.NewJSONLStreamWriter(traceStream)
+			if streamErr != nil {
+				fmt.Fprintf(os.Stderr, "error opening trace stream: %v\n", streamErr)
+				os.Exit(1)
+			}
+			defer traceStreamWriter.Close()
+			unsubStream := traceRuntimeRecorder.OnEvent(traceStreamWriter.WriteEvent)
+			defer unsubStream()
+			var registryMu sync.Mutex
+			var registeredRunID string
+			unsubStreamRegistry := traceRuntimeRecorder.OnEvent(func(event traceutil.Event) {
+				if event.Kind != "run.started" {
+					return
+				}
+				runID := strings.TrimSpace(event.AgentID)
+				if runID == "" {
+					return
+				}
+				registryMu.Lock()
+				defer registryMu.Unlock()
+				if registeredRunID != "" {
+					return
+				}
+				registeredRunID = runID
+				if err := writeLocalTraceStreamRegistry(traceOut, traceStream, runID, "running"); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: update live trace registry: %v\n", err)
+				}
+			})
+			defer unsubStreamRegistry()
+			fmt.Fprintf(os.Stderr, "gollem: live trace stream enabled (%s)\n", traceStream)
+		}
+	}
+
 	// Build the coding agent with the full recommended setup.
 	agentOpts := codetool.AgentOptions(f.workDir, toolOpts...)
 	agentOpts = append(agentOpts, core.WithRunCondition[string](core.MaxRunDuration(f.timeout)))
+	if traceEnabled {
+		agentOpts = append(agentOpts, core.WithTracing[string]())
+		agentOpts = append(agentOpts, core.WithEventBus[string](traceEventBus))
+		agentOpts = append(agentOpts, core.WithHooks[string](core.Hook{
+			OnTurnEnd: func(ctx context.Context, rc *core.RunContext, turnNumber int, response *core.ModelResponse) {
+				if rc == nil {
+					return
+				}
+				if snap := rc.RunStateSnapshot(); snap != nil {
+					traceSnapshots = append(traceSnapshots, snap)
+					core.PublishCheckpointCreated(traceEventBus, snap)
+					if traceOut != "" && traceOut != "-" {
+						if err := writeCLIPartialTrace(traceOut, traceMetadata, traceSnapshots, traceRuntimeRecorder, snap); err != nil {
+							fmt.Fprintf(os.Stderr, "warning: write partial trace artifact: %v\n", err)
+						}
+					}
+				}
+			},
+		}))
+		if traceOut != "" {
+			agentOpts = append(agentOpts, core.WithTraceExporter[string](&cliTraceFileExporter{
+				path:     traceOut,
+				metadata: traceMetadata,
+				snapshots: func() []*core.RunSnapshot {
+					return append([]*core.RunSnapshot(nil), traceSnapshots...)
+				},
+				recorder: traceRuntimeRecorder,
+			}))
+			fmt.Fprintf(os.Stderr, "gollem: trace artifact enabled (%s)\n", traceOut)
+		}
+	}
 
 	// Add LangSmith hook if configured.
 	if langsmithHandler != nil {
@@ -631,6 +778,9 @@ func runAgent() {
 		baseModel.ModelName(), f.workDir, f.timeout)
 
 	var runOpts []core.RunOption
+	if resumeSnapshot != nil {
+		runOpts = append(runOpts, core.WithSnapshot(resumeSnapshot))
+	}
 	if imageParts := detectPromptImageParts(f.prompt, f.workDir); len(imageParts) > 0 {
 		if f.provider == "openai" {
 			parts := make([]core.ModelRequestPart, 0, len(imageParts))
@@ -877,6 +1027,278 @@ func runDebug() {
 		fmt.Printf("\nResult: %s\n", result.Output)
 		fmt.Printf("Tokens: %d input, %d output\n",
 			result.Usage.InputTokens, result.Usage.OutputTokens)
+	}
+}
+
+func loadRunSnapshotFile(path string) (*core.RunSnapshot, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("snapshot path is required")
+	}
+	//nolint:gosec // Snapshot path is explicitly supplied by the local operator.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := core.UnmarshalSnapshot(data)
+	if err != nil {
+		return nil, err
+	}
+	return snap, nil
+}
+
+type cliTraceFileExporter struct {
+	path      string
+	metadata  map[string]any
+	snapshots func() []*core.RunSnapshot
+	recorder  *traceutil.RuntimeRecorder
+}
+
+func (e *cliTraceFileExporter) Export(_ context.Context, runTrace *core.RunTrace) error {
+	if e == nil {
+		return errors.New("cli trace exporter: nil exporter")
+	}
+	if runTrace == nil {
+		return errors.New("cli trace exporter: nil run trace")
+	}
+	var runtimeEvents []traceutil.Event
+	if e.recorder != nil {
+		runtimeEvents = e.recorder.EventsForTrace(runTrace.RunID)
+	}
+	var snapshots []*core.RunSnapshot
+	if e.snapshots != nil {
+		snapshots = e.snapshots()
+	}
+	artifact, err := traceutil.FromRunTraceWithSnapshotsAndEvents(runTrace, snapshots, runtimeEvents, cloneTraceMetadata(e.metadata))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: build trace artifact: %v\n", err)
+		return err
+	}
+	if err := traceutil.WriteFile(e.path, artifact); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: write trace artifact: %v\n", err)
+		return err
+	}
+	if err := writeLocalTraceRegistry(e.path, runTrace.RunID, artifact.Summary.Status); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: update local trace registry: %v\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "gollem: trace artifact written to %s\n", e.path)
+	return nil
+}
+
+func writeCLIPartialTrace(path string, metadata map[string]any, snapshots []*core.RunSnapshot, recorder *traceutil.RuntimeRecorder, snap *core.RunSnapshot) error {
+	if strings.TrimSpace(path) == "" || path == "-" {
+		return nil
+	}
+	if snap == nil {
+		return errors.New("partial trace snapshot is nil")
+	}
+	ended := snap.Timestamp
+	if ended.IsZero() {
+		ended = time.Now()
+	}
+	started := snap.RunStartTime
+	if started.IsZero() {
+		started = ended
+	}
+	runID := strings.TrimSpace(snap.RunID)
+	if runID == "" {
+		runID = "running"
+	}
+	trace := &core.RunTrace{
+		RunID:     runID,
+		Prompt:    snap.Prompt,
+		StartTime: started,
+		Duration:  ended.Sub(started),
+		Usage:     snap.Usage,
+		Success:   false,
+	}
+	if trace.Duration < 0 {
+		trace.Duration = 0
+	}
+	var runtimeEvents []traceutil.Event
+	if recorder != nil {
+		runtimeEvents = recorder.EventsForTrace(runID)
+	}
+	partialMetadata := cloneTraceMetadata(metadata)
+	partialMetadata["partial"] = true
+	partialMetadata["partial_reason"] = "running"
+	artifact, err := traceutil.FromRunTraceWithSnapshotsAndEvents(trace, snapshots, runtimeEvents, partialMetadata)
+	if err != nil {
+		return err
+	}
+	artifact.Summary.Status = "running"
+	artifact.Summary.Success = false
+	artifact.Summary.Error = ""
+	if err := traceutil.WriteFile(path, artifact); err != nil {
+		return err
+	}
+	return writeLocalTraceRegistry(path, runID, "running")
+}
+
+func buildCLITraceMetadata(f flags, resumeSnapshot *core.RunSnapshot, resumeSnapshotPath string) map[string]any {
+	metadata := map[string]any{
+		"provider": f.provider,
+		"model":    f.modelName,
+		"topology": f.teamMode,
+		"workdir":  f.workDir,
+	}
+	if f.toolPolicy != "" {
+		metadata["tool_policy"] = f.toolPolicy
+	}
+	if f.evaluator != "" {
+		metadata["evaluator"] = map[string]any{"name": f.evaluator}
+	}
+	if resumeSnapshot != nil {
+		metadata["resume_snapshot"] = resumeSnapshotPath
+		metadata["resume_parent_run_id"] = resumeSnapshot.ParentRunID
+		metadata["resume_step"] = resumeSnapshot.RunStep
+		metadata["resume_trace_policy"] = "fresh_segment"
+		if resumeSnapshot.SourceTraceRunID != "" {
+			metadata["resume_source_trace_run_id"] = resumeSnapshot.SourceTraceRunID
+		}
+		if resumeSnapshot.SourceSnapshotID != "" {
+			metadata["resume_source_snapshot_id"] = resumeSnapshot.SourceSnapshotID
+		}
+	}
+	return metadata
+}
+
+func cloneTraceMetadata(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+type resumeSnapshotOverrides struct {
+	Applied []string
+}
+
+func applyResumeSnapshotOverrides(f *flags, snap *core.RunSnapshot) (resumeSnapshotOverrides, error) {
+	var applied resumeSnapshotOverrides
+	if f == nil || snap == nil {
+		return applied, nil
+	}
+	overrides := snapshotForkOverrides(snap)
+	if len(overrides) == 0 {
+		return applied, nil
+	}
+
+	if model := overrides["model"]; model != "" {
+		if !f.modelExplicit {
+			f.modelName = model
+			applied.Applied = append(applied.Applied, "model="+model)
+		}
+	}
+	if topology := overrides["topology"]; topology != "" {
+		mode, err := forkTopologyTeamMode(topology)
+		if err != nil {
+			return applied, err
+		}
+		if mode != "" && !f.teamExplicit {
+			f.teamMode = mode
+			applied.Applied = append(applied.Applied, "topology="+topology)
+		}
+	}
+	if policy := overrides["tool_policy"]; policy != "" {
+		appliedPolicy, err := applyForkToolPolicy(f, policy)
+		if err != nil {
+			return applied, err
+		}
+		if appliedPolicy != "" {
+			applied.Applied = append(applied.Applied, "tool_policy="+appliedPolicy)
+		}
+	}
+	if middleware := overrides["middleware"]; middleware != "" {
+		appliedMiddleware, err := applyForkMiddleware(f, middleware)
+		if err != nil {
+			return applied, err
+		}
+		if appliedMiddleware != "" {
+			applied.Applied = append(applied.Applied, "middleware="+appliedMiddleware)
+		}
+	}
+	if evaluator := overrides["evaluator"]; evaluator != "" {
+		f.evaluator = evaluator
+		applied.Applied = append(applied.Applied, "evaluator="+evaluator)
+	}
+	return applied, nil
+}
+
+func snapshotForkOverrides(snap *core.RunSnapshot) map[string]string {
+	if snap == nil || len(snap.ToolState) == 0 {
+		return nil
+	}
+	raw, ok := snap.ToolState["_gollem_fork_overrides"]
+	if !ok || raw == nil {
+		return nil
+	}
+	out := make(map[string]string)
+	switch overrides := raw.(type) {
+	case map[string]any:
+		for key, value := range overrides {
+			if text := strings.TrimSpace(fmt.Sprint(value)); text != "" {
+				out[key] = text
+			}
+		}
+	case map[string]string:
+		for key, value := range overrides {
+			if text := strings.TrimSpace(value); text != "" {
+				out[key] = text
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func forkTopologyTeamMode(topology string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(topology)) {
+	case "", "default":
+		return "", nil
+	case "auto":
+		return "auto", nil
+	case "team", "teams", "team-mode", "multi-agent", "multiagent", "on":
+		return "on", nil
+	case "single", "solo", "single-agent", "singleagent", "local", "off":
+		return "off", nil
+	default:
+		return "", fmt.Errorf("unsupported fork topology override %q (supported: team, single, auto)", topology)
+	}
+}
+
+func applyForkToolPolicy(f *flags, policy string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "", "default":
+		return "", nil
+	case "read-only", "readonly", "read_only", "no-mutation", "no_mutation":
+		f.toolPolicy = "read-only"
+		return "read-only", nil
+	case "no-code", "no-code-mode", "no_code", "no_code_mode":
+		f.noCodeMode = true
+		return "no-code-mode", nil
+	default:
+		return "", fmt.Errorf("unsupported fork tool policy override %q (supported: read-only, no-code-mode)", policy)
+	}
+}
+
+func applyForkMiddleware(f *flags, middleware string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(middleware)) {
+	case "", "default", "none":
+		return "", nil
+	case "no-reasoning", "disable-reasoning":
+		f.noReasoning = true
+		return "no-reasoning", nil
+	case "no-code", "no-code-mode", "disable-code-mode":
+		f.noCodeMode = true
+		return "no-code-mode", nil
+	default:
+		return "", fmt.Errorf("unsupported fork middleware override %q (supported: no-reasoning, no-code-mode)", middleware)
 	}
 }
 
@@ -1687,9 +2109,19 @@ func createModel(provider, modelName, location, project string, requestTimeout t
 
 	switch provider {
 	case "test":
-		return core.NewTestModel(
+		model := core.NewTestModel(
 			core.TextResponse("Hello! I'm a test model. This is a demonstration of the TUI debugger."),
-		), nil
+		)
+		if delayText := strings.TrimSpace(os.Getenv("GOLLEM_TEST_MODEL_DELAY")); delayText != "" {
+			delay, err := time.ParseDuration(delayText)
+			if err != nil || delay < 0 {
+				return nil, fmt.Errorf("invalid GOLLEM_TEST_MODEL_DELAY %q", delayText)
+			}
+			if delay > 0 {
+				return delayedTestModel{inner: model, delay: delay}, nil
+			}
+		}
+		return model, nil
 	case "anthropic":
 		opts := []anthropic.Option{anthropic.WithHTTPClient(httpClient)}
 		if modelName != "" {
@@ -1737,6 +2169,40 @@ func createModel(provider, modelName, location, project string, requestTimeout t
 	}
 }
 
+type delayedTestModel struct {
+	inner core.Model
+	delay time.Duration
+}
+
+func (m delayedTestModel) ModelName() string {
+	return m.inner.ModelName()
+}
+
+func (m delayedTestModel) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	if err := waitTestModelDelay(ctx, m.delay); err != nil {
+		return nil, err
+	}
+	return m.inner.Request(ctx, messages, settings, params)
+}
+
+func (m delayedTestModel) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	if err := waitTestModelDelay(ctx, m.delay); err != nil {
+		return nil, err
+	}
+	return m.inner.RequestStream(ctx, messages, settings, params)
+}
+
+func waitTestModelDelay(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `gollem - Coding agent framework CLI
 
@@ -1747,6 +2213,7 @@ Commands:
   run     Run a coding agent with tools (for benchmarks and automation)
   debug   Run the interactive TUI debugger
   serve   Start the browser dashboard UI server
+  trace   Inspect, replay, and diff Gollem trace artifacts
 
 Run 'gollem <command> --help' for command-specific help.
 `)
@@ -1765,6 +2232,9 @@ Options:
   --location <region>      GCP region for vertexai providers (default: us-central1)
   --project <id>           GCP project ID for vertexai providers (default: GOOGLE_CLOUD_PROJECT)
   --workdir <path>         Working directory (default: current directory)
+  --trace-out <path>       Write a gollem.trace.v1 artifact after the run
+  --trace-stream <path>    Stream live runtime-boundary events as JSONL during the run
+  --resume-snapshot <path> Resume from a snapshot produced by gollem trace fork
   --timeout <duration>     Maximum run time (default: 30m)
   --team-mode <mode>       Team tool routing: auto, on, off (default: auto)
   --thinking-budget <n>    Thinking token budget for Anthropic (default: 16000)
@@ -1798,6 +2268,8 @@ Environment variables:
   VERTEXAI_ANTHROPIC_PROMPT_CACHE Enable Anthropic prompt caching on Vertex AI (1/true/yes/on)
   VERTEXAI_ANTHROPIC_PROMPT_CACHE_TTL Optional Anthropic prompt cache TTL (e.g. 5m, 1h)
   GOLLEM_MODEL_REQUEST_TIMEOUT_SEC Optional per-model-call timeout in seconds (default derived from --timeout, capped at 6m)
+  GOLLEM_TRACE_OUT        Optional path for writing a gollem.trace.v1 artifact
+  GOLLEM_RESUME_SNAPSHOT  Optional snapshot path for resuming/forking a run
   GOLLEM_TEAM_MODE         Team mode override: auto, on, off (default: auto)
   GOLLEM_DISABLE_DELEGATE  Disable the delegate (subagent) tool (1/true/yes/on; default: off)
   GOLLEM_TOP_LEVEL_PERSONALITY Enable top-level dynamic personality generation (1/true/yes/on; default: off)

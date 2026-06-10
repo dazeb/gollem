@@ -12,6 +12,7 @@ import (
 	"github.com/fugue-labs/gollem/ext/deep"
 	"github.com/fugue-labs/gollem/ext/monty"
 	"github.com/fugue-labs/gollem/ext/team"
+	traceutil "github.com/fugue-labs/gollem/ext/trace"
 	"github.com/fugue-labs/gollem/modelutil"
 )
 
@@ -54,7 +55,7 @@ func toolsetTools(opts ...Option) []core.Tool {
 	if cfg.Model != nil && modelutil.GetProfile(cfg.Model).SupportsVision {
 		tools = append(tools, OpenImage(opts...))
 	}
-	return tools
+	return applyToolPolicy(cfg.ToolPolicy, tools)
 }
 
 // AllTools returns all coding agent tools as a slice.
@@ -93,6 +94,11 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	// Ensure shared background process manager for all tools.
 	toolOpts = ensureBackgroundManager(toolOpts)
 	cfg := applyOpts(toolOpts)
+	traceDir := strings.TrimSpace(cfg.TraceDir)
+	var traceRuntimeRecorder *traceutil.RuntimeRecorder
+	if traceDir != "" && cfg.EventBus != nil {
+		traceRuntimeRecorder = traceutil.NewRuntimeRecorder(cfg.EventBus)
+	}
 	verifyMW, verifyValidator := VerificationCheckpoint(workDir, cfg.Timeout)
 	var kickoffMW core.AgentMiddleware
 	if cfg.Model != nil {
@@ -150,6 +156,9 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		}),
 		core.WithDynamicSystemPrompt[string](cfg.BackgroundProcessManager.CompletionPrompt),
 	}
+	if cfg.EventBus != nil {
+		toolOptions = append(toolOptions, core.WithEventBus[string](cfg.EventBus))
+	}
 	// Default personality generation: when a model is available but no
 	// explicit generator was provided, auto-create a cached generator.
 	// Append to toolOpts so it flows through to SubAgentTool as well.
@@ -200,6 +209,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		var t *team.Team
 		if cfg.Session != nil && cfg.Session.Team != nil {
 			t = cfg.Session.Team
+			t.AttachEventBus(cfg.EventBus)
 		} else {
 			workerExtras := []core.Tool{SubAgentTool(cfg.Model, toolOpts...)}
 			if cfg.WebSearchFunc != nil {
@@ -209,9 +219,10 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 				workerExtras = append(workerExtras, FetchURL(cfg.FetchURLFunc))
 			}
 			t = team.NewTeam(team.TeamConfig{
-				Name:   "coding-team",
-				Leader: "leader",
-				Model:  cfg.Model,
+				Name:     "coding-team",
+				Leader:   "leader",
+				Model:    cfg.Model,
+				EventBus: cfg.EventBus,
 				// Each worker gets its own toolset with an isolated
 				// BackgroundProcessManager so bash_status, cleanup, and
 				// completion notifications are per-worker.
@@ -244,6 +255,7 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 
 	// Register all extra tools with the agent.
 	if len(extraTools) > 0 {
+		extraTools = applyToolPolicy(cfg.ToolPolicy, extraTools)
 		toolOptions = append(toolOptions, core.WithTools[string](extraTools...))
 	}
 
@@ -252,12 +264,14 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 	if cfg.Runner != nil {
 		montyTools := append(AllTools(toolOpts...), extraTools...)
 		cm := monty.New(cfg.Runner, montyTools)
-		toolOptions = append(toolOptions, core.WithTools[string](cm.Tool()))
+		toolOptions = append(toolOptions, core.WithTools[string](applyToolPolicy(cfg.ToolPolicy, []core.Tool{cm.Tool()})...))
 		systemPrompt += "\n\n" + cm.SystemPrompt()
 	}
-	toolOptions = append(toolOptions,
-		core.WithToolsPrepare[string](disableExecuteCodeOnImportFailuresPrepare()),
+	toolPrepare := composeToolsPrepare(
+		disableExecuteCodeOnImportFailuresPrepare(),
+		toolPolicyPrepare(cfg.ToolPolicy),
 	)
+	toolOptions = append(toolOptions, core.WithToolsPrepare[string](toolPrepare))
 
 	// Populate session cleanup for persistent session mode.
 	if cfg.Session != nil {
@@ -402,10 +416,23 @@ func AgentOptions(workDir string, toolOpts ...Option) []core.AgentOption[string]
 		}
 	}
 
-	// Export traces to /tmp/gollem-traces if the dir is writable.
-	traceDir := "/tmp/gollem-traces"
-	if err := os.MkdirAll(traceDir, 0o755); err == nil {
-		opts = append(opts, core.WithTraceExporter[string](core.NewJSONFileExporter(traceDir)))
+	// Export canonical trace artifacts if the configured dir is writable.
+	if traceDir != "" {
+		if err := os.MkdirAll(traceDir, 0o755); err == nil {
+			exporterOpts := []traceutil.DirectoryExporterOption(nil)
+			if traceRuntimeRecorder != nil {
+				exporterOpts = append(exporterOpts, traceutil.WithRuntimeRecorder(traceRuntimeRecorder))
+			}
+			exporter := traceutil.NewDirectoryExporter(traceDir, exporterOpts...)
+			if traceRuntimeRecorder != nil {
+				opts = append(opts, core.WithTraceExporter[string](&managedTraceExporter{
+					exporter: exporter,
+					recorder: traceRuntimeRecorder,
+				}))
+			} else {
+				opts = append(opts, core.WithTraceExporter[string](exporter))
+			}
+		}
 	}
 
 	return opts

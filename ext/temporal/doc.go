@@ -11,13 +11,24 @@
 // WorkflowStatus snapshot, signal ta.ApprovalSignalName() for tools marked with
 // core.WithRequiresApproval(), signal ta.DeferredResultSignalName() for deferred
 // tool results, or signal ta.AbortSignalName() to stop a waiting run.
+// WorkflowStatus.Trace and WorkflowOutput.Trace are rebuilt from Temporal
+// workflow state/history, so they are the cluster-safe trace source when
+// multiple worker pods poll the same task queue. File trace exporters registered
+// on the wrapped agent execute as a trace_export activity on whichever worker
+// claims that activity; use shared storage, object storage, or a client-side
+// status query/export path for Kubernetes deployments. WorkflowOutput.TraceExport
+// records trace exporter success/failure counts and non-fatal exporter errors.
+// The in-memory EventBus is process-local and should not be treated as a
+// cross-worker aggregation layer.
 //
 // TemporalAgent also supports stable registration versioning with
 // temporal.WithVersion(...) and workflow rollover thresholds with
 // temporal.WithContinueAsNew(...). WorkflowStatus and WorkflowOutput include
-// continue-as-new metadata so callers can observe how often a run has rolled
-// over. For workers that host multiple durable agents, temporal.RegisterAll(...)
-// registers every workflow and activity set in one call.
+// continue-as-new metadata plus Temporal workflow/run IDs so callers can
+// observe how often a logical run has rolled over and which Temporal executions
+// carried it. For workers that host multiple durable agents,
+// temporal.RegisterAll(...) registers every workflow and activity set in one
+// call.
 //
 // TemporalModel applies any request or stream middleware captured at
 // construction to both its direct Request/RequestStream methods and its

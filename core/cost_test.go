@@ -121,6 +121,44 @@ func TestCostTracker_AgentIntegration(t *testing.T) {
 	}
 }
 
+func TestCostTracker_TraceExporterSeesRunCost(t *testing.T) {
+	pricing := map[string]ModelPricing{
+		"test-model": {InputTokenCost: 0.000003, OutputTokenCost: 0.000015},
+	}
+	tracker := NewCostTracker(pricing)
+
+	resp := TextResponse("done")
+	resp.Usage = Usage{InputTokens: 100, OutputTokens: 50}
+
+	var exported *RunTrace
+	exporter := testTraceExporter{exportFn: func(_ context.Context, trace *RunTrace) error {
+		exported = trace
+		return nil
+	}}
+	agent := NewAgent[string](NewTestModel(resp),
+		WithCostTracker[string](tracker),
+		WithTraceExporter[string](exporter),
+	)
+
+	result, err := agent.Run(context.Background(), "test trace cost tracking")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exported == nil || exported.Cost == nil {
+		t.Fatalf("expected exported trace cost, got %+v", exported)
+	}
+	if result.Cost == nil || result.Trace == nil || result.Trace.Cost == nil {
+		t.Fatalf("expected result and result trace costs, got result=%+v trace=%+v", result.Cost, result.Trace)
+	}
+	artifact, err := NewTraceArtifact(exported, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact.Summary.Cost == nil || artifact.Summary.Cost.TotalCost <= 0 {
+		t.Fatalf("expected artifact summary cost, got %+v", artifact.Summary.Cost)
+	}
+}
+
 func TestCostTracker_ZeroPricing(t *testing.T) {
 	pricing := map[string]ModelPricing{
 		"free-model": {InputTokenCost: 0, OutputTokenCost: 0},

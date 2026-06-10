@@ -245,6 +245,17 @@ func defaultWorkflowRunnerMetadata[T any](run client.WorkflowRun, output *Workfl
 	if output != nil {
 		metadata["temporal_completed"] = output.Completed
 		metadata["temporal_continue_as_new_count"] = output.ContinueAsNewCount
+		metadata["temporal_workflow_id"] = firstNonEmpty(output.TemporalWorkflowID, metadataString(metadata["temporal_workflow_id"]))
+		metadata["temporal_run_id"] = firstNonEmpty(output.TemporalRunID, metadataString(metadata["temporal_run_id"]))
+		if len(output.TemporalRunChain) > 0 {
+			metadata["temporal_run_chain"] = output.TemporalRunChain
+		}
+		if output.TraceExport != nil {
+			metadata["temporal_trace_export_attempted"] = output.TraceExport.Attempted
+			metadata["temporal_trace_export_total"] = output.TraceExport.Total
+			metadata["temporal_trace_export_succeeded"] = output.TraceExport.Succeeded
+			metadata["temporal_trace_export_failed"] = output.TraceExport.Failed
+		}
 		if output.Cost != nil {
 			metadata["temporal_cost_total"] = output.Cost.TotalCost
 			metadata["temporal_cost_currency"] = output.Cost.Currency
@@ -254,6 +265,20 @@ func defaultWorkflowRunnerMetadata[T any](run client.WorkflowRun, output *Workfl
 		metadata["temporal_trace_steps"] = len(result.Trace.Steps)
 	}
 	return metadata
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func metadataString(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 func outputCompletedAt[T any](output *WorkflowOutput, result *core.RunResult[T]) time.Time {

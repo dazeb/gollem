@@ -28,7 +28,7 @@ func Write(opts ...Option) core.Tool {
 		"Create a new file or overwrite an existing file with the provided content. "+
 			"Creates parent directories if they don't exist. "+
 			"Use this for creating new files. For modifying existing files, prefer the edit tool.",
-		func(ctx context.Context, params WriteParams) (string, error) {
+		func(ctx context.Context, rc *core.RunContext, params WriteParams) (string, error) {
 			if params.Path == "" {
 				return "", &core.ModelRetryError{Message: "path must not be empty"}
 			}
@@ -108,7 +108,11 @@ func Write(opts ...Option) core.Tool {
 				writeContent = strings.ReplaceAll(writeContent, "\n", "\r\n")
 			}
 
-			if err := os.WriteFile(path, []byte(writeContent), perm); err != nil {
+			operation := "create"
+			if prevSize >= 0 {
+				operation = "overwrite"
+			}
+			if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), perm, operation, "write"); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
 			}
 

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
@@ -75,6 +76,7 @@ type Runner[T any] struct {
 	evaluators     []Evaluator[T]
 	stepEvaluators []StepEvaluator
 	passScore      float64
+	eventBus       *core.EventBus
 }
 
 // NewRunner creates an evaluation runner.
@@ -95,6 +97,12 @@ func (r *Runner[T]) WithPassScore(score float64) *Runner[T] {
 // WithStepEvaluators adds step evaluators that score individual steps of each agent run.
 func (r *Runner[T]) WithStepEvaluators(evaluators ...StepEvaluator) *Runner[T] {
 	r.stepEvaluators = append(r.stepEvaluators, evaluators...)
+	return r
+}
+
+// WithEventBus publishes evaluator results as replayable runtime trace events.
+func (r *Runner[T]) WithEventBus(bus *core.EventBus) *Runner[T] {
+	r.eventBus = bus
 	return r
 }
 
@@ -146,9 +154,14 @@ func (r *Runner[T]) Run(ctx context.Context, dataset Dataset[T]) (*Report, error
 			cr.StepScores = r.evaluateSteps(ctx, result.Messages)
 		}
 
+		var avgCaseScore *float64
+		var passedCase *bool
 		if len(cr.Scores) > 0 {
-			avgCaseScore := caseTotal / float64(len(cr.Scores))
-			if avgCaseScore >= r.passScore {
+			avg := caseTotal / float64(len(cr.Scores))
+			avgCaseScore = &avg
+			passed := avg >= r.passScore
+			passedCase = &passed
+			if passed {
 				report.PassedCases++
 			} else {
 				report.FailedCases++
@@ -157,6 +170,7 @@ func (r *Runner[T]) Run(ctx context.Context, dataset Dataset[T]) (*Report, error
 			report.FailedCases++
 		}
 
+		r.publishEvaluatorCompleted(result.RunID, dataset, cr, avgCaseScore, passedCase)
 		report.Results = append(report.Results, cr)
 	}
 
@@ -184,6 +198,67 @@ func (r *Runner[T]) Run(ctx context.Context, dataset Dataset[T]) (*Report, error
 	return report, nil
 }
 
+func (r *Runner[T]) publishEvaluatorCompleted(runID string, dataset Dataset[T], cr CaseResult, score *float64, passed *bool) {
+	if r == nil || r.eventBus == nil {
+		return
+	}
+	name := dataset.Name
+	if cr.CaseName != "" {
+		if name == "" {
+			name = cr.CaseName
+		} else {
+			name += "/" + cr.CaseName
+		}
+	}
+	if name == "" {
+		name = "evaluation"
+	}
+	results := map[string]any{
+		"dataset":          dataset.Name,
+		"case":             cr.CaseName,
+		"score_count":      len(cr.Scores),
+		"step_score_count": len(cr.StepScores),
+		"duration_ms":      cr.Duration.Milliseconds(),
+	}
+	if cr.Error != nil {
+		results["error"] = cr.Error.Error()
+	}
+	if len(cr.Scores) > 0 {
+		results["scores"] = scoreSummaries(cr.Scores)
+	}
+	if len(cr.StepScores) > 0 {
+		results["step_scores"] = scoreSummaries(cr.StepScores)
+	}
+	core.Publish(r.eventBus, core.EvaluatorCompletedEvent{
+		RunID:       runID,
+		Name:        name,
+		Score:       score,
+		Passed:      passed,
+		Results:     results,
+		CompletedAt: time.Now(),
+	})
+}
+
+func scoreSummaries(scores []Score) []map[string]any {
+	out := make([]map[string]any, 0, len(scores))
+	for i, score := range scores {
+		item := map[string]any{
+			"index":  i,
+			"value":  score.Value,
+			"reason": score.Reason,
+		}
+		if len(score.Details) > 0 {
+			item["details"] = score.Details
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func evaluationError(name string, err error) Score {
+	return Score{Value: 0, Reason: fmt.Sprintf("%s error: %v", name, err)}
+}
+
 // evaluateSteps runs step evaluators on each ModelResponse in the conversation history.
 func (r *Runner[T]) evaluateSteps(ctx context.Context, messages []core.ModelMessage) []Score {
 	var stepScores []Score
@@ -207,10 +282,7 @@ func (r *Runner[T]) evaluateSteps(ctx context.Context, messages []core.ModelMess
 		for _, se := range r.stepEvaluators {
 			score, err := se.EvaluateStep(ctx, resp, stepIdx, state)
 			if err != nil {
-				stepScores = append(stepScores, Score{
-					Value:  0.0,
-					Reason: "step evaluator error: " + err.Error(),
-				})
+				stepScores = append(stepScores, evaluationError("step evaluator", err))
 				continue
 			}
 			stepScores = append(stepScores, *score)

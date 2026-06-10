@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/fugue-labs/gollem/core"
+	graphutil "github.com/fugue-labs/gollem/ext/graph"
 )
 
 type traceCaptureExporter struct {
@@ -189,6 +192,80 @@ func TestTemporalAgent_RunWorkflow_ToolAndStatefulResult(t *testing.T) {
 	}
 }
 
+func TestTemporalAgent_RunWorkflow_SnapshotResumeRestoresToolState(t *testing.T) {
+	type Params struct{}
+
+	counterState := &workflowCounterTool{}
+	counter := core.FuncTool[Params]("counter", "counter", func(_ context.Context, _ Params) (string, error) {
+		counterState.count++
+		return "counted", nil
+	})
+	counter.Stateful = counterState
+
+	snapshot, err := core.EncodeRunSnapshot(&core.RunSnapshot{
+		Messages: []core.ModelMessage{
+			core.ModelRequest{
+				Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: "previous"}},
+				Timestamp: time.Now().Add(-2 * time.Minute),
+			},
+			core.ModelResponse{
+				Parts:     []core.ModelResponsePart{core.TextPart{Content: "previous response"}},
+				Timestamp: time.Now().Add(-time.Minute),
+			},
+		},
+		RunID:        "workflow-snap-resume",
+		RunStep:      5,
+		RunStartTime: time.Now().Add(-3 * time.Minute),
+		Usage:        core.RunUsage{Requests: 2, ToolCalls: 1},
+		ToolState:    map[string]any{"counter": map[string]any{"count": 7}},
+		Prompt:       "previous",
+	})
+	if err != nil {
+		t.Fatalf("encode run snapshot: %v", err)
+	}
+
+	model := core.NewTestModel(
+		core.ToolCallResponse("counter", `{}`),
+		core.TextResponse("done"),
+	)
+	agent := core.NewAgent[string](model, core.WithTools[string](counter))
+	ta := NewTemporalAgent(agent, WithName("workflow-snapshot-tool-state"))
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	registerTemporalWorkflow(env, ta)
+
+	env.ExecuteWorkflow(ta.RunWorkflow, WorkflowInput{
+		Prompt:   "continue",
+		Snapshot: snapshot,
+	})
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+
+	var output WorkflowOutput
+	if err := env.GetWorkflowResult(&output); err != nil {
+		t.Fatalf("workflow result: %v", err)
+	}
+	result, err := ta.DecodeWorkflowOutput(&output)
+	if err != nil {
+		t.Fatalf("decode workflow output: %v", err)
+	}
+	if result.RunID != "workflow-snap-resume" {
+		t.Fatalf("expected restored RunID workflow-snap-resume, got %q", result.RunID)
+	}
+	state, ok := result.ToolState["counter"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected counter tool state, got %T", result.ToolState["counter"])
+	}
+	if got := int(state["count"].(float64)); got != 8 {
+		t.Fatalf("expected resumed counter state 8, got %d", got)
+	}
+	if result.Usage.Requests != 4 || result.Usage.ToolCalls != 2 {
+		t.Fatalf("expected usage to continue from snapshot, got %+v", result.Usage)
+	}
+}
+
 func TestTemporalAgent_RunWorkflow_StructuredOutput(t *testing.T) {
 	type Answer struct {
 		Answer string `json:"answer"`
@@ -303,7 +380,8 @@ func TestTemporalAgent_RunWorkflow_TraceCostAndExporterParity(t *testing.T) {
 	model := core.NewTestModel(resp)
 	exporter := &traceCaptureExporter{}
 	agent := core.NewAgent[string](model,
-		core.WithTraceExporter[string](core.NewMultiExporter(exporter, &temporalFailingExporter{})),
+		core.WithTraceExporter[string](exporter),
+		core.WithTraceExporter[string](&temporalFailingExporter{}),
 		core.WithCostTracker[string](core.NewCostTracker(map[string]core.ModelPricing{
 			model.ModelName(): {
 				InputTokenCost:  0.000003,
@@ -328,6 +406,15 @@ func TestTemporalAgent_RunWorkflow_TraceCostAndExporterParity(t *testing.T) {
 	}
 	if output.Trace == nil {
 		t.Fatal("expected workflow output to include a decoded trace")
+	}
+	if output.TraceExport == nil {
+		t.Fatal("expected workflow output to include trace export status")
+	}
+	if output.TraceExport.Total != 2 || output.TraceExport.Succeeded != 1 || output.TraceExport.Failed != 1 {
+		t.Fatalf("unexpected trace export status %+v", output.TraceExport)
+	}
+	if len(output.TraceExport.Errors) != 1 || !strings.Contains(output.TraceExport.Errors[0].Error, "export failed") {
+		t.Fatalf("expected non-fatal exporter error, got %+v", output.TraceExport.Errors)
 	}
 	if output.Cost == nil {
 		t.Fatal("expected workflow output to include cost")
@@ -625,4 +712,174 @@ func TestTemporalAgent_DecodeWorkflowOutput_LegacyAndPausedBranches(t *testing.T
 	if result.Cost == nil || result.Cost.TotalCost != 1.23 {
 		t.Fatalf("expected cost to be preserved, got %+v", result.Cost)
 	}
+}
+
+func TestTemporalAgent_RunWorkflow_FileExporterWritesCanonicalArtifact(t *testing.T) {
+	traceDir := t.TempDir()
+	agent := core.NewAgent[string](
+		core.NewTestModel(core.TextResponse("durable traced")),
+		core.WithTraceExporter[string](core.NewTraceFileExporter(traceDir)),
+	)
+	ta := NewTemporalAgent(agent, WithName("workflow-file-trace"))
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	registerTemporalWorkflow(env, ta)
+
+	env.ExecuteWorkflow(ta.RunWorkflow, WorkflowInput{Prompt: "durable file trace"})
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+	var output WorkflowOutput
+	if err := env.GetWorkflowResult(&output); err != nil {
+		t.Fatalf("workflow result: %v", err)
+	}
+	if output.TraceExport == nil || output.TraceExport.Succeeded != 1 || output.TraceExport.Failed != 0 {
+		t.Fatalf("unexpected trace export status %+v", output.TraceExport)
+	}
+	assertCanonicalTraceArtifact(t, traceDir, "durable file trace")
+}
+
+type customTraceExportWorkflowInput struct {
+	ActivityName string        `json:"activity_name"`
+	Trace        core.RunTrace `json:"trace"`
+}
+
+func customTraceExportWorkflow(ctx workflow.Context, input customTraceExportWorkflowInput) (*TraceExportStatus, error) {
+	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: time.Minute,
+	})
+	var status TraceExportStatus
+	err := workflow.ExecuteActivity(ctx, input.ActivityName, traceExportActivityInput{
+		Trace: &input.Trace,
+	}).Get(ctx, &status)
+	return &status, err
+}
+
+func TestTemporalAgent_CustomWorkflowCanUseTraceExportActivity(t *testing.T) {
+	exporter := &traceCaptureExporter{}
+	agent := core.NewAgent[string](
+		core.NewTestModel(core.TextResponse("unused")),
+		core.WithTraceExporter[string](exporter),
+	)
+	ta := NewTemporalAgent(agent, WithName("workflow-custom-trace-export"))
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(customTraceExportWorkflow)
+	for name, fn := range ta.Activities() {
+		env.RegisterActivityWithOptions(fn, activity.RegisterOptions{Name: name})
+	}
+
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	env.ExecuteWorkflow(customTraceExportWorkflow, customTraceExportWorkflowInput{
+		ActivityName: ta.traceExportActivityName(),
+		Trace: core.RunTrace{
+			RunID:     "custom-workflow-run",
+			Prompt:    "custom workflow trace export",
+			StartTime: now,
+			EndTime:   now.Add(time.Second),
+			Duration:  time.Second,
+			Success:   true,
+		},
+	})
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+	var status TraceExportStatus
+	if err := env.GetWorkflowResult(&status); err != nil {
+		t.Fatalf("workflow result: %v", err)
+	}
+	if !status.Attempted || status.Succeeded != 1 || status.Failed != 0 {
+		t.Fatalf("unexpected custom workflow trace export status %+v", status)
+	}
+	if exporter.Count() != 1 || exporter.Last().RunID != "custom-workflow-run" {
+		t.Fatalf("expected exporter to receive custom workflow trace, got count=%d trace=%+v", exporter.Count(), exporter.Last())
+	}
+}
+
+type graphActivityTraceInput struct {
+	TraceDir string
+}
+
+func graphActivityTraceWorkflow(ctx workflow.Context, input graphActivityTraceInput) error {
+	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: time.Minute,
+	})
+	var output string
+	return workflow.ExecuteActivity(ctx, "graph_activity_trace", input).Get(ctx, &output)
+}
+
+func graphActivityTrace(ctx context.Context, input graphActivityTraceInput) (string, error) {
+	type graphState struct {
+		TraceDir string
+		Output   string
+	}
+	g := graphutil.NewGraph[graphState]()
+	g.AddNode(graphutil.Node[graphState]{
+		Name: "agent",
+		Run: func(ctx context.Context, state *graphState) (string, error) {
+			agent := core.NewAgent[string](
+				core.NewTestModel(core.TextResponse("graph activity traced")),
+				core.WithTraceExporter[string](core.NewTraceFileExporter(state.TraceDir)),
+			)
+			result, err := agent.Run(ctx, "graph activity file trace")
+			if err != nil {
+				return "", err
+			}
+			state.Output = result.Output
+			return graphutil.EndNode, nil
+		},
+	})
+	g.SetEntryPoint("agent")
+	state, err := g.Run(ctx, graphState{TraceDir: input.TraceDir})
+	if err != nil {
+		return "", err
+	}
+	return state.Output, nil
+}
+
+func TestTemporalGraphActivityAgentRun_FileExporterWritesCanonicalArtifact(t *testing.T) {
+	traceDir := t.TempDir()
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(graphActivityTraceWorkflow)
+	env.RegisterActivityWithOptions(graphActivityTrace, activity.RegisterOptions{Name: "graph_activity_trace"})
+
+	env.ExecuteWorkflow(graphActivityTraceWorkflow, graphActivityTraceInput{TraceDir: traceDir})
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("workflow error: %v", err)
+	}
+	assertCanonicalTraceArtifact(t, traceDir, "graph activity file trace")
+}
+
+func assertCanonicalTraceArtifact(t *testing.T, traceDir string, prompt string) *core.TraceArtifact {
+	t.Helper()
+	entries, err := os.ReadDir(traceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 trace artifact, got %d", len(entries))
+	}
+	if filepath.Ext(entries[0].Name()) != ".json" || !strings.HasSuffix(entries[0].Name(), ".trace.json") {
+		t.Fatalf("expected canonical trace filename, got %q", entries[0].Name())
+	}
+	artifact, err := core.ReadTraceArtifactFile(filepath.Join(traceDir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact.SchemaVersion != core.TraceArtifactSchemaVersion {
+		t.Fatalf("schema version = %q, want %q", artifact.SchemaVersion, core.TraceArtifactSchemaVersion)
+	}
+	if artifact.Run.Prompt != prompt {
+		t.Fatalf("prompt = %q, want %q", artifact.Run.Prompt, prompt)
+	}
+	if artifact.Trace == nil {
+		t.Fatal("expected embedded core trace")
+	}
+	if len(artifact.Events) == 0 {
+		t.Fatal("expected canonical events")
+	}
+	return artifact
 }

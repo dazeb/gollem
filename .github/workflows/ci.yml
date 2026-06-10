@@ -34,12 +34,16 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       - name: Run tests
-        run: go test -race -coverprofile=coverage.out ./...
+        shell: bash
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v '^github.com/fugue-labs/gollem/ext/monty$')
+          go test -race -coverprofile=coverage.out "${packages[@]}"
+          go test -coverprofile=coverage.monty.out ./ext/monty
       - name: Upload coverage
         if: matrix.go-version == '1.25'
         uses: codecov/codecov-action@v4
         with:
-          files: coverage.out
+          files: coverage.out,coverage.monty.out
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 

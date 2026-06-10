@@ -26,7 +26,14 @@ type workflowRunState struct {
 	RunStep                       int
 	RunID                         string
 	ParentRunID                   string
+	TemporalWorkflowID            string
+	TemporalRunID                 string
+	TemporalRunChain              []string
 	RunStartTime                  time.Time
+	TraceStartTime                time.Time
+	TraceExport                   *TraceExportStatus
+	SourceTraceRunID              string
+	SourceSnapshotID              string
 	ToolState                     map[string]any
 	ContinueAsNewCount            int
 	LastContinueAsNewReason       string
@@ -35,11 +42,29 @@ type workflowRunState struct {
 }
 
 func newWorkflowRunState(ctx workflow.Context, input WorkflowInput) (*workflowRunState, error) {
+	now := workflow.Now(ctx)
+	info := workflow.GetInfo(ctx)
+	temporalWorkflowID := info.WorkflowExecution.ID
+	if temporalWorkflowID == "" {
+		temporalWorkflowID = input.TemporalWorkflowID
+	}
+	temporalRunID := info.WorkflowExecution.RunID
+	if temporalRunID == "" {
+		temporalRunID = input.TemporalRunID
+	}
+	traceStart := now
+	if !input.TraceStartTime.IsZero() {
+		traceStart = input.TraceStartTime
+	}
 	state := &workflowRunState{
 		ToolRetries:                   make(map[string]int),
-		RunID:                         workflow.GetInfo(ctx).WorkflowExecution.ID,
+		RunID:                         temporalWorkflowID,
 		ParentRunID:                   input.ParentRunID,
-		RunStartTime:                  workflow.Now(ctx),
+		TemporalWorkflowID:            temporalWorkflowID,
+		TemporalRunID:                 temporalRunID,
+		TemporalRunChain:              appendTemporalRunChain(input.TemporalRunChain, temporalRunID),
+		RunStartTime:                  now,
+		TraceStartTime:                traceStart,
 		DepsJSON:                      append([]byte(nil), input.DepsJSON...),
 		ContinueAsNewCount:            input.ContinueAsNewCount,
 		ContinueAsNewBaseRunStep:      input.ContinueAsNewBaseRunStep,
@@ -79,23 +104,27 @@ func newWorkflowRunState(ctx workflow.Context, input WorkflowInput) (*workflowRu
 	}
 	state.RunStep = snap.RunStep
 	state.ToolState = cloneAnyMap(snap.ToolState)
+	state.SourceTraceRunID = snap.SourceTraceRunID
+	state.SourceSnapshotID = snap.SourceSnapshotID
 	return state, nil
 }
 
 func (s *workflowRunState) snapshotJSON(prompt string, now time.Time) ([]byte, error) {
 	snap := &core.RunSnapshot{
-		Messages:        cloneMessages(s.Messages),
-		Usage:           s.Usage,
-		LastInputTokens: s.LastInputTokens,
-		Retries:         s.Retries,
-		ToolRetries:     cloneIntMap(s.ToolRetries),
-		RunID:           s.RunID,
-		ParentRunID:     s.ParentRunID,
-		RunStep:         s.RunStep,
-		RunStartTime:    s.RunStartTime,
-		Prompt:          prompt,
-		ToolState:       cloneAnyMap(s.ToolState),
-		Timestamp:       now,
+		Messages:         cloneMessages(s.Messages),
+		Usage:            s.Usage,
+		LastInputTokens:  s.LastInputTokens,
+		Retries:          s.Retries,
+		ToolRetries:      cloneIntMap(s.ToolRetries),
+		RunID:            s.RunID,
+		ParentRunID:      s.ParentRunID,
+		RunStep:          s.RunStep,
+		RunStartTime:     s.RunStartTime,
+		Prompt:           prompt,
+		ToolState:        cloneAnyMap(s.ToolState),
+		Timestamp:        now,
+		SourceTraceRunID: s.SourceTraceRunID,
+		SourceSnapshotID: s.SourceSnapshotID,
 	}
 	return core.MarshalSnapshot(snap)
 }
@@ -293,6 +322,33 @@ func cloneIntMap(src map[string]int) map[string]int {
 		cloned[k] = v
 	}
 	return cloned
+}
+
+func cloneStringSlice(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	return append([]string(nil), src...)
+}
+
+func appendTemporalRunChain(chain []string, runID string) []string {
+	out := cloneStringSlice(chain)
+	if runID == "" {
+		return out
+	}
+	if len(out) == 0 || out[len(out)-1] != runID {
+		out = append(out, runID)
+	}
+	return out
+}
+
+func cloneTraceExportStatus(src *TraceExportStatus) *TraceExportStatus {
+	if src == nil {
+		return nil
+	}
+	cloned := *src
+	cloned.Errors = append([]TraceExportError(nil), src.Errors...)
+	return &cloned
 }
 
 func cloneModelPricingMap(src map[string]core.ModelPricing) map[string]core.ModelPricing {

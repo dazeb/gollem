@@ -12,6 +12,7 @@ type RunTrace struct {
 	Steps     []TraceStep    `json:"steps"`
 	Requests  []RequestTrace `json:"requests,omitempty"`
 	Usage     RunUsage       `json:"usage"`
+	Cost      *RunCost       `json:"cost,omitempty"`
 	Success   bool           `json:"success"`
 	Error     string         `json:"error,omitempty"`
 }
@@ -28,11 +29,24 @@ type TraceStep struct {
 type TraceStepKind string
 
 const (
-	TraceModelRequest  TraceStepKind = "model_request"
-	TraceModelResponse TraceStepKind = "model_response"
-	TraceToolCall      TraceStepKind = "tool_call"
-	TraceToolResult    TraceStepKind = "tool_result"
-	TraceGuardrail     TraceStepKind = "guardrail"
+	TraceModelRequest         TraceStepKind = "model_request"
+	TraceModelResponse        TraceStepKind = "model_response"
+	TraceModelDelta           TraceStepKind = "model_delta"
+	TraceToolCall             TraceStepKind = "tool_call"
+	TraceToolResult           TraceStepKind = "tool_result"
+	TraceGuardrail            TraceStepKind = "guardrail"
+	TraceCheckpointCreated    TraceStepKind = "checkpoint_created"
+	TraceApprovalRequested    TraceStepKind = "approval_requested"
+	TraceApprovalResolved     TraceStepKind = "approval_resolved"
+	TraceDeferredRequested    TraceStepKind = "deferred_requested"
+	TraceDeferredResolved     TraceStepKind = "deferred_resolved"
+	TraceRunWaiting           TraceStepKind = "run_waiting"
+	TraceRunResumed           TraceStepKind = "run_resumed"
+	TraceRetryScheduled       TraceStepKind = "retry_scheduled"
+	TraceTopologyTransitioned TraceStepKind = "topology_transitioned"
+	TraceEvaluatorCompleted   TraceStepKind = "evaluator_completed"
+	TraceArtifactChanged      TraceStepKind = "artifact_changed"
+	TraceErrorRaised          TraceStepKind = "error_raised"
 )
 
 // WithTracing enables execution tracing. The trace is available

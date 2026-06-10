@@ -21,6 +21,7 @@ import (
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/agui"
+	traceutil "github.com/fugue-labs/gollem/ext/trace"
 )
 
 func TestHandleStartRunCreatesRunAndRedirects(t *testing.T) {
@@ -501,6 +502,165 @@ func TestServerServeRoutesAssetsSSEAndApproveFlow(t *testing.T) {
 		">5<",
 		">1<",
 	)
+}
+
+func TestRunTraceRoutesExposeStoredArtifact(t *testing.T) {
+	store := NewRunStateStore()
+	server := MustNewServer(
+		WithRunStore(store),
+		WithRunStarter(RunStarterFunc(func(_ context.Context, runtime *RunRuntime, req RunStartRequest) error {
+			now := time.Now().UTC()
+			core.Publish(runtime.EventBus, core.RunStartedEvent{RunID: runtime.RunID, Prompt: req.Prompt, StartedAt: now})
+
+			artifact, err := traceutil.FromRunTrace(&core.RunTrace{
+				RunID:     runtime.RunID,
+				Prompt:    req.Prompt,
+				StartTime: now,
+				EndTime:   now.Add(time.Second),
+				Duration:  time.Second,
+				Success:   true,
+				Usage:     core.RunUsage{Usage: core.Usage{InputTokens: 3, OutputTokens: 2}, Requests: 1},
+				Steps: []core.TraceStep{
+					{Kind: core.TraceModelRequest, Timestamp: now.Add(10 * time.Millisecond), Data: map[string]any{"model": "test"}},
+					{Kind: core.TraceModelResponse, Timestamp: now.Add(20 * time.Millisecond), Duration: 10 * time.Millisecond, Data: map[string]any{"finish_reason": "stop"}},
+				},
+			}, map[string]any{"source": "test"})
+			if err != nil {
+				return err
+			}
+			runtime.StoreTraceArtifact(artifact)
+			core.Publish(runtime.EventBus, core.RunCompletedEvent{RunID: runtime.RunID, Success: true, StartedAt: now, CompletedAt: now.Add(time.Second)})
+			return nil
+		})),
+	)
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+	client := ts.Client()
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+	startResp := mustPOSTForm(t, client, ts.URL+"/runs/start", url.Values{"title": {"Trace route"}, "prompt": {"capture this trace"}})
+	defer startResp.Body.Close()
+	if startResp.StatusCode != http.StatusSeeOther {
+		body, _ := io.ReadAll(startResp.Body)
+		t.Fatalf("start status = %d, want %d, body=%s", startResp.StatusCode, http.StatusSeeOther, string(body))
+	}
+	runID := strings.TrimPrefix(startResp.Header.Get("Location"), "/runs/")
+	if runID == "" {
+		t.Fatalf("redirect location = %q, want /runs/<id>", startResp.Header.Get("Location"))
+	}
+
+	waitForRunStatus(t, store, runID, "completed")
+	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID),
+		"Trace route",
+		"gollem.trace.v1",
+		"Inspect",
+		"Export",
+		"/runs/"+runID+"/trace",
+		"/runs/"+runID+"/trace/inspect",
+	)
+	assertHTMLContains(t, mustGETBody(t, client, ts.URL+"/runs/"+runID+"/sidebar"),
+		"Inspect trace",
+		"Export trace",
+		"gollem.trace.v1",
+	)
+
+	traceResp := mustGET(t, client, ts.URL+"/runs/"+runID+"/trace")
+	defer traceResp.Body.Close()
+	if traceResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(traceResp.Body)
+		t.Fatalf("trace status = %d, body=%s", traceResp.StatusCode, string(body))
+	}
+	if got := traceResp.Header.Get("Content-Disposition"); !strings.Contains(got, runID+".trace.json") {
+		t.Fatalf("Content-Disposition = %q, want trace filename", got)
+	}
+	var artifact traceutil.Artifact
+	if err := json.NewDecoder(traceResp.Body).Decode(&artifact); err != nil {
+		t.Fatalf("decode trace artifact: %v", err)
+	}
+	if artifact.SchemaVersion != traceutil.SchemaVersion {
+		t.Fatalf("schema = %q, want %q", artifact.SchemaVersion, traceutil.SchemaVersion)
+	}
+	if artifact.Run.ID != runID {
+		t.Fatalf("trace run id = %q, want %q", artifact.Run.ID, runID)
+	}
+	if artifact.Summary.Requests != 1 || artifact.Summary.Usage.InputTokens != 3 {
+		t.Fatalf("unexpected trace summary: %+v", artifact.Summary)
+	}
+
+	inspectResp := mustGET(t, client, ts.URL+"/runs/"+runID+"/trace/inspect")
+	defer inspectResp.Body.Close()
+	if inspectResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(inspectResp.Body)
+		t.Fatalf("inspect status = %d, body=%s", inspectResp.StatusCode, string(body))
+	}
+	inspectBody, err := io.ReadAll(inspectResp.Body)
+	if err != nil {
+		t.Fatalf("read inspect body: %v", err)
+	}
+	assertStringContains(t, string(inspectBody),
+		"Trace "+runID,
+		"schema: gollem.trace.v1",
+		"requests: 1",
+		"prompt: capture this trace",
+	)
+}
+
+func TestRunTraceSnapshotCloneAndUnavailableRoutes(t *testing.T) {
+	store := NewRunStateStore()
+	run := store.create(RunStartRequest{Title: "No trace", Prompt: "wait"})
+	server := MustNewServer(WithRunStore(store))
+
+	emptyView := buildRunTraceView(run.ID(), nil)
+	if emptyView.Available || emptyView.URL == "" || emptyView.InspectURL == "" {
+		t.Fatalf("unexpected empty trace view: %+v", emptyView)
+	}
+	if got, err := run.traceArtifactSnapshot(); err != nil || got != nil {
+		t.Fatalf("empty trace snapshot = %+v err=%v", got, err)
+	}
+	if got, err := cloneTraceArtifact(nil); err != nil || got != nil {
+		t.Fatalf("nil clone = %+v err=%v", got, err)
+	}
+
+	traceResp := httptest.NewRecorder()
+	server.ServeHTTP(traceResp, httptest.NewRequest(http.MethodGet, "/runs/"+run.ID()+"/trace", nil))
+	assertHTTPErrorContains(t, traceResp, http.StatusNotFound, "trace artifact is not available yet")
+	inspectResp := httptest.NewRecorder()
+	server.ServeHTTP(inspectResp, httptest.NewRequest(http.MethodGet, "/runs/"+run.ID()+"/trace/inspect", nil))
+	assertHTTPErrorContains(t, inspectResp, http.StatusNotFound, "trace artifact is not available yet")
+
+	artifact, err := traceutil.FromRunTrace(&core.RunTrace{RunID: run.ID(), Prompt: "trace", Success: true}, nil)
+	if err != nil {
+		t.Fatalf("build trace: %v", err)
+	}
+	run.Runtime().StoreTraceArtifact(artifact)
+	cloned, err := run.traceArtifactSnapshot()
+	if err != nil {
+		t.Fatalf("traceArtifactSnapshot() error = %v", err)
+	}
+	cloned.Run.ID = "mutated"
+	again, err := run.traceArtifactSnapshot()
+	if err != nil {
+		t.Fatalf("traceArtifactSnapshot() second error = %v", err)
+	}
+	if again.Run.ID != run.ID() {
+		t.Fatalf("stored artifact was mutated through clone: %+v", again.Run)
+	}
+	view := buildRunTraceView(run.ID(), again)
+	if !view.Available || view.SchemaVersion != traceutil.SchemaVersion || view.Events != len(again.Events) {
+		t.Fatalf("unexpected trace view: %+v", view)
+	}
+
+	run.setTraceArtifact(&traceutil.Artifact{Metadata: map[string]any{"bad": func() {}}})
+	if _, err := run.traceArtifactSnapshot(); err == nil {
+		t.Fatal("expected clone error for non-JSON trace metadata")
+	}
+	traceResp = httptest.NewRecorder()
+	server.ServeHTTP(traceResp, httptest.NewRequest(http.MethodGet, "/runs/"+run.ID()+"/trace", nil))
+	assertHTTPErrorContains(t, traceResp, http.StatusInternalServerError, "clone trace artifact")
+	inspectResp = httptest.NewRecorder()
+	server.ServeHTTP(inspectResp, httptest.NewRequest(http.MethodGet, "/runs/"+run.ID()+"/trace/inspect", nil))
+	assertHTTPErrorContains(t, inspectResp, http.StatusInternalServerError, "clone trace artifact")
 }
 
 func TestHandleActionHTMXReturnsSidebarFragment(t *testing.T) {

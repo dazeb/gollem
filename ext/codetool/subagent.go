@@ -34,7 +34,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 			"debugging of a specific component, (3) writing a self-contained module "+
 			"or test. The subagent has NO memory of your conversation — include all "+
 			"necessary context in the task description.",
-		func(ctx context.Context, params subagentParams) (any, error) {
+		func(ctx context.Context, rc *core.RunContext, params subagentParams) (any, error) {
 			if params.Task == "" {
 				return nil, &core.ModelRetryError{Message: "task description must not be empty"}
 			}
@@ -80,6 +80,7 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 			subOpts := []core.AgentOption[string]{
 				core.WithSystemPrompt[string](systemPrompt),
 				core.WithToolsets[string](Toolset(subToolOpts...)),
+				core.WithTracing[string](),
 				// Background lifecycle for this subagent: cleanup on run
 				// end, completion notifications between turns.
 				core.WithHooks[string](core.Hook{
@@ -122,6 +123,9 @@ func SubAgentTool(model core.Model, opts ...Option) core.Tool {
 				core.WithAgentMiddleware[string](ContextOverflowMiddleware()),
 				// Stderr logging: real-time per-turn observability for subagents.
 				core.WithAgentMiddleware[string](stderrLoggingMiddleware()),
+			}
+			if rc != nil && rc.EventBus != nil {
+				subOpts = append(subOpts, core.WithEventBus[string](rc.EventBus))
 			}
 
 			agent := core.NewAgent[string](model, subOpts...)

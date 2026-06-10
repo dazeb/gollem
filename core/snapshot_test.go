@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,6 +82,136 @@ func TestSnapshot_CaptureAndRestore(t *testing.T) {
 	}
 }
 
+func TestSnapshotUsesRichGetterFallbacksAndPublishesCheckpoint(t *testing.T) {
+	startTime := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	base := RunContext{
+		Usage:        RunUsage{Requests: 2},
+		RunID:        "fallback-run",
+		ParentRunID:  "fallback-parent",
+		RunStep:      7,
+		RunStartTime: startTime,
+		Prompt:       "fallback prompt",
+		Messages: []ModelMessage{
+			ModelRequest{Parts: []ModelRequestPart{UserPromptPart{Content: "hello"}}},
+		},
+	}
+	rc := NewRunContext(base, func() map[string]any {
+		return map[string]any{"tool": map[string]any{"count": 1}}
+	}, func() *RunStateSnapshot {
+		return &RunStateSnapshot{
+			Messages: []ModelMessage{ModelResponse{Parts: []ModelResponsePart{TextPart{Content: "ok"}}}},
+		}
+	})
+	snap := Snapshot(rc)
+	if snap.RunID != "fallback-run" || snap.ParentRunID != "fallback-parent" || snap.RunStep != 7 || snap.Prompt != "fallback prompt" {
+		t.Fatalf("fallback fields not applied: %+v", snap)
+	}
+	if !snap.RunStartTime.Equal(startTime) {
+		t.Fatalf("run start = %s, want %s", snap.RunStartTime, startTime)
+	}
+	if snap.ToolState["tool"] == nil {
+		t.Fatalf("missing cloned tool state: %+v", snap.ToolState)
+	}
+	if Snapshot(nil) != nil {
+		t.Fatal("nil run context should not snapshot")
+	}
+
+	bus := NewEventBus()
+	defer bus.Close()
+	events := make(chan CheckpointCreatedEvent, 1)
+	unsub := Subscribe(bus, func(event CheckpointCreatedEvent) { events <- event })
+	defer unsub()
+	PublishCheckpointCreated(nil, snap)
+	PublishCheckpointCreated(bus, nil)
+	snap.Timestamp = time.Time{}
+	PublishCheckpointCreated(bus, snap)
+	select {
+	case event := <-events:
+		if event.RunID != "fallback-run" || event.Step != 7 || event.CheckpointID == "" || event.SnapshotID != event.CheckpointID {
+			t.Fatalf("unexpected checkpoint event: %+v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for checkpoint event")
+	}
+	if SnapshotCheckpointID(nil) != "" {
+		t.Fatal("nil checkpoint id should be empty")
+	}
+	if id := SnapshotCheckpointID(&RunSnapshot{RunStep: 2}); !strings.Contains(id, "checkpoint:run:step-2:") {
+		t.Fatalf("unexpected fallback checkpoint id: %s", id)
+	}
+}
+
+func TestSnapshotPreservesRunContextMessagesWhenRichGetterIsUsed(t *testing.T) {
+	unprocessed := ModelRequest{Parts: []ModelRequestPart{UserPromptPart{Content: "original"}}}
+	processed := ModelRequest{Parts: []ModelRequestPart{SystemPromptPart{Content: "shaped"}, UserPromptPart{Content: "processed"}}}
+	rc := NewRunContext(RunContext{
+		Messages: []ModelMessage{processed},
+		RunID:    "run-shaped",
+		RunStep:  2,
+		Prompt:   "processed",
+	}, nil, func() *RunStateSnapshot {
+		return &RunStateSnapshot{
+			Messages: []ModelMessage{unprocessed},
+			RunID:    "run-shaped",
+			RunStep:  2,
+			Prompt:   "processed",
+			Retries:  3,
+		}
+	})
+	rc.messagesOverride = true
+
+	snap := Snapshot(rc)
+	if snap == nil {
+		t.Fatal("Snapshot() returned nil")
+	}
+	if snap.Retries != 3 {
+		t.Fatalf("rich state fields were not preserved: %+v", snap)
+	}
+	if len(snap.Messages) != 1 {
+		t.Fatalf("messages = %+v, want one processed request", snap.Messages)
+	}
+	req, ok := snap.Messages[0].(ModelRequest)
+	if !ok {
+		t.Fatalf("message type = %T, want ModelRequest", snap.Messages[0])
+	}
+	if len(req.Parts) != 2 {
+		t.Fatalf("processed message parts = %+v", req.Parts)
+	}
+	if part, ok := req.Parts[0].(SystemPromptPart); !ok || part.Content != "shaped" {
+		t.Fatalf("first part = %#v, want shaped system prompt", req.Parts[0])
+	}
+}
+
+func TestSnapshotOnModelRequestUsesProcessedMessages(t *testing.T) {
+	var captured *RunSnapshot
+	processed := ModelRequest{Parts: []ModelRequestPart{UserPromptPart{Content: "processed prompt"}}}
+	agent := NewAgent[string](
+		NewTestModel(TextResponse("done")),
+		WithHistoryProcessor[string](func(context.Context, []ModelMessage) ([]ModelMessage, error) {
+			return []ModelMessage{processed}, nil
+		}),
+		WithHooks[string](Hook{
+			OnModelRequest: func(_ context.Context, rc *RunContext, _ []ModelMessage) {
+				captured = Snapshot(rc)
+			},
+		}),
+	)
+	if _, err := agent.Run(context.Background(), "original prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if captured == nil || len(captured.Messages) != 1 {
+		t.Fatalf("captured snapshot = %+v", captured)
+	}
+	req, ok := captured.Messages[0].(ModelRequest)
+	if !ok || len(req.Parts) != 1 {
+		t.Fatalf("captured message = %#v", captured.Messages[0])
+	}
+	part, ok := req.Parts[0].(UserPromptPart)
+	if !ok || part.Content != "processed prompt" {
+		t.Fatalf("snapshot did not preserve processed outbound message: %#v", req.Parts[0])
+	}
+}
+
 func TestSnapshot_Serialize(t *testing.T) {
 	runStartTime := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
 	snap := &RunSnapshot{
@@ -90,17 +221,19 @@ func TestSnapshot_Serialize(t *testing.T) {
 				Timestamp: time.Now(),
 			},
 		},
-		Usage:           RunUsage{Requests: 1},
-		LastInputTokens: 42,
-		Retries:         2,
-		ToolRetries:     map[string]int{"echo": 1},
-		RunID:           "snap-1",
-		ParentRunID:     "parent-1",
-		RunStep:         2,
-		RunStartTime:    runStartTime,
-		Prompt:          "test",
-		ToolState:       map[string]any{"tool": map[string]any{"count": 3}},
-		Timestamp:       time.Now(),
+		Usage:            RunUsage{Requests: 1},
+		LastInputTokens:  42,
+		Retries:          2,
+		ToolRetries:      map[string]int{"echo": 1},
+		RunID:            "snap-1",
+		ParentRunID:      "parent-1",
+		RunStep:          2,
+		RunStartTime:     runStartTime,
+		Prompt:           "test",
+		ToolState:        map[string]any{"tool": map[string]any{"count": 3}},
+		Timestamp:        time.Now(),
+		SourceTraceRunID: "source-run",
+		SourceSnapshotID: "snap_000001",
 	}
 
 	data, err := MarshalSnapshot(snap)
@@ -139,6 +272,12 @@ func TestSnapshot_Serialize(t *testing.T) {
 	}
 	if got := snapshotCountFromAny(restored.ToolState["tool"].(map[string]any)["count"]); got != 3 {
 		t.Errorf("expected restored tool state count=3, got %d", got)
+	}
+	if restored.SourceTraceRunID != "source-run" {
+		t.Errorf("expected source trace run id %q, got %q", "source-run", restored.SourceTraceRunID)
+	}
+	if restored.SourceSnapshotID != "snap_000001" {
+		t.Errorf("expected source snapshot id %q, got %q", "snap_000001", restored.SourceSnapshotID)
 	}
 }
 
@@ -285,6 +424,126 @@ func TestSnapshot_WithSnapshotRestoresRunState(t *testing.T) {
 	}
 }
 
+func TestSnapshot_RunStreamWithSnapshotRestoresRunState(t *testing.T) {
+	stateful := &testSnapshotStatefulTool{}
+	type Params struct{}
+	counter := FuncTool[Params]("counter", "counter", func(_ context.Context, rc *RunContext, _ Params) (string, error) {
+		if got, ok := rc.ToolStateByName("counter"); !ok || snapshotCountFromAny(got.(map[string]any)["count"]) != 4 {
+			t.Fatalf("expected restored tool state count=4, got %v", got)
+		}
+		stateful.count++
+		return fmt.Sprintf("%d", stateful.count), nil
+	})
+	counter.Stateful = stateful
+
+	startTime := time.Now().Add(-2 * time.Minute).UTC().Truncate(time.Second)
+	snap := &RunSnapshot{
+		Messages: []ModelMessage{
+			ModelRequest{
+				Parts:     []ModelRequestPart{UserPromptPart{Content: "previous"}},
+				Timestamp: startTime,
+			},
+			ModelResponse{
+				Parts:     []ModelResponsePart{TextPart{Content: "previous response"}},
+				Timestamp: startTime.Add(time.Second),
+			},
+		},
+		RunID:        "stream-snap-resume",
+		RunStep:      3,
+		RunStartTime: startTime,
+		Usage:        RunUsage{Requests: 2, ToolCalls: 1},
+		ToolState:    map[string]any{"counter": map[string]any{"count": 4}},
+		Prompt:       "previous",
+	}
+
+	model := NewTestModel(
+		ToolCallResponse("counter", `{}`),
+		TextResponse("stream done"),
+	)
+	agent := NewAgent[string](model, WithTools[string](counter))
+
+	stream, err := agent.RunStream(context.Background(), "continue", WithSnapshot(snap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	result, err := stream.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "stream done" {
+		t.Fatalf("expected stream output %q, got %q", "stream done", result.Output)
+	}
+	if result.RunID != "stream-snap-resume" {
+		t.Fatalf("expected restored RunID stream-snap-resume, got %q", result.RunID)
+	}
+	if result.Usage.Requests != 4 || result.Usage.ToolCalls != 2 {
+		t.Fatalf("expected usage to continue from snapshot, got %+v", result.Usage)
+	}
+	if got := snapshotCountFromAny(result.ToolState["counter"].(map[string]any)["count"]); got != 5 {
+		t.Fatalf("expected final streamed tool state count=5, got %d", got)
+	}
+
+	calls := model.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 streamed model calls, got %d", len(calls))
+	}
+	if got := len(calls[0].Messages); got != 3 {
+		t.Fatalf("expected snapshot messages plus new prompt in first streamed call, got %d messages", got)
+	}
+}
+
+func TestSnapshot_WithSnapshotTraceIsFreshSegment(t *testing.T) {
+	oldStart := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	snap := &RunSnapshot{
+		Messages: []ModelMessage{
+			ModelRequest{
+				Parts:     []ModelRequestPart{UserPromptPart{Content: "previous"}},
+				Timestamp: oldStart,
+			},
+			ModelResponse{
+				Parts:     []ModelResponsePart{TextPart{Content: "previous response"}},
+				Timestamp: oldStart.Add(time.Second),
+			},
+		},
+		RunID:            "fresh-trace-resume",
+		RunStep:          3,
+		RunStartTime:     oldStart,
+		Usage:            RunUsage{Requests: 2},
+		Prompt:           "previous",
+		SourceTraceRunID: "source-run",
+		SourceSnapshotID: "snap_000001",
+	}
+
+	model := NewTestModel(TextResponse("resumed"))
+	agent := NewAgent[string](model, WithTracing[string]())
+
+	before := time.Now()
+	result, err := agent.Run(context.Background(), "continue", WithSnapshot(snap))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Trace == nil {
+		t.Fatal("expected trace")
+	}
+	if result.Trace.StartTime.Before(before) {
+		t.Fatalf("expected resumed trace to start at the fresh execution segment, got %v before %v", result.Trace.StartTime, before)
+	}
+	if result.Trace.StartTime.Equal(oldStart) {
+		t.Fatalf("resumed trace reused snapshot run start time %v", oldStart)
+	}
+	if len(result.Trace.Requests) != 1 {
+		t.Fatalf("expected fresh resumed trace to contain only new model requests, got %d", len(result.Trace.Requests))
+	}
+	if result.Trace.Requests[0].Sequence != 1 {
+		t.Fatalf("expected resumed trace request sequence to restart at 1, got %d", result.Trace.Requests[0].Sequence)
+	}
+	if result.Trace.Requests[0].MessageCount != 3 {
+		t.Fatalf("expected outbound request to include restored message history plus new prompt, got %d messages", result.Trace.Requests[0].MessageCount)
+	}
+}
+
 func TestSnapshot_WithSnapshotRetryMapRemainsWritable(t *testing.T) {
 	type Params struct{}
 
@@ -357,5 +616,113 @@ func TestSnapshot_FromHook(t *testing.T) {
 	}
 	if captured.Prompt != "test" {
 		t.Errorf("expected prompt 'test', got %q", captured.Prompt)
+	}
+}
+
+func TestSnapshot_OnTurnEndIncludesToolResults(t *testing.T) {
+	var captured *RunSnapshot
+
+	model := NewTestModel(
+		ToolCallResponseWithID("echo", `{"n":1}`, "call-echo"),
+		TextResponse("done"),
+	)
+
+	type Params struct {
+		N int `json:"n"`
+	}
+	tool := FuncTool[Params]("echo", "echo", func(ctx context.Context, p Params) (string, error) {
+		return "echoed", nil
+	})
+
+	agent := NewAgent[string](model,
+		WithTools[string](tool),
+		WithHooks[string](Hook{
+			OnTurnEnd: func(ctx context.Context, rc *RunContext, turnNumber int, resp *ModelResponse) {
+				if captured == nil {
+					captured = Snapshot(rc)
+				}
+			},
+		}),
+	)
+
+	if _, err := agent.Run(context.Background(), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if captured == nil {
+		t.Fatal("snapshot not captured from OnTurnEnd")
+	}
+	if len(captured.Messages) < 3 {
+		t.Fatalf("expected snapshot to include prompt, tool call, and tool result messages, got %d", len(captured.Messages))
+	}
+	last, ok := captured.Messages[len(captured.Messages)-1].(ModelRequest)
+	if !ok {
+		t.Fatalf("last snapshot message type = %T, want ModelRequest", captured.Messages[len(captured.Messages)-1])
+	}
+	if len(last.Parts) != 1 {
+		t.Fatalf("last snapshot message parts = %d, want 1", len(last.Parts))
+	}
+	ret, ok := last.Parts[0].(ToolReturnPart)
+	if !ok {
+		t.Fatalf("last snapshot part = %T, want ToolReturnPart", last.Parts[0])
+	}
+	if ret.ToolCallID != "call-echo" {
+		t.Fatalf("tool return id = %q, want call-echo", ret.ToolCallID)
+	}
+}
+
+func TestSnapshot_RunStreamOnTurnEndIncludesToolResults(t *testing.T) {
+	var captured *RunSnapshot
+
+	model := NewTestModel(
+		ToolCallResponseWithID("echo", `{"n":1}`, "call-echo"),
+		TextResponse("done"),
+	)
+
+	type Params struct {
+		N int `json:"n"`
+	}
+	tool := FuncTool[Params]("echo", "echo", func(ctx context.Context, p Params) (string, error) {
+		return "echoed", nil
+	})
+
+	agent := NewAgent[string](model,
+		WithTools[string](tool),
+		WithHooks[string](Hook{
+			OnTurnEnd: func(ctx context.Context, rc *RunContext, turnNumber int, resp *ModelResponse) {
+				if captured == nil {
+					captured = Snapshot(rc)
+				}
+			},
+		}),
+	)
+
+	stream, err := agent.RunStream(context.Background(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if _, err := stream.Result(); err != nil {
+		t.Fatal(err)
+	}
+
+	if captured == nil {
+		t.Fatal("snapshot not captured from streaming OnTurnEnd")
+	}
+	if len(captured.Messages) < 3 {
+		t.Fatalf("expected snapshot to include prompt, tool call, and tool result messages, got %d", len(captured.Messages))
+	}
+	last, ok := captured.Messages[len(captured.Messages)-1].(ModelRequest)
+	if !ok {
+		t.Fatalf("last snapshot message type = %T, want ModelRequest", captured.Messages[len(captured.Messages)-1])
+	}
+	if len(last.Parts) != 1 {
+		t.Fatalf("last snapshot message parts = %d, want 1", len(last.Parts))
+	}
+	ret, ok := last.Parts[0].(ToolReturnPart)
+	if !ok {
+		t.Fatalf("last snapshot part = %T, want ToolReturnPart", last.Parts[0])
+	}
+	if ret.ToolCallID != "call-echo" {
+		t.Fatalf("tool return id = %q, want call-echo", ret.ToolCallID)
 	}
 }

@@ -15,8 +15,15 @@ import (
 
 func executeWorkflowChain[T any](t *testing.T, ta *TemporalAgent[T], input WorkflowInput) WorkflowOutput {
 	t.Helper()
+	output, _ := executeWorkflowChainWithInputs(t, ta, input)
+	return output
+}
+
+func executeWorkflowChainWithInputs[T any](t *testing.T, ta *TemporalAgent[T], input WorkflowInput) (WorkflowOutput, []WorkflowInput) {
+	t.Helper()
 
 	dc := converter.GetDefaultDataConverter()
+	inputs := []WorkflowInput{input}
 	for range 8 {
 		var suite testsuite.WorkflowTestSuite
 		env := suite.NewTestWorkflowEnvironment()
@@ -30,7 +37,7 @@ func executeWorkflowChain[T any](t *testing.T, ta *TemporalAgent[T], input Workf
 			if err := env.GetWorkflowResult(&output); err != nil {
 				t.Fatalf("workflow result: %v", err)
 			}
-			return output
+			return output, inputs
 		}
 
 		var continueErr *workflow.ContinueAsNewError
@@ -43,10 +50,11 @@ func executeWorkflowChain[T any](t *testing.T, ta *TemporalAgent[T], input Workf
 			t.Fatalf("decode continue-as-new input: %v", err)
 		}
 		input = nextInput
+		inputs = append(inputs, input)
 	}
 
 	t.Fatal("workflow exceeded continue-as-new iteration limit")
-	return WorkflowOutput{}
+	return WorkflowOutput{}, inputs
 }
 
 func TestTemporalAgent_RunWorkflow_ContinueAsNewPreservesState(t *testing.T) {
@@ -179,6 +187,115 @@ func TestTemporalAgent_RunWorkflow_ContinueAsNewPreservesState(t *testing.T) {
 	}
 	if !hasToolCall || !hasToolResult {
 		t.Fatalf("expected tool trace steps across continue-as-new, got %+v", result.Trace.Steps)
+	}
+}
+
+func TestTemporalAgent_RunWorkflow_ContinueAsNewTraceLineageAcrossRunChain(t *testing.T) {
+	type Params struct{}
+
+	counterState := &workflowCounterTool{}
+	counter := core.FuncTool[Params]("counter", "counter", func(_ context.Context, _ Params) (string, error) {
+		counterState.count++
+		return "counted", nil
+	})
+	counter.Stateful = counterState
+
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("counter", `{}`, "call_counter_1"),
+		core.ToolCallResponseWithID("counter", `{}`, "call_counter_2"),
+		core.TextResponse("done after two rollovers"),
+	)
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](counter),
+		core.WithTracing[string](),
+	)
+	ta := NewTemporalAgent(agent,
+		WithName("workflow-continue-lineage"),
+		WithContinueAsNew(ContinueAsNewConfig{MaxTurns: 1}),
+	)
+
+	output, inputs := executeWorkflowChainWithInputs(t, ta, WorkflowInput{Prompt: "run counter twice"})
+	if !output.Completed {
+		t.Fatal("expected workflow to complete after continue-as-new chain")
+	}
+	if output.ContinueAsNewCount != 2 {
+		t.Fatalf("expected continue-as-new count 2, got %d", output.ContinueAsNewCount)
+	}
+	if len(inputs) != 3 {
+		t.Fatalf("expected initial input plus 2 continue-as-new inputs, got %d", len(inputs))
+	}
+	if inputs[1].ContinueAsNewCount != 1 || inputs[2].ContinueAsNewCount != 2 {
+		t.Fatalf("unexpected continue-as-new input counts: %d, %d", inputs[1].ContinueAsNewCount, inputs[2].ContinueAsNewCount)
+	}
+	if inputs[1].TraceStartTime.IsZero() {
+		t.Fatal("expected first continue-as-new input to carry trace start time")
+	}
+	if !inputs[2].TraceStartTime.Equal(inputs[1].TraceStartTime) {
+		t.Fatalf("expected trace start time to remain stable, got %v then %v", inputs[1].TraceStartTime, inputs[2].TraceStartTime)
+	}
+	if got := inputs[2].ContinueAsNewBaseRunStep; got != 2 {
+		t.Fatalf("expected second continue-as-new base run step 2, got %d", got)
+	}
+	if output.TemporalRunID != "" {
+		if len(output.TemporalRunChain) == 0 {
+			t.Fatal("expected temporal run chain when temporal run ID is present")
+		}
+		if got := output.TemporalRunChain[len(output.TemporalRunChain)-1]; got != output.TemporalRunID {
+			t.Fatalf("expected run chain to end with current run ID %q, got %q", output.TemporalRunID, got)
+		}
+	}
+
+	result, err := ta.DecodeWorkflowOutput(&output)
+	if err != nil {
+		t.Fatalf("decode workflow output: %v", err)
+	}
+	if result.Output != "done after two rollovers" {
+		t.Fatalf("expected final output %q, got %q", "done after two rollovers", result.Output)
+	}
+	if result.Trace == nil {
+		t.Fatal("expected trace after continue-as-new chain")
+	}
+	if !result.Trace.StartTime.Equal(inputs[1].TraceStartTime) {
+		t.Fatalf("expected trace start time %v, got %v", inputs[1].TraceStartTime, result.Trace.StartTime)
+	}
+
+	var modelReqs, modelResps, toolCalls, toolResults int
+	for _, step := range result.Trace.Steps {
+		switch step.Kind {
+		case core.TraceModelRequest:
+			modelReqs++
+		case core.TraceModelResponse:
+			modelResps++
+		case core.TraceToolCall:
+			toolCalls++
+		case core.TraceToolResult:
+			toolResults++
+		}
+	}
+	if modelReqs != 3 || modelResps != 3 || toolCalls != 2 || toolResults != 2 {
+		t.Fatalf("unexpected trace steps: requests=%d responses=%d toolCalls=%d toolResults=%d", modelReqs, modelResps, toolCalls, toolResults)
+	}
+	state, ok := result.ToolState["counter"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected counter tool state, got %T", result.ToolState["counter"])
+	}
+	if got := int(state["count"].(float64)); got != 2 {
+		t.Fatalf("expected counter state 2 after continue-as-new chain, got %d", got)
+	}
+}
+
+func TestAppendTemporalRunChain(t *testing.T) {
+	got := appendTemporalRunChain([]string{"run-a"}, "run-b")
+	if len(got) != 2 || got[0] != "run-a" || got[1] != "run-b" {
+		t.Fatalf("unexpected appended run chain: %+v", got)
+	}
+	got = appendTemporalRunChain([]string{"run-a", "run-b"}, "run-b")
+	if len(got) != 2 || got[1] != "run-b" {
+		t.Fatalf("expected duplicate current run ID to be ignored, got %+v", got)
+	}
+	got = appendTemporalRunChain([]string{"run-a"}, "")
+	if len(got) != 1 || got[0] != "run-a" {
+		t.Fatalf("expected empty run ID to preserve chain, got %+v", got)
 	}
 }
 

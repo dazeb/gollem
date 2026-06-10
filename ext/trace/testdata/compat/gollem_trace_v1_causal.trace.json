@@ -1,0 +1,76 @@
+{
+  "schema_version": "gollem.trace.v1",
+  "run": {
+    "id": "compat-run-2",
+    "prompt": "causal link fixture",
+    "started_at": "2026-05-06T12:00:00Z",
+    "ended_at": "2026-05-06T12:00:02Z",
+    "duration_ms": 2000,
+    "mode": "local"
+  },
+  "metadata": {
+    "fixture": true
+  },
+  "events": [
+    {
+      "id": "evt_000001",
+      "seq": 1,
+      "kind": "run.started",
+      "timestamp": "2026-05-06T12:00:00Z",
+      "agent_id": "compat-run-2",
+      "replay_policy": "inspect",
+      "causal_child_event_ids": ["evt_000002"],
+      "payload": {
+        "prompt": "causal link fixture"
+      }
+    },
+    {
+      "id": "evt_000002",
+      "seq": 2,
+      "kind": "model.requested",
+      "timestamp": "2026-05-06T12:00:00.5Z",
+      "request_id": "compat-run-2/request-1",
+      "agent_id": "compat-run-2",
+      "replay_policy": "recorded",
+      "causal_parent_event_id": "evt_000001",
+      "causal_child_event_ids": ["evt_000003"]
+    },
+    {
+      "id": "evt_000003",
+      "seq": 3,
+      "kind": "model.responded",
+      "timestamp": "2026-05-06T12:00:01Z",
+      "duration_ms": 500,
+      "request_id": "compat-run-2/request-1",
+      "agent_id": "compat-run-2",
+      "replay_policy": "recorded",
+      "causal_parent_event_id": "evt_000002",
+      "causal_child_event_ids": ["evt_000004"]
+    },
+    {
+      "id": "evt_000004",
+      "seq": 4,
+      "kind": "run.completed",
+      "timestamp": "2026-05-06T12:00:02Z",
+      "duration_ms": 2000,
+      "agent_id": "compat-run-2",
+      "replay_policy": "inspect",
+      "causal_parent_event_id": "evt_000003",
+      "payload": {
+        "success": true
+      }
+    }
+  ],
+  "summary": {
+    "status": "succeeded",
+    "success": true,
+    "steps": 0,
+    "requests": 1,
+    "tool_calls": 0,
+    "usage": {
+      "requests": 1,
+      "tool_calls": 0
+    },
+    "duration_ms": 2000
+  }
+}

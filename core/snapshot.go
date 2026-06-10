@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -11,34 +12,38 @@ type RunSnapshot = RunStateSnapshot
 
 // snapshotJSON is the JSON-safe serialization of RunStateSnapshot.
 type snapshotJSON struct {
-	Messages        json.RawMessage `json:"messages"`
-	Usage           RunUsage        `json:"usage"`
-	LastInputTokens int             `json:"last_input_tokens"`
-	Retries         int             `json:"retries"`
-	ToolRetries     map[string]int  `json:"tool_retries,omitempty"`
-	RunID           string          `json:"run_id"`
-	ParentRunID     string          `json:"parent_run_id,omitempty"`
-	RunStep         int             `json:"run_step"`
-	RunStartTime    time.Time       `json:"run_start_time"`
-	Prompt          string          `json:"prompt"`
-	ToolState       map[string]any  `json:"tool_state,omitempty"`
-	Timestamp       time.Time       `json:"timestamp"`
+	Messages         json.RawMessage `json:"messages"`
+	Usage            RunUsage        `json:"usage"`
+	LastInputTokens  int             `json:"last_input_tokens"`
+	Retries          int             `json:"retries"`
+	ToolRetries      map[string]int  `json:"tool_retries,omitempty"`
+	RunID            string          `json:"run_id"`
+	ParentRunID      string          `json:"parent_run_id,omitempty"`
+	RunStep          int             `json:"run_step"`
+	RunStartTime     time.Time       `json:"run_start_time"`
+	Prompt           string          `json:"prompt"`
+	ToolState        map[string]any  `json:"tool_state,omitempty"`
+	Timestamp        time.Time       `json:"timestamp"`
+	SourceTraceRunID string          `json:"source_trace_run_id,omitempty"`
+	SourceSnapshotID string          `json:"source_snapshot_id,omitempty"`
 }
 
 // SerializedRunSnapshot is the structured JSON-safe form of a run snapshot.
 type SerializedRunSnapshot struct {
-	Messages        []SerializedMessage `json:"messages"`
-	Usage           RunUsage            `json:"usage"`
-	LastInputTokens int                 `json:"last_input_tokens"`
-	Retries         int                 `json:"retries"`
-	ToolRetries     map[string]int      `json:"tool_retries,omitempty"`
-	RunID           string              `json:"run_id"`
-	ParentRunID     string              `json:"parent_run_id,omitempty"`
-	RunStep         int                 `json:"run_step"`
-	RunStartTime    time.Time           `json:"run_start_time"`
-	Prompt          string              `json:"prompt"`
-	ToolState       map[string]any      `json:"tool_state,omitempty"`
-	Timestamp       time.Time           `json:"timestamp"`
+	Messages         []SerializedMessage `json:"messages"`
+	Usage            RunUsage            `json:"usage"`
+	LastInputTokens  int                 `json:"last_input_tokens"`
+	Retries          int                 `json:"retries"`
+	ToolRetries      map[string]int      `json:"tool_retries,omitempty"`
+	RunID            string              `json:"run_id"`
+	ParentRunID      string              `json:"parent_run_id,omitempty"`
+	RunStep          int                 `json:"run_step"`
+	RunStartTime     time.Time           `json:"run_start_time"`
+	Prompt           string              `json:"prompt"`
+	ToolState        map[string]any      `json:"tool_state,omitempty"`
+	Timestamp        time.Time           `json:"timestamp"`
+	SourceTraceRunID string              `json:"source_trace_run_id,omitempty"`
+	SourceSnapshotID string              `json:"source_snapshot_id,omitempty"`
 }
 
 // Snapshot creates a serializable snapshot of the current agent run state.
@@ -62,13 +67,24 @@ func Snapshot(rc *RunContext) *RunSnapshot {
 	if rc.runStateSnapshotGetter != nil {
 		if richer := rc.runStateSnapshotGetter(); richer != nil {
 			snap = richer
-			snap.Messages = cloneMessages(rc.Messages)
-			snap.Usage = rc.Usage
-			snap.RunID = rc.RunID
-			snap.ParentRunID = rc.ParentRunID
-			snap.RunStep = rc.RunStep
-			snap.RunStartTime = rc.RunStartTime
-			snap.Prompt = rc.Prompt
+			if rc.messagesOverride {
+				snap.Messages = cloneMessages(rc.Messages)
+			}
+			if snap.RunID == "" {
+				snap.RunID = rc.RunID
+			}
+			if snap.ParentRunID == "" {
+				snap.ParentRunID = rc.ParentRunID
+			}
+			if snap.RunStep == 0 {
+				snap.RunStep = rc.RunStep
+			}
+			if snap.RunStartTime.IsZero() {
+				snap.RunStartTime = rc.RunStartTime
+			}
+			if snap.Prompt == "" {
+				snap.Prompt = rc.Prompt
+			}
 			snap.Timestamp = time.Now()
 		}
 	}
@@ -78,6 +94,46 @@ func Snapshot(rc *RunContext) *RunSnapshot {
 	}
 
 	return snap
+}
+
+// PublishCheckpointCreated emits a runtime checkpoint event for a captured
+// snapshot. It is intended for trace exporters that capture snapshots through
+// hooks and want live subscribers to observe the same branch anchor.
+func PublishCheckpointCreated(bus *EventBus, snap *RunSnapshot) {
+	if bus == nil || snap == nil {
+		return
+	}
+	createdAt := snap.Timestamp
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	checkpointID := SnapshotCheckpointID(snap)
+	Publish(bus, CheckpointCreatedEvent{
+		RunID:        snap.RunID,
+		ParentRunID:  snap.ParentRunID,
+		CheckpointID: checkpointID,
+		SnapshotID:   checkpointID,
+		Step:         snap.RunStep,
+		CreatedAt:    createdAt,
+	})
+}
+
+// SnapshotCheckpointID returns a local identifier for a runtime snapshot
+// checkpoint event. Trace artifact writers still assign portable snapshot
+// record IDs during export.
+func SnapshotCheckpointID(snap *RunSnapshot) string {
+	if snap == nil {
+		return ""
+	}
+	when := snap.Timestamp
+	if when.IsZero() {
+		when = time.Now()
+	}
+	runID := snap.RunID
+	if runID == "" {
+		runID = "run"
+	}
+	return fmt.Sprintf("checkpoint:%s:step-%d:%d", runID, snap.RunStep, when.UnixNano())
 }
 
 // MarshalSnapshot serializes a snapshot to JSON using the message serialization API.
@@ -91,18 +147,20 @@ func MarshalSnapshot(snap *RunSnapshot) ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(snapshotJSON{
-		Messages:        msgData,
-		Usage:           encoded.Usage,
-		LastInputTokens: encoded.LastInputTokens,
-		Retries:         encoded.Retries,
-		ToolRetries:     cloneIntMap(encoded.ToolRetries),
-		RunID:           encoded.RunID,
-		ParentRunID:     encoded.ParentRunID,
-		RunStep:         encoded.RunStep,
-		RunStartTime:    encoded.RunStartTime,
-		Prompt:          encoded.Prompt,
-		ToolState:       cloneAnyMap(encoded.ToolState),
-		Timestamp:       encoded.Timestamp,
+		Messages:         msgData,
+		Usage:            encoded.Usage,
+		LastInputTokens:  encoded.LastInputTokens,
+		Retries:          encoded.Retries,
+		ToolRetries:      cloneIntMap(encoded.ToolRetries),
+		RunID:            encoded.RunID,
+		ParentRunID:      encoded.ParentRunID,
+		RunStep:          encoded.RunStep,
+		RunStartTime:     encoded.RunStartTime,
+		Prompt:           encoded.Prompt,
+		ToolState:        cloneAnyMap(encoded.ToolState),
+		Timestamp:        encoded.Timestamp,
+		SourceTraceRunID: encoded.SourceTraceRunID,
+		SourceSnapshotID: encoded.SourceSnapshotID,
 	})
 }
 
@@ -117,18 +175,20 @@ func UnmarshalSnapshot(data []byte) (*RunSnapshot, error) {
 		return nil, err
 	}
 	return DecodeRunSnapshot(&SerializedRunSnapshot{
-		Messages:        messages,
-		Usage:           sj.Usage,
-		LastInputTokens: sj.LastInputTokens,
-		Retries:         sj.Retries,
-		ToolRetries:     cloneIntMap(sj.ToolRetries),
-		RunID:           sj.RunID,
-		ParentRunID:     sj.ParentRunID,
-		RunStep:         sj.RunStep,
-		RunStartTime:    sj.RunStartTime,
-		Prompt:          sj.Prompt,
-		ToolState:       cloneAnyMap(sj.ToolState),
-		Timestamp:       sj.Timestamp,
+		Messages:         messages,
+		Usage:            sj.Usage,
+		LastInputTokens:  sj.LastInputTokens,
+		Retries:          sj.Retries,
+		ToolRetries:      cloneIntMap(sj.ToolRetries),
+		RunID:            sj.RunID,
+		ParentRunID:      sj.ParentRunID,
+		RunStep:          sj.RunStep,
+		RunStartTime:     sj.RunStartTime,
+		Prompt:           sj.Prompt,
+		ToolState:        cloneAnyMap(sj.ToolState),
+		Timestamp:        sj.Timestamp,
+		SourceTraceRunID: sj.SourceTraceRunID,
+		SourceSnapshotID: sj.SourceSnapshotID,
 	})
 }
 
@@ -142,18 +202,20 @@ func EncodeRunSnapshot(snap *RunSnapshot) (*SerializedRunSnapshot, error) {
 		return nil, err
 	}
 	return &SerializedRunSnapshot{
-		Messages:        msgs,
-		Usage:           snap.Usage,
-		LastInputTokens: snap.LastInputTokens,
-		Retries:         snap.Retries,
-		ToolRetries:     cloneIntMap(snap.ToolRetries),
-		RunID:           snap.RunID,
-		ParentRunID:     snap.ParentRunID,
-		RunStep:         snap.RunStep,
-		RunStartTime:    snap.RunStartTime,
-		Prompt:          snap.Prompt,
-		ToolState:       cloneAnyMap(snap.ToolState),
-		Timestamp:       snap.Timestamp,
+		Messages:         msgs,
+		Usage:            snap.Usage,
+		LastInputTokens:  snap.LastInputTokens,
+		Retries:          snap.Retries,
+		ToolRetries:      cloneIntMap(snap.ToolRetries),
+		RunID:            snap.RunID,
+		ParentRunID:      snap.ParentRunID,
+		RunStep:          snap.RunStep,
+		RunStartTime:     snap.RunStartTime,
+		Prompt:           snap.Prompt,
+		ToolState:        cloneAnyMap(snap.ToolState),
+		Timestamp:        snap.Timestamp,
+		SourceTraceRunID: snap.SourceTraceRunID,
+		SourceSnapshotID: snap.SourceSnapshotID,
 	}, nil
 }
 
@@ -167,18 +229,20 @@ func DecodeRunSnapshot(snap *SerializedRunSnapshot) (*RunSnapshot, error) {
 		return nil, err
 	}
 	return &RunStateSnapshot{
-		Messages:        msgs,
-		Usage:           snap.Usage,
-		LastInputTokens: snap.LastInputTokens,
-		Retries:         snap.Retries,
-		ToolRetries:     cloneIntMap(snap.ToolRetries),
-		RunID:           snap.RunID,
-		ParentRunID:     snap.ParentRunID,
-		RunStep:         snap.RunStep,
-		RunStartTime:    snap.RunStartTime,
-		Prompt:          snap.Prompt,
-		ToolState:       cloneAnyMap(snap.ToolState),
-		Timestamp:       snap.Timestamp,
+		Messages:         msgs,
+		Usage:            snap.Usage,
+		LastInputTokens:  snap.LastInputTokens,
+		Retries:          snap.Retries,
+		ToolRetries:      cloneIntMap(snap.ToolRetries),
+		RunID:            snap.RunID,
+		ParentRunID:      snap.ParentRunID,
+		RunStep:          snap.RunStep,
+		RunStartTime:     snap.RunStartTime,
+		Prompt:           snap.Prompt,
+		ToolState:        cloneAnyMap(snap.ToolState),
+		Timestamp:        snap.Timestamp,
+		SourceTraceRunID: snap.SourceTraceRunID,
+		SourceSnapshotID: snap.SourceSnapshotID,
 	}, nil
 }
 
@@ -195,17 +259,19 @@ func (s *RunStateSnapshot) Branch(modifier func(messages []ModelMessage) []Model
 	msgs := cloneMessages(s.Messages)
 	modified := modifier(msgs)
 	return &RunStateSnapshot{
-		Messages:        modified,
-		Usage:           s.Usage,
-		LastInputTokens: s.LastInputTokens,
-		Retries:         s.Retries,
-		ToolRetries:     cloneIntMap(s.ToolRetries),
-		RunID:           s.RunID,
-		ParentRunID:     s.ParentRunID,
-		RunStep:         s.RunStep,
-		RunStartTime:    s.RunStartTime,
-		Prompt:          s.Prompt,
-		ToolState:       cloneAnyMap(s.ToolState),
-		Timestamp:       time.Now(),
+		Messages:         modified,
+		Usage:            s.Usage,
+		LastInputTokens:  s.LastInputTokens,
+		Retries:          s.Retries,
+		ToolRetries:      cloneIntMap(s.ToolRetries),
+		RunID:            s.RunID,
+		ParentRunID:      s.ParentRunID,
+		RunStep:          s.RunStep,
+		RunStartTime:     s.RunStartTime,
+		Prompt:           s.Prompt,
+		ToolState:        cloneAnyMap(s.ToolState),
+		Timestamp:        time.Now(),
+		SourceTraceRunID: s.SourceTraceRunID,
+		SourceSnapshotID: s.SourceSnapshotID,
 	}
 }

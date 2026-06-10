@@ -2,6 +2,7 @@ package temporal
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,10 @@ func TestTemporalAgent_RunWorkflow_QueryStatusWhileWaitingOnDeferred(t *testing.
 	if err := env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
+	var output WorkflowOutput
+	if err := env.GetWorkflowResult(&output); err != nil {
+		t.Fatalf("workflow result: %v", err)
+	}
 	if queryErr != nil {
 		t.Fatalf("query workflow: %v", queryErr)
 	}
@@ -116,7 +121,7 @@ func TestTemporalAgent_RunWorkflow_QueryStatusWhileWaitingOnDeferred(t *testing.
 	if trace == nil {
 		t.Fatal("expected workflow status trace")
 	}
-	var hasReq, hasResp, hasToolCall, hasToolResult bool
+	var hasReq, hasResp, hasToolCall, hasToolResult, hasDeferredRequested, hasWaitStarted bool
 	for _, step := range trace.Steps {
 		switch step.Kind {
 		case core.TraceModelRequest:
@@ -125,13 +130,52 @@ func TestTemporalAgent_RunWorkflow_QueryStatusWhileWaitingOnDeferred(t *testing.
 			hasResp = true
 		case core.TraceToolCall:
 			hasToolCall = true
+			if got := traceStepField(t, step, "tool_call_id"); got != "call_1" {
+				t.Fatalf("tool call trace id = %q, want call_1", got)
+			}
 		case core.TraceToolResult:
 			hasToolResult = true
+			if got := traceStepField(t, step, "tool_call_id"); got != "call_1" {
+				t.Fatalf("tool result trace id = %q, want call_1", got)
+			}
+		case core.TraceDeferredRequested:
+			hasDeferredRequested = true
+			if got := traceStepField(t, step, "tool_call_id"); got != "call_1" {
+				t.Fatalf("deferred request trace id = %q, want call_1", got)
+			}
+		case core.TraceRunWaiting:
+			hasWaitStarted = true
 		}
 	}
-	if !hasReq || !hasResp || !hasToolCall || !hasToolResult {
-		t.Fatalf("expected status trace to include model/tool steps, got %+v", trace.Steps)
+	if !hasReq || !hasResp || !hasToolCall || !hasToolResult || !hasDeferredRequested || !hasWaitStarted {
+		t.Fatalf("expected status trace to include model/tool/deferred wait steps, got %+v", trace.Steps)
 	}
+	if output.Trace == nil {
+		t.Fatal("expected traced workflow output")
+	}
+	for _, kind := range []core.TraceStepKind{
+		core.TraceDeferredRequested,
+		core.TraceRunWaiting,
+		core.TraceRunResumed,
+		core.TraceDeferredResolved,
+	} {
+		if !traceHasStepKind(output.Trace, kind) {
+			t.Fatalf("expected completed trace step %s, got %+v", kind, output.Trace.Steps)
+		}
+	}
+}
+
+func traceStepField(t *testing.T, step core.TraceStep, key string) string {
+	t.Helper()
+	data, ok := step.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("trace step data = %T, want map[string]any", step.Data)
+	}
+	value, ok := data[key]
+	if !ok {
+		t.Fatalf("trace step data missing %q: %+v", key, data)
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func TestTemporalAgent_RunWorkflow_ApprovalSignal(t *testing.T) {
@@ -147,7 +191,10 @@ func TestTemporalAgent_RunWorkflow_ApprovalSignal(t *testing.T) {
 		core.ToolCallResponseWithID("dangerous_action", `{}`, "call_approval"),
 		core.TextResponse("approved"),
 	)
-	agent := core.NewAgent[string](model, core.WithTools[string](tool))
+	agent := core.NewAgent[string](model,
+		core.WithTools[string](tool),
+		core.WithTracing[string](),
+	)
 	ta := NewTemporalAgent(agent, WithName("workflow-approval"))
 
 	var suite testsuite.WorkflowTestSuite
@@ -196,6 +243,37 @@ func TestTemporalAgent_RunWorkflow_ApprovalSignal(t *testing.T) {
 	if !executed {
 		t.Fatal("expected tool to execute after approval signal")
 	}
+	var output WorkflowOutput
+	if err := env.GetWorkflowResult(&output); err != nil {
+		t.Fatalf("workflow result: %v", err)
+	}
+	if output.Trace == nil {
+		t.Fatal("expected traced workflow output")
+	}
+	for _, kind := range []core.TraceStepKind{
+		core.TraceApprovalRequested,
+		core.TraceRunWaiting,
+		core.TraceRunResumed,
+		core.TraceApprovalResolved,
+		core.TraceToolCall,
+		core.TraceToolResult,
+	} {
+		if !traceHasStepKind(output.Trace, kind) {
+			t.Fatalf("expected trace step %s, got %+v", kind, output.Trace.Steps)
+		}
+	}
+}
+
+func traceHasStepKind(trace *core.RunTrace, kind core.TraceStepKind) bool {
+	if trace == nil {
+		return false
+	}
+	for _, step := range trace.Steps {
+		if step.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTemporalAgent_RunWorkflow_AbortSignal(t *testing.T) {

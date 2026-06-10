@@ -24,6 +24,8 @@ const (
 	RuntimeEventTypeModelRequestStarted = "model_request_started"
 	// RuntimeEventTypeModelResponseCompleted marks the end of a model response.
 	RuntimeEventTypeModelResponseCompleted = "model_response_completed"
+	// RuntimeEventTypeModelDelta marks an incremental streamed model response delta.
+	RuntimeEventTypeModelDelta = "model_delta"
 	// RuntimeEventTypeApprovalRequested marks a tool approval request.
 	RuntimeEventTypeApprovalRequested = "approval_requested"
 	// RuntimeEventTypeApprovalResolved marks a tool approval resolution.
@@ -36,6 +38,18 @@ const (
 	RuntimeEventTypeRunWaiting = "run_waiting"
 	// RuntimeEventTypeRunResumed marks a run resuming from a waiting state.
 	RuntimeEventTypeRunResumed = "run_resumed"
+	// RuntimeEventTypeArtifactChanged marks a workspace artifact/file mutation.
+	RuntimeEventTypeArtifactChanged = "artifact_changed"
+	// RuntimeEventTypeRetryScheduled marks a model retry requested by the runtime.
+	RuntimeEventTypeRetryScheduled = "retry_scheduled"
+	// RuntimeEventTypeCheckpointCreated marks a replay/fork checkpoint boundary.
+	RuntimeEventTypeCheckpointCreated = "checkpoint_created"
+	// RuntimeEventTypeTopologyTransitioned marks a runtime topology change.
+	RuntimeEventTypeTopologyTransitioned = "topology_transitioned"
+	// RuntimeEventTypeEvaluatorCompleted marks evaluator output attached to a run.
+	RuntimeEventTypeEvaluatorCompleted = "evaluator_completed"
+	// RuntimeEventTypeErrorRaised marks an execution error boundary.
+	RuntimeEventTypeErrorRaised = "error_raised"
 )
 
 // RuntimeEvent is implemented by built-in runtime lifecycle events.
@@ -240,6 +254,22 @@ func (e ModelResponseCompletedEvent) RuntimeRunID() string         { return e.Ru
 func (e ModelResponseCompletedEvent) RuntimeParentRunID() string   { return e.ParentRunID }
 func (e ModelResponseCompletedEvent) RuntimeOccurredAt() time.Time { return e.CompletedAt }
 
+// ModelDeltaEvent is published for streamed model response deltas.
+type ModelDeltaEvent struct {
+	RunID        string
+	ParentRunID  string
+	TurnNumber   int
+	PartIndex    int
+	DeltaKind    string
+	ContentDelta string
+	DeltaAt      time.Time
+}
+
+func (e ModelDeltaEvent) RuntimeEventType() string     { return RuntimeEventTypeModelDelta }
+func (e ModelDeltaEvent) RuntimeRunID() string         { return e.RunID }
+func (e ModelDeltaEvent) RuntimeParentRunID() string   { return e.ParentRunID }
+func (e ModelDeltaEvent) RuntimeOccurredAt() time.Time { return e.DeltaAt }
+
 // ApprovalRequestedEvent is published when a tool requires approval.
 type ApprovalRequestedEvent struct {
 	RunID       string
@@ -325,3 +355,112 @@ func (e RunResumedEvent) RuntimeEventType() string     { return RuntimeEventType
 func (e RunResumedEvent) RuntimeRunID() string         { return e.RunID }
 func (e RunResumedEvent) RuntimeParentRunID() string   { return e.ParentRunID }
 func (e RunResumedEvent) RuntimeOccurredAt() time.Time { return e.ResumedAt }
+
+// ArtifactChangedEvent is published after a tool mutates a workspace artifact.
+type ArtifactChangedEvent struct {
+	RunID                string
+	ParentRunID          string
+	ToolCallID           string
+	ToolName             string
+	Path                 string
+	Operation            string
+	Bytes                int64
+	BeforeSHA256         string
+	AfterSHA256          string
+	Diff                 string
+	DiffTruncated        bool
+	DiffOmittedReason    string
+	BeforeContent        string
+	AfterContent         string
+	ContentEncoding      string
+	ContentTruncated     bool
+	ContentOmittedReason string
+	ChangedAt            time.Time
+}
+
+func (e ArtifactChangedEvent) RuntimeEventType() string     { return RuntimeEventTypeArtifactChanged }
+func (e ArtifactChangedEvent) RuntimeRunID() string         { return e.RunID }
+func (e ArtifactChangedEvent) RuntimeParentRunID() string   { return e.ParentRunID }
+func (e ArtifactChangedEvent) RuntimeOccurredAt() time.Time { return e.ChangedAt }
+
+// RetryScheduledEvent is published when the runtime schedules a model retry.
+type RetryScheduledEvent struct {
+	RunID       string
+	ParentRunID string
+	TurnNumber  int
+	ToolName    string
+	ToolCallID  string
+	Reason      string
+	Retry       int
+	MaxRetries  int
+	ScheduledAt time.Time
+}
+
+func (e RetryScheduledEvent) RuntimeEventType() string     { return RuntimeEventTypeRetryScheduled }
+func (e RetryScheduledEvent) RuntimeRunID() string         { return e.RunID }
+func (e RetryScheduledEvent) RuntimeParentRunID() string   { return e.ParentRunID }
+func (e RetryScheduledEvent) RuntimeOccurredAt() time.Time { return e.ScheduledAt }
+
+// CheckpointCreatedEvent is published when a replay/fork checkpoint is created.
+type CheckpointCreatedEvent struct {
+	RunID        string
+	ParentRunID  string
+	CheckpointID string
+	SnapshotID   string
+	Step         int
+	CreatedAt    time.Time
+}
+
+func (e CheckpointCreatedEvent) RuntimeEventType() string     { return RuntimeEventTypeCheckpointCreated }
+func (e CheckpointCreatedEvent) RuntimeRunID() string         { return e.RunID }
+func (e CheckpointCreatedEvent) RuntimeParentRunID() string   { return e.ParentRunID }
+func (e CheckpointCreatedEvent) RuntimeOccurredAt() time.Time { return e.CreatedAt }
+
+// TopologyTransitionedEvent is published when runtime topology changes.
+type TopologyTransitionedEvent struct {
+	RunID          string
+	ParentRunID    string
+	From           string
+	To             string
+	Reason         string
+	TransitionedAt time.Time
+}
+
+func (e TopologyTransitionedEvent) RuntimeEventType() string {
+	return RuntimeEventTypeTopologyTransitioned
+}
+func (e TopologyTransitionedEvent) RuntimeRunID() string         { return e.RunID }
+func (e TopologyTransitionedEvent) RuntimeParentRunID() string   { return e.ParentRunID }
+func (e TopologyTransitionedEvent) RuntimeOccurredAt() time.Time { return e.TransitionedAt }
+
+// EvaluatorCompletedEvent is published when evaluator output is available.
+type EvaluatorCompletedEvent struct {
+	RunID       string
+	ParentRunID string
+	Name        string
+	Score       *float64
+	Passed      *bool
+	Results     map[string]any
+	CompletedAt time.Time
+}
+
+func (e EvaluatorCompletedEvent) RuntimeEventType() string     { return RuntimeEventTypeEvaluatorCompleted }
+func (e EvaluatorCompletedEvent) RuntimeRunID() string         { return e.RunID }
+func (e EvaluatorCompletedEvent) RuntimeParentRunID() string   { return e.ParentRunID }
+func (e EvaluatorCompletedEvent) RuntimeOccurredAt() time.Time { return e.CompletedAt }
+
+// ErrorRaisedEvent is published when a runtime error boundary is reached.
+type ErrorRaisedEvent struct {
+	RunID       string
+	ParentRunID string
+	TurnNumber  int
+	ToolName    string
+	ToolCallID  string
+	Error       string
+	RaisedAt    time.Time
+}
+
+func (e ErrorRaisedEvent) RuntimeEventType() string     { return RuntimeEventTypeErrorRaised }
+func (e ErrorRaisedEvent) RuntimeRunID() string         { return e.RunID }
+func (e ErrorRaisedEvent) RuntimeParentRunID() string   { return e.ParentRunID }
+func (e ErrorRaisedEvent) RuntimeOccurredAt() time.Time { return e.RaisedAt }

@@ -88,7 +88,7 @@ func shutdownTool(t *Team) core.Tool {
 	return core.FuncTool[shutdownParams](
 		"shutdown_teammate",
 		"Request a teammate to stop after its current claimed task completes.",
-		func(_ context.Context, params shutdownParams) (any, error) {
+		func(ctx context.Context, params shutdownParams) (any, error) {
 			if params.Name == "" {
 				return nil, &core.ModelRetryError{Message: "name must not be empty"}
 			}
@@ -98,7 +98,7 @@ func shutdownTool(t *Team) core.Tool {
 				reason = "work complete"
 			}
 
-			req, err := t.requestShutdown(params.Name, t.leaderSenderName(), reason, "")
+			req, err := t.requestShutdownForRun(params.Name, t.leaderSenderName(), reason, "", core.RunIDFromContext(ctx))
 			if err != nil {
 				return nil, err
 			}

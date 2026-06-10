@@ -66,6 +66,7 @@ type RunContext struct {
 
 	toolStateGetter        func() map[string]any
 	runStateSnapshotGetter func() *RunStateSnapshot
+	messagesOverride       bool
 }
 
 // NewRunContext constructs a RunContext with optional tool-state and snapshot getters.

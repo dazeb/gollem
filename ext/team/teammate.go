@@ -10,6 +10,7 @@ import (
 
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/ext/orchestrator"
+	traceutil "github.com/fugue-labs/gollem/ext/trace"
 	"github.com/google/uuid"
 )
 
@@ -366,6 +367,15 @@ func (r *teammateRunner) RunTask(ctx context.Context, claim *orchestrator.Claime
 			},
 			CompletedAt: time.Now(),
 		},
+	}
+	if spec, ok, err := traceutil.OrchestratorArtifactSpec(claim.Task, result, map[string]any{
+		"team_name":      tm.team.name,
+		"teammate_name":  tm.name,
+		"team_task_kind": teamTaskKind,
+	}); err == nil && ok {
+		outcome.Artifacts = append(outcome.Artifacts, spec)
+	} else if err != nil {
+		fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s trace artifact error: %v\n", tm.team.name, tm.name, err)
 	}
 	fmt.Fprintf(os.Stderr, "[gollem] team:%s teammate:%s completed task:%s (tokens: %d in, %d out)\n",
 		tm.team.name, tm.name, claim.Task.ID, result.Usage.InputTokens, result.Usage.OutputTokens)

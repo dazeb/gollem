@@ -227,10 +227,8 @@ func TestCachedPersonalityGenerator_ConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 
-	// With sync.Map, some concurrent calls may slip through before
-	// the first Store, but it should be far fewer than 10.
-	if callCount.Load() > 5 {
-		t.Errorf("expected mostly cached results, got %d calls", callCount.Load())
+	if callCount.Load() != 1 {
+		t.Errorf("expected one coalesced generation call, got %d", callCount.Load())
 	}
 }
 

@@ -131,6 +131,8 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /runs/{id}", http.HandlerFunc(s.handleRun))
 	s.mux.Handle("GET /runs/{id}/sidebar", http.HandlerFunc(s.handleSidebar))
 	s.mux.Handle("GET /runs/{id}/events", http.HandlerFunc(s.handleEvents))
+	s.mux.Handle("GET /runs/{id}/trace", http.HandlerFunc(s.handleRunTrace))
+	s.mux.Handle("GET /runs/{id}/trace/inspect", http.HandlerFunc(s.handleRunTraceInspect))
 	s.mux.Handle("POST /runs/{id}/action", http.HandlerFunc(s.handleAction))
 	s.mux.Handle("GET /static/{path...}", s.static)
 }

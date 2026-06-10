@@ -10,6 +10,8 @@ import (
 	"github.com/fugue-labs/gollem/modelutil"
 )
 
+const DefaultTraceDir = "/tmp/gollem-traces"
+
 // Config holds shared configuration for coding tools.
 type Config struct {
 	// WorkDir is the working directory for shell commands and file operations.
@@ -36,6 +38,15 @@ type Config struct {
 	// Model is the LLM model used for subagent delegation.
 	// When set, the agent gets a delegate tool for spawning subagents.
 	Model core.Model
+
+	// EventBus receives runtime events from the top-level agent, delegated
+	// subagents, and spawned teammates when configured.
+	EventBus *core.EventBus
+
+	// TraceDir is where AgentOptions writes canonical gollem.trace.v1 artifacts.
+	// Defaults to DefaultTraceDir. Set to "" with WithTraceDir to disable. Pair
+	// WithTraceDir with WithEventBus to include runtime-only events.
+	TraceDir string
 
 	// Timeout is the overall run timeout for the agent. Used by the
 	// TimeBudgetMiddleware to inject time-remaining warnings.
@@ -93,6 +104,9 @@ type Config struct {
 	// test file enforcement (/tests/), destructive-command blocking, risky
 	// process-kill blocking, and the benchmark system prompt. Off by default.
 	BenchmarkMode bool
+
+	// ToolPolicy optionally restricts the visible coding tool surface.
+	ToolPolicy string
 }
 
 // Option configures coding tools.
@@ -103,6 +117,7 @@ func defaults() *Config {
 		BashTimeout:  5 * time.Minute,
 		MaxFileSize:  1 << 20,    // 1MB
 		MaxOutputLen: 100 * 1024, // 100KB — smart head+tail truncation preserves error info
+		TraceDir:     DefaultTraceDir,
 	}
 }
 
@@ -149,6 +164,23 @@ func WithCodeMode(runner *montygo.Runner) Option {
 // with its own context and limited turns.
 func WithModel(model core.Model) Option {
 	return func(c *Config) { c.Model = model }
+}
+
+// WithEventBus connects the coding agent, delegate subagents, and team
+// teammates to a shared runtime event bus.
+func WithEventBus(bus *core.EventBus) Option {
+	return func(c *Config) { c.EventBus = bus }
+}
+
+// WithTraceDir sets the directory where AgentOptions writes canonical
+// gollem.trace.v1 artifacts. Pass an empty string to disable file export.
+func WithTraceDir(dir string) Option {
+	return func(c *Config) { c.TraceDir = dir }
+}
+
+// WithTraceDirectory is an alias for WithTraceDir.
+func WithTraceDirectory(dir string) Option {
+	return WithTraceDir(dir)
 }
 
 // WithTimeout sets the overall run timeout. When set, a time budget
@@ -258,4 +290,10 @@ func WithPersistentSession(s *Session) Option {
 // base prompt.
 func WithBenchmarkMode() Option {
 	return func(c *Config) { c.BenchmarkMode = true }
+}
+
+// WithToolPolicy restricts the visible coding tool surface. Supported values:
+// "read-only" removes mutating and shell/delegation tools.
+func WithToolPolicy(policy string) Option {
+	return func(c *Config) { c.ToolPolicy = policy }
 }
