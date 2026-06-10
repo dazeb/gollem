@@ -257,5 +257,9 @@ func metadataString(metadata map[string]any, key string) string {
 	if len(metadata) == 0 {
 		return ""
 	}
-	return strings.TrimSpace(fmt.Sprint(metadata[key]))
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }

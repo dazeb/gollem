@@ -838,7 +838,11 @@ func traceSnapshotToolStateKeys(record TraceSnapshotRecord) []string {
 }
 
 // NormalizeTraceEvents sorts events into a deterministic timeline and assigns
-// stable sequence numbers and event IDs.
+// stable sequence numbers and event IDs. Event IDs are positional, so callers
+// that add, remove, or retime events must re-normalize the full event set;
+// persisted causal parent references are remapped to the renumbered IDs (and
+// re-inferred when their target is gone) so links keep pointing at the same
+// events across renumbering.
 func NormalizeTraceEvents(events []TraceEvent) []TraceEvent {
 	sort.SliceStable(events, func(i, j int) bool {
 		left, right := events[i].Timestamp, events[j].Timestamp
@@ -853,15 +857,43 @@ func NormalizeTraceEvents(events []TraceEvent) []TraceEvent {
 		}
 		return left.Before(right)
 	})
+	previousIDs := make([]string, len(events))
 	for i := range events {
+		previousIDs[i] = strings.TrimSpace(events[i].ID)
 		events[i].Seq = i + 1
 		events[i].ID = fmt.Sprintf("evt_%06d", i+1)
 		if events[i].ReplayPolicy == "" {
 			events[i].ReplayPolicy = traceReplayPolicyForKind(events[i].Kind)
 		}
 	}
+	remapTraceEventParents(events, previousIDs)
 	attachTraceEventCausality(events)
 	return events
+}
+
+// remapTraceEventParents rewrites persisted causal parent references through
+// the previous-to-new event ID mapping so links follow the events they named
+// before renumbering. References to IDs that no longer exist, or that were
+// duplicated across events, are cleared so causality is re-inferred.
+func remapTraceEventParents(events []TraceEvent, previousIDs []string) {
+	remap := make(map[string]string, len(events))
+	for i, previousID := range previousIDs {
+		if previousID == "" {
+			continue
+		}
+		if _, duplicate := remap[previousID]; duplicate {
+			remap[previousID] = ""
+			continue
+		}
+		remap[previousID] = events[i].ID
+	}
+	for i := range events {
+		parent := strings.TrimSpace(events[i].CausalParentEventID)
+		if parent == "" {
+			continue
+		}
+		events[i].CausalParentEventID = remap[parent]
+	}
 }
 
 func attachTraceEventCausality(events []TraceEvent) {
@@ -879,6 +911,12 @@ func attachTraceEventCausality(events []TraceEvent) {
 	for i := range events {
 		event := &events[i]
 		parent := strings.TrimSpace(event.CausalParentEventID)
+		event.CausalParentEventID = ""
+		if parent != "" {
+			if parentIndex, ok := eventIndex[parent]; !ok || parentIndex >= i {
+				parent = ""
+			}
+		}
 		if parent == "" && event.CausalParentID != "" {
 			parent = lastByAgent[event.CausalParentID]
 		}
@@ -896,11 +934,10 @@ func attachTraceEventCausality(events []TraceEvent) {
 		if parent == "" {
 			parent = last
 		}
-		if parent != "" && parent != event.ID {
+		if parent != "" {
 			event.CausalParentEventID = parent
-			if parentIndex, ok := eventIndex[parent]; ok {
-				events[parentIndex].CausalChildEventIDs = append(events[parentIndex].CausalChildEventIDs, event.ID)
-			}
+			parentIndex := eventIndex[parent]
+			events[parentIndex].CausalChildEventIDs = append(events[parentIndex].CausalChildEventIDs, event.ID)
 		}
 		if event.RequestID != "" {
 			lastByRequest[event.RequestID] = event.ID

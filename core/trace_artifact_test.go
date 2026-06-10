@@ -256,6 +256,21 @@ func TestTraceArtifactNormalizationAndPayloadHelpers(t *testing.T) {
 			t.Fatalf("event not normalized: %+v", event)
 		}
 	}
+	for i := 1; i < len(events); i++ {
+		if events[i].CausalParentEventID != events[i-1].ID {
+			t.Fatalf("event %d parent = %q, want %q", i, events[i].CausalParentEventID, events[i-1].ID)
+		}
+		if len(events[i-1].CausalChildEventIDs) == 0 || events[i-1].CausalChildEventIDs[0] != events[i].ID {
+			t.Fatalf("event %d children = %+v, want first child %q", i-1, events[i-1].CausalChildEventIDs, events[i].ID)
+		}
+	}
+	data, err := json.Marshal(events[1])
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"causal_parent_event_id"`)) || !bytes.Contains(data, []byte(`"causal_child_event_ids"`)) {
+		t.Fatalf("normalized event JSON missing causal event fields: %s", data)
+	}
 	for _, kind := range []string{
 		"run.started", "checkpoint.created", "turn.started", "model.requested", "model.delta",
 		"model.responded", "model.failed", "tool.called", "approval.requested", "deferred.requested",
@@ -315,6 +330,120 @@ func TestTraceArtifactNormalizationAndPayloadHelpers(t *testing.T) {
 	if got := compactTracePayload(map[string]any{"empty": ""}); got != nil {
 		t.Fatalf("empty compact payload = %+v", got)
 	}
+}
+
+func TestNormalizeTraceEventsRemapsPersistedParentsAcrossRenumbering(t *testing.T) {
+	base := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	events := NormalizeTraceEvents([]TraceEvent{
+		{Kind: "run.started", Timestamp: base},
+		{Kind: "model.requested", Timestamp: base.Add(time.Second), RequestID: "req-1"},
+		{Kind: "error.raised", Timestamp: base.Add(2 * time.Second)},
+		{Kind: "run.failed", Timestamp: base.Add(2 * time.Second)},
+	})
+	if events[3].Kind != "run.failed" || events[3].CausalParentEventID != events[2].ID {
+		t.Fatalf("precondition: run.failed parent = %q, want error.raised %q", events[3].CausalParentEventID, events[2].ID)
+	}
+
+	// evaluator.completed sorts before error.raised and run.failed at the same
+	// timestamp, displacing their positional IDs by one.
+	events = NormalizeTraceEvents(append(events, TraceEvent{
+		Kind:      "evaluator.completed",
+		Timestamp: base.Add(2 * time.Second),
+	}))
+	kinds := make([]string, len(events))
+	for i, event := range events {
+		kinds[i] = event.Kind
+	}
+	if kinds[2] != "evaluator.completed" || kinds[3] != "error.raised" || kinds[4] != "run.failed" {
+		t.Fatalf("unexpected event order after insertion: %v", kinds)
+	}
+	if events[4].CausalParentEventID != events[3].ID {
+		t.Fatalf("run.failed parent = %q, want renumbered error.raised %q (stale link survived renumbering)", events[4].CausalParentEventID, events[3].ID)
+	}
+	if len(events[3].CausalChildEventIDs) != 1 || events[3].CausalChildEventIDs[0] != events[4].ID {
+		t.Fatalf("error.raised children = %+v, want [%q]", events[3].CausalChildEventIDs, events[4].ID)
+	}
+	for _, childID := range events[2].CausalChildEventIDs {
+		if childID == events[4].ID {
+			t.Fatalf("evaluator event must not adopt run.failed: %+v", events[2].CausalChildEventIDs)
+		}
+	}
+
+	// Stale references to events that no longer exist are dropped and the
+	// parent is re-inferred instead of left dangling.
+	events[3].CausalParentEventID = "evt_gone"
+	events = NormalizeTraceEvents(events)
+	if events[3].CausalParentEventID != events[2].ID {
+		t.Fatalf("dangling parent reference must be re-inferred, got %q", events[3].CausalParentEventID)
+	}
+
+	// A persisted parent that inference would never choose must survive
+	// renumbering: rewire run.failed to model.requested, then displace
+	// model.requested's positional ID with an earlier insertion.
+	events[4].CausalParentEventID = events[1].ID
+	events = NormalizeTraceEvents(append(events, TraceEvent{
+		Kind:      "checkpoint.created",
+		Timestamp: base.Add(500 * time.Millisecond),
+	}))
+	if events[2].Kind != "model.requested" || events[5].Kind != "run.failed" {
+		t.Fatalf("unexpected order after early insertion: %+v", events)
+	}
+	if events[5].CausalParentEventID != events[2].ID {
+		t.Fatalf("rewired parent must survive renumbering, got %q want model.requested %q", events[5].CausalParentEventID, events[2].ID)
+	}
+
+	// References to a duplicated pre-normalization ID are ambiguous and must be
+	// re-inferred (here via request grouping), not resolved to the last holder.
+	dupEvents := NormalizeTraceEvents([]TraceEvent{
+		{Kind: "run.started", Timestamp: base},
+		{Kind: "model.requested", Timestamp: base.Add(time.Second), RequestID: "req-9"},
+		{Kind: "tool.called", Timestamp: base.Add(2 * time.Second)},
+		{Kind: "model.responded", Timestamp: base.Add(3 * time.Second), RequestID: "req-9"},
+	})
+	dupEvents[1].ID = "evt_dup"
+	dupEvents[2].ID = "evt_dup"
+	dupEvents[3].CausalParentEventID = "evt_dup"
+	dupEvents = NormalizeTraceEvents(dupEvents)
+	if dupEvents[3].CausalParentEventID != dupEvents[1].ID {
+		t.Fatalf("ambiguous duplicate id must be re-inferred via request grouping, got %q want %q", dupEvents[3].CausalParentEventID, dupEvents[1].ID)
+	}
+}
+
+func TestAttachTraceEventCausalityPrecedence(t *testing.T) {
+	base := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	at := func(seconds int) time.Time { return base.Add(time.Duration(seconds) * time.Second) }
+	// Every event after the first carries Step 1, so step grouping (and the
+	// previous-event fallback) always has a competing answer; each assertion
+	// below pins a higher-precedence mechanism beating it.
+	events := NormalizeTraceEvents([]TraceEvent{
+		{Kind: "run.started", Timestamp: at(0), AgentID: "run-1"},
+		{Kind: "turn.started", Timestamp: at(1), Step: 1},
+		{Kind: "model.requested", Timestamp: at(2), RequestID: "req-a", Step: 1},
+		{Kind: "tool.called", Timestamp: at(3), Payload: map[string]any{"tool_call_id": "tc-1"}, Step: 1},
+		{Kind: "model.responded", Timestamp: at(4), RequestID: "req-a", Step: 1},
+		{Kind: "tool.completed", Timestamp: at(5), Payload: map[string]any{"tool_call_id": "tc-1"}, Step: 1},
+		{Kind: "checkpoint.created", Timestamp: at(6), CausalParentID: "run-1", RequestID: "req-a", Step: 1},
+	})
+	assertParent := func(child, parent int, reason string) {
+		t.Helper()
+		if events[child].CausalParentEventID != events[parent].ID {
+			t.Fatalf("%s: event %d parent = %q, want %q", reason, child, events[child].CausalParentEventID, events[parent].ID)
+		}
+		found := false
+		for _, childID := range events[parent].CausalChildEventIDs {
+			if childID == events[child].ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s: event %d children %+v missing %q", reason, parent, events[parent].CausalChildEventIDs, events[child].ID)
+		}
+	}
+	assertParent(1, 0, "previous event is the fallback parent")
+	assertParent(2, 1, "step grouping applies when no higher key matches")
+	assertParent(4, 2, "request id beats step grouping")
+	assertParent(5, 3, "tool call id beats step grouping")
+	assertParent(6, 0, "agent lineage beats request and step grouping")
 }
 
 func TestTraceArtifactEvaluatorMetadataForms(t *testing.T) {

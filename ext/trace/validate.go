@@ -7,6 +7,11 @@ import (
 )
 
 // ValidateArtifact checks structural invariants for canonical trace artifacts.
+// Artifacts carrying persisted causal event links are held to full reciprocity:
+// every event after the first must name a preceding parent that lists it back.
+// Normalization establishes those links, so callers that append or mutate
+// events must re-run core.NormalizeTraceEvents before validating; link-free
+// legacy artifacts are exempt.
 func ValidateArtifact(artifact *Artifact) error {
 	if artifact == nil {
 		return errors.New("nil trace artifact")
@@ -61,13 +66,14 @@ func validateTraceEvents(runID string, lineageIDs []string, events []Event) erro
 		if event.Seq != wantSeq {
 			return fmt.Errorf("event sequence at index %d = %d, want %d", i, event.Seq, wantSeq)
 		}
-		if strings.TrimSpace(event.ID) == "" {
+		id := strings.TrimSpace(event.ID)
+		if id == "" {
 			return fmt.Errorf("event %03d is missing id", event.Seq)
 		}
-		if seenIDs[event.ID] {
-			return fmt.Errorf("event %03d duplicates id %q", event.Seq, event.ID)
+		if seenIDs[id] {
+			return fmt.Errorf("event %03d duplicates id %q", event.Seq, id)
 		}
-		seenIDs[event.ID] = true
+		seenIDs[id] = true
 		if strings.TrimSpace(event.Kind) == "" {
 			return fmt.Errorf("event %03d is missing kind", event.Seq)
 		}
@@ -91,6 +97,75 @@ func validateTraceEvents(runID string, lineageIDs []string, events []Event) erro
 		}
 		if err := validateTraceEventPayload(event); err != nil {
 			return err
+		}
+	}
+	if err := validateTraceEventCausality(events); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateTraceEventCausality(events []Event) error {
+	eventIndex := make(map[string]int, len(events))
+	hasPersistedLinks := false
+	for i, event := range events {
+		eventIndex[strings.TrimSpace(event.ID)] = i
+		if strings.TrimSpace(event.CausalParentEventID) != "" || len(event.CausalChildEventIDs) > 0 {
+			hasPersistedLinks = true
+		}
+	}
+	childSets := make([]map[string]bool, len(events))
+	for i, event := range events {
+		parentID := strings.TrimSpace(event.CausalParentEventID)
+		if parentID != "" {
+			parentIndex, ok := eventIndex[parentID]
+			if !ok {
+				return fmt.Errorf("event %03d causal parent event %q is not present", event.Seq, parentID)
+			}
+			if parentIndex >= i {
+				return fmt.Errorf("event %03d causal parent event %q must precede child event", event.Seq, parentID)
+			}
+		}
+		seenChildren := make(map[string]bool, len(event.CausalChildEventIDs))
+		for _, childID := range event.CausalChildEventIDs {
+			childID = strings.TrimSpace(childID)
+			if childID == "" {
+				return fmt.Errorf("event %03d has empty causal child event id", event.Seq)
+			}
+			if seenChildren[childID] {
+				return fmt.Errorf("event %03d duplicates causal child event %q", event.Seq, childID)
+			}
+			seenChildren[childID] = true
+			childIndex, ok := eventIndex[childID]
+			if !ok {
+				return fmt.Errorf("event %03d causal child event %q is not present", event.Seq, childID)
+			}
+			if childIndex <= i {
+				return fmt.Errorf("event %03d causal child event %q must follow parent event", event.Seq, childID)
+			}
+		}
+		childSets[i] = seenChildren
+	}
+	if !hasPersistedLinks {
+		return nil
+	}
+	for i, event := range events {
+		eventID := strings.TrimSpace(event.ID)
+		parentID := strings.TrimSpace(event.CausalParentEventID)
+		if i > 0 && parentID == "" {
+			return fmt.Errorf("event %03d is missing causal parent event id", event.Seq)
+		}
+		if parentID != "" {
+			if !childSets[eventIndex[parentID]][eventID] {
+				return fmt.Errorf("event %03d causal parent event %q does not list child %q", event.Seq, parentID, event.ID)
+			}
+		}
+		for _, childID := range event.CausalChildEventIDs {
+			childID = strings.TrimSpace(childID)
+			child := events[eventIndex[childID]]
+			if strings.TrimSpace(child.CausalParentEventID) != eventID {
+				return fmt.Errorf("event %03d causal child event %q does not point back to parent %q", event.Seq, childID, event.ID)
+			}
 		}
 	}
 	return nil

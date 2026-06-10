@@ -1127,6 +1127,232 @@ func TestDiffFindsFirstDivergenceAndUsageDelta(t *testing.T) {
 	}
 }
 
+func TestDiffUsesPersistedCausalEventLinks(t *testing.T) {
+	events := []Event{
+		{
+			ID:                  "evt_000001",
+			Seq:                 1,
+			Kind:                "run.started",
+			AgentID:             "run-causal",
+			ReplayPolicy:        "inspect",
+			CausalChildEventIDs: []string{"evt_000002"},
+		},
+		{
+			ID:                  "evt_000002",
+			Seq:                 2,
+			Kind:                "model.requested",
+			RequestID:           "req-1",
+			AgentID:             "run-causal",
+			ReplayPolicy:        "recorded",
+			CausalParentEventID: "evt_000001",
+			CausalChildEventIDs: []string{"evt_000003"},
+		},
+		{
+			ID:                  "evt_000003",
+			Seq:                 3,
+			Kind:                "model.responded",
+			RequestID:           "req-1",
+			AgentID:             "run-causal",
+			ReplayPolicy:        "recorded",
+			CausalParentEventID: "evt_000002",
+			CausalChildEventIDs: []string{"evt_000004"},
+		},
+		{
+			ID:                  "evt_000004",
+			Seq:                 4,
+			Kind:                "run.completed",
+			AgentID:             "run-causal",
+			ReplayPolicy:        "inspect",
+			CausalParentEventID: "evt_000003",
+		},
+	}
+	baseline := &Artifact{
+		SchemaVersion: SchemaVersion,
+		Run:           RunMetadata{ID: "run-causal"},
+		Summary:       Summary{Status: "succeeded", Success: true},
+		Events:        events,
+	}
+	variantEvents := append([]Event(nil), events...)
+	variantEvents[0].CausalChildEventIDs = []string{"evt_000002", "evt_000003"}
+	variantEvents[1].CausalChildEventIDs = nil
+	variantEvents[2].CausalParentEventID = "evt_000001"
+	variant := &Artifact{
+		SchemaVersion: SchemaVersion,
+		Run:           RunMetadata{ID: "run-causal"},
+		Summary:       Summary{Status: "succeeded", Success: true},
+		Events:        variantEvents,
+	}
+
+	if err := ValidateArtifact(baseline); err != nil {
+		t.Fatalf("ValidateArtifact(baseline) error = %v", err)
+	}
+	if err := ValidateArtifact(variant); err != nil {
+		t.Fatalf("ValidateArtifact(variant) error = %v", err)
+	}
+	diff := Diff(baseline, variant)
+	if diff.FirstDivergence != nil {
+		t.Fatalf("event fingerprints should match; got first divergence %+v", diff.FirstDivergence)
+	}
+	if diff.CausalGraphDelta == nil || diff.CausalGraphDelta.FirstEdgeDivergence == nil {
+		t.Fatalf("expected persisted causal graph divergence: %+v", diff.CausalGraphDelta)
+	}
+	if len(diff.CausalGraphDelta.BaselineOnlyEdges) == 0 || len(diff.CausalGraphDelta.VariantOnlyEdges) == 0 {
+		t.Fatalf("expected causal edge set deltas: %+v", diff.CausalGraphDelta)
+	}
+}
+
+func TestDiffCausalGraphFallbackMatchesPersistedLinks(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	baseline, err := FromRunTrace(sampleRunTrace(now), nil)
+	if err != nil {
+		t.Fatalf("FromRunTrace(baseline) error = %v", err)
+	}
+	variantTrace := sampleRunTrace(now)
+	variantTrace.Steps = append(variantTrace.Steps,
+		core.TraceStep{
+			Kind:      core.TraceToolCall,
+			Timestamp: now.Add(1100 * time.Millisecond),
+			Data:      map[string]any{"tool_name": "lint", "args": "{}"},
+		},
+		core.TraceStep{
+			Kind:      core.TraceToolResult,
+			Timestamp: now.Add(1300 * time.Millisecond),
+			Data:      map[string]any{"tool_name": "lint", "result": "clean"},
+		},
+	)
+	variant, err := FromRunTrace(variantTrace, nil)
+	if err != nil {
+		t.Fatalf("FromRunTrace(variant) error = %v", err)
+	}
+
+	stripCausalLinks := func(artifact *Artifact) *Artifact {
+		out := *artifact
+		out.Events = append([]Event(nil), artifact.Events...)
+		for i := range out.Events {
+			out.Events[i].CausalParentEventID = ""
+			out.Events[i].CausalChildEventIDs = nil
+		}
+		return &out
+	}
+	if err := ValidateArtifact(stripCausalLinks(baseline)); err != nil {
+		t.Fatalf("ValidateArtifact(link-free legacy artifact) error = %v", err)
+	}
+
+	linked := Diff(baseline, variant)
+	if linked.CausalGraphDelta == nil {
+		t.Fatalf("expected causal graph delta between linked artifacts: %+v", linked)
+	}
+	wantDelta, err := json.Marshal(linked.CausalGraphDelta)
+	if err != nil {
+		t.Fatalf("marshal linked delta: %v", err)
+	}
+
+	stripped := Diff(stripCausalLinks(baseline), stripCausalLinks(variant))
+	gotDelta, err := json.Marshal(stripped.CausalGraphDelta)
+	if err != nil {
+		t.Fatalf("marshal stripped delta: %v", err)
+	}
+	if !bytes.Equal(wantDelta, gotDelta) {
+		t.Fatalf("legacy fallback delta diverges from persisted links:\npersisted: %s\nfallback:  %s", wantDelta, gotDelta)
+	}
+
+	// A genuinely partial artifact — fully linked except one later event whose
+	// parent is whitespace — must fall back wholesale, not drop that edge.
+	partial := &Artifact{}
+	*partial = *baseline
+	partial.Events = append([]Event(nil), baseline.Events...)
+	partial.Events[len(partial.Events)-1].CausalParentEventID = " "
+	partialDiff := Diff(partial, stripCausalLinks(variant))
+	gotPartial, err := json.Marshal(partialDiff.CausalGraphDelta)
+	if err != nil {
+		t.Fatalf("marshal partial delta: %v", err)
+	}
+	if !bytes.Equal(wantDelta, gotPartial) {
+		t.Fatalf("partially linked artifact must fall back to inference:\npersisted: %s\npartial:   %s", wantDelta, gotPartial)
+	}
+
+	// A spurious parent on the first event likewise disqualifies the persisted
+	// graph instead of producing backward edges.
+	spurious := &Artifact{}
+	*spurious = *baseline
+	spurious.Events = append([]Event(nil), baseline.Events...)
+	spurious.Events[0].CausalParentEventID = baseline.Events[len(baseline.Events)-1].ID
+	spuriousDiff := Diff(spurious, stripCausalLinks(variant))
+	gotSpurious, err := json.Marshal(spuriousDiff.CausalGraphDelta)
+	if err != nil {
+		t.Fatalf("marshal spurious delta: %v", err)
+	}
+	if !bytes.Equal(wantDelta, gotSpurious) {
+		t.Fatalf("spuriously rooted artifact must fall back to inference:\npersisted: %s\nspurious:  %s", wantDelta, gotSpurious)
+	}
+}
+
+func TestEvaluateTraceRemapsCausalLinksAcrossRenumbering(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	failedTrace := sampleRunTrace(now)
+	failedTrace.Success = false
+	failedTrace.Steps = append(failedTrace.Steps, core.TraceStep{
+		Kind:      core.TraceErrorRaised,
+		Timestamp: failedTrace.EndTime,
+		Data:      map[string]any{"error": "boom"},
+	})
+	baseline, err := FromRunTrace(failedTrace, nil)
+	if err != nil {
+		t.Fatalf("FromRunTrace() error = %v", err)
+	}
+	eventByKind := func(artifact *Artifact, kind string) Event {
+		t.Helper()
+		for _, event := range artifact.Events {
+			if event.Kind == kind {
+				return event
+			}
+		}
+		t.Fatalf("event kind %q not found in %+v", kind, artifact.Events)
+		return Event{}
+	}
+	errorBefore := eventByKind(baseline, "error.raised")
+	failedBefore := eventByKind(baseline, "run.failed")
+	if failedBefore.CausalParentEventID != errorBefore.ID {
+		t.Fatalf("precondition: run.failed parent = %q, want error.raised %q", failedBefore.CausalParentEventID, errorBefore.ID)
+	}
+
+	evaluated, err := EvaluateTrace(baseline, EvaluateOptions{Evaluator: "status:failed"})
+	if err != nil {
+		t.Fatalf("EvaluateTrace() error = %v", err)
+	}
+	if err := ValidateArtifact(evaluated); err != nil {
+		t.Fatalf("ValidateArtifact(evaluated) error = %v", err)
+	}
+	errorAfter := eventByKind(evaluated, "error.raised")
+	failedAfter := eventByKind(evaluated, "run.failed")
+	if errorAfter.ID == errorBefore.ID {
+		t.Fatalf("expected evaluator event to displace error.raised id %q", errorBefore.ID)
+	}
+	if failedAfter.CausalParentEventID != errorAfter.ID {
+		t.Fatalf("run.failed parent = %q, want renumbered error.raised %q (stale link survived renumbering)", failedAfter.CausalParentEventID, errorAfter.ID)
+	}
+
+	diff := Diff(baseline, evaluated)
+	if diff.CausalGraphDelta == nil {
+		t.Fatalf("expected causal graph delta for appended evaluator event: %+v", diff)
+	}
+	// Renumbering renames ID-keyed graph nodes, so baseline edges may resurface
+	// under new IDs; what must never appear is an edge claiming the evaluator
+	// event caused part of the original run.
+	preservedChain := false
+	for _, edge := range diff.CausalGraphDelta.VariantOnlyEdges {
+		if strings.HasPrefix(edge, "evaluator.completed") {
+			t.Fatalf("corrupted causal edge from evaluator event: %q", edge)
+		}
+		if strings.HasPrefix(edge, "error.raised") && strings.Contains(edge, "-> run.failed") {
+			preservedChain = true
+		}
+	}
+	if !preservedChain {
+		t.Fatalf("error.raised -> run.failed chain missing from variant edges: %+v", diff.CausalGraphDelta.VariantOnlyEdges)
+	}
+}
+
 func TestEvaluateTraceAddsEvaluatorEvidence(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	artifact, err := FromRunTrace(sampleRunTrace(now), nil)
@@ -1275,6 +1501,31 @@ func TestSleepyEvidenceRanksCandidatesAndPreservesReplayLineage(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), SleepyEvidenceSchemaVersion) {
 		t.Fatalf("serialized evidence missing schema:\n%s", buf.String())
+	}
+}
+
+func TestSleepyEvidenceCandidateIDFallsBackToRunID(t *testing.T) {
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	baseline, err := FromRunTrace(sampleRunTrace(now), map[string]any{"evaluator": map[string]any{"score": 0.5, "passed": true}})
+	if err != nil {
+		t.Fatalf("FromRunTrace(baseline) error = %v", err)
+	}
+	candidateTrace := sampleRunTrace(now)
+	candidateTrace.RunID = "candidate-without-sleepy-id"
+	candidate, err := FromRunTrace(candidateTrace, map[string]any{"evaluator": map[string]any{"score": 0.6, "passed": true}})
+	if err != nil {
+		t.Fatalf("FromRunTrace(candidate) error = %v", err)
+	}
+
+	evidence, err := BuildSleepyEvidence(baseline, []*Artifact{candidate})
+	if err != nil {
+		t.Fatalf("BuildSleepyEvidence() error = %v", err)
+	}
+	if got := evidence.Candidates[0].CandidateID; got != "candidate-without-sleepy-id" {
+		t.Fatalf("CandidateID = %q, want run id", got)
+	}
+	if got := evidence.Candidates[0].Lineage.SourceTraceRunID; got != "" {
+		t.Fatalf("unexpected nil metadata lineage = %q", got)
 	}
 }
 
@@ -1780,23 +2031,19 @@ func TestValidateArtifactChecksStructuralInvariants(t *testing.T) {
 
 	withRuntimeFailures := *artifact
 	withRuntimeFailures.Events = append([]Event(nil), artifact.Events...)
-	withRuntimeFailures.Events = append(withRuntimeFailures.Events,
+	withRuntimeFailures.Events = core.NormalizeTraceEvents(append(withRuntimeFailures.Events,
 		Event{
-			ID:           "event-turn-failed",
-			Seq:          len(withRuntimeFailures.Events) + 1,
 			Kind:         "turn.failed",
 			AgentID:      artifact.Run.ID,
 			ReplayPolicy: "inspect",
 		},
 		Event{
-			ID:           "event-guardrail",
-			Seq:          len(withRuntimeFailures.Events) + 2,
 			Kind:         "guardrail.evaluated",
 			AgentID:      artifact.Run.ID,
 			ReplayPolicy: "recorded",
 			Payload:      map[string]any{"name": "policy", "passed": false},
 		},
-	)
+	))
 	if err := ValidateArtifact(&withRuntimeFailures); err != nil {
 		t.Fatalf("ValidateArtifact() rejected runtime failure/policy events: %v", err)
 	}
@@ -1807,6 +2054,88 @@ func TestValidateArtifactChecksStructuralInvariants(t *testing.T) {
 	withResumeLineage.Events[0].CausalParentID = "source-run"
 	if err := ValidateArtifact(&withResumeLineage); err != nil {
 		t.Fatalf("ValidateArtifact() rejected resume source lineage: %v", err)
+	}
+
+	missingParentEvent := *artifact
+	missingParentEvent.Events = append([]Event(nil), artifact.Events...)
+	missingParentEvent.Events[0].CausalChildEventIDs = nil
+	missingParentEvent.Events[1].CausalParentEventID = ""
+	if err := ValidateArtifact(&missingParentEvent); err == nil || !strings.Contains(err.Error(), "missing causal parent event id") {
+		t.Fatalf("missing causal parent event id error = %v", err)
+	}
+
+	badParentEvent := *artifact
+	badParentEvent.Events = append([]Event(nil), artifact.Events...)
+	badParentEvent.Events[1].CausalParentEventID = "evt_missing"
+	if err := ValidateArtifact(&badParentEvent); err == nil || !strings.Contains(err.Error(), `causal parent event "evt_missing" is not present`) {
+		t.Fatalf("bad causal parent event error = %v", err)
+	}
+
+	trimmedDuplicateID := *artifact
+	trimmedDuplicateID.Events = append([]Event(nil), artifact.Events...)
+	trimmedDuplicateID.Events[2].ID = artifact.Events[1].ID + " "
+	if err := ValidateArtifact(&trimmedDuplicateID); err == nil || !strings.Contains(err.Error(), "duplicates id") {
+		t.Fatalf("trimmed duplicate id error = %v", err)
+	}
+
+	missingReciprocalChild := *artifact
+	missingReciprocalChild.Events = append([]Event(nil), artifact.Events...)
+	missingReciprocalChild.Events[0].CausalChildEventIDs = nil
+	if err := ValidateArtifact(&missingReciprocalChild); err == nil || !strings.Contains(err.Error(), "does not list child") {
+		t.Fatalf("missing reciprocal child error = %v", err)
+	}
+
+	forwardParentEvent := *artifact
+	forwardParentEvent.Events = append([]Event(nil), artifact.Events...)
+	forwardParentEvent.Events[0].CausalChildEventIDs = []string{artifact.Events[1].ID}
+	forwardParentEvent.Events[1].CausalParentEventID = artifact.Events[2].ID
+	if err := ValidateArtifact(&forwardParentEvent); err == nil || !strings.Contains(err.Error(), "must precede child") {
+		t.Fatalf("forward causal parent error = %v", err)
+	}
+
+	emptyChildEvent := *artifact
+	emptyChildEvent.Events = append([]Event(nil), artifact.Events...)
+	emptyChildEvent.Events[0].CausalChildEventIDs = append(append([]string(nil), artifact.Events[0].CausalChildEventIDs...), " ")
+	if err := ValidateArtifact(&emptyChildEvent); err == nil || !strings.Contains(err.Error(), "empty causal child event id") {
+		t.Fatalf("empty causal child error = %v", err)
+	}
+
+	duplicateChildEvent := *artifact
+	duplicateChildEvent.Events = append([]Event(nil), artifact.Events...)
+	duplicateChildEvent.Events[0].CausalChildEventIDs = []string{artifact.Events[1].ID, artifact.Events[1].ID}
+	if err := ValidateArtifact(&duplicateChildEvent); err == nil || !strings.Contains(err.Error(), "duplicates causal child event") {
+		t.Fatalf("duplicate causal child error = %v", err)
+	}
+
+	missingChildEvent := *artifact
+	missingChildEvent.Events = append([]Event(nil), artifact.Events...)
+	missingChildEvent.Events[0].CausalChildEventIDs = append(append([]string(nil), artifact.Events[0].CausalChildEventIDs...), "evt_999999")
+	if err := ValidateArtifact(&missingChildEvent); err == nil || !strings.Contains(err.Error(), `causal child event "evt_999999" is not present`) {
+		t.Fatalf("missing causal child error = %v", err)
+	}
+
+	backwardChildEvent := *artifact
+	backwardChildEvent.Events = append([]Event(nil), artifact.Events...)
+	backwardChildEvent.Events[1].CausalChildEventIDs = []string{artifact.Events[0].ID}
+	if err := ValidateArtifact(&backwardChildEvent); err == nil || !strings.Contains(err.Error(), "must follow parent event") {
+		t.Fatalf("backward causal child error = %v", err)
+	}
+
+	badChildBacklink := *artifact
+	badChildBacklink.Events = append([]Event(nil), artifact.Events...)
+	backlinkChild := -1
+	for j := 2; j < len(artifact.Events); j++ {
+		if artifact.Events[j].CausalParentEventID != artifact.Events[0].ID {
+			backlinkChild = j
+			break
+		}
+	}
+	if backlinkChild < 0 {
+		t.Fatal("expected an event not parented by the first event")
+	}
+	badChildBacklink.Events[0].CausalChildEventIDs = append(append([]string(nil), artifact.Events[0].CausalChildEventIDs...), artifact.Events[backlinkChild].ID)
+	if err := ValidateArtifact(&badChildBacklink); err == nil || !strings.Contains(err.Error(), "does not point back to parent") {
+		t.Fatalf("bad child backlink error = %v", err)
 	}
 
 	badSeq := *artifact

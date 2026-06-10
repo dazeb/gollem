@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/fugue-labs/gollem/core"
@@ -43,8 +44,10 @@ type CausalDivergence struct {
 	Variant  string `json:"variant,omitempty"`
 }
 
-// CausalGraphDelta compares inferred event-to-event causal edges rather than
-// only the ordered boundary path.
+// CausalGraphDelta compares persisted event-to-event causal edges rather than
+// only the ordered boundary path. Legacy traces without complete event links
+// re-derive them through the same normalization that persists links on the
+// export path.
 type CausalGraphDelta struct {
 	BaselineNodes       int               `json:"baseline_nodes"`
 	VariantNodes        int               `json:"variant_nodes"`
@@ -484,50 +487,93 @@ type causalGraph struct {
 }
 
 func buildCausalGraph(events []Event) causalGraph {
-	graph := causalGraph{nodes: make([]string, 0, len(events))}
-	lastByRequest := make(map[string]string)
-	lastByToolCall := make(map[string]string)
-	lastByStep := make(map[int]string)
-	lastByAgent := make(map[string]string)
-	var last string
+	if !hasCompletePersistedCausalLinks(events) {
+		// Legacy or partially linked traces: derive links with the same
+		// normalization that persists them on the export path, so inferred
+		// and persisted graphs cannot disagree.
+		events = core.NormalizeTraceEvents(append([]Event(nil), events...))
+	}
+	return buildPersistedCausalGraph(events)
+}
 
+// hasCompletePersistedCausalLinks reports whether the first event is parentless
+// and every later event carries a persisted causal parent link. Partially or
+// spuriously linked event sets fall back to inference rather than silently
+// dropping or inverting edges.
+func hasCompletePersistedCausalLinks(events []Event) bool {
+	if len(events) < 2 {
+		return false
+	}
+	if strings.TrimSpace(events[0].CausalParentEventID) != "" {
+		return false
+	}
+	for _, event := range events[1:] {
+		if strings.TrimSpace(event.CausalParentEventID) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func buildPersistedCausalGraph(events []Event) causalGraph {
+	graph := causalGraph{nodes: make([]string, 0, len(events))}
+	nodes := make([]string, len(events))
+	indexByID := make(map[string]int, len(events))
+	ambiguousIDs := make(map[string]bool)
+	for i, event := range events {
+		nodes[i] = eventGraphKey(event)
+		graph.nodes = append(graph.nodes, nodes[i])
+		id := strings.TrimSpace(event.ID)
+		if id == "" {
+			continue
+		}
+		if _, duplicate := indexByID[id]; duplicate {
+			ambiguousIDs[id] = true
+			continue
+		}
+		indexByID[id] = i
+	}
+	type causalEdge struct{ parent, child int }
+	seenEdges := make(map[causalEdge]bool, len(events))
+	edges := make([]causalEdge, 0, len(events))
+	addEdge := func(parentID, childID string) {
+		parentID = strings.TrimSpace(parentID)
+		childID = strings.TrimSpace(childID)
+		if parentID == "" || childID == "" || parentID == childID {
+			return
+		}
+		if ambiguousIDs[parentID] || ambiguousIDs[childID] {
+			return
+		}
+		parentIndex, parentOK := indexByID[parentID]
+		childIndex, childOK := indexByID[childID]
+		if !parentOK || !childOK || parentIndex >= childIndex || nodes[parentIndex] == nodes[childIndex] {
+			return
+		}
+		edge := causalEdge{parent: parentIndex, child: childIndex}
+		if seenEdges[edge] {
+			return
+		}
+		seenEdges[edge] = true
+		edges = append(edges, edge)
+	}
 	for _, event := range events {
-		node := eventGraphKey(event)
-		graph.nodes = append(graph.nodes, node)
-		parent := ""
-		if event.CausalParentID != "" {
-			parent = lastByAgent[event.CausalParentID]
+		addEdge(event.CausalParentEventID, event.ID)
+		for _, childID := range event.CausalChildEventIDs {
+			addEdge(event.ID, childID)
 		}
-		if parent == "" && event.RequestID != "" {
-			parent = lastByRequest[event.RequestID]
+	}
+	// Order edges by event position so the emitted sequence is independent of
+	// whether an edge was declared on the parent, the child, or both.
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].child != edges[j].child {
+			return edges[i].child < edges[j].child
 		}
-		if parent == "" {
-			if toolCallID := firstPayloadString(event, "tool_call_id"); toolCallID != "" {
-				parent = lastByToolCall[toolCallID]
-			}
-		}
-		if parent == "" && event.Step > 0 {
-			parent = lastByStep[event.Step]
-		}
-		if parent == "" {
-			parent = last
-		}
-		if parent != "" && parent != node {
-			graph.edges = append(graph.edges, parent+" -> "+node)
-		}
-		if event.RequestID != "" {
-			lastByRequest[event.RequestID] = node
-		}
-		if toolCallID := firstPayloadString(event, "tool_call_id"); toolCallID != "" {
-			lastByToolCall[toolCallID] = node
-		}
-		if event.Step > 0 {
-			lastByStep[event.Step] = node
-		}
-		if event.AgentID != "" {
-			lastByAgent[event.AgentID] = node
-		}
-		last = node
+		return edges[i].parent < edges[j].parent
+	})
+	graph.edges = make([]string, 0, len(edges))
+	for _, edge := range edges {
+		graph.edges = append(graph.edges, nodes[edge.parent]+" -> "+nodes[edge.child])
 	}
 	return graph
 }
