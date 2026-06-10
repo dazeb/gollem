@@ -147,7 +147,7 @@ func (c *HTTPClient) call(ctx context.Context, method string, params any) (json.
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusAccepted {
 			c.ensureNotificationStream()
-			if !c.waitForStream(ctx, 250*time.Millisecond) {
+			if !c.waitForStream(ctx, streamConnectWait) {
 				c.removePending(id)
 				return nil, errors.New("mcp: HTTP request accepted but no event stream is connected")
 			}
@@ -363,6 +363,17 @@ func (c *HTTPClient) isStreamConnected() bool {
 	defer c.streamMu.Unlock()
 	return c.streamConnected
 }
+
+// streamConnectWait bounds how long a call whose response was
+// deferred to the notification stream (HTTP 202) waits for that
+// stream to connect. The wait returns the moment the stream is up,
+// so a generous bound only delays the failure path. The previous
+// 250ms bound lost the cold-start race deterministically: a client's
+// first tools/call could be accepted by the server before the
+// client's notification GET finished connecting, surfacing as
+// "request accepted but no event stream is connected" on otherwise
+// healthy local servers (and as a load-dependent flake in CI).
+const streamConnectWait = 5 * time.Second
 
 func (c *HTTPClient) waitForStream(ctx context.Context, timeout time.Duration) bool {
 	if c.isStreamConnected() {
