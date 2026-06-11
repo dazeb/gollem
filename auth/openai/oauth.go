@@ -5,6 +5,7 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -164,18 +165,24 @@ func loginBrowser(ctx context.Context, config LoginConfig) (*Credentials, error)
 	return exchangeCode(ctx, code, redirectURI, verifier)
 }
 
-// loginDeviceCode performs the device code OAuth flow.
+// loginDeviceCode performs the device code OAuth flow against the
+// auth.openai.com device-auth endpoints. Protocol (matches codex-rs
+// login/src/device_code_auth.rs, verified live 2026-06): both
+// endpoints take JSON bodies; "authorization pending" is signaled by
+// HTTP 403/404 on the token poll, success is 2xx with an
+// authorization code that is exchanged using the server-provided
+// PKCE verifier and the deviceauth callback redirect URI.
 func loginDeviceCode(ctx context.Context) (*Credentials, error) {
 	// Request a user code.
-	data := url.Values{
-		"client_id": {ClientID},
-		"scope":     {oauthScopes},
+	reqBody, err := json.Marshal(map[string]string{"client_id": ClientID})
+	if err != nil {
+		return nil, fmt.Errorf("encoding device code request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, deviceUserCodeEndpoint, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, deviceUserCodeEndpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("creating device code request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -189,31 +196,31 @@ func loginDeviceCode(ctx context.Context) (*Credentials, error) {
 	}
 
 	var deviceResp struct {
-		UserCode        string `json:"user_code"`
-		DeviceCode      string `json:"device_code"`
-		VerificationURI string `json:"verification_uri"`
-		ExpiresIn       int    `json:"expires_in"`
-		Interval        int    `json:"interval"`
+		DeviceAuthID string `json:"device_auth_id"`
+		UserCode     string `json:"user_code"`
+		Interval     string `json:"interval"` // seconds, sent as a string
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&deviceResp); err != nil {
 		return nil, fmt.Errorf("decoding device code response: %w", err)
 	}
-
-	verifyURL := deviceResp.VerificationURI
-	if verifyURL == "" {
-		verifyURL = "https://auth.openai.com/codex/device"
+	if deviceResp.DeviceAuthID == "" || deviceResp.UserCode == "" {
+		return nil, errors.New("device code response missing device_auth_id or user_code")
 	}
 
-	fmt.Printf("Visit %s and enter code: %s\n\nWaiting for authorization...\n", verifyURL, deviceResp.UserCode)
+	fmt.Printf("Visit https://auth.openai.com/codex/device and enter code: %s\n\nWaiting for authorization (codes expire after 15 minutes; never share this code)...\n", deviceResp.UserCode)
 
-	// Poll for authorization.
-	interval := time.Duration(deviceResp.Interval) * time.Second
-	if interval == 0 {
-		interval = 5 * time.Second
+	interval := 5 * time.Second
+	if secs, err := strconv.Atoi(strings.TrimSpace(deviceResp.Interval)); err == nil && secs > 0 {
+		interval = time.Duration(secs) * time.Second
 	}
-	deadline := time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second)
-	if deviceResp.ExpiresIn == 0 {
-		deadline = time.Now().Add(5 * time.Minute)
+	deadline := time.Now().Add(15 * time.Minute)
+
+	pollBody, err := json.Marshal(map[string]string{
+		"device_auth_id": deviceResp.DeviceAuthID,
+		"user_code":      deviceResp.UserCode,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encoding device poll request: %w", err)
 	}
 
 	for time.Now().Before(deadline) {
@@ -223,48 +230,40 @@ func loginDeviceCode(ctx context.Context) (*Credentials, error) {
 		case <-time.After(interval):
 		}
 
-		pollData := url.Values{
-			"client_id":   {ClientID},
-			"device_code": {deviceResp.DeviceCode},
-		}
-		pollReq, err := http.NewRequestWithContext(ctx, http.MethodPost, deviceTokenEndpoint, strings.NewReader(pollData.Encode()))
+		pollReq, err := http.NewRequestWithContext(ctx, http.MethodPost, deviceTokenEndpoint, bytes.NewReader(pollBody))
 		if err != nil {
 			continue
 		}
-		pollReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		pollReq.Header.Set("Content-Type", "application/json")
 
 		tokenResp, err := http.DefaultClient.Do(pollReq)
 		if err != nil {
 			continue
 		}
-
 		body, _ := io.ReadAll(tokenResp.Body)
 		tokenResp.Body.Close()
+
+		// Pending authorization is signaled by status, not body:
+		// 403/404 until the user enters the code.
+		if tokenResp.StatusCode == http.StatusForbidden || tokenResp.StatusCode == http.StatusNotFound {
+			continue
+		}
+		if tokenResp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("device authorization failed (HTTP %d): %s", tokenResp.StatusCode, body)
+		}
 
 		var result struct {
 			AuthorizationCode string `json:"authorization_code"`
 			CodeVerifier      string `json:"code_verifier"`
 			CodeChallenge     string `json:"code_challenge"`
-			Error             string `json:"error"`
 		}
 		if err := json.Unmarshal(body, &result); err != nil {
-			continue
+			return nil, fmt.Errorf("decoding device token response: %w", err)
 		}
-
-		if result.Error == "authorization_pending" {
-			continue
+		if result.AuthorizationCode == "" {
+			return nil, fmt.Errorf("device token response missing authorization_code: %s", body)
 		}
-		if result.Error == "slow_down" {
-			interval += 5 * time.Second // RFC 8628: increase interval on slow_down
-			continue
-		}
-		if result.Error != "" {
-			return nil, fmt.Errorf("device authorization failed: %s", result.Error)
-		}
-
-		if result.AuthorizationCode != "" {
-			return exchangeCode(ctx, result.AuthorizationCode, "http://localhost:"+strconv.Itoa(defaultPort)+"/auth/callback", result.CodeVerifier)
-		}
+		return exchangeCode(ctx, result.AuthorizationCode, "https://auth.openai.com/deviceauth/callback", result.CodeVerifier)
 	}
 
 	return nil, errors.New("device authorization timed out")
