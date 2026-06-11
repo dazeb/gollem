@@ -15,11 +15,15 @@ import (
 var timeBudgetNow = time.Now
 
 // ReasoningLevel defines a provider-agnostic reasoning intensity.
-// It maps to ThinkingBudget (Anthropic) and ReasoningEffort (OpenAI).
+// It maps to ThinkingBudget (Anthropic manual thinking) and
+// ReasoningEffort (OpenAI reasoning models, and Anthropic adaptive
+// thinking, where effort is the depth control).
 type ReasoningLevel struct {
 	// ThinkingBudget is the token budget for Anthropic extended thinking.
 	ThinkingBudget int
-	// ReasoningEffort is the effort level for OpenAI models ("low", "medium", "high", "xhigh").
+	// ReasoningEffort is the effort level ("low", "medium", "high",
+	// "xhigh"). Applies to OpenAI reasoning models and to Anthropic
+	// models running with adaptive thinking.
 	ReasoningEffort string
 }
 
@@ -194,8 +198,13 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig, maxTurns ...int) c
 		isVerifying := thresholdTriggered || verificationCooldown > 0
 		mu.Unlock()
 
-		// Only modify settings if reasoning is configured (either provider).
-		if settings == nil || (settings.ThinkingBudget == nil && settings.ReasoningEffort == nil) {
+		// Only modify settings if reasoning is configured: a manual
+		// thinking budget, a reasoning effort, or Anthropic adaptive
+		// thinking (whose depth control IS the effort parameter).
+		adaptiveOn := settings != nil &&
+			settings.AdaptiveThinking != nil && *settings.AdaptiveThinking
+		if settings == nil ||
+			(settings.ThinkingBudget == nil && settings.ReasoningEffort == nil && !adaptiveOn) {
 			return next(ctx, messages, settings, params)
 		}
 
@@ -225,7 +234,11 @@ func ReasoningSandwichMiddleware(cfg ReasoningSandwichConfig, maxTurns ...int) c
 				s.MaxTokens = &maxT
 			}
 		}
-		if s.ReasoningEffort != nil {
+		// Effort applies to OpenAI reasoning models and to Anthropic
+		// adaptive thinking — with adaptive on, per-phase effort is the
+		// sandwich (the model has no budget to vary, and without this
+		// the middleware would be inert on Claude 4.6+).
+		if s.ReasoningEffort != nil || adaptiveOn {
 			s.ReasoningEffort = &level.ReasoningEffort
 		}
 

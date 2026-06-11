@@ -34,6 +34,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   unconditionally server-side), and forced tool choice
   (`required`/specific tool) combined with any thinking mode now
   fails fast with a clear error instead of an API 400.
+- **Reasoning sandwich works with adaptive thinking.** The codetool
+  middleware only varied a manual `ThinkingBudget`, so on Claude 4.6+
+  agents (which now default to adaptive thinking, no budget) it was
+  silently inert. With `AdaptiveThinking` on it now varies
+  `ReasoningEffort` per phase — effort is adaptive thinking's depth
+  control — keeping the plan-high/implement-lower/verify-high shape
+  on Anthropic. First direct tests for the middleware included.
 
 ### Phase 14: Ten Innovations from Pydantic-AI, LangChain 1.0, OpenAI Agents SDK, AutoGen & CrewAI
 
