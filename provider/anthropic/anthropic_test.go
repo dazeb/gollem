@@ -1070,6 +1070,68 @@ func TestOpus48AndFableRejectThinkingBudget(t *testing.T) {
 	}
 }
 
+// TestBuildRequestStripsSamplingOnOpus47Plus verifies temperature and top_p
+// are stripped on models where the API removed sampling parameters
+// (Opus 4.7+, including Fable where thinking is always on server-side),
+// even when no thinking mode is requested — and preserved on 4.6.
+func TestBuildRequestStripsSamplingOnOpus47Plus(t *testing.T) {
+	temp := 0.7
+	topP := 0.95
+	for _, model := range []string{ClaudeOpus47, ClaudeOpus48, ClaudeFable5} {
+		t.Run(model, func(t *testing.T) {
+			settings := &core.ModelSettings{Temperature: &temp, TopP: &topP}
+			req, err := buildRequest(nil, settings, nil, model, 4096, false, false, false)
+			if err != nil {
+				t.Fatalf("buildRequest: %v", err)
+			}
+			if req.Temperature != nil || req.TopP != nil {
+				t.Errorf("sampling params must be stripped on %s, got temp=%v topP=%v", model, req.Temperature, req.TopP)
+			}
+		})
+	}
+	settings := &core.ModelSettings{Temperature: &temp, TopP: &topP}
+	req, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false, false, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	if req.Temperature == nil || req.TopP == nil {
+		t.Error("sampling params must be preserved on Sonnet 4.6 without thinking")
+	}
+}
+
+// TestBuildRequestForcedToolChoiceWithThinkingErrors verifies the documented
+// incompatibility: tool_choice any/tool is rejected while thinking is
+// enabled (adaptive or manual); auto passes.
+func TestBuildRequestForcedToolChoiceWithThinkingErrors(t *testing.T) {
+	on := true
+	budget := 2048
+	cases := []struct {
+		name     string
+		settings *core.ModelSettings
+		wantErr  bool
+	}{
+		{"adaptive_required", &core.ModelSettings{AdaptiveThinking: &on, ToolChoice: &core.ToolChoice{Mode: "required"}}, true},
+		{"adaptive_specific_tool", &core.ModelSettings{AdaptiveThinking: &on, ToolChoice: &core.ToolChoice{ToolName: "search"}}, true},
+		{"manual_required", &core.ModelSettings{ThinkingBudget: &budget, ToolChoice: &core.ToolChoice{Mode: "required"}}, true},
+		{"adaptive_auto", &core.ModelSettings{AdaptiveThinking: &on, ToolChoice: &core.ToolChoice{Mode: "auto"}}, false},
+		{"no_thinking_required", &core.ModelSettings{ToolChoice: &core.ToolChoice{Mode: "required"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := buildRequest(nil, tc.settings, nil, ClaudeSonnet46, 4096, false, false, false)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected forced tool_choice + thinking to error")
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "incompatible with extended thinking") {
+				t.Errorf("error should explain the incompatibility, got: %v", err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 // TestBuildRequestWithEffort verifies output_config.effort is emitted for each
 // valid value on models that accept it.
 func TestBuildRequestWithEffort(t *testing.T) {

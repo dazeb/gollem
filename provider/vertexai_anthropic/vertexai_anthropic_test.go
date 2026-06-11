@@ -1343,6 +1343,50 @@ func TestOpus48RejectsThinkingBudget(t *testing.T) {
 	}
 }
 
+// TestBuildRequestStripsSamplingOnOpus47Plus verifies temperature and top_p
+// are stripped on models where the API removed sampling parameters
+// (Opus 4.7+, including Fable), even without thinking — and preserved on 4.6.
+func TestBuildRequestStripsSamplingOnOpus47Plus(t *testing.T) {
+	temp := 0.7
+	topP := 0.95
+	for _, model := range []string{ClaudeOpus47, "claude-opus-4-8", "claude-fable-5"} {
+		t.Run(model, func(t *testing.T) {
+			settings := &core.ModelSettings{Temperature: &temp, TopP: &topP}
+			req, err := buildRequest(nil, settings, nil, model, 4096, false)
+			if err != nil {
+				t.Fatalf("buildRequest: %v", err)
+			}
+			if req.Temperature != nil || req.TopP != nil {
+				t.Errorf("sampling params must be stripped on %s, got temp=%v topP=%v", model, req.Temperature, req.TopP)
+			}
+		})
+	}
+	settings := &core.ModelSettings{Temperature: &temp, TopP: &topP}
+	req, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false)
+	if err != nil {
+		t.Fatalf("buildRequest: %v", err)
+	}
+	if req.Temperature == nil || req.TopP == nil {
+		t.Error("sampling params must be preserved on Sonnet 4.6 without thinking")
+	}
+}
+
+// TestBuildRequestForcedToolChoiceWithThinkingErrors verifies tool_choice
+// any/tool is rejected while thinking is enabled; auto passes.
+func TestBuildRequestForcedToolChoiceWithThinkingErrors(t *testing.T) {
+	on := true
+	settings := &core.ModelSettings{AdaptiveThinking: &on, ToolChoice: &core.ToolChoice{Mode: "required"}}
+	_, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false)
+	if err == nil || !strings.Contains(err.Error(), "incompatible with extended thinking") {
+		t.Fatalf("expected incompatibility error, got: %v", err)
+	}
+
+	settings = &core.ModelSettings{AdaptiveThinking: &on, ToolChoice: &core.ToolChoice{Mode: "auto"}}
+	if _, err := buildRequest(nil, settings, nil, ClaudeSonnet46, 4096, false); err != nil {
+		t.Fatalf("auto tool_choice with thinking must pass, got: %v", err)
+	}
+}
+
 // TestBuildRequestWithEffort verifies output_config.effort is emitted for each
 // valid value on models that accept it.
 func TestBuildRequestWithEffort(t *testing.T) {

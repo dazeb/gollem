@@ -23,6 +23,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   budgets rejected with a pointer to `AdaptiveThinking`), and the full
   effort range including `xhigh` and `max` now passes
   per-model effort gating.
+- **`core.WithAdaptiveThinking` agent option**, and the CLI's
+  default reasoning setup now selects adaptive thinking for Claude
+  4.6+ models instead of a manual budget (which is rejected on 4.7+
+  — the budget default made the new models unusable from the CLI).
+  An explicit `-thinking-budget` still wins.
+- **Request guards matching API removals** (both Anthropic
+  providers): temperature/top_p are stripped on Opus 4.7+ (the API
+  400s on them regardless of thinking config, and Fable thinks
+  unconditionally server-side), and forced tool choice
+  (`required`/specific tool) combined with any thinking mode now
+  fails fast with a clear error instead of an API 400.
 
 ### Phase 14: Ten Innovations from Pydantic-AI, LangChain 1.0, OpenAI Agents SDK, AutoGen & CrewAI
 

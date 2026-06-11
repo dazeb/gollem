@@ -154,6 +154,16 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 		req.TopP = settings.TopP
 		req.StopSequences = settings.StopSequences
 
+		// Sampling parameters are removed on Opus 4.7+ (4.7, 4.8, Fable,
+		// Mythos): the API returns 400 on temperature/top_p regardless of
+		// the thinking config, and on Fable thinking is always on
+		// server-side. Strip rather than reject so swapping the model
+		// under existing middleware that sets temperature keeps working.
+		if isOpus47(model) || isOpus48OrFable(model) {
+			req.Temperature = nil
+			req.TopP = nil
+		}
+
 		// Extended thinking. Two modes, mutually exclusive: adaptive (the
 		// model decides; the only mode on Opus 4.7+) and the legacy manual
 		// budget (rejected by Opus 4.7+). Fail fast with a pointer to the
@@ -240,6 +250,16 @@ func buildRequest(messages []core.ModelMessage, settings *core.ModelSettings, pa
 		case tc.Mode == "auto":
 			req.ToolChoice = &apiToolChoice{Type: "auto"}
 		}
+	}
+
+	// Forced tool use is incompatible with extended thinking (adaptive or
+	// manual): the API only accepts tool_choice auto/none while thinking.
+	// Fail fast with a clear error instead of letting the API 400.
+	if req.Thinking != nil && req.ToolChoice != nil && req.ToolChoice.Type != "auto" {
+		return nil, fmt.Errorf(
+			"vertexai_anthropic: tool_choice %q is incompatible with extended thinking; use auto, or disable thinking",
+			req.ToolChoice.Type,
+		)
 	}
 
 	var systemBlocks []apiSystemBlock

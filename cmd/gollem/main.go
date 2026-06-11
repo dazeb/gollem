@@ -697,12 +697,26 @@ func runAgent() {
 	}
 
 	// Enable reasoning by default for providers that support it.
-	// This is provider-agnostic: Anthropic uses ThinkingBudget,
-	// OpenAI uses ReasoningEffort. The reasoning sandwich middleware
-	// will vary these per-turn for optimal performance.
+	// This is provider-agnostic: Anthropic uses adaptive thinking on
+	// Claude 4.6+ (a manual ThinkingBudget on older models), OpenAI uses
+	// ReasoningEffort. The reasoning sandwich middleware will vary these
+	// per-turn for optimal performance.
 	if !f.noReasoning {
 		switch f.provider {
 		case "anthropic", "vertexai-anthropic":
+			if f.thinkingBudget < 0 && anthropicModelPrefersAdaptive(f.modelName) {
+				// Claude 4.6+ default: adaptive thinking. A manual budget
+				// is rejected outright on Opus 4.7+ and deprecated on 4.6,
+				// so the budget default would make these models unusable
+				// from the CLI. An explicit -thinking-budget still wins
+				// below (and gets the provider's clear rejection on
+				// adaptive-only models).
+				agentOpts = append(agentOpts, core.WithAdaptiveThinking[string](true))
+				maxTokens := defaultThinkingBudget + 16000
+				agentOpts = append(agentOpts, core.WithMaxTokens[string](maxTokens))
+				fmt.Fprintf(os.Stderr, "gollem: adaptive thinking enabled (max_tokens: %d)\n", maxTokens)
+				break
+			}
 			if f.thinkingBudget < 0 {
 				f.thinkingBudget = defaultThinkingBudget
 			}
@@ -1997,6 +2011,24 @@ func detectProvider() string {
 		return "vertexai"
 	}
 	return ""
+}
+
+// anthropicModelPrefersAdaptive reports whether the selected Claude model
+// should default to adaptive thinking instead of a manual budget: the 4.6
+// generation and newer (Opus/Sonnet 4.6, Opus 4.7/4.8, Fable, Mythos).
+// Manual budgets are rejected on 4.7+ and deprecated on 4.6. An empty
+// model means the provider default (Sonnet 4.6), which is adaptive-capable.
+func anthropicModelPrefersAdaptive(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m == "" || strings.Contains(m, "mythos") || strings.Contains(m, "fable") {
+		return true
+	}
+	for _, marker := range []string{"opus-4-6", "sonnet-4-6", "opus-4-7", "opus-4-8"} {
+		if strings.Contains(m, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func deriveGeminiMaxOutputTokens() int {
