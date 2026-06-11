@@ -433,6 +433,12 @@ func SaveCredentials(creds *Credentials) error {
 }
 
 // SaveCredentialsTo writes credentials to a specific file path.
+//
+// The write is atomic (private temp file + rename): os.WriteFile
+// truncates in place, so a concurrent reader — or a second process
+// racing its own token refresh — could observe an empty or partial
+// file. Seen in the wild as a 0-byte auth.json that broke every
+// ChatGPT-auth consumer until re-login.
 func SaveCredentialsTo(creds *Credentials, path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -442,7 +448,28 @@ func SaveCredentialsTo(creds *Credentials, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling credentials: %w", err)
 	}
-	return os.WriteFile(path, data, 0600)
+	tmp, err := os.CreateTemp(dir, ".auth-*.json")
+	if err != nil {
+		return fmt.Errorf("creating temp credentials file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("restricting credentials permissions: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing credentials: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("syncing credentials: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing credentials file: %w", err)
+	}
+	return os.Rename(tmpName, path) //nolint:gosec // tmpName is from os.CreateTemp in the target's own directory
 }
 
 // generatePKCE generates a PKCE code verifier and S256 challenge.
