@@ -12,9 +12,33 @@ import (
 // HTTPServerTransport serves MCP over the streamable HTTP transport.
 // Each MCP session gets its own cloned Server instance.
 type HTTPServerTransport struct {
-	mu       sync.Mutex
-	template *Server
-	sessions map[string]*httpServerSession
+	mu         sync.Mutex
+	template   *Server
+	sessions   map[string]*httpServerSession
+	sessionCtx func(*http.Request) context.Context
+}
+
+// SetSessionContextFunc installs a hook that derives each new MCP
+// session's base context from the HTTP request that initialized it.
+// This is how hosts thread per-connection identity (a workspace
+// resolved from the Authorization header, say) through to tool
+// handlers, whose ctx is the session context.
+//
+// The returned context must NOT be (or derive its cancellation from)
+// the request context — sessions outlive their initializing request.
+// Carry values only, e.g.:
+//
+//	t.SetSessionContextFunc(func(r *http.Request) context.Context {
+//		ws := resolveWorkspace(r.Header.Get("Authorization"))
+//		return context.WithValue(context.Background(), workspaceKey{}, ws)
+//	})
+//
+// A nil hook (the default) and a nil return both mean
+// context.Background().
+func (t *HTTPServerTransport) SetSessionContextFunc(f func(*http.Request) context.Context) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sessionCtx = f
 }
 
 type httpServerSession struct {
@@ -130,7 +154,7 @@ func (t *HTTPServerTransport) handlePost(w http.ResponseWriter, r *http.Request)
 
 	sessionID := r.Header.Get("Mcp-Session-Id")
 	if msg.Method == "initialize" && sessionID == "" {
-		session := t.newSession()
+		session := t.newSession(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Mcp-Session-Id", session.id)
 
@@ -181,9 +205,18 @@ func (t *HTTPServerTransport) handleDelete(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (t *HTTPServerTransport) newSession() *httpServerSession {
+func (t *HTTPServerTransport) newSession(r *http.Request) *httpServerSession {
 	sessionID := generateHTTPSessionID()
-	ctx, cancel := context.WithCancel(context.Background())
+	base := context.Background()
+	t.mu.Lock()
+	hook := t.sessionCtx
+	t.mu.Unlock()
+	if hook != nil {
+		if derived := hook(r); derived != nil {
+			base = derived
+		}
+	}
+	ctx, cancel := context.WithCancel(base)
 	server := cloneServerTemplate(t.template)
 	session := &httpServerSession{
 		id:     sessionID,

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -93,7 +94,7 @@ func TestHTTPServerTransportSamplingRoundTrip(t *testing.T) {
 
 func TestHTTPServerTransportRunClosesSessionsOnCancel(t *testing.T) {
 	transport := NewHTTPServerTransport(NewServer())
-	session := transport.newSession()
+	session := transport.newSession(httptest.NewRequest(http.MethodPost, "/", nil))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -130,5 +131,48 @@ func TestHTTPServerTransportRunClosesSessionsOnCancel(t *testing.T) {
 	session.mu.Unlock()
 	if !closed {
 		t.Fatal("expected session to be marked closed")
+	}
+}
+
+// TestHTTPServerTransportSessionContextFunc verifies the per-session
+// context hook: identity derived from the initializing HTTP request
+// (e.g. a workspace resolved from the Authorization header) reaches
+// tool handlers through their ctx, for the whole life of the session.
+func TestHTTPServerTransportSessionContextFunc(t *testing.T) {
+	type wsKey struct{}
+
+	server := NewServer(WithServerInfo(ServerInfo{Name: "ctx-test", Version: "0.1.0"}))
+	server.AddTool(Tool{
+		Name:        "whoami",
+		Description: "Report the session identity",
+		InputSchema: mustRawJSON([]byte(`{"type":"object"}`)),
+	}, func(ctx context.Context, _ *RequestContext, _ map[string]any) (*ToolResult, error) {
+		ws, _ := ctx.Value(wsKey{}).(string)
+		return textToolResult(ws), nil
+	})
+
+	transport := NewHTTPServerTransport(server)
+	transport.SetSessionContextFunc(func(r *http.Request) context.Context {
+		return context.WithValue(context.Background(), wsKey{}, r.Header.Get("X-Test-Workspace"))
+	})
+	httpServer := httptest.NewServer(transport)
+	defer httpServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client, err := NewHTTPClientWithConfig(ctx, httpServer.URL, ClientConfig{},
+		WithHeaders(map[string]string{"X-Test-Workspace": "ws-42"}))
+	if err != nil {
+		t.Fatalf("failed to create HTTP client: %v", err)
+	}
+	defer client.Close()
+
+	result, err := client.CallTool(ctx, "whoami", map[string]any{})
+	if err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+	if got := result.TextContent(); got != "ws-42" {
+		t.Fatalf("session context value did not reach the tool handler: %q", got)
 	}
 }
