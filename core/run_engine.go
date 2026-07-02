@@ -43,9 +43,16 @@ func (a *Agent[T]) initializeRunExecution(ctx context.Context, cfg *runConfig) *
 		a.restoreToolState(restoreToolState)
 	}
 
-	settings := a.modelSettings
+	// Copy settings so per-run mutations (e.g. tool-choice injection in Step
+	// and startTurn) never write through to the agent's or the caller's
+	// ModelSettings — runs may execute concurrently against one agent.
+	var settings *ModelSettings
 	if cfg.modelSettings != nil {
-		settings = cfg.modelSettings
+		s := *cfg.modelSettings
+		settings = &s
+	} else if a.modelSettings != nil {
+		s := *a.modelSettings
+		settings = &s
 	}
 
 	deps := a.deps
@@ -501,13 +508,16 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			e.emitTurnCompleted(resp, err)
 			return resp, nil, err
 		}
+		// Record tool results in history for every outcome (deferred, final
+		// result, or continue) so no tool_use is left without a paired
+		// tool_result when Messages round-trips through WithMessages.
+		if len(nextParts) > 0 {
+			e.state.messages = append(e.state.messages, ModelRequest{
+				Parts:     nextParts,
+				Timestamp: time.Now(),
+			})
+		}
 		if len(deferredReqs) > 0 {
-			if len(nextParts) > 0 {
-				e.state.messages = append(e.state.messages, ModelRequest{
-					Parts:     nextParts,
-					Timestamp: time.Now(),
-				})
-			}
 			fireTurnEnd()
 			e.emitTurnCompleted(resp, nil)
 			if e.agent.eventBus != nil {
@@ -552,12 +562,6 @@ func (e *turnEngine[T]) Step() (*ModelResponse, *RunResult[T], error) {
 			return resp, e.agent.buildRunResult(e.state, result.output), nil
 		}
 		// No result — tool calls processed, continue to next turn.
-		if len(nextParts) > 0 {
-			e.state.messages = append(e.state.messages, ModelRequest{
-				Parts:     nextParts,
-				Timestamp: time.Now(),
-			})
-		}
 		fireTurnEnd()
 		e.emitTurnCompleted(resp, nil)
 		return resp, nil, nil

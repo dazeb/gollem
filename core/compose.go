@@ -57,6 +57,10 @@ func (a *Agent[T]) Clone(opts ...AgentOption[T]) *Agent[T] {
 		s := *a.modelSettings
 		clone.modelSettings = &s
 	}
+	if a.truncationConfig != nil {
+		tc := *a.truncationConfig
+		clone.truncationConfig = &tc
+	}
 	clone.outputSchema = a.outputSchema
 	clone.toolApprovalFunc = a.toolApprovalFunc
 	clone.maxConcurrency = a.maxConcurrency

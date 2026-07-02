@@ -56,15 +56,15 @@ func Ls(opts ...Option) core.Tool {
 			}
 
 			var lines []string
-			listDir(ctx, dir, dir, "", depth, &lines)
+			truncated := listDir(ctx, dir, dir, "", depth, &lines)
 
 			if len(lines) == 0 {
 				return "(empty directory)", nil
 			}
 
 			result := strings.Join(lines, "\n")
-			// Don't add count if truncated (listDir already appends a truncation notice).
-			if len(lines) <= 500 {
+			// Don't add count if truncated (listDir already appended a truncation notice).
+			if !truncated {
 				result += fmt.Sprintf("\n(%d entries)", len(lines))
 			}
 			return result, nil
@@ -85,22 +85,26 @@ func compactSize(bytes int64) string {
 	}
 }
 
-func listDir(ctx context.Context, basePath, currentPath, prefix string, remainingDepth int, lines *[]string) {
+// listDir appends directory entries to lines, recursing up to
+// remainingDepth levels. It returns true once output is truncated at the
+// 500-entry cap so ancestor levels unwind without appending duplicate
+// truncation markers.
+func listDir(ctx context.Context, basePath, currentPath, prefix string, remainingDepth int, lines *[]string) bool {
 	if ctx.Err() != nil {
-		return
+		return false
 	}
 	if remainingDepth <= 0 {
-		return
+		return false
 	}
 
 	entries, err := os.ReadDir(currentPath)
 	if err != nil {
-		return
+		return false
 	}
 
 	for _, entry := range entries {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 
 		name := entry.Name()
@@ -110,11 +114,20 @@ func listDir(ctx context.Context, basePath, currentPath, prefix string, remainin
 			continue
 		}
 
+		// Check before appending so the cap is exact: at most 500 entry
+		// lines plus a single truncation marker.
+		if len(*lines) >= 500 {
+			*lines = append(*lines, "... (truncated at 500 entries)")
+			return true
+		}
+
 		display := prefix + name
 		if entry.IsDir() {
 			display += "/"
 			*lines = append(*lines, display)
-			listDir(ctx, basePath, filepath.Join(currentPath, name), prefix+name+"/", remainingDepth-1, lines)
+			if listDir(ctx, basePath, filepath.Join(currentPath, name), prefix+name+"/", remainingDepth-1, lines) {
+				return true
+			}
 		} else {
 			// Show file size to save agents from needing `ls -la` via bash.
 			if info, err := entry.Info(); err == nil {
@@ -122,10 +135,6 @@ func listDir(ctx context.Context, basePath, currentPath, prefix string, remainin
 			}
 			*lines = append(*lines, display)
 		}
-
-		if len(*lines) > 500 {
-			*lines = append(*lines, "... (truncated at 500 entries)")
-			return
-		}
 	}
+	return false
 }

@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"text/template"
+	"text/template/parse"
 )
 
 // PromptTemplate is a prompt with named variable placeholders using {{.VarName}} syntax.
@@ -78,29 +78,15 @@ func (t *PromptTemplate) Partial(vars map[string]string) *PromptTemplate {
 }
 
 // Variables returns the set of variable names used in the template.
-// It parses the template tree to extract field names from actions.
+// It parses the template tree to extract field names from actions,
+// including those inside trim-marker actions ({{- .X -}}), pipelines,
+// and if/range/with control flow.
 func (t *PromptTemplate) Variables() []string {
-	// Simple extraction: find all {{.VarName}} patterns in the raw template.
 	varSet := make(map[string]bool)
-	raw := t.raw
-	for {
-		idx := strings.Index(raw, "{{")
-		if idx < 0 {
-			break
+	for _, tmpl := range t.tmpl.Templates() {
+		if tree := tmpl.Tree; tree != nil && tree.Root != nil {
+			collectTemplateVars(tree.Root, varSet)
 		}
-		end := strings.Index(raw[idx:], "}}")
-		if end < 0 {
-			break
-		}
-		action := strings.TrimSpace(raw[idx+2 : idx+end])
-		if strings.HasPrefix(action, ".") {
-			varName := strings.TrimPrefix(action, ".")
-			// Handle cases like {{.Foo}} and ignore pipeline actions.
-			if varName != "" && !strings.ContainsAny(varName, " |()") {
-				varSet[varName] = true
-			}
-		}
-		raw = raw[idx+end+2:]
 	}
 
 	vars := make([]string, 0, len(varSet))
@@ -109,6 +95,51 @@ func (t *PromptTemplate) Variables() []string {
 	}
 	sort.Strings(vars)
 	return vars
+}
+
+// collectTemplateVars walks a template parse tree and records the top-level
+// identifier of every field reference ({{.Name}}, {{.Name.Sub}}, ...).
+func collectTemplateVars(node parse.Node, varSet map[string]bool) {
+	switch n := node.(type) {
+	case *parse.ListNode:
+		if n == nil {
+			return
+		}
+		for _, item := range n.Nodes {
+			collectTemplateVars(item, varSet)
+		}
+	case *parse.ActionNode:
+		collectTemplateVars(n.Pipe, varSet)
+	case *parse.PipeNode:
+		if n == nil {
+			return
+		}
+		for _, cmd := range n.Cmds {
+			for _, arg := range cmd.Args {
+				collectTemplateVars(arg, varSet)
+			}
+		}
+	case *parse.FieldNode:
+		if len(n.Ident) > 0 {
+			varSet[n.Ident[0]] = true
+		}
+	case *parse.ChainNode:
+		collectTemplateVars(n.Node, varSet)
+	case *parse.IfNode:
+		collectTemplateVars(n.Pipe, varSet)
+		collectTemplateVars(n.List, varSet)
+		collectTemplateVars(n.ElseList, varSet)
+	case *parse.RangeNode:
+		collectTemplateVars(n.Pipe, varSet)
+		collectTemplateVars(n.List, varSet)
+		collectTemplateVars(n.ElseList, varSet)
+	case *parse.WithNode:
+		collectTemplateVars(n.Pipe, varSet)
+		collectTemplateVars(n.List, varSet)
+		collectTemplateVars(n.ElseList, varSet)
+	case *parse.TemplateNode:
+		collectTemplateVars(n.Pipe, varSet)
+	}
 }
 
 // TemplateVars provides template variable values. Implement on your deps type.

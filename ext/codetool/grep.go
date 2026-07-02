@@ -115,7 +115,10 @@ func Grep(opts ...Option) core.Tool {
 					return ctx.Err()
 				}
 				if d.IsDir() {
-					if isSkippableDir(d.Name()) {
+					// Never prune the walk root — the caller explicitly
+					// asked to search this directory, even if its basename
+					// is skippable (e.g. path="vendor").
+					if path != searchPath && isSkippableDir(d.Name()) {
 						return filepath.SkipDir
 					}
 					return nil

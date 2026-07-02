@@ -100,8 +100,11 @@ func Edit(opts ...Option) core.Tool {
 			// Normalize CRLF → LF for matching. Models generate LF-only
 			// strings; Windows-style files with \r\n cause silent match
 			// failures without this. The original line endings are restored
-			// when writing back.
-			hasCRLF := strings.Contains(content, "\r\n")
+			// when writing back. Only uniformly-CRLF files are normalized:
+			// for mixed-ending files the whole-file LF→CRLF restore would
+			// silently rewrite the endings of untouched lines, so they are
+			// matched as-is.
+			hasCRLF := isUniformCRLF(content)
 			if hasCRLF {
 				content = strings.ReplaceAll(content, "\r\n", "\n")
 			}
@@ -120,6 +123,7 @@ func Edit(opts ...Option) core.Tool {
 				// adjust indentation and apply the edit. This saves a full
 				// round-trip — whitespace mismatches are the #1 edit failure.
 				if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, oldStr, newStr); ok {
+					editIdx := strings.Index(content, actualOld)
 					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
 					writeContent := newContent
 					if hasCRLF {
@@ -128,7 +132,7 @@ func Edit(opts ...Option) core.Tool {
 					if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 						return "", fmt.Errorf("write file: %w", err)
 					}
-					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+					result := editResultWithContext(newContent, adjustedNew, editIdx, 1, params.Path)
 					result += "\n[auto-corrected whitespace mismatch]"
 					return result, nil
 				}
@@ -140,6 +144,7 @@ func Edit(opts ...Option) core.Tool {
 				if trimmedOld, trimmedNew, ok := autoCorrectBlankLines(content, oldStr, newStr); ok {
 					// Try exact match with stripped version first.
 					if strings.Count(content, trimmedOld) == 1 {
+						editIdx := strings.Index(content, trimmedOld)
 						newContent := strings.Replace(content, trimmedOld, trimmedNew, 1)
 						writeContent := newContent
 						if hasCRLF {
@@ -148,12 +153,13 @@ func Edit(opts ...Option) core.Tool {
 						if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
-						result := editResultWithContext(newContent, trimmedNew, 1, params.Path)
+						result := editResultWithContext(newContent, trimmedNew, editIdx, 1, params.Path)
 						result += "\n[auto-corrected extra blank lines in old_string]"
 						return result, nil
 					}
 					// Also try whitespace auto-correct on the stripped version.
 					if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, trimmedOld, trimmedNew); ok {
+						editIdx := strings.Index(content, actualOld)
 						newContent := strings.Replace(content, actualOld, adjustedNew, 1)
 						writeContent := newContent
 						if hasCRLF {
@@ -162,7 +168,7 @@ func Edit(opts ...Option) core.Tool {
 						if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
-						result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+						result := editResultWithContext(newContent, adjustedNew, editIdx, 1, params.Path)
 						result += "\n[auto-corrected blank lines and whitespace]"
 						return result, nil
 					}
@@ -174,6 +180,7 @@ func Edit(opts ...Option) core.Tool {
 				// and retry — this is the #3 edit failure.
 				if normalizedOld, normalizedNew, ok := autoCorrectInternalBlankLines(content, oldStr, newStr); ok {
 					if strings.Count(content, normalizedOld) == 1 {
+						editIdx := strings.Index(content, normalizedOld)
 						newContent := strings.Replace(content, normalizedOld, normalizedNew, 1)
 						writeContent := newContent
 						if hasCRLF {
@@ -182,7 +189,7 @@ func Edit(opts ...Option) core.Tool {
 						if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 							return "", fmt.Errorf("write file: %w", err)
 						}
-						result := editResultWithContext(newContent, normalizedNew, 1, params.Path)
+						result := editResultWithContext(newContent, normalizedNew, editIdx, 1, params.Path)
 						result += "\n[auto-corrected internal blank line count]"
 						return result, nil
 					}
@@ -198,6 +205,7 @@ func Edit(opts ...Option) core.Tool {
 					blankNormNew := normalizeBlankRuns(newStr)
 					if blankNormOld != oldStr { // blank line normalization changed something
 						if actualOld, adjustedNew, ok := autoCorrectWhitespace(content, blankNormOld, blankNormNew); ok {
+							editIdx := strings.Index(content, actualOld)
 							newContent := strings.Replace(content, actualOld, adjustedNew, 1)
 							writeContent := newContent
 							if hasCRLF {
@@ -206,7 +214,7 @@ func Edit(opts ...Option) core.Tool {
 							if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 								return "", fmt.Errorf("write file: %w", err)
 							}
-							result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+							result := editResultWithContext(newContent, adjustedNew, editIdx, 1, params.Path)
 							result += "\n[auto-corrected internal blank lines and whitespace]"
 							return result, nil
 						}
@@ -218,6 +226,7 @@ func Edit(opts ...Option) core.Tool {
 				// doesn't exist in the file or has slightly different content.
 				// Only trims lines that are identical in old and new (pure context).
 				if actualOld, adjustedNew, ok := autoCorrectLineTrim(content, oldStr, newStr); ok {
+					editIdx := strings.Index(content, actualOld)
 					newContent := strings.Replace(content, actualOld, adjustedNew, 1)
 					writeContent := newContent
 					if hasCRLF {
@@ -226,7 +235,7 @@ func Edit(opts ...Option) core.Tool {
 					if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), filePerm, "edit", "edit"); err != nil {
 						return "", fmt.Errorf("write file: %w", err)
 					}
-					result := editResultWithContext(newContent, adjustedNew, 1, params.Path)
+					result := editResultWithContext(newContent, adjustedNew, editIdx, 1, params.Path)
 					result += "\n[auto-corrected by trimming extra context line]"
 					return result, nil
 				}
@@ -265,6 +274,9 @@ func Edit(opts ...Option) core.Tool {
 				return "", &core.ModelRetryError{Message: msg}
 			}
 
+			// The first occurrence of oldStr is always a genuine edit site,
+			// and the bytes before it are unchanged by the replacement.
+			editIdx := strings.Index(content, oldStr)
 			var newContent string
 			if params.ReplaceAll {
 				newContent = strings.ReplaceAll(content, oldStr, newStr)
@@ -284,15 +296,29 @@ func Edit(opts ...Option) core.Tool {
 			if params.ReplaceAll {
 				replacements = count
 			}
-			return editResultWithContext(newContent, newStr, replacements, params.Path), nil
+			return editResultWithContext(newContent, newStr, editIdx, replacements, params.Path), nil
 		},
 	)
 }
 
+// isUniformCRLF reports whether content uses CRLF line endings exclusively
+// (at least one CRLF and no bare LF). Mixed-ending files must not be
+// CRLF-normalized: restoring with a whole-file LF→CRLF replacement would
+// silently rewrite the endings of lines the edit never touched.
+func isUniformCRLF(content string) bool {
+	if !strings.Contains(content, "\r\n") {
+		return false
+	}
+	return !strings.Contains(strings.ReplaceAll(content, "\r\n", ""), "\n")
+}
+
 // editResultWithContext returns a success message with surrounding file context
 // so the model can verify the edit without a separate view call. This saves
-// one turn per edit — a significant efficiency gain.
-func editResultWithContext(content, newString string, replacements int, path string) string {
+// one turn per edit — a significant efficiency gain. editIdx is the byte
+// offset of the replacement within content; it anchors the context to the
+// actual edit site rather than an identical earlier occurrence of newString.
+// Pass -1 to fall back to searching for newString.
+func editResultWithContext(content, newString string, editIdx, replacements int, path string) string {
 	header := fmt.Sprintf("Replaced %d occurrence(s) in %s", replacements, path)
 
 	// For replace_all with many replacements, skip context — too many locations.
@@ -300,8 +326,11 @@ func editResultWithContext(content, newString string, replacements int, path str
 		return header
 	}
 
-	// Find the location of the new string in the content.
-	idx := strings.Index(content, newString)
+	// Locate the edit in the content.
+	idx := editIdx
+	if idx < 0 {
+		idx = strings.Index(content, newString)
+	}
 	if idx < 0 || newString == "" {
 		return header
 	}
@@ -535,6 +564,7 @@ func MultiEdit(opts ...Option) core.Tool {
 				relPath    string
 				newContent string
 				newString  string
+				editIdx    int
 				message    string
 			}
 			var pending []pendingWrite
@@ -584,8 +614,9 @@ func MultiEdit(opts ...Option) core.Tool {
 						return "", &core.ModelRetryError{Message: fmt.Sprintf("edit[%d]: %v", i, err)}
 					}
 					content = string(data)
-					// Normalize CRLF → LF for matching (same as single edit).
-					if strings.Contains(content, "\r\n") {
+					// Normalize CRLF → LF for matching (same as single edit;
+					// mixed-ending files are matched as-is).
+					if isUniformCRLF(content) {
 						fileCRLF[path] = true
 						content = strings.ReplaceAll(content, "\r\n", "\n")
 					}
@@ -593,32 +624,47 @@ func MultiEdit(opts ...Option) core.Tool {
 
 				var newContent string
 				var msg string
+				editIdx := -1
+				// corrected tracks whether an auto-correction succeeded. An
+				// explicit flag rather than newContent == "" — a successful
+				// correction can legitimately produce empty content (e.g.
+				// deleting the entire file content).
+				corrected := false
 				if !strings.Contains(content, oldStr) {
 					// Try auto-correcting whitespace mismatch.
 					if actualOld, adjustedNew, okWs := autoCorrectWhitespace(content, oldStr, newStr); okWs {
+						editIdx = strings.Index(content, actualOld)
 						newContent = strings.Replace(content, actualOld, adjustedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected whitespace mismatch", i)
+						corrected = true
 					} else if trimmedOld, trimmedNew, okBl := autoCorrectBlankLines(content, oldStr, newStr); okBl && strings.Count(content, trimmedOld) == 1 {
+						editIdx = strings.Index(content, trimmedOld)
 						newContent = strings.Replace(content, trimmedOld, trimmedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected extra blank lines", i)
+						corrected = true
 					} else if normalizedOld, normalizedNew, okIbl := autoCorrectInternalBlankLines(content, oldStr, newStr); okIbl && strings.Count(content, normalizedOld) == 1 {
+						editIdx = strings.Index(content, normalizedOld)
 						newContent = strings.Replace(content, normalizedOld, normalizedNew, 1)
 						msg = fmt.Sprintf("edit[%d]: auto-corrected internal blank line count", i)
+						corrected = true
 					}
 					// Combined internal blank line + whitespace correction.
-					if newContent == "" {
+					if !corrected {
 						blankNormOld := normalizeBlankRuns(oldStr)
 						blankNormNew := normalizeBlankRuns(newStr)
 						if blankNormOld != oldStr {
 							if actualOld2, adjustedNew2, okWs2 := autoCorrectWhitespace(content, blankNormOld, blankNormNew); okWs2 {
+								editIdx = strings.Index(content, actualOld2)
 								newContent = strings.Replace(content, actualOld2, adjustedNew2, 1)
 								msg = fmt.Sprintf("edit[%d]: auto-corrected internal blank lines and whitespace", i)
+								corrected = true
 							}
 						}
 					}
-					// If we still don't have a newContent, try line trim.
-					if newContent == "" {
+					// If we still don't have a correction, try line trim.
+					if !corrected {
 						if actualOld, adjustedNew, okLt := autoCorrectLineTrim(content, oldStr, newStr); okLt {
+							editIdx = strings.Index(content, actualOld)
 							newContent = strings.Replace(content, actualOld, adjustedNew, 1)
 							msg = fmt.Sprintf("edit[%d]: auto-corrected by trimming extra context line", i)
 						} else {
@@ -648,6 +694,7 @@ func MultiEdit(opts ...Option) core.Tool {
 							i, count, edit.Path, locations)
 						return "", &core.ModelRetryError{Message: errMsg}
 					}
+					editIdx = strings.Index(content, oldStr)
 					newContent = strings.Replace(content, oldStr, newStr, 1)
 				}
 				fileContents[path] = newContent
@@ -656,6 +703,7 @@ func MultiEdit(opts ...Option) core.Tool {
 					relPath:    edit.Path,
 					newContent: newContent,
 					newString:  newStr,
+					editIdx:    editIdx,
 					message:    msg,
 				})
 			}
@@ -677,7 +725,7 @@ func MultiEdit(opts ...Option) core.Tool {
 				if pw.message != "" {
 					results = append(results, pw.message)
 				}
-				results = append(results, editResultWithContext(pw.newContent, pw.newString, 1, pw.relPath))
+				results = append(results, editResultWithContext(pw.newContent, pw.newString, pw.editIdx, 1, pw.relPath))
 			}
 
 			return strings.Join(results, "\n\n"), nil
@@ -709,6 +757,12 @@ func autoCorrectWhitespace(content, oldStr, newStr string) (actualOld, adjustedN
 	}
 
 	normalizedOld := normalizeBlock(oldStr)
+	// A whitespace-only old_string normalizes to "" — nothing to anchor a
+	// match on, and strings.Index(s, "") returning 0 would make the
+	// uniqueness slice below go out of range on empty content.
+	if normalizedOld == "" {
+		return "", "", false
+	}
 	normalizedContent := normalizeBlock(content)
 
 	// Must match exactly once (unique).
@@ -1005,6 +1059,12 @@ func normalizeBlankRuns(s string) string {
 
 func autoCorrectInternalBlankLines(content, oldStr, newStr string) (actualOld, adjustedNew string, ok bool) {
 	normalizedOld := normalizeBlankRuns(oldStr)
+	// An all-blank old_string normalizes to "" — nothing meaningful to
+	// locate, and strings.Index(s, "") returning 0 would make the
+	// uniqueness slice below go out of range on empty content.
+	if normalizedOld == "" {
+		return "", "", false
+	}
 	normalizedContent := normalizeBlankRuns(content)
 
 	// Only proceed if normalization actually changed something.
