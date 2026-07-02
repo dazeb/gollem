@@ -130,21 +130,38 @@ func collectFields(t reflect.Type, properties map[string]any, required *[]string
 	for i := range t.NumField() {
 		field := t.Field(i)
 
-		// Skip unexported fields.
-		if !field.IsExported() {
-			continue
-		}
-
-		// Handle embedded structs by flattening.
+		// Handle embedded structs by flattening, matching encoding/json
+		// semantics: an embedded struct without a json name tag is
+		// flattened (its exported fields promoted, even when the embedded
+		// type itself is unexported), while a name tag turns it into a
+		// regular nested property.
+		embeddedStruct := false
 		if field.Anonymous {
 			ft := field.Type
 			for ft.Kind() == reflect.Ptr {
 				ft = ft.Elem()
 			}
 			if ft.Kind() == reflect.Struct && ft != timeType {
-				collectFields(ft, properties, required, visited)
-				continue
+				embeddedStruct = true
+				tagName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+				if tagName == "" {
+					// Consult the visited guard so self- or mutually-embedded
+					// types don't recurse forever (schemaForStruct only
+					// guards its own entry point).
+					if !visited[ft] {
+						visited[ft] = true
+						collectFields(ft, properties, required, visited)
+						delete(visited, ft)
+					}
+					continue
+				}
 			}
+		}
+
+		// Skip unexported fields. An embedded struct of unexported type is
+		// exempt: encoding/json still nests it under its json name tag.
+		if !field.IsExported() && !embeddedStruct {
+			continue
 		}
 
 		name, fieldSchema, isRequired := schemaForField(field, visited)

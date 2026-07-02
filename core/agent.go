@@ -988,18 +988,28 @@ func (a *Agent[T]) processResponse(
 				toolName:   tc.ToolName,
 				toolCallID: tc.ToolCallID,
 			}
+			// Answer the output tool call in both end strategies so its
+			// tool_use never dangles in history.
+			resultParts = append(resultParts, ToolReturnPart{
+				ToolName:   tc.ToolName,
+				Content:    "output accepted",
+				ToolCallID: tc.ToolCallID,
+				Timestamp:  time.Now(),
+			})
 			if a.endStrategy == EndStrategyEarly {
-				// Return tool result part and skip remaining.
-				resultParts = append(resultParts, ToolReturnPart{
-					ToolName:   tc.ToolName,
-					Content:    "output accepted",
-					ToolCallID: tc.ToolCallID,
-					Timestamp:  time.Now(),
-				})
 				// Skip remaining function calls in early mode.
 				return result, resultParts, nil, nil
 			}
+			continue
 		}
+		// A result was already accepted; answer the duplicate call so it
+		// isn't left dangling in history.
+		resultParts = append(resultParts, ToolReturnPart{
+			ToolName:   tc.ToolName,
+			Content:    "output already accepted; duplicate ignored",
+			ToolCallID: tc.ToolCallID,
+			Timestamp:  time.Now(),
+		})
 	}
 
 	// Execute function tool calls.

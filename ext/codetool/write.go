@@ -82,6 +82,7 @@ func Write(opts ...Option) core.Tool {
 					perm = fi.Mode().Perm()
 				}
 			}
+			origPerm := perm
 			// Auto-upgrade to executable for scripts (both new and existing).
 			lower := strings.ToLower(filepath.Base(path))
 			isScript := strings.HasPrefix(params.Content, "#!") ||
@@ -114,6 +115,14 @@ func Write(opts ...Option) core.Tool {
 			}
 			if err := writeFileAndTrace(ctx, rc, cfg, path, []byte(writeContent), perm, operation, "write"); err != nil {
 				return "", fmt.Errorf("write file: %w", err)
+			}
+			// os.WriteFile only applies perm when creating a file — overwriting
+			// leaves the existing mode untouched, so the script auto-upgrade
+			// above needs an explicit chmod for existing files.
+			if prevSize >= 0 && perm != origPerm {
+				if err := os.Chmod(path, perm); err != nil {
+					return "", fmt.Errorf("chmod file: %w", err)
+				}
 			}
 
 			// Return a summary with line count. For small files, include a

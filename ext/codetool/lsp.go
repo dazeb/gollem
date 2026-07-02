@@ -451,18 +451,21 @@ func startServer(ctx context.Context, lang, workDir string) (*lspServer, error) 
 	// handled automatically during initialization.
 	go srv.readLoop(bufio.NewReaderSize(stdout, 256*1024))
 
+	// Background goroutine: detect server crashes by calling Wait().
+	// This sets srv.dead so getServer can detect and restart. Started
+	// BEFORE the initialize handshake so the child is always reaped —
+	// otherwise the kill() on handshake failure would leave a zombie
+	// and leak the pipe FDs.
+	go func() {
+		srv.cmd.Wait() //nolint:errcheck
+		srv.dead.Store(true)
+	}()
+
 	// Initialize handshake (uses the caller's context for timeout).
 	if err := srv.initialize(ctx, workDir); err != nil {
 		srv.kill()
 		return nil, fmt.Errorf("LSP initialize: %w", err)
 	}
-
-	// Background goroutine: detect server crashes by calling Wait().
-	// This sets srv.dead so getServer can detect and restart.
-	go func() {
-		srv.cmd.Wait() //nolint:errcheck
-		srv.dead.Store(true)
-	}()
 
 	return srv, nil
 }
@@ -1419,6 +1422,26 @@ func lspCodeAction(ctx context.Context, srv *lspServer, filePath string, line, c
 	return b.String(), nil
 }
 
+// utf16OffsetToByte converts a UTF-16 code-unit offset — the default LSP
+// position encoding — into a byte offset within line. Runes outside the
+// Basic Multilingual Plane count as two UTF-16 units (a surrogate pair);
+// all others count as one. Offsets past the end of the line clamp to
+// len(line).
+func utf16OffsetToByte(line string, utf16Off int) int {
+	units := 0
+	for i, r := range line {
+		if units >= utf16Off {
+			return i
+		}
+		if r > 0xFFFF {
+			units += 2
+		} else {
+			units++
+		}
+	}
+	return len(line)
+}
+
 // applyWorkspaceEdit applies a WorkspaceEdit to disk and syncs changed files
 // back to the LSP server. Returns the total number of edits applied and a
 // per-file summary. This is shared by rename and code_action.
@@ -1454,16 +1477,16 @@ func applyWorkspaceEdit(edit *lspWorkspaceEdit, srv *lspServer, absWorkDir strin
 			}
 
 			// Build the content before the edit range, the new text, and after.
+			// LSP character offsets are UTF-16 code units, not bytes — convert
+			// before slicing or edits on lines with multibyte runes corrupt
+			// the file.
 			before := ""
 			if startLine > 0 {
 				before = strings.Join(lines[:startLine], "\n") + "\n"
 			}
-			before += lines[startLine][:min(startChar, len(lines[startLine]))]
+			before += lines[startLine][:utf16OffsetToByte(lines[startLine], startChar)]
 
-			after := ""
-			if endChar <= len(lines[endLine]) {
-				after = lines[endLine][endChar:]
-			}
+			after := lines[endLine][utf16OffsetToByte(lines[endLine], endChar):]
 			if endLine+1 < len(lines) {
 				after += "\n" + strings.Join(lines[endLine+1:], "\n")
 			}
@@ -1692,16 +1715,27 @@ func lspOutline(ctx context.Context, srv *lspServer, filePath, workDir string) (
 		relPath = rel
 	}
 
-	// Try DocumentSymbol[] (hierarchical) first.
-	var docSymbols []lspDocumentSymbol
-	if err := json.Unmarshal(result, &docSymbols); err == nil && len(docSymbols) > 0 {
-		var b strings.Builder
-		fmt.Fprintf(&b, "Outline of %s:\n", relPath)
-		formatDocumentSymbols(&b, docSymbols, 0)
-		return strings.TrimRight(b.String(), "\n"), nil
+	// Servers return either DocumentSymbol[] (hierarchical) or
+	// SymbolInformation[] (flat). The flat shape also unmarshals cleanly
+	// into []lspDocumentSymbol (its `location` field is silently ignored,
+	// leaving Range zero), so probe for a `location` key to pick the
+	// right parse instead of trusting the first successful unmarshal.
+	var probe []struct {
+		Location json.RawMessage `json:"location"`
+	}
+	flat := json.Unmarshal(result, &probe) == nil && len(probe) > 0 && len(probe[0].Location) > 0
+
+	if !flat {
+		var docSymbols []lspDocumentSymbol
+		if err := json.Unmarshal(result, &docSymbols); err == nil && len(docSymbols) > 0 {
+			var b strings.Builder
+			fmt.Fprintf(&b, "Outline of %s:\n", relPath)
+			formatDocumentSymbols(&b, docSymbols, 0)
+			return strings.TrimRight(b.String(), "\n"), nil
+		}
 	}
 
-	// Fallback: try SymbolInformation[] (flat, older servers).
+	// SymbolInformation[] (flat, older servers).
 	var symbols []lspSymbolInfo
 	if err := json.Unmarshal(result, &symbols); err == nil && len(symbols) > 0 {
 		var b strings.Builder

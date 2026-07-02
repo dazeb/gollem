@@ -705,13 +705,16 @@ func (s *agentStream[T]) completeTurn() error {
 		s.completeActiveTurn(resp, err)
 		return err
 	}
+	// Record tool results in history for every outcome (deferred, final
+	// result, or continue) so no tool_use is left without a paired
+	// tool_result when Messages round-trips through WithMessages.
+	if len(nextParts) > 0 {
+		s.state.messages = append(s.state.messages, ModelRequest{
+			Parts:     nextParts,
+			Timestamp: time.Now(),
+		})
+	}
 	if len(deferredReqs) > 0 {
-		if len(nextParts) > 0 {
-			s.state.messages = append(s.state.messages, ModelRequest{
-				Parts:     nextParts,
-				Timestamp: time.Now(),
-			})
-		}
 		fireTurnEnd()
 		s.completeActiveTurn(resp, nil)
 		if s.agent.eventBus != nil {
@@ -764,12 +767,6 @@ func (s *agentStream[T]) completeTurn() error {
 	}
 
 	// No result — tool calls processed, continue to next turn.
-	if len(nextParts) > 0 {
-		s.state.messages = append(s.state.messages, ModelRequest{
-			Parts:     nextParts,
-			Timestamp: time.Now(),
-		})
-	}
 	fireTurnEnd()
 	s.completeActiveTurn(resp, nil)
 

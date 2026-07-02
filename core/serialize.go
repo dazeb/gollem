@@ -107,6 +107,12 @@ type thinkingPartJSON struct {
 	Signature string `json:"signature,omitempty"`
 }
 
+type providerMetadataPartJSON struct {
+	Provider string          `json:"provider"`
+	Kind     string          `json:"kind"`
+	Payload  json.RawMessage `json:"payload,omitempty"`
+}
+
 // MarshalMessages serializes a conversation ([]ModelMessage) to JSON.
 func MarshalMessages(messages []ModelMessage) ([]byte, error) {
 	envelopes, err := EncodeMessages(messages)
@@ -383,6 +389,13 @@ func encodeResponsePart(part ModelResponsePart) (partEnvelope, error) {
 		}
 		return partEnvelope{Type: "thinking", Data: data}, nil
 
+	case ProviderMetadataPart:
+		data, err := json.Marshal(providerMetadataPartJSON(p))
+		if err != nil {
+			return partEnvelope{}, err
+		}
+		return partEnvelope{Type: "provider-metadata", Data: data}, nil
+
 	default:
 		return partEnvelope{}, fmt.Errorf("unknown response part type: %T", part)
 	}
@@ -503,6 +516,13 @@ func decodeResponsePart(env partEnvelope) (ModelResponsePart, error) {
 			return nil, fmt.Errorf("unmarshaling thinking: %w", err)
 		}
 		return ThinkingPart(p), nil
+
+	case "provider-metadata":
+		var p providerMetadataPartJSON
+		if err := json.Unmarshal(env.Data, &p); err != nil {
+			return nil, fmt.Errorf("unmarshaling provider-metadata: %w", err)
+		}
+		return ProviderMetadataPart(p), nil
 
 	default:
 		return nil, fmt.Errorf("unknown response part type: %q", env.Type)

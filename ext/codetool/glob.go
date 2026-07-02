@@ -75,7 +75,10 @@ func Glob(opts ...Option) core.Tool {
 						return ctx.Err()
 					}
 					if d.IsDir() {
-						if isSkippableDir(d.Name()) {
+						// Never prune the walk root — the caller explicitly
+						// asked to search this directory, even if its basename
+						// is skippable (e.g. path="vendor").
+						if path != searchPath && isSkippableDir(d.Name()) {
 							return filepath.SkipDir
 						}
 						return nil
@@ -102,40 +105,61 @@ func Glob(opts ...Option) core.Tool {
 					return "", fmt.Errorf("walking directory: %w", err)
 				}
 			} else {
-				// Simple glob without **. Expand braces first since
-				// filepath.Glob doesn't support {a,b} patterns.
-				expandedPatterns := expandBraces(params.Pattern)
-				seen := make(map[string]bool)
-				var globMatches []string
-				for _, ep := range expandedPatterns {
-					p := filepath.Join(searchPath, ep)
-					matches, err := filepath.Glob(p)
-					if err != nil {
-						return "", &core.ModelRetryError{Message: fmt.Sprintf("invalid glob pattern: %v", err)}
-					}
-					for _, m := range matches {
-						if !seen[m] {
-							seen[m] = true
-							globMatches = append(globMatches, m)
+				// Simple glob without **. filepath.Glob would interpret
+				// glob metacharacters in searchPath itself (e.g. Next.js
+				// "[slug]" route directories), so walk the tree and match
+				// the pattern against the path relative to searchPath
+				// instead. matchDoublestar requires an exact segment count
+				// for patterns without **, preserving non-recursive glob
+				// semantics. Expand braces up front to validate the pattern
+				// and bound the walk depth.
+				maxDepth := 1
+				for _, ep := range expandBraces(filepath.ToSlash(params.Pattern)) {
+					for _, seg := range strings.Split(ep, "/") {
+						if _, err := filepath.Match(seg, ""); err != nil {
+							return "", &core.ModelRetryError{Message: fmt.Sprintf("invalid glob pattern: %v", err)}
 						}
+					}
+					if d := strings.Count(ep, "/") + 1; d > maxDepth {
+						maxDepth = d
 					}
 				}
-				for _, m := range globMatches {
-					info, err := os.Stat(m)
-					if err != nil {
-						continue
+				err := filepath.WalkDir(searchPath, func(path string, d os.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
 					}
-					if info.IsDir() {
-						continue
+					if ctx.Err() != nil {
+						return ctx.Err()
 					}
+					if d.IsDir() {
+						if path == searchPath {
+							return nil
+						}
+						// Don't descend deeper than the pattern can match.
+						relDir, _ := filepath.Rel(searchPath, path)
+						if strings.Count(filepath.ToSlash(relDir), "/")+1 >= maxDepth {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+
 					// Apply exclude filter (with brace expansion).
 					if params.Exclude != "" {
-						if matchWithBraces(params.Exclude, info.Name()) {
-							continue
+						if matchWithBraces(params.Exclude, d.Name()) {
+							return nil
 						}
 					}
-					relPath, _ := filepath.Rel(searchPath, m)
-					results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})
+
+					relPath, _ := filepath.Rel(searchPath, path)
+					if matchDoublestar(params.Pattern, relPath) {
+						if info, err := d.Info(); err == nil {
+							results = append(results, fileEntry{relPath, info.ModTime().Unix(), info.Size()})
+						}
+					}
+					return nil
+				})
+				if err != nil && !errors.Is(err, context.Canceled) {
+					return "", fmt.Errorf("walking directory: %w", err)
 				}
 			}
 
@@ -189,11 +213,17 @@ func matchDoublestar(pattern, path string) bool {
 	return false
 }
 
-// expandBraces expands a single brace group in a pattern.
+// maxBraceExpansions bounds the cartesian product of sequential brace
+// groups so a pathological pattern cannot explode memory.
+const maxBraceExpansions = 64
+
+// expandBraces expands brace groups in a pattern.
 // "*.{go,py}" → ["*.go", "*.py"]
 // "src/{a,b}/*.ts" → ["src/a/*.ts", "src/b/*.ts"]
+// "{a,b}/*.{go,py}" → ["a/*.go", "a/*.py", "b/*.go", "b/*.py"]
 // Patterns without braces return a single-element slice.
-// Only the first brace group is expanded (nested braces are not supported).
+// Sequential groups expand as a cartesian product (capped at
+// maxBraceExpansions); nested braces are not supported.
 func expandBraces(pattern string) []string {
 	open := strings.IndexByte(pattern, '{')
 	if open < 0 {
@@ -205,11 +235,17 @@ func expandBraces(pattern string) []string {
 	}
 	close += open
 	prefix := pattern[:open]
-	suffix := pattern[close+1:]
+	// Recurse on the suffix so later groups expand too.
+	suffixes := expandBraces(pattern[close+1:])
 	alternatives := strings.Split(pattern[open+1:close], ",")
+	if len(alternatives)*len(suffixes) > maxBraceExpansions {
+		return []string{pattern} // pathological — leave braces literal
+	}
 	var result []string
 	for _, alt := range alternatives {
-		result = append(result, prefix+strings.TrimSpace(alt)+suffix)
+		for _, suffix := range suffixes {
+			result = append(result, prefix+strings.TrimSpace(alt)+suffix)
+		}
 	}
 	return result
 }
