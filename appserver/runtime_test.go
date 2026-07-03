@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,6 +160,66 @@ func TestServerRuntimeThreadResumeUsesInjectedResponseItems(t *testing.T) {
 	assertRuntimeUserPrompt(t, messages[0], "injected user")
 	assertRuntimeAssistantText(t, messages[1], "injected assistant")
 	assertRuntimeUserPrompt(t, messages[2], "next prompt")
+}
+
+func TestServerRuntimeThreadCompactBoundsResumeHistory(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	model := core.NewTestModel(
+		core.TextResponse("first answer"),
+		core.TextResponse("second answer"),
+		core.TextResponse("third answer"),
+	)
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}))),
+	)
+
+	startResp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "first prompt"}))
+	if startResp.Error != nil {
+		t.Fatalf("thread/start error: %v", startResp.Error)
+	}
+	var started struct {
+		Thread *store.Thread `json:"thread"`
+		Turn   *store.Turn   `json:"turn"`
+	}
+	decodeResult(t, startResp, &started)
+	waitForNotificationSet(t, server, "turn/completed")
+
+	resumeResp := server.HandleRequest(ctx, request("thread/resume", map[string]any{
+		"threadId": started.Thread.ID,
+		"prompt":   "second prompt",
+	}))
+	if resumeResp.Error != nil {
+		t.Fatalf("thread/resume error: %v", resumeResp.Error)
+	}
+	waitForNotificationSet(t, server, "turn/completed")
+
+	compactResp := server.HandleRequest(ctx, request("thread/compact/start", map[string]any{"threadId": started.Thread.ID}))
+	if compactResp.Error != nil {
+		t.Fatalf("thread/compact/start error: %v", compactResp.Error)
+	}
+	waitForNotificationSet(t, server, "thread/compacted")
+
+	resumeResp = server.HandleRequest(ctx, request("thread/resume", map[string]any{
+		"threadId": started.Thread.ID,
+		"prompt":   "third prompt",
+	}))
+	if resumeResp.Error != nil {
+		t.Fatalf("thread/resume third error: %v", resumeResp.Error)
+	}
+	waitForNotificationSet(t, server, "turn/completed")
+
+	calls := model.Calls()
+	if len(calls) != 3 {
+		t.Fatalf("model calls = %d, want 3", len(calls))
+	}
+	messages := calls[2].Messages
+	if len(messages) != 2 {
+		t.Fatalf("third call messages = %#v", messages)
+	}
+	assertRuntimeSystemPromptContains(t, messages[0], "first prompt", "second answer")
+	assertRuntimeUserPrompt(t, messages[1], "third prompt")
 }
 
 func TestServerRuntimeTurnRetryBranchesBeforeSourceTurn(t *testing.T) {
@@ -325,6 +386,23 @@ func assertRuntimeUserPrompt(t *testing.T, message core.ModelMessage, want strin
 	part, ok := req.Parts[0].(core.UserPromptPart)
 	if !ok || part.Content != want {
 		t.Fatalf("request part = %#v, want user prompt %q", req.Parts[0], want)
+	}
+}
+
+func assertRuntimeSystemPromptContains(t *testing.T, message core.ModelMessage, want ...string) {
+	t.Helper()
+	req, ok := message.(core.ModelRequest)
+	if !ok || len(req.Parts) != 1 {
+		t.Fatalf("message = %#v, want one-part system request", message)
+	}
+	part, ok := req.Parts[0].(core.SystemPromptPart)
+	if !ok {
+		t.Fatalf("request part = %#v, want system prompt", req.Parts[0])
+	}
+	for _, text := range want {
+		if !strings.Contains(part.Content, text) {
+			t.Fatalf("system prompt = %q, want substring %q", part.Content, text)
+		}
 	}
 }
 

@@ -474,6 +474,12 @@ func runtimeMessagesFromItems(items []*store.Item) []core.ModelMessage {
 			}
 			continue
 		}
+		if item.Kind == threadCompactionItemKind {
+			if message, ok := runtimeMessageFromCompactionItem(item.Payload); ok {
+				messages = append(messages, message)
+			}
+			continue
+		}
 		if item.Kind != "message" {
 			continue
 		}

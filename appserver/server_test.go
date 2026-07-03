@@ -604,6 +604,92 @@ func TestServerThreadRollbackHandler(t *testing.T) {
 	}
 }
 
+func TestServerThreadCompactStartHandler(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Compact"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID, Input: json.RawMessage(`{"prompt":"old"}`)})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := st.AppendItem(ctx, store.AppendItemRequest{ThreadID: thread.ID, TurnID: turn.ID, Kind: "message", Payload: json.RawMessage(`{"role":"user","text":"old prompt"}`)}); err != nil {
+		t.Fatalf("AppendItem user: %v", err)
+	}
+	if _, err := st.AppendItem(ctx, store.AppendItemRequest{ThreadID: thread.ID, TurnID: turn.ID, Kind: "message", Payload: json.RawMessage(`{"role":"assistant","text":"old answer"}`)}); err != nil {
+		t.Fatalf("AppendItem assistant: %v", err)
+	}
+
+	server := readyServer(WithStore(st))
+	resp := server.HandleRequest(ctx, request("thread/compact/start", map[string]any{"threadId": thread.ID}))
+	if resp.Error != nil {
+		t.Fatalf("thread/compact/start error: %v", resp.Error)
+	}
+	var result map[string]any
+	decodeResult(t, resp, &result)
+	if len(result) != 0 {
+		t.Fatalf("compact result = %#v, want empty object", result)
+	}
+	events := server.DrainNotifications()
+	assertNotificationMethods(t, events, "turn/started", "item/started", "item/completed", "turn/completed", "thread/compacted")
+	var compacted contextCompactedNotificationParams
+	if err := json.Unmarshal(events[4].Params, &compacted); err != nil {
+		t.Fatalf("decode compacted notification: %v", err)
+	}
+	if compacted.ThreadID != thread.ID || compacted.TurnID == "" {
+		t.Fatalf("compacted notification = %#v", compacted)
+	}
+	var startedItem runtimeItemNotificationParams
+	if err := json.Unmarshal(events[1].Params, &startedItem); err != nil {
+		t.Fatalf("decode item/started: %v", err)
+	}
+	if startedItem.ItemID == "" || startedItem.Item == nil || startedItem.Item.Kind != threadCompactionItemKind || startedItem.Item.Status != "running" {
+		t.Fatalf("item/started params = %#v", startedItem)
+	}
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 3 || items[2].Kind != threadCompactionItemKind || items[2].Status != "completed" {
+		t.Fatalf("items after compact = %#v", items)
+	}
+	var payload threadCompactionPayload
+	if err := json.Unmarshal(items[2].Payload, &payload); err != nil {
+		t.Fatalf("decode compact payload: %v", err)
+	}
+	if payload.Type != threadCompactionItemKind || !strings.Contains(payload.Summary, "old prompt") || !strings.Contains(payload.Summary, "old answer") {
+		t.Fatalf("compact payload = %#v", payload)
+	}
+	turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	if len(turns) != 2 || turns[1].ID != compacted.TurnID || turns[1].Status != store.TurnCompleted {
+		t.Fatalf("turns after compact = %#v", turns)
+	}
+	loadedResp := server.HandleRequest(ctx, request("thread/loaded/list", nil))
+	if loadedResp.Error != nil {
+		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
+	}
+	var loaded threadLoadedListResult
+	decodeResult(t, loadedResp, &loaded)
+	if !sameStringSet(loaded.Data, []string{thread.ID}) {
+		t.Fatalf("loaded after compact = %#v", loaded.Data)
+	}
+
+	invalidResp := server.HandleRequest(ctx, request("thread/compact/start", map[string]any{"threadId": ""}))
+	if invalidResp.Error == nil || invalidResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("invalid compact error = %#v", invalidResp.Error)
+	}
+}
+
 func TestServerThreadControlHandlers(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))

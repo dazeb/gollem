@@ -215,6 +215,11 @@ type deprecationNoticeNotificationParams struct {
 	Details *string `json:"details"`
 }
 
+type contextCompactedNotificationParams struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+}
+
 type threadGoalNotificationParams struct {
 	ThreadID string        `json:"threadId"`
 	Goal     any           `json:"goal,omitempty"`

@@ -438,6 +438,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadRead(ctx, params)
 	case "thread/fork":
 		return s.handleThreadFork(ctx, params)
+	case "thread/compact/start":
+		return s.handleThreadCompactStart(ctx, params)
 	case "thread/rollback":
 		return s.handleThreadRollback(ctx, params)
 	case "thread/archive":
@@ -1286,7 +1288,7 @@ func (s *Server) loadThreadHistory(ctx context.Context, st store.Store, threadID
 		}
 		filtered = append(filtered, item)
 	}
-	return runtimeMessagesFromItems(filtered), nil
+	return runtimeMessagesFromItems(compactionWindowItems(filtered)), nil
 }
 
 func firstTurnItemSeq(ctx context.Context, st store.Store, threadID, turnID string) (int64, error) {
