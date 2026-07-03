@@ -88,6 +88,28 @@ func TestSQLiteStoreThreadLifecyclePersists(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreClosedOperationsReturnErrStoreClosed(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{Title: "closed"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := s.CreateThread(ctx, CreateThreadRequest{Title: "after close"}); !errors.Is(err, ErrStoreClosed) {
+		t.Fatalf("CreateThread after close error = %v, want ErrStoreClosed", err)
+	}
+	if _, err := s.GetThread(ctx, thread.ID); !errors.Is(err, ErrStoreClosed) {
+		t.Fatalf("GetThread after close error = %v, want ErrStoreClosed", err)
+	}
+	if _, err := s.ListThreads(ctx, ThreadFilter{}); !errors.Is(err, ErrStoreClosed) {
+		t.Fatalf("ListThreads after close error = %v, want ErrStoreClosed", err)
+	}
+}
+
 func TestSQLiteStoreTurnsAndItemsPersistAndPaginate(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))

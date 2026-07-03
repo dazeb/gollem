@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -288,6 +289,70 @@ func TestServerRuntimeTurnInterruptCancelsActiveRun(t *testing.T) {
 	}
 	if turn.Status != store.TurnInterrupted {
 		t.Fatalf("turn status = %s, want interrupted; error=%q", turn.Status, turn.Error)
+	}
+}
+
+func TestRuntimeShutdownCancelsActiveRunBeforeStoreClose(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	model := &blockingRuntimeModel{started: make(chan struct{})}
+	runtimeSvc := NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "blocking"}))
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(runtimeSvc),
+	)
+
+	startResp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "block"}))
+	if startResp.Error != nil {
+		t.Fatalf("thread/start error: %v", startResp.Error)
+	}
+	var started struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, startResp, &started)
+	waitForBlockingModel(t, model)
+
+	shutdownCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := runtimeSvc.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	turn, err := st.GetTurn(ctx, started.Turn.ID)
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	if turn.Status != store.TurnInterrupted {
+		t.Fatalf("turn status = %s, want interrupted; error=%q", turn.Status, turn.Error)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close store after runtime shutdown: %v", err)
+	}
+}
+
+func TestRuntimeShutdownRejectsNewStarts(t *testing.T) {
+	ctx := context.Background()
+	runtimeSvc := NewRuntimeService(WithRuntimeModel(
+		core.NewTestModel(core.TextResponse("late")),
+		RuntimeModelInfo{ProviderID: "test", Model: "test-model"},
+	))
+	server := readyServer(
+		WithStore(newRuntimeTestStore(t)),
+		WithRuntimeService(runtimeSvc),
+	)
+	if err := runtimeSvc.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	resp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "after shutdown"}))
+	if resp.Error == nil || resp.Error.Code != protocol.CodeMethodUnavailable {
+		t.Fatalf("thread/start after shutdown error = %#v, want method unavailable", resp.Error)
+	}
+	var data protocol.UnavailableData
+	if err := json.Unmarshal(resp.Error.Data, &data); err != nil {
+		t.Fatalf("decode unavailable data: %v", err)
+	}
+	if data.Method != "thread/start" || data.Reason != "turn runtime is shutting down" {
+		t.Fatalf("unavailable data = %+v", data)
 	}
 }
 

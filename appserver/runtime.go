@@ -18,6 +18,7 @@ var (
 	ErrRuntimeTurnActive    = errors.New("appserver/runtime: turn is already running")
 	ErrRuntimeTurnNotActive = errors.New("appserver/runtime: turn is not running")
 	ErrRuntimePromptEmpty   = errors.New("appserver/runtime: prompt is required")
+	ErrRuntimeShuttingDown  = errors.New("appserver/runtime: runtime is shutting down")
 )
 
 type RuntimeModelSelection struct {
@@ -55,9 +56,12 @@ func WithRuntimeModel(model core.Model, info RuntimeModelInfo) RuntimeOption {
 }
 
 type RuntimeService struct {
+	startMu      sync.Mutex
 	mu           sync.Mutex
 	modelFactory RuntimeModelFactory
 	active       map[string]*activeRuntimeTurn
+	shuttingDown bool
+	wg           sync.WaitGroup
 }
 
 func NewRuntimeService(opts ...RuntimeOption) *RuntimeService {
@@ -109,6 +113,14 @@ func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier run
 	if req.Prompt == "" {
 		return nil, ErrRuntimePromptEmpty
 	}
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+	s.mu.Lock()
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return nil, ErrRuntimeShuttingDown
+	}
+	s.mu.Unlock()
 	if len(req.Input) == 0 {
 		input, err := json.Marshal(runtimeTurnInput{
 			Prompt:      req.Prompt,
@@ -153,10 +165,14 @@ func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier run
 		return nil, ErrRuntimeTurnActive
 	}
 	s.active[started.ID] = &activeRuntimeTurn{cancel: cancel}
+	s.wg.Add(1)
 	s.mu.Unlock()
 
 	publishTurnStarted(notifier, started)
-	go s.run(runCtx, st, notifier, started, req)
+	go func() {
+		defer s.wg.Done()
+		s.run(runCtx, st, notifier, started, req)
+	}()
 	return &RuntimeStartResult{Turn: started}, nil
 }
 
@@ -191,6 +207,37 @@ func (s *RuntimeService) IsActive(turnID string) bool {
 	defer s.mu.Unlock()
 	_, ok := s.active[turnID]
 	return ok
+}
+
+func (s *RuntimeService) Shutdown(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+	s.mu.Lock()
+	s.shuttingDown = true
+	for _, active := range s.active {
+		if active != nil && active.cancel != nil {
+			active.cancel()
+		}
+	}
+	s.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runtimeNotifier, turn *store.Turn, req RuntimeStartRequest) {

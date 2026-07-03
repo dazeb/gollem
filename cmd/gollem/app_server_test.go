@@ -491,6 +491,98 @@ func TestCLIAppServerThreadStartUsesRuntimeProviderFlag(t *testing.T) {
 	waitCLINotification(t, server, "turn/completed")
 }
 
+func TestCLIAppServerCleanupStopsActiveRuntimeBeforeStoreClose(t *testing.T) {
+	t.Setenv("GOLLEM_TEST_MODEL_DELAY", "250ms")
+	workDir := t.TempDir()
+	server, cleanup, err := newCLIAppServer(appServerFlags{
+		workDir:        workDir,
+		storePath:      filepath.Join(workDir, "app.db"),
+		provider:       "test",
+		stdio:          true,
+		allowMutations: true,
+	})
+	if err != nil {
+		t.Fatalf("newCLIAppServer: %v", err)
+	}
+	defer cleanup()
+
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		err := appserver.ServeJSONLines(context.Background(), server, inR, outW)
+		if err != nil {
+			_ = outW.CloseWithError(err)
+		} else {
+			_ = outW.Close()
+		}
+		errCh <- err
+	}()
+	lineCh := make(chan string, 1024)
+	scanErrCh := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(outR)
+		for scanner.Scan() {
+			select {
+			case lineCh <- scanner.Text():
+			default:
+			}
+		}
+		scanErrCh <- scanner.Err()
+		close(lineCh)
+	}()
+	readLine := func() string {
+		t.Helper()
+		select {
+		case line, ok := <-lineCh:
+			if !ok {
+				t.Fatal("output stream closed before expected line")
+			}
+			return line
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for output line")
+			return ""
+		}
+	}
+	writeCLIInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`)
+	writeCLIInputLine(t, inW, `{"method":"initialized"}`)
+	if err := json.Unmarshal([]byte(readLine()), &protocol.Response{}); err != nil {
+		t.Fatalf("decode init response: %v", err)
+	}
+
+	writeCLIInputLine(t, inW, `{"id":"start","method":"thread/start","params":{"prompt":"slow runtime"}}`)
+	var start protocol.Response
+	for {
+		line := readLine()
+		var envelope struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			t.Fatalf("decode output envelope %q: %v", line, err)
+		}
+		if envelope.ID != "start" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(line), &start); err != nil {
+			t.Fatalf("decode start response: %v", err)
+		}
+		break
+	}
+	if start.Error != nil {
+		t.Fatalf("thread/start error: %v", start.Error)
+	}
+	if err := inW.Close(); err != nil {
+		t.Fatalf("close input: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeJSONLines: %v", err)
+	}
+	if err := <-scanErrCh; err != nil {
+		t.Fatalf("scan output: %v", err)
+	}
+}
+
 func writeCLITestFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	path := filepath.Join(root, rel)

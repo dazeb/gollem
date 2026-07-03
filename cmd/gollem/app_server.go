@@ -242,6 +242,9 @@ func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*apps
 	gitOpts := []toolgit.Option{}
 	events := appserver.NewEventQueue()
 	approvals := appserver.NewApprovalService()
+	runtimeSvc := appserver.NewRuntimeService(
+		appserver.WithRuntimeModelFactory(appServerRuntimeModelFactory(flags)),
+	)
 	var server *appserver.Server
 	if !flags.allowMutations {
 		fsOpts = append(fsOpts, toolfs.WithApproval(approvals.FilesystemApproval))
@@ -326,15 +329,25 @@ func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*apps
 		appserver.WithMemoryService(memorySvc),
 		appserver.WithEventQueue(events),
 		appserver.WithApprovalService(approvals),
-		appserver.WithRuntimeService(appserver.NewRuntimeService(
-			appserver.WithRuntimeModelFactory(appServerRuntimeModelFactory(flags)),
-		)),
+		appserver.WithRuntimeService(runtimeSvc),
 	}
 	if gitSvc != nil {
 		opts = append(opts, appserver.WithGit(gitSvc))
 	}
 	server = appserver.NewServer(opts...)
-	return server, cleanup, nil
+	return server, func() {
+		shutdownCLIAppServerRuntime(runtimeSvc)
+		cleanup()
+	}, nil
+}
+
+func shutdownCLIAppServerRuntime(runtimeSvc *appserver.RuntimeService) {
+	if runtimeSvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = runtimeSvc.Shutdown(ctx)
 }
 
 func serveCLIAppServerTransports(ctx context.Context, flags appServerFlags) error {

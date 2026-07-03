@@ -44,7 +44,12 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 
 // Close closes the database handle.
 func (s *SQLiteStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db == nil {
 		return nil
 	}
 	db := s.db
@@ -102,7 +107,11 @@ func (s *SQLiteStore) init() error {
 }
 
 func (s *SQLiteStore) withTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	db, err := s.dbLocked()
+	if err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin sqlite transaction: %w", err)
 	}
@@ -115,6 +124,13 @@ func (s *SQLiteStore) withTx(ctx context.Context, fn func(*sql.Tx) error) (err e
 	}()
 	err = fn(tx)
 	return err
+}
+
+func (s *SQLiteStore) dbLocked() (*sql.DB, error) {
+	if s == nil || s.db == nil {
+		return nil, ErrStoreClosed
+	}
+	return s.db, nil
 }
 
 func normalizeContext(ctx context.Context) context.Context {
@@ -154,7 +170,11 @@ func (s *SQLiteStore) GetThread(ctx context.Context, id string) (*Thread, error)
 	ctx = normalizeContext(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	thread, err := loadThread(ctx, s.db, id)
+	db, err := s.dbLocked()
+	if err != nil {
+		return nil, err
+	}
+	thread, err := loadThread(ctx, db, id)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +187,11 @@ func (s *SQLiteStore) ListThreads(ctx context.Context, filter ThreadFilter) ([]*
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM app_threads ORDER BY updated_at DESC, id ASC`)
+	db, err := s.dbLocked()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT payload FROM app_threads ORDER BY updated_at DESC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list threads: %w", err)
 	}
@@ -465,7 +489,11 @@ func (s *SQLiteStore) GetTurn(ctx context.Context, id string) (*Turn, error) {
 	ctx = normalizeContext(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	turn, err := loadTurn(ctx, s.db, id)
+	db, err := s.dbLocked()
+	if err != nil {
+		return nil, err
+	}
+	turn, err := loadTurn(ctx, db, id)
 	if err != nil {
 		return nil, err
 	}
@@ -478,7 +506,11 @@ func (s *SQLiteStore) ListTurns(ctx context.Context, filter TurnFilter) ([]*Turn
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM app_turns ORDER BY created_at ASC, id ASC`)
+	db, err := s.dbLocked()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT payload FROM app_turns ORDER BY created_at ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list turns: %w", err)
 	}
@@ -656,7 +688,11 @@ func (s *SQLiteStore) GetItem(ctx context.Context, id string) (*Item, error) {
 	ctx = normalizeContext(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item, err := loadItem(ctx, s.db, id)
+	db, err := s.dbLocked()
+	if err != nil {
+		return nil, err
+	}
+	item, err := loadItem(ctx, db, id)
 	if err != nil {
 		return nil, err
 	}
@@ -669,7 +705,11 @@ func (s *SQLiteStore) ListItems(ctx context.Context, filter ItemFilter) ([]*Item
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM app_items WHERE seq > ? ORDER BY seq ASC`, filter.AfterSeq)
+	db, err := s.dbLocked()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT payload FROM app_items WHERE seq > ? ORDER BY seq ASC`, filter.AfterSeq)
 	if err != nil {
 		return nil, fmt.Errorf("list items: %w", err)
 	}

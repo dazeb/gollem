@@ -2003,6 +2003,8 @@ func mapError(method string, err error) *protocol.Error {
 		return rpcError(protocol.CodeInvalidRequest, "operation denied by approval policy", err)
 	case errors.Is(err, ErrRuntimeNotConfigured):
 		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime model factory is not configured")
+	case errors.Is(err, ErrRuntimeShuttingDown):
+		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime is shutting down")
 	default:
 		return rpcError(protocol.CodeInternalError, "internal app-server error", err)
 	}
