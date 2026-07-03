@@ -104,6 +104,7 @@ func TestRequestScheduleForThreadControls(t *testing.T) {
 	methods := []string{
 		"thread/search",
 		"thread/loaded/list",
+		"thread/unsubscribe",
 		"thread/inject_items",
 		"thread/goal/get",
 		"thread/goal/set",

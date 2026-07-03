@@ -357,6 +357,139 @@ func TestServerThreadDiscoveryHandlers(t *testing.T) {
 	}
 }
 
+func TestServerThreadUnsubscribeHandler(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Subscribed"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	neverLoaded, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Never loaded"})
+	if err != nil {
+		t.Fatalf("CreateThread never loaded: %v", err)
+	}
+	deleted, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Deleted"})
+	if err != nil {
+		t.Fatalf("CreateThread deleted: %v", err)
+	}
+	if _, err := st.DeleteThread(ctx, deleted.ID); err != nil {
+		t.Fatalf("DeleteThread: %v", err)
+	}
+
+	server := readyServer(WithStore(st), WithThreadIdleUnloadAfter(500*time.Millisecond))
+	readResp := server.HandleRequest(ctx, request("thread/read", map[string]any{"threadId": thread.ID, "includeTurns": false, "includeItems": false}))
+	if readResp.Error != nil {
+		t.Fatalf("thread/read error: %v", readResp.Error)
+	}
+
+	firstResp := server.HandleRequest(ctx, request("thread/unsubscribe", map[string]any{"threadId": thread.ID}))
+	if firstResp.Error != nil {
+		t.Fatalf("thread/unsubscribe error: %v", firstResp.Error)
+	}
+	var first threadUnsubscribeResponse
+	decodeResult(t, firstResp, &first)
+	if first.Status != "unsubscribed" {
+		t.Fatalf("first unsubscribe = %#v", first)
+	}
+	loadedResp := server.HandleRequest(ctx, request("thread/loaded/list", nil))
+	if loadedResp.Error != nil {
+		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
+	}
+	var loaded threadLoadedListResult
+	decodeResult(t, loadedResp, &loaded)
+	if !sameStringSet(loaded.Data, []string{thread.ID}) {
+		t.Fatalf("loaded after unsubscribe = %#v", loaded.Data)
+	}
+	if events := server.DrainNotifications(); len(events) != 0 {
+		t.Fatalf("unsubscribe emitted immediate notifications: %#v", events)
+	}
+
+	secondResp := server.HandleRequest(ctx, request("thread/unsubscribe", map[string]any{"threadId": thread.ID}))
+	if secondResp.Error != nil {
+		t.Fatalf("second thread/unsubscribe error: %v", secondResp.Error)
+	}
+	var second threadUnsubscribeResponse
+	decodeResult(t, secondResp, &second)
+	if second.Status != "notSubscribed" {
+		t.Fatalf("second unsubscribe = %#v", second)
+	}
+
+	readResp = server.HandleRequest(ctx, request("thread/read", map[string]any{"threadId": thread.ID, "includeTurns": false, "includeItems": false}))
+	if readResp.Error != nil {
+		t.Fatalf("thread/read resubscribe error: %v", readResp.Error)
+	}
+	time.Sleep(600 * time.Millisecond)
+	if events := server.DrainNotifications(); len(events) != 0 {
+		t.Fatalf("resubscribed thread emitted idle close: %#v", events)
+	}
+
+	finalResp := server.HandleRequest(ctx, request("thread/unsubscribe", map[string]any{"threadId": thread.ID}))
+	if finalResp.Error != nil {
+		t.Fatalf("final thread/unsubscribe error: %v", finalResp.Error)
+	}
+	var final threadUnsubscribeResponse
+	decodeResult(t, finalResp, &final)
+	if final.Status != "unsubscribed" {
+		t.Fatalf("final unsubscribe = %#v", final)
+	}
+	events := waitForNotificationMethods(t, server, "thread/closed", "thread/status/changed")
+	var closed threadClosedNotificationParams
+	if err := json.Unmarshal(events[0].Params, &closed); err != nil {
+		t.Fatalf("decode closed notice: %v", err)
+	}
+	if closed.ThreadID != thread.ID {
+		t.Fatalf("closed notice = %#v", closed)
+	}
+	var notLoaded threadNotLoadedStatusNotificationParams
+	if err := json.Unmarshal(events[1].Params, &notLoaded); err != nil {
+		t.Fatalf("decode status notice: %v", err)
+	}
+	if notLoaded.ThreadID != thread.ID || notLoaded.Status["type"] != "notLoaded" {
+		t.Fatalf("notLoaded status notice = %#v", notLoaded)
+	}
+
+	loadedResp = server.HandleRequest(ctx, request("thread/loaded/list", nil))
+	if loadedResp.Error != nil {
+		t.Fatalf("thread/loaded/list after close error: %v", loadedResp.Error)
+	}
+	loaded = threadLoadedListResult{}
+	decodeResult(t, loadedResp, &loaded)
+	if len(loaded.Data) != 0 {
+		t.Fatalf("loaded after idle close = %#v", loaded.Data)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		threadID string
+	}{
+		{name: "closed", threadID: thread.ID},
+		{name: "never-loaded", threadID: neverLoaded.ID},
+		{name: "deleted", threadID: deleted.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := server.HandleRequest(ctx, request("thread/unsubscribe", map[string]any{"threadId": tc.threadID}))
+			if resp.Error != nil {
+				t.Fatalf("thread/unsubscribe error: %v", resp.Error)
+			}
+			var result threadUnsubscribeResponse
+			decodeResult(t, resp, &result)
+			if result.Status != "notLoaded" {
+				t.Fatalf("unsubscribe %s = %#v, want notLoaded", tc.name, result)
+			}
+		})
+	}
+
+	missingIDResp := server.HandleRequest(ctx, request("thread/unsubscribe", map[string]any{"threadId": ""}))
+	if missingIDResp.Error == nil || missingIDResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing threadId error = %#v", missingIDResp.Error)
+	}
+}
+
 func TestServerThreadControlHandlers(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
@@ -1547,6 +1680,21 @@ func assertNotificationMethods(t *testing.T, notifications []protocol.Notificati
 			t.Fatalf("notification[%d] method = %q, want %q", i, notifications[i].Method, method)
 		}
 	}
+}
+
+func waitForNotificationMethods(t *testing.T, server *Server, want ...string) []protocol.Notification {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		notifications := server.DrainNotifications()
+		if len(notifications) > 0 {
+			assertNotificationMethods(t, notifications, want...)
+			return notifications
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for notifications %v", want)
+	return nil
 }
 
 func sameStringSet(got []string, want []string) bool {

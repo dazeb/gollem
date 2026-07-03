@@ -166,7 +166,7 @@ func TestToolListAvailability(t *testing.T) {
 	if threadStoreTool == nil || !threadStoreTool.Available || !threadStoreTool.CodexCompatible || threadStoreTool.Mutation {
 		t.Fatalf("thread-store tool metadata = %#v", threadStoreTool)
 	}
-	if !containsMethod(threadStoreTool.Methods, "thread/search") || !containsMethod(threadStoreTool.Methods, "thread/loaded/list") || !containsMethod(threadStoreTool.Methods, "thread/inject_items") || !containsMethod(threadStoreTool.Methods, "thread/goal/set") || !containsMethod(threadStoreTool.Methods, "thread/memoryMode/set") || !containsMethod(threadStoreTool.Methods, "thread/name/set") {
+	if !containsMethod(threadStoreTool.Methods, "thread/search") || !containsMethod(threadStoreTool.Methods, "thread/loaded/list") || !containsMethod(threadStoreTool.Methods, "thread/unsubscribe") || !containsMethod(threadStoreTool.Methods, "thread/inject_items") || !containsMethod(threadStoreTool.Methods, "thread/goal/set") || !containsMethod(threadStoreTool.Methods, "thread/memoryMode/set") || !containsMethod(threadStoreTool.Methods, "thread/name/set") {
 		t.Fatalf("thread-store tool methods = %#v", threadStoreTool.Methods)
 	}
 }

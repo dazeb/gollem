@@ -42,6 +42,8 @@ type Server struct {
 	clientInfo protocol.ImplementationInfo
 	optOut     map[string]struct{}
 	loaded     map[string]struct{}
+	subscribed map[string]struct{}
+	idleUnload map[string]*threadIdleUnload
 
 	store     store.Store
 	fs        *toolfs.Service
@@ -61,6 +63,7 @@ type Server struct {
 	memory    *MemoryService
 
 	requestSchedulerLimit int
+	threadIdleUnloadAfter time.Duration
 }
 
 // Option configures a Server.
@@ -164,6 +167,14 @@ func WithMemoryService(memory *MemoryService) Option {
 	}
 }
 
+func WithThreadIdleUnloadAfter(after time.Duration) Option {
+	return func(s *Server) {
+		if after >= 0 {
+			s.threadIdleUnloadAfter = after
+		}
+	}
+}
+
 func WithRequestSchedulerLimit(limit int) Option {
 	return func(s *Server) {
 		if limit > 0 {
@@ -177,6 +188,8 @@ func NewServer(opts ...Option) *Server {
 		serverInfo:            protocol.ImplementationInfo{Name: "gollem-appserver"},
 		optOut:                make(map[string]struct{}),
 		loaded:                make(map[string]struct{}),
+		subscribed:            make(map[string]struct{}),
+		idleUnload:            make(map[string]*threadIdleUnload),
 		catalog:               catalog.NewDefault(),
 		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
@@ -188,6 +201,7 @@ func NewServer(opts ...Option) *Server {
 		interact:              NewInteractionService(),
 		daemon:                NewDaemonService(),
 		requestSchedulerLimit: defaultRequestSchedulerLimit,
+		threadIdleUnloadAfter: 30 * time.Minute,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -418,6 +432,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadSearch(ctx, params)
 	case "thread/loaded/list":
 		return s.handleThreadLoadedList(ctx, params)
+	case "thread/unsubscribe":
+		return s.handleThreadUnsubscribe(ctx, params)
 	case "thread/read":
 		return s.handleThreadRead(ctx, params)
 	case "thread/fork":
@@ -2103,6 +2119,10 @@ type threadLoadedListParams struct {
 type threadLoadedListResult struct {
 	Data       []string `json:"data"`
 	NextCursor *string  `json:"nextCursor"`
+}
+
+type threadUnsubscribeResponse struct {
+	Status string `json:"status"`
 }
 
 type threadSearchParams struct {
