@@ -417,6 +417,16 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadStatus(ctx, params, method, store.ThreadDeleted)
 	case "thread/settings/update":
 		return s.handleThreadSettingsUpdate(ctx, params)
+	case "thread/goal/get":
+		return s.handleThreadGoalGet(ctx, params)
+	case "thread/goal/set":
+		return s.handleThreadGoalSet(ctx, params)
+	case "thread/goal/clear":
+		return s.handleThreadGoalClear(ctx, params)
+	case "thread/metadata/update":
+		return s.handleThreadMetadataUpdate(ctx, params)
+	case "thread/memoryMode/set":
+		return s.handleThreadMemoryModeSet(ctx, params)
 	case "thread/backgroundTerminals/list":
 		return s.handleBackgroundTerminalsList(ctx)
 	case "thread/backgroundTerminals/terminate":
@@ -748,6 +758,165 @@ func (s *Server) handleThreadSettingsUpdate(ctx context.Context, raw json.RawMes
 	}
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return map[string]any{"thread": thread}, nil
+}
+
+func (s *Server) handleThreadGoalGet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, threadID, rpcErr := s.threadStoreAndID(raw, "thread/goal/get")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	thread, err := st.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, mapError("thread/goal/get", err)
+	}
+	goal, set := thread.Settings[threadGoalSettingKey]
+	return threadGoalResult{
+		ThreadID: thread.ID,
+		Goal:     goal,
+		Set:      set,
+		Thread:   thread,
+	}, nil
+}
+
+func (s *Server) handleThreadGoalSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/goal/set")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadGoalSetParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	goal, ok := params.goal()
+	if !ok {
+		return nil, invalidParams("goal is required", nil)
+	}
+	thread, err := st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Settings: map[string]any{threadGoalSettingKey: goal},
+	})
+	if err != nil {
+		return nil, mapError("thread/goal/set", err)
+	}
+	s.publishThreadNotification("thread/settings/updated", thread)
+	s.publishThreadGoalNotification("thread/goal/updated", thread, goal)
+	return threadGoalResult{
+		ThreadID: thread.ID,
+		Goal:     goal,
+		Set:      true,
+		Thread:   thread,
+	}, nil
+}
+
+func (s *Server) handleThreadGoalClear(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, threadID, rpcErr := s.threadStoreAndID(raw, "thread/goal/clear")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	thread, err := st.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, mapError("thread/goal/clear", err)
+	}
+	_, hadGoal := thread.Settings[threadGoalSettingKey]
+	if !hadGoal {
+		return threadGoalClearResult{
+			ThreadID: thread.ID,
+			Cleared:  false,
+			Thread:   thread,
+		}, nil
+	}
+	nextSettings := cloneSettings(thread.Settings)
+	delete(nextSettings, threadGoalSettingKey)
+	thread, err = st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Settings: nextSettings,
+		Metadata: cloneSettings(thread.Metadata),
+		Replace:  true,
+	})
+	if err != nil {
+		return nil, mapError("thread/goal/clear", err)
+	}
+	s.publishThreadNotification("thread/settings/updated", thread)
+	s.publishThreadGoalNotification("thread/goal/cleared", thread, nil)
+	return threadGoalClearResult{
+		ThreadID: thread.ID,
+		Cleared:  hadGoal,
+		Thread:   thread,
+	}, nil
+}
+
+func (s *Server) handleThreadMetadataUpdate(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/metadata/update")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadMetadataUpdateParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	if params.Metadata == nil {
+		return nil, invalidParams("metadata is required", nil)
+	}
+	req := store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Metadata: params.Metadata,
+	}
+	if params.Replace {
+		thread, err := st.GetThread(ctx, threadID)
+		if err != nil {
+			return nil, mapError("thread/metadata/update", err)
+		}
+		req.Settings = cloneSettings(thread.Settings)
+		req.Replace = true
+	}
+	thread, err := st.UpdateThreadSettings(ctx, req)
+	if err != nil {
+		return nil, mapError("thread/metadata/update", err)
+	}
+	s.publishThreadNotification("thread/settings/updated", thread)
+	return map[string]any{"thread": thread, "metadata": thread.Metadata}, nil
+}
+
+func (s *Server) handleThreadMemoryModeSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/memoryMode/set")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadMemoryModeSetParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(params.MemoryMode, params.Mode)))
+	switch mode {
+	case "enabled", "disabled":
+	default:
+		return nil, invalidParams("mode must be enabled or disabled", nil)
+	}
+	thread, err := st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Settings: map[string]any{threadMemoryModeSettingKey: mode},
+	})
+	if err != nil {
+		return nil, mapError("thread/memoryMode/set", err)
+	}
+	s.publishThreadNotification("thread/settings/updated", thread)
+	return threadMemoryModeSetResult{
+		ThreadID:   thread.ID,
+		MemoryMode: mode,
+		Thread:     thread,
+	}, nil
 }
 
 func (s *Server) handleBackgroundTerminalsList(ctx context.Context) (any, *protocol.Error) {
@@ -1618,6 +1787,22 @@ func (s *Server) requireRuntime(method string) (store.Store, *RuntimeService, *p
 	return st, s.runtime, nil
 }
 
+func (s *Server) threadStoreAndID(raw json.RawMessage, method string) (store.Store, string, *protocol.Error) {
+	st, rpcErr := s.requireStore(method)
+	if rpcErr != nil {
+		return nil, "", rpcErr
+	}
+	var params threadIDParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, "", rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, "", invalidParams("threadId is required", nil)
+	}
+	return st, threadID, nil
+}
+
 func decodeParams(raw json.RawMessage, out any) *protocol.Error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -1850,6 +2035,25 @@ type threadReadResult struct {
 	Thread *store.Thread `json:"thread"`
 	Turns  []*store.Turn `json:"turns,omitempty"`
 	Items  []*store.Item `json:"items,omitempty"`
+}
+
+type threadGoalResult struct {
+	ThreadID string        `json:"threadId"`
+	Goal     any           `json:"goal"`
+	Set      bool          `json:"set"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+}
+
+type threadGoalClearResult struct {
+	ThreadID string        `json:"threadId"`
+	Cleared  bool          `json:"cleared"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+}
+
+type threadMemoryModeSetResult struct {
+	ThreadID   string        `json:"threadId"`
+	MemoryMode string        `json:"memoryMode"`
+	Thread     *store.Thread `json:"thread,omitempty"`
 }
 
 type threadForkParams struct {

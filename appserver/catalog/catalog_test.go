@@ -155,6 +155,13 @@ func TestToolListAvailability(t *testing.T) {
 	if !containsMethod(skillsTool.Methods, "skills/list") || !containsMethod(skillsTool.Methods, "plugin/skill/read") {
 		t.Fatalf("skills tool methods = %#v", skillsTool.Methods)
 	}
+	threadStoreTool := findTool(ListTools(ToolListParams{}, ToolServices{}).Data, "thread-store")
+	if threadStoreTool == nil || !threadStoreTool.Available || !threadStoreTool.CodexCompatible || threadStoreTool.Mutation {
+		t.Fatalf("thread-store tool metadata = %#v", threadStoreTool)
+	}
+	if !containsMethod(threadStoreTool.Methods, "thread/goal/set") || !containsMethod(threadStoreTool.Methods, "thread/memoryMode/set") {
+		t.Fatalf("thread-store tool methods = %#v", threadStoreTool.Methods)
+	}
 }
 
 func mapEnv(values map[string]string) EnvLookup {

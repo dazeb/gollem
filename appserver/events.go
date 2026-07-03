@@ -200,6 +200,13 @@ type threadNotificationParams struct {
 	At       time.Time          `json:"at"`
 }
 
+type threadGoalNotificationParams struct {
+	ThreadID string        `json:"threadId"`
+	Goal     any           `json:"goal,omitempty"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+	At       time.Time     `json:"at"`
+}
+
 func ProcessOutputNotification(event toolprocess.OutputEvent) (string, any) {
 	data, encoding := encodeContent(event.Data)
 	return "process/outputDelta", processOutputDeltaParams{

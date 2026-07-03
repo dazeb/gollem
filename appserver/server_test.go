@@ -161,6 +161,158 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	assertNotificationMethods(t, threadEvents, "thread/status/changed", "thread/archived")
 }
 
+func TestServerThreadControlHandlers(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{
+		Title:    "Controls",
+		Settings: map[string]any{"provider": "openai"},
+		Metadata: map[string]any{"source": "initial"},
+	})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	server := readyServer(WithStore(st))
+
+	getResp := server.HandleRequest(ctx, request("thread/goal/get", map[string]any{"threadId": thread.ID}))
+	if getResp.Error != nil {
+		t.Fatalf("thread/goal/get error: %v", getResp.Error)
+	}
+	var initialGoal threadGoalResult
+	decodeResult(t, getResp, &initialGoal)
+	if initialGoal.Set || initialGoal.Goal != nil {
+		t.Fatalf("initial goal = %#v", initialGoal)
+	}
+
+	goalPayload := map[string]any{
+		"objective":     "finish PR",
+		"status":        "active",
+		"budgetLimited": false,
+	}
+	setResp := server.HandleRequest(ctx, request("thread/goal/set", map[string]any{
+		"threadId": thread.ID,
+		"goal":     goalPayload,
+	}))
+	if setResp.Error != nil {
+		t.Fatalf("thread/goal/set error: %v", setResp.Error)
+	}
+	var setGoal threadGoalResult
+	decodeResult(t, setResp, &setGoal)
+	gotGoal, ok := setGoal.Goal.(map[string]any)
+	if !setGoal.Set || !ok || gotGoal["objective"] != "finish PR" || setGoal.Thread.Settings[threadGoalSettingKey] == nil {
+		t.Fatalf("set goal = %#v", setGoal)
+	}
+	events := server.DrainNotifications()
+	assertNotificationMethods(t, events, "thread/settings/updated", "thread/goal/updated")
+	var goalNotice threadGoalNotificationParams
+	if err := json.Unmarshal(events[1].Params, &goalNotice); err != nil {
+		t.Fatalf("decode goal notice: %v", err)
+	}
+	noticeGoal, ok := goalNotice.Goal.(map[string]any)
+	if goalNotice.ThreadID != thread.ID || !ok || noticeGoal["status"] != "active" {
+		t.Fatalf("goal notice = %#v", goalNotice)
+	}
+
+	metadataResp := server.HandleRequest(ctx, request("thread/metadata/update", map[string]any{
+		"threadId": thread.ID,
+		"metadata": map[string]any{"reviewed": true},
+	}))
+	if metadataResp.Error != nil {
+		t.Fatalf("thread/metadata/update error: %v", metadataResp.Error)
+	}
+	var metadataUpdated struct {
+		Thread   *store.Thread  `json:"thread"`
+		Metadata map[string]any `json:"metadata"`
+	}
+	decodeResult(t, metadataResp, &metadataUpdated)
+	if metadataUpdated.Metadata["source"] != "initial" || metadataUpdated.Metadata["reviewed"] != true {
+		t.Fatalf("merged metadata = %#v", metadataUpdated.Metadata)
+	}
+	events = server.DrainNotifications()
+	assertNotificationMethods(t, events, "thread/settings/updated")
+
+	replaceMetadataResp := server.HandleRequest(ctx, request("thread/metadata/update", map[string]any{
+		"threadId": thread.ID,
+		"metadata": map[string]any{"source": "replacement"},
+		"replace":  true,
+	}))
+	if replaceMetadataResp.Error != nil {
+		t.Fatalf("thread/metadata/update replace error: %v", replaceMetadataResp.Error)
+	}
+	metadataUpdated = struct {
+		Thread   *store.Thread  `json:"thread"`
+		Metadata map[string]any `json:"metadata"`
+	}{}
+	decodeResult(t, replaceMetadataResp, &metadataUpdated)
+	if metadataUpdated.Metadata["source"] != "replacement" || metadataUpdated.Metadata["reviewed"] != nil || metadataUpdated.Thread.Settings[threadGoalSettingKey] == nil {
+		t.Fatalf("replaced metadata = %#v settings = %#v", metadataUpdated.Metadata, metadataUpdated.Thread.Settings)
+	}
+	_ = server.DrainNotifications()
+
+	memoryResp := server.HandleRequest(ctx, request("thread/memoryMode/set", map[string]any{
+		"threadId": thread.ID,
+		"mode":     "disabled",
+	}))
+	if memoryResp.Error != nil {
+		t.Fatalf("thread/memoryMode/set error: %v", memoryResp.Error)
+	}
+	var memoryResult threadMemoryModeSetResult
+	decodeResult(t, memoryResp, &memoryResult)
+	if memoryResult.MemoryMode != "disabled" || memoryResult.Thread.Settings[threadMemoryModeSettingKey] != "disabled" {
+		t.Fatalf("memory result = %#v", memoryResult)
+	}
+	events = server.DrainNotifications()
+	assertNotificationMethods(t, events, "thread/settings/updated")
+
+	badModeResp := server.HandleRequest(ctx, request("thread/memoryMode/set", map[string]any{
+		"threadId": thread.ID,
+		"mode":     "sometimes",
+	}))
+	if badModeResp.Error == nil || badModeResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("bad memory mode error = %#v", badModeResp.Error)
+	}
+
+	clearResp := server.HandleRequest(ctx, request("thread/goal/clear", map[string]any{"threadId": thread.ID}))
+	if clearResp.Error != nil {
+		t.Fatalf("thread/goal/clear error: %v", clearResp.Error)
+	}
+	var cleared threadGoalClearResult
+	decodeResult(t, clearResp, &cleared)
+	if !cleared.Cleared || cleared.Thread.Settings[threadGoalSettingKey] != nil || cleared.Thread.Settings[threadMemoryModeSettingKey] != "disabled" {
+		t.Fatalf("cleared goal = %#v", cleared)
+	}
+	events = server.DrainNotifications()
+	assertNotificationMethods(t, events, "thread/settings/updated", "thread/goal/cleared")
+
+	getResp = server.HandleRequest(ctx, request("thread/goal/get", map[string]any{"threadId": thread.ID}))
+	if getResp.Error != nil {
+		t.Fatalf("thread/goal/get after clear error: %v", getResp.Error)
+	}
+	var finalGoal threadGoalResult
+	decodeResult(t, getResp, &finalGoal)
+	if finalGoal.Set || finalGoal.Goal != nil {
+		t.Fatalf("final goal = %#v", finalGoal)
+	}
+
+	clearAgainResp := server.HandleRequest(ctx, request("thread/goal/clear", map[string]any{"threadId": thread.ID}))
+	if clearAgainResp.Error != nil {
+		t.Fatalf("thread/goal/clear no-op error: %v", clearAgainResp.Error)
+	}
+	var clearAgain threadGoalClearResult
+	decodeResult(t, clearAgainResp, &clearAgain)
+	if clearAgain.Cleared {
+		t.Fatalf("clear again = %#v, want no-op", clearAgain)
+	}
+	if events := server.DrainNotifications(); len(events) != 0 {
+		t.Fatalf("clear no-op emitted notifications: %#v", events)
+	}
+}
+
 func TestServerCatalogHandlers(t *testing.T) {
 	ctx := context.Background()
 	catalogSvc := catalog.NewDefault(catalog.WithEnvLookup(func(key string) (string, bool) {

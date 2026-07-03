@@ -44,6 +44,18 @@ func (s *Server) publishThreadNotification(method string, thread *store.Thread) 
 	})
 }
 
+func (s *Server) publishThreadGoalNotification(method string, thread *store.Thread, goal any) {
+	if thread == nil {
+		return
+	}
+	s.PublishNotification(method, threadGoalNotificationParams{
+		ThreadID: thread.ID,
+		Goal:     goal,
+		Thread:   thread,
+		At:       time.Now().UTC(),
+	})
+}
+
 func (s *Server) publishCacheBenchmarkCompleted(result appcache.BenchmarkResponse) {
 	providers := make([]appcache.ProviderStats, 0, len(result.Providers))
 	for _, provider := range result.Providers {

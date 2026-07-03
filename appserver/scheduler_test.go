@@ -99,3 +99,21 @@ func TestRequestSchedulerSerializesMatchingScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestRequestScheduleForThreadControls(t *testing.T) {
+	methods := []string{
+		"thread/goal/get",
+		"thread/goal/set",
+		"thread/goal/clear",
+		"thread/metadata/update",
+		"thread/memoryMode/set",
+	}
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			schedule := RequestScheduleFor(method, nil)
+			if schedule.Scope != "thread" || !schedule.Serial {
+				t.Fatalf("schedule = %#v, want serial thread scope", schedule)
+			}
+		})
+	}
+}

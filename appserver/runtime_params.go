@@ -54,6 +54,60 @@ type threadSettingsUpdateParams struct {
 	Replace  bool           `json:"replace,omitempty"`
 }
 
+const (
+	threadGoalSettingKey       = "goal"
+	threadMemoryModeSettingKey = "memoryMode"
+)
+
+type threadGoalSetParams struct {
+	ID       string          `json:"id,omitempty"`
+	ThreadID string          `json:"threadId,omitempty"`
+	Goal     json.RawMessage `json:"goal,omitempty"`
+	Text     json.RawMessage `json:"text,omitempty"`
+	Value    json.RawMessage `json:"value,omitempty"`
+}
+
+func (p threadGoalSetParams) threadID() string {
+	return firstNonEmpty(p.ThreadID, p.ID)
+}
+
+func (p threadGoalSetParams) goal() (any, bool) {
+	raw := firstRaw(p.Goal, p.Text, p.Value)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false
+	}
+	if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+		return nil, false
+	}
+	return value, true
+}
+
+type threadMetadataUpdateParams struct {
+	ID       string         `json:"id,omitempty"`
+	ThreadID string         `json:"threadId,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Replace  bool           `json:"replace,omitempty"`
+}
+
+func (p threadMetadataUpdateParams) threadID() string {
+	return firstNonEmpty(p.ThreadID, p.ID)
+}
+
+type threadMemoryModeSetParams struct {
+	ID         string `json:"id,omitempty"`
+	ThreadID   string `json:"threadId,omitempty"`
+	Mode       string `json:"mode,omitempty"`
+	MemoryMode string `json:"memoryMode,omitempty"`
+}
+
+func (p threadMemoryModeSetParams) threadID() string {
+	return firstNonEmpty(p.ThreadID, p.ID)
+}
+
 type turnStartParams struct {
 	ID       string         `json:"id,omitempty"`
 	ThreadID string         `json:"threadId,omitempty"`
