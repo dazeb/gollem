@@ -165,6 +165,9 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 	if !containsTool(tools.Data, "provider-catalog") {
 		t.Fatalf("tool/list missing provider catalog tool: %#v", tools.Data)
 	}
+	if !containsTool(tools.Data, "cache") {
+		t.Fatalf("tool/list missing cache tool: %#v", tools.Data)
+	}
 }
 
 func readyCLIAppServer(t *testing.T, server *appserver.Server) {

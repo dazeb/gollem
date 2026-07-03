@@ -185,3 +185,47 @@ func TestCachedModel_DifferentSettings(t *testing.T) {
 		t.Errorf("expected 2 model calls for different settings, got %d", len(model.Calls()))
 	}
 }
+
+func TestCachedModel_StableKeyEvents(t *testing.T) {
+	model := core.NewTestModel(core.TextResponse("cached"))
+	cache := NewMemoryCache()
+	var events []CacheEvent
+	cached := NewCachedModel(model, cache, WithCachedModelEventHandler(func(event CacheEvent) {
+		events = append(events, event)
+	}))
+
+	msg1 := []core.ModelMessage{core.ModelRequest{
+		Timestamp: time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC),
+		Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "same", Timestamp: time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)},
+		},
+	}}
+	msg2 := []core.ModelMessage{core.ModelRequest{
+		Timestamp: time.Date(2026, 7, 2, 10, 5, 0, 0, time.UTC),
+		Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "same", Timestamp: time.Date(2026, 7, 2, 10, 5, 0, 0, time.UTC)},
+		},
+	}}
+
+	if _, err := cached.Request(context.Background(), msg1, nil, &core.ModelRequestParameters{AllowTextOutput: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cached.Request(context.Background(), msg2, nil, &core.ModelRequestParameters{AllowTextOutput: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Calls()) != 1 {
+		t.Fatalf("expected second timestamp-only variant to hit cache, got %d model calls", len(model.Calls()))
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want miss then hit", events)
+	}
+	if events[0].Type != CacheEventMiss || events[1].Type != CacheEventHit {
+		t.Fatalf("events = %#v, want miss then hit", events)
+	}
+	if events[0].Key != events[1].Key {
+		t.Fatalf("event keys differ: %#v", events)
+	}
+	if events[0].Model != "test-model" || events[0].At.IsZero() {
+		t.Fatalf("event metadata = %#v", events[0])
+	}
+}

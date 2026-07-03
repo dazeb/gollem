@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/catalog"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
@@ -42,6 +43,7 @@ type Server struct {
 	process *toolprocess.Service
 	git     *toolgit.Service
 	catalog *catalog.Catalog
+	cache   *appcache.Service
 }
 
 // Option configures a Server.
@@ -85,11 +87,18 @@ func WithCatalog(catalog *catalog.Catalog) Option {
 	}
 }
 
+func WithCache(cache *appcache.Service) Option {
+	return func(s *Server) {
+		s.cache = cache
+	}
+}
+
 func NewServer(opts ...Option) *Server {
 	s := &Server{
 		serverInfo: protocol.ImplementationInfo{Name: "gollem-appserver"},
 		optOut:     make(map[string]struct{}),
 		catalog:    catalog.NewDefault(),
+		cache:      appcache.NewService(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -246,6 +255,10 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleProviderList(params)
 	case "tool/list":
 		return s.handleToolList(params)
+	case "cache/stats":
+		return s.handleCacheStats()
+	case "cache/benchmark":
+		return s.handleCacheBenchmark(params)
 	case "fs/readFile":
 		return s.handleFSReadFile(ctx, params)
 	case "fs/writeFile":
@@ -488,6 +501,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Filesystem: s.fs != nil,
 		Process:    s.process != nil,
 		Git:        s.git != nil,
+		Cache:      s.cache != nil,
 	}), nil
 }
 

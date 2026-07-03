@@ -164,6 +164,42 @@ func TestCacheMiddleware_CacheMiss(t *testing.T) {
 	}
 }
 
+func TestCacheMiddleware_StableKeyIgnoresTimestamps(t *testing.T) {
+	callCount := 0
+	handler := RequestFunc(func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {
+		callCount++
+		return &core.ModelResponse{
+			Parts:     []core.ModelResponsePart{core.TextPart{Content: "stable"}},
+			ModelName: "test-model",
+		}, nil
+	})
+
+	mw := CacheMiddleware(5 * time.Minute)
+	wrapped := mw.WrapRequest(handler)
+	msg1 := []core.ModelMessage{core.ModelRequest{
+		Timestamp: time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC),
+		Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "same request", Timestamp: time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)},
+		},
+	}}
+	msg2 := []core.ModelMessage{core.ModelRequest{
+		Timestamp: time.Date(2026, 7, 2, 11, 0, 0, 0, time.UTC),
+		Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "same request", Timestamp: time.Date(2026, 7, 2, 11, 0, 0, 0, time.UTC)},
+		},
+	}}
+
+	if _, err := wrapped(context.Background(), msg1, nil, nil); err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+	if _, err := wrapped(context.Background(), msg2, nil, nil); err != nil {
+		t.Fatalf("second request: %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected timestamp-only variant to hit cache, got %d calls", callCount)
+	}
+}
+
 func TestCacheMiddleware_Expiration(t *testing.T) {
 	callCount := 0
 	handler := RequestFunc(func(_ context.Context, _ []core.ModelMessage, _ *core.ModelSettings, _ *core.ModelRequestParameters) (*core.ModelResponse, error) {

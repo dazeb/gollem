@@ -120,6 +120,10 @@ func TestToolListAvailability(t *testing.T) {
 	if process == nil || process.Available || process.UnavailableReason == "" {
 		t.Fatalf("process unavailable metadata = %#v", process)
 	}
+	cacheTool := findTool(ListTools(ToolListParams{}, ToolServices{Cache: true}).Data, "cache")
+	if cacheTool == nil || !cacheTool.Available || !cacheTool.GollemExtension {
+		t.Fatalf("cache tool metadata = %#v", cacheTool)
+	}
 }
 
 func mapEnv(values map[string]string) EnvLookup {

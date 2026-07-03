@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/catalog"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
@@ -219,6 +220,57 @@ func TestServerCatalogHandlers(t *testing.T) {
 	}
 	if toolAvailable(tools.Data, "git") {
 		t.Fatalf("tool/list reported git available without git service: %#v", tools.Data)
+	}
+	if !toolAvailable(tools.Data, "cache") {
+		t.Fatalf("tool/list did not report cache available: %#v", tools.Data)
+	}
+}
+
+func TestServerCacheHandlers(t *testing.T) {
+	ctx := context.Background()
+	server := readyServer()
+
+	statsResp := server.HandleRequest(ctx, request("cache/stats", nil))
+	if statsResp.Error != nil {
+		t.Fatalf("cache/stats error: %v", statsResp.Error)
+	}
+	var initial appcache.StatsResponse
+	decodeResult(t, statsResp, &initial)
+	if initial.TotalRequests != 0 {
+		t.Fatalf("initial cache stats = %#v", initial)
+	}
+
+	benchmarkResp := server.HandleRequest(ctx, request("cache/benchmark", map[string]any{
+		"includeEvents": true,
+	}))
+	if benchmarkResp.Error != nil {
+		t.Fatalf("cache/benchmark error: %v", benchmarkResp.Error)
+	}
+	var benchmark appcache.BenchmarkResponse
+	decodeResult(t, benchmarkResp, &benchmark)
+	if !benchmark.Passed {
+		t.Fatalf("cache benchmark failed: %#v", benchmark)
+	}
+	if len(benchmark.Providers) != 2 {
+		t.Fatalf("cache benchmark providers = %#v", benchmark.Providers)
+	}
+	for _, provider := range benchmark.Providers {
+		if provider.HitRate < 0.90 {
+			t.Fatalf("%s hit rate = %f, want >= .90", provider.Provider, provider.HitRate)
+		}
+	}
+	if len(benchmark.Events) == 0 {
+		t.Fatal("cache benchmark did not return typed events")
+	}
+
+	afterResp := server.HandleRequest(ctx, request("cache/stats", nil))
+	if afterResp.Error != nil {
+		t.Fatalf("cache/stats after benchmark error: %v", afterResp.Error)
+	}
+	var after appcache.StatsResponse
+	decodeResult(t, afterResp, &after)
+	if after.TotalRequests != benchmark.Totals.TotalRequests || after.HitRate < 0.90 {
+		t.Fatalf("cache stats after benchmark = %#v, benchmark = %#v", after, benchmark.Totals)
 	}
 }
 
