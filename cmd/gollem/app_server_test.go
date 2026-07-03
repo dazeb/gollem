@@ -5,8 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +47,33 @@ func TestParseAppServerFlags(t *testing.T) {
 
 	if _, err := parseAppServerFlags([]string{"--unknown"}); err == nil || !strings.Contains(err.Error(), "unknown app-server") {
 		t.Fatalf("unknown flag error = %v", err)
+	}
+
+	network, err := parseAppServerFlags([]string{
+		"--socket", filepath.Join(t.TempDir(), "gollem.sock"),
+		"--websocket", "127.0.0.1:0",
+		"--websocket-path", "/rpc",
+	})
+	if err != nil {
+		t.Fatalf("parse network app-server flags: %v", err)
+	}
+	if network.stdio || network.socketPath == "" || network.websocketAddr != "127.0.0.1:0" || network.websocketPath != "/rpc" {
+		t.Fatalf("network flags = %#v", network)
+	}
+
+	explicitStdio, err := parseAppServerFlags([]string{"--stdio=true", "--socket", filepath.Join(t.TempDir(), "gollem.sock")})
+	if err != nil {
+		t.Fatalf("parse explicit stdio app-server flags: %v", err)
+	}
+	if !explicitStdio.stdio || !explicitStdio.stdioExplicit {
+		t.Fatalf("explicit stdio flags = %#v", explicitStdio)
+	}
+
+	if _, err := parseAppServerFlags([]string{"--stdio=false"}); err == nil || !strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("missing transport error = %v", err)
+	}
+	if _, err := parseAppServerFlags([]string{"--websocket", "127.0.0.1:0", "--websocket-path", "rpc"}); err == nil || !strings.Contains(err.Error(), "must start with /") {
+		t.Fatalf("invalid websocket path error = %v", err)
 	}
 }
 
@@ -199,6 +230,91 @@ func TestCLIAppServerServesStdioWhenMutationsAllowed(t *testing.T) {
 	}
 }
 
+func TestCLIAppServerServesUnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not supported on windows")
+	}
+	workDir := t.TempDir()
+	socketDir, err := os.MkdirTemp("/tmp", "gollem-sock-*")
+	if err != nil {
+		t.Fatalf("create socket temp dir: %v", err)
+	}
+	defer os.RemoveAll(socketDir)
+	socketPath := filepath.Join(socketDir, "gollem.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveAppServerUnixSocket(ctx, appServerFlags{
+			workDir:        workDir,
+			storePath:      ":memory:",
+			socketPath:     socketPath,
+			allowMutations: true,
+		})
+	}()
+
+	var conn net.Conn
+	err = nil
+	dialer := net.Dialer{}
+	for range 100 {
+		conn, err = dialer.DialContext(ctx, "unix", socketPath)
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("dial app-server socket: %v", err)
+	}
+	defer conn.Close()
+	scanner := bufio.NewScanner(conn)
+	writeCLIInputLine(t, conn, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"socket-test"}}}`)
+	writeCLIInputLine(t, conn, `{"method":"initialized"}`)
+	writeCLIInputLine(t, conn, `{"id":"status","method":"daemon/status","params":{}}`)
+
+	var initResp protocol.Response
+	if err := json.Unmarshal([]byte(readCLIOutputLine(t, scanner)), &initResp); err != nil {
+		t.Fatalf("decode init response: %v", err)
+	}
+	if initResp.Error != nil {
+		t.Fatalf("initialize error: %v", initResp.Error)
+	}
+	var statusResp protocol.Response
+	if err := json.Unmarshal([]byte(readCLIOutputLine(t, scanner)), &statusResp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if statusResp.Error != nil {
+		t.Fatalf("daemon/status error: %v", statusResp.Error)
+	}
+	var status appserver.DaemonStatus
+	if err := json.Unmarshal(statusResp.Result, &status); err != nil {
+		t.Fatalf("decode daemon/status: %v", err)
+	}
+	if status.Transport != "socket" {
+		t.Fatalf("daemon/status transport = %q, want socket", status.Transport)
+	}
+
+	writeCLIInputLine(t, conn, `{"id":"stop","method":"daemon/stop","params":{"reason":"socket test"}}`)
+	var stopResp protocol.Response
+	if err := json.Unmarshal([]byte(readCLIOutputLine(t, scanner)), &stopResp); err != nil {
+		t.Fatalf("decode stop response: %v", err)
+	}
+	if stopResp.Error != nil {
+		t.Fatalf("daemon/stop error: %v", stopResp.Error)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close socket: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("serveAppServerUnixSocket: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("serveAppServerUnixSocket did not exit after daemon/stop")
+	}
+}
+
 func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 	workDir := t.TempDir()
 	server, cleanup, err := newCLIAppServer(appServerFlags{
@@ -342,6 +458,33 @@ func TestCLIAppServerServesDaemonLifecycleMethods(t *testing.T) {
 	}
 }
 
+func TestCLIAppServerDaemonStatusReportsTransport(t *testing.T) {
+	server, cleanup, err := newCLIAppServerWithTransport(appServerFlags{
+		workDir:   t.TempDir(),
+		storePath: ":memory:",
+	}, "websocket")
+	if err != nil {
+		t.Fatalf("newCLIAppServerWithTransport: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	statusResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("status"),
+		Method: "daemon/status",
+	})
+	if statusResp.Error != nil {
+		t.Fatalf("daemon/status error: %v", statusResp.Error)
+	}
+	var status appserver.DaemonStatus
+	if err := json.Unmarshal(statusResp.Result, &status); err != nil {
+		t.Fatalf("decode daemon/status result: %v", err)
+	}
+	if status.Transport != "websocket" {
+		t.Fatalf("daemon/status transport = %q, want websocket", status.Transport)
+	}
+}
+
 func readyCLIAppServer(t *testing.T, server *appserver.Server) {
 	t.Helper()
 	initResp := server.HandleRequest(context.Background(), protocol.Request{
@@ -383,7 +526,7 @@ func containsTool(tools []catalog.Tool, id string) bool {
 	return false
 }
 
-func writeCLIInputLine(t *testing.T, writer *io.PipeWriter, line string) {
+func writeCLIInputLine(t *testing.T, writer io.Writer, line string) {
 	t.Helper()
 	if _, err := io.WriteString(writer, line+"\n"); err != nil {
 		t.Fatalf("write input line: %v", err)
