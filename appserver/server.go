@@ -15,6 +15,7 @@ import (
 	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/catalog"
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
+	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
@@ -47,6 +48,7 @@ type Server struct {
 	catalog   *catalog.Catalog
 	config    *appconfig.Service
 	cache     *appcache.Service
+	mcp       *appmcp.Service
 	events    *EventQueue
 	requests  *RequestQueue
 	approvals *ApprovalService
@@ -110,6 +112,12 @@ func WithCache(cache *appcache.Service) Option {
 	}
 }
 
+func WithMCP(mcp *appmcp.Service) Option {
+	return func(s *Server) {
+		s.mcp = mcp
+	}
+}
+
 func WithEventQueue(events *EventQueue) Option {
 	return func(s *Server) {
 		s.events = events
@@ -155,6 +163,7 @@ func NewServer(opts ...Option) *Server {
 		catalog:               catalog.NewDefault(),
 		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
+		mcp:                   appmcp.NewService(),
 		events:                NewEventQueue(),
 		requests:              NewRequestQueue(),
 		approvals:             NewApprovalService(),
@@ -437,6 +446,14 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleConfigRequirementsRead()
 	case "config/mcpServer/reload":
 		return s.handleConfigMCPServerReload()
+	case "mcpServerStatus/list":
+		return s.handleMCPServerStatusList(ctx, params)
+	case "mcpServer/resource/read":
+		return s.handleMCPServerResourceRead(ctx, params)
+	case "mcpServer/tool/call":
+		return s.handleMCPServerToolCall(ctx, params)
+	case "mcpServer/oauth/login":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "MCP OAuth login is not implemented; register an already-authenticated MCP client")
 	case "environment/info":
 		return s.handleEnvironmentInfo()
 	case "environment/add":
@@ -971,6 +988,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Git:          s.git != nil,
 		Cache:        s.cache != nil,
 		Config:       s.config != nil,
+		MCP:          s.mcp != nil,
 		Runtime:      s.runtime != nil,
 		Interactions: s.interact != nil,
 	}), nil
@@ -1037,6 +1055,15 @@ func (s *Server) handleConfigRequirementsRead() (any, *protocol.Error) {
 }
 
 func (s *Server) handleConfigMCPServerReload() (any, *protocol.Error) {
+	if s.mcp != nil {
+		reload := s.mcp.Reload()
+		return appconfig.MCPReloadResponse{
+			Reloaded: reload.Reloaded,
+			Status:   reload.Status,
+			Reason:   reload.Reason,
+			Count:    reload.Count,
+		}, nil
+	}
 	return s.requireConfig().ReloadMCPServers(), nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -171,6 +172,28 @@ func (s *ApprovalService) GitApproval(ctx context.Context, op toolgit.Operation)
 			"kind":      "git",
 			"operation": string(op.Kind),
 			"mutating":  op.Mutating,
+		},
+	}
+	return s.requestApproval(ctx, "item/permissions/requestApproval", params.ItemID, params)
+}
+
+func (s *ApprovalService) MCPToolApproval(ctx context.Context, serverName, toolName string, args map[string]any) error {
+	reason := fmt.Sprintf("Approve MCP tool %s on %s", toolName, serverName)
+	argKeys := make([]string, 0, len(args))
+	for key := range args {
+		argKeys = append(argKeys, key)
+	}
+	slices.Sort(argKeys)
+	params := permissionsApprovalParams{
+		approvalRequestBase: s.base(reason),
+		CWD:                 ".",
+		Operation:           "mcpToolCall",
+		Permissions: map[string]any{
+			"kind":         "mcp",
+			"server":       serverName,
+			"tool":         toolName,
+			"argumentKeys": argKeys,
+			"mutating":     true,
 		},
 	}
 	return s.requestApproval(ctx, "item/permissions/requestApproval", params.ItemID, params)

@@ -182,6 +182,7 @@ type ToolServices struct {
 	Git          bool
 	Cache        bool
 	Config       bool
+	MCP          bool
 	Runtime      bool
 	Interactions bool
 }
@@ -476,6 +477,7 @@ func builtinTools(services ToolServices) []Tool {
 		tool("interactions", "Interactions", "Request user input, dynamic tool calls, and MCP elicitation from the connected Slang client.", "runtime", []string{"item/tool/requestUserInput", "item/tool/call", "mcpServer/elicitation/request"}, services.Interactions, false, false, "serverRequest/resolved", true, false),
 		tool("provider-catalog", "Provider catalog", "List provider, model, capability, and app-server tool metadata for Slang controls.", "configuration", []string{"provider/list", "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "tool/list"}, true, false, false, "", true, true),
 		tool("config", "Configuration", "Read and update app-server config, environment metadata, permission profiles, collaboration modes, and feature flags.", "configuration", []string{"config/read", "config/value/write", "config/batchWrite", "configRequirements/read", "config/mcpServer/reload", "environment/info", "environment/add", "permissionProfile/list", "collaborationMode/list", "experimentalFeature/list", "experimentalFeature/enablement/set"}, services.Config, true, false, "", true, false),
+		tool("mcp", "MCP servers", "List MCP server startup status, read MCP resources, and call MCP tools through registered Gollem MCP clients.", "runtime", []string{"mcpServerStatus/list", "mcpServer/resource/read", "mcpServer/tool/call"}, services.MCP, true, true, "", true, false),
 		tool("cache", "Cache", "Read deterministic cache stats and run provider normalization benchmark fixtures.", "runtime", []string{"cache/stats", "cache/benchmark"}, services.Cache, false, false, "", false, true),
 	}
 }

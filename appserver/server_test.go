@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,11 +14,13 @@ import (
 	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/catalog"
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
+	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
+	extmcp "github.com/fugue-labs/gollem/ext/mcp"
 )
 
 func TestServerHandshakeAndUnavailable(t *testing.T) {
@@ -358,6 +361,171 @@ func TestServerConfigHandlers(t *testing.T) {
 	decodeResult(t, reloadResp, &reload)
 	if reload.Reloaded || reload.Status != "no-op" {
 		t.Fatalf("reload = %#v", reload)
+	}
+}
+
+func TestServerMCPHandlers(t *testing.T) {
+	ctx := context.Background()
+	mcpSvc := appmcp.NewService()
+	src := &serverTestMCPSource{
+		tools: []extmcp.Tool{{
+			Name:        "echo",
+			Description: "Echo text",
+			InputSchema: json.RawMessage(`{"type":"object"}`),
+		}},
+		toolResults: map[string]*extmcp.ToolResult{
+			"echo": {
+				Content: []extmcp.Content{{Type: "text", Text: "pong"}},
+			},
+		},
+		resources: []extmcp.Resource{{
+			URI:  "file:///workspace/README.md",
+			Name: "README",
+		}},
+		resourceTemplates: []extmcp.ResourceTemplate{{
+			URITemplate: "file:///workspace/{path}",
+			Name:        "workspace_file",
+		}},
+		resourceResults: map[string]*extmcp.ReadResourceResult{
+			"file:///workspace/README.md": {
+				Contents: []extmcp.ResourceContents{{
+					URI:  "file:///workspace/README.md",
+					Text: "# Gollem\n",
+				}},
+			},
+		},
+	}
+	if err := mcpSvc.AddServer("repo", src); err != nil {
+		t.Fatalf("AddServer: %v", err)
+	}
+	server := readyServer(WithMCP(mcpSvc))
+
+	statusResp := server.HandleRequest(ctx, request("mcpServerStatus/list", nil))
+	if statusResp.Error != nil {
+		t.Fatalf("mcpServerStatus/list error: %v", statusResp.Error)
+	}
+	var statuses appmcp.StatusListResponse
+	decodeResult(t, statusResp, &statuses)
+	if len(statuses.Servers) != 1 || statuses.Servers[0].ToolCount != 1 || !statuses.Servers[0].Capabilities.Resources {
+		t.Fatalf("mcp statuses = %#v", statuses)
+	}
+
+	readResp := server.HandleRequest(ctx, request("mcpServer/resource/read", map[string]any{
+		"serverName": "repo",
+		"uri":        "file:///workspace/README.md",
+	}))
+	if readResp.Error != nil {
+		t.Fatalf("mcpServer/resource/read error: %v", readResp.Error)
+	}
+	var resource appmcp.ResourceReadResponse
+	decodeResult(t, readResp, &resource)
+	if resource.Text != "# Gollem\n" {
+		t.Fatalf("resource = %#v", resource)
+	}
+
+	callRespCh := make(chan protocol.Response, 1)
+	go func() {
+		callRespCh <- server.HandleRequest(ctx, request("mcpServer/tool/call", map[string]any{
+			"name":      "repo__echo",
+			"arguments": map[string]any{"text": "ping"},
+		}))
+	}()
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for MCP tool approval request")
+	}
+	approvalRequests := server.DrainRequests()
+	if len(approvalRequests) != 1 || approvalRequests[0].Method != "item/permissions/requestApproval" {
+		t.Fatalf("approval requests = %#v", approvalRequests)
+	}
+	var approval permissionsApprovalParams
+	if err := json.Unmarshal(approvalRequests[0].Params, &approval); err != nil {
+		t.Fatalf("decode approval request: %v", err)
+	}
+	if approval.Permissions["kind"] != "mcp" || approval.Permissions["server"] != "repo" || approval.Permissions["tool"] != "echo" {
+		t.Fatalf("approval params = %#v", approval)
+	}
+	if _, ok := approval.Permissions["argumentKeys"]; !ok {
+		t.Fatalf("approval params missing redacted argument keys: %#v", approval.Permissions)
+	}
+	requestID, _ := approvalRequests[0].ID.Value().(string)
+	approveResp := server.HandleRequest(ctx, request("approval/respond", map[string]any{
+		"requestId": requestID,
+		"approved":  true,
+	}))
+	if approveResp.Error != nil {
+		t.Fatalf("approval/respond error: %v", approveResp.Error)
+	}
+	var callResp protocol.Response
+	select {
+	case callResp = <-callRespCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("MCP tool call did not finish after approval")
+	}
+	if callResp.Error != nil {
+		t.Fatalf("mcpServer/tool/call error: %v", callResp.Error)
+	}
+	var tool appmcp.ToolCallResponse
+	decodeResult(t, callResp, &tool)
+	if tool.ServerName != "repo" || tool.ToolName != "echo" || tool.Text != "pong" {
+		t.Fatalf("tool call = %#v", tool)
+	}
+	if src.callCount != 1 {
+		t.Fatalf("source call count = %d, want 1", src.callCount)
+	}
+
+	deniedRespCh := make(chan protocol.Response, 1)
+	go func() {
+		deniedRespCh <- server.HandleRequest(ctx, request("mcpServer/tool/call", map[string]any{
+			"serverName": "repo",
+			"toolName":   "echo",
+		}))
+	}()
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for denied MCP tool approval request")
+	}
+	approvalRequests = server.DrainRequests()
+	if len(approvalRequests) != 1 || approvalRequests[0].Method != "item/permissions/requestApproval" {
+		t.Fatalf("denied approval requests = %#v", approvalRequests)
+	}
+	requestID, _ = approvalRequests[0].ID.Value().(string)
+	denyResp := server.HandleRequest(ctx, request("approval/respond", map[string]any{
+		"requestId": requestID,
+		"approved":  false,
+		"message":   "not allowed",
+	}))
+	if denyResp.Error != nil {
+		t.Fatalf("approval/respond deny error: %v", denyResp.Error)
+	}
+	var deniedResp protocol.Response
+	select {
+	case deniedResp = <-deniedRespCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("denied MCP tool call did not finish")
+	}
+	if deniedResp.Error == nil || deniedResp.Error.Code != protocol.CodeInvalidRequest {
+		t.Fatalf("denied response = %#v, want invalid request", deniedResp)
+	}
+	if src.callCount != 1 {
+		t.Fatalf("denied call reached source, call count = %d", src.callCount)
+	}
+
+	reloadResp := server.HandleRequest(ctx, request("config/mcpServer/reload", nil))
+	if reloadResp.Error != nil {
+		t.Fatalf("config/mcpServer/reload error: %v", reloadResp.Error)
+	}
+	var reload appconfig.MCPReloadResponse
+	decodeResult(t, reloadResp, &reload)
+	if !reload.Reloaded || reload.Status != "reloaded" {
+		t.Fatalf("reload = %#v", reload)
+	}
+
+	oauthResp := server.HandleRequest(ctx, request("mcpServer/oauth/login", map[string]any{"serverName": "repo"}))
+	if oauthResp.Error == nil || oauthResp.Error.Code != protocol.CodeMethodUnavailable {
+		t.Fatalf("oauth response = %#v, want method unavailable", oauthResp)
 	}
 }
 
@@ -932,4 +1100,42 @@ func toolAvailable(tools []catalog.Tool, id string) bool {
 		}
 	}
 	return false
+}
+
+type serverTestMCPSource struct {
+	tools             []extmcp.Tool
+	toolResults       map[string]*extmcp.ToolResult
+	resources         []extmcp.Resource
+	resourceTemplates []extmcp.ResourceTemplate
+	resourceResults   map[string]*extmcp.ReadResourceResult
+	callCount         int
+}
+
+func (s *serverTestMCPSource) ListTools(context.Context) ([]extmcp.Tool, error) {
+	return append([]extmcp.Tool(nil), s.tools...), nil
+}
+
+func (s *serverTestMCPSource) CallTool(_ context.Context, name string, _ map[string]any) (*extmcp.ToolResult, error) {
+	s.callCount++
+	result, ok := s.toolResults[name]
+	if !ok {
+		return nil, errors.New("tool not found")
+	}
+	return result, nil
+}
+
+func (s *serverTestMCPSource) ListResources(context.Context) ([]extmcp.Resource, error) {
+	return append([]extmcp.Resource(nil), s.resources...), nil
+}
+
+func (s *serverTestMCPSource) ReadResource(_ context.Context, uri string) (*extmcp.ReadResourceResult, error) {
+	result, ok := s.resourceResults[uri]
+	if !ok {
+		return nil, errors.New("resource not found")
+	}
+	return result, nil
+}
+
+func (s *serverTestMCPSource) ListResourceTemplates(context.Context) ([]extmcp.ResourceTemplate, error) {
+	return append([]extmcp.ResourceTemplate(nil), s.resourceTemplates...), nil
 }
