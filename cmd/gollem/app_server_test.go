@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,41 +101,82 @@ func TestCLIAppServerServesStdioWhenMutationsAllowed(t *testing.T) {
 	}
 	defer cleanup()
 
-	input := strings.Join([]string{
-		`{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`,
-		`{"method":"initialized"}`,
-		`{"id":"write","method":"fs/writeFile","params":{"path":"ok.txt","content":"ok"}}`,
-		`{"id":"read","method":"fs/readFile","params":{"path":"ok.txt"}}`,
-		"",
-	}, "\n")
-	var output bytes.Buffer
-	if err := appserver.ServeJSONLines(context.Background(), server, strings.NewReader(input), &output); err != nil {
-		t.Fatalf("ServeJSONLines: %v", err)
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		err := appserver.ServeJSONLines(context.Background(), server, inR, outW)
+		if err != nil {
+			_ = outW.CloseWithError(err)
+		} else {
+			_ = outW.Close()
+		}
+		errCh <- err
+	}()
+	scanner := bufio.NewScanner(outR)
+	writeCLIInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`)
+	writeCLIInputLine(t, inW, `{"method":"initialized"}`)
+	var initResp protocol.Response
+	if err := json.Unmarshal([]byte(readCLIOutputLine(t, scanner)), &initResp); err != nil {
+		t.Fatalf("decode init response: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("output lines = %d, want 4\n%s", len(lines), output.String())
+	if initResp.Error != nil {
+		t.Fatalf("init error: %v", initResp.Error)
 	}
-	var changed protocol.Notification
-	if err := json.Unmarshal([]byte(lines[2]), &changed); err != nil {
-		t.Fatalf("decode fs changed notification: %v", err)
+
+	writeCLIInputLine(t, inW, `{"id":"write","method":"fs/writeFile","params":{"path":"ok.txt","content":"ok"}}`)
+	seenWrite := false
+	seenChanged := false
+	for !seenWrite || !seenChanged {
+		line := readCLIOutputLine(t, scanner)
+		var envelope struct {
+			ID     any             `json:"id"`
+			Method string          `json:"method"`
+			Error  *protocol.Error `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			t.Fatalf("decode output envelope %q: %v", line, err)
+		}
+		switch {
+		case envelope.Method != "":
+			if envelope.Method != "fs/changed" {
+				t.Fatalf("notification method = %q, want fs/changed", envelope.Method)
+			}
+			var changed protocol.Notification
+			if err := json.Unmarshal([]byte(line), &changed); err != nil {
+				t.Fatalf("decode fs changed notification: %v", err)
+			}
+			var changedParams struct {
+				Path      string `json:"path"`
+				Operation string `json:"operation"`
+			}
+			if err := json.Unmarshal(changed.Params, &changedParams); err != nil {
+				t.Fatalf("decode fs changed params: %v", err)
+			}
+			if changedParams.Path != "ok.txt" || changedParams.Operation != "writeFile" {
+				t.Fatalf("fs changed params = %#v", changedParams)
+			}
+			seenChanged = true
+		case envelope.ID == "write":
+			if envelope.Error != nil {
+				t.Fatalf("write error: %v", envelope.Error)
+			}
+			seenWrite = true
+		default:
+			t.Fatalf("unexpected output line: %q", line)
+		}
 	}
-	if changed.Method != "fs/changed" {
-		t.Fatalf("notification method = %q, want fs/changed", changed.Method)
-	}
-	var changedParams struct {
-		Path      string `json:"path"`
-		Operation string `json:"operation"`
-	}
-	if err := json.Unmarshal(changed.Params, &changedParams); err != nil {
-		t.Fatalf("decode fs changed params: %v", err)
-	}
-	if changedParams.Path != "ok.txt" || changedParams.Operation != "writeFile" {
-		t.Fatalf("fs changed params = %#v", changedParams)
+
+	writeCLIInputLine(t, inW, `{"id":"read","method":"fs/readFile","params":{"path":"ok.txt"}}`)
+	if err := inW.Close(); err != nil {
+		t.Fatalf("close input: %v", err)
 	}
 	var read protocol.Response
-	if err := json.Unmarshal([]byte(lines[3]), &read); err != nil {
+	if err := json.Unmarshal([]byte(readCLIOutputLine(t, scanner)), &read); err != nil {
 		t.Fatalf("decode read response: %v", err)
+	}
+	if read.Error != nil {
+		t.Fatalf("read error: %v", read.Error)
 	}
 	var result struct {
 		Content string `json:"content"`
@@ -143,6 +186,9 @@ func TestCLIAppServerServesStdioWhenMutationsAllowed(t *testing.T) {
 	}
 	if result.Content != "ok" {
 		t.Fatalf("content = %q, want ok", result.Content)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeJSONLines: %v", err)
 	}
 }
 
@@ -175,10 +221,19 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 		t.Fatalf("output lines = %d, want 4\n%s", len(lines), output.String())
 	}
 
-	var providersResp protocol.Response
-	if err := json.Unmarshal([]byte(lines[1]), &providersResp); err != nil {
-		t.Fatalf("decode providers response: %v", err)
+	responses := map[string]protocol.Response{}
+	for _, line := range lines[1:] {
+		var resp protocol.Response
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			t.Fatalf("decode response line %q: %v", line, err)
+		}
+		id, _ := resp.ID.Value().(string)
+		if id == "" {
+			t.Fatalf("response missing string id: %#v", resp)
+		}
+		responses[id] = resp
 	}
+	providersResp := responses["providers"]
 	var providers catalog.ProviderListResponse
 	if err := json.Unmarshal(providersResp.Result, &providers); err != nil {
 		t.Fatalf("decode provider/list result: %v", err)
@@ -187,10 +242,7 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 		t.Fatal("provider/list returned no providers")
 	}
 
-	var modelsResp protocol.Response
-	if err := json.Unmarshal([]byte(lines[2]), &modelsResp); err != nil {
-		t.Fatalf("decode models response: %v", err)
-	}
+	modelsResp := responses["models"]
 	var models catalog.ModelListResponse
 	if err := json.Unmarshal(modelsResp.Result, &models); err != nil {
 		t.Fatalf("decode model/list result: %v", err)
@@ -199,10 +251,7 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 		t.Fatalf("model/list returned %d models, want 2", len(models.Data))
 	}
 
-	var toolsResp protocol.Response
-	if err := json.Unmarshal([]byte(lines[3]), &toolsResp); err != nil {
-		t.Fatalf("decode tools response: %v", err)
-	}
+	toolsResp := responses["tools"]
 	var tools catalog.ToolListResponse
 	if err := json.Unmarshal(toolsResp.Result, &tools); err != nil {
 		t.Fatalf("decode tool/list result: %v", err)
@@ -281,4 +330,38 @@ func containsTool(tools []catalog.Tool, id string) bool {
 		}
 	}
 	return false
+}
+
+func writeCLIInputLine(t *testing.T, writer *io.PipeWriter, line string) {
+	t.Helper()
+	if _, err := io.WriteString(writer, line+"\n"); err != nil {
+		t.Fatalf("write input line: %v", err)
+	}
+}
+
+func readCLIOutputLine(t *testing.T, scanner *bufio.Scanner) string {
+	t.Helper()
+	type result struct {
+		line string
+		ok   bool
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		ok := scanner.Scan()
+		ch <- result{line: scanner.Text(), ok: ok, err: scanner.Err()}
+	}()
+	select {
+	case got := <-ch:
+		if got.err != nil {
+			t.Fatalf("scan output: %v", got.err)
+		}
+		if !got.ok {
+			t.Fatal("output stream closed before expected line")
+		}
+		return got.line
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for output line")
+		return ""
+	}
 }

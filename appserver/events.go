@@ -168,6 +168,11 @@ type fileChangedParams struct {
 	At          time.Time `json:"at"`
 }
 
+type fsWatchChangedParams struct {
+	WatchID      string   `json:"watchId"`
+	ChangedPaths []string `json:"changedPaths"`
+}
+
 type processOutputDeltaParams struct {
 	ID        string    `json:"id"`
 	ProcessID string    `json:"processId"`

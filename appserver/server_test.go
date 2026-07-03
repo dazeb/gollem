@@ -413,6 +413,58 @@ func TestServerFilesystemHandlers(t *testing.T) {
 	}
 }
 
+func TestServerFilesystemWatchHandlers(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	fsSvc, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	server := readyServer(WithFilesystem(fsSvc))
+	watchPath := filepath.Join(root, "watched.txt")
+
+	watchResp := server.HandleRequest(ctx, request("fs/watch", map[string]any{
+		"watchId":            "watch-file",
+		"path":               watchPath,
+		"pollIntervalMillis": 20,
+	}))
+	var watch fsWatchResult
+	decodeResult(t, watchResp, &watch)
+	if watch.Path != watchPath {
+		t.Fatalf("fs/watch path = %q, want %q", watch.Path, watchPath)
+	}
+
+	relativeResp := server.HandleRequest(ctx, request("fs/watch", map[string]any{
+		"watchId": "relative",
+		"path":    "relative.txt",
+	}))
+	if relativeResp.Error == nil || relativeResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("relative fs/watch response = %#v", relativeResp)
+	}
+
+	if err := os.WriteFile(watchPath, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write watched file: %v", err)
+	}
+	notification := waitForNotification(t, server, "fs/changed")
+	var changed fsWatchChangedParams
+	if err := json.Unmarshal(notification.Params, &changed); err != nil {
+		t.Fatalf("decode watch changed notification: %v", err)
+	}
+	if changed.WatchID != "watch-file" || !containsString(changed.ChangedPaths, watchPath) {
+		t.Fatalf("watch changed notification = %#v", changed)
+	}
+
+	unwatchResp := server.HandleRequest(ctx, request("fs/unwatch", map[string]any{"watchId": "watch-file"}))
+	if unwatchResp.Error != nil {
+		t.Fatalf("fs/unwatch error: %v", unwatchResp.Error)
+	}
+	if err := os.WriteFile(watchPath, []byte("again"), 0o644); err != nil {
+		t.Fatalf("write unwatched file: %v", err)
+	}
+	assertNoNotification(t, server, "fs/changed")
+}
+
 func TestServerFilesystemApprovalRespondFlow(t *testing.T) {
 	ctx := context.Background()
 	approvals := NewApprovalService()
@@ -611,6 +663,49 @@ func assertNotificationMethods(t *testing.T, notifications []protocol.Notificati
 			t.Fatalf("notification[%d] method = %q, want %q", i, notifications[i].Method, method)
 		}
 	}
+}
+
+func waitForNotification(t *testing.T, server *Server, method string) protocol.Notification {
+	t.Helper()
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case <-server.NotificationSignal():
+			for _, notification := range server.DrainNotifications() {
+				if notification.Method == method {
+					return notification
+				}
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for notification %q", method)
+		}
+	}
+}
+
+func assertNoNotification(t *testing.T, server *Server, method string) {
+	t.Helper()
+	timeout := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case <-server.NotificationSignal():
+			for _, notification := range server.DrainNotifications() {
+				if notification.Method == method {
+					t.Fatalf("unexpected notification %q: %#v", method, notification)
+				}
+			}
+		case <-timeout:
+			return
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func waitForServerRequest(t *testing.T, server *Server) protocol.Request {

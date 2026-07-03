@@ -366,6 +366,10 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleFSRemove(ctx, params)
 	case "fs/copy":
 		return s.handleFSCopy(ctx, params)
+	case "fs/watch":
+		return s.handleFSWatch(ctx, params)
+	case "fs/unwatch":
+		return s.handleFSUnwatch(ctx, params)
 	case "command/exec":
 		return s.handleProcessStart(ctx, method, params, true)
 	case "command/exec/write", "process/writeStdin":
@@ -753,6 +757,53 @@ func (s *Server) handleFSCopy(ctx context.Context, raw json.RawMessage) (any, *p
 	return map[string]any{"ok": true, "source": src, "destination": dst}, nil
 }
 
+func (s *Server) handleFSWatch(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	fsSvc, rpcErr := s.requireFS("fs/watch")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params fsWatchParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	if strings.TrimSpace(params.WatchID) == "" {
+		return nil, invalidParams("watchId is required", nil)
+	}
+	if strings.TrimSpace(params.Path) == "" {
+		return nil, invalidParams("path is required", nil)
+	}
+	if params.PollIntervalMillis < 0 {
+		return nil, invalidParams("pollIntervalMillis must be non-negative", nil)
+	}
+	result, err := fsSvc.Watch(ctx, toolfs.WatchRequest{
+		WatchID:      params.WatchID,
+		Path:         params.Path,
+		PollInterval: time.Duration(params.PollIntervalMillis) * time.Millisecond,
+	}, s.publishWatchChanged)
+	if err != nil {
+		return nil, mapError("fs/watch", err)
+	}
+	return fsWatchResult{Path: result.Path}, nil
+}
+
+func (s *Server) handleFSUnwatch(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	fsSvc, rpcErr := s.requireFS("fs/unwatch")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params fsUnwatchParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	if strings.TrimSpace(params.WatchID) == "" {
+		return nil, invalidParams("watchId is required", nil)
+	}
+	if err := fsSvc.Unwatch(ctx, params.WatchID); err != nil {
+		return nil, mapError("fs/unwatch", err)
+	}
+	return map[string]any{}, nil
+}
+
 func (s *Server) handleProcessStart(ctx context.Context, method string, raw json.RawMessage, defaultShell bool) (any, *protocol.Error) {
 	processSvc, rpcErr := s.requireProcess(method)
 	if rpcErr != nil {
@@ -1049,6 +1100,10 @@ func mapError(method string, err error) *protocol.Error {
 	case errors.Is(err, toolfs.ErrPathOutsideRoot),
 		errors.Is(err, toolfs.ErrInvalidCopyDestination),
 		errors.Is(err, toolfs.ErrRefusingRoot),
+		errors.Is(err, toolfs.ErrWatchPathNotAbsolute),
+		errors.Is(err, toolfs.ErrWatchIDRequired),
+		errors.Is(err, toolfs.ErrWatchAlreadyExists),
+		errors.Is(err, toolfs.ErrWatchNotFound),
 		errors.Is(err, toolgit.ErrPathOutsideRoot),
 		errors.Is(err, toolgit.ErrInvalidPathspec),
 		errors.Is(err, toolgit.ErrInvalidMessage),
@@ -1209,6 +1264,20 @@ type copyParams struct {
 	SourcePath      string `json:"sourcePath,omitempty"`
 	Destination     string `json:"destination,omitempty"`
 	DestinationPath string `json:"destinationPath,omitempty"`
+}
+
+type fsWatchParams struct {
+	WatchID            string `json:"watchId"`
+	Path               string `json:"path"`
+	PollIntervalMillis int64  `json:"pollIntervalMillis,omitempty"`
+}
+
+type fsWatchResult struct {
+	Path string `json:"path"`
+}
+
+type fsUnwatchParams struct {
+	WatchID string `json:"watchId"`
 }
 
 type fileContentResult struct {

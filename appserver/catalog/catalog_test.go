@@ -114,6 +114,9 @@ func TestToolListAvailability(t *testing.T) {
 	if fs == nil || !fs.Available || !fs.Mutation || !fs.RequiresApproval {
 		t.Fatalf("filesystem tool metadata = %#v", fs)
 	}
+	if !containsMethod(fs.Methods, "fs/watch") || !containsMethod(fs.Methods, "fs/unwatch") {
+		t.Fatalf("filesystem tool methods = %#v", fs.Methods)
+	}
 
 	withUnavailable := ListTools(ToolListParams{IncludeUnavailable: true}, ToolServices{Filesystem: true})
 	process := findTool(withUnavailable.Data, "process")
@@ -154,4 +157,13 @@ func findTool(tools []Tool, id string) *Tool {
 		}
 	}
 	return nil
+}
+
+func containsMethod(methods []string, want string) bool {
+	for _, method := range methods {
+		if method == want {
+			return true
+		}
+	}
+	return false
 }

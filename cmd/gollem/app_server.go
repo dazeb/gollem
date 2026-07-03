@@ -175,6 +175,11 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
+	storeCleanup := cleanup
+	cleanup = func() {
+		_ = fsSvc.Close()
+		storeCleanup()
+	}
 	processSvc, err := toolprocess.NewService(workDir, processOpts...)
 	if err != nil {
 		cleanup()

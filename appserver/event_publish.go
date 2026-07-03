@@ -5,6 +5,7 @@ import (
 
 	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/store"
+	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 )
 
 type cacheBenchmarkNotificationParams struct {
@@ -21,6 +22,13 @@ func (s *Server) publishFileChanged(operation, path, destination string) {
 		Destination: destination,
 		Operation:   operation,
 		At:          time.Now().UTC(),
+	})
+}
+
+func (s *Server) publishWatchChanged(event toolfs.WatchEvent) {
+	s.PublishNotification("fs/changed", fsWatchChangedParams{
+		WatchID:      event.WatchID,
+		ChangedPaths: append([]string(nil), event.ChangedPaths...),
 	})
 }
 
