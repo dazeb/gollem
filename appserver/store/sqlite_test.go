@@ -149,6 +149,17 @@ func TestSQLiteStoreTurnsAndItemsPersistAndPaginate(t *testing.T) {
 	if first.Seq == 0 || second.Seq <= first.Seq {
 		t.Fatalf("item seqs not increasing: first=%d second=%d", first.Seq, second.Seq)
 	}
+	updatedFirst, err := s.UpdateItem(ctx, UpdateItemRequest{
+		ID:      first.ID,
+		Status:  "failed",
+		Payload: json.RawMessage(`{"role":"user","text":"updated"}`),
+	})
+	if err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+	if updatedFirst.ID != first.ID || updatedFirst.Seq != first.Seq || updatedFirst.Status != "failed" || string(updatedFirst.Payload) != `{"role":"user","text":"updated"}` {
+		t.Fatalf("updated item = %#v, want same id/seq with updated status and payload", updatedFirst)
+	}
 
 	items, err := s.ListItems(ctx, ItemFilter{ThreadID: thread.ID, Limit: 1})
 	if err != nil {

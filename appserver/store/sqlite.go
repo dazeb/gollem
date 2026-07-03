@@ -614,6 +614,43 @@ func (s *SQLiteStore) AppendItem(ctx context.Context, req AppendItemRequest) (*I
 	return cloneItem(item), nil
 }
 
+// UpdateItem implements Store.
+func (s *SQLiteStore) UpdateItem(ctx context.Context, req UpdateItemRequest) (*Item, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var item *Item
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		loaded, err := loadItemTx(ctx, tx, req.ID)
+		if err != nil {
+			return err
+		}
+		thread, err := loadThreadTx(ctx, tx, loaded.ThreadID)
+		if err != nil {
+			return err
+		}
+		if thread.Status == ThreadDeleted {
+			return ErrThreadDeleted
+		}
+		if req.Status != "" {
+			loaded.Status = req.Status
+		}
+		if req.Payload != nil {
+			loaded.Payload = cloneRaw(req.Payload)
+		}
+		loaded.UpdatedAt = time.Now().UTC()
+		if err := saveItemTx(ctx, tx, loaded); err != nil {
+			return err
+		}
+		item = loaded
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return cloneItem(item), nil
+}
+
 // GetItem implements Store.
 func (s *SQLiteStore) GetItem(ctx context.Context, id string) (*Item, error) {
 	ctx = normalizeContext(ctx)
@@ -855,6 +892,10 @@ func firstRemovedItemSeqTx(ctx context.Context, tx *sql.Tx, threadID string, rem
 
 func loadItem(ctx context.Context, db *sql.DB, id string) (*Item, error) {
 	return scanItem(db.QueryRowContext(ctx, `SELECT payload FROM app_items WHERE id = ?`, id))
+}
+
+func loadItemTx(ctx context.Context, tx *sql.Tx, id string) (*Item, error) {
+	return scanItem(tx.QueryRowContext(ctx, `SELECT payload FROM app_items WHERE id = ?`, id))
 }
 
 func scanThread(row interface{ Scan(dest ...any) error }) (*Thread, error) {

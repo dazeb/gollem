@@ -44,6 +44,7 @@ type Server struct {
 	loaded     map[string]struct{}
 	subscribed map[string]struct{}
 	idleUnload map[string]*threadIdleUnload
+	commands   map[string]threadShellCommandRun
 
 	store     store.Store
 	fs        *toolfs.Service
@@ -190,6 +191,7 @@ func NewServer(opts ...Option) *Server {
 		loaded:                make(map[string]struct{}),
 		subscribed:            make(map[string]struct{}),
 		idleUnload:            make(map[string]*threadIdleUnload),
+		commands:              make(map[string]threadShellCommandRun),
 		catalog:               catalog.NewDefault(),
 		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
@@ -440,6 +442,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadFork(ctx, params)
 	case "thread/compact/start":
 		return s.handleThreadCompactStart(ctx, params)
+	case "thread/shellCommand":
+		return s.handleThreadShellCommand(ctx, params)
 	case "thread/rollback":
 		return s.handleThreadRollback(ctx, params)
 	case "thread/archive":

@@ -146,6 +146,12 @@ type AppendItemRequest struct {
 	Payload      json.RawMessage
 }
 
+type UpdateItemRequest struct {
+	ID      string
+	Status  string
+	Payload json.RawMessage
+}
+
 type ItemFilter struct {
 	ThreadID string
 	TurnID   string
@@ -173,6 +179,7 @@ type Store interface {
 	RollbackThread(context.Context, RollbackThreadRequest) (*RollbackThreadResult, error)
 
 	AppendItem(context.Context, AppendItemRequest) (*Item, error)
+	UpdateItem(context.Context, UpdateItemRequest) (*Item, error)
 	GetItem(context.Context, string) (*Item, error)
 	ListItems(context.Context, ItemFilter) ([]*Item, error)
 }

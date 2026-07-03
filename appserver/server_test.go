@@ -690,6 +690,95 @@ func TestServerThreadCompactStartHandler(t *testing.T) {
 	}
 }
 
+func TestServerThreadShellCommandHandler(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	st, err := store.NewSQLiteStore(filepath.Join(root, "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Shell", Workspace: "."})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	var server *Server
+	processSvc, err := toolprocess.NewService(root,
+		toolprocess.WithOutputSink(func(ev toolprocess.OutputEvent) {
+			server.PublishProcessOutput(ev)
+		}),
+		toolprocess.WithExitSink(func(ev toolprocess.ExitEvent) {
+			server.PublishProcessExited(ev)
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server = readyServer(WithStore(st), WithProcess(processSvc))
+
+	resp := server.HandleRequest(ctx, request("thread/shellCommand", map[string]any{
+		"threadId": thread.ID,
+		"command":  "sleep 0.05; printf shell-output",
+	}))
+	if resp.Error != nil {
+		t.Fatalf("thread/shellCommand error: %v", resp.Error)
+	}
+	var result map[string]any
+	decodeResult(t, resp, &result)
+	if len(result) != 0 {
+		t.Fatalf("shell command result = %#v, want empty object", result)
+	}
+
+	events := waitForNotificationSet(t, server,
+		"turn/started",
+		"item/started",
+		"process/outputDelta",
+		"item/commandExecution/outputDelta",
+		"process/exited",
+		"item/completed",
+		"turn/completed",
+	)
+	var delta commandExecutionOutputDeltaNotificationParams
+	for _, event := range events {
+		if event.Method != "item/commandExecution/outputDelta" {
+			continue
+		}
+		if err := json.Unmarshal(event.Params, &delta); err != nil {
+			t.Fatalf("decode command delta: %v", err)
+		}
+	}
+	if delta.ThreadID != thread.ID || delta.TurnID == "" || delta.ItemID == "" || delta.Delta != "shell-output" {
+		t.Fatalf("command delta = %#v", delta)
+	}
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 1 || items[0].Kind != threadShellCommandItemKind || items[0].Status != commandExecutionStatusCompleted {
+		t.Fatalf("shell command items = %#v", items)
+	}
+	var payload threadShellCommandPayload
+	if err := json.Unmarshal(items[0].Payload, &payload); err != nil {
+		t.Fatalf("decode shell payload: %v", err)
+	}
+	if payload.Command != "sleep 0.05; printf shell-output" || payload.Source != commandExecutionSourceUserShell || payload.AggregatedOutput == nil || *payload.AggregatedOutput != "shell-output" || payload.ExitCode == nil || *payload.ExitCode != 0 || payload.ProcessID == nil {
+		t.Fatalf("shell payload = %#v", payload)
+	}
+	turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	if len(turns) != 1 || turns[0].Status != store.TurnCompleted {
+		t.Fatalf("shell command turns = %#v", turns)
+	}
+
+	invalidResp := server.HandleRequest(ctx, request("thread/shellCommand", map[string]any{"threadId": thread.ID, "command": "   "}))
+	if invalidResp.Error == nil || invalidResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("invalid shell command error = %#v", invalidResp.Error)
+	}
+}
+
 func TestServerThreadControlHandlers(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
