@@ -161,6 +161,47 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	assertNotificationMethods(t, threadEvents, "thread/status/changed", "thread/archived")
 }
 
+func TestServerThreadApproveGuardianDeniedActionDeferredStub(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Guardian"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	server := readyServer(WithStore(st))
+
+	resp := server.HandleRequest(ctx, request("thread/approveGuardianDeniedAction", map[string]any{
+		"threadId": thread.ID,
+		"event": map[string]any{
+			"type": "guardian_assessment",
+			"id":   "guardian-1",
+		},
+	}))
+	if resp.Error == nil || resp.Error.Code != protocol.CodeMethodUnavailable {
+		t.Fatalf("guardian approval error = %#v, want method unavailable", resp.Error)
+	}
+	var data protocol.UnavailableData
+	if err := json.Unmarshal(resp.Error.Data, &data); err != nil {
+		t.Fatalf("decode unavailable data: %v", err)
+	}
+	if data.Method != "thread/approveGuardianDeniedAction" || data.Surface != protocol.SurfaceClientRequest || data.Status != protocol.MethodDeferredStub {
+		t.Fatalf("unavailable data = %+v", data)
+	}
+	if !strings.Contains(data.Reason, "Guardian denied-action replay is not implemented") {
+		t.Fatalf("unavailable reason = %q", data.Reason)
+	}
+
+	missingEvent := server.HandleRequest(ctx, request("thread/approveGuardianDeniedAction", map[string]any{"threadId": thread.ID}))
+	if missingEvent.Error == nil || missingEvent.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing event error = %#v, want invalid params", missingEvent.Error)
+	}
+}
+
 func TestServerThreadInjectItemsHandler(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))

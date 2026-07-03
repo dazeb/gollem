@@ -444,6 +444,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadCompactStart(ctx, params)
 	case "thread/shellCommand":
 		return s.handleThreadShellCommand(ctx, params)
+	case "thread/approveGuardianDeniedAction":
+		return s.handleThreadApproveGuardianDeniedAction(ctx, params)
 	case "thread/rollback":
 		return s.handleThreadRollback(ctx, params)
 	case "thread/archive":

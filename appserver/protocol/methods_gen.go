@@ -86,7 +86,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "skills/config/write", Surface: SurfaceClientRequest, State: MethodDeferredStub, Source: "json schema:ClientRequest, protocol crate:common.rs:784, typescript:ClientRequest.ts"},
 	{Method: "skills/extraRoots/set", Surface: SurfaceClientRequest, State: MethodDeferredStub, Source: "json schema:ClientRequest, protocol crate:common.rs:662, typescript:ClientRequest.ts"},
 	{Method: "skills/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:657, typescript:ClientRequest.ts"},
-	{Method: "thread/approveGuardianDeniedAction", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "json schema:ClientRequest, protocol crate:common.rs:587, typescript:ClientRequest.ts"},
+	{Method: "thread/approveGuardianDeniedAction", Surface: SurfaceClientRequest, State: MethodDeferredStub, Source: "json schema:ClientRequest, protocol crate:common.rs:587, typescript:ClientRequest.ts"},
 	{Method: "thread/archive", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:494, typescript:ClientRequest.ts"},
 	{Method: "thread/backgroundTerminals/clean", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:593"},
 	{Method: "thread/backgroundTerminals/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:599"},
