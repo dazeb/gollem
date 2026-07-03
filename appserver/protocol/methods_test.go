@@ -89,6 +89,7 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	assertMethod(t, "fs/changed", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "process/outputDelta", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "process/exited", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "command/exec/outputDelta", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "thread/status/changed", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "thread/closed", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "thread/compacted", SurfaceServerNotification, MethodImplemented)

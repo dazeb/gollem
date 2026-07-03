@@ -60,6 +60,28 @@ func TestServiceStartShellWaitCapturesOutput(t *testing.T) {
 	}
 }
 
+func TestServiceStartUsesProvidedIDAndRejectsDuplicate(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+
+	first, err := svc.Start(ctx, StartRequest{ID: "client-proc", Command: "cat"})
+	if err != nil {
+		t.Fatalf("Start first: %v", err)
+	}
+	if first.ID != "client-proc" {
+		t.Fatalf("process id = %q, want client-proc", first.ID)
+	}
+	if _, err := svc.Start(ctx, StartRequest{ID: "client-proc", Command: "cat"}); !errors.Is(err, ErrProcessAlreadyExists) {
+		t.Fatalf("duplicate start error = %v, want ErrProcessAlreadyExists", err)
+	}
+	if err := svc.Kill(ctx, first.ID); err != nil {
+		t.Fatalf("Kill first: %v", err)
+	}
+	if _, err := waitWithTimeout(t, svc, first.ID); err != nil {
+		t.Fatalf("Wait first: %v", err)
+	}
+}
+
 func TestServiceWorkDirIsWorkspaceScoped(t *testing.T) {
 	ctx := context.Background()
 	outside := t.TempDir()

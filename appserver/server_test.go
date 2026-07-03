@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -1817,6 +1818,107 @@ func TestServerProcessHandlers(t *testing.T) {
 	if resizeResp.Error == nil || resizeResp.Error.Code != protocol.CodeMethodUnavailable {
 		t.Fatalf("resize error = %#v, want unavailable", resizeResp.Error)
 	}
+}
+
+func TestServerCommandExecPublishesCommandOutputDelta(t *testing.T) {
+	ctx := context.Background()
+	var server *Server
+	processSvc, err := toolprocess.NewService(t.TempDir(),
+		toolprocess.WithOutputSink(func(ev toolprocess.OutputEvent) {
+			server.PublishProcessOutput(ev)
+		}),
+		toolprocess.WithExitSink(func(ev toolprocess.ExitEvent) {
+			server.PublishProcessExited(ev)
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server = readyServer(WithProcess(processSvc))
+
+	startResp := server.HandleRequest(ctx, request("command/exec", map[string]any{
+		"processId": "client-command-1",
+		"command":   "cat",
+	}))
+	if startResp.Error != nil {
+		t.Fatalf("command/exec start error: %v", startResp.Error)
+	}
+	var started struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, startResp, &started)
+	if started.Process.ID != "client-command-1" {
+		t.Fatalf("command/exec process id = %q, want client-command-1", started.Process.ID)
+	}
+
+	duplicateResp := server.HandleRequest(ctx, request("command/exec", map[string]any{
+		"processId": "client-command-1",
+		"command":   "printf should-not-run",
+	}))
+	if duplicateResp.Error == nil || duplicateResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("duplicate command/exec error = %#v, want invalid params", duplicateResp.Error)
+	}
+
+	writeResp := server.HandleRequest(ctx, request("command/exec/write", map[string]any{
+		"processId": "client-command-1",
+		"data":      "cmd-output\n",
+		"close":     true,
+	}))
+	if writeResp.Error != nil {
+		t.Fatalf("command/exec/write error: %v", writeResp.Error)
+	}
+
+	events := waitForNotificationSet(t, server, "process/outputDelta", "command/exec/outputDelta", "process/exited")
+	var delta commandExecOutputDeltaNotificationParams
+	for _, event := range events {
+		if event.Method != "command/exec/outputDelta" {
+			continue
+		}
+		if err := json.Unmarshal(event.Params, &delta); err != nil {
+			t.Fatalf("decode command exec delta: %v", err)
+		}
+	}
+	decoded, err := base64.StdEncoding.DecodeString(delta.DeltaBase64)
+	if err != nil {
+		t.Fatalf("decode delta base64: %v", err)
+	}
+	if delta.ProcessID != "client-command-1" || delta.Stream != string(toolprocess.StreamStdout) || string(decoded) != "cmd-output\n" || delta.CapReached {
+		t.Fatalf("command exec delta = %#v decoded=%q", delta, decoded)
+	}
+}
+
+func TestServerProcessSpawnDoesNotPublishCommandExecDelta(t *testing.T) {
+	ctx := context.Background()
+	var server *Server
+	processSvc, err := toolprocess.NewService(t.TempDir(),
+		toolprocess.WithOutputSink(func(ev toolprocess.OutputEvent) {
+			server.PublishProcessOutput(ev)
+		}),
+		toolprocess.WithExitSink(func(ev toolprocess.ExitEvent) {
+			server.PublishProcessExited(ev)
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server = readyServer(WithProcess(processSvc))
+
+	startResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"id":      "spawn-client-1",
+		"command": "printf",
+		"args":    []string{"spawn-output"},
+	}))
+	if startResp.Error != nil {
+		t.Fatalf("process/spawn error: %v", startResp.Error)
+	}
+	events := waitForNotificationSet(t, server, "process/outputDelta", "process/exited")
+	events = append(events, server.DrainNotifications()...)
+	for _, event := range events {
+		if event.Method == "command/exec/outputDelta" {
+			t.Fatalf("unexpected command exec delta for process/spawn: %#v", event)
+		}
+	}
+	assertNoNotification(t, server, "command/exec/outputDelta")
 }
 
 func TestServerBackgroundTerminalHandlers(t *testing.T) {

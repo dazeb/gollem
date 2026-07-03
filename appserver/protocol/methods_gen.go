@@ -131,7 +131,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "account/rateLimits/updated", Surface: SurfaceServerNotification, State: MethodDeferredStub, Source: "json schema:ServerNotification, protocol crate:common.rs:1656, typescript:ServerNotification.ts"},
 	{Method: "account/updated", Surface: SurfaceServerNotification, State: MethodDeferredStub, Source: "json schema:ServerNotification, protocol crate:common.rs:1655, typescript:ServerNotification.ts"},
 	{Method: "app/list/updated", Surface: SurfaceServerNotification, State: MethodDeferredStub, Source: "json schema:ServerNotification, protocol crate:common.rs:1657, typescript:ServerNotification.ts"},
-	{Method: "command/exec/outputDelta", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1639, typescript:ServerNotification.ts"},
+	{Method: "command/exec/outputDelta", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1639, typescript:ServerNotification.ts"},
 	{Method: "configWarning", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1675, typescript:ServerNotification.ts"},
 	{Method: "deprecationNotice", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1674, typescript:ServerNotification.ts"},
 	{Method: "error", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1609, typescript:ServerNotification.ts"},

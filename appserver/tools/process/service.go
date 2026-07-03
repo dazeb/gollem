@@ -28,6 +28,7 @@ var (
 	ErrApprovalDenied       = errors.New("appserver/process: operation denied by approval policy")
 	ErrProcessNotFound      = errors.New("appserver/process: process not found")
 	ErrProcessNotRunning    = errors.New("appserver/process: process is not running")
+	ErrProcessAlreadyExists = errors.New("appserver/process: process already exists")
 	ErrTooManyProcesses     = errors.New("appserver/process: too many running processes")
 	ErrPTYUnsupported       = errors.New("appserver/process: pty resize is not supported")
 	ErrInvalidOutputBufSize = errors.New("appserver/process: output buffer size must be positive")
@@ -154,6 +155,7 @@ type Service struct {
 }
 
 type StartRequest struct {
+	ID             string
 	Command        string
 	Args           []string
 	Shell          bool
@@ -303,8 +305,15 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Snapshot, error
 		s.emit(op, "", 0, false, ErrTooManyProcesses)
 		return nil, ErrTooManyProcesses
 	}
-	s.counter++
-	proc.id = fmt.Sprintf("proc-%d", s.counter)
+	proc.id = strings.TrimSpace(req.ID)
+	if proc.id == "" {
+		s.counter++
+		proc.id = fmt.Sprintf("proc-%d", s.counter)
+	} else if _, exists := s.processes[proc.id]; exists {
+		s.mu.Unlock()
+		s.emit(op, proc.id, 0, false, ErrProcessAlreadyExists)
+		return nil, ErrProcessAlreadyExists
+	}
 	if err := cmd.Start(); err != nil {
 		s.mu.Unlock()
 		s.emit(op, proc.id, 0, false, err)

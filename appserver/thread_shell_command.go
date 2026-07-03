@@ -364,6 +364,10 @@ func (s *Server) PublishProcessOutput(event toolprocess.OutputEvent) {
 	}
 	method, params := ProcessOutputNotification(event)
 	s.PublishNotification(method, params)
+	if s.isCommandExecProcess(event.ID) {
+		method, params := commandExecOutputDeltaNotification(event)
+		s.PublishNotification(method, params)
+	}
 	run, ok := s.lookupThreadShellCommandProcess(event.ID)
 	if !ok {
 		return
@@ -386,4 +390,5 @@ func (s *Server) PublishProcessExited(event toolprocess.ExitEvent) {
 	}
 	method, params := ProcessExitedNotification(event)
 	s.PublishNotification(method, params)
+	s.unregisterCommandExecProcess(event.Snapshot.ID)
 }
