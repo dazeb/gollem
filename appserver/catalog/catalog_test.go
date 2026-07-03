@@ -134,6 +134,13 @@ func TestToolListAvailability(t *testing.T) {
 	if cacheTool == nil || !cacheTool.Available || !cacheTool.GollemExtension {
 		t.Fatalf("cache tool metadata = %#v", cacheTool)
 	}
+	memoryTool := findTool(ListTools(ToolListParams{}, ToolServices{Memory: true}).Data, "memory")
+	if memoryTool == nil || !memoryTool.Available || memoryTool.GollemExtension || !memoryTool.CodexCompatible || !memoryTool.Mutation {
+		t.Fatalf("memory tool metadata = %#v", memoryTool)
+	}
+	if !containsMethod(memoryTool.Methods, "memory/reset") {
+		t.Fatalf("memory tool methods = %#v", memoryTool.Methods)
+	}
 	configTool := findTool(ListTools(ToolListParams{}, ToolServices{Config: true}).Data, "config")
 	if configTool == nil || !configTool.Available || !configTool.CodexCompatible || configTool.GollemExtension {
 		t.Fatalf("config tool metadata = %#v", configTool)

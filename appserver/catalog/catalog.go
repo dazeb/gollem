@@ -186,6 +186,7 @@ type ToolServices struct {
 	Skills       bool
 	Runtime      bool
 	Interactions bool
+	Memory       bool
 }
 
 type Tool struct {
@@ -481,6 +482,7 @@ func builtinTools(services ToolServices) []Tool {
 		tool("mcp", "MCP servers", "List MCP server startup status, read MCP resources, and call MCP tools through registered Gollem MCP clients.", "runtime", []string{"mcpServerStatus/list", "mcpServer/resource/read", "mcpServer/tool/call"}, services.MCP, true, true, "", true, false),
 		tool("skills", "Skills and plugins", "List workspace-scoped skills and read plugin manifests and skill content from configured roots.", "configuration", []string{"skills/list", "plugin/list", "plugin/installed", "plugin/read", "plugin/skill/read"}, services.Skills, false, false, "", true, false),
 		tool("cache", "Cache", "Read deterministic cache stats and run provider normalization benchmark fixtures.", "runtime", []string{"cache/stats", "cache/benchmark"}, services.Cache, false, false, "", false, true),
+		tool("memory", "Memory", "Reset local Gollem memory artifacts without changing persisted thread memory modes.", "conversation", []string{"memory/reset"}, services.Memory, true, true, "", true, false),
 	}
 }
 

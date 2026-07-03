@@ -273,6 +273,11 @@ func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*apps
 		cleanup()
 		return nil, nil, err
 	}
+	memorySvc, err := appserver.NewMemoryService(filepath.Join(workDir, ".gollem", "memories"))
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
 
 	var gitSvc *toolgit.Service
 	gitRoot := firstNonEmptyAppServer(flags.gitRoot, workDir)
@@ -309,6 +314,7 @@ func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*apps
 			filepath.Join(workDir, ".gollem", "skills"),
 			filepath.Join(workDir, ".gollem", "plugins"),
 		))),
+		appserver.WithMemoryService(memorySvc),
 		appserver.WithEventQueue(events),
 		appserver.WithApprovalService(approvals),
 		appserver.WithRuntimeService(appserver.NewRuntimeService(

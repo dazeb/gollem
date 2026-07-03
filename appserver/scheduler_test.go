@@ -121,3 +121,10 @@ func TestRequestScheduleForThreadControls(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestScheduleForMemoryReset(t *testing.T) {
+	schedule := RequestScheduleFor("memory/reset", nil)
+	if schedule.Scope != "memory" || !schedule.Serial {
+		t.Fatalf("schedule = %#v, want serial memory scope", schedule)
+	}
+}

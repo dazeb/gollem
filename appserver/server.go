@@ -58,6 +58,7 @@ type Server struct {
 	interact  *InteractionService
 	daemon    *DaemonService
 	runtime   *RuntimeService
+	memory    *MemoryService
 
 	requestSchedulerLimit int
 }
@@ -154,6 +155,12 @@ func WithDaemonService(daemon *DaemonService) Option {
 func WithRuntimeService(runtime *RuntimeService) Option {
 	return func(s *Server) {
 		s.runtime = runtime
+	}
+}
+
+func WithMemoryService(memory *MemoryService) Option {
+	return func(s *Server) {
+		s.memory = memory
 	}
 }
 
@@ -433,6 +440,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadMetadataUpdate(ctx, params)
 	case "thread/memoryMode/set":
 		return s.handleThreadMemoryModeSet(ctx, params)
+	case "memory/reset":
+		return s.handleMemoryReset(ctx)
 	case "thread/name/set":
 		return s.handleThreadNameSet(ctx, params)
 	case "thread/backgroundTerminals/list":
@@ -942,6 +951,18 @@ func (s *Server) handleThreadMemoryModeSet(ctx context.Context, raw json.RawMess
 	}, nil
 }
 
+func (s *Server) handleMemoryReset(ctx context.Context) (any, *protocol.Error) {
+	memorySvc, rpcErr := s.requireMemory("memory/reset")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := memorySvc.Reset(ctx)
+	if err != nil {
+		return nil, mapError("memory/reset", err)
+	}
+	return result, nil
+}
+
 func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	st, rpcErr := s.requireStore("thread/name/set")
 	if rpcErr != nil {
@@ -1309,6 +1330,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Skills:       s.skills != nil,
 		Runtime:      s.runtime != nil,
 		Interactions: s.interact != nil,
+		Memory:       s.memory != nil,
 	}), nil
 }
 
@@ -1831,6 +1853,13 @@ func (s *Server) requireDaemon(method string) (*DaemonService, *protocol.Error) 
 	return s.daemon, nil
 }
 
+func (s *Server) requireMemory(method string) (*MemoryService, *protocol.Error) {
+	if s.memory == nil {
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "memory service is not configured")
+	}
+	return s.memory, nil
+}
+
 func (s *Server) requireRuntime(method string) (store.Store, *RuntimeService, *protocol.Error) {
 	st, rpcErr := s.requireStore(method)
 	if rpcErr != nil {
@@ -1938,6 +1967,8 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
 		errors.Is(err, store.ErrThreadDeleted),
+		errors.Is(err, ErrMemoryRootRequired),
+		errors.Is(err, ErrMemoryRootUnsafe),
 		errors.Is(err, ErrRuntimePromptEmpty):
 		return invalidParams("invalid params", err)
 	case errors.Is(err, toolfs.ErrApprovalDenied),

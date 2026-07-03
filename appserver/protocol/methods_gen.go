@@ -55,7 +55,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "mcpServer/resource/read", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:972, typescript:ClientRequest.ts"},
 	{Method: "mcpServer/tool/call", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:978, typescript:ClientRequest.ts"},
 	{Method: "mcpServerStatus/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:966, typescript:ClientRequest.ts"},
-	{Method: "memory/reset", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "protocol crate:common.rs:567"},
+	{Method: "memory/reset", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:567"},
 	{Method: "mock/experimentalMethod", Surface: SurfaceClientRequest, State: MethodNotApplicable, Source: "protocol crate:common.rs:934"},
 	{Method: "model/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:858, typescript:ClientRequest.ts"},
 	{Method: "modelProvider/capabilities/read", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:863, typescript:ClientRequest.ts"},

@@ -539,6 +539,59 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	}
 }
 
+func TestServerMemoryResetHandler(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{
+		Title:    "Memory",
+		Settings: map[string]any{threadMemoryModeSettingKey: "enabled"},
+	})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	memoryRoot := filepath.Join(t.TempDir(), "memories")
+	if err := os.MkdirAll(filepath.Join(memoryRoot, "rollout_summaries"), 0o700); err != nil {
+		t.Fatalf("MkdirAll memory root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(memoryRoot, "MEMORY.md"), []byte("stale memory"), 0o600); err != nil {
+		t.Fatalf("WriteFile memory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(memoryRoot, "rollout_summaries", "old.md"), []byte("old"), 0o600); err != nil {
+		t.Fatalf("WriteFile rollout: %v", err)
+	}
+	memorySvc, err := NewMemoryService(memoryRoot)
+	if err != nil {
+		t.Fatalf("NewMemoryService: %v", err)
+	}
+	server := readyServer(WithStore(st), WithMemoryService(memorySvc))
+
+	resetResp := server.HandleRequest(ctx, request("memory/reset", nil))
+	if resetResp.Error != nil {
+		t.Fatalf("memory/reset error: %v", resetResp.Error)
+	}
+	var reset MemoryResetResponse
+	decodeResult(t, resetResp, &reset)
+	entries, err := os.ReadDir(memoryRoot)
+	if err != nil {
+		t.Fatalf("ReadDir memory root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("memory root entries after reset = %#v", entries)
+	}
+	loaded, err := st.GetThread(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if loaded.Settings[threadMemoryModeSettingKey] != "enabled" {
+		t.Fatalf("memory mode after reset = %#v", loaded.Settings)
+	}
+}
+
 func TestServerCatalogHandlers(t *testing.T) {
 	ctx := context.Background()
 	catalogSvc := catalog.NewDefault(catalog.WithEnvLookup(func(key string) (string, bool) {
@@ -551,7 +604,11 @@ func TestServerCatalogHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	server := readyServer(WithCatalog(catalogSvc), WithFilesystem(fsSvc))
+	memorySvc, err := NewMemoryService(filepath.Join(t.TempDir(), "memories"))
+	if err != nil {
+		t.Fatalf("NewMemoryService: %v", err)
+	}
+	server := readyServer(WithCatalog(catalogSvc), WithFilesystem(fsSvc), WithMemoryService(memorySvc))
 
 	providersResp := server.HandleRequest(ctx, request("provider/list", nil))
 	if providersResp.Error != nil {
@@ -620,6 +677,9 @@ func TestServerCatalogHandlers(t *testing.T) {
 	}
 	if !toolAvailable(tools.Data, "config") {
 		t.Fatalf("tool/list did not report config available: %#v", tools.Data)
+	}
+	if !toolAvailable(tools.Data, "memory") {
+		t.Fatalf("tool/list did not report memory available: %#v", tools.Data)
 	}
 }
 

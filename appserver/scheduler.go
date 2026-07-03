@@ -113,6 +113,8 @@ func RequestScheduleFor(method string, params json.RawMessage) RequestSchedule {
 		return RequestSchedule{Scope: "git", Serial: true}
 	case "cache/stats", "cache/benchmark":
 		return RequestSchedule{Scope: "cache", Serial: true}
+	case "memory/reset":
+		return RequestSchedule{Scope: "memory", Serial: true}
 	case "mcpServerStatus/list", "mcpServer/resource/read", "mcpServer/tool/call":
 		return RequestSchedule{Scope: "mcp", Serial: true}
 	case "skills/list", "plugin/list", "plugin/installed", "plugin/read", "plugin/skill/read",
