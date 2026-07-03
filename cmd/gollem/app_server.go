@@ -153,10 +153,11 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 	processOpts := []toolprocess.Option{}
 	gitOpts := []toolgit.Option{}
 	events := appserver.NewEventQueue()
+	approvals := appserver.NewApprovalService()
 	if !flags.allowMutations {
-		fsOpts = append(fsOpts, toolfs.WithApproval(denyFilesystemMutation))
-		processOpts = append(processOpts, toolprocess.WithApproval(denyProcessMutation))
-		gitOpts = append(gitOpts, toolgit.WithApproval(denyGitMutation))
+		fsOpts = append(fsOpts, toolfs.WithApproval(approvals.FilesystemApproval))
+		processOpts = append(processOpts, toolprocess.WithApproval(approvals.ProcessApproval))
+		gitOpts = append(gitOpts, toolgit.WithApproval(approvals.GitApproval))
 	}
 	processOpts = append(processOpts,
 		toolprocess.WithOutputSink(func(ev toolprocess.OutputEvent) {
@@ -204,6 +205,7 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 		appserver.WithFilesystem(fsSvc),
 		appserver.WithProcess(processSvc),
 		appserver.WithEventQueue(events),
+		appserver.WithApprovalService(approvals),
 	}
 	if gitSvc != nil {
 		opts = append(opts, appserver.WithGit(gitSvc))
@@ -233,18 +235,6 @@ func resolveAppServerStorePath(workDir, configured string) (string, error) {
 	return abs, nil
 }
 
-func denyFilesystemMutation(_ context.Context, op toolfs.Operation) error {
-	return fmt.Errorf("filesystem mutation %q requires --allow-mutations until approval/respond is implemented", op.Kind)
-}
-
-func denyProcessMutation(_ context.Context, op toolprocess.Operation) error {
-	return fmt.Errorf("process operation %q requires --allow-mutations until approval/respond is implemented", op.Kind)
-}
-
-func denyGitMutation(_ context.Context, op toolgit.Operation) error {
-	return fmt.Errorf("git mutation %q requires --allow-mutations until approval/respond is implemented", op.Kind)
-}
-
 func firstNonEmptyAppServer(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -266,7 +256,7 @@ Options:
   --store <path>            SQLite store path (default: <workdir>/.gollem/appserver.db)
   --git-root <path>         Git repository root (default: workdir; unavailable if not a repo)
   --worktree-root <path>    Directory where git/worktree/create may create worktrees
-  --allow-mutations[=bool]  Allow fs/process/git mutations without approval/respond (default: false)
+  --allow-mutations[=bool]  Bypass app-server approvals for fs/process/git mutations (default: false)
   -h, --help                Show this help
 
 Protocol:

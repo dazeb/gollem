@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	appserver "github.com/fugue-labs/gollem/appserver"
 	"github.com/fugue-labs/gollem/appserver/catalog"
@@ -36,7 +37,7 @@ func TestParseAppServerFlags(t *testing.T) {
 	}
 }
 
-func TestCLIAppServerDefaultDeniesMutations(t *testing.T) {
+func TestCLIAppServerDefaultRequiresMutationApproval(t *testing.T) {
 	server, cleanup, err := newCLIAppServer(appServerFlags{
 		workDir:   t.TempDir(),
 		storePath: ":memory:",
@@ -48,11 +49,38 @@ func TestCLIAppServerDefaultDeniesMutations(t *testing.T) {
 	defer cleanup()
 	readyCLIAppServer(t, server)
 
-	resp := server.HandleRequest(context.Background(), protocol.Request{
-		ID:     protocol.NewStringID("write"),
-		Method: "fs/writeFile",
-		Params: json.RawMessage(`{"path":"blocked.txt","content":"nope"}`),
+	respCh := make(chan protocol.Response, 1)
+	go func() {
+		respCh <- server.HandleRequest(context.Background(), protocol.Request{
+			ID:     protocol.NewStringID("write"),
+			Method: "fs/writeFile",
+			Params: json.RawMessage(`{"path":"blocked.txt","content":"nope"}`),
+		})
+	}()
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for approval request")
+	}
+	requests := server.DrainRequests()
+	if len(requests) != 1 || requests[0].Method != "item/fileChange/requestApproval" {
+		t.Fatalf("approval requests = %#v", requests)
+	}
+	requestID, _ := requests[0].ID.Value().(string)
+	denyResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("deny"),
+		Method: "approval/respond",
+		Params: json.RawMessage(`{"requestId":"` + requestID + `","approved":false,"message":"denied in test"}`),
 	})
+	if denyResp.Error != nil {
+		t.Fatalf("approval/respond error: %v", denyResp.Error)
+	}
+	var resp protocol.Response
+	select {
+	case resp = <-respCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("write request did not finish after denied approval")
+	}
 	if resp.Error == nil || resp.Error.Code != protocol.CodeInvalidRequest {
 		t.Fatalf("write response error = %#v, want invalid request", resp.Error)
 	}

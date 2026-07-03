@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/fugue-labs/gollem/appserver/protocol"
 )
@@ -35,6 +36,10 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLineBytes)
 	out := bufio.NewWriter(writer)
 	defer func() { _ = out.Flush() }()
+	var writeMu sync.Mutex
+	var requestMu sync.Mutex
+	var handlers sync.WaitGroup
+	writeErr := make(chan error, 1)
 
 	lines := make(chan scannedJSONLine, 1)
 	go func() {
@@ -48,20 +53,78 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 	}()
 
 	eventSignal := server.NotificationSignal()
+	requestSignal := server.RequestSignal()
+	sendErr := func(err error) {
+		if err == nil {
+			return
+		}
+		select {
+		case writeErr <- err:
+		default:
+		}
+	}
+	drainOutboundLocked := func() error {
+		if err := writeJSONLineRequests(server.DrainRequests(), out); err != nil {
+			return err
+		}
+		if err := writeJSONLineNotifications(server.DrainNotifications(), out); err != nil {
+			return err
+		}
+		return nil
+	}
+	handleLine := func(line []byte, serialize bool) {
+		defer handlers.Done()
+		if serialize {
+			requestMu.Lock()
+			defer requestMu.Unlock()
+		}
+		response, hasResponse, err := handleJSONLine(ctx, server, line)
+		writeMu.Lock()
+		err = writeJSONLineResponsePayload(response, hasResponse, err, out)
+		if err == nil {
+			err = drainOutboundLocked()
+		}
+		writeMu.Unlock()
+		sendErr(err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case err := <-writeErr:
+			return err
+		case <-requestSignal:
+			writeMu.Lock()
+			err := writeJSONLineRequests(server.DrainRequests(), out)
+			writeMu.Unlock()
+			if err != nil {
+				return err
+			}
 		case <-eventSignal:
-			if err := writeJSONLineNotifications(server.DrainNotifications(), out); err != nil {
+			writeMu.Lock()
+			err := writeJSONLineNotifications(server.DrainNotifications(), out)
+			writeMu.Unlock()
+			if err != nil {
 				return err
 			}
 		case scanned, ok := <-lines:
 			if !ok {
-				if err := writeJSONLineNotifications(server.DrainNotifications(), out); err != nil {
+				done := make(chan struct{})
+				go func() {
+					handlers.Wait()
+					close(done)
+				}()
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case err := <-writeErr:
+					return err
+				case <-done:
+					writeMu.Lock()
+					err := drainOutboundLocked()
+					writeMu.Unlock()
 					return err
 				}
-				return nil
 			}
 			if scanned.err != nil {
 				return fmt.Errorf("read app-server input: %w", scanned.err)
@@ -70,12 +133,24 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 			if line == "" {
 				continue
 			}
-			if err := writeJSONLineResponse(ctx, server, []byte(line), out); err != nil {
-				return err
+			classified, err := classifyJSONLine([]byte(line))
+			if err != nil {
+				writeMu.Lock()
+				err = writeJSONLineResponse(ctx, server, []byte(line), out)
+				writeMu.Unlock()
+				if err != nil {
+					return err
+				}
+				continue
 			}
-			if err := writeJSONLineNotifications(server.DrainNotifications(), out); err != nil {
-				return err
+			serialize := classified.isClientRequest() && classified.Method != "initialize" && classified.Method != "approval/respond"
+			if serialize {
+				handlers.Add(1)
+				go handleLine([]byte(line), true)
+				continue
 			}
+			handlers.Add(1)
+			handleLine([]byte(line), false)
 		}
 	}
 }
@@ -85,8 +160,33 @@ type scannedJSONLine struct {
 	err  error
 }
 
+type classifiedJSONLine struct {
+	ID     json.RawMessage
+	Method string
+}
+
+func (l classifiedJSONLine) isClientRequest() bool {
+	return len(l.ID) > 0
+}
+
+func classifyJSONLine(line []byte) (classifiedJSONLine, error) {
+	var classified classifiedJSONLine
+	if err := json.Unmarshal(line, &classified); err != nil {
+		return classifiedJSONLine{}, err
+	}
+	return classified, nil
+}
+
 func writeJSONLineResponse(ctx context.Context, server *Server, line []byte, out *bufio.Writer) error {
-	response, hasResponse, err := server.HandleJSON(ctx, line)
+	response, hasResponse, err := handleJSONLine(ctx, server, line)
+	return writeJSONLineResponsePayload(response, hasResponse, err, out)
+}
+
+func handleJSONLine(ctx context.Context, server *Server, line []byte) ([]byte, bool, error) {
+	return server.HandleJSON(ctx, line)
+}
+
+func writeJSONLineResponsePayload(response []byte, hasResponse bool, err error, out *bufio.Writer) error {
 	if err != nil {
 		response = marshalTransportError(err)
 		hasResponse = true
@@ -102,6 +202,28 @@ func writeJSONLineResponse(ctx context.Context, server *Server, line []byte, out
 	}
 	if err := out.Flush(); err != nil {
 		return fmt.Errorf("flush app-server response: %w", err)
+	}
+	return nil
+}
+
+func writeJSONLineRequests(requests []protocol.Request, out *bufio.Writer) error {
+	for _, request := range requests {
+		data, err := json.Marshal(request)
+		if err != nil {
+			return fmt.Errorf("marshal app-server request: %w", err)
+		}
+		if _, err := out.Write(data); err != nil {
+			return fmt.Errorf("write app-server request: %w", err)
+		}
+		if err := out.WriteByte('\n'); err != nil {
+			return fmt.Errorf("write app-server request newline: %w", err)
+		}
+	}
+	if len(requests) == 0 {
+		return nil
+	}
+	if err := out.Flush(); err != nil {
+		return fmt.Errorf("flush app-server requests: %w", err)
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -77,6 +78,91 @@ func TestServeJSONLinesStdioFlow(t *testing.T) {
 	}
 }
 
+func TestServeJSONLinesApprovalRespondFlow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	approvals := NewApprovalService()
+	fsSvc, err := toolfs.NewService(t.TempDir(), toolfs.WithApproval(approvals.FilesystemApproval))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := NewServer(WithFilesystem(fsSvc), WithApprovalService(approvals))
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		err := ServeJSONLines(ctx, server, inR, outW)
+		if err != nil {
+			_ = outW.CloseWithError(err)
+		} else {
+			_ = outW.Close()
+		}
+		errCh <- err
+	}()
+	scanner := bufio.NewScanner(outR)
+	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`)
+	writeInputLine(t, inW, `{"method":"initialized"}`)
+	writeInputLine(t, inW, `{"id":"write","method":"fs/writeFile","params":{"path":"approved.txt","content":"ok"}}`)
+
+	var initResp protocol.Response
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &initResp); err != nil {
+		t.Fatalf("decode init response: %v", err)
+	}
+	if initResp.Error != nil {
+		t.Fatalf("init error: %v", initResp.Error)
+	}
+	var approvalReq protocol.Request
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &approvalReq); err != nil {
+		t.Fatalf("decode approval request: %v", err)
+	}
+	if approvalReq.Method != "item/fileChange/requestApproval" {
+		t.Fatalf("approval method = %q", approvalReq.Method)
+	}
+	requestID, _ := approvalReq.ID.Value().(string)
+	if requestID == "" {
+		t.Fatalf("approval request id = %#v", approvalReq.ID.Value())
+	}
+	writeInputLine(t, inW, `{"id":"approve","method":"approval/respond","params":{"requestId":"`+requestID+`","approved":true}}`)
+	if err := inW.Close(); err != nil {
+		t.Fatalf("close input: %v", err)
+	}
+
+	seenIDs := map[string]bool{}
+	seenMethods := map[string]bool{}
+	for scanner.Scan() {
+		var envelope struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+		}
+		line := scanner.Text()
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			t.Fatalf("decode output line %q: %v", line, err)
+		}
+		if id, ok := envelope.ID.(string); ok {
+			seenIDs[id] = true
+		}
+		if envelope.Method != "" {
+			seenMethods[envelope.Method] = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan output: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeJSONLines: %v", err)
+	}
+	for _, id := range []string{"approve", "write"} {
+		if !seenIDs[id] {
+			t.Fatalf("missing response id %q in %#v", id, seenIDs)
+		}
+	}
+	for _, method := range []string{"serverRequest/resolved", "fs/changed"} {
+		if !seenMethods[method] {
+			t.Fatalf("missing notification method %q in %#v", method, seenMethods)
+		}
+	}
+}
+
 func TestServeJSONLinesWritesTransportErrors(t *testing.T) {
 	server := NewServer()
 	var output bytes.Buffer
@@ -124,5 +210,39 @@ func assertNoJSONRPCMember(t *testing.T, line string) {
 	}
 	if _, ok := envelope["jsonrpc"]; ok {
 		t.Fatalf("response included jsonrpc member: %s", line)
+	}
+}
+
+func writeInputLine(t *testing.T, writer *io.PipeWriter, line string) {
+	t.Helper()
+	if _, err := io.WriteString(writer, line+"\n"); err != nil {
+		t.Fatalf("write input line: %v", err)
+	}
+}
+
+func readOutputLine(t *testing.T, scanner *bufio.Scanner) string {
+	t.Helper()
+	type result struct {
+		line string
+		ok   bool
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		ok := scanner.Scan()
+		ch <- result{line: scanner.Text(), ok: ok, err: scanner.Err()}
+	}()
+	select {
+	case got := <-ch:
+		if got.err != nil {
+			t.Fatalf("scan output: %v", got.err)
+		}
+		if !got.ok {
+			t.Fatal("output stream closed before expected line")
+		}
+		return got.line
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for output line")
+		return ""
 	}
 }

@@ -350,6 +350,52 @@ func TestServerFilesystemHandlers(t *testing.T) {
 	}
 }
 
+func TestServerFilesystemApprovalRespondFlow(t *testing.T) {
+	ctx := context.Background()
+	approvals := NewApprovalService()
+	fsSvc, err := toolfs.NewService(t.TempDir(), toolfs.WithApproval(approvals.FilesystemApproval))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithFilesystem(fsSvc), WithApprovalService(approvals))
+
+	respCh := make(chan protocol.Response, 1)
+	go func() {
+		respCh <- server.HandleRequest(ctx, request("fs/writeFile", map[string]any{
+			"path":    "approved.txt",
+			"content": "ok",
+		}))
+	}()
+
+	approvalReq := waitForServerRequest(t, server)
+	if approvalReq.Method != "item/fileChange/requestApproval" {
+		t.Fatalf("approval method = %q", approvalReq.Method)
+	}
+	requestID, _ := approvalReq.ID.Value().(string)
+	if requestID == "" {
+		t.Fatalf("approval request id = %#v", approvalReq.ID.Value())
+	}
+	approvalResp := server.HandleRequest(ctx, request("approval/respond", map[string]any{
+		"requestId": requestID,
+		"approved":  true,
+	}))
+	if approvalResp.Error != nil {
+		t.Fatalf("approval/respond error: %v", approvalResp.Error)
+	}
+
+	select {
+	case writeResp := <-respCh:
+		if writeResp.Error != nil {
+			t.Fatalf("fs/writeFile after approval error: %v", writeResp.Error)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fs/writeFile did not finish after approval")
+	}
+
+	events := server.DrainNotifications()
+	assertNotificationMethods(t, events, "serverRequest/resolved", "fs/changed")
+}
+
 func TestServerProcessHandlers(t *testing.T) {
 	ctx := context.Background()
 	processSvc, err := toolprocess.NewService(t.TempDir())
@@ -502,6 +548,20 @@ func assertNotificationMethods(t *testing.T, notifications []protocol.Notificati
 			t.Fatalf("notification[%d] method = %q, want %q", i, notifications[i].Method, method)
 		}
 	}
+}
+
+func waitForServerRequest(t *testing.T, server *Server) protocol.Request {
+	t.Helper()
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for server request")
+	}
+	requests := server.DrainRequests()
+	if len(requests) != 1 {
+		t.Fatalf("server requests = %#v", requests)
+	}
+	return requests[0]
 }
 
 func initRepo(t *testing.T) string {

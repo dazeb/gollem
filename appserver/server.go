@@ -38,13 +38,14 @@ type Server struct {
 	clientInfo protocol.ImplementationInfo
 	optOut     map[string]struct{}
 
-	store   store.Store
-	fs      *toolfs.Service
-	process *toolprocess.Service
-	git     *toolgit.Service
-	catalog *catalog.Catalog
-	cache   *appcache.Service
-	events  *EventQueue
+	store     store.Store
+	fs        *toolfs.Service
+	process   *toolprocess.Service
+	git       *toolgit.Service
+	catalog   *catalog.Catalog
+	cache     *appcache.Service
+	events    *EventQueue
+	approvals *ApprovalService
 }
 
 // Option configures a Server.
@@ -100,6 +101,12 @@ func WithEventQueue(events *EventQueue) Option {
 	}
 }
 
+func WithApprovalService(approvals *ApprovalService) Option {
+	return func(s *Server) {
+		s.approvals = approvals
+	}
+}
+
 func NewServer(opts ...Option) *Server {
 	s := &Server{
 		serverInfo: protocol.ImplementationInfo{Name: "gollem-appserver"},
@@ -107,6 +114,7 @@ func NewServer(opts ...Option) *Server {
 		catalog:    catalog.NewDefault(),
 		cache:      appcache.NewService(),
 		events:     NewEventQueue(),
+		approvals:  NewApprovalService(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -215,6 +223,20 @@ func (s *Server) DrainNotifications() []protocol.Notification {
 	return s.events.Drain(s.NotificationEnabled)
 }
 
+func (s *Server) RequestSignal() <-chan struct{} {
+	if s == nil || s.approvals == nil {
+		return nil
+	}
+	return s.approvals.RequestSignal()
+}
+
+func (s *Server) DrainRequests() []protocol.Request {
+	if s == nil || s.approvals == nil {
+		return nil
+	}
+	return s.approvals.DrainRequests()
+}
+
 func (s *Server) PublishNotification(method string, params any) {
 	if s == nil || s.events == nil || !s.NotificationEnabled(method) {
 		return
@@ -288,6 +310,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleCacheStats()
 	case "cache/benchmark":
 		return s.handleCacheBenchmark(params)
+	case "approval/respond":
+		return s.handleApprovalRespond(params)
 	case "fs/readFile":
 		return s.handleFSReadFile(ctx, params)
 	case "fs/writeFile":

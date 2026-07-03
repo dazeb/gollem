@@ -42,6 +42,11 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	assertMethod(t, "process/exited", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "thread/status/changed", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "cache/benchmark/completed", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "serverRequest/resolved", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "item/commandExecution/requestApproval", SurfaceServerRequest, MethodImplemented)
+	assertMethod(t, "item/fileChange/requestApproval", SurfaceServerRequest, MethodImplemented)
+	assertMethod(t, "item/permissions/requestApproval", SurfaceServerRequest, MethodImplemented)
+	assertMethod(t, "approval/respond", SurfaceGollemExtension, MethodImplemented)
 	assertMethod(t, "feedback/upload", SurfaceClientRequest, MethodNotApplicable)
 	assertMethod(t, "initialized", SurfaceClientNotification, MethodImplemented)
 }
