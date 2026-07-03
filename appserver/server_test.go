@@ -294,6 +294,69 @@ func TestServerCacheHandlers(t *testing.T) {
 	}
 }
 
+func TestServerDaemonLifecycleHandlers(t *testing.T) {
+	ctx := context.Background()
+	daemon := NewDaemonService(
+		WithDaemonVersion("test-version"),
+		WithDaemonTransport("stdio"),
+		WithDaemonWorkDir("/tmp/work"),
+		WithDaemonStorePath(":memory:"),
+	)
+	server := readyServer(WithDaemonService(daemon))
+
+	statusResp := server.HandleRequest(ctx, request("daemon/status", nil))
+	if statusResp.Error != nil {
+		t.Fatalf("daemon/status error: %v", statusResp.Error)
+	}
+	var status DaemonStatus
+	decodeResult(t, statusResp, &status)
+	if status.Status != daemonStatusRunning || status.Version != "test-version" || status.ProtocolVersion != protocol.ProtocolVersion || status.WorkDir != "/tmp/work" {
+		t.Fatalf("daemon/status = %#v", status)
+	}
+
+	versionResp := server.HandleRequest(ctx, request("daemon/version", nil))
+	if versionResp.Error != nil {
+		t.Fatalf("daemon/version error: %v", versionResp.Error)
+	}
+	var version DaemonVersion
+	decodeResult(t, versionResp, &version)
+	if version.Version != "test-version" || version.ProtocolVersion != protocol.ProtocolVersion || version.GoVersion == "" {
+		t.Fatalf("daemon/version = %#v", version)
+	}
+
+	startResp := server.HandleRequest(ctx, request("daemon/start", nil))
+	if startResp.Error != nil {
+		t.Fatalf("daemon/start error: %v", startResp.Error)
+	}
+	var start DaemonStartResult
+	decodeResult(t, startResp, &start)
+	if !start.OK || !start.AlreadyRunning || start.Status.Status != daemonStatusRunning {
+		t.Fatalf("daemon/start = %#v", start)
+	}
+
+	stopResp := server.HandleRequest(ctx, request("daemon/stop", map[string]any{"reason": "test stop"}))
+	if stopResp.Error != nil {
+		t.Fatalf("daemon/stop error: %v", stopResp.Error)
+	}
+	var stop DaemonStopResult
+	decodeResult(t, stopResp, &stop)
+	if !stop.OK || !stop.Stopping || stop.Restart || !daemon.ShutdownRequested() || stop.Status.Status != "stopping" {
+		t.Fatalf("daemon/stop = %#v", stop)
+	}
+
+	restartDaemon := NewDaemonService()
+	restartServer := readyServer(WithDaemonService(restartDaemon))
+	restartResp := restartServer.HandleRequest(ctx, request("daemon/restart", map[string]any{"reason": "test restart"}))
+	if restartResp.Error != nil {
+		t.Fatalf("daemon/restart error: %v", restartResp.Error)
+	}
+	var restart DaemonStopResult
+	decodeResult(t, restartResp, &restart)
+	if !restart.OK || !restart.Stopping || !restart.Restart || !restartDaemon.ShutdownRequested() || !restart.Status.RestartRequested {
+		t.Fatalf("daemon/restart = %#v", restart)
+	}
+}
+
 func TestServerFilesystemHandlers(t *testing.T) {
 	ctx := context.Background()
 	fsSvc, err := toolfs.NewService(t.TempDir())

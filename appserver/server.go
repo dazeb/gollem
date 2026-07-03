@@ -46,6 +46,7 @@ type Server struct {
 	cache     *appcache.Service
 	events    *EventQueue
 	approvals *ApprovalService
+	daemon    *DaemonService
 
 	requestSchedulerLimit int
 }
@@ -109,6 +110,12 @@ func WithApprovalService(approvals *ApprovalService) Option {
 	}
 }
 
+func WithDaemonService(daemon *DaemonService) Option {
+	return func(s *Server) {
+		s.daemon = daemon
+	}
+}
+
 func WithRequestSchedulerLimit(limit int) Option {
 	return func(s *Server) {
 		if limit > 0 {
@@ -125,6 +132,7 @@ func NewServer(opts ...Option) *Server {
 		cache:                 appcache.NewService(),
 		events:                NewEventQueue(),
 		approvals:             NewApprovalService(),
+		daemon:                NewDaemonService(),
 		requestSchedulerLimit: defaultRequestSchedulerLimit,
 	}
 	for _, opt := range opts {
@@ -255,6 +263,10 @@ func (s *Server) RequestSchedulerLimit() int {
 	return s.requestSchedulerLimit
 }
 
+func (s *Server) DaemonShutdownRequested() bool {
+	return s != nil && s.daemon != nil && s.daemon.ShutdownRequested()
+}
+
 func (s *Server) PublishNotification(method string, params any) {
 	if s == nil || s.events == nil || !s.NotificationEnabled(method) {
 		return
@@ -330,6 +342,16 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleCacheBenchmark(params)
 	case "approval/respond":
 		return s.handleApprovalRespond(params)
+	case "daemon/start":
+		return s.handleDaemonStart()
+	case "daemon/stop":
+		return s.handleDaemonStop(params, false)
+	case "daemon/restart":
+		return s.handleDaemonStop(params, true)
+	case "daemon/status":
+		return s.handleDaemonStatus()
+	case "daemon/version":
+		return s.handleDaemonVersion()
 	case "fs/readFile":
 		return s.handleFSReadFile(ctx, params)
 	case "fs/writeFile":
@@ -953,6 +975,13 @@ func (s *Server) requireCatalog() *catalog.Catalog {
 		return catalog.NewDefault()
 	}
 	return s.catalog
+}
+
+func (s *Server) requireDaemon(method string) (*DaemonService, *protocol.Error) {
+	if s.daemon == nil {
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "daemon service is not configured")
+	}
+	return s.daemon, nil
 }
 
 func decodeParams(raw json.RawMessage, out any) *protocol.Error {

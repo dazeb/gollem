@@ -201,6 +201,13 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 	}
 	opts := []appserver.Option{
 		appserver.WithImplementationInfo(protocol.ImplementationInfo{Name: "gollem-appserver", Version: version}),
+		appserver.WithDaemonService(appserver.NewDaemonService(
+			appserver.WithDaemonName("gollem-appserver"),
+			appserver.WithDaemonVersion(version),
+			appserver.WithDaemonTransport("stdio"),
+			appserver.WithDaemonWorkDir(workDir),
+			appserver.WithDaemonStorePath(storePath),
+		)),
 		appserver.WithStore(st),
 		appserver.WithFilesystem(fsSvc),
 		appserver.WithProcess(processSvc),

@@ -215,6 +215,50 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 	}
 }
 
+func TestCLIAppServerServesDaemonLifecycleMethods(t *testing.T) {
+	workDir := t.TempDir()
+	server, cleanup, err := newCLIAppServer(appServerFlags{
+		workDir:   workDir,
+		storePath: ":memory:",
+		stdio:     true,
+	})
+	if err != nil {
+		t.Fatalf("newCLIAppServer: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	statusResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("status"),
+		Method: "daemon/status",
+	})
+	if statusResp.Error != nil {
+		t.Fatalf("daemon/status error: %v", statusResp.Error)
+	}
+	var status appserver.DaemonStatus
+	if err := json.Unmarshal(statusResp.Result, &status); err != nil {
+		t.Fatalf("decode daemon/status result: %v", err)
+	}
+	if status.Status != "running" || status.Name != "gollem-appserver" || status.WorkDir != workDir || status.StorePath != ":memory:" || status.ProtocolVersion != protocol.ProtocolVersion {
+		t.Fatalf("daemon/status = %#v", status)
+	}
+
+	versionResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("version"),
+		Method: "daemon/version",
+	})
+	if versionResp.Error != nil {
+		t.Fatalf("daemon/version error: %v", versionResp.Error)
+	}
+	var version appserver.DaemonVersion
+	if err := json.Unmarshal(versionResp.Result, &version); err != nil {
+		t.Fatalf("decode daemon/version result: %v", err)
+	}
+	if version.Name != "gollem-appserver" || version.ProtocolVersion != protocol.ProtocolVersion || version.GoVersion == "" {
+		t.Fatalf("daemon/version = %#v", version)
+	}
+}
+
 func readyCLIAppServer(t *testing.T, server *appserver.Server) {
 	t.Helper()
 	initResp := server.HandleRequest(context.Background(), protocol.Request{
