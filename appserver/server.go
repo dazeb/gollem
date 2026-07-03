@@ -46,6 +46,8 @@ type Server struct {
 	cache     *appcache.Service
 	events    *EventQueue
 	approvals *ApprovalService
+
+	requestSchedulerLimit int
 }
 
 // Option configures a Server.
@@ -107,14 +109,23 @@ func WithApprovalService(approvals *ApprovalService) Option {
 	}
 }
 
+func WithRequestSchedulerLimit(limit int) Option {
+	return func(s *Server) {
+		if limit > 0 {
+			s.requestSchedulerLimit = limit
+		}
+	}
+}
+
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		serverInfo: protocol.ImplementationInfo{Name: "gollem-appserver"},
-		optOut:     make(map[string]struct{}),
-		catalog:    catalog.NewDefault(),
-		cache:      appcache.NewService(),
-		events:     NewEventQueue(),
-		approvals:  NewApprovalService(),
+		serverInfo:            protocol.ImplementationInfo{Name: "gollem-appserver"},
+		optOut:                make(map[string]struct{}),
+		catalog:               catalog.NewDefault(),
+		cache:                 appcache.NewService(),
+		events:                NewEventQueue(),
+		approvals:             NewApprovalService(),
+		requestSchedulerLimit: defaultRequestSchedulerLimit,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -235,6 +246,13 @@ func (s *Server) DrainRequests() []protocol.Request {
 		return nil
 	}
 	return s.approvals.DrainRequests()
+}
+
+func (s *Server) RequestSchedulerLimit() int {
+	if s == nil || s.requestSchedulerLimit <= 0 {
+		return defaultRequestSchedulerLimit
+	}
+	return s.requestSchedulerLimit
 }
 
 func (s *Server) PublishNotification(method string, params any) {
