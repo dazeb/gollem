@@ -102,6 +102,8 @@ func TestRequestSchedulerSerializesMatchingScopes(t *testing.T) {
 
 func TestRequestScheduleForThreadControls(t *testing.T) {
 	methods := []string{
+		"thread/search",
+		"thread/loaded/list",
 		"thread/goal/get",
 		"thread/goal/set",
 		"thread/goal/clear",

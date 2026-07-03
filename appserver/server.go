@@ -41,6 +41,7 @@ type Server struct {
 	serverInfo protocol.ImplementationInfo
 	clientInfo protocol.ImplementationInfo
 	optOut     map[string]struct{}
+	loaded     map[string]struct{}
 
 	store     store.Store
 	fs        *toolfs.Service
@@ -168,6 +169,7 @@ func NewServer(opts ...Option) *Server {
 	s := &Server{
 		serverInfo:            protocol.ImplementationInfo{Name: "gollem-appserver"},
 		optOut:                make(map[string]struct{}),
+		loaded:                make(map[string]struct{}),
 		catalog:               catalog.NewDefault(),
 		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
@@ -405,6 +407,10 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadResume(ctx, params)
 	case "thread/list":
 		return s.handleThreadList(ctx, params)
+	case "thread/search":
+		return s.handleThreadSearch(ctx, params)
+	case "thread/loaded/list":
+		return s.handleThreadLoadedList(ctx, params)
 	case "thread/read":
 		return s.handleThreadRead(ctx, params)
 	case "thread/fork":
@@ -589,6 +595,7 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	if err != nil {
 		return nil, mapError("thread/start", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/started", thread)
 	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
 		ThreadID:      thread.ID,
@@ -650,6 +657,7 @@ func (s *Server) handleThreadRead(ctx context.Context, raw json.RawMessage) (any
 	if err != nil {
 		return nil, mapError("thread/read", err)
 	}
+	s.markThreadLoaded(thread)
 	result := threadReadResult{Thread: thread}
 	if boolDefault(params.IncludeTurns, true) {
 		turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: threadID, Limit: params.Limit})
@@ -690,6 +698,7 @@ func (s *Server) handleThreadFork(ctx context.Context, raw json.RawMessage) (any
 	if err != nil {
 		return nil, mapError("thread/fork", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/started", thread)
 	return map[string]any{"thread": thread}, nil
 }
@@ -723,6 +732,11 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 	}
 	if err != nil {
 		return nil, mapError(method, err)
+	}
+	if status == store.ThreadDeleted {
+		s.markThreadUnloaded(thread.ID)
+	} else {
+		s.markThreadLoaded(thread)
 	}
 	s.publishThreadNotification("thread/status/changed", thread)
 	switch status {
@@ -758,6 +772,7 @@ func (s *Server) handleThreadSettingsUpdate(ctx context.Context, raw json.RawMes
 	if err != nil {
 		return nil, mapError("thread/settings/update", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return map[string]any{"thread": thread}, nil
 }
@@ -804,6 +819,7 @@ func (s *Server) handleThreadGoalSet(ctx context.Context, raw json.RawMessage) (
 	if err != nil {
 		return nil, mapError("thread/goal/set", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	s.publishThreadGoalNotification("thread/goal/updated", thread, goal)
 	return threadGoalResult{
@@ -842,6 +858,7 @@ func (s *Server) handleThreadGoalClear(ctx context.Context, raw json.RawMessage)
 	if err != nil {
 		return nil, mapError("thread/goal/clear", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	s.publishThreadGoalNotification("thread/goal/cleared", thread, nil)
 	return threadGoalClearResult{
@@ -883,6 +900,7 @@ func (s *Server) handleThreadMetadataUpdate(ctx context.Context, raw json.RawMes
 	if err != nil {
 		return nil, mapError("thread/metadata/update", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return map[string]any{"thread": thread, "metadata": thread.Metadata}, nil
 }
@@ -913,6 +931,7 @@ func (s *Server) handleThreadMemoryModeSet(ctx context.Context, raw json.RawMess
 	if err != nil {
 		return nil, mapError("thread/memoryMode/set", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return threadMemoryModeSetResult{
 		ThreadID:   thread.ID,
@@ -942,6 +961,7 @@ func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (
 	if err != nil {
 		return nil, mapError("thread/name/set", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNameNotification(thread)
 	return threadNameSetResult{
 		ThreadID: thread.ID,
@@ -1170,6 +1190,7 @@ func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, mapError("turn/retry", err)
 	}
+	s.markThreadLoadedID(source.ThreadID)
 	return map[string]any{"turn": turn.Turn, "sourceTurnId": source.ID}, nil
 }
 
@@ -1208,6 +1229,7 @@ func (s *Server) startTurnWithParams(ctx context.Context, method string, params 
 	if err != nil {
 		return nil, mapError(method, err)
 	}
+	s.markThreadLoaded(thread)
 	return map[string]any{"thread": thread, "turn": turn.Turn}, nil
 }
 
@@ -2038,6 +2060,43 @@ type threadListParams struct {
 	Statuses       []store.ThreadStatus `json:"statuses,omitempty"`
 	IncludeDeleted bool                 `json:"includeDeleted,omitempty"`
 	Limit          int                  `json:"limit,omitempty"`
+}
+
+type threadLoadedListParams struct {
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+type threadLoadedListResult struct {
+	Data       []string `json:"data"`
+	NextCursor *string  `json:"nextCursor"`
+}
+
+type threadSearchParams struct {
+	Cursor        string   `json:"cursor,omitempty"`
+	Limit         int      `json:"limit,omitempty"`
+	SortKey       string   `json:"sortKey,omitempty"`
+	SortDirection string   `json:"sortDirection,omitempty"`
+	SourceKinds   []string `json:"sourceKinds,omitempty"`
+	Archived      *bool    `json:"archived,omitempty"`
+	SearchTerm    string   `json:"searchTerm,omitempty"`
+	Query         string   `json:"query,omitempty"`
+	Q             string   `json:"q,omitempty"`
+}
+
+func (p threadSearchParams) query() string {
+	return strings.TrimSpace(firstNonEmpty(p.SearchTerm, p.Query, p.Q))
+}
+
+type threadSearchResult struct {
+	Thread  *store.Thread `json:"thread"`
+	Snippet string        `json:"snippet"`
+}
+
+type threadSearchResponse struct {
+	Data            []threadSearchResult `json:"data"`
+	NextCursor      *string              `json:"nextCursor"`
+	BackwardsCursor *string              `json:"backwardsCursor"`
 }
 
 type threadIDParams struct {

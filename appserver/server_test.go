@@ -161,6 +161,122 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	assertNotificationMethods(t, threadEvents, "thread/status/changed", "thread/archived")
 }
 
+func TestServerThreadDiscoveryHandlers(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	alpha, err := st.CreateThread(ctx, store.CreateThreadRequest{
+		Title:     "Alpha migration",
+		Workspace: "/tmp/alpha",
+		Metadata:  map[string]any{"sourceKind": "appServer"},
+	})
+	if err != nil {
+		t.Fatalf("CreateThread alpha: %v", err)
+	}
+	beta, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Beta notes", Workspace: "/tmp/beta"})
+	if err != nil {
+		t.Fatalf("CreateThread beta: %v", err)
+	}
+	if _, err := st.AppendItem(ctx, store.AppendItemRequest{
+		ThreadID: beta.ID,
+		Kind:     "message",
+		Payload:  json.RawMessage(`{"text":"find the hidden needle in this payload"}`),
+	}); err != nil {
+		t.Fatalf("AppendItem beta: %v", err)
+	}
+	archived, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Archived needle"})
+	if err != nil {
+		t.Fatalf("CreateThread archived: %v", err)
+	}
+	if _, err := st.ArchiveThread(ctx, archived.ID); err != nil {
+		t.Fatalf("ArchiveThread: %v", err)
+	}
+	deleted, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Deleted needle"})
+	if err != nil {
+		t.Fatalf("CreateThread deleted: %v", err)
+	}
+	if _, err := st.DeleteThread(ctx, deleted.ID); err != nil {
+		t.Fatalf("DeleteThread: %v", err)
+	}
+
+	server := readyServer(WithStore(st))
+	for _, id := range []string{alpha.ID, beta.ID} {
+		readResp := server.HandleRequest(ctx, request("thread/read", map[string]any{"threadId": id, "includeItems": false}))
+		if readResp.Error != nil {
+			t.Fatalf("thread/read %s error: %v", id, readResp.Error)
+		}
+	}
+
+	loadedResp := server.HandleRequest(ctx, request("thread/loaded/list", map[string]any{"limit": 1}))
+	if loadedResp.Error != nil {
+		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
+	}
+	var loadedPage threadLoadedListResult
+	decodeResult(t, loadedResp, &loadedPage)
+	if len(loadedPage.Data) != 1 || loadedPage.NextCursor == nil {
+		t.Fatalf("loaded first page = %#v, want one result and next cursor", loadedPage)
+	}
+	nextLoadedResp := server.HandleRequest(ctx, request("thread/loaded/list", map[string]any{"cursor": *loadedPage.NextCursor}))
+	if nextLoadedResp.Error != nil {
+		t.Fatalf("thread/loaded/list next error: %v", nextLoadedResp.Error)
+	}
+	var loadedNext threadLoadedListResult
+	decodeResult(t, nextLoadedResp, &loadedNext)
+	loadedIDs := append(loadedPage.Data, loadedNext.Data...)
+	if !sameStringSet(loadedIDs, []string{alpha.ID, beta.ID}) || loadedNext.NextCursor != nil {
+		t.Fatalf("loaded ids = %#v next = %v", loadedIDs, loadedNext.NextCursor)
+	}
+
+	searchResp := server.HandleRequest(ctx, request("thread/search", map[string]any{
+		"searchTerm": "needle",
+		"limit":      10,
+	}))
+	if searchResp.Error != nil {
+		t.Fatalf("thread/search error: %v", searchResp.Error)
+	}
+	var search threadSearchResponse
+	decodeResult(t, searchResp, &search)
+	if len(search.Data) != 1 || search.Data[0].Thread.ID != beta.ID || !strings.Contains(strings.ToLower(search.Data[0].Snippet), "needle") {
+		t.Fatalf("search active result = %#v", search.Data)
+	}
+
+	archivedOnly := true
+	archivedResp := server.HandleRequest(ctx, request("thread/search", map[string]any{
+		"searchTerm": "needle",
+		"archived":   archivedOnly,
+	}))
+	if archivedResp.Error != nil {
+		t.Fatalf("thread/search archived error: %v", archivedResp.Error)
+	}
+	var archivedSearch threadSearchResponse
+	decodeResult(t, archivedResp, &archivedSearch)
+	if len(archivedSearch.Data) != 1 || archivedSearch.Data[0].Thread.ID != archived.ID {
+		t.Fatalf("archived search = %#v", archivedSearch.Data)
+	}
+
+	sourceFilteredResp := server.HandleRequest(ctx, request("thread/search", map[string]any{
+		"searchTerm":  "alpha",
+		"sourceKinds": []string{"cli"},
+	}))
+	if sourceFilteredResp.Error != nil {
+		t.Fatalf("thread/search source filtered error: %v", sourceFilteredResp.Error)
+	}
+	var sourceFiltered threadSearchResponse
+	decodeResult(t, sourceFilteredResp, &sourceFiltered)
+	if len(sourceFiltered.Data) != 0 {
+		t.Fatalf("source filtered search = %#v, want none", sourceFiltered.Data)
+	}
+
+	emptySearchResp := server.HandleRequest(ctx, request("thread/search", map[string]any{"searchTerm": "  "}))
+	if emptySearchResp.Error == nil || emptySearchResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("empty search error = %#v", emptySearchResp.Error)
+	}
+}
+
 func TestServerThreadControlHandlers(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
@@ -1291,6 +1407,23 @@ func assertNotificationMethods(t *testing.T, notifications []protocol.Notificati
 			t.Fatalf("notification[%d] method = %q, want %q", i, notifications[i].Method, method)
 		}
 	}
+}
+
+func sameStringSet(got []string, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	counts := make(map[string]int, len(got))
+	for _, value := range got {
+		counts[value]++
+	}
+	for _, value := range want {
+		if counts[value] == 0 {
+			return false
+		}
+		counts[value]--
+	}
+	return true
 }
 
 func waitForNotification(t *testing.T, server *Server, method string) protocol.Notification {
