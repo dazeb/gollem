@@ -177,11 +177,12 @@ type ToolListParams struct {
 }
 
 type ToolServices struct {
-	Filesystem bool
-	Process    bool
-	Git        bool
-	Cache      bool
-	Runtime    bool
+	Filesystem   bool
+	Process      bool
+	Git          bool
+	Cache        bool
+	Runtime      bool
+	Interactions bool
 }
 
 type Tool struct {
@@ -471,6 +472,7 @@ func builtinTools(services ToolServices) []Tool {
 		tool("git", "Git", "Read repository status and diffs, commit changes, and manage scoped worktrees.", "source-control", []string{"git/status", "git/diff", "git/commit", "git/worktree/list", "git/worktree/create"}, services.Git, true, true, "", false, true),
 		tool("thread-store", "Thread store", "List, read, archive, unarchive, delete, fork, and configure durable Gollem app-server threads.", "conversation", []string{"thread/list", "thread/read", "thread/fork", "thread/archive", "thread/unarchive", "thread/delete", "thread/settings/update", "thread/turns/list", "thread/items/list"}, true, false, false, "", true, false),
 		tool("turn-runtime", "Turn runtime", "Start, resume, interrupt, steer, and retry provider-neutral Gollem app-server turns.", "runtime", []string{"thread/start", "thread/resume", "turn/start", "turn/interrupt", "turn/steer", "turn/retry"}, services.Runtime, true, false, "turn/started", true, true),
+		tool("interactions", "Interactions", "Request user input, dynamic tool calls, and MCP elicitation from the connected Slang client.", "runtime", []string{"item/tool/requestUserInput", "item/tool/call", "mcpServer/elicitation/request"}, services.Interactions, false, false, "serverRequest/resolved", true, false),
 		tool("provider-catalog", "Provider catalog", "List provider, model, capability, and app-server tool metadata for Slang controls.", "configuration", []string{"provider/list", "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "tool/list"}, true, false, false, "", true, true),
 		tool("cache", "Cache", "Read deterministic cache stats and run provider normalization benchmark fixtures.", "runtime", []string{"cache/stats", "cache/benchmark"}, services.Cache, false, false, "", false, true),
 	}

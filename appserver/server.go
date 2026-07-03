@@ -46,7 +46,9 @@ type Server struct {
 	catalog   *catalog.Catalog
 	cache     *appcache.Service
 	events    *EventQueue
+	requests  *RequestQueue
 	approvals *ApprovalService
+	interact  *InteractionService
 	daemon    *DaemonService
 	runtime   *RuntimeService
 
@@ -112,6 +114,12 @@ func WithApprovalService(approvals *ApprovalService) Option {
 	}
 }
 
+func WithInteractionService(interactions *InteractionService) Option {
+	return func(s *Server) {
+		s.interact = interactions
+	}
+}
+
 func WithDaemonService(daemon *DaemonService) Option {
 	return func(s *Server) {
 		s.daemon = daemon
@@ -139,12 +147,23 @@ func NewServer(opts ...Option) *Server {
 		catalog:               catalog.NewDefault(),
 		cache:                 appcache.NewService(),
 		events:                NewEventQueue(),
+		requests:              NewRequestQueue(),
 		approvals:             NewApprovalService(),
+		interact:              NewInteractionService(),
 		daemon:                NewDaemonService(),
 		requestSchedulerLimit: defaultRequestSchedulerLimit,
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	if s.requests == nil {
+		s.requests = NewRequestQueue()
+	}
+	if s.approvals != nil {
+		s.approvals.setRequestQueue(s.requests)
+	}
+	if s.interact != nil {
+		s.interact.setRequestQueue(s.requests)
 	}
 	return s
 }
@@ -160,6 +179,13 @@ func (s *Server) HandleJSON(ctx context.Context, data []byte) ([]byte, bool, err
 		return nil, false, err
 	}
 	if len(probe.ID) > 0 {
+		if strings.TrimSpace(probe.Method) == "" {
+			var resp protocol.Response
+			if err := json.Unmarshal(data, &resp); err != nil {
+				return nil, false, err
+			}
+			return nil, false, s.HandleResponse(ctx, resp)
+		}
 		var req protocol.Request
 		if err := json.Unmarshal(data, &req); err != nil {
 			return nil, false, err
@@ -224,6 +250,32 @@ func (s *Server) HandleNotification(ctx context.Context, notification protocol.N
 	return protocol.MethodUnavailableErrorWithReason(notification.Method, "notification handler is not implemented in this Gollem build")
 }
 
+// HandleResponse handles one client response to a server-to-client request.
+func (s *Server) HandleResponse(ctx context.Context, resp protocol.Response) error {
+	_ = ctx
+	if s == nil {
+		return rpcError(protocol.CodeInternalError, "server not configured", nil)
+	}
+	if err := s.requireReady(); err != nil {
+		return err
+	}
+	if s.interact == nil {
+		return protocol.MethodUnavailableErrorWithReason("server response", "interaction service is not configured")
+	}
+	result, ok, err := s.interact.Respond(resp)
+	if err != nil {
+		return invalidParams("invalid server request response", err)
+	}
+	if !ok {
+		return invalidParams("server request is not pending", fmt.Errorf("request %s is not pending", requestIDString(resp.ID)))
+	}
+	s.PublishNotification("serverRequest/resolved", serverRequestResolvedParams{
+		ThreadID:  firstNonEmpty(result.ThreadID, "appserver"),
+		RequestID: result.RequestID,
+	})
+	return nil
+}
+
 // NotificationEnabled reports whether the connected client opted out of a
 // server notification method.
 func (s *Server) NotificationEnabled(method string) bool {
@@ -251,17 +303,17 @@ func (s *Server) DrainNotifications() []protocol.Notification {
 }
 
 func (s *Server) RequestSignal() <-chan struct{} {
-	if s == nil || s.approvals == nil {
+	if s == nil || s.requests == nil {
 		return nil
 	}
-	return s.approvals.RequestSignal()
+	return s.requests.Signal()
 }
 
 func (s *Server) DrainRequests() []protocol.Request {
-	if s == nil || s.approvals == nil {
+	if s == nil || s.requests == nil {
 		return nil
 	}
-	return s.approvals.DrainRequests()
+	return s.requests.Drain()
 }
 
 func (s *Server) RequestSchedulerLimit() int {
@@ -883,11 +935,12 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		return nil, rpcErr
 	}
 	return catalog.ListTools(params, catalog.ToolServices{
-		Filesystem: s.fs != nil,
-		Process:    s.process != nil,
-		Git:        s.git != nil,
-		Cache:      s.cache != nil,
-		Runtime:    s.runtime != nil,
+		Filesystem:   s.fs != nil,
+		Process:      s.process != nil,
+		Git:          s.git != nil,
+		Cache:        s.cache != nil,
+		Runtime:      s.runtime != nil,
+		Interactions: s.interact != nil,
 	}), nil
 }
 

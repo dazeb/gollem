@@ -101,6 +101,15 @@ func NewApprovalService() *ApprovalService {
 	}
 }
 
+func (s *ApprovalService) setRequestQueue(q *RequestQueue) {
+	if s == nil || q == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.requests = q
+}
+
 func (s *ApprovalService) RequestSignal() <-chan struct{} {
 	if s == nil || s.requests == nil {
 		return nil
