@@ -438,6 +438,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadRead(ctx, params)
 	case "thread/fork":
 		return s.handleThreadFork(ctx, params)
+	case "thread/rollback":
+		return s.handleThreadRollback(ctx, params)
 	case "thread/archive":
 		return s.handleThreadStatus(ctx, params, method, store.ThreadArchived)
 	case "thread/unarchive":

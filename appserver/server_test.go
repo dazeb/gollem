@@ -490,6 +490,120 @@ func TestServerThreadUnsubscribeHandler(t *testing.T) {
 	}
 }
 
+func TestServerThreadRollbackHandler(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Rollback Title"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	firstTurn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID, Input: json.RawMessage(`{"prompt":"first"}`)})
+	if err != nil {
+		t.Fatalf("CreateTurn first: %v", err)
+	}
+	if _, err := st.AppendItem(ctx, store.AppendItemRequest{ThreadID: thread.ID, TurnID: firstTurn.ID, Kind: "message", Payload: json.RawMessage(`{"role":"user","text":"first"}`)}); err != nil {
+		t.Fatalf("AppendItem first: %v", err)
+	}
+	secondTurn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID, Input: json.RawMessage(`{"prompt":"second"}`)})
+	if err != nil {
+		t.Fatalf("CreateTurn second: %v", err)
+	}
+	if _, err := st.AppendItem(ctx, store.AppendItemRequest{ThreadID: thread.ID, TurnID: secondTurn.ID, Kind: "message", Payload: json.RawMessage(`{"role":"user","text":"second"}`)}); err != nil {
+		t.Fatalf("AppendItem second: %v", err)
+	}
+
+	server := readyServer(WithStore(st))
+	rollbackResp := server.HandleRequest(ctx, request("thread/rollback", map[string]any{
+		"threadId": thread.ID,
+		"numTurns": 1,
+	}))
+	if rollbackResp.Error != nil {
+		t.Fatalf("thread/rollback error: %v", rollbackResp.Error)
+	}
+	events := server.DrainNotifications()
+	assertNotificationMethods(t, events, "deprecationNotice")
+	var notice deprecationNoticeNotificationParams
+	if err := json.Unmarshal(events[0].Params, &notice); err != nil {
+		t.Fatalf("decode deprecation notice: %v", err)
+	}
+	if notice.Summary != threadRollbackDeprecationSummary || notice.Details != nil {
+		t.Fatalf("deprecation notice = %#v", notice)
+	}
+	var rollback struct {
+		Thread struct {
+			ID    string        `json:"id"`
+			Name  *string       `json:"name"`
+			Turns []*store.Turn `json:"turns"`
+		} `json:"thread"`
+	}
+	decodeResult(t, rollbackResp, &rollback)
+	if rollback.Thread.ID != thread.ID || rollback.Thread.Name == nil || *rollback.Thread.Name != "Rollback Title" {
+		t.Fatalf("rollback thread identity = %#v", rollback.Thread)
+	}
+	if len(rollback.Thread.Turns) != 1 || rollback.Thread.Turns[0].ID != firstTurn.ID {
+		t.Fatalf("rollback turns = %#v", rollback.Thread.Turns)
+	}
+	remainingTurns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	if len(remainingTurns) != 1 || remainingTurns[0].ID != firstTurn.ID {
+		t.Fatalf("remaining turns = %#v", remainingTurns)
+	}
+	remainingItems, err := st.ListItems(ctx, store.ItemFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(remainingItems) != 2 || remainingItems[0].TurnID != firstTurn.ID || remainingItems[1].Kind != "thread_rollback" {
+		t.Fatalf("remaining items = %#v", remainingItems)
+	}
+	loadedResp := server.HandleRequest(ctx, request("thread/loaded/list", nil))
+	if loadedResp.Error != nil {
+		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
+	}
+	var loaded threadLoadedListResult
+	decodeResult(t, loadedResp, &loaded)
+	if !sameStringSet(loaded.Data, []string{thread.ID}) {
+		t.Fatalf("loaded after rollback = %#v", loaded.Data)
+	}
+
+	invalidResp := server.HandleRequest(ctx, request("thread/rollback", map[string]any{
+		"threadId": thread.ID,
+		"numTurns": 0,
+	}))
+	if invalidResp.Error == nil || invalidResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("invalid rollback error = %#v", invalidResp.Error)
+	}
+
+	tuiThread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "TUI"})
+	if err != nil {
+		t.Fatalf("CreateThread tui: %v", err)
+	}
+	if _, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: tuiThread.ID, Input: json.RawMessage(`{"prompt":"tui"}`)}); err != nil {
+		t.Fatalf("CreateTurn tui: %v", err)
+	}
+	tuiServer := NewServer(WithStore(st))
+	_ = tuiServer.HandleRequest(ctx, request("initialize", protocol.InitializeParams{ClientInfo: protocol.ImplementationInfo{Name: "codex-tui"}}))
+	if err := tuiServer.HandleNotification(ctx, protocol.Notification{Method: "initialized"}); err != nil {
+		t.Fatalf("initialized tui: %v", err)
+	}
+	tuiResp := tuiServer.HandleRequest(ctx, request("thread/rollback", map[string]any{
+		"threadId": tuiThread.ID,
+		"numTurns": 1,
+	}))
+	if tuiResp.Error != nil {
+		t.Fatalf("thread/rollback tui error: %v", tuiResp.Error)
+	}
+	if events := tuiServer.DrainNotifications(); len(events) != 0 {
+		t.Fatalf("codex-tui rollback emitted deprecation notice: %#v", events)
+	}
+}
+
 func TestServerThreadControlHandlers(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
@@ -1685,15 +1799,16 @@ func assertNotificationMethods(t *testing.T, notifications []protocol.Notificati
 func waitForNotificationMethods(t *testing.T, server *Server, want ...string) []protocol.Notification {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
+	var notifications []protocol.Notification
 	for time.Now().Before(deadline) {
-		notifications := server.DrainNotifications()
-		if len(notifications) > 0 {
+		notifications = append(notifications, server.DrainNotifications()...)
+		if len(notifications) >= len(want) {
 			assertNotificationMethods(t, notifications, want...)
 			return notifications
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for notifications %v", want)
+	t.Fatalf("timed out waiting for notifications %v, got %#v", want, notifications)
 	return nil
 }
 

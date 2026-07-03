@@ -504,6 +504,73 @@ func (s *SQLiteStore) ListTurns(ctx context.Context, filter TurnFilter) ([]*Turn
 	return out, nil
 }
 
+// RollbackThread implements Store.
+func (s *SQLiteStore) RollbackThread(ctx context.Context, req RollbackThreadRequest) (*RollbackThreadResult, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if req.NumTurns < 1 {
+		return nil, errors.New("appserver/store: rollback num turns must be >= 1")
+	}
+	var result *RollbackThreadResult
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		thread, err := loadThreadTx(ctx, tx, req.ID)
+		if err != nil {
+			return err
+		}
+		if thread.Status == ThreadDeleted {
+			return ErrThreadDeleted
+		}
+		removed, err := loadLastTurnsTx(ctx, tx, thread.ID, req.NumTurns)
+		if err != nil {
+			return err
+		}
+		if err := pruneRolledBackHistoryTx(ctx, tx, thread.ID, removed); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		thread.UpdatedAt = now
+		if err := saveThreadTx(ctx, tx, thread); err != nil {
+			return err
+		}
+		markerPayload, err := json.Marshal(map[string]any{
+			"numTurns":       req.NumTurns,
+			"removedTurnIds": turnIDs(removed),
+			"createdAt":      now,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal rollback marker: %w", err)
+		}
+		marker := &Item{
+			ID:        newID("item"),
+			ThreadID:  thread.ID,
+			Kind:      "thread_rollback",
+			Status:    "completed",
+			Payload:   markerPayload,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := saveItemTx(ctx, tx, marker); err != nil {
+			return err
+		}
+		remaining, err := loadTurnsForThreadTx(ctx, tx, thread.ID)
+		if err != nil {
+			return err
+		}
+		result = &RollbackThreadResult{
+			Thread:       cloneThread(thread),
+			Turns:        cloneTurns(remaining),
+			RemovedTurns: cloneTurns(removed),
+			Marker:       cloneItem(marker),
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // AppendItem implements Store.
 func (s *SQLiteStore) AppendItem(ctx context.Context, req AppendItemRequest) (*Item, error) {
 	ctx = normalizeContext(ctx)
@@ -682,6 +749,110 @@ func loadTurnTx(ctx context.Context, tx *sql.Tx, id string) (*Turn, error) {
 	return scanTurn(tx.QueryRowContext(ctx, `SELECT payload FROM app_turns WHERE id = ?`, id))
 }
 
+func loadTurnsForThreadTx(ctx context.Context, tx *sql.Tx, threadID string) ([]*Turn, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM app_turns WHERE thread_id = ? ORDER BY created_at ASC, id ASC`, threadID)
+	if err != nil {
+		return nil, fmt.Errorf("load thread turns: %w", err)
+	}
+	defer rows.Close()
+	var turns []*Turn
+	for rows.Next() {
+		turn, err := scanTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		turns = append(turns, turn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate thread turns: %w", err)
+	}
+	return turns, nil
+}
+
+func loadLastTurnsTx(ctx context.Context, tx *sql.Tx, threadID string, limit int) ([]*Turn, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM app_turns WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, threadID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("load rollback turns: %w", err)
+	}
+	defer rows.Close()
+	var turns []*Turn
+	for rows.Next() {
+		turn, err := scanTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		turns = append(turns, turn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate rollback turns: %w", err)
+	}
+	return turns, nil
+}
+
+func pruneRolledBackHistoryTx(ctx context.Context, tx *sql.Tx, threadID string, removed []*Turn) error {
+	if len(removed) == 0 {
+		return nil
+	}
+	removedIDs := make(map[string]struct{}, len(removed))
+	for _, turn := range removed {
+		removedIDs[turn.ID] = struct{}{}
+	}
+	cutoff, err := firstRemovedItemSeqTx(ctx, tx, threadID, removed)
+	if err != nil {
+		return err
+	}
+	if cutoff > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM app_items WHERE thread_id = ? AND seq >= ?`, threadID, cutoff); err != nil {
+			return fmt.Errorf("delete rolled back items: %w", err)
+		}
+	} else {
+		for id := range removedIDs {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM app_items WHERE thread_id = ? AND turn_id = ?`, threadID, id); err != nil {
+				return fmt.Errorf("delete rolled back turn items: %w", err)
+			}
+		}
+	}
+	for id := range removedIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM app_turns WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("delete rolled back turn: %w", err)
+		}
+	}
+	return nil
+}
+
+func firstRemovedItemSeqTx(ctx context.Context, tx *sql.Tx, threadID string, removed []*Turn) (int64, error) {
+	removedIDs := make(map[string]struct{}, len(removed))
+	var earliest time.Time
+	for _, turn := range removed {
+		removedIDs[turn.ID] = struct{}{}
+		if !turn.CreatedAt.IsZero() && (earliest.IsZero() || turn.CreatedAt.Before(earliest)) {
+			earliest = turn.CreatedAt
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM app_items WHERE thread_id = ? ORDER BY seq ASC`, threadID)
+	if err != nil {
+		return 0, fmt.Errorf("load rollback items: %w", err)
+	}
+	defer rows.Close()
+	var fallback int64
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return 0, err
+		}
+		if _, ok := removedIDs[item.TurnID]; ok {
+			return item.Seq, nil
+		}
+		if fallback == 0 && !earliest.IsZero() && !item.CreatedAt.Before(earliest) {
+			fallback = item.Seq
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate rollback items: %w", err)
+	}
+	return fallback, nil
+}
+
 func loadItem(ctx context.Context, db *sql.DB, id string) (*Item, error) {
 	return scanItem(db.QueryRowContext(ctx, `SELECT payload FROM app_items WHERE id = ?`, id))
 }
@@ -854,6 +1025,14 @@ func cloneTurn(src *Turn) *Turn {
 	return &dst
 }
 
+func cloneTurns(src []*Turn) []*Turn {
+	out := make([]*Turn, 0, len(src))
+	for _, turn := range src {
+		out = append(out, cloneTurn(turn))
+	}
+	return out
+}
+
 func cloneItem(src *Item) *Item {
 	if src == nil {
 		return nil
@@ -861,6 +1040,16 @@ func cloneItem(src *Item) *Item {
 	dst := *src
 	dst.Payload = cloneRaw(src.Payload)
 	return &dst
+}
+
+func turnIDs(turns []*Turn) []string {
+	ids := make([]string, 0, len(turns))
+	for _, turn := range turns {
+		if turn != nil && turn.ID != "" {
+			ids = append(ids, turn.ID)
+		}
+	}
+	return ids
 }
 
 func cloneMap(src map[string]any) map[string]any {

@@ -210,6 +210,11 @@ type threadNotLoadedStatusNotificationParams struct {
 	At       time.Time         `json:"at"`
 }
 
+type deprecationNoticeNotificationParams struct {
+	Summary string  `json:"summary"`
+	Details *string `json:"details"`
+}
+
 type threadGoalNotificationParams struct {
 	ThreadID string        `json:"threadId"`
 	Goal     any           `json:"goal,omitempty"`
