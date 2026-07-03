@@ -445,6 +445,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadTurnsList(ctx, params)
 	case "thread/items/list":
 		return s.handleThreadItemsList(ctx, params)
+	case "thread/inject_items":
+		return s.handleThreadInjectItems(ctx, params)
 	case "turn/start":
 		return s.handleTurnStart(ctx, params)
 	case "turn/interrupt":

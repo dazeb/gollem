@@ -161,6 +161,86 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	assertNotificationMethods(t, threadEvents, "thread/status/changed", "thread/archived")
 }
 
+func TestServerThreadInjectItemsHandler(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Inject"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	server := readyServer(WithStore(st))
+
+	injectResp := server.HandleRequest(ctx, request("thread/inject_items", map[string]any{
+		"threadId": thread.ID,
+		"items": []any{
+			map[string]any{
+				"type": "message",
+				"role": "assistant",
+				"content": []any{
+					map[string]any{"type": "output_text", "text": "injected assistant history"},
+				},
+			},
+		},
+	}))
+	if injectResp.Error != nil {
+		t.Fatalf("thread/inject_items error: %v", injectResp.Error)
+	}
+	var injectedResult threadInjectItemsResponse
+	decodeResult(t, injectResp, &injectedResult)
+
+	events := server.DrainNotifications()
+	assertNotificationMethods(t, events, "item/completed")
+	var itemNotice runtimeItemNotificationParams
+	if err := json.Unmarshal(events[0].Params, &itemNotice); err != nil {
+		t.Fatalf("decode item notice: %v", err)
+	}
+	if itemNotice.ThreadID != thread.ID || itemNotice.Item == nil || itemNotice.Item.Kind != threadInjectedResponseItemKind {
+		t.Fatalf("item notice = %#v", itemNotice)
+	}
+
+	itemsResp := server.HandleRequest(ctx, request("thread/items/list", map[string]any{"threadId": thread.ID}))
+	if itemsResp.Error != nil {
+		t.Fatalf("thread/items/list error: %v", itemsResp.Error)
+	}
+	var listed struct {
+		Items []*store.Item `json:"items"`
+	}
+	decodeResult(t, itemsResp, &listed)
+	if len(listed.Items) != 1 || listed.Items[0].Kind != threadInjectedResponseItemKind || !strings.Contains(string(listed.Items[0].Payload), "injected assistant history") {
+		t.Fatalf("listed injected items = %#v", listed.Items)
+	}
+
+	loadedResp := server.HandleRequest(ctx, request("thread/loaded/list", nil))
+	if loadedResp.Error != nil {
+		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
+	}
+	var loaded threadLoadedListResult
+	decodeResult(t, loadedResp, &loaded)
+	if !sameStringSet(loaded.Data, []string{thread.ID}) {
+		t.Fatalf("loaded after inject = %#v", loaded.Data)
+	}
+
+	deleted, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Deleted"})
+	if err != nil {
+		t.Fatalf("CreateThread deleted: %v", err)
+	}
+	if _, err := st.DeleteThread(ctx, deleted.ID); err != nil {
+		t.Fatalf("DeleteThread: %v", err)
+	}
+	deletedResp := server.HandleRequest(ctx, request("thread/inject_items", map[string]any{
+		"threadId": deleted.ID,
+		"items":    []any{map[string]any{"role": "user", "content": "nope"}},
+	}))
+	if deletedResp.Error == nil || deletedResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("deleted inject error = %#v", deletedResp.Error)
+	}
+}
+
 func TestServerThreadDiscoveryHandlers(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))

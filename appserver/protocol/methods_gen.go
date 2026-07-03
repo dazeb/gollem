@@ -99,7 +99,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "thread/goal/get", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:538, typescript:ClientRequest.ts"},
 	{Method: "thread/goal/set", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:533, typescript:ClientRequest.ts"},
 	{Method: "thread/increment_elicitation", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "protocol crate:common.rs:514"},
-	{Method: "thread/inject_items", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "json schema:ClientRequest, protocol crate:common.rs:652, typescript:ClientRequest.ts"},
+	{Method: "thread/inject_items", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:652, typescript:ClientRequest.ts"},
 	{Method: "thread/items/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:645"},
 	{Method: "thread/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:615, typescript:ClientRequest.ts"},
 	{Method: "thread/loaded/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:627, typescript:ClientRequest.ts"},

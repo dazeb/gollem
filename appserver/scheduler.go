@@ -102,7 +102,7 @@ func RequestScheduleFor(method string, params json.RawMessage) RequestSchedule {
 	switch method {
 	case "thread/list", "thread/search", "thread/loaded/list", "thread/read", "thread/fork", "thread/archive", "thread/unarchive", "thread/delete", "thread/settings/update",
 		"thread/goal/get", "thread/goal/set", "thread/goal/clear", "thread/metadata/update", "thread/memoryMode/set",
-		"thread/name/set", "thread/turns/list", "thread/items/list":
+		"thread/name/set", "thread/turns/list", "thread/items/list", "thread/inject_items":
 		return RequestSchedule{Scope: "thread", Serial: true}
 	case "fs/readFile", "fs/writeFile", "fs/createDirectory", "fs/readDirectory", "fs/getMetadata", "fs/remove", "fs/copy", "fs/watch", "fs/unwatch":
 		return RequestSchedule{Scope: "fs", Serial: true}

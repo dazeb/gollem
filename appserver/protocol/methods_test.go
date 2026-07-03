@@ -30,6 +30,7 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	assertMethod(t, "thread/resume", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/search", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/loaded/list", SurfaceClientRequest, MethodImplemented)
+	assertMethod(t, "thread/inject_items", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/settings/update", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/goal/get", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/goal/set", SurfaceClientRequest, MethodImplemented)

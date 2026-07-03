@@ -465,7 +465,16 @@ func lastRuntimeAssistantText(messages []core.ModelMessage) string {
 func runtimeMessagesFromItems(items []*store.Item) []core.ModelMessage {
 	messages := make([]core.ModelMessage, 0, len(items))
 	for _, item := range items {
-		if item == nil || item.Kind != "message" || len(item.Payload) == 0 {
+		if item == nil || len(item.Payload) == 0 {
+			continue
+		}
+		if item.Kind == threadInjectedResponseItemKind {
+			if message, ok := runtimeMessageFromInjectedResponseItem(item.Payload); ok {
+				messages = append(messages, message)
+			}
+			continue
+		}
+		if item.Kind != "message" {
 			continue
 		}
 		var payload runtimeMessagePayload

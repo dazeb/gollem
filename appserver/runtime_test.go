@@ -101,6 +101,66 @@ func TestServerRuntimeThreadResumeUsesPersistedHistory(t *testing.T) {
 	assertRuntimeUserPrompt(t, secondMessages[2], "second prompt")
 }
 
+func TestServerRuntimeThreadResumeUsesInjectedResponseItems(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	model := core.NewTestModel(core.TextResponse("after injection"))
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}))),
+	)
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Injected history"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+
+	injectResp := server.HandleRequest(ctx, request("thread/inject_items", map[string]any{
+		"threadId": thread.ID,
+		"items": []any{
+			map[string]any{
+				"type": "message",
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "input_text", "text": "injected user"},
+				},
+			},
+			map[string]any{
+				"type":  "message",
+				"role":  "assistant",
+				"model": "prior-model",
+				"content": []any{
+					map[string]any{"type": "output_text", "text": "injected assistant"},
+				},
+			},
+		},
+	}))
+	if injectResp.Error != nil {
+		t.Fatalf("thread/inject_items error: %v", injectResp.Error)
+	}
+	server.DrainNotifications()
+
+	resumeResp := server.HandleRequest(ctx, request("thread/resume", map[string]any{
+		"threadId": thread.ID,
+		"prompt":   "next prompt",
+	}))
+	if resumeResp.Error != nil {
+		t.Fatalf("thread/resume error: %v", resumeResp.Error)
+	}
+	waitForNotificationSet(t, server, "turn/completed")
+
+	calls := model.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(calls))
+	}
+	messages := calls[0].Messages
+	if len(messages) != 3 {
+		t.Fatalf("messages = %#v", messages)
+	}
+	assertRuntimeUserPrompt(t, messages[0], "injected user")
+	assertRuntimeAssistantText(t, messages[1], "injected assistant")
+	assertRuntimeUserPrompt(t, messages[2], "next prompt")
+}
+
 func TestServerRuntimeTurnRetryBranchesBeforeSourceTurn(t *testing.T) {
 	ctx := context.Background()
 	st := newRuntimeTestStore(t)
