@@ -213,6 +213,42 @@ func TestServiceListAndOutputLimit(t *testing.T) {
 	}
 }
 
+func TestServiceCleanCompleted(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	running, err := svc.Start(ctx, StartRequest{Command: "cat"})
+	if err != nil {
+		t.Fatalf("Start running: %v", err)
+	}
+	completed, err := svc.Start(ctx, StartRequest{Command: "printf", Args: []string{"done"}})
+	if err != nil {
+		t.Fatalf("Start completed: %v", err)
+	}
+	if _, err := waitWithTimeout(t, svc, completed.ID); err != nil {
+		t.Fatalf("Wait completed: %v", err)
+	}
+	removed, err := svc.CleanCompleted(ctx)
+	if err != nil {
+		t.Fatalf("CleanCompleted: %v", err)
+	}
+	if len(removed) != 1 || removed[0].ID != completed.ID || removed[0].Status != StatusCompleted {
+		t.Fatalf("removed = %+v", removed)
+	}
+	list, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != running.ID {
+		t.Fatalf("list after clean = %+v", list)
+	}
+	if err := svc.Kill(ctx, running.ID); err != nil {
+		t.Fatalf("Kill running: %v", err)
+	}
+	if _, err := waitWithTimeout(t, svc, running.ID); err != nil {
+		t.Fatalf("Wait killed: %v", err)
+	}
+}
+
 func newTestService(t *testing.T, opts ...Option) *Service {
 	t.Helper()
 	svc, err := NewService(t.TempDir(), opts...)

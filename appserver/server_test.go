@@ -918,6 +918,93 @@ func TestServerProcessHandlers(t *testing.T) {
 	}
 }
 
+func TestServerBackgroundTerminalHandlers(t *testing.T) {
+	ctx := context.Background()
+	processSvc, err := toolprocess.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithProcess(processSvc))
+
+	runningResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"command": "cat",
+	}))
+	if runningResp.Error != nil {
+		t.Fatalf("process/spawn running error: %v", runningResp.Error)
+	}
+	var runningStarted struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, runningResp, &runningStarted)
+
+	doneResp := server.HandleRequest(ctx, request("command/exec", map[string]any{
+		"command": "printf done",
+	}))
+	if doneResp.Error != nil {
+		t.Fatalf("command/exec done error: %v", doneResp.Error)
+	}
+	var doneStarted struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, doneResp, &doneStarted)
+	if _, err := waitProcessSnapshot(t, processSvc, doneStarted.Process.ID); err != nil {
+		t.Fatalf("wait completed process: %v", err)
+	}
+
+	listResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", nil))
+	if listResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/list error: %v", listResp.Error)
+	}
+	var list backgroundTerminalListResult
+	decodeResult(t, listResp, &list)
+	if len(list.Terminals) != 2 || len(list.BackgroundTerminals) != 2 || len(list.Data) != 2 {
+		t.Fatalf("background terminal list = %#v", list)
+	}
+
+	terminateResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/terminate", map[string]any{
+		"terminalId": runningStarted.Process.ID,
+	}))
+	if terminateResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/terminate error: %v", terminateResp.Error)
+	}
+	var terminated struct {
+		OK       bool                     `json:"ok"`
+		ID       string                   `json:"id"`
+		Terminal backgroundTerminalResult `json:"terminal"`
+	}
+	decodeResult(t, terminateResp, &terminated)
+	if !terminated.OK || terminated.ID != runningStarted.Process.ID || terminated.Terminal.ProcessID != runningStarted.Process.ID {
+		t.Fatalf("terminate result = %#v", terminated)
+	}
+	if killed, err := waitProcessSnapshot(t, processSvc, runningStarted.Process.ID); err != nil || killed.Status != toolprocess.StatusKilled {
+		t.Fatalf("wait killed process = %#v err=%v", killed, err)
+	}
+
+	cleanResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/clean", nil))
+	if cleanResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/clean error: %v", cleanResp.Error)
+	}
+	var cleaned backgroundTerminalCleanResult
+	decodeResult(t, cleanResp, &cleaned)
+	if cleaned.RemovedCount != 2 || len(cleaned.Removed) != 2 {
+		t.Fatalf("cleaned terminals = %#v", cleaned)
+	}
+	listAfterResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", nil))
+	if listAfterResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/list after clean error: %v", listAfterResp.Error)
+	}
+	var listAfter backgroundTerminalListResult
+	decodeResult(t, listAfterResp, &listAfter)
+	if len(listAfter.Terminals) != 0 {
+		t.Fatalf("terminals after clean = %#v", listAfter)
+	}
+
+	missingIDResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/terminate", nil))
+	if missingIDResp.Error == nil || missingIDResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing id terminate response = %#v, want invalid params", missingIDResp)
+	}
+}
+
 func TestServerGitHandlers(t *testing.T) {
 	ctx := context.Background()
 	repo := initRepo(t)
@@ -1079,6 +1166,13 @@ func waitForServerRequest(t *testing.T, server *Server) protocol.Request {
 		t.Fatalf("server requests = %#v", requests)
 	}
 	return requests[0]
+}
+
+func waitProcessSnapshot(t *testing.T, svc *toolprocess.Service, id string) (*toolprocess.Snapshot, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return svc.Wait(ctx, id)
 }
 
 func initRepo(t *testing.T) string {

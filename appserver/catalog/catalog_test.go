@@ -117,6 +117,13 @@ func TestToolListAvailability(t *testing.T) {
 	if !containsMethod(fs.Methods, "fs/watch") || !containsMethod(fs.Methods, "fs/unwatch") {
 		t.Fatalf("filesystem tool methods = %#v", fs.Methods)
 	}
+	processTool := findTool(ListTools(ToolListParams{}, ToolServices{Process: true}).Data, "process")
+	if processTool == nil || !processTool.Available || !processTool.Mutation || !processTool.RequiresApproval {
+		t.Fatalf("process tool metadata = %#v", processTool)
+	}
+	if !containsMethod(processTool.Methods, "thread/backgroundTerminals/list") || !containsMethod(processTool.Methods, "thread/backgroundTerminals/clean") {
+		t.Fatalf("process tool methods = %#v", processTool.Methods)
+	}
 
 	withUnavailable := ListTools(ToolListParams{IncludeUnavailable: true}, ToolServices{Filesystem: true})
 	process := findTool(withUnavailable.Data, "process")

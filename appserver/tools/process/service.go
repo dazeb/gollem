@@ -381,6 +381,32 @@ func (s *Service) List(ctx context.Context) ([]Snapshot, error) {
 	return out, nil
 }
 
+func (s *Service) CleanCompleted(ctx context.Context) ([]Snapshot, error) {
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, errors.New("appserver/process: nil service")
+	}
+	s.mu.Lock()
+	ids := make([]string, 0, len(s.processes))
+	for id := range s.processes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	removed := make([]Snapshot, 0, len(ids))
+	for _, id := range ids {
+		proc := s.processes[id]
+		if proc.isRunning() {
+			continue
+		}
+		removed = append(removed, proc.snapshot())
+		delete(s.processes, id)
+	}
+	s.mu.Unlock()
+	return removed, nil
+}
+
 func (s *Service) WriteStdin(ctx context.Context, id string, data []byte) error {
 	op := Operation{Kind: OperationWriteStdin, ID: id}
 	if err := checkContext(ctx); err != nil {

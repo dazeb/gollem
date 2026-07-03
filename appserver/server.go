@@ -417,6 +417,12 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadStatus(ctx, params, method, store.ThreadDeleted)
 	case "thread/settings/update":
 		return s.handleThreadSettingsUpdate(ctx, params)
+	case "thread/backgroundTerminals/list":
+		return s.handleBackgroundTerminalsList(ctx)
+	case "thread/backgroundTerminals/terminate":
+		return s.handleBackgroundTerminalTerminate(ctx, params)
+	case "thread/backgroundTerminals/clean":
+		return s.handleBackgroundTerminalsClean(ctx)
 	case "thread/turns/list":
 		return s.handleThreadTurnsList(ctx, params)
 	case "thread/items/list":
@@ -742,6 +748,68 @@ func (s *Server) handleThreadSettingsUpdate(ctx context.Context, raw json.RawMes
 	}
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return map[string]any{"thread": thread}, nil
+}
+
+func (s *Server) handleBackgroundTerminalsList(ctx context.Context) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/list")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	snapshots, err := processSvc.List(ctx)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/list", err)
+	}
+	terminals := backgroundTerminalResultsFromSnapshots(snapshots)
+	return backgroundTerminalListResult{
+		Terminals:           terminals,
+		BackgroundTerminals: cloneBackgroundTerminalResults(terminals),
+		Data:                cloneBackgroundTerminalResults(terminals),
+	}, nil
+}
+
+func (s *Server) handleBackgroundTerminalTerminate(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/terminate")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params backgroundTerminalIDParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	id := params.id()
+	if id == "" {
+		return nil, invalidParams("id, terminalId, backgroundTerminalId, or processId is required", nil)
+	}
+	if err := processSvc.Terminate(ctx, id); err != nil {
+		return nil, mapError("thread/backgroundTerminals/terminate", err)
+	}
+	snapshot, err := processSvc.Snapshot(ctx, id)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/terminate", err)
+	}
+	return map[string]any{
+		"ok":       true,
+		"id":       id,
+		"terminal": backgroundTerminalResultFromSnapshot(*snapshot),
+	}, nil
+}
+
+func (s *Server) handleBackgroundTerminalsClean(ctx context.Context) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/clean")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	removed, err := processSvc.CleanCompleted(ctx)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/clean", err)
+	}
+	terminals := backgroundTerminalResultsFromSnapshots(removed)
+	return backgroundTerminalCleanResult{
+		Removed:             terminals,
+		BackgroundTerminals: cloneBackgroundTerminalResults(terminals),
+		Data:                cloneBackgroundTerminalResults(terminals),
+		RemovedCount:        len(terminals),
+	}, nil
 }
 
 func (s *Server) handleThreadTurnsList(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1686,6 +1754,47 @@ func processSnapshotResultFrom(snapshot *toolprocess.Snapshot) processSnapshotRe
 	}
 }
 
+func backgroundTerminalResultsFromSnapshots(snapshots []toolprocess.Snapshot) []backgroundTerminalResult {
+	terminals := make([]backgroundTerminalResult, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		terminals = append(terminals, backgroundTerminalResultFromSnapshot(snapshot))
+	}
+	return terminals
+}
+
+func backgroundTerminalResultFromSnapshot(snapshot toolprocess.Snapshot) backgroundTerminalResult {
+	process := processSnapshotResultFrom(&snapshot)
+	title := snapshot.Command
+	if len(snapshot.Args) > 0 {
+		title = strings.TrimSpace(snapshot.Command + " " + strings.Join(snapshot.Args, " "))
+	}
+	return backgroundTerminalResult{
+		ID:         snapshot.ID,
+		TerminalID: snapshot.ID,
+		ProcessID:  snapshot.ID,
+		PID:        snapshot.PID,
+		Title:      title,
+		Command:    snapshot.Command,
+		Args:       append([]string(nil), snapshot.Args...),
+		WorkDir:    snapshot.WorkDir,
+		Status:     snapshot.Status,
+		StartedAt:  snapshot.StartedAt,
+		EndedAt:    snapshot.EndedAt,
+		ExitCode:   snapshot.ExitCode,
+		Error:      snapshot.Error,
+		Process:    process,
+	}
+}
+
+func cloneBackgroundTerminalResults(in []backgroundTerminalResult) []backgroundTerminalResult {
+	out := make([]backgroundTerminalResult, 0, len(in))
+	for _, terminal := range in {
+		terminal.Args = append([]string(nil), terminal.Args...)
+		out = append(out, terminal)
+	}
+	return out
+}
+
 func okResult(path string) map[string]any {
 	if path == "" {
 		return map[string]any{"ok": true}
@@ -1844,6 +1953,47 @@ type processResizeParams struct {
 	ProcessID string `json:"processId,omitempty"`
 	Cols      int    `json:"cols"`
 	Rows      int    `json:"rows"`
+}
+
+type backgroundTerminalIDParams struct {
+	ID                   string `json:"id,omitempty"`
+	TerminalID           string `json:"terminalId,omitempty"`
+	BackgroundTerminalID string `json:"backgroundTerminalId,omitempty"`
+	ProcessID            string `json:"processId,omitempty"`
+}
+
+func (p backgroundTerminalIDParams) id() string {
+	return firstNonEmpty(p.ID, p.TerminalID, p.BackgroundTerminalID, p.ProcessID)
+}
+
+type backgroundTerminalListResult struct {
+	Terminals           []backgroundTerminalResult `json:"terminals"`
+	BackgroundTerminals []backgroundTerminalResult `json:"backgroundTerminals"`
+	Data                []backgroundTerminalResult `json:"data"`
+}
+
+type backgroundTerminalCleanResult struct {
+	Removed             []backgroundTerminalResult `json:"removed"`
+	BackgroundTerminals []backgroundTerminalResult `json:"backgroundTerminals"`
+	Data                []backgroundTerminalResult `json:"data"`
+	RemovedCount        int                        `json:"removedCount"`
+}
+
+type backgroundTerminalResult struct {
+	ID         string                `json:"id"`
+	TerminalID string                `json:"terminalId"`
+	ProcessID  string                `json:"processId"`
+	PID        int                   `json:"pid"`
+	Title      string                `json:"title"`
+	Command    string                `json:"command"`
+	Args       []string              `json:"args,omitempty"`
+	WorkDir    string                `json:"workDir"`
+	Status     toolprocess.Status    `json:"status"`
+	StartedAt  time.Time             `json:"startedAt"`
+	EndedAt    time.Time             `json:"endedAt,omitempty"`
+	ExitCode   int                   `json:"exitCode"`
+	Error      string                `json:"error,omitempty"`
+	Process    processSnapshotResult `json:"process"`
 }
 
 type processSnapshotResult struct {
