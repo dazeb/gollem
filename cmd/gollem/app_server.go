@@ -152,11 +152,22 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 	fsOpts := []toolfs.Option{}
 	processOpts := []toolprocess.Option{}
 	gitOpts := []toolgit.Option{}
+	events := appserver.NewEventQueue()
 	if !flags.allowMutations {
 		fsOpts = append(fsOpts, toolfs.WithApproval(denyFilesystemMutation))
 		processOpts = append(processOpts, toolprocess.WithApproval(denyProcessMutation))
 		gitOpts = append(gitOpts, toolgit.WithApproval(denyGitMutation))
 	}
+	processOpts = append(processOpts,
+		toolprocess.WithOutputSink(func(ev toolprocess.OutputEvent) {
+			method, params := appserver.ProcessOutputNotification(ev)
+			events.Publish(method, params)
+		}),
+		toolprocess.WithExitSink(func(ev toolprocess.ExitEvent) {
+			method, params := appserver.ProcessExitedNotification(ev)
+			events.Publish(method, params)
+		}),
+	)
 
 	fsSvc, err := toolfs.NewService(workDir, fsOpts...)
 	if err != nil {
@@ -192,6 +203,7 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 		appserver.WithStore(st),
 		appserver.WithFilesystem(fsSvc),
 		appserver.WithProcess(processSvc),
+		appserver.WithEventQueue(events),
 	}
 	if gitSvc != nil {
 		opts = append(opts, appserver.WithGit(gitSvc))

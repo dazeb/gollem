@@ -131,6 +131,15 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	if forked.Thread.ForkedFromThreadID != thread.ID {
 		t.Fatalf("forked thread = %#v", forked.Thread)
 	}
+	threadEvents := server.DrainNotifications()
+	assertNotificationMethods(t, threadEvents, "thread/started")
+	var startedNotice threadNotificationParams
+	if err := json.Unmarshal(threadEvents[0].Params, &startedNotice); err != nil {
+		t.Fatalf("decode thread started notice: %v", err)
+	}
+	if startedNotice.ThreadID != forked.Thread.ID || startedNotice.Thread == nil {
+		t.Fatalf("thread started notice = %#v", startedNotice)
+	}
 
 	archiveResp := server.HandleRequest(ctx, request("thread/archive", map[string]any{"threadId": thread.ID}))
 	if archiveResp.Error != nil {
@@ -143,6 +152,8 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	if archived.Thread.Status != store.ThreadArchived {
 		t.Fatalf("archived status = %s", archived.Thread.Status)
 	}
+	threadEvents = server.DrainNotifications()
+	assertNotificationMethods(t, threadEvents, "thread/status/changed", "thread/archived")
 }
 
 func TestServerCatalogHandlers(t *testing.T) {
@@ -262,6 +273,15 @@ func TestServerCacheHandlers(t *testing.T) {
 	if len(benchmark.Events) == 0 {
 		t.Fatal("cache benchmark did not return typed events")
 	}
+	cacheEvents := server.DrainNotifications()
+	assertNotificationMethods(t, cacheEvents, "cache/benchmark/completed")
+	var completedNotice cacheBenchmarkNotificationParams
+	if err := json.Unmarshal(cacheEvents[0].Params, &completedNotice); err != nil {
+		t.Fatalf("decode cache benchmark notice: %v", err)
+	}
+	if !completedNotice.Passed || completedNotice.Totals.TotalRequests != benchmark.Totals.TotalRequests {
+		t.Fatalf("cache benchmark notice = %#v, benchmark = %#v", completedNotice, benchmark.Totals)
+	}
 
 	afterResp := server.HandleRequest(ctx, request("cache/stats", nil))
 	if afterResp.Error != nil {
@@ -289,6 +309,15 @@ func TestServerFilesystemHandlers(t *testing.T) {
 	if writeResp.Error != nil {
 		t.Fatalf("fs/writeFile error: %v", writeResp.Error)
 	}
+	fsEvents := server.DrainNotifications()
+	assertNotificationMethods(t, fsEvents, "fs/changed")
+	var changedNotice fileChangedParams
+	if err := json.Unmarshal(fsEvents[0].Params, &changedNotice); err != nil {
+		t.Fatalf("decode fs changed notice: %v", err)
+	}
+	if changedNotice.Path != "nested/hello.txt" || changedNotice.Operation != "writeFile" {
+		t.Fatalf("fs changed notice = %#v", changedNotice)
+	}
 
 	readResp := server.HandleRequest(ctx, request("fs/readFile", map[string]any{"path": "nested/hello.txt"}))
 	if readResp.Error != nil {
@@ -306,6 +335,14 @@ func TestServerFilesystemHandlers(t *testing.T) {
 	}))
 	if copyResp.Error != nil {
 		t.Fatalf("fs/copy error: %v", copyResp.Error)
+	}
+	fsEvents = server.DrainNotifications()
+	assertNotificationMethods(t, fsEvents, "fs/changed")
+	if err := json.Unmarshal(fsEvents[0].Params, &changedNotice); err != nil {
+		t.Fatalf("decode fs copy changed notice: %v", err)
+	}
+	if changedNotice.Path != "nested/hello.txt" || changedNotice.Destination != "copy.txt" || changedNotice.Operation != "copy" {
+		t.Fatalf("fs copy changed notice = %#v", changedNotice)
 	}
 	listResp := server.HandleRequest(ctx, request("fs/readDirectory", map[string]any{"path": "."}))
 	if listResp.Error != nil {
@@ -452,6 +489,18 @@ func decodeResult(t *testing.T, resp protocol.Response, out any) {
 	}
 	if err := json.Unmarshal(resp.Result, out); err != nil {
 		t.Fatalf("unmarshal result %s: %v", string(resp.Result), err)
+	}
+}
+
+func assertNotificationMethods(t *testing.T, notifications []protocol.Notification, want ...string) {
+	t.Helper()
+	if len(notifications) != len(want) {
+		t.Fatalf("notifications = %#v, want methods %v", notifications, want)
+	}
+	for i, method := range want {
+		if notifications[i].Method != method {
+			t.Fatalf("notification[%d] method = %q, want %q", i, notifications[i].Method, method)
+		}
 	}
 }
 

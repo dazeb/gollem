@@ -47,12 +47,20 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 		}
 	}()
 
+	eventSignal := server.NotificationSignal()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-eventSignal:
+			if err := writeJSONLineNotifications(server.DrainNotifications(), out); err != nil {
+				return err
+			}
 		case scanned, ok := <-lines:
 			if !ok {
+				if err := writeJSONLineNotifications(server.DrainNotifications(), out); err != nil {
+					return err
+				}
 				return nil
 			}
 			if scanned.err != nil {
@@ -63,6 +71,9 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 				continue
 			}
 			if err := writeJSONLineResponse(ctx, server, []byte(line), out); err != nil {
+				return err
+			}
+			if err := writeJSONLineNotifications(server.DrainNotifications(), out); err != nil {
 				return err
 			}
 		}
@@ -91,6 +102,28 @@ func writeJSONLineResponse(ctx context.Context, server *Server, line []byte, out
 	}
 	if err := out.Flush(); err != nil {
 		return fmt.Errorf("flush app-server response: %w", err)
+	}
+	return nil
+}
+
+func writeJSONLineNotifications(notifications []protocol.Notification, out *bufio.Writer) error {
+	for _, notification := range notifications {
+		data, err := json.Marshal(notification)
+		if err != nil {
+			return fmt.Errorf("marshal app-server notification: %w", err)
+		}
+		if _, err := out.Write(data); err != nil {
+			return fmt.Errorf("write app-server notification: %w", err)
+		}
+		if err := out.WriteByte('\n'); err != nil {
+			return fmt.Errorf("write app-server notification newline: %w", err)
+		}
+	}
+	if len(notifications) == 0 {
+		return nil
+	}
+	if err := out.Flush(); err != nil {
+		return fmt.Errorf("flush app-server notifications: %w", err)
 	}
 	return nil
 }

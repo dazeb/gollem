@@ -34,8 +34,8 @@ func TestServeJSONLinesStdioFlow(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("output lines = %d, want 3\n%s", len(lines), output.String())
+	if len(lines) != 4 {
+		t.Fatalf("output lines = %d, want 4\n%s", len(lines), output.String())
 	}
 	var initResp protocol.Response
 	if err := json.Unmarshal([]byte(lines[0]), &initResp); err != nil {
@@ -46,8 +46,23 @@ func TestServeJSONLinesStdioFlow(t *testing.T) {
 	}
 	assertNoJSONRPCMember(t, lines[0])
 
+	var changed protocol.Notification
+	if err := json.Unmarshal([]byte(lines[2]), &changed); err != nil {
+		t.Fatalf("decode fs changed notification: %v", err)
+	}
+	if changed.Method != "fs/changed" {
+		t.Fatalf("notification method = %q, want fs/changed", changed.Method)
+	}
+	var changedParams fileChangedParams
+	if err := json.Unmarshal(changed.Params, &changedParams); err != nil {
+		t.Fatalf("decode fs changed params: %v", err)
+	}
+	if changedParams.Path != "note.txt" || changedParams.Operation != "writeFile" {
+		t.Fatalf("fs changed params = %#v", changedParams)
+	}
+
 	var readResp protocol.Response
-	if err := json.Unmarshal([]byte(lines[2]), &readResp); err != nil {
+	if err := json.Unmarshal([]byte(lines[3]), &readResp); err != nil {
 		t.Fatalf("decode read response: %v", err)
 	}
 	var read struct {

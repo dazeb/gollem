@@ -83,11 +83,28 @@ func TestCLIAppServerServesStdioWhenMutationsAllowed(t *testing.T) {
 		t.Fatalf("ServeJSONLines: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("output lines = %d, want 3\n%s", len(lines), output.String())
+	if len(lines) != 4 {
+		t.Fatalf("output lines = %d, want 4\n%s", len(lines), output.String())
+	}
+	var changed protocol.Notification
+	if err := json.Unmarshal([]byte(lines[2]), &changed); err != nil {
+		t.Fatalf("decode fs changed notification: %v", err)
+	}
+	if changed.Method != "fs/changed" {
+		t.Fatalf("notification method = %q, want fs/changed", changed.Method)
+	}
+	var changedParams struct {
+		Path      string `json:"path"`
+		Operation string `json:"operation"`
+	}
+	if err := json.Unmarshal(changed.Params, &changedParams); err != nil {
+		t.Fatalf("decode fs changed params: %v", err)
+	}
+	if changedParams.Path != "ok.txt" || changedParams.Operation != "writeFile" {
+		t.Fatalf("fs changed params = %#v", changedParams)
 	}
 	var read protocol.Response
-	if err := json.Unmarshal([]byte(lines[2]), &read); err != nil {
+	if err := json.Unmarshal([]byte(lines[3]), &read); err != nil {
 		t.Fatalf("decode read response: %v", err)
 	}
 	var result struct {

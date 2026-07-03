@@ -16,11 +16,16 @@ import (
 func TestServiceStartShellWaitCapturesOutput(t *testing.T) {
 	ctx := context.Background()
 	var outputs []OutputEvent
+	var exits []ExitEvent
 	var outputsMu sync.Mutex
 	svc := newTestService(t, WithOutputSink(func(ev OutputEvent) {
 		outputsMu.Lock()
 		defer outputsMu.Unlock()
 		outputs = append(outputs, ev)
+	}), WithExitSink(func(ev ExitEvent) {
+		outputsMu.Lock()
+		defer outputsMu.Unlock()
+		exits = append(exits, ev)
 	}))
 
 	started, err := svc.Start(ctx, StartRequest{
@@ -45,9 +50,13 @@ func TestServiceStartShellWaitCapturesOutput(t *testing.T) {
 	}
 	outputsMu.Lock()
 	outputCount := len(outputs)
+	exitsCopy := append([]ExitEvent(nil), exits...)
 	outputsMu.Unlock()
 	if outputCount == 0 {
 		t.Fatal("expected output events")
+	}
+	if len(exitsCopy) != 1 || exitsCopy[0].Snapshot.ID != started.ID || exitsCopy[0].Snapshot.Status != StatusCompleted {
+		t.Fatalf("exit events = %+v", exitsCopy)
 	}
 }
 

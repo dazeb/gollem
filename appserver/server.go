@@ -44,6 +44,7 @@ type Server struct {
 	git     *toolgit.Service
 	catalog *catalog.Catalog
 	cache   *appcache.Service
+	events  *EventQueue
 }
 
 // Option configures a Server.
@@ -93,12 +94,19 @@ func WithCache(cache *appcache.Service) Option {
 	}
 }
 
+func WithEventQueue(events *EventQueue) Option {
+	return func(s *Server) {
+		s.events = events
+	}
+}
+
 func NewServer(opts ...Option) *Server {
 	s := &Server{
 		serverInfo: protocol.ImplementationInfo{Name: "gollem-appserver"},
 		optOut:     make(map[string]struct{}),
 		catalog:    catalog.NewDefault(),
 		cache:      appcache.NewService(),
+		events:     NewEventQueue(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -191,6 +199,27 @@ func (s *Server) NotificationEnabled(method string) bool {
 	defer s.mu.Unlock()
 	_, disabled := s.optOut[method]
 	return !disabled
+}
+
+func (s *Server) NotificationSignal() <-chan struct{} {
+	if s == nil || s.events == nil {
+		return nil
+	}
+	return s.events.Signal()
+}
+
+func (s *Server) DrainNotifications() []protocol.Notification {
+	if s == nil || s.events == nil {
+		return nil
+	}
+	return s.events.Drain(s.NotificationEnabled)
+}
+
+func (s *Server) PublishNotification(method string, params any) {
+	if s == nil || s.events == nil || !s.NotificationEnabled(method) {
+		return
+	}
+	s.events.Publish(method, params)
 }
 
 func (s *Server) handleInitialize(req protocol.Request) protocol.Response {
@@ -380,6 +409,7 @@ func (s *Server) handleThreadFork(ctx context.Context, raw json.RawMessage) (any
 	if err != nil {
 		return nil, mapError("thread/fork", err)
 	}
+	s.publishThreadNotification("thread/started", thread)
 	return map[string]any{"thread": thread}, nil
 }
 
@@ -412,6 +442,15 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 	}
 	if err != nil {
 		return nil, mapError(method, err)
+	}
+	s.publishThreadNotification("thread/status/changed", thread)
+	switch status {
+	case store.ThreadArchived:
+		s.publishThreadNotification("thread/archived", thread)
+	case store.ThreadActive:
+		s.publishThreadNotification("thread/unarchived", thread)
+	case store.ThreadDeleted:
+		s.publishThreadNotification("thread/deleted", thread)
 	}
 	return map[string]any{"thread": thread}, nil
 }
@@ -552,6 +591,7 @@ func (s *Server) handleFSWriteFile(ctx context.Context, raw json.RawMessage) (an
 	if err := fsSvc.WriteFile(ctx, params.Path, content, iofs.FileMode(params.Mode)); err != nil {
 		return nil, mapError("fs/writeFile", err)
 	}
+	s.publishFileChanged("writeFile", params.Path, "")
 	return okResult(params.Path), nil
 }
 
@@ -570,6 +610,7 @@ func (s *Server) handleFSCreateDirectory(ctx context.Context, raw json.RawMessag
 	if err := fsSvc.CreateDirectory(ctx, params.Path); err != nil {
 		return nil, mapError("fs/createDirectory", err)
 	}
+	s.publishFileChanged("createDirectory", params.Path, "")
 	return okResult(params.Path), nil
 }
 
@@ -623,6 +664,7 @@ func (s *Server) handleFSRemove(ctx context.Context, raw json.RawMessage) (any, 
 	if err := fsSvc.Remove(ctx, params.Path); err != nil {
 		return nil, mapError("fs/remove", err)
 	}
+	s.publishFileChanged("remove", params.Path, "")
 	return okResult(params.Path), nil
 }
 
@@ -643,6 +685,7 @@ func (s *Server) handleFSCopy(ctx context.Context, raw json.RawMessage) (any, *p
 	if err := fsSvc.Copy(ctx, src, dst); err != nil {
 		return nil, mapError("fs/copy", err)
 	}
+	s.publishFileChanged("copy", src, dst)
 	return map[string]any{"ok": true, "source": src, "destination": dst}, nil
 }
 

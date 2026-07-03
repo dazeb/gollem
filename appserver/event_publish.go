@@ -1,0 +1,57 @@
+package appserver
+
+import (
+	"time"
+
+	appcache "github.com/fugue-labs/gollem/appserver/cache"
+	"github.com/fugue-labs/gollem/appserver/store"
+)
+
+type cacheBenchmarkNotificationParams struct {
+	Passed        bool                     `json:"passed"`
+	TargetHitRate float64                  `json:"targetHitRate"`
+	Totals        appcache.ProviderStats   `json:"totals"`
+	Providers     []appcache.ProviderStats `json:"providers"`
+	At            time.Time                `json:"at"`
+}
+
+func (s *Server) publishFileChanged(operation, path, destination string) {
+	s.PublishNotification("fs/changed", fileChangedParams{
+		Path:        path,
+		Destination: destination,
+		Operation:   operation,
+		At:          time.Now().UTC(),
+	})
+}
+
+func (s *Server) publishThreadNotification(method string, thread *store.Thread) {
+	if thread == nil {
+		return
+	}
+	s.PublishNotification(method, threadNotificationParams{
+		ThreadID: thread.ID,
+		Status:   thread.Status,
+		Thread:   thread,
+		At:       time.Now().UTC(),
+	})
+}
+
+func (s *Server) publishCacheBenchmarkCompleted(result appcache.BenchmarkResponse) {
+	providers := make([]appcache.ProviderStats, 0, len(result.Providers))
+	for _, provider := range result.Providers {
+		providers = append(providers, appcache.ProviderStats{
+			Provider:      provider.Provider,
+			TotalRequests: provider.TotalRequests,
+			Hits:          provider.Hits,
+			Misses:        provider.Misses,
+			HitRate:       provider.HitRate,
+		})
+	}
+	s.PublishNotification("cache/benchmark/completed", cacheBenchmarkNotificationParams{
+		Passed:        result.Passed,
+		TargetHitRate: result.TargetHitRate,
+		Totals:        result.Totals,
+		Providers:     providers,
+		At:            time.Now().UTC(),
+	})
+}

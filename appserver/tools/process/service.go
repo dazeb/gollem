@@ -88,9 +88,15 @@ type OutputEvent struct {
 	At     time.Time
 }
 
+type ExitEvent struct {
+	Snapshot Snapshot
+	At       time.Time
+}
+
 type ApprovalFunc func(context.Context, Operation) error
 type AuditSink func(AuditEvent)
 type OutputSink func(OutputEvent)
+type ExitSink func(ExitEvent)
 
 type Option func(*Service)
 
@@ -109,6 +115,12 @@ func WithAuditSink(fn AuditSink) Option {
 func WithOutputSink(fn OutputSink) Option {
 	return func(s *Service) {
 		s.output = fn
+	}
+}
+
+func WithExitSink(fn ExitSink) Option {
+	return func(s *Service) {
+		s.exit = fn
 	}
 }
 
@@ -138,6 +150,7 @@ type Service struct {
 	approve            ApprovalFunc
 	audit              AuditSink
 	output             OutputSink
+	exit               ExitSink
 }
 
 type StartRequest struct {
@@ -304,6 +317,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Snapshot, error
 	go func() {
 		waitErr := cmd.Wait()
 		proc.finish(waitErr)
+		s.emitExit(proc)
 		close(proc.done)
 	}()
 	if req.Timeout > 0 {
@@ -537,6 +551,14 @@ func (s *Service) emit(op Operation, id string, pid int, allowed bool, err error
 		event.Err = err.Error()
 	}
 	s.audit(event)
+}
+
+func (s *Service) emitExit(proc *managedProcess) {
+	if s == nil || s.exit == nil || proc == nil {
+		return
+	}
+	snap := proc.snapshot()
+	s.exit(ExitEvent{Snapshot: snap, At: snap.EndedAt})
 }
 
 func (p *managedProcess) snapshot() Snapshot {

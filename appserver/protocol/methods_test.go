@@ -4,8 +4,8 @@ import "testing"
 
 func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	methods := Methods()
-	if len(methods) != 223 {
-		t.Fatalf("Methods() returned %d entries, want 223", len(methods))
+	if len(methods) != 224 {
+		t.Fatalf("Methods() returned %d entries, want 224", len(methods))
 	}
 
 	counts := map[Surface]int{}
@@ -14,7 +14,7 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	}
 	wantCounts := map[Surface]int{
 		SurfaceClientRequest:      125,
-		SurfaceServerNotification: 69,
+		SurfaceServerNotification: 70,
 		SurfaceServerRequest:      11,
 		SurfaceClientNotification: 1,
 		SurfaceGollemExtension:    17,
@@ -37,6 +37,11 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	assertMethod(t, "tool/list", SurfaceGollemExtension, MethodImplemented)
 	assertMethod(t, "cache/stats", SurfaceGollemExtension, MethodImplemented)
 	assertMethod(t, "cache/benchmark", SurfaceGollemExtension, MethodImplemented)
+	assertMethod(t, "fs/changed", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "process/outputDelta", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "process/exited", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "thread/status/changed", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "cache/benchmark/completed", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "feedback/upload", SurfaceClientRequest, MethodNotApplicable)
 	assertMethod(t, "initialized", SurfaceClientNotification, MethodImplemented)
 }
