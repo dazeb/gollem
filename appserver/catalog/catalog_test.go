@@ -127,6 +127,13 @@ func TestToolListAvailability(t *testing.T) {
 	if cacheTool == nil || !cacheTool.Available || !cacheTool.GollemExtension {
 		t.Fatalf("cache tool metadata = %#v", cacheTool)
 	}
+	configTool := findTool(ListTools(ToolListParams{}, ToolServices{Config: true}).Data, "config")
+	if configTool == nil || !configTool.Available || !configTool.CodexCompatible || configTool.GollemExtension {
+		t.Fatalf("config tool metadata = %#v", configTool)
+	}
+	if !containsMethod(configTool.Methods, "config/read") || !containsMethod(configTool.Methods, "permissionProfile/list") {
+		t.Fatalf("config tool methods = %#v", configTool.Methods)
+	}
 }
 
 func mapEnv(values map[string]string) EnvLookup {

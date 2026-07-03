@@ -12,6 +12,7 @@ import (
 
 	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/catalog"
+	appconfig "github.com/fugue-labs/gollem/appserver/config"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
@@ -234,6 +235,129 @@ func TestServerCatalogHandlers(t *testing.T) {
 	}
 	if !toolAvailable(tools.Data, "cache") {
 		t.Fatalf("tool/list did not report cache available: %#v", tools.Data)
+	}
+	if !toolAvailable(tools.Data, "config") {
+		t.Fatalf("tool/list did not report config available: %#v", tools.Data)
+	}
+}
+
+func TestServerConfigHandlers(t *testing.T) {
+	ctx := context.Background()
+	configSvc := appconfig.NewService(
+		appconfig.WithWorkDir("/tmp/work"),
+		appconfig.WithEnvLookup(func(key string) (string, bool) {
+			switch key {
+			case "ANTHROPIC_API_KEY":
+				return "secret", true
+			case "SHELL":
+				return "/bin/zsh", true
+			case "HOME":
+				return "/Users/example", true
+			default:
+				return "", false
+			}
+		}),
+	)
+	server := readyServer(WithConfig(configSvc))
+
+	writeResp := server.HandleRequest(ctx, request("config/value/write", map[string]any{
+		"key":   "api.token",
+		"value": "secret-value",
+	}))
+	if writeResp.Error != nil {
+		t.Fatalf("config/value/write error: %v", writeResp.Error)
+	}
+	readResp := server.HandleRequest(ctx, request("config/read", nil))
+	if readResp.Error != nil {
+		t.Fatalf("config/read error: %v", readResp.Error)
+	}
+	var read appconfig.ReadResponse
+	decodeResult(t, readResp, &read)
+	token := configEntry(t, read.Entries, "api.token")
+	if !token.Redacted || string(token.Value) != "null" || string(read.Values["api.token"]) != "null" {
+		t.Fatalf("secret config leaked: entry=%#v value=%s", token, read.Values["api.token"])
+	}
+
+	batchResp := server.HandleRequest(ctx, request("config/batchWrite", map[string]any{
+		"values": map[string]any{"provider.default": "anthropic"},
+		"entries": []map[string]any{{
+			"key":   "custom.flag",
+			"value": true,
+		}},
+	}))
+	if batchResp.Error != nil {
+		t.Fatalf("config/batchWrite error: %v", batchResp.Error)
+	}
+	var batch appconfig.WriteResponse
+	decodeResult(t, batchResp, &batch)
+	if len(batch.Entries) != 2 || string(batch.Values["custom.flag"]) != "true" {
+		t.Fatalf("batch write = %#v", batch)
+	}
+
+	requirementsResp := server.HandleRequest(ctx, request("configRequirements/read", nil))
+	if requirementsResp.Error != nil {
+		t.Fatalf("configRequirements/read error: %v", requirementsResp.Error)
+	}
+	var requirements appconfig.RequirementsResponse
+	decodeResult(t, requirementsResp, &requirements)
+	if !configRequirementSatisfied(requirements.Requirements, "anthropic.apiKey") {
+		t.Fatalf("requirements did not reflect env status: %#v", requirements.Requirements)
+	}
+
+	addResp := server.HandleRequest(ctx, request("environment/add", map[string]any{
+		"id":      "staging",
+		"name":    "Staging",
+		"workDir": "/tmp/staging",
+		"variables": map[string]any{
+			"OPENAI_API_KEY": "not-returned",
+		},
+	}))
+	if addResp.Error != nil {
+		t.Fatalf("environment/add error: %v", addResp.Error)
+	}
+	var added appconfig.EnvironmentResponse
+	decodeResult(t, addResp, &added)
+	if added.Environment.ID != "staging" || len(added.Environment.Variables) != 1 || !added.Environment.Variables[0].Redacted {
+		t.Fatalf("added environment = %#v", added.Environment)
+	}
+
+	envResp := server.HandleRequest(ctx, request("environment/info", nil))
+	if envResp.Error != nil {
+		t.Fatalf("environment/info error: %v", envResp.Error)
+	}
+	var envInfo appconfig.EnvironmentInfoResponse
+	decodeResult(t, envResp, &envInfo)
+	if envInfo.CurrentID != "current" || len(envInfo.Environments) != 2 {
+		t.Fatalf("environment/info = %#v", envInfo)
+	}
+
+	for _, method := range []string{"collaborationMode/list", "permissionProfile/list", "experimentalFeature/list"} {
+		resp := server.HandleRequest(ctx, request(method, nil))
+		if resp.Error != nil {
+			t.Fatalf("%s error: %v", method, resp.Error)
+		}
+	}
+	setResp := server.HandleRequest(ctx, request("experimentalFeature/enablement/set", map[string]any{
+		"id":      "websocket-transport",
+		"enabled": false,
+	}))
+	if setResp.Error != nil {
+		t.Fatalf("experimentalFeature/enablement/set error: %v", setResp.Error)
+	}
+	var set appconfig.ExperimentalFeatureSetResponse
+	decodeResult(t, setResp, &set)
+	if set.Feature.Enabled {
+		t.Fatalf("feature was not disabled: %#v", set.Feature)
+	}
+
+	reloadResp := server.HandleRequest(ctx, request("config/mcpServer/reload", nil))
+	if reloadResp.Error != nil {
+		t.Fatalf("config/mcpServer/reload error: %v", reloadResp.Error)
+	}
+	var reload appconfig.MCPReloadResponse
+	decodeResult(t, reloadResp, &reload)
+	if reload.Reloaded || reload.Status != "no-op" {
+		t.Fatalf("reload = %#v", reload)
 	}
 }
 
@@ -776,6 +900,26 @@ func providerConfigured(providers []catalog.Provider, id string) bool {
 	for _, provider := range providers {
 		if provider.ID == id {
 			return provider.Configured
+		}
+	}
+	return false
+}
+
+func configEntry(t *testing.T, entries []appconfig.Entry, key string) appconfig.Entry {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.Key == key {
+			return entry
+		}
+	}
+	t.Fatalf("config entry %q not found in %#v", key, entries)
+	return appconfig.Entry{}
+}
+
+func configRequirementSatisfied(requirements []appconfig.Requirement, id string) bool {
+	for _, requirement := range requirements {
+		if requirement.ID == id {
+			return requirement.Satisfied
 		}
 	}
 	return false

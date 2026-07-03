@@ -14,6 +14,7 @@ import (
 
 	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/catalog"
+	appconfig "github.com/fugue-labs/gollem/appserver/config"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
@@ -44,6 +45,7 @@ type Server struct {
 	process   *toolprocess.Service
 	git       *toolgit.Service
 	catalog   *catalog.Catalog
+	config    *appconfig.Service
 	cache     *appcache.Service
 	events    *EventQueue
 	requests  *RequestQueue
@@ -96,6 +98,12 @@ func WithCatalog(catalog *catalog.Catalog) Option {
 	}
 }
 
+func WithConfig(config *appconfig.Service) Option {
+	return func(s *Server) {
+		s.config = config
+	}
+}
+
 func WithCache(cache *appcache.Service) Option {
 	return func(s *Server) {
 		s.cache = cache
@@ -145,6 +153,7 @@ func NewServer(opts ...Option) *Server {
 		serverInfo:            protocol.ImplementationInfo{Name: "gollem-appserver"},
 		optOut:                make(map[string]struct{}),
 		catalog:               catalog.NewDefault(),
+		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
 		events:                NewEventQueue(),
 		requests:              NewRequestQueue(),
@@ -410,6 +419,28 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleProviderList(params)
 	case "tool/list":
 		return s.handleToolList(params)
+	case "collaborationMode/list":
+		return s.handleCollaborationModeList()
+	case "permissionProfile/list":
+		return s.handlePermissionProfileList()
+	case "experimentalFeature/list":
+		return s.handleExperimentalFeatureList()
+	case "experimentalFeature/enablement/set":
+		return s.handleExperimentalFeatureEnablementSet(params)
+	case "config/read":
+		return s.handleConfigRead(params)
+	case "config/value/write":
+		return s.handleConfigValueWrite(params)
+	case "config/batchWrite":
+		return s.handleConfigBatchWrite(params)
+	case "configRequirements/read":
+		return s.handleConfigRequirementsRead()
+	case "config/mcpServer/reload":
+		return s.handleConfigMCPServerReload()
+	case "environment/info":
+		return s.handleEnvironmentInfo()
+	case "environment/add":
+		return s.handleEnvironmentAdd(params)
 	case "cache/stats":
 		return s.handleCacheStats()
 	case "cache/benchmark":
@@ -939,9 +970,90 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Process:      s.process != nil,
 		Git:          s.git != nil,
 		Cache:        s.cache != nil,
+		Config:       s.config != nil,
 		Runtime:      s.runtime != nil,
 		Interactions: s.interact != nil,
 	}), nil
+}
+
+func (s *Server) handleCollaborationModeList() (any, *protocol.Error) {
+	return s.requireConfig().CollaborationModes(), nil
+}
+
+func (s *Server) handlePermissionProfileList() (any, *protocol.Error) {
+	return s.requireConfig().PermissionProfiles(), nil
+}
+
+func (s *Server) handleExperimentalFeatureList() (any, *protocol.Error) {
+	return s.requireConfig().ExperimentalFeatures(), nil
+}
+
+func (s *Server) handleExperimentalFeatureEnablementSet(raw json.RawMessage) (any, *protocol.Error) {
+	var params appconfig.ExperimentalFeatureSetParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := s.requireConfig().SetExperimentalFeature(params)
+	if err != nil {
+		return nil, invalidParams("invalid experimentalFeature/enablement/set params", err)
+	}
+	return result, nil
+}
+
+func (s *Server) handleConfigRead(raw json.RawMessage) (any, *protocol.Error) {
+	var params appconfig.ReadParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	return s.requireConfig().Read(params), nil
+}
+
+func (s *Server) handleConfigValueWrite(raw json.RawMessage) (any, *protocol.Error) {
+	var params appconfig.ValueWriteParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := s.requireConfig().WriteValue(params)
+	if err != nil {
+		return nil, invalidParams("invalid config/value/write params", err)
+	}
+	return result, nil
+}
+
+func (s *Server) handleConfigBatchWrite(raw json.RawMessage) (any, *protocol.Error) {
+	var params appconfig.BatchWriteParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := s.requireConfig().BatchWrite(params)
+	if err != nil {
+		return nil, invalidParams("invalid config/batchWrite params", err)
+	}
+	return result, nil
+}
+
+func (s *Server) handleConfigRequirementsRead() (any, *protocol.Error) {
+	return s.requireConfig().Requirements(), nil
+}
+
+func (s *Server) handleConfigMCPServerReload() (any, *protocol.Error) {
+	return s.requireConfig().ReloadMCPServers(), nil
+}
+
+func (s *Server) handleEnvironmentInfo() (any, *protocol.Error) {
+	return s.requireConfig().EnvironmentInfo(), nil
+}
+
+func (s *Server) handleEnvironmentAdd(raw json.RawMessage) (any, *protocol.Error) {
+	var params appconfig.EnvironmentAddParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := s.requireConfig().AddEnvironment(params)
+	if err != nil {
+		return nil, invalidParams("invalid environment/add params", err)
+	}
+	return result, nil
 }
 
 func (s *Server) handleFSReadFile(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1358,6 +1470,13 @@ func (s *Server) requireCatalog() *catalog.Catalog {
 		return catalog.NewDefault()
 	}
 	return s.catalog
+}
+
+func (s *Server) requireConfig() *appconfig.Service {
+	if s.config == nil {
+		return appconfig.NewService()
+	}
+	return s.config
 }
 
 func (s *Server) requireDaemon(method string) (*DaemonService, *protocol.Error) {

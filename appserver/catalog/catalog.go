@@ -181,6 +181,7 @@ type ToolServices struct {
 	Process      bool
 	Git          bool
 	Cache        bool
+	Config       bool
 	Runtime      bool
 	Interactions bool
 }
@@ -474,6 +475,7 @@ func builtinTools(services ToolServices) []Tool {
 		tool("turn-runtime", "Turn runtime", "Start, resume, interrupt, steer, and retry provider-neutral Gollem app-server turns.", "runtime", []string{"thread/start", "thread/resume", "turn/start", "turn/interrupt", "turn/steer", "turn/retry"}, services.Runtime, true, false, "turn/started", true, true),
 		tool("interactions", "Interactions", "Request user input, dynamic tool calls, and MCP elicitation from the connected Slang client.", "runtime", []string{"item/tool/requestUserInput", "item/tool/call", "mcpServer/elicitation/request"}, services.Interactions, false, false, "serverRequest/resolved", true, false),
 		tool("provider-catalog", "Provider catalog", "List provider, model, capability, and app-server tool metadata for Slang controls.", "configuration", []string{"provider/list", "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "tool/list"}, true, false, false, "", true, true),
+		tool("config", "Configuration", "Read and update app-server config, environment metadata, permission profiles, collaboration modes, and feature flags.", "configuration", []string{"config/read", "config/value/write", "config/batchWrite", "configRequirements/read", "config/mcpServer/reload", "environment/info", "environment/add", "permissionProfile/list", "collaborationMode/list", "experimentalFeature/list", "experimentalFeature/enablement/set"}, services.Config, true, false, "", true, false),
 		tool("cache", "Cache", "Read deterministic cache stats and run provider normalization benchmark fixtures.", "runtime", []string{"cache/stats", "cache/benchmark"}, services.Cache, false, false, "", false, true),
 	}
 }

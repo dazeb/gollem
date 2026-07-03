@@ -333,6 +333,7 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 		`{"id":"providers","method":"provider/list","params":{}}`,
 		`{"id":"models","method":"model/list","params":{"limit":2}}`,
 		`{"id":"tools","method":"tool/list","params":{"includeUnavailable":true}}`,
+		`{"id":"config","method":"config/read","params":{"keys":["workspace.root"]}}`,
 		"",
 	}, "\n")
 	var output bytes.Buffer
@@ -340,8 +341,8 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 		t.Fatalf("ServeJSONLines: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("output lines = %d, want 4\n%s", len(lines), output.String())
+	if len(lines) != 5 {
+		t.Fatalf("output lines = %d, want 5\n%s", len(lines), output.String())
 	}
 
 	responses := map[string]protocol.Response{}
@@ -387,6 +388,20 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 	}
 	if !containsTool(tools.Data, "turn-runtime") {
 		t.Fatalf("tool/list missing turn runtime tool: %#v", tools.Data)
+	}
+	if !containsTool(tools.Data, "config") {
+		t.Fatalf("tool/list missing config tool: %#v", tools.Data)
+	}
+
+	configResp := responses["config"]
+	var configRead struct {
+		Values map[string]json.RawMessage `json:"values"`
+	}
+	if err := json.Unmarshal(configResp.Result, &configRead); err != nil {
+		t.Fatalf("decode config/read result: %v", err)
+	}
+	if string(configRead.Values["workspace.root"]) == "" {
+		t.Fatalf("config/read missing workspace root: %#v", configRead.Values)
 	}
 }
 
