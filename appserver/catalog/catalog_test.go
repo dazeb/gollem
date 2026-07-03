@@ -141,6 +141,13 @@ func TestToolListAvailability(t *testing.T) {
 	if !containsMethod(mcpTool.Methods, "mcpServerStatus/list") || !containsMethod(mcpTool.Methods, "mcpServer/tool/call") {
 		t.Fatalf("mcp tool methods = %#v", mcpTool.Methods)
 	}
+	skillsTool := findTool(ListTools(ToolListParams{}, ToolServices{Skills: true}).Data, "skills")
+	if skillsTool == nil || !skillsTool.Available || !skillsTool.CodexCompatible || skillsTool.Mutation || skillsTool.RequiresApproval {
+		t.Fatalf("skills tool metadata = %#v", skillsTool)
+	}
+	if !containsMethod(skillsTool.Methods, "skills/list") || !containsMethod(skillsTool.Methods, "plugin/skill/read") {
+		t.Fatalf("skills tool methods = %#v", skillsTool.Methods)
+	}
 }
 
 func mapEnv(values map[string]string) EnvLookup {

@@ -392,6 +392,9 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 	if !containsTool(tools.Data, "config") {
 		t.Fatalf("tool/list missing config tool: %#v", tools.Data)
 	}
+	if !containsTool(tools.Data, "skills") {
+		t.Fatalf("tool/list missing skills tool: %#v", tools.Data)
+	}
 
 	configResp := responses["config"]
 	var configRead struct {
@@ -402,6 +405,65 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 	}
 	if string(configRead.Values["workspace.root"]) == "" {
 		t.Fatalf("config/read missing workspace root: %#v", configRead.Values)
+	}
+}
+
+func TestCLIAppServerDiscoversWorkspaceSkills(t *testing.T) {
+	workDir := t.TempDir()
+	writeCLITestFile(t, workDir, ".gollem/plugins/example/.codex-plugin/plugin.json", `{"id":"example","name":"Example Plugin","version":"1.2.3"}`)
+	writeCLITestFile(t, workDir, ".gollem/plugins/example/skills/review/SKILL.md", "# Review Skill\n\nReview code carefully.\n")
+	server, cleanup, err := newCLIAppServer(appServerFlags{
+		workDir:   workDir,
+		storePath: ":memory:",
+		stdio:     true,
+	})
+	if err != nil {
+		t.Fatalf("newCLIAppServer: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	skillsResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("skills"),
+		Method: "skills/list",
+	})
+	if skillsResp.Error != nil {
+		t.Fatalf("skills/list error: %v", skillsResp.Error)
+	}
+	var skills struct {
+		Skills []struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			PluginID string `json:"pluginId"`
+		} `json:"skills"`
+	}
+	if err := json.Unmarshal(skillsResp.Result, &skills); err != nil {
+		t.Fatalf("decode skills/list: %v", err)
+	}
+	if len(skills.Skills) != 1 || skills.Skills[0].Name != "Review Skill" || skills.Skills[0].PluginID != "example" {
+		t.Fatalf("skills/list = %#v", skills)
+	}
+
+	pluginsResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("plugins"),
+		Method: "plugin/list",
+		Params: json.RawMessage(`{"includeSkills":true}`),
+	})
+	if pluginsResp.Error != nil {
+		t.Fatalf("plugin/list error: %v", pluginsResp.Error)
+	}
+	var plugins struct {
+		Plugins []struct {
+			ID         string `json:"id"`
+			Version    string `json:"version"`
+			SkillCount int    `json:"skillCount"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(pluginsResp.Result, &plugins); err != nil {
+		t.Fatalf("decode plugin/list: %v", err)
+	}
+	if len(plugins.Plugins) != 1 || plugins.Plugins[0].ID != "example" || plugins.Plugins[0].SkillCount != 1 {
+		t.Fatalf("plugin/list = %#v", plugins)
 	}
 }
 
@@ -427,6 +489,17 @@ func TestCLIAppServerThreadStartUsesRuntimeProviderFlag(t *testing.T) {
 		t.Fatalf("thread/start error: %v", resp.Error)
 	}
 	waitCLINotification(t, server, "turn/completed")
+}
+
+func writeCLITestFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", rel, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
 }
 
 func TestCLIAppServerServesDaemonLifecycleMethods(t *testing.T) {

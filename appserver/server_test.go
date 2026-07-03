@@ -16,6 +16,7 @@ import (
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
 	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
 	"github.com/fugue-labs/gollem/appserver/protocol"
+	appskills "github.com/fugue-labs/gollem/appserver/skills"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
@@ -526,6 +527,72 @@ func TestServerMCPHandlers(t *testing.T) {
 	oauthResp := server.HandleRequest(ctx, request("mcpServer/oauth/login", map[string]any{"serverName": "repo"}))
 	if oauthResp.Error == nil || oauthResp.Error.Code != protocol.CodeMethodUnavailable {
 		t.Fatalf("oauth response = %#v, want method unavailable", oauthResp)
+	}
+}
+
+func TestServerSkillsPluginHandlers(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	writeAppServerTestFile(t, root, "standalone/SKILL.md", "# Standalone\n\nStandalone skill description.\n")
+	writeAppServerTestFile(t, root, "plugins/example/.codex-plugin/plugin.json", `{"id":"example","name":"Example Plugin","description":"Example plugin","version":"1.2.3"}`)
+	writeAppServerTestFile(t, root, "plugins/example/skills/review/SKILL.md", "---\nname: Review Skill\ndescription: Review code carefully.\n---\n")
+	server := readyServer(WithSkills(appskills.NewService(appskills.WithRoot(root))))
+
+	skillsResp := server.HandleRequest(ctx, request("skills/list", nil))
+	if skillsResp.Error != nil {
+		t.Fatalf("skills/list error: %v", skillsResp.Error)
+	}
+	var skills appskills.ListResponse
+	decodeResult(t, skillsResp, &skills)
+	if len(skills.Skills) != 2 {
+		t.Fatalf("skills/list = %#v", skills)
+	}
+	review := appServerTestSkillByName(t, skills.Skills, "Review Skill")
+	if review.PluginID != "example" || review.Description != "Review code carefully." {
+		t.Fatalf("review skill = %#v", review)
+	}
+
+	pluginsResp := server.HandleRequest(ctx, request("plugin/list", map[string]any{"includeSkills": true}))
+	if pluginsResp.Error != nil {
+		t.Fatalf("plugin/list error: %v", pluginsResp.Error)
+	}
+	var plugins appskills.PluginListResponse
+	decodeResult(t, pluginsResp, &plugins)
+	if len(plugins.Plugins) != 1 || plugins.Plugins[0].ID != "example" || plugins.Plugins[0].SkillCount != 1 {
+		t.Fatalf("plugin/list = %#v", plugins)
+	}
+	installedResp := server.HandleRequest(ctx, request("plugin/installed", map[string]any{"includeSkills": true}))
+	if installedResp.Error != nil {
+		t.Fatalf("plugin/installed error: %v", installedResp.Error)
+	}
+
+	pluginReadResp := server.HandleRequest(ctx, request("plugin/read", map[string]any{"pluginId": "example"}))
+	if pluginReadResp.Error != nil {
+		t.Fatalf("plugin/read error: %v", pluginReadResp.Error)
+	}
+	var plugin appskills.PluginReadResponse
+	decodeResult(t, pluginReadResp, &plugin)
+	if plugin.Plugin.Version != "1.2.3" || plugin.Manifest["name"] != "Example Plugin" {
+		t.Fatalf("plugin/read = %#v", plugin)
+	}
+
+	skillReadResp := server.HandleRequest(ctx, request("plugin/skill/read", map[string]any{"pluginId": "example", "skillId": review.ID}))
+	if skillReadResp.Error != nil {
+		t.Fatalf("plugin/skill/read error: %v", skillReadResp.Error)
+	}
+	var skill appskills.PluginSkillReadResponse
+	decodeResult(t, skillReadResp, &skill)
+	if skill.Skill.ID != review.ID || !strings.Contains(skill.Content, "Review code carefully") {
+		t.Fatalf("plugin/skill/read = %#v", skill)
+	}
+
+	missingResp := server.HandleRequest(ctx, request("plugin/read", map[string]any{"pluginId": "missing"}))
+	if missingResp.Error == nil || missingResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing plugin response = %#v, want invalid params", missingResp)
+	}
+	installResp := server.HandleRequest(ctx, request("plugin/install", map[string]any{"id": "example"}))
+	if installResp.Error == nil || installResp.Error.Code != protocol.CodeMethodUnavailable {
+		t.Fatalf("plugin/install response = %#v, want unavailable", installResp)
 	}
 }
 
@@ -1091,6 +1158,28 @@ func configRequirementSatisfied(requirements []appconfig.Requirement, id string)
 		}
 	}
 	return false
+}
+
+func writeAppServerTestFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", rel, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func appServerTestSkillByName(t *testing.T, skills []appskills.Skill, name string) appskills.Skill {
+	t.Helper()
+	for _, skill := range skills {
+		if skill.Name == name {
+			return skill
+		}
+	}
+	t.Fatalf("skill %q not found in %#v", name, skills)
+	return appskills.Skill{}
 }
 
 func toolAvailable(tools []catalog.Tool, id string) bool {

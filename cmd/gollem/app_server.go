@@ -18,6 +18,7 @@ import (
 	appserver "github.com/fugue-labs/gollem/appserver"
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
 	"github.com/fugue-labs/gollem/appserver/protocol"
+	appskills "github.com/fugue-labs/gollem/appserver/skills"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
@@ -304,6 +305,10 @@ func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*apps
 		appserver.WithFilesystem(fsSvc),
 		appserver.WithProcess(processSvc),
 		appserver.WithConfig(appconfig.NewService(appconfig.WithWorkDir(workDir))),
+		appserver.WithSkills(appskills.NewService(appskills.WithRoots(
+			filepath.Join(workDir, ".gollem", "skills"),
+			filepath.Join(workDir, ".gollem", "plugins"),
+		))),
 		appserver.WithEventQueue(events),
 		appserver.WithApprovalService(approvals),
 		appserver.WithRuntimeService(appserver.NewRuntimeService(

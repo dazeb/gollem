@@ -112,6 +112,10 @@ func RequestScheduleFor(method string, params json.RawMessage) RequestSchedule {
 		return RequestSchedule{Scope: "cache", Serial: true}
 	case "mcpServerStatus/list", "mcpServer/resource/read", "mcpServer/tool/call":
 		return RequestSchedule{Scope: "mcp", Serial: true}
+	case "skills/list", "plugin/list", "plugin/installed", "plugin/read", "plugin/skill/read",
+		"plugin/install", "plugin/uninstall", "plugin/share/list", "plugin/share/save", "plugin/share/updateTargets", "plugin/share/checkout", "plugin/share/delete",
+		"marketplace/add", "marketplace/remove", "marketplace/upgrade", "skills/config/write", "skills/extraRoots/set":
+		return RequestSchedule{Scope: "skills", Serial: true}
 	case "daemon/start", "daemon/stop", "daemon/restart", "daemon/status", "daemon/version":
 		return RequestSchedule{Scope: "daemon", Serial: true}
 	case "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "provider/list", "tool/list",

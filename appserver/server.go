@@ -17,6 +17,7 @@ import (
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
 	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
 	"github.com/fugue-labs/gollem/appserver/protocol"
+	appskills "github.com/fugue-labs/gollem/appserver/skills"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
@@ -49,6 +50,7 @@ type Server struct {
 	config    *appconfig.Service
 	cache     *appcache.Service
 	mcp       *appmcp.Service
+	skills    *appskills.Service
 	events    *EventQueue
 	requests  *RequestQueue
 	approvals *ApprovalService
@@ -118,6 +120,12 @@ func WithMCP(mcp *appmcp.Service) Option {
 	}
 }
 
+func WithSkills(skills *appskills.Service) Option {
+	return func(s *Server) {
+		s.skills = skills
+	}
+}
+
 func WithEventQueue(events *EventQueue) Option {
 	return func(s *Server) {
 		s.events = events
@@ -164,6 +172,7 @@ func NewServer(opts ...Option) *Server {
 		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
 		mcp:                   appmcp.NewService(),
+		skills:                appskills.NewService(),
 		events:                NewEventQueue(),
 		requests:              NewRequestQueue(),
 		approvals:             NewApprovalService(),
@@ -454,6 +463,22 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleMCPServerToolCall(ctx, params)
 	case "mcpServer/oauth/login":
 		return nil, protocol.MethodUnavailableErrorWithReason(method, "MCP OAuth login is not implemented; register an already-authenticated MCP client")
+	case "skills/list":
+		return s.handleSkillsList(ctx, params)
+	case "plugin/list", "plugin/installed":
+		return s.handlePluginList(ctx, params)
+	case "plugin/read":
+		return s.handlePluginRead(ctx, params)
+	case "plugin/skill/read":
+		return s.handlePluginSkillRead(ctx, params)
+	case "plugin/install", "plugin/uninstall":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "plugin install and uninstall are not implemented; configure read-only skill roots on the app-server")
+	case "plugin/share/list", "plugin/share/save", "plugin/share/updateTargets", "plugin/share/checkout", "plugin/share/delete":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "plugin sharing is not implemented by this Gollem app-server build")
+	case "marketplace/add", "marketplace/remove", "marketplace/upgrade":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "plugin marketplace mutation is not implemented by this Gollem app-server build")
+	case "skills/config/write", "skills/extraRoots/set":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "skills configuration mutation is not implemented; start the app-server with configured skill roots")
 	case "environment/info":
 		return s.handleEnvironmentInfo()
 	case "environment/add":
@@ -989,6 +1014,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Cache:        s.cache != nil,
 		Config:       s.config != nil,
 		MCP:          s.mcp != nil,
+		Skills:       s.skills != nil,
 		Runtime:      s.runtime != nil,
 		Interactions: s.interact != nil,
 	}), nil
