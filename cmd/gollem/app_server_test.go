@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	appserver "github.com/fugue-labs/gollem/appserver"
+	"github.com/fugue-labs/gollem/appserver/catalog"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 )
 
@@ -100,6 +101,72 @@ func TestCLIAppServerServesStdioWhenMutationsAllowed(t *testing.T) {
 	}
 }
 
+func TestCLIAppServerServesCatalogMethods(t *testing.T) {
+	workDir := t.TempDir()
+	server, cleanup, err := newCLIAppServer(appServerFlags{
+		workDir:   workDir,
+		storePath: ":memory:",
+		stdio:     true,
+	})
+	if err != nil {
+		t.Fatalf("newCLIAppServer: %v", err)
+	}
+	defer cleanup()
+
+	input := strings.Join([]string{
+		`{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`,
+		`{"method":"initialized"}`,
+		`{"id":"providers","method":"provider/list","params":{}}`,
+		`{"id":"models","method":"model/list","params":{"limit":2}}`,
+		`{"id":"tools","method":"tool/list","params":{"includeUnavailable":true}}`,
+		"",
+	}, "\n")
+	var output bytes.Buffer
+	if err := appserver.ServeJSONLines(context.Background(), server, strings.NewReader(input), &output); err != nil {
+		t.Fatalf("ServeJSONLines: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("output lines = %d, want 4\n%s", len(lines), output.String())
+	}
+
+	var providersResp protocol.Response
+	if err := json.Unmarshal([]byte(lines[1]), &providersResp); err != nil {
+		t.Fatalf("decode providers response: %v", err)
+	}
+	var providers catalog.ProviderListResponse
+	if err := json.Unmarshal(providersResp.Result, &providers); err != nil {
+		t.Fatalf("decode provider/list result: %v", err)
+	}
+	if len(providers.Data) == 0 {
+		t.Fatal("provider/list returned no providers")
+	}
+
+	var modelsResp protocol.Response
+	if err := json.Unmarshal([]byte(lines[2]), &modelsResp); err != nil {
+		t.Fatalf("decode models response: %v", err)
+	}
+	var models catalog.ModelListResponse
+	if err := json.Unmarshal(modelsResp.Result, &models); err != nil {
+		t.Fatalf("decode model/list result: %v", err)
+	}
+	if len(models.Data) != 2 {
+		t.Fatalf("model/list returned %d models, want 2", len(models.Data))
+	}
+
+	var toolsResp protocol.Response
+	if err := json.Unmarshal([]byte(lines[3]), &toolsResp); err != nil {
+		t.Fatalf("decode tools response: %v", err)
+	}
+	var tools catalog.ToolListResponse
+	if err := json.Unmarshal(toolsResp.Result, &tools); err != nil {
+		t.Fatalf("decode tool/list result: %v", err)
+	}
+	if !containsTool(tools.Data, "provider-catalog") {
+		t.Fatalf("tool/list missing provider catalog tool: %#v", tools.Data)
+	}
+}
+
 func readyCLIAppServer(t *testing.T, server *appserver.Server) {
 	t.Helper()
 	initResp := server.HandleRequest(context.Background(), protocol.Request{
@@ -113,4 +180,13 @@ func readyCLIAppServer(t *testing.T, server *appserver.Server) {
 	if err := server.HandleNotification(context.Background(), protocol.Notification{Method: "initialized"}); err != nil {
 		t.Fatalf("initialized: %v", err)
 	}
+}
+
+func containsTool(tools []catalog.Tool, id string) bool {
+	for _, tool := range tools {
+		if tool.ID == id {
+			return true
+		}
+	}
+	return false
 }

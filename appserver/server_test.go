@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fugue-labs/gollem/appserver/catalog"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
@@ -140,6 +141,84 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	decodeResult(t, archiveResp, &archived)
 	if archived.Thread.Status != store.ThreadArchived {
 		t.Fatalf("archived status = %s", archived.Thread.Status)
+	}
+}
+
+func TestServerCatalogHandlers(t *testing.T) {
+	ctx := context.Background()
+	catalogSvc := catalog.NewDefault(catalog.WithEnvLookup(func(key string) (string, bool) {
+		if key == "OPENAI_API_KEY" {
+			return "set", true
+		}
+		return "", false
+	}))
+	fsSvc, err := toolfs.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithCatalog(catalogSvc), WithFilesystem(fsSvc))
+
+	providersResp := server.HandleRequest(ctx, request("provider/list", nil))
+	if providersResp.Error != nil {
+		t.Fatalf("provider/list error: %v", providersResp.Error)
+	}
+	var providers catalog.ProviderListResponse
+	decodeResult(t, providersResp, &providers)
+	if len(providers.Data) == 0 || !providerConfigured(providers.Data, catalog.ProviderOpenAI) {
+		t.Fatalf("provider/list = %#v", providers.Data)
+	}
+
+	modelsResp := server.HandleRequest(ctx, request("model/list", map[string]any{
+		"providerId": catalog.ProviderOpenAI,
+		"limit":      2,
+	}))
+	if modelsResp.Error != nil {
+		t.Fatalf("model/list error: %v", modelsResp.Error)
+	}
+	var models catalog.ModelListResponse
+	decodeResult(t, modelsResp, &models)
+	if len(models.Data) != 2 || models.NextCursor == nil {
+		t.Fatalf("model/list = %#v", models)
+	}
+	if models.Data[0].ProviderID != catalog.ProviderOpenAI || !models.Data[0].IsDefault {
+		t.Fatalf("model/list first model = %#v", models.Data[0])
+	}
+
+	codexCapsResp := server.HandleRequest(ctx, request("modelProvider/capabilities/read", map[string]any{
+		"providerId": catalog.ProviderOpenAI,
+	}))
+	if codexCapsResp.Error != nil {
+		t.Fatalf("modelProvider/capabilities/read error: %v", codexCapsResp.Error)
+	}
+	var codexCaps catalog.ProviderCapabilities
+	decodeResult(t, codexCapsResp, &codexCaps)
+	if !codexCaps.NamespaceTools || !codexCaps.ToolCalls || !codexCaps.Configured {
+		t.Fatalf("codex capabilities = %#v", codexCaps)
+	}
+
+	aliasResp := server.HandleRequest(ctx, request("provider/capabilities/read", map[string]any{
+		"provider": catalog.ProviderAnthropic,
+	}))
+	if aliasResp.Error != nil {
+		t.Fatalf("provider/capabilities/read error: %v", aliasResp.Error)
+	}
+	var aliasCaps catalog.ProviderCapabilities
+	decodeResult(t, aliasResp, &aliasCaps)
+	if !aliasCaps.AdaptiveThinking || !aliasCaps.ManualThinking {
+		t.Fatalf("anthropic capabilities = %#v", aliasCaps)
+	}
+
+	toolsResp := server.HandleRequest(ctx, request("tool/list", map[string]any{"includeUnavailable": true}))
+	if toolsResp.Error != nil {
+		t.Fatalf("tool/list error: %v", toolsResp.Error)
+	}
+	var tools catalog.ToolListResponse
+	decodeResult(t, toolsResp, &tools)
+	if !toolAvailable(tools.Data, "fs") {
+		t.Fatalf("tool/list did not report filesystem available: %#v", tools.Data)
+	}
+	if toolAvailable(tools.Data, "git") {
+		t.Fatalf("tool/list reported git available without git service: %#v", tools.Data)
 	}
 }
 
@@ -372,4 +451,22 @@ func cleanTestGitEnv(env []string) []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+func providerConfigured(providers []catalog.Provider, id string) bool {
+	for _, provider := range providers {
+		if provider.ID == id {
+			return provider.Configured
+		}
+	}
+	return false
+}
+
+func toolAvailable(tools []catalog.Tool, id string) bool {
+	for _, tool := range tools {
+		if tool.ID == id {
+			return tool.Available
+		}
+	}
+	return false
 }

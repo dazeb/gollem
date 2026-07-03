@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/fugue-labs/gollem/appserver/catalog"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
@@ -40,6 +41,7 @@ type Server struct {
 	fs      *toolfs.Service
 	process *toolprocess.Service
 	git     *toolgit.Service
+	catalog *catalog.Catalog
 }
 
 // Option configures a Server.
@@ -77,10 +79,17 @@ func WithGit(git *toolgit.Service) Option {
 	}
 }
 
+func WithCatalog(catalog *catalog.Catalog) Option {
+	return func(s *Server) {
+		s.catalog = catalog
+	}
+}
+
 func NewServer(opts ...Option) *Server {
 	s := &Server{
 		serverInfo: protocol.ImplementationInfo{Name: "gollem-appserver"},
 		optOut:     make(map[string]struct{}),
+		catalog:    catalog.NewDefault(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -229,6 +238,14 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadTurnsList(ctx, params)
 	case "thread/items/list":
 		return s.handleThreadItemsList(ctx, params)
+	case "model/list":
+		return s.handleModelList(params)
+	case "modelProvider/capabilities/read", "provider/capabilities/read":
+		return s.handleProviderCapabilities(params)
+	case "provider/list":
+		return s.handleProviderList(params)
+	case "tool/list":
+		return s.handleToolList(params)
 	case "fs/readFile":
 		return s.handleFSReadFile(ctx, params)
 	case "fs/writeFile":
@@ -427,6 +444,51 @@ func (s *Server) handleThreadItemsList(ctx context.Context, raw json.RawMessage)
 		return nil, mapError("thread/items/list", err)
 	}
 	return map[string]any{"items": items}, nil
+}
+
+func (s *Server) handleModelList(raw json.RawMessage) (any, *protocol.Error) {
+	var params catalog.ModelListParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := s.requireCatalog().ListModels(params)
+	if err != nil {
+		return nil, invalidParams("invalid model/list params", err)
+	}
+	return result, nil
+}
+
+func (s *Server) handleProviderList(raw json.RawMessage) (any, *protocol.Error) {
+	var params catalog.ProviderListParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	return s.requireCatalog().ListProviders(params), nil
+}
+
+func (s *Server) handleProviderCapabilities(raw json.RawMessage) (any, *protocol.Error) {
+	var params catalog.CapabilitiesReadParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	providerID := firstNonEmpty(params.ProviderID, params.Provider, params.ModelProvider)
+	caps, err := s.requireCatalog().ProviderCapabilities(providerID)
+	if err != nil {
+		return nil, invalidParams("invalid provider capabilities params", err)
+	}
+	return caps, nil
+}
+
+func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
+	var params catalog.ToolListParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	return catalog.ListTools(params, catalog.ToolServices{
+		Filesystem: s.fs != nil,
+		Process:    s.process != nil,
+		Git:        s.git != nil,
+	}), nil
 }
 
 func (s *Server) handleFSReadFile(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -785,6 +847,13 @@ func (s *Server) requireGit(method string) (*toolgit.Service, *protocol.Error) {
 		return nil, protocol.MethodUnavailableErrorWithReason(method, "git service is not configured")
 	}
 	return s.git, nil
+}
+
+func (s *Server) requireCatalog() *catalog.Catalog {
+	if s.catalog == nil {
+		return catalog.NewDefault()
+	}
+	return s.catalog
 }
 
 func decodeParams(raw json.RawMessage, out any) *protocol.Error {

@@ -27,10 +27,14 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 
 	assertMethod(t, "initialize", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/start", SurfaceClientRequest, MethodBlocked)
+	assertMethod(t, "model/list", SurfaceClientRequest, MethodImplemented)
+	assertMethod(t, "modelProvider/capabilities/read", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "fs/readFile", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "git/status", SurfaceGollemExtension, MethodImplemented)
 	assertMethod(t, "turn/retry", SurfaceGollemExtension, MethodBlocked)
-	assertMethod(t, "provider/capabilities/read", SurfaceGollemExtension, MethodRenamedEquivalent)
+	assertMethod(t, "provider/list", SurfaceGollemExtension, MethodImplemented)
+	assertMethod(t, "provider/capabilities/read", SurfaceGollemExtension, MethodImplemented)
+	assertMethod(t, "tool/list", SurfaceGollemExtension, MethodImplemented)
 	assertMethod(t, "feedback/upload", SurfaceClientRequest, MethodNotApplicable)
 	assertMethod(t, "initialized", SurfaceClientNotification, MethodImplemented)
 }

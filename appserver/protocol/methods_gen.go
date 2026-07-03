@@ -57,8 +57,8 @@ var methodRegistry = []MethodInfo{
 	{Method: "mcpServerStatus/list", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "json schema:ClientRequest, protocol crate:common.rs:966, typescript:ClientRequest.ts"},
 	{Method: "memory/reset", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "protocol crate:common.rs:567"},
 	{Method: "mock/experimentalMethod", Surface: SurfaceClientRequest, State: MethodNotApplicable, Source: "protocol crate:common.rs:934"},
-	{Method: "model/list", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "json schema:ClientRequest, protocol crate:common.rs:858, typescript:ClientRequest.ts"},
-	{Method: "modelProvider/capabilities/read", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "json schema:ClientRequest, protocol crate:common.rs:863, typescript:ClientRequest.ts"},
+	{Method: "model/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:858, typescript:ClientRequest.ts"},
+	{Method: "modelProvider/capabilities/read", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:863, typescript:ClientRequest.ts"},
 	{Method: "permissionProfile/list", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "json schema:ClientRequest, protocol crate:common.rs:873, typescript:ClientRequest.ts"},
 	{Method: "plugin/install", Surface: SurfaceClientRequest, State: MethodDeferredStub, Source: "json schema:ClientRequest, protocol crate:common.rs:789, typescript:ClientRequest.ts"},
 	{Method: "plugin/installed", Surface: SurfaceClientRequest, State: MethodDeferredStub, Source: "json schema:ClientRequest, protocol crate:common.rs:692, typescript:ClientRequest.ts"},
@@ -221,9 +221,9 @@ var methodRegistry = []MethodInfo{
 	{Method: "git/status", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
 	{Method: "git/worktree/create", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
 	{Method: "git/worktree/list", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
-	{Method: "provider/capabilities/read", Surface: SurfaceGollemExtension, State: MethodRenamedEquivalent, Source: "goal.txt"},
-	{Method: "provider/list", Surface: SurfaceGollemExtension, State: MethodBlocked, Source: "goal.txt"},
-	{Method: "tool/list", Surface: SurfaceGollemExtension, State: MethodBlocked, Source: "goal.txt"},
+	{Method: "provider/capabilities/read", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
+	{Method: "provider/list", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
+	{Method: "tool/list", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
 	{Method: "turn/retry", Surface: SurfaceGollemExtension, State: MethodBlocked, Source: "goal.txt"},
 }
 
