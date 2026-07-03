@@ -25,12 +25,14 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 		}
 	}
 
-	assertMethod(t, "initialize", SurfaceClientRequest, MethodBlocked)
+	assertMethod(t, "initialize", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/start", SurfaceClientRequest, MethodBlocked)
+	assertMethod(t, "fs/readFile", SurfaceClientRequest, MethodImplemented)
+	assertMethod(t, "git/status", SurfaceGollemExtension, MethodImplemented)
 	assertMethod(t, "turn/retry", SurfaceGollemExtension, MethodBlocked)
 	assertMethod(t, "provider/capabilities/read", SurfaceGollemExtension, MethodRenamedEquivalent)
 	assertMethod(t, "feedback/upload", SurfaceClientRequest, MethodNotApplicable)
-	assertMethod(t, "initialized", SurfaceClientNotification, MethodBlocked)
+	assertMethod(t, "initialized", SurfaceClientNotification, MethodImplemented)
 }
 
 func TestMethodsReturnsCopy(t *testing.T) {

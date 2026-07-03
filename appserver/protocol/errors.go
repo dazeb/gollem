@@ -44,15 +44,24 @@ type UnavailableData struct {
 // MethodUnavailableError returns a typed unavailable error for a known method.
 // Unknown methods still receive JSON-RPC method-not-found.
 func MethodUnavailableError(method string) *Error {
+	return MethodUnavailableErrorWithReason(method, "method is registered in the app-server contract but is not implemented in this Gollem build")
+}
+
+// MethodUnavailableErrorWithReason returns a typed unavailable error with a
+// runtime-specific reason. Unknown methods still receive method-not-found.
+func MethodUnavailableErrorWithReason(method, reason string) *Error {
 	info, ok := LookupMethod(method)
 	if !ok {
 		return &Error{Code: CodeMethodNotFound, Message: "method not found"}
+	}
+	if reason == "" {
+		reason = "method is unavailable"
 	}
 	data, _ := json.Marshal(UnavailableData{
 		Method:  method,
 		Surface: info.Surface,
 		Status:  info.State,
-		Reason:  "method is registered in the app-server contract but is not implemented in this Gollem build",
+		Reason:  reason,
 	})
 	return &Error{
 		Code:    CodeMethodUnavailable,
