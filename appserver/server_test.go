@@ -269,6 +269,36 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	events = server.DrainNotifications()
 	assertNotificationMethods(t, events, "thread/settings/updated")
 
+	nameResp := server.HandleRequest(ctx, request("thread/name/set", map[string]any{
+		"threadId": thread.ID,
+		"name":     "Renamed Controls",
+	}))
+	if nameResp.Error != nil {
+		t.Fatalf("thread/name/set error: %v", nameResp.Error)
+	}
+	var nameResult threadNameSetResult
+	decodeResult(t, nameResp, &nameResult)
+	if nameResult.Name != "Renamed Controls" || nameResult.Thread.Title != "Renamed Controls" || nameResult.Thread.Settings[threadMemoryModeSettingKey] != "disabled" {
+		t.Fatalf("name result = %#v", nameResult)
+	}
+	events = server.DrainNotifications()
+	assertNotificationMethods(t, events, "thread/name/updated")
+	var nameNotice threadNameNotificationParams
+	if err := json.Unmarshal(events[0].Params, &nameNotice); err != nil {
+		t.Fatalf("decode name notice: %v", err)
+	}
+	if nameNotice.ThreadID != thread.ID || nameNotice.Name != "Renamed Controls" {
+		t.Fatalf("name notice = %#v", nameNotice)
+	}
+
+	emptyNameResp := server.HandleRequest(ctx, request("thread/name/set", map[string]any{
+		"threadId": thread.ID,
+		"name":     "  ",
+	}))
+	if emptyNameResp.Error == nil || emptyNameResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("empty name error = %#v", emptyNameResp.Error)
+	}
+
 	badModeResp := server.HandleRequest(ctx, request("thread/memoryMode/set", map[string]any{
 		"threadId": thread.ID,
 		"mode":     "sometimes",

@@ -56,6 +56,18 @@ func (s *Server) publishThreadGoalNotification(method string, thread *store.Thre
 	})
 }
 
+func (s *Server) publishThreadNameNotification(thread *store.Thread) {
+	if thread == nil {
+		return
+	}
+	s.PublishNotification("thread/name/updated", threadNameNotificationParams{
+		ThreadID: thread.ID,
+		Name:     thread.Title,
+		Thread:   thread,
+		At:       time.Now().UTC(),
+	})
+}
+
 func (s *Server) publishCacheBenchmarkCompleted(result appcache.BenchmarkResponse) {
 	providers := make([]appcache.ProviderStats, 0, len(result.Providers))
 	for _, provider := range result.Providers {

@@ -268,6 +268,37 @@ func TestSQLiteStoreUpdateThreadSettingsMergesAndReplaces(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreUpdateThreadTitle(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{
+		Title:    "Original",
+		Settings: map[string]any{"goal": "keep"},
+		Metadata: map[string]any{"source": "test"},
+	})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	renamed, err := s.UpdateThreadTitle(ctx, thread.ID, "Renamed")
+	if err != nil {
+		t.Fatalf("UpdateThreadTitle: %v", err)
+	}
+	if renamed.Title != "Renamed" || renamed.Settings["goal"] != "keep" || renamed.Metadata["source"] != "test" {
+		t.Fatalf("renamed thread = %#v", renamed)
+	}
+	if !renamed.UpdatedAt.After(thread.UpdatedAt) && !renamed.UpdatedAt.Equal(thread.UpdatedAt) {
+		t.Fatalf("renamed UpdatedAt moved backward: before=%s after=%s", thread.UpdatedAt, renamed.UpdatedAt)
+	}
+
+	if _, err := s.DeleteThread(ctx, thread.ID); err != nil {
+		t.Fatalf("DeleteThread: %v", err)
+	}
+	if _, err := s.UpdateThreadTitle(ctx, thread.ID, "Deleted"); !errors.Is(err, ErrThreadDeleted) {
+		t.Fatalf("UpdateThreadTitle deleted err = %v, want ErrThreadDeleted", err)
+	}
+}
+
 func TestSQLiteStoreReturnsCopies(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))

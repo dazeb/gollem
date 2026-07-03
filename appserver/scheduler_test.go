@@ -107,6 +107,7 @@ func TestRequestScheduleForThreadControls(t *testing.T) {
 		"thread/goal/clear",
 		"thread/metadata/update",
 		"thread/memoryMode/set",
+		"thread/name/set",
 	}
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {

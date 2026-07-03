@@ -427,6 +427,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadMetadataUpdate(ctx, params)
 	case "thread/memoryMode/set":
 		return s.handleThreadMemoryModeSet(ctx, params)
+	case "thread/name/set":
+		return s.handleThreadNameSet(ctx, params)
 	case "thread/backgroundTerminals/list":
 		return s.handleBackgroundTerminalsList(ctx)
 	case "thread/backgroundTerminals/terminate":
@@ -916,6 +918,35 @@ func (s *Server) handleThreadMemoryModeSet(ctx context.Context, raw json.RawMess
 		ThreadID:   thread.ID,
 		MemoryMode: mode,
 		Thread:     thread,
+	}, nil
+}
+
+func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/name/set")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadNameSetParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	name := params.name()
+	if name == "" {
+		return nil, invalidParams("name is required", nil)
+	}
+	thread, err := st.UpdateThreadTitle(ctx, threadID, name)
+	if err != nil {
+		return nil, mapError("thread/name/set", err)
+	}
+	s.publishThreadNameNotification(thread)
+	return threadNameSetResult{
+		ThreadID: thread.ID,
+		Name:     thread.Title,
+		Thread:   thread,
 	}, nil
 }
 
@@ -2054,6 +2085,12 @@ type threadMemoryModeSetResult struct {
 	ThreadID   string        `json:"threadId"`
 	MemoryMode string        `json:"memoryMode"`
 	Thread     *store.Thread `json:"thread,omitempty"`
+}
+
+type threadNameSetResult struct {
+	ThreadID string        `json:"threadId"`
+	Name     string        `json:"name"`
+	Thread   *store.Thread `json:"thread,omitempty"`
 }
 
 type threadForkParams struct {

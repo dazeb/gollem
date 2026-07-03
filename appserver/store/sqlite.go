@@ -291,6 +291,34 @@ func (s *SQLiteStore) ForkThread(ctx context.Context, req ForkThreadRequest) (*T
 	return cloneThread(fork), nil
 }
 
+// UpdateThreadTitle implements Store.
+func (s *SQLiteStore) UpdateThreadTitle(ctx context.Context, id, title string) (*Thread, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var thread *Thread
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		loaded, err := loadThreadTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if loaded.Status == ThreadDeleted {
+			return ErrThreadDeleted
+		}
+		loaded.Title = title
+		loaded.UpdatedAt = time.Now().UTC()
+		if err := saveThreadTx(ctx, tx, loaded); err != nil {
+			return err
+		}
+		thread = loaded
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return cloneThread(thread), nil
+}
+
 // UpdateThreadSettings implements Store.
 func (s *SQLiteStore) UpdateThreadSettings(ctx context.Context, req UpdateThreadSettingsRequest) (*Thread, error) {
 	ctx = normalizeContext(ctx)

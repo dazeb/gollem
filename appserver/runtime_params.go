@@ -108,6 +108,21 @@ func (p threadMemoryModeSetParams) threadID() string {
 	return firstNonEmpty(p.ThreadID, p.ID)
 }
 
+type threadNameSetParams struct {
+	ID       string `json:"id,omitempty"`
+	ThreadID string `json:"threadId,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Title    string `json:"title,omitempty"`
+}
+
+func (p threadNameSetParams) threadID() string {
+	return firstNonEmpty(p.ThreadID, p.ID)
+}
+
+func (p threadNameSetParams) name() string {
+	return strings.TrimSpace(firstNonEmpty(p.Name, p.Title))
+}
+
 type turnStartParams struct {
 	ID       string         `json:"id,omitempty"`
 	ThreadID string         `json:"threadId,omitempty"`

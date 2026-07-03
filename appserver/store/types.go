@@ -150,6 +150,7 @@ type Store interface {
 	UnarchiveThread(context.Context, string) (*Thread, error)
 	DeleteThread(context.Context, string) (*Thread, error)
 	ForkThread(context.Context, ForkThreadRequest) (*Thread, error)
+	UpdateThreadTitle(context.Context, string, string) (*Thread, error)
 	UpdateThreadSettings(context.Context, UpdateThreadSettingsRequest) (*Thread, error)
 
 	CreateTurn(context.Context, CreateTurnRequest) (*Turn, error)
