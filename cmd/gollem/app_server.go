@@ -16,6 +16,8 @@ import (
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
+	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 const defaultAppServerStoreRel = ".gollem/appserver.db"
@@ -25,6 +27,10 @@ type appServerFlags struct {
 	storePath       string
 	gitRoot         string
 	worktreeRoot    string
+	provider        string
+	modelName       string
+	location        string
+	project         string
 	stdio           bool
 	allowMutations  bool
 	gitRootExplicit bool
@@ -119,6 +125,42 @@ func parseAppServerFlags(args []string) (appServerFlags, error) {
 			}
 			flags.worktreeRoot = strings.TrimSpace(value)
 			i++
+		case arg == "--provider":
+			value, err := requireServeFlagValue(args, i, "--provider")
+			if err != nil {
+				return appServerFlags{}, err
+			}
+			flags.provider = strings.TrimSpace(value)
+			i++
+		case strings.HasPrefix(arg, "--provider="):
+			flags.provider = strings.TrimSpace(strings.TrimPrefix(arg, "--provider="))
+		case arg == "--model":
+			value, err := requireServeFlagValue(args, i, "--model")
+			if err != nil {
+				return appServerFlags{}, err
+			}
+			flags.modelName = strings.TrimSpace(value)
+			i++
+		case strings.HasPrefix(arg, "--model="):
+			flags.modelName = strings.TrimSpace(strings.TrimPrefix(arg, "--model="))
+		case arg == "--location":
+			value, err := requireServeFlagValue(args, i, "--location")
+			if err != nil {
+				return appServerFlags{}, err
+			}
+			flags.location = strings.TrimSpace(value)
+			i++
+		case strings.HasPrefix(arg, "--location="):
+			flags.location = strings.TrimSpace(strings.TrimPrefix(arg, "--location="))
+		case arg == "--project":
+			value, err := requireServeFlagValue(args, i, "--project")
+			if err != nil {
+				return appServerFlags{}, err
+			}
+			flags.project = strings.TrimSpace(value)
+			i++
+		case strings.HasPrefix(arg, "--project="):
+			flags.project = strings.TrimSpace(strings.TrimPrefix(arg, "--project="))
 		case arg == "--help" || arg == "-h":
 			printAppServerUsage()
 			os.Exit(0)
@@ -218,11 +260,39 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 		appserver.WithProcess(processSvc),
 		appserver.WithEventQueue(events),
 		appserver.WithApprovalService(approvals),
+		appserver.WithRuntimeService(appserver.NewRuntimeService(
+			appserver.WithRuntimeModelFactory(appServerRuntimeModelFactory(flags)),
+		)),
 	}
 	if gitSvc != nil {
 		opts = append(opts, appserver.WithGit(gitSvc))
 	}
 	return appserver.NewServer(opts...), cleanup, nil
+}
+
+func appServerRuntimeModelFactory(flags appServerFlags) appserver.RuntimeModelFactory {
+	return func(_ context.Context, selection appserver.RuntimeModelSelection) (core.Model, appserver.RuntimeModelInfo, error) {
+		provider := firstNonEmptyAppServer(selection.ProviderID, selection.Provider, flags.provider)
+		if provider == "" {
+			provider = detectProvider()
+		}
+		if provider == "" {
+			return nil, appserver.RuntimeModelInfo{}, fmt.Errorf("%w: provider is required for thread/turn runtime", appserver.ErrRuntimeNotConfigured)
+		}
+		modelName := firstNonEmptyAppServer(selection.Model, flags.modelName)
+		base, err := createModel(provider, modelName, flags.location, flags.project, deriveRequestTimeout(0))
+		if err != nil {
+			return nil, appserver.RuntimeModelInfo{}, err
+		}
+		if modelName == "" {
+			modelName = strings.TrimSpace(base.ModelName())
+		}
+		return modelutil.NewRetryModel(base, buildRetryConfig(provider, modelName, 0)), appserver.RuntimeModelInfo{
+			ProviderID: provider,
+			Provider:   provider,
+			Model:      modelName,
+		}, nil
+	}
 }
 
 func resolveAppServerStorePath(workDir, configured string) (string, error) {
@@ -268,6 +338,10 @@ Options:
   --store <path>            SQLite store path (default: <workdir>/.gollem/appserver.db)
   --git-root <path>         Git repository root (default: workdir; unavailable if not a repo)
   --worktree-root <path>    Directory where git/worktree/create may create worktrees
+  --provider <name>         Default provider for thread/turn runtime (auto-detected when possible)
+  --model <name>            Default model for thread/turn runtime (provider default when unset)
+  --location <region>       GCP region for vertexai providers
+  --project <id>            GCP project ID for vertexai providers
   --allow-mutations[=bool]  Bypass app-server approvals for fs/process/git mutations (default: false)
   -h, --help                Show this help
 

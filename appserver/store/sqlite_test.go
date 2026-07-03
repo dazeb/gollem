@@ -226,6 +226,48 @@ func TestSQLiteStoreForkCopiesThreadHistory(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreUpdateThreadSettingsMergesAndReplaces(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{
+		Settings: map[string]any{"provider": "openai", "model": "gpt"},
+		Metadata: map[string]any{"source": "initial"},
+	})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	merged, err := s.UpdateThreadSettings(ctx, UpdateThreadSettingsRequest{
+		ID:       thread.ID,
+		Settings: map[string]any{"model": "claude"},
+		Metadata: map[string]any{"updated": true},
+	})
+	if err != nil {
+		t.Fatalf("UpdateThreadSettings merge: %v", err)
+	}
+	if merged.Settings["provider"] != "openai" || merged.Settings["model"] != "claude" {
+		t.Fatalf("merged settings = %#v", merged.Settings)
+	}
+	if merged.Metadata["source"] != "initial" || merged.Metadata["updated"] != true {
+		t.Fatalf("merged metadata = %#v", merged.Metadata)
+	}
+
+	replaced, err := s.UpdateThreadSettings(ctx, UpdateThreadSettingsRequest{
+		ID:       thread.ID,
+		Settings: map[string]any{"provider": "anthropic"},
+		Replace:  true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateThreadSettings replace: %v", err)
+	}
+	if replaced.Settings["provider"] != "anthropic" || replaced.Settings["model"] != nil {
+		t.Fatalf("replaced settings = %#v", replaced.Settings)
+	}
+	if len(replaced.Metadata) != 0 {
+		t.Fatalf("replaced metadata = %#v", replaced.Metadata)
+	}
+}
+
 func TestSQLiteStoreReturnsCopies(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))

@@ -98,6 +98,13 @@ type ForkThreadRequest struct {
 	IncludeItems   bool
 }
 
+type UpdateThreadSettingsRequest struct {
+	ID       string
+	Settings map[string]any
+	Metadata map[string]any
+	Replace  bool
+}
+
 type CreateTurnRequest struct {
 	ThreadID string
 	Input    json.RawMessage
@@ -143,6 +150,7 @@ type Store interface {
 	UnarchiveThread(context.Context, string) (*Thread, error)
 	DeleteThread(context.Context, string) (*Thread, error)
 	ForkThread(context.Context, ForkThreadRequest) (*Thread, error)
+	UpdateThreadSettings(context.Context, UpdateThreadSettingsRequest) (*Thread, error)
 
 	CreateTurn(context.Context, CreateTurnRequest) (*Turn, error)
 	StartTurn(context.Context, string) (*Turn, error)

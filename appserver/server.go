@@ -19,6 +19,7 @@ import (
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
+	"github.com/fugue-labs/gollem/core"
 )
 
 type connectionState int
@@ -47,6 +48,7 @@ type Server struct {
 	events    *EventQueue
 	approvals *ApprovalService
 	daemon    *DaemonService
+	runtime   *RuntimeService
 
 	requestSchedulerLimit int
 }
@@ -113,6 +115,12 @@ func WithApprovalService(approvals *ApprovalService) Option {
 func WithDaemonService(daemon *DaemonService) Option {
 	return func(s *Server) {
 		s.daemon = daemon
+	}
+}
+
+func WithRuntimeService(runtime *RuntimeService) Option {
+	return func(s *Server) {
+		s.runtime = runtime
 	}
 }
 
@@ -312,6 +320,10 @@ func (s *Server) requireReady() *protocol.Error {
 
 func (s *Server) dispatch(ctx context.Context, method string, params json.RawMessage) (any, *protocol.Error) {
 	switch method {
+	case "thread/start":
+		return s.handleThreadStart(ctx, params)
+	case "thread/resume":
+		return s.handleThreadResume(ctx, params)
 	case "thread/list":
 		return s.handleThreadList(ctx, params)
 	case "thread/read":
@@ -324,10 +336,20 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadStatus(ctx, params, method, store.ThreadActive)
 	case "thread/delete":
 		return s.handleThreadStatus(ctx, params, method, store.ThreadDeleted)
+	case "thread/settings/update":
+		return s.handleThreadSettingsUpdate(ctx, params)
 	case "thread/turns/list":
 		return s.handleThreadTurnsList(ctx, params)
 	case "thread/items/list":
 		return s.handleThreadItemsList(ctx, params)
+	case "turn/start":
+		return s.handleTurnStart(ctx, params)
+	case "turn/interrupt":
+		return s.handleTurnInterrupt(ctx, params)
+	case "turn/steer":
+		return s.handleTurnSteer(ctx, params)
+	case "turn/retry":
+		return s.handleTurnRetry(ctx, params)
 	case "model/list":
 		return s.handleModelList(params)
 	case "modelProvider/capabilities/read", "provider/capabilities/read":
@@ -398,6 +420,54 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		}
 		return nil, protocol.MethodUnavailableError(method)
 	}
+}
+
+func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, runtimeSvc, rpcErr := s.requireRuntime("thread/start")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadStartParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	prompt := runtimePromptFromStartParams(params.Prompt, params.Message, params.Text, params.Input)
+	if prompt == "" {
+		return nil, invalidParams("prompt is required", nil)
+	}
+	settings := cloneSettings(params.Settings)
+	settings = mergeRuntimeSelectionIntoSettings(settings, params.ProviderID, params.Provider, params.Model)
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{
+		Title:     params.Title,
+		Workspace: params.Workspace,
+		Settings:  settings,
+		Metadata:  params.Metadata,
+	})
+	if err != nil {
+		return nil, mapError("thread/start", err)
+	}
+	s.publishThreadNotification("thread/started", thread)
+	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
+		ThreadID:      thread.ID,
+		Prompt:        prompt,
+		Input:         params.Input,
+		Metadata:      params.Metadata,
+		Selection:     runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model),
+		ModelSettings: runtimeModelSettingsFromParams(params.RuntimeModelParams),
+	})
+	if err != nil {
+		return nil, mapError("thread/start", err)
+	}
+	return map[string]any{"thread": thread, "turn": turn.Turn}, nil
+}
+
+func (s *Server) handleThreadResume(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	var params threadResumeParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	params.ThreadID = firstNonEmpty(params.ThreadID, params.ID)
+	return s.startTurnWithParams(ctx, "thread/resume", params.turnStartParams())
 }
 
 func (s *Server) handleThreadList(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -523,6 +593,32 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 	return map[string]any{"thread": thread}, nil
 }
 
+func (s *Server) handleThreadSettingsUpdate(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/settings/update")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadSettingsUpdateParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := firstNonEmpty(params.ThreadID, params.ID)
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	thread, err := st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Settings: params.Settings,
+		Metadata: params.Metadata,
+		Replace:  params.Replace,
+	})
+	if err != nil {
+		return nil, mapError("thread/settings/update", err)
+	}
+	s.publishThreadNotification("thread/settings/updated", thread)
+	return map[string]any{"thread": thread}, nil
+}
+
 func (s *Server) handleThreadTurnsList(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	st, rpcErr := s.requireStore("thread/turns/list")
 	if rpcErr != nil {
@@ -564,6 +660,188 @@ func (s *Server) handleThreadItemsList(ctx context.Context, raw json.RawMessage)
 		return nil, mapError("thread/items/list", err)
 	}
 	return map[string]any{"items": items}, nil
+}
+
+func (s *Server) handleTurnStart(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	var params turnStartParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	return s.startTurnWithParams(ctx, "turn/start", params)
+}
+
+func (s *Server) handleTurnInterrupt(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, runtimeSvc, rpcErr := s.requireRuntime("turn/interrupt")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params turnIDParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	turnID := params.turnID()
+	if turnID == "" {
+		return nil, invalidParams("turnId is required", nil)
+	}
+	result, err := runtimeSvc.Interrupt(ctx, st, turnID)
+	if err != nil && !errors.Is(err, ErrRuntimeTurnNotActive) {
+		return nil, mapError("turn/interrupt", err)
+	}
+	return result, nil
+}
+
+func (s *Server) handleTurnSteer(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, runtimeSvc, rpcErr := s.requireRuntime("turn/steer")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params turnSteerParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	turnID := firstNonEmpty(params.TurnID, params.ID)
+	if turnID == "" {
+		return nil, invalidParams("turnId is required", nil)
+	}
+	message := strings.TrimSpace(firstNonEmpty(params.Prompt, params.Message, params.Text))
+	if message == "" {
+		return nil, invalidParams("message is required", nil)
+	}
+	turn, err := st.GetTurn(ctx, turnID)
+	if err != nil {
+		return nil, mapError("turn/steer", err)
+	}
+	item, err := st.AppendItem(ctx, store.AppendItemRequest{
+		ThreadID: turn.ThreadID,
+		TurnID:   turn.ID,
+		Kind:     "steer",
+		Status:   "queued",
+		Payload: mustRuntimeJSON(map[string]any{
+			"message": message,
+			"at":      time.Now().UTC(),
+		}),
+	})
+	if err != nil {
+		return nil, mapError("turn/steer", err)
+	}
+	accepted := runtimeSvc.IsActive(turn.ID)
+	return map[string]any{
+		"accepted": accepted,
+		"turnId":   turn.ID,
+		"item":     item,
+		"reason":   runtimeSteerReason(accepted),
+	}, nil
+}
+
+func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, runtimeSvc, rpcErr := s.requireRuntime("turn/retry")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params turnRetryParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	turnID := firstNonEmpty(params.TurnID, params.ID)
+	if turnID == "" {
+		return nil, invalidParams("turnId is required", nil)
+	}
+	source, err := st.GetTurn(ctx, turnID)
+	if err != nil {
+		return nil, mapError("turn/retry", err)
+	}
+	prompt := runtimePromptFromInput(source.Input)
+	if params.Prompt != "" || params.Message != "" || params.Text != "" || len(params.Input) > 0 {
+		prompt = runtimePromptFromStartParams(params.Prompt, params.Message, params.Text, params.Input)
+	}
+	if prompt == "" {
+		return nil, invalidParams("retry prompt is unavailable", nil)
+	}
+	beforeSeq, err := firstTurnItemSeq(ctx, st, source.ThreadID, source.ID)
+	if err != nil {
+		return nil, mapError("turn/retry", err)
+	}
+	history, err := s.loadThreadHistory(ctx, st, source.ThreadID, beforeSeq)
+	if err != nil {
+		return nil, mapError("turn/retry", err)
+	}
+	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
+		ThreadID:      source.ThreadID,
+		Prompt:        prompt,
+		Input:         firstRaw(params.Input, source.Input),
+		Metadata:      params.Metadata,
+		Selection:     runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model),
+		ModelSettings: runtimeModelSettingsFromParams(params.RuntimeModelParams),
+		History:       history,
+	})
+	if err != nil {
+		return nil, mapError("turn/retry", err)
+	}
+	return map[string]any{"turn": turn.Turn, "sourceTurnId": source.ID}, nil
+}
+
+func (s *Server) startTurnWithParams(ctx context.Context, method string, params turnStartParams) (any, *protocol.Error) {
+	st, runtimeSvc, rpcErr := s.requireRuntime(method)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := firstNonEmpty(params.ThreadID, params.ID)
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	prompt := runtimePromptFromStartParams(params.Prompt, params.Message, params.Text, params.Input)
+	if prompt == "" {
+		return nil, invalidParams("prompt is required", nil)
+	}
+	thread, err := st.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, mapError(method, err)
+	}
+	history, err := s.loadThreadHistory(ctx, st, thread.ID, 0)
+	if err != nil {
+		return nil, mapError(method, err)
+	}
+	selection := runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model)
+	selection = runtimeSelectionWithThreadDefaults(selection, thread.Settings)
+	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
+		ThreadID:      thread.ID,
+		Prompt:        prompt,
+		Input:         params.Input,
+		Metadata:      params.Metadata,
+		Selection:     selection,
+		ModelSettings: runtimeModelSettingsFromParams(params.RuntimeModelParams),
+		History:       history,
+	})
+	if err != nil {
+		return nil, mapError(method, err)
+	}
+	return map[string]any{"thread": thread, "turn": turn.Turn}, nil
+}
+
+func (s *Server) loadThreadHistory(ctx context.Context, st store.Store, threadID string, beforeSeq int64) ([]core.ModelMessage, error) {
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: threadID})
+	if err != nil {
+		return nil, err
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if beforeSeq > 0 && item.Seq >= beforeSeq {
+			break
+		}
+		filtered = append(filtered, item)
+	}
+	return runtimeMessagesFromItems(filtered), nil
+}
+
+func firstTurnItemSeq(ctx context.Context, st store.Store, threadID, turnID string) (int64, error) {
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: threadID, TurnID: turnID, Limit: 1})
+	if err != nil {
+		return 0, err
+	}
+	if len(items) == 0 || items[0] == nil {
+		return 0, nil
+	}
+	return items[0].Seq, nil
 }
 
 func (s *Server) handleModelList(raw json.RawMessage) (any, *protocol.Error) {
@@ -609,6 +887,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Process:    s.process != nil,
 		Git:        s.git != nil,
 		Cache:      s.cache != nil,
+		Runtime:    s.runtime != nil,
 	}), nil
 }
 
@@ -1035,6 +1314,17 @@ func (s *Server) requireDaemon(method string) (*DaemonService, *protocol.Error) 
 	return s.daemon, nil
 }
 
+func (s *Server) requireRuntime(method string) (store.Store, *RuntimeService, *protocol.Error) {
+	st, rpcErr := s.requireStore(method)
+	if rpcErr != nil {
+		return nil, nil, rpcErr
+	}
+	if s.runtime == nil {
+		return nil, nil, protocol.MethodUnavailableErrorWithReason(method, "turn runtime is not configured")
+	}
+	return st, s.runtime, nil
+}
+
 func decodeParams(raw json.RawMessage, out any) *protocol.Error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -1114,12 +1404,15 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, store.ErrThreadNotFound),
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
-		errors.Is(err, store.ErrThreadDeleted):
+		errors.Is(err, store.ErrThreadDeleted),
+		errors.Is(err, ErrRuntimePromptEmpty):
 		return invalidParams("invalid params", err)
 	case errors.Is(err, toolfs.ErrApprovalDenied),
 		errors.Is(err, toolgit.ErrApprovalDenied),
 		errors.Is(err, toolprocess.ErrApprovalDenied):
 		return rpcError(protocol.CodeInvalidRequest, "operation denied by approval policy", err)
+	case errors.Is(err, ErrRuntimeNotConfigured):
+		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime model factory is not configured")
 	default:
 		return rpcError(protocol.CodeInternalError, "internal app-server error", err)
 	}

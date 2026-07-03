@@ -22,6 +22,10 @@ func TestParseAppServerFlags(t *testing.T) {
 		"--store", "state/app.db",
 		"--git-root", "/tmp/repo",
 		"--worktree-root", "/tmp/worktrees",
+		"--provider", "test",
+		"--model", "test-model",
+		"--location", "global",
+		"--project", "test-project",
 		"--allow-mutations",
 	})
 	if err != nil {
@@ -29,6 +33,9 @@ func TestParseAppServerFlags(t *testing.T) {
 	}
 	if got.workDir != "/tmp/work" || got.storePath != "state/app.db" || got.gitRoot != "/tmp/repo" || got.worktreeRoot != "/tmp/worktrees" {
 		t.Fatalf("flags = %#v", got)
+	}
+	if got.provider != "test" || got.modelName != "test-model" || got.location != "global" || got.project != "test-project" {
+		t.Fatalf("runtime flags = %#v", got)
 	}
 	if !got.allowMutations || !got.stdio || !got.gitRootExplicit {
 		t.Fatalf("boolean flags = %#v", got)
@@ -262,6 +269,33 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 	if !containsTool(tools.Data, "cache") {
 		t.Fatalf("tool/list missing cache tool: %#v", tools.Data)
 	}
+	if !containsTool(tools.Data, "turn-runtime") {
+		t.Fatalf("tool/list missing turn runtime tool: %#v", tools.Data)
+	}
+}
+
+func TestCLIAppServerThreadStartUsesRuntimeProviderFlag(t *testing.T) {
+	server, cleanup, err := newCLIAppServer(appServerFlags{
+		workDir:   t.TempDir(),
+		storePath: ":memory:",
+		provider:  "test",
+		stdio:     true,
+	})
+	if err != nil {
+		t.Fatalf("newCLIAppServer: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	resp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("start"),
+		Method: "thread/start",
+		Params: json.RawMessage(`{"prompt":"hello from cli runtime"}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	waitCLINotification(t, server, "turn/completed")
 }
 
 func TestCLIAppServerServesDaemonLifecycleMethods(t *testing.T) {
@@ -320,6 +354,23 @@ func readyCLIAppServer(t *testing.T, server *appserver.Server) {
 	}
 	if err := server.HandleNotification(context.Background(), protocol.Notification{Method: "initialized"}); err != nil {
 		t.Fatalf("initialized: %v", err)
+	}
+}
+
+func waitCLINotification(t *testing.T, server *appserver.Server, method string) {
+	t.Helper()
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case <-server.NotificationSignal():
+			for _, notification := range server.DrainNotifications() {
+				if notification.Method == method {
+					return
+				}
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for notification %q", method)
+		}
 	}
 }
 
