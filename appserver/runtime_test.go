@@ -103,6 +103,76 @@ func TestServerRuntimeThreadResumeUsesPersistedHistory(t *testing.T) {
 	assertRuntimeUserPrompt(t, secondMessages[2], "second prompt")
 }
 
+func TestServerRuntimePublishesThreadTokenUsageUpdated(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	first := core.TextResponse("first answer")
+	first.Usage = core.Usage{
+		InputTokens:     10,
+		OutputTokens:    4,
+		CacheReadTokens: 3,
+		Details: map[string]int{
+			"reasoning_tokens": 2,
+		},
+	}
+	second := core.TextResponse("second answer")
+	second.Usage = core.Usage{
+		InputTokens:     5,
+		OutputTokens:    6,
+		CacheReadTokens: 1,
+		Details: map[string]int{
+			"reasoning_tokens": 1,
+		},
+	}
+	model := core.NewTestModel(first, second)
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}))),
+	)
+
+	startResp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "first prompt"}))
+	if startResp.Error != nil {
+		t.Fatalf("thread/start error: %v", startResp.Error)
+	}
+	var started struct {
+		Thread *store.Thread `json:"thread"`
+		Turn   *store.Turn   `json:"turn"`
+	}
+	decodeResult(t, startResp, &started)
+	firstEvents := waitForNotificationSet(t, server, "thread/tokenUsage/updated", "turn/completed")
+	firstUsage := decodeThreadTokenUsageNotification(t, firstEvents)
+	if firstUsage.ThreadID != started.Thread.ID || firstUsage.TurnID != started.Turn.ID {
+		t.Fatalf("first usage ids = thread %q turn %q, want %q/%q", firstUsage.ThreadID, firstUsage.TurnID, started.Thread.ID, started.Turn.ID)
+	}
+	if firstUsage.TokenUsage.ModelContextWindow != nil {
+		t.Fatalf("first modelContextWindow = %v, want nil", *firstUsage.TokenUsage.ModelContextWindow)
+	}
+	assertTokenUsageBreakdown(t, "first last", firstUsage.TokenUsage.Last, 14, 10, 3, 4, 2)
+	assertTokenUsageBreakdown(t, "first total", firstUsage.TokenUsage.Total, 14, 10, 3, 4, 2)
+
+	resumeResp := server.HandleRequest(ctx, request("thread/resume", map[string]any{
+		"threadId": started.Thread.ID,
+		"prompt":   "second prompt",
+	}))
+	if resumeResp.Error != nil {
+		t.Fatalf("thread/resume error: %v", resumeResp.Error)
+	}
+	var resumed struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, resumeResp, &resumed)
+	secondEvents := waitForNotificationSet(t, server, "thread/tokenUsage/updated", "turn/completed")
+	secondUsage := decodeThreadTokenUsageNotification(t, secondEvents)
+	if secondUsage.ThreadID != started.Thread.ID || secondUsage.TurnID != resumed.Turn.ID {
+		t.Fatalf("second usage ids = thread %q turn %q, want %q/%q", secondUsage.ThreadID, secondUsage.TurnID, started.Thread.ID, resumed.Turn.ID)
+	}
+	if secondUsage.TokenUsage.ModelContextWindow != nil {
+		t.Fatalf("second modelContextWindow = %v, want nil", *secondUsage.TokenUsage.ModelContextWindow)
+	}
+	assertTokenUsageBreakdown(t, "second last", secondUsage.TokenUsage.Last, 11, 5, 1, 6, 1)
+	assertTokenUsageBreakdown(t, "second total", secondUsage.TokenUsage.Total, 25, 15, 4, 10, 3)
+}
+
 func TestServerRuntimeThreadResumeUsesInjectedResponseItems(t *testing.T) {
 	ctx := context.Background()
 	st := newRuntimeTestStore(t)
@@ -440,6 +510,36 @@ func notificationMethods(notifications []protocol.Notification) []string {
 		methods[i] = notification.Method
 	}
 	return methods
+}
+
+func decodeThreadTokenUsageNotification(t *testing.T, notifications []protocol.Notification) threadTokenUsageUpdatedNotificationParams {
+	t.Helper()
+	for _, notification := range notifications {
+		if notification.Method != "thread/tokenUsage/updated" {
+			continue
+		}
+		var params threadTokenUsageUpdatedNotificationParams
+		if err := json.Unmarshal(notification.Params, &params); err != nil {
+			t.Fatalf("decode thread/tokenUsage/updated params: %v", err)
+		}
+		return params
+	}
+	t.Fatalf("thread/tokenUsage/updated notification missing from %v", notificationMethods(notifications))
+	return threadTokenUsageUpdatedNotificationParams{}
+}
+
+func assertTokenUsageBreakdown(t *testing.T, label string, got tokenUsageBreakdown, total, input, cachedInput, output, reasoningOutput int64) {
+	t.Helper()
+	want := tokenUsageBreakdown{
+		TotalTokens:           total,
+		InputTokens:           input,
+		CachedInputTokens:     cachedInput,
+		OutputTokens:          output,
+		ReasoningOutputTokens: reasoningOutput,
+	}
+	if got != want {
+		t.Fatalf("%s usage = %+v, want %+v", label, got, want)
+	}
 }
 
 func assertRuntimeUserPrompt(t *testing.T, message core.ModelMessage, want string) {

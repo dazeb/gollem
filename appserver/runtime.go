@@ -346,6 +346,9 @@ func (s *RuntimeService) complete(st store.Store, notifier runtimeNotifier, turn
 		Usage:  usage,
 	})
 	if err == nil {
+		if result != nil {
+			publishThreadTokenUsage(notifier, st, completed, result.Usage)
+		}
 		publishTurnCompleted(notifier, completed)
 	}
 }
@@ -419,6 +422,26 @@ type runtimeErrorNotificationParams struct {
 	At       time.Time `json:"at"`
 }
 
+type threadTokenUsageUpdatedNotificationParams struct {
+	ThreadID   string                  `json:"threadId"`
+	TurnID     string                  `json:"turnId"`
+	TokenUsage threadTokenUsagePayload `json:"tokenUsage"`
+}
+
+type threadTokenUsagePayload struct {
+	Total              tokenUsageBreakdown `json:"total"`
+	Last               tokenUsageBreakdown `json:"last"`
+	ModelContextWindow *int64              `json:"modelContextWindow"`
+}
+
+type tokenUsageBreakdown struct {
+	TotalTokens           int64 `json:"totalTokens"`
+	InputTokens           int64 `json:"inputTokens"`
+	CachedInputTokens     int64 `json:"cachedInputTokens"`
+	OutputTokens          int64 `json:"outputTokens"`
+	ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
+}
+
 func publishTurnStarted(notifier runtimeNotifier, turn *store.Turn) {
 	if notifier == nil || turn == nil {
 		return
@@ -458,6 +481,22 @@ func publishItemCompleted(notifier runtimeNotifier, turn *store.Turn, item *stor
 	})
 }
 
+func publishThreadTokenUsage(notifier runtimeNotifier, st store.Store, turn *store.Turn, last core.RunUsage) {
+	if notifier == nil || st == nil || turn == nil {
+		return
+	}
+	total := threadTokenUsageTotal(context.Background(), st, turn.ThreadID, last)
+	notifier.PublishNotification("thread/tokenUsage/updated", threadTokenUsageUpdatedNotificationParams{
+		ThreadID: turn.ThreadID,
+		TurnID:   turn.ID,
+		TokenUsage: threadTokenUsagePayload{
+			Total:              tokenUsageBreakdownFromUsage(total.Usage),
+			Last:               tokenUsageBreakdownFromUsage(last.Usage),
+			ModelContextWindow: nil,
+		},
+	})
+}
+
 func publishModelDelta(notifier runtimeNotifier, turn *store.Turn, event core.ModelDeltaEvent) {
 	if notifier == nil || turn == nil || event.ContentDelta == "" {
 		return
@@ -488,16 +527,115 @@ func publishRuntimeError(notifier runtimeNotifier, turn *store.Turn, text string
 }
 
 func runtimeUsageMap(usage core.RunUsage) map[string]any {
-	return map[string]any{
-		"requests": usage.Requests,
-		"usage": map[string]any{
-			"inputTokens":      usage.InputTokens,
-			"outputTokens":     usage.OutputTokens,
-			"cacheWriteTokens": usage.CacheWriteTokens,
-			"cacheReadTokens":  usage.CacheReadTokens,
-			"totalTokens":      usage.TotalTokens(),
-		},
+	usageMap := map[string]any{
+		"inputTokens":      usage.InputTokens,
+		"outputTokens":     usage.OutputTokens,
+		"cacheWriteTokens": usage.CacheWriteTokens,
+		"cacheReadTokens":  usage.CacheReadTokens,
+		"totalTokens":      usage.TotalTokens(),
 	}
+	if len(usage.Details) > 0 {
+		details := make(map[string]any, len(usage.Details))
+		for key, value := range usage.Details {
+			details[key] = value
+		}
+		usageMap["details"] = details
+	}
+	return map[string]any{
+		"requests":  usage.Requests,
+		"toolCalls": usage.ToolCalls,
+		"usage":     usageMap,
+	}
+}
+
+func threadTokenUsageTotal(ctx context.Context, st store.Store, threadID string, fallback core.RunUsage) core.RunUsage {
+	turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: threadID})
+	if err != nil {
+		return fallback
+	}
+	var total core.RunUsage
+	for _, turn := range turns {
+		if turn == nil || len(turn.Usage) == 0 {
+			continue
+		}
+		total.IncrRun(runtimeUsageFromStoredMap(turn.Usage))
+	}
+	if total.Requests == 0 && total.ToolCalls == 0 && total.TotalTokens() == 0 {
+		return fallback
+	}
+	return total
+}
+
+func runtimeUsageFromStoredMap(values map[string]any) core.RunUsage {
+	var usage core.RunUsage
+	if len(values) == 0 {
+		return usage
+	}
+	usage.Requests = runtimeIntFromAny(values["requests"])
+	usage.ToolCalls = runtimeIntFromAny(values["toolCalls"])
+	tokenValues := runtimeMapFromAny(values["usage"])
+	if tokenValues == nil {
+		tokenValues = values
+	}
+	usage.InputTokens = runtimeIntFromAny(tokenValues["inputTokens"])
+	usage.OutputTokens = runtimeIntFromAny(tokenValues["outputTokens"])
+	usage.CacheWriteTokens = runtimeIntFromAny(tokenValues["cacheWriteTokens"])
+	usage.CacheReadTokens = runtimeIntFromAny(tokenValues["cacheReadTokens"])
+	if details := runtimeMapFromAny(tokenValues["details"]); len(details) > 0 {
+		usage.Details = make(map[string]int, len(details))
+		for key, value := range details {
+			usage.Details[key] = runtimeIntFromAny(value)
+		}
+	}
+	return usage
+}
+
+func tokenUsageBreakdownFromUsage(usage core.Usage) tokenUsageBreakdown {
+	return tokenUsageBreakdown{
+		TotalTokens:           int64(usage.TotalTokens()),
+		InputTokens:           int64(usage.InputTokens),
+		CachedInputTokens:     int64(usage.CacheReadTokens),
+		OutputTokens:          int64(usage.OutputTokens),
+		ReasoningOutputTokens: int64(runtimeReasoningOutputTokens(usage.Details)),
+	}
+}
+
+func runtimeReasoningOutputTokens(details map[string]int) int {
+	for _, key := range []string{"reasoning_tokens", "reasoningTokens", "reasoningOutputTokens"} {
+		if value := details[key]; value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func runtimeMapFromAny(value any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	if mapped, ok := value.(map[string]any); ok {
+		return mapped
+	}
+	return nil
+}
+
+func runtimeIntFromAny(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		if i, err := typed.Int64(); err == nil {
+			return int(i)
+		}
+		if f, err := typed.Float64(); err == nil {
+			return int(f)
+		}
+	}
+	return 0
 }
 
 func lastRuntimeAssistantText(messages []core.ModelMessage) string {
