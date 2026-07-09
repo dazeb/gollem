@@ -82,6 +82,31 @@ func TestGPT56PromptCacheOptions(t *testing.T) {
 	}
 }
 
+func TestChatGPTAuth_GPT56ResponsesLiteHeader(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  string
+	}{
+		{model: GPT56, want: "true"},
+		{model: GPT56Sol, want: "true"},
+		{model: GPT56Terra, want: "true"},
+		{model: GPT56Luna, want: "true"},
+		{model: "gpt-5.5"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			p := New(WithChatGPTAuth("token", "acct"), WithModel(tc.model))
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.setHeaders(req)
+			if got := req.Header.Get(chatgptResponsesLiteHdr); got != tc.want {
+				t.Fatalf("%s = %q, want %q", chatgptResponsesLiteHdr, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPreGPT56KeepsPromptCacheRetention(t *testing.T) {
 	p := New(WithModel("gpt-5.5"), WithPromptCacheRetention("24h"))
 	req := &responsesRequest{Model: "gpt-5.5"}

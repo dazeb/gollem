@@ -54,6 +54,7 @@ const (
 	chatCompletionsEndpoint = "/v1/chat/completions"
 	responsesEndpoint       = "/v1/responses"
 	chatgptResponsesEP      = "/responses"
+	chatgptResponsesLiteHdr = "X-OpenAI-Internal-Codex-Responses-Lite"
 )
 
 const (
@@ -578,6 +579,9 @@ func (p *Provider) setHeaders(req *http.Request) {
 		// header to pass Cloudflare bot protection. Match the Codex CLI headers.
 		req.Header.Set("User-Agent", "codex-cli/0.1")
 		req.Header.Set("originator", "codex_cli_rs")
+		if isGPT56Model(p.model) {
+			req.Header.Set(chatgptResponsesLiteHdr, "true")
+		}
 	}
 }
 

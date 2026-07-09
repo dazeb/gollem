@@ -178,6 +178,9 @@ func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context) (*respons
 		}
 		headers.Set("User-Agent", "codex-cli/0.1")
 		headers.Set("originator", "codex_cli_rs")
+		if isGPT56Model(p.model) {
+			headers.Set(chatgptResponsesLiteHdr, "true")
+		}
 	}
 
 	dialer := websocket.Dialer{
