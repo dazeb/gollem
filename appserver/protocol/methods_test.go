@@ -98,6 +98,7 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	assertMethod(t, "thread/goal/cleared", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "thread/name/updated", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "deprecationNotice", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "thread/tokenUsage/updated", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "turn/started", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "turn/completed", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "item/started", SurfaceServerNotification, MethodImplemented)

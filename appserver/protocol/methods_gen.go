@@ -186,7 +186,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "thread/settings/updated", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1621, typescript:ServerNotification.ts"},
 	{Method: "thread/started", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1610, typescript:ServerNotification.ts"},
 	{Method: "thread/status/changed", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1611, typescript:ServerNotification.ts"},
-	{Method: "thread/tokenUsage/updated", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1622, typescript:ServerNotification.ts"},
+	{Method: "thread/tokenUsage/updated", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1622, typescript:ServerNotification.ts"},
 	{Method: "thread/unarchived", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1614, typescript:ServerNotification.ts"},
 	{Method: "turn/completed", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1625, typescript:ServerNotification.ts"},
 	{Method: "turn/diff/updated", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1627, typescript:ServerNotification.ts"},
