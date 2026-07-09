@@ -103,7 +103,54 @@ func TestChatGPTAuth_GPT56ResponsesLiteHeader(t *testing.T) {
 			if got := req.Header.Get(chatgptResponsesLiteHdr); got != tc.want {
 				t.Fatalf("%s = %q, want %q", chatgptResponsesLiteHdr, got, tc.want)
 			}
+			if got := req.Header.Get("User-Agent"); got != chatgptUserAgent {
+				t.Fatalf("User-Agent = %q, want %q", got, chatgptUserAgent)
+			}
 		})
+	}
+}
+
+func TestChatGPTAuth_GPT56ResponsesLiteRequest(t *testing.T) {
+	effort := "medium"
+	params := &core.ModelRequestParameters{FunctionTools: []core.ToolDefinition{{
+		Name:        "read_file",
+		Description: "Read one file",
+	}}}
+	messages := []core.ModelMessage{core.ModelRequest{Parts: []core.ModelRequestPart{
+		core.SystemPromptPart{Content: "Be concise."},
+		core.UserPromptPart{Content: "Read the file."},
+	}}}
+	req, err := buildResponsesRequest(messages, &core.ModelSettings{ReasoningEffort: &effort}, params, GPT56Luna, 128000, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := New(WithChatGPTAuth("token", "acct"), WithModel(GPT56Luna))
+	p.applyResponsesEndpointSettings(req)
+
+	if req.Instructions != "" || req.Tools != nil {
+		t.Fatalf("Responses Lite top-level instructions/tools = %q/%v, want empty/nil", req.Instructions, req.Tools)
+	}
+	if req.Reasoning == nil || req.Reasoning.Effort != effort || req.Reasoning.Context != "all_turns" {
+		t.Fatalf("reasoning = %+v, want effort=%q context=all_turns", req.Reasoning, effort)
+	}
+	if req.ParallelToolCalls == nil || *req.ParallelToolCalls {
+		t.Fatalf("parallel_tool_calls = %v, want false", req.ParallelToolCalls)
+	}
+	if len(req.Input) != 3 {
+		t.Fatalf("input length = %d, want 3: %#v", len(req.Input), req.Input)
+	}
+	if req.Input[0]["type"] != "additional_tools" || req.Input[0]["role"] != "developer" {
+		t.Fatalf("first input item = %#v, want developer additional_tools", req.Input[0])
+	}
+	tools, ok := req.Input[0]["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("additional tools = %#v, want one tool", req.Input[0]["tools"])
+	}
+	if req.Input[1]["role"] != "developer" || extractTextContent(req.Input[1]["content"]) != "Be concise." {
+		t.Fatalf("developer instruction = %#v", req.Input[1])
+	}
+	if req.Input[2]["role"] != "user" || extractTextContent(req.Input[2]["content"]) != "Read the file." {
+		t.Fatalf("user input = %#v", req.Input[2])
 	}
 }
 

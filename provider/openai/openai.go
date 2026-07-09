@@ -55,6 +55,9 @@ const (
 	responsesEndpoint       = "/v1/responses"
 	chatgptResponsesEP      = "/responses"
 	chatgptResponsesLiteHdr = "X-OpenAI-Internal-Codex-Responses-Lite"
+	// GPT-5.6 requires the Responses Lite request contract introduced by
+	// Codex 0.144.0. The backend gates Luna on this compatibility version.
+	chatgptUserAgent = "codex_cli_rs/0.144.0"
 )
 
 const (
@@ -576,8 +579,8 @@ func (p *Provider) setHeaders(req *http.Request) {
 			req.Header.Set("ChatGPT-Account-ID", p.chatgptAccountID)
 		}
 		// The ChatGPT backend (chatgpt.com) requires a User-Agent and originator
-		// header to pass Cloudflare bot protection. Match the Codex CLI headers.
-		req.Header.Set("User-Agent", "codex-cli/0.1")
+		// header to pass Cloudflare bot protection and gate model compatibility.
+		req.Header.Set("User-Agent", chatgptUserAgent)
 		req.Header.Set("originator", "codex_cli_rs")
 		if isGPT56Model(p.model) {
 			req.Header.Set(chatgptResponsesLiteHdr, "true")

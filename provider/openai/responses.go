@@ -22,6 +22,7 @@ type responsesRequest struct {
 	PreviousResponseID   string              `json:"previous_response_id,omitempty"`
 	Tools                []any               `json:"tools,omitempty"` // responsesToolDef, responsesNamespace, or tool_search built-in
 	ToolChoice           any                 `json:"tool_choice,omitempty"`
+	ParallelToolCalls    *bool               `json:"parallel_tool_calls,omitempty"`
 	ServiceTier          string              `json:"service_tier,omitempty"`
 	PromptCacheKey       string              `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention string              `json:"prompt_cache_retention,omitempty"`
@@ -40,6 +41,7 @@ type promptCacheOptions struct {
 type responsesReasoning struct {
 	Effort  string `json:"effort,omitempty"`
 	Summary string `json:"summary,omitempty"` // "auto", "concise", "detailed"
+	Context string `json:"context,omitempty"`
 }
 
 type responsesText struct {
@@ -232,23 +234,50 @@ func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []cor
 }
 
 // applyChatGPTRequirements modifies a request for the ChatGPT backend:
-// extracts system messages into instructions, forces store=false, stream=true.
+// applies the Codex Responses request shape and forces store=false, stream=true.
 func (p *Provider) applyChatGPTRequirements(req *responsesRequest) {
-	// Extract system messages into the top-level instructions field.
-	// Content can be a plain string or structured [{type, text}] array.
 	var instructions []string
 	var filtered []map[string]any
 	for _, item := range req.Input {
 		if role, _ := item["role"].(string); role == "system" {
 			if text := extractTextContent(item["content"]); text != "" {
 				instructions = append(instructions, text)
-				continue
 			}
+			continue
 		}
 		filtered = append(filtered, item)
 	}
-	if len(instructions) > 0 {
-		req.Instructions = strings.Join(instructions, "\n\n")
+
+	if isGPT56Model(req.Model) {
+		// Responses Lite carries tools and developer instructions as input
+		// items instead of top-level fields. This is the request contract used
+		// by Codex 0.144+ for the GPT-5.6 family.
+		tools := req.Tools
+		if tools == nil {
+			tools = []any{}
+		}
+		prefix := []map[string]any{{
+			"type":  "additional_tools",
+			"role":  "developer",
+			"tools": tools,
+		}}
+		if len(instructions) > 0 {
+			prefix = append(prefix, responsesMessage("developer", strings.Join(instructions, "\n\n")))
+		}
+		req.Input = append(prefix, filtered...)
+		req.Instructions = ""
+		req.Tools = nil
+		parallelToolCalls := false
+		req.ParallelToolCalls = &parallelToolCalls
+		if req.Reasoning == nil {
+			req.Reasoning = &responsesReasoning{}
+		}
+		req.Reasoning.Context = "all_turns"
+	} else {
+		// Standard Codex Responses requests use top-level instructions.
+		if len(instructions) > 0 {
+			req.Instructions = strings.Join(instructions, "\n\n")
+		}
 		req.Input = filtered
 	}
 
