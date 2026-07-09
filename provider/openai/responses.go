@@ -25,11 +25,16 @@ type responsesRequest struct {
 	ServiceTier          string              `json:"service_tier,omitempty"`
 	PromptCacheKey       string              `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention string              `json:"prompt_cache_retention,omitempty"`
+	PromptCacheOptions   *promptCacheOptions `json:"prompt_cache_options,omitempty"`
 	MaxOutputTokens      int                 `json:"max_output_tokens,omitempty"`
 	Temperature          *float64            `json:"temperature,omitempty"`
 	TopP                 *float64            `json:"top_p,omitempty"`
 	Reasoning            *responsesReasoning `json:"reasoning,omitempty"`
 	Text                 *responsesText      `json:"text,omitempty"`
+}
+
+type promptCacheOptions struct {
+	TTL string `json:"ttl,omitempty"`
 }
 
 type responsesReasoning struct {
@@ -114,7 +119,8 @@ type responsesUsage struct {
 }
 
 type responsesInputTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
 }
 
 type responsesOutputTokensDetails struct {
@@ -140,7 +146,15 @@ func (p *Provider) applyResponsesEndpointSettings(req *responsesRequest) {
 		p.applyChatGPTRequirements(req)
 	} else if p.isOpenAIEndpoint() {
 		req.PromptCacheKey = p.promptCacheKey
-		req.PromptCacheRetention = p.promptCacheRetention
+		if isGPT56Model(req.Model) {
+			// GPT-5.6 replaces the legacy retention policy with a minimum
+			// cache lifetime. 30m is currently the only supported TTL.
+			req.PromptCacheRetention = ""
+			req.PromptCacheOptions = &promptCacheOptions{TTL: "30m"}
+		} else {
+			req.PromptCacheRetention = p.promptCacheRetention
+			req.PromptCacheOptions = nil
+		}
 		req.ServiceTier = p.serviceTier
 		if p.reasoningSummary != "" && req.Reasoning != nil {
 			req.Reasoning.Summary = p.reasoningSummary
@@ -247,6 +261,7 @@ func (p *Provider) applyChatGPTRequirements(req *responsesRequest) {
 	// Don't send fields unsupported by the ChatGPT backend.
 	// PromptCacheKey is kept — ChatGPT backend supports prefix-based caching.
 	req.PromptCacheRetention = ""
+	req.PromptCacheOptions = nil
 	req.ServiceTier = ""
 	req.MaxOutputTokens = 0
 }
@@ -925,6 +940,9 @@ func mapResponsesUsage(u responsesUsage) core.Usage {
 	}
 	if u.InputTokensDetails != nil && u.InputTokensDetails.CachedTokens > 0 {
 		usage.CacheReadTokens = u.InputTokensDetails.CachedTokens
+	}
+	if u.InputTokensDetails != nil && u.InputTokensDetails.CacheWriteTokens > 0 {
+		usage.CacheWriteTokens = u.InputTokensDetails.CacheWriteTokens
 	}
 	if u.OutputTokensDetails != nil && u.OutputTokensDetails.ReasoningTokens > 0 {
 		usage.Details = map[string]int{

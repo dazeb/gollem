@@ -36,10 +36,14 @@ const (
 
 	// GPT-5 family. Supports reasoning by default. Use WithReasoningEffort
 	// to control thinking depth (minimal|low|medium|high).
-	GPT5      = "gpt-5"
-	GPT5Mini  = "gpt-5-mini"
-	GPT5Nano  = "gpt-5-nano"
-	GPT5Codex = "gpt-5-codex"
+	GPT5       = "gpt-5"
+	GPT5Mini   = "gpt-5-mini"
+	GPT5Nano   = "gpt-5-nano"
+	GPT5Codex  = "gpt-5-codex"
+	GPT56      = "gpt-5.6"
+	GPT56Sol   = "gpt-5.6-sol"
+	GPT56Terra = "gpt-5.6-terra"
+	GPT56Luna  = "gpt-5.6-luna"
 )
 
 const (
@@ -629,6 +633,11 @@ func responsesWebSocketURL(baseURL, endpoint string) (string, error) {
 func modelNeedsResponsesAPI(model string) bool {
 	m := strings.ToLower(strings.TrimSpace(model))
 	return strings.Contains(m, "codex") || strings.Contains(m, "multi-agent") || strings.HasPrefix(m, "gpt-5")
+}
+
+func isGPT56Model(model string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	return m == GPT56 || strings.HasPrefix(m, GPT56+"-")
 }
 
 // responsesSupportsToolSearch reports whether the given model supports

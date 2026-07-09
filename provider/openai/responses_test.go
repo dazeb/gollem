@@ -27,6 +27,7 @@ func TestChatGPTAuth_PromptCacheKey(t *testing.T) {
 		MaxOutputTokens:      128000,
 		ServiceTier:          "default",
 		PromptCacheRetention: "24h",
+		PromptCacheOptions:   &promptCacheOptions{TTL: "30m"},
 	}
 	p.applyChatGPTRequirements(req)
 
@@ -38,11 +39,71 @@ func TestChatGPTAuth_PromptCacheKey(t *testing.T) {
 	if req.PromptCacheRetention != "" {
 		t.Errorf("expected prompt_cache_retention cleared, got %q", req.PromptCacheRetention)
 	}
+	if req.PromptCacheOptions != nil {
+		t.Errorf("expected prompt_cache_options cleared, got %+v", req.PromptCacheOptions)
+	}
 	if req.ServiceTier != "" {
 		t.Errorf("expected service_tier cleared, got %q", req.ServiceTier)
 	}
 	if req.MaxOutputTokens != 0 {
 		t.Errorf("expected max_output_tokens cleared, got %d", req.MaxOutputTokens)
+	}
+}
+
+func TestGPT56PromptCacheOptions(t *testing.T) {
+	for _, model := range []string{GPT56, GPT56Sol, GPT56Terra, GPT56Luna, "gpt-5.6-sol-2026-07-09"} {
+		t.Run(model, func(t *testing.T) {
+			p := New(WithModel(model), WithPromptCacheRetention("24h"))
+			req := &responsesRequest{Model: model}
+			p.applyResponsesEndpointSettings(req)
+
+			if req.PromptCacheRetention != "" {
+				t.Fatalf("prompt_cache_retention = %q, want omitted", req.PromptCacheRetention)
+			}
+			if req.PromptCacheOptions == nil || req.PromptCacheOptions.TTL != "30m" {
+				t.Fatalf("prompt_cache_options = %+v, want ttl=30m", req.PromptCacheOptions)
+			}
+			body, err := json.Marshal(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(body, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := fields["prompt_cache_retention"]; ok {
+				t.Fatalf("legacy retention serialized: %s", body)
+			}
+			options, ok := fields["prompt_cache_options"].(map[string]any)
+			if !ok || options["ttl"] != "30m" {
+				t.Fatalf("serialized prompt_cache_options = %#v", fields["prompt_cache_options"])
+			}
+		})
+	}
+}
+
+func TestPreGPT56KeepsPromptCacheRetention(t *testing.T) {
+	p := New(WithModel("gpt-5.5"), WithPromptCacheRetention("24h"))
+	req := &responsesRequest{Model: "gpt-5.5"}
+	p.applyResponsesEndpointSettings(req)
+	if req.PromptCacheRetention != "24h" {
+		t.Fatalf("prompt_cache_retention = %q, want 24h", req.PromptCacheRetention)
+	}
+	if req.PromptCacheOptions != nil {
+		t.Fatalf("prompt_cache_options = %+v, want nil", req.PromptCacheOptions)
+	}
+}
+
+func TestMapResponsesUsageIncludesGPT56CacheWrites(t *testing.T) {
+	usage := mapResponsesUsage(responsesUsage{
+		InputTokens: 100,
+		InputTokensDetails: &responsesInputTokensDetails{
+			CachedTokens:     60,
+			CacheWriteTokens: 30,
+		},
+	})
+	if usage.CacheReadTokens != 60 || usage.CacheWriteTokens != 30 {
+		t.Fatalf("cache usage = read:%d write:%d, want read:60 write:30", usage.CacheReadTokens, usage.CacheWriteTokens)
 	}
 }
 
