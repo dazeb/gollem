@@ -285,6 +285,8 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	defer unsubscribeToolCompleted()
 	unsubscribeToolFailed := core.Subscribe(bus, toolItems.toolFailed)
 	defer unsubscribeToolFailed()
+	unsubscribeToolItemID := core.Subscribe(bus, toolItems.resolveItemID)
+	defer unsubscribeToolItemID()
 	fileChangeItems := newRuntimeFileChangeTracker(st, notifier, turn, toolItems)
 	unsubscribeArtifactChanged := core.Subscribe(bus, fileChangeItems.artifactChanged)
 	defer unsubscribeArtifactChanged()
@@ -295,6 +297,13 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	defer unsubscribeCommandOutput()
 	unsubscribeCommandCompleted := core.Subscribe(bus, commandItems.commandCompleted)
 	defer unsubscribeCommandCompleted()
+	mcpItems := newRuntimeMCPItemTracker(st, notifier, turn, toolItems)
+	unsubscribeMCPStarted := core.Subscribe(bus, mcpItems.toolStarted)
+	defer unsubscribeMCPStarted()
+	unsubscribeMCPProgress := core.Subscribe(bus, mcpItems.toolProgress)
+	defer unsubscribeMCPProgress()
+	unsubscribeMCPCompleted := core.Subscribe(bus, mcpItems.toolCompleted)
+	defer unsubscribeMCPCompleted()
 
 	agentOptions := []core.AgentOption[string]{core.WithEventBus[string](bus)}
 	if len(s.tools) > 0 {
@@ -334,6 +343,9 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	}
 	if err == nil {
 		err = commandItems.Err()
+	}
+	if err == nil {
+		err = mcpItems.Err()
 	}
 	s.complete(st, notifier, turn, statusFromRuntimeError(err), result, err, info)
 }

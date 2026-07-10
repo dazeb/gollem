@@ -34,7 +34,8 @@ type ApprovalService struct {
 }
 
 type pendingApproval struct {
-	ch chan approvalResolution
+	ch       chan approvalResolution
+	threadID string
 }
 
 type approvalResolution struct {
@@ -95,6 +96,7 @@ type approvalRespondResult struct {
 	OK        bool   `json:"ok"`
 	RequestID string `json:"requestId"`
 	Approved  bool   `json:"approved"`
+	threadID  string
 }
 
 func NewApprovalService() *ApprovalService {
@@ -214,7 +216,7 @@ func (s *Server) handleApprovalRespond(raw json.RawMessage) (any, *protocol.Erro
 		return nil, invalidParams("invalid approval response", err)
 	}
 	s.PublishNotification("serverRequest/resolved", serverRequestResolvedParams{
-		ThreadID:  approvalThreadID,
+		ThreadID:  firstNonEmpty(result.threadID, approvalThreadID),
 		RequestID: result.RequestID,
 	})
 	return result, nil
@@ -238,7 +240,7 @@ func (s *ApprovalService) Respond(params approvalRespondParams) (approvalRespond
 		return approvalRespondResult{}, fmt.Errorf("approval request %q is not pending", requestID)
 	}
 	pending.ch <- approvalResolution{Approved: params.Approved, Message: params.Message}
-	return approvalRespondResult{OK: true, RequestID: requestID, Approved: params.Approved}, nil
+	return approvalRespondResult{OK: true, RequestID: requestID, Approved: params.Approved, threadID: pending.threadID}, nil
 }
 
 type serverRequestResolvedParams struct {
@@ -279,7 +281,11 @@ func (s *ApprovalService) requestApproval(ctx context.Context, method, requestID
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	pending := pendingApproval{ch: make(chan approvalResolution, 1)}
+	runtimeContext := runtimeTurnContextFrom(ctx)
+	pending := pendingApproval{
+		ch:       make(chan approvalResolution, 1),
+		threadID: firstNonEmpty(runtimeContext.ThreadID, approvalThreadID),
+	}
 	s.mu.Lock()
 	if s.pending == nil {
 		s.pending = make(map[string]pendingApproval)

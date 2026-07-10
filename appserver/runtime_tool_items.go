@@ -64,6 +64,13 @@ type runtimeToolItemState struct {
 	payload runtimeDynamicToolCallPayload
 }
 
+type runtimeToolItemIDRequestEvent struct {
+	RunID      string
+	ToolCallID string
+	ToolName   string
+	ItemID     *string
+}
+
 type runtimeToolItemTracker struct {
 	mu         sync.Mutex
 	store      store.Store
@@ -224,6 +231,27 @@ func (t *runtimeToolItemTracker) itemID(runID, toolCallID, toolName string) stri
 		return ""
 	}
 	return state.item.ID
+}
+
+func (t *runtimeToolItemTracker) resolveItemID(event runtimeToolItemIDRequestEvent) {
+	if event.ItemID == nil {
+		return
+	}
+	*event.ItemID = t.itemID(event.RunID, event.ToolCallID, event.ToolName)
+}
+
+func runtimeDurableToolItemID(ctx context.Context, rc *core.RunContext) string {
+	if rc == nil || rc.EventBus == nil {
+		return ""
+	}
+	itemID := ""
+	core.Publish(rc.EventBus, runtimeToolItemIDRequestEvent{
+		RunID:      runtimeRunID(rc),
+		ToolCallID: runtimeToolCallID(ctx, rc),
+		ToolName:   runtimeToolName(rc, ""),
+		ItemID:     &itemID,
+	})
+	return itemID
 }
 
 func (t *runtimeToolItemTracker) recordErrorLocked(operation string, err error) {

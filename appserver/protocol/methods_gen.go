@@ -151,7 +151,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "item/completed", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1632, typescript:ServerNotification.ts"},
 	{Method: "item/fileChange/outputDelta", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1649, typescript:ServerNotification.ts"},
 	{Method: "item/fileChange/patchUpdated", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1650, typescript:ServerNotification.ts"},
-	{Method: "item/mcpToolCall/progress", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1652, typescript:ServerNotification.ts"},
+	{Method: "item/mcpToolCall/progress", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1652, typescript:ServerNotification.ts"},
 	{Method: "item/plan/delta", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1637, typescript:ServerNotification.ts"},
 	{Method: "item/reasoning/summaryPartAdded", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1663, typescript:ServerNotification.ts"},
 	{Method: "item/reasoning/summaryTextDelta", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1662, typescript:ServerNotification.ts"},
