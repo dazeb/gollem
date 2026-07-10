@@ -60,6 +60,8 @@ func main() {
 		runDebug()
 	case "serve":
 		runServe()
+	case "app-server":
+		runAppServer()
 	case "trace":
 		runTraceCommand()
 	case "--help", "-h", "help":
@@ -2245,6 +2247,7 @@ Commands:
   run     Run a coding agent with tools (for benchmarks and automation)
   debug   Run the interactive TUI debugger
   serve   Start the browser dashboard UI server
+  app-server  Start the Codex-style JSON-RPC app-server daemon
   trace   Inspect, replay, and diff Gollem trace artifacts
 
 Run 'gollem <command> --help' for command-specific help.
