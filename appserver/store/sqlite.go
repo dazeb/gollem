@@ -1022,15 +1022,35 @@ func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkTh
 	if err != nil {
 		return fmt.Errorf("load source items: %w", err)
 	}
-	defer itemRows.Close()
+	var items []*Item
 	for itemRows.Next() {
 		item, err := scanItem(itemRows)
 		if err != nil {
+			itemRows.Close()
 			return err
 		}
-		item.ID = newID("item")
+		items = append(items, item)
+	}
+	if err := itemRows.Err(); err != nil {
+		itemRows.Close()
+		return fmt.Errorf("iterate source items: %w", err)
+	}
+	if err := itemRows.Close(); err != nil {
+		return fmt.Errorf("close source items: %w", err)
+	}
+
+	itemMap := make(map[string]string, len(items))
+	for _, item := range items {
+		itemMap[item.ID] = newID("item")
+	}
+	for _, item := range items {
+		oldID := item.ID
+		oldParentID := item.ParentItemID
+		item.ID = itemMap[oldID]
+		item.Payload = remapForkedItemPayloadID(item.Payload, oldID, item.ID)
 		item.ThreadID = forkThreadID
 		item.TurnID = turnMap[item.TurnID]
+		item.ParentItemID = itemMap[oldParentID]
 		item.Seq = 0
 		item.CreatedAt = now
 		item.UpdatedAt = now
@@ -1038,10 +1058,31 @@ func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkTh
 			return err
 		}
 	}
-	if err := itemRows.Err(); err != nil {
-		return fmt.Errorf("iterate source items: %w", err)
-	}
 	return nil
+}
+
+func remapForkedItemPayloadID(raw json.RawMessage, oldID, newID string) json.RawMessage {
+	if len(raw) == 0 || oldID == "" || newID == "" {
+		return raw
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return raw
+	}
+	var payloadID string
+	if json.Unmarshal(payload["id"], &payloadID) != nil || payloadID != oldID {
+		return raw
+	}
+	encodedID, err := json.Marshal(newID)
+	if err != nil {
+		return raw
+	}
+	payload["id"] = encodedID
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return updated
 }
 
 func matchesThreadFilter(thread *Thread, filter ThreadFilter) bool {

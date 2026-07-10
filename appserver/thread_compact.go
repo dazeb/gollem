@@ -148,11 +148,22 @@ func summarizeCompactionMessages(messages []core.ModelMessage, maxRunes int) str
 					lines = append(lines, "system: "+compactWhitespace(p.Content))
 				case core.UserPromptPart:
 					lines = append(lines, "user: "+compactWhitespace(p.Content))
+				case core.ToolReturnPart:
+					lines = append(lines, "tool result: "+p.ToolName+" "+compactWhitespace(runtimeReplayContentString(p.Content)))
+				case core.RetryPromptPart:
+					lines = append(lines, "tool error: "+p.ToolName+" "+compactWhitespace(p.Content))
 				}
 			}
 		case core.ModelResponse:
-			if text := compactWhitespace(typed.TextContent()); text != "" {
-				lines = append(lines, "assistant: "+text)
+			for _, part := range typed.Parts {
+				switch p := part.(type) {
+				case core.TextPart:
+					if text := compactWhitespace(p.Content); text != "" {
+						lines = append(lines, "assistant: "+text)
+					}
+				case core.ToolCallPart:
+					lines = append(lines, "tool call: "+p.ToolName+" "+compactWhitespace(p.ArgsJSON))
+				}
 			}
 		}
 	}
