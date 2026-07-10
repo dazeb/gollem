@@ -91,11 +91,86 @@ func (q *EventQueue) signalReady() {
 	}
 }
 
+// RequestQueue buffers server-to-client app-server requests for transports
+// that need ordered delivery alongside request responses.
+type RequestQueue struct {
+	mu       sync.Mutex
+	limit    int
+	requests []protocol.Request
+	signal   chan struct{}
+}
+
+func NewRequestQueue() *RequestQueue {
+	return &RequestQueue{
+		limit:  defaultEventLimit,
+		signal: make(chan struct{}, 1),
+	}
+}
+
+func (q *RequestQueue) Publish(method string, id protocol.RequestID, params any) {
+	if q == nil || method == "" || id.IsZero() {
+		return
+	}
+	var raw json.RawMessage
+	if params != nil {
+		data, err := json.Marshal(params)
+		if err != nil {
+			return
+		}
+		raw = data
+	}
+	q.PublishRaw(protocol.Request{ID: id, Method: method, Params: raw})
+}
+
+func (q *RequestQueue) PublishRaw(req protocol.Request) {
+	if q == nil || req.Method == "" || req.ID.IsZero() {
+		return
+	}
+	q.mu.Lock()
+	q.requests = append(q.requests, req)
+	if q.limit > 0 && len(q.requests) > q.limit {
+		copy(q.requests, q.requests[len(q.requests)-q.limit:])
+		q.requests = q.requests[:q.limit]
+	}
+	q.mu.Unlock()
+	q.signalReady()
+}
+
+func (q *RequestQueue) Drain() []protocol.Request {
+	if q == nil {
+		return nil
+	}
+	q.mu.Lock()
+	requests := append([]protocol.Request(nil), q.requests...)
+	q.requests = nil
+	q.mu.Unlock()
+	return requests
+}
+
+func (q *RequestQueue) Signal() <-chan struct{} {
+	if q == nil {
+		return nil
+	}
+	return q.signal
+}
+
+func (q *RequestQueue) signalReady() {
+	select {
+	case q.signal <- struct{}{}:
+	default:
+	}
+}
+
 type fileChangedParams struct {
 	Path        string    `json:"path,omitempty"`
 	Destination string    `json:"destination,omitempty"`
 	Operation   string    `json:"operation"`
 	At          time.Time `json:"at"`
+}
+
+type fsWatchChangedParams struct {
+	WatchID      string   `json:"watchId"`
+	ChangedPaths []string `json:"changedPaths"`
 }
 
 type processOutputDeltaParams struct {
@@ -123,6 +198,37 @@ type threadNotificationParams struct {
 	Status   store.ThreadStatus `json:"status,omitempty"`
 	Thread   *store.Thread      `json:"thread,omitempty"`
 	At       time.Time          `json:"at"`
+}
+
+type threadClosedNotificationParams struct {
+	ThreadID string `json:"threadId"`
+}
+
+type threadNotLoadedStatusNotificationParams struct {
+	ThreadID string            `json:"threadId"`
+	Status   map[string]string `json:"status"`
+	At       time.Time         `json:"at"`
+}
+
+type deprecationNoticeNotificationParams struct {
+	Summary string  `json:"summary"`
+	Details *string `json:"details"`
+}
+
+type contextCompactedNotificationParams = protocol.ThreadCompactedNotificationParams
+
+type threadGoalNotificationParams struct {
+	ThreadID string        `json:"threadId"`
+	Goal     any           `json:"goal,omitempty"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+	At       time.Time     `json:"at"`
+}
+
+type threadNameNotificationParams struct {
+	ThreadID string        `json:"threadId"`
+	Name     string        `json:"name"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+	At       time.Time     `json:"at"`
 }
 
 func ProcessOutputNotification(event toolprocess.OutputEvent) (string, any) {
