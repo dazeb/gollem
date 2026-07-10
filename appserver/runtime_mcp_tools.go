@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/core"
 )
 
@@ -89,16 +90,8 @@ type runtimeMCPResourceResult struct {
 	NonTextContentOmitted bool   `json:"nonTextContentOmitted,omitempty"`
 }
 
-type runtimeMCPContentPayload struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-}
-
-type runtimeMCPToolCallResultPayload struct {
-	Content           []runtimeMCPContentPayload `json:"content"`
-	StructuredContent any                        `json:"structuredContent"`
-	Meta              any                        `json:"_meta"`
-}
+type runtimeMCPContentPayload = protocol.MCPContent
+type runtimeMCPToolCallResultPayload = protocol.MCPToolCallResult
 
 type runtimeMCPCallResult struct {
 	Server            string                           `json:"server"`

@@ -7,25 +7,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
 )
 
 const runtimeCommandOutputTruncatedMarker = "\n[output truncated]\n"
 
-type runtimeCommandItemStartedNotificationParams struct {
-	Item        threadShellCommandPayload `json:"item"`
-	ThreadID    string                    `json:"threadId"`
-	TurnID      string                    `json:"turnId"`
-	StartedAtMS int64                     `json:"startedAtMs"`
-}
-
-type runtimeCommandItemCompletedNotificationParams struct {
-	Item          threadShellCommandPayload `json:"item"`
-	ThreadID      string                    `json:"threadId"`
-	TurnID        string                    `json:"turnId"`
-	CompletedAtMS int64                     `json:"completedAtMs"`
-}
+type runtimeCommandItemStartedNotificationParams = protocol.CommandExecutionItemStartedNotificationParams
+type runtimeCommandItemCompletedNotificationParams = protocol.CommandExecutionItemCompletedNotificationParams
 
 type runtimeCommandItemState struct {
 	item         *store.Item
