@@ -2,14 +2,12 @@ package middleware
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 // cacheEntry holds a cached response along with its creation time.
@@ -85,21 +83,14 @@ func CacheMiddlewareWithStats(ttl time.Duration) (Middleware, *CacheStats) {
 	return mw, stats
 }
 
-// hashRequest computes a SHA-256 hash of the request parameters for use as
-// a cache key. The hash covers messages, settings, and parameters.
+// hashRequest computes a stable SHA-256 hash of the request parameters for use
+// as a cache key. Unstable request metadata is stripped before hashing.
 func hashRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (string, error) {
-	h := sha256.New()
-	enc := json.NewEncoder(h)
-	if err := enc.Encode(messages); err != nil {
-		return "", fmt.Errorf("cache: failed to hash messages: %w", err)
-	}
-	if err := enc.Encode(settings); err != nil {
-		return "", fmt.Errorf("cache: failed to hash settings: %w", err)
-	}
-	if err := enc.Encode(params); err != nil {
-		return "", fmt.Errorf("cache: failed to hash params: %w", err)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return modelutil.StableCacheKey(modelutil.StableCacheKeyInput{
+		Messages: messages,
+		Settings: settings,
+		Params:   params,
+	})
 }
 
 // WrapRequest implements Middleware. It caches responses keyed by a hash of
