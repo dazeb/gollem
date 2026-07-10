@@ -30,6 +30,7 @@ var (
 	ErrTurnNotFound   = errors.New("appserver/store: turn not found")
 	ErrItemNotFound   = errors.New("appserver/store: item not found")
 	ErrThreadDeleted  = errors.New("appserver/store: thread is deleted")
+	ErrStoreClosed    = errors.New("appserver/store: store is closed")
 )
 
 // Thread is a durable conversation container.
