@@ -221,6 +221,10 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 }
 
 func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*appserver.Server, func(), error) {
+	return newCLIAppServerWithRuntimeFactory(flags, transport, appServerRuntimeModelFactory(flags))
+}
+
+func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, runtimeFactory appserver.RuntimeModelFactory) (*appserver.Server, func(), error) {
 	workDir, err := filepath.Abs(flags.workDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve workdir: %w", err)
@@ -242,9 +246,6 @@ func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*apps
 	gitOpts := []toolgit.Option{}
 	events := appserver.NewEventQueue()
 	approvals := appserver.NewApprovalService()
-	runtimeSvc := appserver.NewRuntimeService(
-		appserver.WithRuntimeModelFactory(appServerRuntimeModelFactory(flags)),
-	)
 	var server *appserver.Server
 	if !flags.allowMutations {
 		fsOpts = append(fsOpts, toolfs.WithApproval(approvals.FilesystemApproval))
@@ -304,6 +305,10 @@ func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*apps
 	if err != nil {
 		gitSvc = nil
 	}
+	runtimeSvc := appserver.NewRuntimeService(
+		appserver.WithRuntimeModelFactory(runtimeFactory),
+		appserver.WithRuntimeTools(appserver.FilesystemRuntimeTools(fsSvc)...),
+	)
 
 	version := gitCommit
 	if version == "" {

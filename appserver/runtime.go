@@ -257,6 +257,7 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 		s.mu.Unlock()
 	}()
 
+	ctx = withRuntimeTurnContext(ctx, turn.ThreadID, turn.ID)
 	model, info, err := s.modelFactory(ctx, req.Selection)
 	if err != nil {
 		s.complete(st, notifier, turn, store.TurnFailed, nil, err, info)
@@ -284,6 +285,9 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	defer unsubscribeToolCompleted()
 	unsubscribeToolFailed := core.Subscribe(bus, toolItems.toolFailed)
 	defer unsubscribeToolFailed()
+	fileChangeItems := newRuntimeFileChangeTracker(st, notifier, turn, toolItems)
+	unsubscribeArtifactChanged := core.Subscribe(bus, fileChangeItems.artifactChanged)
+	defer unsubscribeArtifactChanged()
 
 	agentOptions := []core.AgentOption[string]{core.WithEventBus[string](bus)}
 	if len(s.tools) > 0 {
@@ -317,6 +321,9 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	}
 	if err == nil {
 		err = toolItems.Err()
+	}
+	if err == nil {
+		err = fileChangeItems.Err()
 	}
 	s.complete(st, notifier, turn, statusFromRuntimeError(err), result, err, info)
 }

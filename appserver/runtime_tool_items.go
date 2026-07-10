@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fugue-labs/gollem/appserver/store"
 	"github.com/fugue-labs/gollem/core"
@@ -17,6 +18,7 @@ const (
 	runtimeToolStatusInProgress    = "inProgress"
 	runtimeToolStatusCompleted     = "completed"
 	runtimeToolStatusFailed        = "failed"
+	runtimeToolPayloadMaxBytes     = 64 * 1024
 )
 
 type runtimeDynamicToolCallPayload struct {
@@ -34,6 +36,13 @@ type runtimeDynamicToolCallPayload struct {
 type runtimeDynamicToolCallContentItem struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+}
+
+type runtimeToolPayloadSummary struct {
+	Omitted bool   `json:"omitted"`
+	Reason  string `json:"reason"`
+	Bytes   int    `json:"bytes"`
+	SHA256  string `json:"sha256"`
 }
 
 type runtimeToolItemStartedNotificationParams struct {
@@ -170,7 +179,7 @@ func (t *runtimeToolItemTracker) complete(key, status, output string, success bo
 	}
 	delete(t.items, key)
 	state.payload.Status = status
-	state.payload.ContentItems = []runtimeDynamicToolCallContentItem{{Type: "inputText", Text: output}}
+	state.payload.ContentItems = []runtimeDynamicToolCallContentItem{{Type: "inputText", Text: boundedRuntimeToolOutput(output)}}
 	state.payload.Success = runtimeBoolPointer(success)
 	state.payload.DurationMS = runtimeInt64Pointer(durationMS)
 	item, err := t.store.UpdateItem(context.Background(), store.UpdateItemRequest{
@@ -204,6 +213,19 @@ func (t *runtimeToolItemTracker) Err() error {
 	return t.err
 }
 
+func (t *runtimeToolItemTracker) itemID(runID, toolCallID, toolName string) string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	state, ok := t.items[runtimeToolItemKey(runID, toolCallID, toolName)]
+	if !ok || state.item == nil {
+		return ""
+	}
+	return state.item.ID
+}
+
 func (t *runtimeToolItemTracker) recordErrorLocked(operation string, err error) {
 	if err == nil || t.err != nil {
 		return
@@ -228,14 +250,58 @@ func runtimeToolNamespace(namespace string) *string {
 }
 
 func runtimeToolArguments(raw string) any {
-	if strings.TrimSpace(raw) == "" {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
 		return map[string]any{}
+	}
+	if len(raw) > runtimeToolPayloadMaxBytes {
+		return runtimeToolPayloadSummary{
+			Omitted: true,
+			Reason:  "tool arguments exceed persisted payload limit",
+			Bytes:   len(raw),
+			SHA256:  runtimeSHA256([]byte(raw)),
+		}
 	}
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
 		return raw
 	}
 	return value
+}
+
+func boundedRuntimeToolOutput(output string) string {
+	output = strings.ToValidUTF8(output, "\uFFFD")
+	if len(output) <= runtimeToolPayloadMaxBytes {
+		return output
+	}
+	marker := "\n... tool output truncated ...\n"
+	remaining := runtimeToolPayloadMaxBytes - len(marker)
+	headBytes := remaining / 2
+	tailBytes := remaining - headBytes
+	head := boundedRuntimeToolOutputPrefix(output, headBytes)
+	tail := boundedRuntimeToolOutputSuffix(output, tailBytes)
+	return head + marker + tail
+}
+
+func boundedRuntimeToolOutputPrefix(value string, limit int) string {
+	if limit >= len(value) {
+		return value
+	}
+	for limit > 0 && !utf8.RuneStart(value[limit]) {
+		limit--
+	}
+	return value[:limit]
+}
+
+func boundedRuntimeToolOutputSuffix(value string, limit int) string {
+	if limit >= len(value) {
+		return value
+	}
+	start := len(value) - limit
+	for start < len(value) && !utf8.RuneStart(value[start]) {
+		start++
+	}
+	return value[start:]
 }
 
 func runtimeBoolPointer(value bool) *bool {
