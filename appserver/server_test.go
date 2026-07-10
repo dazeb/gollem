@@ -821,6 +821,79 @@ func TestServerThreadShellCommandHandler(t *testing.T) {
 	}
 }
 
+func TestServerThreadShellCommandPublishesTurnDiffUpdated(t *testing.T) {
+	ctx := context.Background()
+	repo := initRepo(t)
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Shell diff", Workspace: repo})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	gitSvc, err := toolgit.NewService(repo, toolgit.WithWorktreeRoot(filepath.Join(t.TempDir(), "worktrees")))
+	if err != nil {
+		t.Fatalf("NewService git: %v", err)
+	}
+	var server *Server
+	processSvc, err := toolprocess.NewService(repo,
+		toolprocess.WithOutputSink(func(ev toolprocess.OutputEvent) {
+			server.PublishProcessOutput(ev)
+		}),
+		toolprocess.WithExitSink(func(ev toolprocess.ExitEvent) {
+			server.PublishProcessExited(ev)
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewService process: %v", err)
+	}
+	server = readyServer(WithStore(st), WithProcess(processSvc), WithGit(gitSvc))
+
+	resp := server.HandleRequest(ctx, request("thread/shellCommand", map[string]any{
+		"threadId": thread.ID,
+		"command":  "printf 'changed\\n' > README.md",
+	}))
+	if resp.Error != nil {
+		t.Fatalf("thread/shellCommand error: %v", resp.Error)
+	}
+	events := waitForNotificationSet(t, server,
+		"process/exited",
+		"turn/diff/updated",
+		"turn/completed",
+	)
+	var diffNotice turnDiffUpdatedNotificationParams
+	for _, event := range events {
+		if event.Method != "turn/diff/updated" {
+			continue
+		}
+		if err := json.Unmarshal(event.Params, &diffNotice); err != nil {
+			t.Fatalf("decode turn/diff/updated: %v", err)
+		}
+	}
+	if diffNotice.ThreadID != thread.ID || diffNotice.TurnID == "" {
+		t.Fatalf("turn diff ids = %#v", diffNotice)
+	}
+	if !strings.Contains(diffNotice.Diff, "README.md") || !strings.Contains(diffNotice.Diff, "-hello") || !strings.Contains(diffNotice.Diff, "+changed") {
+		t.Fatalf("turn diff = %q, want README.md hello->changed patch", diffNotice.Diff)
+	}
+
+	resp = server.HandleRequest(ctx, request("thread/shellCommand", map[string]any{
+		"threadId": thread.ID,
+		"command":  "true",
+	}))
+	if resp.Error != nil {
+		t.Fatalf("thread/shellCommand no-op error: %v", resp.Error)
+	}
+	events = waitForNotificationSet(t, server, "process/exited", "turn/completed")
+	for _, event := range events {
+		if event.Method == "turn/diff/updated" {
+			t.Fatalf("unexpected turn/diff/updated for unchanged git diff: %#v", event)
+		}
+	}
+}
+
 func TestServerThreadControlHandlers(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
