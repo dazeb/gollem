@@ -36,15 +36,17 @@ const (
 // Server dispatches Codex-style app-server JSON-RPC requests to Gollem
 // services. It is transport-neutral; stdio/socket/WebSocket layers can wrap it.
 type Server struct {
-	mu         sync.Mutex
-	state      connectionState
-	serverInfo protocol.ImplementationInfo
-	clientInfo protocol.ImplementationInfo
-	optOut     map[string]struct{}
-	loaded     map[string]struct{}
-	subscribed map[string]struct{}
-	idleUnload map[string]*threadIdleUnload
-	commands   map[string]threadShellCommandRun
+	mu          sync.Mutex
+	state       connectionState
+	serverInfo  protocol.ImplementationInfo
+	clientInfo  protocol.ImplementationInfo
+	optOut      map[string]struct{}
+	loaded      map[string]struct{}
+	subscribed  map[string]struct{}
+	idleUnload  map[string]*threadIdleUnload
+	commands    map[string]threadShellCommandRun
+	commandExec map[string]struct{}
+	commandSeq  int
 
 	store     store.Store
 	fs        *toolfs.Service
@@ -192,6 +194,7 @@ func NewServer(opts ...Option) *Server {
 		subscribed:            make(map[string]struct{}),
 		idleUnload:            make(map[string]*threadIdleUnload),
 		commands:              make(map[string]threadShellCommandRun),
+		commandExec:           make(map[string]struct{}),
 		catalog:               catalog.NewDefault(),
 		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
@@ -1654,7 +1657,16 @@ func (s *Server) handleProcessStart(ctx context.Context, method string, raw json
 		return nil, invalidParams("timeoutMillis must be non-negative", nil)
 	}
 	shell := boolDefault(params.Shell, defaultShell)
+	processID := strings.TrimSpace(firstNonEmpty(params.ProcessID, params.ID))
+	registeredCommandExec := false
+	if method == "command/exec" {
+		if processID == "" {
+			processID = s.nextCommandExecProcessID()
+		}
+		registeredCommandExec = s.registerCommandExecProcess(processID)
+	}
 	snapshot, err := processSvc.Start(ctx, toolprocess.StartRequest{
+		ID:             processID,
 		Command:        params.Command,
 		Args:           params.Args,
 		Shell:          shell,
@@ -1664,6 +1676,9 @@ func (s *Server) handleProcessStart(ctx context.Context, method string, raw json
 		MaxOutputBytes: params.MaxOutputBytes,
 	})
 	if err != nil {
+		if registeredCommandExec {
+			s.unregisterCommandExecProcess(processID)
+		}
 		return nil, mapError(method, err)
 	}
 	return map[string]any{"process": processSnapshotResultFrom(snapshot)}, nil
@@ -1989,6 +2004,7 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, toolprocess.ErrInvalidWorkDir),
 		errors.Is(err, toolprocess.ErrProcessNotFound),
 		errors.Is(err, toolprocess.ErrProcessNotRunning),
+		errors.Is(err, toolprocess.ErrProcessAlreadyExists),
 		errors.Is(err, store.ErrThreadNotFound),
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
@@ -2291,6 +2307,8 @@ type metadataResult struct {
 }
 
 type processStartParams struct {
+	ID             string            `json:"id,omitempty"`
+	ProcessID      string            `json:"processId,omitempty"`
 	Command        string            `json:"command"`
 	Args           []string          `json:"args,omitempty"`
 	Shell          *bool             `json:"shell,omitempty"`
