@@ -102,11 +102,20 @@ func TestRequestSchedulerSerializesMatchingScopes(t *testing.T) {
 
 func TestRequestScheduleForThreadControls(t *testing.T) {
 	methods := []string{
+		"thread/search",
+		"thread/loaded/list",
+		"thread/unsubscribe",
+		"thread/compact/start",
+		"thread/shellCommand",
+		"thread/approveGuardianDeniedAction",
+		"thread/rollback",
+		"thread/inject_items",
 		"thread/goal/get",
 		"thread/goal/set",
 		"thread/goal/clear",
 		"thread/metadata/update",
 		"thread/memoryMode/set",
+		"thread/name/set",
 	}
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
@@ -115,5 +124,12 @@ func TestRequestScheduleForThreadControls(t *testing.T) {
 				t.Fatalf("schedule = %#v, want serial thread scope", schedule)
 			}
 		})
+	}
+}
+
+func TestRequestScheduleForMemoryReset(t *testing.T) {
+	schedule := RequestScheduleFor("memory/reset", nil)
+	if schedule.Scope != "memory" || !schedule.Serial {
+		t.Fatalf("schedule = %#v, want serial memory scope", schedule)
 	}
 }
