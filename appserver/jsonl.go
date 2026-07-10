@@ -15,6 +15,8 @@ import (
 
 const maxJSONLineBytes = 16 << 20
 
+var errDaemonShutdownRequested = errors.New("appserver: daemon shutdown requested")
+
 // ServeJSONLines serves newline-delimited JSON-RPC messages over the supplied
 // reader and writer. It is intended for stdio first, but tests and future
 // transports can reuse it for any ordered byte stream.
@@ -81,6 +83,9 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 			if err == nil {
 				err = drainOutboundLocked()
 			}
+			if err == nil && server.DaemonShutdownRequested() {
+				err = errDaemonShutdownRequested
+			}
 			writeMu.Unlock()
 			return err
 		})
@@ -91,6 +96,9 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-writeErr:
+			if errors.Is(err, errDaemonShutdownRequested) {
+				return nil
+			}
 			return err
 		case <-requestSignal:
 			writeMu.Lock()
@@ -117,6 +125,9 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 				case <-ctx.Done():
 					return ctx.Err()
 				case err := <-writeErr:
+					if errors.Is(err, errDaemonShutdownRequested) {
+						return nil
+					}
 					return err
 				case <-done:
 					writeMu.Lock()
@@ -179,7 +190,7 @@ func (l classifiedJSONLine) isClientRequest() bool {
 }
 
 func (l classifiedJSONLine) scheduledClientRequest() bool {
-	return l.isClientRequest() && l.Method != "initialize" && l.Method != "approval/respond"
+	return l.isClientRequest() && strings.TrimSpace(l.Method) != "" && l.Method != "initialize" && l.Method != "approval/respond"
 }
 
 func classifyJSONLine(line []byte) (classifiedJSONLine, error) {
