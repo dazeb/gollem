@@ -728,19 +728,11 @@ func (s *Server) handleThreadList(ctx context.Context, raw json.RawMessage) (any
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadListParams
+	var params protocol.ThreadListParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	threads, err := st.ListThreads(ctx, store.ThreadFilter{
-		Statuses:       params.Statuses,
-		IncludeDeleted: params.IncludeDeleted,
-		Limit:          params.Limit,
-	})
-	if err != nil {
-		return nil, mapError("thread/list", err)
-	}
-	return map[string]any{"threads": threads}, nil
+	return listThreadRecords(ctx, st, params)
 }
 
 func (s *Server) handleThreadRead(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -748,11 +740,11 @@ func (s *Server) handleThreadRead(ctx context.Context, raw json.RawMessage) (any
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadReadParams
+	var params protocol.ThreadReadParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
+	threadID := params.EffectiveThreadID()
 	if threadID == "" {
 		return nil, invalidParams("threadId is required", nil)
 	}
@@ -761,21 +753,22 @@ func (s *Server) handleThreadRead(ctx context.Context, raw json.RawMessage) (any
 		return nil, mapError("thread/read", err)
 	}
 	s.markThreadLoaded(thread)
-	result := threadReadResult{Thread: thread}
+	result := protocol.ThreadReadResponse{Thread: protocolThreadRecord(thread)}
 	if boolDefault(params.IncludeTurns, true) {
 		turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: threadID, Limit: params.Limit})
 		if err != nil {
 			return nil, mapError("thread/read", err)
 		}
-		result.Turns = turns
+		result.Turns = protocolTurnRecords(turns)
 	}
 	if boolDefault(params.IncludeItems, true) {
 		items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: threadID, AfterSeq: params.AfterSeq, Limit: params.Limit})
 		if err != nil {
 			return nil, mapError("thread/read", err)
 		}
-		result.Items = items
+		result.Items = protocolTimelineItems(items)
 	}
+	result.Thread.Turns = nestThreadTurns(result.Turns, result.Items)
 	return result, nil
 }
 
@@ -2196,12 +2189,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-type threadListParams struct {
-	Statuses       []store.ThreadStatus `json:"statuses,omitempty"`
-	IncludeDeleted bool                 `json:"includeDeleted,omitempty"`
-	Limit          int                  `json:"limit,omitempty"`
-}
-
 type threadLoadedListParams struct {
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
@@ -2250,25 +2237,6 @@ type threadIDParams struct {
 
 func (p threadIDParams) threadID() string {
 	return firstNonEmpty(p.ThreadID, p.ID)
-}
-
-type threadReadParams struct {
-	ID           string `json:"id,omitempty"`
-	ThreadID     string `json:"threadId,omitempty"`
-	IncludeTurns *bool  `json:"includeTurns,omitempty"`
-	IncludeItems *bool  `json:"includeItems,omitempty"`
-	AfterSeq     int64  `json:"afterSeq,omitempty"`
-	Limit        int    `json:"limit,omitempty"`
-}
-
-func (p threadReadParams) threadID() string {
-	return firstNonEmpty(p.ThreadID, p.ID)
-}
-
-type threadReadResult struct {
-	Thread *store.Thread `json:"thread"`
-	Turns  []*store.Turn `json:"turns,omitempty"`
-	Items  []*store.Item `json:"items,omitempty"`
 }
 
 type threadGoalResult struct {

@@ -128,15 +128,27 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
+		{Name: "SortDirection", Type: reflect.TypeFor[SortDirection]()},
 		{Name: "ThreadCompactStartParams", Type: reflect.TypeFor[ThreadCompactStartParams]()},
 		{Name: "ThreadCompactStartResponse", Type: reflect.TypeFor[ThreadCompactStartResponse]()},
 		{Name: "ThreadCompactedNotificationParams", Type: reflect.TypeFor[ThreadCompactedNotificationParams]()},
 		{Name: "ThreadTokenUsageUpdatedNotificationParams", Type: reflect.TypeFor[ThreadTokenUsageUpdatedNotificationParams]()},
+		{Name: "ThreadLifecycleStatus", Type: reflect.TypeFor[ThreadLifecycleStatus]()},
+		{Name: "ThreadListCwdFilter", Type: reflect.TypeFor[ThreadListCwdFilter]()},
+		{Name: "ThreadListParams", Type: reflect.TypeFor[ThreadListParams]()},
+		{Name: "ThreadListResponse", Type: reflect.TypeFor[ThreadListResponse]()},
+		{Name: "ThreadReadParams", Type: reflect.TypeFor[ThreadReadParams]()},
+		{Name: "ThreadReadResponse", Type: reflect.TypeFor[ThreadReadResponse]()},
+		{Name: "ThreadRecord", Type: reflect.TypeFor[ThreadRecord]()},
+		{Name: "ThreadSortKey", Type: reflect.TypeFor[ThreadSortKey]()},
+		{Name: "ThreadSourceKind", Type: reflect.TypeFor[ThreadSourceKind]()},
 		{Name: "TimelineItem", Type: reflect.TypeFor[TimelineItem]()},
 		{Name: "TokenUsage", Type: reflect.TypeFor[TokenUsage]()},
 		{Name: "TokenUsageBreakdown", Type: reflect.TypeFor[TokenUsageBreakdown]()},
 		{Name: "ToolPayloadSummary", Type: reflect.TypeFor[ToolPayloadSummary]()},
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
+		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
+		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
 	}
 	names := make(map[reflect.Type]string, len(definitions))
 	for _, definition := range definitions {
@@ -159,6 +171,27 @@ func wireSchemaDefinitions() Schema {
 		string(SurfaceServerRequest),
 		string(SurfaceClientNotification),
 		string(SurfaceGollemExtension),
+	)
+	schemas["SortDirection"] = stringEnumSchema(string(SortDirectionAsc), string(SortDirectionDesc))
+	schemas["ThreadLifecycleStatus"] = stringEnumSchema(
+		string(ThreadLifecycleActive), string(ThreadLifecycleArchived), string(ThreadLifecycleDeleted),
+	)
+	schemas["ThreadListCwdFilter"] = Schema{"oneOf": []any{
+		Schema{"type": "string"},
+		Schema{"type": "array", "items": Schema{"type": "string"}},
+	}}
+	schemas["ThreadSortKey"] = stringEnumSchema(
+		string(ThreadSortCreatedAt), string(ThreadSortUpdatedAt), string(ThreadSortRecencyAt),
+	)
+	schemas["ThreadSourceKind"] = stringEnumSchema(
+		string(ThreadSourceCLI), string(ThreadSourceVSCode), string(ThreadSourceExec),
+		string(ThreadSourceAppServer), string(ThreadSourceSubAgent), string(ThreadSourceSubAgentReview),
+		string(ThreadSourceSubAgentCompact), string(ThreadSourceSubAgentSpawn),
+		string(ThreadSourceSubAgentOther), string(ThreadSourceUnknown),
+	)
+	schemas["TurnLifecycleStatus"] = stringEnumSchema(
+		string(TurnLifecycleQueued), string(TurnLifecycleRunning), string(TurnLifecycleCompleted),
+		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
 }

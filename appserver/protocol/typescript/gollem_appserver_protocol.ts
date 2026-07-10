@@ -877,6 +877,8 @@ export type ServerRequestResolvedNotificationParams = {
   "threadId": string;
 };
 
+export type SortDirection = "asc" | "desc";
+
 export type Surface = "client-request" | "server-notification" | "server-request" | "client-notification" | "gollem-extension";
 
 export type ThreadCompactStartParams = {
@@ -890,6 +892,66 @@ export type ThreadCompactedNotificationParams = {
   "threadId": string;
   "turnId": string;
 };
+
+export type ThreadLifecycleStatus = "active" | "archived" | "deleted";
+
+export type ThreadListCwdFilter = string | Array<string>;
+
+export type ThreadListParams = {
+  "archived"?: boolean | null;
+  "cursor"?: string | null;
+  "cwd"?: ThreadListCwdFilter | null;
+  "includeDeleted"?: boolean;
+  "limit"?: number | null;
+  "modelProviders"?: Array<string> | null;
+  "searchTerm"?: string | null;
+  "sortDirection"?: SortDirection | null;
+  "sortKey"?: ThreadSortKey | null;
+  "sourceKinds"?: Array<ThreadSourceKind> | null;
+  "statuses"?: Array<ThreadLifecycleStatus> | null;
+  "useStateDbOnly"?: boolean;
+};
+
+export type ThreadListResponse = {
+  "backwardsCursor"?: string | null;
+  "data": Array<ThreadRecord>;
+  "nextCursor"?: string | null;
+  "threads"?: Array<ThreadRecord>;
+};
+
+export type ThreadReadParams = {
+  "afterSeq"?: number;
+  "id"?: string;
+  "includeItems"?: boolean | null;
+  "includeTurns"?: boolean;
+  "limit"?: number;
+  "threadId": string;
+};
+
+export type ThreadReadResponse = {
+  "items"?: Array<TimelineItem>;
+  "thread": ThreadRecord;
+  "turns"?: Array<TurnRecord>;
+};
+
+export type ThreadRecord = {
+  "archivedAt"?: string;
+  "createdAt": string;
+  "deletedAt"?: string;
+  "forkedFromThreadId"?: string;
+  "id": string;
+  "metadata"?: Record<string, unknown> | null;
+  "settings"?: Record<string, unknown> | null;
+  "status": ThreadLifecycleStatus;
+  "title"?: string;
+  "turns"?: Array<TurnRecord>;
+  "updatedAt": string;
+  "workspace"?: string;
+};
+
+export type ThreadSortKey = "created_at" | "updated_at" | "recency_at";
+
+export type ThreadSourceKind = "cli" | "vscode" | "exec" | "appServer" | "subAgent" | "subAgentReview" | "subAgentCompact" | "subAgentThreadSpawn" | "subAgentOther" | "unknown";
 
 export type ThreadTokenUsageUpdatedNotificationParams = {
   "threadId": string;
@@ -937,6 +999,24 @@ export type TurnDiffUpdatedNotificationParams = {
   "turnId": string;
 };
 
+export type TurnLifecycleStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
+
+export type TurnRecord = {
+  "completedAt"?: string;
+  "createdAt": string;
+  "error"?: string;
+  "id": string;
+  "input"?: unknown;
+  "items"?: Array<TimelineItem>;
+  "metadata"?: Record<string, unknown> | null;
+  "result"?: unknown;
+  "startedAt"?: string;
+  "status": TurnLifecycleStatus;
+  "threadId": string;
+  "updatedAt": string;
+  "usage"?: Record<string, unknown> | null;
+};
+
 export type WireTypeBinding = {
   "method": KnownMethod;
   "surface": ProtocolSurface;
@@ -964,6 +1044,8 @@ export const wireTypeBindings = [
   { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotificationParams"] },
   { "method": "thread/compact/start", "surface": "client-request", "params": ["ThreadCompactStartParams"], "result": ["ThreadCompactStartResponse"] },
   { "method": "thread/compacted", "surface": "server-notification", "params": ["ThreadCompactedNotificationParams"] },
+  { "method": "thread/list", "surface": "client-request", "params": ["ThreadListParams"], "result": ["ThreadListResponse"] },
+  { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResponse"] },
   { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotificationParams"] },
   { "method": "turn/diff/updated", "surface": "server-notification", "params": ["TurnDiffUpdatedNotificationParams"] },
 ] as const satisfies readonly WireTypeBinding[];
@@ -988,6 +1070,8 @@ export interface MethodParamsByName {
   "serverRequest/resolved": ServerRequestResolvedNotificationParams;
   "thread/compact/start": ThreadCompactStartParams;
   "thread/compacted": ThreadCompactedNotificationParams;
+  "thread/list": ThreadListParams;
+  "thread/read": ThreadReadParams;
   "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotificationParams;
   "turn/diff/updated": TurnDiffUpdatedNotificationParams;
 }
@@ -1001,6 +1085,8 @@ export interface MethodResultsByName {
   "daemon/version": DaemonVersion;
   "initialize": InitializeResponse;
   "thread/compact/start": ThreadCompactStartResponse;
+  "thread/list": ThreadListResponse;
+  "thread/read": ThreadReadResponse;
 }
 
 export type BoundRequestMethod = Extract<

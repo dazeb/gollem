@@ -142,7 +142,7 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	if readResp.Error != nil {
 		t.Fatalf("thread/read error: %v", readResp.Error)
 	}
-	var read threadReadResult
+	var read legacyThreadReadResult
 	decodeResult(t, readResp, &read)
 	if read.Thread.ID != thread.ID || len(read.Turns) != 1 || len(read.Items) != 1 {
 		t.Fatalf("thread/read = %#v", read)

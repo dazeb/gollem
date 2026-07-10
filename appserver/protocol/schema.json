@@ -1795,6 +1795,13 @@
       ],
       "type": "object"
     },
+    "SortDirection": {
+      "enum": [
+        "asc",
+        "desc"
+      ],
+      "type": "string"
+    },
     "Surface": {
       "enum": [
         "client-request",
@@ -1836,6 +1843,341 @@
         "turnId"
       ],
       "type": "object"
+    },
+    "ThreadLifecycleStatus": {
+      "enum": [
+        "active",
+        "archived",
+        "deleted"
+      ],
+      "type": "string"
+    },
+    "ThreadListCwdFilter": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ]
+    },
+    "ThreadListParams": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadListCwdFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "includeDeleted": {
+          "type": "boolean"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modelProviders": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "searchTerm": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sortDirection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SortDirection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sortKey": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadSortKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceKinds": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ThreadSourceKind"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "statuses": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ThreadLifecycleStatus"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "useStateDbOnly": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ThreadListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "backwardsCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data": {
+          "items": {
+            "$ref": "#/$defs/ThreadRecord"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threads": {
+          "items": {
+            "$ref": "#/$defs/ThreadRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "type": "object"
+    },
+    "ThreadReadParams": {
+      "additionalProperties": false,
+      "properties": {
+        "afterSeq": {
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "includeItems": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "includeTurns": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadReadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/TimelineItem"
+          },
+          "type": "array"
+        },
+        "thread": {
+          "$ref": "#/$defs/ThreadRecord"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/TurnRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
+    "ThreadRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "archivedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "deletedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "forkedFromThreadId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settings": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadLifecycleStatus"
+        },
+        "title": {
+          "type": "string"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/TurnRecord"
+          },
+          "type": "array"
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "ThreadSortKey": {
+      "enum": [
+        "created_at",
+        "updated_at",
+        "recency_at"
+      ],
+      "type": "string"
+    },
+    "ThreadSourceKind": {
+      "enum": [
+        "cli",
+        "vscode",
+        "exec",
+        "appServer",
+        "subAgent",
+        "subAgentReview",
+        "subAgentCompact",
+        "subAgentThreadSpawn",
+        "subAgentOther",
+        "unknown"
+      ],
+      "type": "string"
     },
     "ThreadTokenUsageUpdatedNotificationParams": {
       "additionalProperties": false,
@@ -1997,6 +2339,87 @@
         "threadId",
         "turnId",
         "diff"
+      ],
+      "type": "object"
+    },
+    "TurnLifecycleStatus": {
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "interrupted"
+      ],
+      "type": "string"
+    },
+    "TurnRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "completedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "input": {},
+        "items": {
+          "items": {
+            "$ref": "#/$defs/TimelineItem"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {},
+        "startedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnLifecycleStatus"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "threadId",
+        "status",
+        "createdAt",
+        "updatedAt"
       ],
       "type": "object"
     }
@@ -3526,6 +3949,26 @@
       "surface": "server-notification",
       "params": [
         "ThreadCompactedNotificationParams"
+      ]
+    },
+    {
+      "method": "thread/list",
+      "surface": "client-request",
+      "params": [
+        "ThreadListParams"
+      ],
+      "result": [
+        "ThreadListResponse"
+      ]
+    },
+    {
+      "method": "thread/read",
+      "surface": "client-request",
+      "params": [
+        "ThreadReadParams"
+      ],
+      "result": [
+        "ThreadReadResponse"
       ]
     },
     {
