@@ -200,6 +200,37 @@ type threadNotificationParams struct {
 	At       time.Time          `json:"at"`
 }
 
+type threadClosedNotificationParams struct {
+	ThreadID string `json:"threadId"`
+}
+
+type threadNotLoadedStatusNotificationParams struct {
+	ThreadID string            `json:"threadId"`
+	Status   map[string]string `json:"status"`
+	At       time.Time         `json:"at"`
+}
+
+type deprecationNoticeNotificationParams struct {
+	Summary string  `json:"summary"`
+	Details *string `json:"details"`
+}
+
+type contextCompactedNotificationParams = protocol.ThreadCompactedNotificationParams
+
+type threadGoalNotificationParams struct {
+	ThreadID string        `json:"threadId"`
+	Goal     any           `json:"goal,omitempty"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+	At       time.Time     `json:"at"`
+}
+
+type threadNameNotificationParams struct {
+	ThreadID string        `json:"threadId"`
+	Name     string        `json:"name"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+	At       time.Time     `json:"at"`
+}
+
 func ProcessOutputNotification(event toolprocess.OutputEvent) (string, any) {
 	data, encoding := encodeContent(event.Data)
 	return "process/outputDelta", processOutputDeltaParams{

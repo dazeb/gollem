@@ -100,18 +100,27 @@ type RequestSchedule struct {
 func RequestScheduleFor(method string, params json.RawMessage) RequestSchedule {
 	_ = params
 	switch method {
-	case "thread/list", "thread/read", "thread/fork", "thread/archive", "thread/unarchive", "thread/delete", "thread/turns/list", "thread/items/list":
+	case "thread/list", "thread/search", "thread/loaded/list", "thread/unsubscribe", "thread/read", "thread/fork", "thread/compact/start", "thread/shellCommand", "thread/approveGuardianDeniedAction", "thread/rollback", "thread/archive", "thread/unarchive", "thread/delete", "thread/settings/update",
+		"thread/goal/get", "thread/goal/set", "thread/goal/clear", "thread/metadata/update", "thread/memoryMode/set",
+		"thread/name/set", "thread/turns/list", "thread/items/list", "thread/inject_items":
 		return RequestSchedule{Scope: "thread", Serial: true}
 	case "fs/readFile", "fs/writeFile", "fs/createDirectory", "fs/readDirectory", "fs/getMetadata", "fs/remove", "fs/copy", "fs/watch", "fs/unwatch":
 		return RequestSchedule{Scope: "fs", Serial: true}
-	case "command/exec", "command/exec/write", "command/exec/resize", "command/exec/terminate", "process/spawn", "process/writeStdin", "process/resizePty", "process/kill":
+	case "command/exec", "command/exec/write", "command/exec/resize", "command/exec/terminate", "process/spawn", "process/writeStdin", "process/resizePty", "process/kill",
+		"thread/backgroundTerminals/list", "thread/backgroundTerminals/terminate", "thread/backgroundTerminals/clean":
 		return RequestSchedule{Scope: "process", Serial: true}
 	case "git/status", "git/diff", "git/commit", "git/worktree/create", "git/worktree/list":
 		return RequestSchedule{Scope: "git", Serial: true}
 	case "cache/stats", "cache/benchmark":
 		return RequestSchedule{Scope: "cache", Serial: true}
+	case "memory/reset":
+		return RequestSchedule{Scope: "memory", Serial: true}
 	case "mcpServerStatus/list", "mcpServer/resource/read", "mcpServer/tool/call":
 		return RequestSchedule{Scope: "mcp", Serial: true}
+	case "skills/list", "plugin/list", "plugin/installed", "plugin/read", "plugin/skill/read",
+		"plugin/install", "plugin/uninstall", "plugin/share/list", "plugin/share/save", "plugin/share/updateTargets", "plugin/share/checkout", "plugin/share/delete",
+		"marketplace/add", "marketplace/remove", "marketplace/upgrade", "skills/config/write", "skills/extraRoots/set":
+		return RequestSchedule{Scope: "skills", Serial: true}
 	case "daemon/start", "daemon/stop", "daemon/restart", "daemon/status", "daemon/version":
 		return RequestSchedule{Scope: "daemon", Serial: true}
 	case "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "provider/list", "tool/list",
