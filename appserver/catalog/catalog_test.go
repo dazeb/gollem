@@ -121,7 +121,7 @@ func TestToolListAvailability(t *testing.T) {
 	if processTool == nil || !processTool.Available || !processTool.Mutation || !processTool.RequiresApproval {
 		t.Fatalf("process tool metadata = %#v", processTool)
 	}
-	if !containsMethod(processTool.Methods, "thread/backgroundTerminals/list") || !containsMethod(processTool.Methods, "thread/backgroundTerminals/clean") {
+	if !containsMethod(processTool.Methods, "thread/shellCommand") || !containsMethod(processTool.Methods, "thread/backgroundTerminals/list") || !containsMethod(processTool.Methods, "thread/backgroundTerminals/clean") {
 		t.Fatalf("process tool methods = %#v", processTool.Methods)
 	}
 
@@ -133,6 +133,13 @@ func TestToolListAvailability(t *testing.T) {
 	cacheTool := findTool(ListTools(ToolListParams{}, ToolServices{Cache: true}).Data, "cache")
 	if cacheTool == nil || !cacheTool.Available || !cacheTool.GollemExtension {
 		t.Fatalf("cache tool metadata = %#v", cacheTool)
+	}
+	memoryTool := findTool(ListTools(ToolListParams{}, ToolServices{Memory: true}).Data, "memory")
+	if memoryTool == nil || !memoryTool.Available || memoryTool.GollemExtension || !memoryTool.CodexCompatible || !memoryTool.Mutation {
+		t.Fatalf("memory tool metadata = %#v", memoryTool)
+	}
+	if !containsMethod(memoryTool.Methods, "memory/reset") {
+		t.Fatalf("memory tool methods = %#v", memoryTool.Methods)
 	}
 	configTool := findTool(ListTools(ToolListParams{}, ToolServices{Config: true}).Data, "config")
 	if configTool == nil || !configTool.Available || !configTool.CodexCompatible || configTool.GollemExtension {
@@ -154,6 +161,13 @@ func TestToolListAvailability(t *testing.T) {
 	}
 	if !containsMethod(skillsTool.Methods, "skills/list") || !containsMethod(skillsTool.Methods, "plugin/skill/read") {
 		t.Fatalf("skills tool methods = %#v", skillsTool.Methods)
+	}
+	threadStoreTool := findTool(ListTools(ToolListParams{}, ToolServices{}).Data, "thread-store")
+	if threadStoreTool == nil || !threadStoreTool.Available || !threadStoreTool.CodexCompatible || threadStoreTool.Mutation {
+		t.Fatalf("thread-store tool metadata = %#v", threadStoreTool)
+	}
+	if !containsMethod(threadStoreTool.Methods, "thread/search") || !containsMethod(threadStoreTool.Methods, "thread/loaded/list") || !containsMethod(threadStoreTool.Methods, "thread/unsubscribe") || !containsMethod(threadStoreTool.Methods, "thread/compact/start") || !containsMethod(threadStoreTool.Methods, "thread/rollback") || !containsMethod(threadStoreTool.Methods, "thread/inject_items") || !containsMethod(threadStoreTool.Methods, "thread/goal/set") || !containsMethod(threadStoreTool.Methods, "thread/memoryMode/set") || !containsMethod(threadStoreTool.Methods, "thread/name/set") {
+		t.Fatalf("thread-store tool methods = %#v", threadStoreTool.Methods)
 	}
 }
 
