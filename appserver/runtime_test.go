@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -171,6 +172,238 @@ func TestServerRuntimePublishesThreadTokenUsageUpdated(t *testing.T) {
 	}
 	assertTokenUsageBreakdown(t, "second last", secondUsage.TokenUsage.Last, 11, 5, 1, 6, 1)
 	assertTokenUsageBreakdown(t, "second total", secondUsage.TokenUsage.Total, 25, 15, 4, 10, 3)
+}
+
+func TestServerRuntimePersistsDynamicToolCallLifecycle(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	type echoParams struct {
+		Text string `json:"text"`
+	}
+	echo := core.FuncTool[echoParams]("echo", "Echo text.", func(_ context.Context, params echoParams) (string, error) {
+		return "echo: " + params.Text, nil
+	})
+	echo.Definition.Namespace = "utility"
+	unused := core.FuncTool[struct{}]("unused", "Unused test tool.", func(context.Context, struct{}) (string, error) {
+		return "unused", nil
+	})
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("echo", `{"text":"hello"}`, "call-echo"),
+		core.TextResponse("tool finished"),
+	)
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(
+			WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+			WithRuntimeTools(echo),
+			WithRuntimeTools(unused),
+		)),
+	)
+
+	resp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "use echo"}))
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	var started struct {
+		Thread *store.Thread `json:"thread"`
+		Turn   *store.Turn   `json:"turn"`
+	}
+	decodeResult(t, resp, &started)
+	events := waitForNotificationSet(t, server,
+		"item/started",
+		"item/completed",
+		"item/completed",
+		"turn/completed",
+	)
+	toolEvents := runtimeToolNotifications(t, events)
+	if len(toolEvents) != 2 {
+		t.Fatalf("dynamic tool notifications = %#v, want started and completed", toolEvents)
+	}
+	startedNotice := toolEvents[0]
+	completedNotice := toolEvents[1]
+	if startedNotice.Method != "item/started" || startedNotice.Params.StartedAtMS <= 0 {
+		t.Fatalf("started tool notification = %#v", startedNotice)
+	}
+	if completedNotice.Method != "item/completed" || completedNotice.Params.CompletedAtMS <= 0 {
+		t.Fatalf("completed tool notification = %#v", completedNotice)
+	}
+	if startedNotice.Params.ThreadID != started.Thread.ID || startedNotice.Params.TurnID != started.Turn.ID {
+		t.Fatalf("started tool ids = %#v, want %q/%q", startedNotice.Params, started.Thread.ID, started.Turn.ID)
+	}
+	if startedNotice.Params.Item.ID == "" || completedNotice.Params.Item.ID != startedNotice.Params.Item.ID {
+		t.Fatalf("tool item ids = started %q completed %q", startedNotice.Params.Item.ID, completedNotice.Params.Item.ID)
+	}
+	if startedNotice.Params.Item.Tool != "echo" || startedNotice.Params.Item.Status != "inProgress" || startedNotice.Params.Item.Success != nil {
+		t.Fatalf("started tool item = %#v", startedNotice.Params.Item)
+	}
+	if startedNotice.Params.Item.Namespace == nil || *startedNotice.Params.Item.Namespace != "utility" {
+		t.Fatalf("started tool namespace = %v", startedNotice.Params.Item.Namespace)
+	}
+	if got := startedNotice.Params.Item.Arguments["text"]; got != "hello" {
+		t.Fatalf("started tool arguments = %#v", startedNotice.Params.Item.Arguments)
+	}
+	if completedNotice.Params.Item.Status != "completed" || completedNotice.Params.Item.Success == nil || !*completedNotice.Params.Item.Success {
+		t.Fatalf("completed tool item = %#v", completedNotice.Params.Item)
+	}
+	if completedNotice.Params.Item.DurationMS == nil || *completedNotice.Params.Item.DurationMS < 0 {
+		t.Fatalf("completed tool duration = %v", completedNotice.Params.Item.DurationMS)
+	}
+	if len(completedNotice.Params.Item.ContentItems) != 1 || !strings.Contains(completedNotice.Params.Item.ContentItems[0].Text, "echo: hello") {
+		t.Fatalf("completed tool content = %#v", completedNotice.Params.Item.ContentItems)
+	}
+
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: started.Thread.ID, TurnID: started.Turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	toolItem := findRuntimeToolItem(t, items, "echo", "text", "hello")
+	if toolItem.Status != "completed" || toolItem.Payload.ID != toolItem.Item.ID || toolItem.Payload.Tool != "echo" {
+		t.Fatalf("stored tool item = %#v", toolItem)
+	}
+}
+
+func TestServerRuntimePersistsFailedDynamicToolCall(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	type failParams struct {
+		Reason string `json:"reason"`
+	}
+	failing := core.FuncTool[failParams]("failing", "Fail with a reason.", func(_ context.Context, params failParams) (string, error) {
+		return "", errors.New(params.Reason)
+	})
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("failing", `{"reason":"boom"}`, "call-failing"),
+		core.TextResponse("failure handled"),
+	)
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(
+			WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+			WithRuntimeTools(failing),
+		)),
+	)
+
+	resp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "call failing"}))
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	var started struct {
+		Thread *store.Thread `json:"thread"`
+		Turn   *store.Turn   `json:"turn"`
+	}
+	decodeResult(t, resp, &started)
+	events := waitForNotificationSet(t, server,
+		"item/started",
+		"item/completed",
+		"item/completed",
+		"turn/completed",
+	)
+	toolEvents := runtimeToolNotifications(t, events)
+	if len(toolEvents) != 2 {
+		t.Fatalf("dynamic tool notifications = %#v, want started and failed completion", toolEvents)
+	}
+	failed := toolEvents[1].Params.Item
+	if failed.Status != "failed" || failed.Success == nil || *failed.Success {
+		t.Fatalf("failed tool item = %#v", failed)
+	}
+	if len(failed.ContentItems) != 1 || !strings.Contains(failed.ContentItems[0].Text, "boom") {
+		t.Fatalf("failed tool content = %#v", failed.ContentItems)
+	}
+
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: started.Thread.ID, TurnID: started.Turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	toolItem := findRuntimeToolItem(t, items, "failing", "reason", "boom")
+	if toolItem.Status != "failed" || toolItem.Payload.Success == nil || *toolItem.Payload.Success {
+		t.Fatalf("stored failed tool item = %#v", toolItem)
+	}
+}
+
+func TestServerRuntimeTracksConcurrentDynamicToolCalls(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	type parallelParams struct {
+		Value string `json:"value"`
+	}
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	parallel := core.FuncTool[parallelParams]("parallel", "Run concurrently.", func(ctx context.Context, params parallelParams) (string, error) {
+		entered <- params.Value
+		select {
+		case <-release:
+			return "done: " + params.Value, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}, core.WithToolConcurrencySafe(true))
+	model := core.NewTestModel(
+		core.MultiToolCallResponse(
+			core.ToolCallPart{ToolName: "parallel", ToolCallID: "call-a", ArgsJSON: `{"value":"a"}`},
+			core.ToolCallPart{ToolName: "parallel", ToolCallID: "call-b", ArgsJSON: `{"value":"b"}`},
+		),
+		core.TextResponse("parallel finished"),
+	)
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(
+			WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+			WithRuntimeTools(parallel),
+		)),
+	)
+
+	resp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "run both"}))
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	var started struct {
+		Thread *store.Thread `json:"thread"`
+		Turn   *store.Turn   `json:"turn"`
+	}
+	decodeResult(t, resp, &started)
+	seenValues := map[string]bool{}
+	for len(seenValues) < 2 {
+		select {
+		case value := <-entered:
+			seenValues[value] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("tool calls did not run concurrently; entered=%v", seenValues)
+		}
+	}
+	close(release)
+	events := waitForNotificationSet(t, server,
+		"item/started",
+		"item/started",
+		"item/completed",
+		"item/completed",
+		"item/completed",
+		"turn/completed",
+	)
+	toolEvents := runtimeToolNotifications(t, events)
+	if len(toolEvents) != 4 {
+		t.Fatalf("dynamic tool notifications = %#v, want two starts and two completions", toolEvents)
+	}
+	completedIDs := map[string]bool{}
+	for _, event := range toolEvents {
+		if event.Method != "item/completed" {
+			continue
+		}
+		if event.Params.Item.Status != "completed" || event.Params.Item.Success == nil || !*event.Params.Item.Success {
+			t.Fatalf("concurrent completed tool item = %#v", event.Params.Item)
+		}
+		completedIDs[event.Params.Item.ID] = true
+	}
+	if len(completedIDs) != 2 {
+		t.Fatalf("completed concurrent tool ids = %#v", completedIDs)
+	}
+
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: started.Thread.ID, TurnID: started.Turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if findRuntimeToolItem(t, items, "parallel", "value", "a").Status != "completed" || findRuntimeToolItem(t, items, "parallel", "value", "b").Status != "completed" {
+		t.Fatalf("concurrent tool items were not completed: %#v", items)
+	}
 }
 
 func TestServerRuntimeThreadResumeUsesInjectedResponseItems(t *testing.T) {
@@ -510,6 +743,77 @@ func notificationMethods(notifications []protocol.Notification) []string {
 		methods[i] = notification.Method
 	}
 	return methods
+}
+
+type runtimeToolNotification struct {
+	Method string
+	Params struct {
+		ThreadID      string                         `json:"threadId"`
+		TurnID        string                         `json:"turnId"`
+		Item          runtimeDynamicToolCallTestItem `json:"item"`
+		StartedAtMS   int64                          `json:"startedAtMs"`
+		CompletedAtMS int64                          `json:"completedAtMs"`
+	}
+}
+
+type runtimeDynamicToolCallTestItem struct {
+	Type         string                                  `json:"type"`
+	ID           string                                  `json:"id"`
+	Namespace    *string                                 `json:"namespace"`
+	Tool         string                                  `json:"tool"`
+	Arguments    map[string]any                          `json:"arguments"`
+	Status       string                                  `json:"status"`
+	ContentItems []runtimeDynamicToolCallTestContentItem `json:"contentItems"`
+	Success      *bool                                   `json:"success"`
+	DurationMS   *int64                                  `json:"durationMs"`
+}
+
+type runtimeDynamicToolCallTestContentItem struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func runtimeToolNotifications(t *testing.T, notifications []protocol.Notification) []runtimeToolNotification {
+	t.Helper()
+	var out []runtimeToolNotification
+	for _, notification := range notifications {
+		if notification.Method != "item/started" && notification.Method != "item/completed" {
+			continue
+		}
+		var decoded runtimeToolNotification
+		decoded.Method = notification.Method
+		if err := json.Unmarshal(notification.Params, &decoded.Params); err != nil {
+			t.Fatalf("decode %s: %v", notification.Method, err)
+		}
+		if decoded.Params.Item.Type == "dynamicToolCall" {
+			out = append(out, decoded)
+		}
+	}
+	return out
+}
+
+type storedRuntimeToolItem struct {
+	Item    *store.Item
+	Status  string
+	Payload runtimeDynamicToolCallTestItem
+}
+
+func findRuntimeToolItem(t *testing.T, items []*store.Item, tool, argumentKey string, argumentValue any) storedRuntimeToolItem {
+	t.Helper()
+	for _, item := range items {
+		if item == nil || item.Kind != "dynamicToolCall" {
+			continue
+		}
+		var payload runtimeDynamicToolCallTestItem
+		if err := json.Unmarshal(item.Payload, &payload); err != nil {
+			t.Fatalf("decode stored dynamic tool item: %v", err)
+		}
+		if payload.Tool == tool && payload.Arguments[argumentKey] == argumentValue {
+			return storedRuntimeToolItem{Item: item, Status: item.Status, Payload: payload}
+		}
+	}
+	t.Fatalf("dynamic tool item %q with %s=%v not found in %#v", tool, argumentKey, argumentValue, items)
+	return storedRuntimeToolItem{}
 }
 
 func decodeThreadTokenUsageNotification(t *testing.T, notifications []protocol.Notification) threadTokenUsageUpdatedNotificationParams {

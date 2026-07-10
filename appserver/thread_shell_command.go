@@ -20,6 +20,7 @@ const (
 	commandExecutionStatusCompleted  = "completed"
 	commandExecutionStatusFailed     = "failed"
 	commandExecutionStatusDeclined   = "declined"
+	commandExecutionSourceAgent      = "agent"
 	commandExecutionSourceUserShell  = "userShell"
 )
 
@@ -46,38 +47,10 @@ type threadShellCommandRun struct {
 	StartedAt  time.Time
 }
 
-type threadShellCommandPayload struct {
-	Type             string                     `json:"type"`
-	Command          string                     `json:"command"`
-	CWD              string                     `json:"cwd"`
-	ProcessID        *string                    `json:"processId"`
-	Source           string                     `json:"source"`
-	Status           string                     `json:"status"`
-	CommandActions   []threadShellCommandAction `json:"commandActions"`
-	AggregatedOutput *string                    `json:"aggregatedOutput"`
-	ExitCode         *int                       `json:"exitCode"`
-	DurationMS       *int64                     `json:"durationMs"`
-	StartedAt        time.Time                  `json:"startedAt"`
-	CompletedAt      *time.Time                 `json:"completedAt"`
-}
-
-type threadShellCommandAction struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-}
-
-type commandExecutionOutputDeltaNotificationParams struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId"`
-	ItemID   string `json:"itemId"`
-	Delta    string `json:"delta"`
-}
-
-type turnDiffUpdatedNotificationParams struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId"`
-	Diff     string `json:"diff"`
-}
+type threadShellCommandPayload = protocol.CommandExecutionItem
+type threadShellCommandAction = protocol.CommandExecutionAction
+type commandExecutionOutputDeltaNotificationParams = protocol.CommandExecutionOutputDeltaNotificationParams
+type turnDiffUpdatedNotificationParams = protocol.TurnDiffUpdatedNotificationParams
 
 func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	st, rpcErr := s.requireStore("thread/shellCommand")
@@ -154,7 +127,7 @@ func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessa
 		ThreadID: thread.ID,
 		TurnID:   startedTurn.ID,
 		ItemID:   item.ID,
-		Item:     item,
+		Item:     protocolTimelineItem(item),
 		At:       startedAt,
 	})
 
@@ -322,6 +295,10 @@ func (s *Server) publishTurnDiffUpdatedIfChanged(ctx context.Context, turn *stor
 }
 
 func newThreadShellCommandPayload(command, cwd, processID, status, output string, exitCode *int, startedAt time.Time, completedAt *time.Time) threadShellCommandPayload {
+	return newCommandExecutionPayload(command, cwd, processID, commandExecutionSourceUserShell, status, output, exitCode, startedAt, completedAt)
+}
+
+func newCommandExecutionPayload(command, cwd, processID, source, status, output string, exitCode *int, startedAt time.Time, completedAt *time.Time) threadShellCommandPayload {
 	var processIDPtr *string
 	if processID != "" {
 		processIDPtr = &processID
@@ -340,7 +317,7 @@ func newThreadShellCommandPayload(command, cwd, processID, status, output string
 		Command:   command,
 		CWD:       cwd,
 		ProcessID: processIDPtr,
-		Source:    commandExecutionSourceUserShell,
+		Source:    source,
 		Status:    status,
 		CommandActions: []threadShellCommandAction{{
 			Type:    "unknown",

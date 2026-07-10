@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	"github.com/fugue-labs/gollem/core"
 )
@@ -55,10 +56,20 @@ func WithRuntimeModel(model core.Model, info RuntimeModelInfo) RuntimeOption {
 	})
 }
 
+// WithRuntimeTools registers provider-neutral core tools for app-server turns.
+// Tool handlers are shared across turns and should be safe for concurrent use.
+func WithRuntimeTools(tools ...core.Tool) RuntimeOption {
+	cloned := append([]core.Tool(nil), tools...)
+	return func(s *RuntimeService) {
+		s.tools = append(s.tools, cloned...)
+	}
+}
+
 type RuntimeService struct {
 	startMu      sync.Mutex
 	mu           sync.Mutex
 	modelFactory RuntimeModelFactory
+	tools        []core.Tool
 	active       map[string]*activeRuntimeTurn
 	shuttingDown bool
 	wg           sync.WaitGroup
@@ -247,6 +258,7 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 		s.mu.Unlock()
 	}()
 
+	ctx = withRuntimeTurnContext(ctx, turn.ThreadID, turn.ID)
 	model, info, err := s.modelFactory(ctx, req.Selection)
 	if err != nil {
 		s.complete(st, notifier, turn, store.TurnFailed, nil, err, info)
@@ -267,8 +279,38 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 		publishRuntimeError(notifier, turn, event.Error)
 	})
 	defer unsubscribeError()
+	toolItems := newRuntimeToolItemTracker(st, notifier, turn, s.tools)
+	unsubscribeToolCalled := core.Subscribe(bus, toolItems.toolCalled)
+	defer unsubscribeToolCalled()
+	unsubscribeToolCompleted := core.Subscribe(bus, toolItems.toolCompleted)
+	defer unsubscribeToolCompleted()
+	unsubscribeToolFailed := core.Subscribe(bus, toolItems.toolFailed)
+	defer unsubscribeToolFailed()
+	unsubscribeToolItemID := core.Subscribe(bus, toolItems.resolveItemID)
+	defer unsubscribeToolItemID()
+	fileChangeItems := newRuntimeFileChangeTracker(st, notifier, turn, toolItems)
+	unsubscribeArtifactChanged := core.Subscribe(bus, fileChangeItems.artifactChanged)
+	defer unsubscribeArtifactChanged()
+	commandItems := newRuntimeCommandItemTracker(st, notifier, turn, toolItems)
+	unsubscribeCommandStarted := core.Subscribe(bus, commandItems.commandStarted)
+	defer unsubscribeCommandStarted()
+	unsubscribeCommandOutput := core.Subscribe(bus, commandItems.commandOutput)
+	defer unsubscribeCommandOutput()
+	unsubscribeCommandCompleted := core.Subscribe(bus, commandItems.commandCompleted)
+	defer unsubscribeCommandCompleted()
+	mcpItems := newRuntimeMCPItemTracker(st, notifier, turn, toolItems)
+	unsubscribeMCPStarted := core.Subscribe(bus, mcpItems.toolStarted)
+	defer unsubscribeMCPStarted()
+	unsubscribeMCPProgress := core.Subscribe(bus, mcpItems.toolProgress)
+	defer unsubscribeMCPProgress()
+	unsubscribeMCPCompleted := core.Subscribe(bus, mcpItems.toolCompleted)
+	defer unsubscribeMCPCompleted()
 
-	agent := core.NewAgent[string](model, core.WithEventBus[string](bus))
+	agentOptions := []core.AgentOption[string]{core.WithEventBus[string](bus)}
+	if len(s.tools) > 0 {
+		agentOptions = append(agentOptions, core.WithTools[string](s.tools...))
+	}
+	agent := core.NewAgent[string](model, agentOptions...)
 	runOpts := make([]core.RunOption, 0, 2)
 	if len(req.History) > 0 {
 		runOpts = append(runOpts, core.WithMessages(req.History...))
@@ -293,6 +335,18 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	result, err := stream.Result()
 	if err == nil {
 		err = streamErr
+	}
+	if err == nil {
+		err = toolItems.Err()
+	}
+	if err == nil {
+		err = fileChangeItems.Err()
+	}
+	if err == nil {
+		err = commandItems.Err()
+	}
+	if err == nil {
+		err = mcpItems.Err()
 	}
 	s.complete(st, notifier, turn, statusFromRuntimeError(err), result, err, info)
 }
@@ -399,13 +453,7 @@ type turnNotificationParams struct {
 	At       time.Time        `json:"at"`
 }
 
-type runtimeItemNotificationParams struct {
-	ThreadID string      `json:"threadId"`
-	TurnID   string      `json:"turnId,omitempty"`
-	ItemID   string      `json:"itemId,omitempty"`
-	Item     *store.Item `json:"item,omitempty"`
-	At       time.Time   `json:"at"`
-}
+type runtimeItemNotificationParams = protocol.ItemLifecycleNotificationParams
 
 type runtimeDeltaNotificationParams struct {
 	ThreadID string    `json:"threadId"`
@@ -422,25 +470,9 @@ type runtimeErrorNotificationParams struct {
 	At       time.Time `json:"at"`
 }
 
-type threadTokenUsageUpdatedNotificationParams struct {
-	ThreadID   string                  `json:"threadId"`
-	TurnID     string                  `json:"turnId"`
-	TokenUsage threadTokenUsagePayload `json:"tokenUsage"`
-}
-
-type threadTokenUsagePayload struct {
-	Total              tokenUsageBreakdown `json:"total"`
-	Last               tokenUsageBreakdown `json:"last"`
-	ModelContextWindow *int64              `json:"modelContextWindow"`
-}
-
-type tokenUsageBreakdown struct {
-	TotalTokens           int64 `json:"totalTokens"`
-	InputTokens           int64 `json:"inputTokens"`
-	CachedInputTokens     int64 `json:"cachedInputTokens"`
-	OutputTokens          int64 `json:"outputTokens"`
-	ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
-}
+type threadTokenUsageUpdatedNotificationParams = protocol.ThreadTokenUsageUpdatedNotificationParams
+type threadTokenUsagePayload = protocol.TokenUsage
+type tokenUsageBreakdown = protocol.TokenUsageBreakdown
 
 func publishTurnStarted(notifier runtimeNotifier, turn *store.Turn) {
 	if notifier == nil || turn == nil {
@@ -476,9 +508,27 @@ func publishItemCompleted(notifier runtimeNotifier, turn *store.Turn, item *stor
 		ThreadID: turn.ThreadID,
 		TurnID:   turn.ID,
 		ItemID:   item.ID,
-		Item:     item,
+		Item:     protocolTimelineItem(item),
 		At:       time.Now().UTC(),
 	})
+}
+
+func protocolTimelineItem(item *store.Item) *protocol.TimelineItem {
+	if item == nil {
+		return nil
+	}
+	return &protocol.TimelineItem{
+		ID:           item.ID,
+		ThreadID:     item.ThreadID,
+		TurnID:       item.TurnID,
+		ParentItemID: item.ParentItemID,
+		Seq:          item.Seq,
+		Kind:         item.Kind,
+		Status:       item.Status,
+		Payload:      append(json.RawMessage(nil), item.Payload...),
+		CreatedAt:    item.CreatedAt,
+		UpdatedAt:    item.UpdatedAt,
+	}
 }
 
 func publishThreadTokenUsage(notifier runtimeNotifier, st store.Store, turn *store.Turn, last core.RunUsage) {
@@ -645,49 +695,6 @@ func lastRuntimeAssistantText(messages []core.ModelMessage) string {
 		}
 	}
 	return ""
-}
-
-func runtimeMessagesFromItems(items []*store.Item) []core.ModelMessage {
-	messages := make([]core.ModelMessage, 0, len(items))
-	for _, item := range items {
-		if item == nil || len(item.Payload) == 0 {
-			continue
-		}
-		if item.Kind == threadInjectedResponseItemKind {
-			if message, ok := runtimeMessageFromInjectedResponseItem(item.Payload); ok {
-				messages = append(messages, message)
-			}
-			continue
-		}
-		if item.Kind == threadCompactionItemKind {
-			if message, ok := runtimeMessageFromCompactionItem(item.Payload); ok {
-				messages = append(messages, message)
-			}
-			continue
-		}
-		if item.Kind != "message" {
-			continue
-		}
-		var payload runtimeMessagePayload
-		if err := json.Unmarshal(item.Payload, &payload); err != nil {
-			continue
-		}
-		switch payload.Role {
-		case "user":
-			messages = append(messages, core.ModelRequest{
-				Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: payload.Text, Timestamp: payload.CreatedAt}},
-				Timestamp: payload.CreatedAt,
-			})
-		case "assistant":
-			messages = append(messages, core.ModelResponse{
-				Parts:        []core.ModelResponsePart{core.TextPart{Content: payload.Text}},
-				ModelName:    payload.Model,
-				FinishReason: core.FinishReasonStop,
-				Timestamp:    payload.CreatedAt,
-			})
-		}
-	}
-	return messages
 }
 
 func runtimePromptFromInput(raw json.RawMessage) string {

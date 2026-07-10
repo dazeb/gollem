@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -18,6 +19,8 @@ import (
 	appserver "github.com/fugue-labs/gollem/appserver"
 	"github.com/fugue-labs/gollem/appserver/catalog"
 	"github.com/fugue-labs/gollem/appserver/protocol"
+	"github.com/fugue-labs/gollem/appserver/store"
+	"github.com/fugue-labs/gollem/core"
 )
 
 func TestParseAppServerFlags(t *testing.T) {
@@ -491,6 +494,259 @@ func TestCLIAppServerThreadStartUsesRuntimeProviderFlag(t *testing.T) {
 	waitCLINotification(t, server, "turn/completed")
 }
 
+func TestCLIAppServerRuntimeUsesApprovedScopedFilesystemTool(t *testing.T) {
+	workDir := t.TempDir()
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(
+			"workspace_write_file",
+			`{"path":"from-runtime.txt","content":"cli runtime write\n"}`,
+			"call-cli-write",
+		),
+		core.TextResponse("write complete"),
+	)
+	server, cleanup, err := newCLIAppServerWithRuntimeFactory(
+		appServerFlags{workDir: workDir, storePath: ":memory:", stdio: true},
+		"stdio",
+		func(context.Context, appserver.RuntimeModelSelection) (core.Model, appserver.RuntimeModelInfo, error) {
+			return model, appserver.RuntimeModelInfo{ProviderID: "test", Model: "test-model"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("newCLIAppServerWithRuntimeFactory: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	resp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("start-runtime-write"),
+		Method: "thread/start",
+		Params: json.RawMessage(`{"prompt":"write the file"}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for runtime filesystem approval")
+	}
+	requests := server.DrainRequests()
+	if len(requests) != 1 || requests[0].Method != "item/fileChange/requestApproval" {
+		t.Fatalf("runtime approval requests = %#v", requests)
+	}
+	requestID, _ := requests[0].ID.Value().(string)
+	approval := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("approve-runtime-write"),
+		Method: "approval/respond",
+		Params: json.RawMessage(`{"requestId":"` + requestID + `","approved":true}`),
+	})
+	if approval.Error != nil {
+		t.Fatalf("approval/respond error: %v", approval.Error)
+	}
+	waitCLINotification(t, server, "turn/completed")
+
+	data, err := os.ReadFile(filepath.Join(workDir, "from-runtime.txt"))
+	if err != nil {
+		t.Fatalf("read runtime-written file: %v", err)
+	}
+	if string(data) != "cli runtime write\n" {
+		t.Fatalf("runtime-written content = %q", data)
+	}
+}
+
+func TestCLIAppServerRuntimeUsesScopedProcessAndGitTools(t *testing.T) {
+	workDir := t.TempDir()
+	runCLIAppServerGit(t, workDir, "init")
+	runCLIAppServerGit(t, workDir, "config", "user.name", "Test User")
+	runCLIAppServerGit(t, workDir, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("initial\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runCLIAppServerGit(t, workDir, "add", "README.md")
+	runCLIAppServerGit(t, workDir, "commit", "-m", "initial")
+
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("git_status", `{}`, "call-cli-git-before"),
+		core.ToolCallResponseWithID(
+			"workspace_run_command",
+			`{"command":"sh","args":["-c","printf cli-output; printf cli-process > from-process.txt"]}`,
+			"call-cli-process",
+		),
+		core.ToolCallResponseWithID("git_status", `{}`, "call-cli-git-after"),
+		core.TextResponse("process and git complete"),
+	)
+	server, cleanup, err := newCLIAppServerWithRuntimeFactory(
+		appServerFlags{workDir: workDir, storePath: ":memory:", stdio: true},
+		"stdio",
+		func(context.Context, appserver.RuntimeModelSelection) (core.Model, appserver.RuntimeModelInfo, error) {
+			return model, appserver.RuntimeModelInfo{ProviderID: "test", Model: "test-model"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("newCLIAppServerWithRuntimeFactory: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	resp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("start-process-git"),
+		Method: "thread/start",
+		Params: json.RawMessage(`{"prompt":"inspect, run, and inspect again"}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	var started struct {
+		Thread *store.Thread `json:"thread"`
+		Turn   *store.Turn   `json:"turn"`
+	}
+	if err := json.Unmarshal(resp.Result, &started); err != nil {
+		t.Fatalf("decode thread/start: %v", err)
+	}
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for runtime process approval")
+	}
+	requests := server.DrainRequests()
+	if len(requests) != 1 || requests[0].Method != "item/commandExecution/requestApproval" {
+		t.Fatalf("runtime process approval requests = %#v", requests)
+	}
+	requestID, _ := requests[0].ID.Value().(string)
+	approval := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("approve-runtime-process"),
+		Method: "approval/respond",
+		Params: json.RawMessage(`{"requestId":"` + requestID + `","approved":true}`),
+	})
+	if approval.Error != nil {
+		t.Fatalf("approval/respond error: %v", approval.Error)
+	}
+	waitCLINotification(t, server, "turn/completed")
+
+	data, err := os.ReadFile(filepath.Join(workDir, "from-process.txt"))
+	if err != nil {
+		t.Fatalf("read process-written file: %v", err)
+	}
+	if string(data) != "cli-process" {
+		t.Fatalf("process-written content = %q", data)
+	}
+	itemsResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("list-runtime-items"),
+		Method: "thread/items/list",
+		Params: json.RawMessage(`{"threadId":"` + started.Thread.ID + `"}`),
+	})
+	if itemsResp.Error != nil {
+		t.Fatalf("thread/items/list error: %v", itemsResp.Error)
+	}
+	var listed struct {
+		Items []*store.Item `json:"items"`
+	}
+	if err := json.Unmarshal(itemsResp.Result, &listed); err != nil {
+		t.Fatalf("decode thread/items/list: %v", err)
+	}
+	toolCounts := map[string]int{}
+	commandItems := 0
+	for _, item := range listed.Items {
+		if item == nil {
+			continue
+		}
+		switch item.Kind {
+		case "dynamicToolCall":
+			var payload struct {
+				Tool    string `json:"tool"`
+				Status  string `json:"status"`
+				Success *bool  `json:"success"`
+			}
+			if err := json.Unmarshal(item.Payload, &payload); err != nil {
+				t.Fatalf("decode runtime tool item: %v", err)
+			}
+			if payload.Status != "completed" || payload.Success == nil || !*payload.Success {
+				t.Fatalf("runtime tool payload = %#v", payload)
+			}
+			toolCounts[payload.Tool]++
+		case "commandExecution":
+			commandItems++
+			if item.Status != "completed" || !strings.Contains(string(item.Payload), "cli-output") || !strings.Contains(string(item.Payload), `"source":"agent"`) {
+				t.Fatalf("runtime command item = %#v", item)
+			}
+		}
+	}
+	if toolCounts["git_status"] != 2 || toolCounts["workspace_run_command"] != 1 || commandItems != 1 {
+		t.Fatalf("runtime item counts: tools=%v commands=%d", toolCounts, commandItems)
+	}
+}
+
+func TestCLIAppServerRuntimeUsesMCPAndSharedInteractionTools(t *testing.T) {
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("mcp_list_servers", `{}`, "call-cli-mcp-list"),
+		core.ToolCallResponseWithID("request_user_input", `{"prompt":"Choose","options":["one","two"]}`, "call-cli-input"),
+		core.TextResponse("interaction complete"),
+	)
+	server, cleanup, err := newCLIAppServerWithRuntimeFactory(
+		appServerFlags{workDir: t.TempDir(), storePath: ":memory:", stdio: true},
+		"stdio",
+		func(context.Context, appserver.RuntimeModelSelection) (core.Model, appserver.RuntimeModelInfo, error) {
+			return model, appserver.RuntimeModelInfo{ProviderID: "test", Model: "test-model"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("newCLIAppServerWithRuntimeFactory: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	resp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("start-mcp-interaction"),
+		Method: "thread/start",
+		Params: json.RawMessage(`{"prompt":"inspect MCP and ask"}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	var started struct {
+		Thread *store.Thread `json:"thread"`
+	}
+	if err := json.Unmarshal(resp.Result, &started); err != nil {
+		t.Fatalf("decode thread/start: %v", err)
+	}
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for runtime interaction")
+	}
+	requests := server.DrainRequests()
+	if len(requests) != 1 || requests[0].Method != appserver.InteractionRequestUserInput {
+		t.Fatalf("runtime interaction requests = %#v", requests)
+	}
+	if err := server.HandleResponse(context.Background(), protocol.Response{
+		ID:     requests[0].ID,
+		Result: json.RawMessage(`{"text":"one"}`),
+	}); err != nil {
+		t.Fatalf("HandleResponse: %v", err)
+	}
+	waitCLINotification(t, server, "turn/completed")
+
+	statusResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("mcp-status"),
+		Method: "mcpServerStatus/list",
+		Params: json.RawMessage(`{}`),
+	})
+	if statusResp.Error != nil || !strings.Contains(string(statusResp.Result), `"servers":[]`) {
+		t.Fatalf("mcpServerStatus/list response = %#v", statusResp)
+	}
+	itemsResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("list-mcp-interaction-items"),
+		Method: "thread/items/list",
+		Params: json.RawMessage(`{"threadId":"` + started.Thread.ID + `"}`),
+	})
+	if itemsResp.Error != nil {
+		t.Fatalf("thread/items/list error: %v", itemsResp.Error)
+	}
+	if !strings.Contains(string(itemsResp.Result), `"tool":"mcp_list_servers"`) || !strings.Contains(string(itemsResp.Result), `"tool":"request_user_input"`) {
+		t.Fatalf("runtime MCP/interaction items = %s", itemsResp.Result)
+	}
+}
+
 func TestCLIAppServerCleanupStopsActiveRuntimeBeforeStoreClose(t *testing.T) {
 	t.Setenv("GOLLEM_TEST_MODEL_DELAY", "250ms")
 	workDir := t.TempDir()
@@ -704,6 +960,35 @@ func containsTool(tools []catalog.Tool, id string) bool {
 		}
 	}
 	return false
+}
+
+func runCLIAppServerGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	blocked := map[string]struct{}{
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES": {},
+		"GIT_COMMON_DIR":                   {},
+		"GIT_DIR":                          {},
+		"GIT_INDEX_FILE":                   {},
+		"GIT_NAMESPACE":                    {},
+		"GIT_OBJECT_DIRECTORY":             {},
+		"GIT_PREFIX":                       {},
+		"GIT_QUARANTINE_PATH":              {},
+		"GIT_WORK_TREE":                    {},
+	}
+	for _, value := range os.Environ() {
+		key, _, _ := strings.Cut(value, "=")
+		if _, skip := blocked[key]; !skip {
+			cmd.Env = append(cmd.Env, value)
+		}
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
 }
 
 func writeCLIInputLine(t *testing.T, writer io.Writer, line string) {

@@ -17,22 +17,9 @@ const (
 	threadCompactionSummaryMax = 6000
 )
 
-type threadCompactStartParams struct {
-	ID       string `json:"id,omitempty"`
-	ThreadID string `json:"threadId,omitempty"`
-}
-
-func (p threadCompactStartParams) threadID() string {
-	return firstNonEmpty(p.ThreadID, p.ID)
-}
-
-type threadCompactStartResponse struct{}
-
-type threadCompactionPayload struct {
-	Type      string    `json:"type"`
-	Summary   string    `json:"summary,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
-}
+type threadCompactStartParams = protocol.ThreadCompactStartParams
+type threadCompactStartResponse = protocol.ThreadCompactStartResponse
+type threadCompactionPayload = protocol.ContextCompactionItem
 
 func (s *Server) handleThreadCompactStart(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	st, rpcErr := s.requireStore("thread/compact/start")
@@ -43,7 +30,7 @@ func (s *Server) handleThreadCompactStart(ctx context.Context, raw json.RawMessa
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
+	threadID := firstNonEmpty(params.ThreadID, params.ID)
 	if threadID == "" {
 		return nil, invalidParams("threadId is required", nil)
 	}
@@ -119,7 +106,7 @@ func (s *Server) publishItemStarted(turn *store.Turn, item *store.Item) {
 		ThreadID: turn.ThreadID,
 		TurnID:   turn.ID,
 		ItemID:   item.ID,
-		Item:     &started,
+		Item:     protocolTimelineItem(&started),
 		At:       time.Now().UTC(),
 	})
 }
@@ -148,11 +135,22 @@ func summarizeCompactionMessages(messages []core.ModelMessage, maxRunes int) str
 					lines = append(lines, "system: "+compactWhitespace(p.Content))
 				case core.UserPromptPart:
 					lines = append(lines, "user: "+compactWhitespace(p.Content))
+				case core.ToolReturnPart:
+					lines = append(lines, "tool result: "+p.ToolName+" "+compactWhitespace(runtimeReplayContentString(p.Content)))
+				case core.RetryPromptPart:
+					lines = append(lines, "tool error: "+p.ToolName+" "+compactWhitespace(p.Content))
 				}
 			}
 		case core.ModelResponse:
-			if text := compactWhitespace(typed.TextContent()); text != "" {
-				lines = append(lines, "assistant: "+text)
+			for _, part := range typed.Parts {
+				switch p := part.(type) {
+				case core.TextPart:
+					if text := compactWhitespace(p.Content); text != "" {
+						lines = append(lines, "assistant: "+text)
+					}
+				case core.ToolCallPart:
+					lines = append(lines, "tool call: "+p.ToolName+" "+compactWhitespace(p.ArgsJSON))
+				}
 			}
 		}
 	}
