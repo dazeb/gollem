@@ -3,17 +3,35 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/fugue-labs/gollem/appserver/protocol"
 )
 
 func main() {
-	data, err := protocol.MarshalJSONSchema()
+	writeGenerated("schema.json", protocol.MarshalJSONSchema)
+	writeGenerated(filepath.Join("typescript", "gollem_appserver_protocol.ts"), protocol.MarshalTypeScript)
+	fixture, err := os.ReadFile(filepath.Join("testdata", "runtime_wire_v1.json"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	if err := os.WriteFile("schema.json", data, 0o600); err != nil {
+	writeGenerated(filepath.Join("typescript", "testdata", "runtime_wire_v1.ts"), func() ([]byte, error) {
+		return protocol.MarshalTypeScriptFixture(fixture)
+	})
+}
+
+func writeGenerated(path string, generate func() ([]byte, error)) {
+	data, err := generate()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
