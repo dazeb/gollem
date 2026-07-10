@@ -155,7 +155,7 @@ func TestCLIAppServerServesStdioWhenMutationsAllowed(t *testing.T) {
 		errCh <- err
 	}()
 	scanner := bufio.NewScanner(outR)
-	writeCLIInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`)
+	writeCLIInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client","version":"1.0.0"}}}`)
 	writeCLIInputLine(t, inW, `{"method":"initialized"}`)
 	var initResp protocol.Response
 	if err := json.Unmarshal([]byte(readCLIOutputLine(t, scanner)), &initResp); err != nil {
@@ -163,6 +163,14 @@ func TestCLIAppServerServesStdioWhenMutationsAllowed(t *testing.T) {
 	}
 	if initResp.Error != nil {
 		t.Fatalf("init error: %v", initResp.Error)
+	}
+	var initResult protocol.InitializeResponse
+	if err := json.Unmarshal(initResp.Result, &initResult); err != nil {
+		t.Fatalf("decode init result: %v", err)
+	}
+	if initResult.CodexHome != filepath.Join(workDir, ".gollem") || initResult.UserAgent == "" ||
+		initResult.PlatformFamily == "" || initResult.PlatformOS == "" {
+		t.Fatalf("init compatibility fields = %+v", initResult)
 	}
 
 	writeCLIInputLine(t, inW, `{"id":"write","method":"fs/writeFile","params":{"path":"ok.txt","content":"ok"}}`)
@@ -271,7 +279,7 @@ func TestCLIAppServerServesUnixSocket(t *testing.T) {
 	}
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
-	writeCLIInputLine(t, conn, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"socket-test"}}}`)
+	writeCLIInputLine(t, conn, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"socket-test","version":"1.0.0"}}}`)
 	writeCLIInputLine(t, conn, `{"method":"initialized"}`)
 	writeCLIInputLine(t, conn, `{"id":"status","method":"daemon/status","params":{}}`)
 
@@ -331,7 +339,7 @@ func TestCLIAppServerServesCatalogMethods(t *testing.T) {
 	defer cleanup()
 
 	input := strings.Join([]string{
-		`{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`,
+		`{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client","version":"1.0.0"}}}`,
 		`{"method":"initialized"}`,
 		`{"id":"providers","method":"provider/list","params":{}}`,
 		`{"id":"models","method":"model/list","params":{"limit":2}}`,
@@ -800,7 +808,7 @@ func TestCLIAppServerCleanupStopsActiveRuntimeBeforeStoreClose(t *testing.T) {
 			return ""
 		}
 	}
-	writeCLIInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`)
+	writeCLIInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client","version":"1.0.0"}}}`)
 	writeCLIInputLine(t, inW, `{"method":"initialized"}`)
 	if err := json.Unmarshal([]byte(readLine()), &protocol.Response{}); err != nil {
 		t.Fatalf("decode init response: %v", err)
@@ -926,7 +934,7 @@ func readyCLIAppServer(t *testing.T, server *appserver.Server) {
 	initResp := server.HandleRequest(context.Background(), protocol.Request{
 		ID:     protocol.NewStringID("init"),
 		Method: "initialize",
-		Params: json.RawMessage(`{"clientInfo":{"name":"test-client"}}`),
+		Params: json.RawMessage(`{"clientInfo":{"name":"test-client","version":"1.0.0"}}`),
 	})
 	if initResp.Error != nil {
 		t.Fatalf("initialize: %v", initResp.Error)

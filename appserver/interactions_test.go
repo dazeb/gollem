@@ -117,7 +117,7 @@ func TestServeJSONLinesResolvesInteractionResponse(t *testing.T) {
 		errCh <- err
 	}()
 	scanner := bufio.NewScanner(outR)
-	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"interaction-jsonl"}}}`)
+	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"interaction-jsonl","version":"1.0.0"}}}`)
 	var initResp protocol.Response
 	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &initResp); err != nil {
 		t.Fatalf("decode init response: %v", err)

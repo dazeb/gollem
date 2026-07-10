@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "gollem.appserver.v0",
+  "protocolVersion": "gollem.appserver.v1",
   "schemaVersion": "gollem.appserver.schema.v1",
   "cases": [
     {
@@ -14,9 +14,13 @@
         "params": {
           "clientInfo": {
             "name": "gollem-typescript-fixture",
+            "title": null,
             "version": "1.0.0"
           },
           "capabilities": {
+            "experimentalApi": true,
+            "requestAttestation": false,
+            "mcpServerOpenaiFormElicitation": true,
             "optOutNotificationMethods": ["thread/tokenUsage/updated"],
             "experimental": {"typedInitialize": true}
           }
@@ -32,7 +36,11 @@
       "message": {
         "id": "initialize-1",
         "result": {
-          "protocolVersion": "gollem.appserver.v0",
+          "userAgent": "gollem-appserver/dev",
+          "codexHome": "/workspace/.gollem",
+          "platformFamily": "unix",
+          "platformOs": "macos",
+          "protocolVersion": "gollem.appserver.v1",
           "serverInfo": {
             "name": "gollem-appserver",
             "version": "dev"

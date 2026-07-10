@@ -8,7 +8,7 @@ import type {
   InitializeResponse,
 } from "../gollem_appserver_protocol";
 
-export const fixtureProtocolVersion = "gollem.appserver.v0" as const;
+export const fixtureProtocolVersion = "gollem.appserver.v1" as const;
 export const fixtureSchemaVersion = "gollem.appserver.schema.v1" as const;
 
 export const initializeRequest = {
@@ -17,9 +17,13 @@ export const initializeRequest = {
   "params": {
     "clientInfo": {
       "name": "gollem-typescript-fixture",
+      "title": null,
       "version": "1.0.0"
     },
     "capabilities": {
+      "experimentalApi": true,
+      "requestAttestation": false,
+      "mcpServerOpenaiFormElicitation": true,
       "optOutNotificationMethods": [
         "thread/tokenUsage/updated"
       ],
@@ -34,7 +38,11 @@ export const initializeRequestParams = initializeRequest.params satisfies Initia
 export const initializeResponse = {
   "id": "initialize-1",
   "result": {
-    "protocolVersion": "gollem.appserver.v0",
+    "userAgent": "gollem-appserver/dev",
+    "codexHome": "/workspace/.gollem",
+    "platformFamily": "unix",
+    "platformOs": "macos",
+    "protocolVersion": "gollem.appserver.v1",
     "serverInfo": {
       "name": "gollem-appserver",
       "version": "dev"
@@ -69,5 +77,7 @@ export type RejectRequestAsNotification = BoundNotification<"daemon/status">;
 export type RejectNotificationAsRequest = BoundRequest<"item/started">;
 // @ts-expect-error initialize requires clientInfo.
 export const rejectInitializeWithoutClientInfo = { "capabilities": {} } satisfies InitializeParams;
+// @ts-expect-error initialize requires clientInfo.version.
+export const rejectInitializeWithoutClientVersion = { "clientInfo": { "name": "client" } } satisfies InitializeParams;
 // @ts-expect-error initialized does not accept params.
 export const rejectInitializedParams = { "method": "initialized", "params": {} } satisfies BoundNotification<"initialized">;

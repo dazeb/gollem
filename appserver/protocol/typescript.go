@@ -515,6 +515,8 @@ func MarshalTypeScriptFixture(data []byte) ([]byte, error) {
 	if hasInitialize {
 		out.WriteString("// @ts-expect-error initialize requires clientInfo.\n")
 		out.WriteString("export const rejectInitializeWithoutClientInfo = { \"capabilities\": {} } satisfies InitializeParams;\n")
+		out.WriteString("// @ts-expect-error initialize requires clientInfo.version.\n")
+		out.WriteString("export const rejectInitializeWithoutClientVersion = { \"clientInfo\": { \"name\": \"client\" } } satisfies InitializeParams;\n")
 	}
 	if hasInitialized {
 		out.WriteString("// @ts-expect-error initialized does not accept params.\n")

@@ -17,7 +17,7 @@ import type {
   TurnDiffUpdatedNotificationParams,
 } from "../gollem_appserver_protocol";
 
-export const fixtureProtocolVersion = "gollem.appserver.v0" as const;
+export const fixtureProtocolVersion = "gollem.appserver.v1" as const;
 export const fixtureSchemaVersion = "gollem.appserver.schema.v1" as const;
 
 export const dynamicToolStarted = {
@@ -242,7 +242,7 @@ export const daemonStatus = {
     "status": "running",
     "name": "gollem-appserver",
     "version": "dev",
-    "protocolVersion": "gollem.appserver.v0",
+    "protocolVersion": "gollem.appserver.v1",
     "pid": 4242,
     "startedAt": "2026-07-10T20:00:00Z",
     "uptimeMillis": 1860000,

@@ -326,6 +326,7 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 	}
 	opts := []appserver.Option{
 		appserver.WithImplementationInfo(protocol.ImplementationInfo{Name: "gollem-appserver", Version: version}),
+		appserver.WithInitializeHome(filepath.Join(workDir, ".gollem")),
 		appserver.WithDaemonService(appserver.NewDaemonService(
 			appserver.WithDaemonName("gollem-appserver"),
 			appserver.WithDaemonVersion(version),

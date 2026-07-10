@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -125,9 +126,13 @@ func TestJSONSchemaExportsRuntimeDefinitionsAndBindings(t *testing.T) {
 }
 
 func TestJSONSchemaExportsInitializeHandshakeAndBindings(t *testing.T) {
+	if ProtocolVersion != "gollem.appserver.v1" {
+		t.Errorf("protocol version = %q, want gollem.appserver.v1", ProtocolVersion)
+	}
 	schema := JSONSchema()
 	defs := schema["$defs"].(Schema)
 	for _, name := range []string{
+		"ClientInfo",
 		"ImplementationInfo",
 		"InitializeCapabilities",
 		"InitializeParams",
@@ -147,6 +152,39 @@ func TestJSONSchemaExportsInitializeHandshakeAndBindings(t *testing.T) {
 	assertBinding(t, bindings, "initialize", SurfaceClientRequest, "InitializeResponse")
 	assertBindingMethod(t, bindings, "initialized", SurfaceClientNotification)
 
+	clientInfo, ok := defs["ClientInfo"].(Schema)
+	if !ok {
+		t.Fatalf("ClientInfo definition = %T", defs["ClientInfo"])
+	}
+	clientProperties := clientInfo["properties"].(Schema)
+	for _, name := range []string{"name", "title", "version"} {
+		if _, ok := clientProperties[name]; !ok {
+			t.Errorf("ClientInfo missing property %s", name)
+		}
+	}
+	assertSchemaRequired(t, clientInfo, "name", "version")
+
+	initializeParams := defs["InitializeParams"].(Schema)
+	paramsProperties := initializeParams["properties"].(Schema)
+	if got := paramsProperties["clientInfo"].(Schema)["$ref"]; got != "#/$defs/ClientInfo" {
+		t.Errorf("InitializeParams.clientInfo ref = %v", got)
+	}
+	assertNullableSchemaRef(t, paramsProperties["capabilities"], "#/$defs/InitializeCapabilities")
+
+	initializeCapabilities := defs["InitializeCapabilities"].(Schema)
+	capabilityProperties := initializeCapabilities["properties"].(Schema)
+	for _, name := range []string{
+		"experimentalApi",
+		"requestAttestation",
+		"mcpServerOpenaiFormElicitation",
+		"optOutNotificationMethods",
+		"experimental",
+	} {
+		if _, ok := capabilityProperties[name]; !ok {
+			t.Errorf("InitializeCapabilities missing property %s", name)
+		}
+	}
+
 	initializeResponse, ok := defs["InitializeResponse"].(Schema)
 	if !ok {
 		t.Fatalf("InitializeResponse definition = %T", defs["InitializeResponse"])
@@ -158,6 +196,20 @@ func TestJSONSchemaExportsInitializeHandshakeAndBindings(t *testing.T) {
 	if got := properties["capabilities"].(Schema)["$ref"]; got != "#/$defs/ServerCapabilities" {
 		t.Errorf("InitializeResponse.capabilities ref = %v", got)
 	}
+	for _, name := range []string{"userAgent", "codexHome", "platformFamily", "platformOs"} {
+		if _, ok := properties[name]; !ok {
+			t.Errorf("InitializeResponse missing property %s", name)
+		}
+	}
+	assertSchemaRequired(t, initializeResponse,
+		"userAgent",
+		"codexHome",
+		"platformFamily",
+		"platformOs",
+		"protocolVersion",
+		"serverInfo",
+		"capabilities",
+	)
 
 	assertSchemaEnum(t, defs, "Surface", []any{
 		string(SurfaceClientRequest),
@@ -274,6 +326,36 @@ func assertSchemaEnum(t *testing.T, defs Schema, name string, want []any) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("definition %s enum = %v, want %v", name, got, want)
+	}
+}
+
+func assertSchemaRequired(t *testing.T, definition Schema, names ...string) {
+	t.Helper()
+	required, ok := definition["required"].([]string)
+	if !ok {
+		t.Fatalf("required = %T", definition["required"])
+	}
+	for _, name := range names {
+		if !slices.Contains(required, name) {
+			t.Errorf("required fields %v missing %s", required, name)
+		}
+	}
+}
+
+func assertNullableSchemaRef(t *testing.T, value any, want string) {
+	t.Helper()
+	schema, ok := value.(Schema)
+	if !ok {
+		t.Fatalf("nullable ref schema = %T", value)
+	}
+	variants, ok := schema["anyOf"].([]any)
+	if !ok || len(variants) != 2 {
+		t.Fatalf("nullable ref variants = %v", schema["anyOf"])
+	}
+	ref, refOK := variants[0].(Schema)
+	null, nullOK := variants[1].(Schema)
+	if !refOK || ref["$ref"] != want || !nullOK || null["type"] != "null" {
+		t.Fatalf("nullable ref variants = %v, want %s/null", variants, want)
 	}
 }
 
