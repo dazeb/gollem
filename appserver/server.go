@@ -15,7 +15,9 @@ import (
 	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/catalog"
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
+	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
 	"github.com/fugue-labs/gollem/appserver/protocol"
+	appskills "github.com/fugue-labs/gollem/appserver/skills"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
@@ -34,11 +36,17 @@ const (
 // Server dispatches Codex-style app-server JSON-RPC requests to Gollem
 // services. It is transport-neutral; stdio/socket/WebSocket layers can wrap it.
 type Server struct {
-	mu         sync.Mutex
-	state      connectionState
-	serverInfo protocol.ImplementationInfo
-	clientInfo protocol.ImplementationInfo
-	optOut     map[string]struct{}
+	mu          sync.Mutex
+	state       connectionState
+	serverInfo  protocol.ImplementationInfo
+	clientInfo  protocol.ImplementationInfo
+	optOut      map[string]struct{}
+	loaded      map[string]struct{}
+	subscribed  map[string]struct{}
+	idleUnload  map[string]*threadIdleUnload
+	commands    map[string]threadShellCommandRun
+	commandExec map[string]struct{}
+	commandSeq  int
 
 	store     store.Store
 	fs        *toolfs.Service
@@ -47,14 +55,18 @@ type Server struct {
 	catalog   *catalog.Catalog
 	config    *appconfig.Service
 	cache     *appcache.Service
+	mcp       *appmcp.Service
+	skills    *appskills.Service
 	events    *EventQueue
 	requests  *RequestQueue
 	approvals *ApprovalService
 	interact  *InteractionService
 	daemon    *DaemonService
 	runtime   *RuntimeService
+	memory    *MemoryService
 
 	requestSchedulerLimit int
+	threadIdleUnloadAfter time.Duration
 }
 
 // Option configures a Server.
@@ -110,6 +122,18 @@ func WithCache(cache *appcache.Service) Option {
 	}
 }
 
+func WithMCP(mcp *appmcp.Service) Option {
+	return func(s *Server) {
+		s.mcp = mcp
+	}
+}
+
+func WithSkills(skills *appskills.Service) Option {
+	return func(s *Server) {
+		s.skills = skills
+	}
+}
+
 func WithEventQueue(events *EventQueue) Option {
 	return func(s *Server) {
 		s.events = events
@@ -140,6 +164,20 @@ func WithRuntimeService(runtime *RuntimeService) Option {
 	}
 }
 
+func WithMemoryService(memory *MemoryService) Option {
+	return func(s *Server) {
+		s.memory = memory
+	}
+}
+
+func WithThreadIdleUnloadAfter(after time.Duration) Option {
+	return func(s *Server) {
+		if after >= 0 {
+			s.threadIdleUnloadAfter = after
+		}
+	}
+}
+
 func WithRequestSchedulerLimit(limit int) Option {
 	return func(s *Server) {
 		if limit > 0 {
@@ -152,15 +190,23 @@ func NewServer(opts ...Option) *Server {
 	s := &Server{
 		serverInfo:            protocol.ImplementationInfo{Name: "gollem-appserver"},
 		optOut:                make(map[string]struct{}),
+		loaded:                make(map[string]struct{}),
+		subscribed:            make(map[string]struct{}),
+		idleUnload:            make(map[string]*threadIdleUnload),
+		commands:              make(map[string]threadShellCommandRun),
+		commandExec:           make(map[string]struct{}),
 		catalog:               catalog.NewDefault(),
 		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
+		mcp:                   appmcp.NewService(),
+		skills:                appskills.NewService(),
 		events:                NewEventQueue(),
 		requests:              NewRequestQueue(),
 		approvals:             NewApprovalService(),
 		interact:              NewInteractionService(),
 		daemon:                NewDaemonService(),
 		requestSchedulerLimit: defaultRequestSchedulerLimit,
+		threadIdleUnloadAfter: 30 * time.Minute,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -387,10 +433,24 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadResume(ctx, params)
 	case "thread/list":
 		return s.handleThreadList(ctx, params)
+	case "thread/search":
+		return s.handleThreadSearch(ctx, params)
+	case "thread/loaded/list":
+		return s.handleThreadLoadedList(ctx, params)
+	case "thread/unsubscribe":
+		return s.handleThreadUnsubscribe(ctx, params)
 	case "thread/read":
 		return s.handleThreadRead(ctx, params)
 	case "thread/fork":
 		return s.handleThreadFork(ctx, params)
+	case "thread/compact/start":
+		return s.handleThreadCompactStart(ctx, params)
+	case "thread/shellCommand":
+		return s.handleThreadShellCommand(ctx, params)
+	case "thread/approveGuardianDeniedAction":
+		return s.handleThreadApproveGuardianDeniedAction(ctx, params)
+	case "thread/rollback":
+		return s.handleThreadRollback(ctx, params)
 	case "thread/archive":
 		return s.handleThreadStatus(ctx, params, method, store.ThreadArchived)
 	case "thread/unarchive":
@@ -399,10 +459,32 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadStatus(ctx, params, method, store.ThreadDeleted)
 	case "thread/settings/update":
 		return s.handleThreadSettingsUpdate(ctx, params)
+	case "thread/goal/get":
+		return s.handleThreadGoalGet(ctx, params)
+	case "thread/goal/set":
+		return s.handleThreadGoalSet(ctx, params)
+	case "thread/goal/clear":
+		return s.handleThreadGoalClear(ctx, params)
+	case "thread/metadata/update":
+		return s.handleThreadMetadataUpdate(ctx, params)
+	case "thread/memoryMode/set":
+		return s.handleThreadMemoryModeSet(ctx, params)
+	case "memory/reset":
+		return s.handleMemoryReset(ctx)
+	case "thread/name/set":
+		return s.handleThreadNameSet(ctx, params)
+	case "thread/backgroundTerminals/list":
+		return s.handleBackgroundTerminalsList(ctx)
+	case "thread/backgroundTerminals/terminate":
+		return s.handleBackgroundTerminalTerminate(ctx, params)
+	case "thread/backgroundTerminals/clean":
+		return s.handleBackgroundTerminalsClean(ctx)
 	case "thread/turns/list":
 		return s.handleThreadTurnsList(ctx, params)
 	case "thread/items/list":
 		return s.handleThreadItemsList(ctx, params)
+	case "thread/inject_items":
+		return s.handleThreadInjectItems(ctx, params)
 	case "turn/start":
 		return s.handleTurnStart(ctx, params)
 	case "turn/interrupt":
@@ -437,6 +519,30 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleConfigRequirementsRead()
 	case "config/mcpServer/reload":
 		return s.handleConfigMCPServerReload()
+	case "mcpServerStatus/list":
+		return s.handleMCPServerStatusList(ctx, params)
+	case "mcpServer/resource/read":
+		return s.handleMCPServerResourceRead(ctx, params)
+	case "mcpServer/tool/call":
+		return s.handleMCPServerToolCall(ctx, params)
+	case "mcpServer/oauth/login":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "MCP OAuth login is not implemented; register an already-authenticated MCP client")
+	case "skills/list":
+		return s.handleSkillsList(ctx, params)
+	case "plugin/list", "plugin/installed":
+		return s.handlePluginList(ctx, params)
+	case "plugin/read":
+		return s.handlePluginRead(ctx, params)
+	case "plugin/skill/read":
+		return s.handlePluginSkillRead(ctx, params)
+	case "plugin/install", "plugin/uninstall":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "plugin install and uninstall are not implemented; configure read-only skill roots on the app-server")
+	case "plugin/share/list", "plugin/share/save", "plugin/share/updateTargets", "plugin/share/checkout", "plugin/share/delete":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "plugin sharing is not implemented by this Gollem app-server build")
+	case "marketplace/add", "marketplace/remove", "marketplace/upgrade":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "plugin marketplace mutation is not implemented by this Gollem app-server build")
+	case "skills/config/write", "skills/extraRoots/set":
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "skills configuration mutation is not implemented; start the app-server with configured skill roots")
 	case "environment/info":
 		return s.handleEnvironmentInfo()
 	case "environment/add":
@@ -529,6 +635,7 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	if err != nil {
 		return nil, mapError("thread/start", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/started", thread)
 	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
 		ThreadID:      thread.ID,
@@ -590,6 +697,7 @@ func (s *Server) handleThreadRead(ctx context.Context, raw json.RawMessage) (any
 	if err != nil {
 		return nil, mapError("thread/read", err)
 	}
+	s.markThreadLoaded(thread)
 	result := threadReadResult{Thread: thread}
 	if boolDefault(params.IncludeTurns, true) {
 		turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: threadID, Limit: params.Limit})
@@ -630,6 +738,7 @@ func (s *Server) handleThreadFork(ctx context.Context, raw json.RawMessage) (any
 	if err != nil {
 		return nil, mapError("thread/fork", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/started", thread)
 	return map[string]any{"thread": thread}, nil
 }
@@ -663,6 +772,11 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 	}
 	if err != nil {
 		return nil, mapError(method, err)
+	}
+	if status == store.ThreadDeleted {
+		s.markThreadUnloaded(thread.ID)
+	} else {
+		s.markThreadLoaded(thread)
 	}
 	s.publishThreadNotification("thread/status/changed", thread)
 	switch status {
@@ -698,8 +812,276 @@ func (s *Server) handleThreadSettingsUpdate(ctx context.Context, raw json.RawMes
 	if err != nil {
 		return nil, mapError("thread/settings/update", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return map[string]any{"thread": thread}, nil
+}
+
+func (s *Server) handleThreadGoalGet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, threadID, rpcErr := s.threadStoreAndID(raw, "thread/goal/get")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	thread, err := st.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, mapError("thread/goal/get", err)
+	}
+	goal, set := thread.Settings[threadGoalSettingKey]
+	return threadGoalResult{
+		ThreadID: thread.ID,
+		Goal:     goal,
+		Set:      set,
+		Thread:   thread,
+	}, nil
+}
+
+func (s *Server) handleThreadGoalSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/goal/set")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadGoalSetParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	goal, ok := params.goal()
+	if !ok {
+		return nil, invalidParams("goal is required", nil)
+	}
+	thread, err := st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Settings: map[string]any{threadGoalSettingKey: goal},
+	})
+	if err != nil {
+		return nil, mapError("thread/goal/set", err)
+	}
+	s.markThreadLoaded(thread)
+	s.publishThreadNotification("thread/settings/updated", thread)
+	s.publishThreadGoalNotification("thread/goal/updated", thread, goal)
+	return threadGoalResult{
+		ThreadID: thread.ID,
+		Goal:     goal,
+		Set:      true,
+		Thread:   thread,
+	}, nil
+}
+
+func (s *Server) handleThreadGoalClear(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, threadID, rpcErr := s.threadStoreAndID(raw, "thread/goal/clear")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	thread, err := st.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, mapError("thread/goal/clear", err)
+	}
+	_, hadGoal := thread.Settings[threadGoalSettingKey]
+	if !hadGoal {
+		return threadGoalClearResult{
+			ThreadID: thread.ID,
+			Cleared:  false,
+			Thread:   thread,
+		}, nil
+	}
+	nextSettings := cloneSettings(thread.Settings)
+	delete(nextSettings, threadGoalSettingKey)
+	thread, err = st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Settings: nextSettings,
+		Metadata: cloneSettings(thread.Metadata),
+		Replace:  true,
+	})
+	if err != nil {
+		return nil, mapError("thread/goal/clear", err)
+	}
+	s.markThreadLoaded(thread)
+	s.publishThreadNotification("thread/settings/updated", thread)
+	s.publishThreadGoalNotification("thread/goal/cleared", thread, nil)
+	return threadGoalClearResult{
+		ThreadID: thread.ID,
+		Cleared:  hadGoal,
+		Thread:   thread,
+	}, nil
+}
+
+func (s *Server) handleThreadMetadataUpdate(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/metadata/update")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadMetadataUpdateParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	if params.Metadata == nil {
+		return nil, invalidParams("metadata is required", nil)
+	}
+	req := store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Metadata: params.Metadata,
+	}
+	if params.Replace {
+		thread, err := st.GetThread(ctx, threadID)
+		if err != nil {
+			return nil, mapError("thread/metadata/update", err)
+		}
+		req.Settings = cloneSettings(thread.Settings)
+		req.Replace = true
+	}
+	thread, err := st.UpdateThreadSettings(ctx, req)
+	if err != nil {
+		return nil, mapError("thread/metadata/update", err)
+	}
+	s.markThreadLoaded(thread)
+	s.publishThreadNotification("thread/settings/updated", thread)
+	return map[string]any{"thread": thread, "metadata": thread.Metadata}, nil
+}
+
+func (s *Server) handleThreadMemoryModeSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/memoryMode/set")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadMemoryModeSetParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(params.MemoryMode, params.Mode)))
+	switch mode {
+	case "enabled", "disabled":
+	default:
+		return nil, invalidParams("mode must be enabled or disabled", nil)
+	}
+	thread, err := st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
+		ID:       threadID,
+		Settings: map[string]any{threadMemoryModeSettingKey: mode},
+	})
+	if err != nil {
+		return nil, mapError("thread/memoryMode/set", err)
+	}
+	s.markThreadLoaded(thread)
+	s.publishThreadNotification("thread/settings/updated", thread)
+	return threadMemoryModeSetResult{
+		ThreadID:   thread.ID,
+		MemoryMode: mode,
+		Thread:     thread,
+	}, nil
+}
+
+func (s *Server) handleMemoryReset(ctx context.Context) (any, *protocol.Error) {
+	memorySvc, rpcErr := s.requireMemory("memory/reset")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := memorySvc.Reset(ctx)
+	if err != nil {
+		return nil, mapError("memory/reset", err)
+	}
+	return result, nil
+}
+
+func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	st, rpcErr := s.requireStore("thread/name/set")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params threadNameSetParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, invalidParams("threadId is required", nil)
+	}
+	name := params.name()
+	if name == "" {
+		return nil, invalidParams("name is required", nil)
+	}
+	thread, err := st.UpdateThreadTitle(ctx, threadID, name)
+	if err != nil {
+		return nil, mapError("thread/name/set", err)
+	}
+	s.markThreadLoaded(thread)
+	s.publishThreadNameNotification(thread)
+	return threadNameSetResult{
+		ThreadID: thread.ID,
+		Name:     thread.Title,
+		Thread:   thread,
+	}, nil
+}
+
+func (s *Server) handleBackgroundTerminalsList(ctx context.Context) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/list")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	snapshots, err := processSvc.List(ctx)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/list", err)
+	}
+	terminals := backgroundTerminalResultsFromSnapshots(snapshots)
+	return backgroundTerminalListResult{
+		Terminals:           terminals,
+		BackgroundTerminals: cloneBackgroundTerminalResults(terminals),
+		Data:                cloneBackgroundTerminalResults(terminals),
+	}, nil
+}
+
+func (s *Server) handleBackgroundTerminalTerminate(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/terminate")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params backgroundTerminalIDParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	id := params.id()
+	if id == "" {
+		return nil, invalidParams("id, terminalId, backgroundTerminalId, or processId is required", nil)
+	}
+	if err := processSvc.Terminate(ctx, id); err != nil {
+		return nil, mapError("thread/backgroundTerminals/terminate", err)
+	}
+	snapshot, err := processSvc.Snapshot(ctx, id)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/terminate", err)
+	}
+	return map[string]any{
+		"ok":       true,
+		"id":       id,
+		"terminal": backgroundTerminalResultFromSnapshot(*snapshot),
+	}, nil
+}
+
+func (s *Server) handleBackgroundTerminalsClean(ctx context.Context) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/clean")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	removed, err := processSvc.CleanCompleted(ctx)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/clean", err)
+	}
+	terminals := backgroundTerminalResultsFromSnapshots(removed)
+	return backgroundTerminalCleanResult{
+		Removed:             terminals,
+		BackgroundTerminals: cloneBackgroundTerminalResults(terminals),
+		Data:                cloneBackgroundTerminalResults(terminals),
+		RemovedCount:        len(terminals),
+	}, nil
 }
 
 func (s *Server) handleThreadTurnsList(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -860,6 +1242,7 @@ func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, mapError("turn/retry", err)
 	}
+	s.markThreadLoadedID(source.ThreadID)
 	return map[string]any{"turn": turn.Turn, "sourceTurnId": source.ID}, nil
 }
 
@@ -898,6 +1281,7 @@ func (s *Server) startTurnWithParams(ctx context.Context, method string, params 
 	if err != nil {
 		return nil, mapError(method, err)
 	}
+	s.markThreadLoaded(thread)
 	return map[string]any{"thread": thread, "turn": turn.Turn}, nil
 }
 
@@ -913,7 +1297,7 @@ func (s *Server) loadThreadHistory(ctx context.Context, st store.Store, threadID
 		}
 		filtered = append(filtered, item)
 	}
-	return runtimeMessagesFromItems(filtered), nil
+	return runtimeMessagesFromItems(compactionWindowItems(filtered)), nil
 }
 
 func firstTurnItemSeq(ctx context.Context, st store.Store, threadID, turnID string) (int64, error) {
@@ -971,8 +1355,11 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Git:          s.git != nil,
 		Cache:        s.cache != nil,
 		Config:       s.config != nil,
+		MCP:          s.mcp != nil,
+		Skills:       s.skills != nil,
 		Runtime:      s.runtime != nil,
 		Interactions: s.interact != nil,
+		Memory:       s.memory != nil,
 	}), nil
 }
 
@@ -1037,6 +1424,15 @@ func (s *Server) handleConfigRequirementsRead() (any, *protocol.Error) {
 }
 
 func (s *Server) handleConfigMCPServerReload() (any, *protocol.Error) {
+	if s.mcp != nil {
+		reload := s.mcp.Reload()
+		return appconfig.MCPReloadResponse{
+			Reloaded: reload.Reloaded,
+			Status:   reload.Status,
+			Reason:   reload.Reason,
+			Count:    reload.Count,
+		}, nil
+	}
 	return s.requireConfig().ReloadMCPServers(), nil
 }
 
@@ -1261,7 +1657,16 @@ func (s *Server) handleProcessStart(ctx context.Context, method string, raw json
 		return nil, invalidParams("timeoutMillis must be non-negative", nil)
 	}
 	shell := boolDefault(params.Shell, defaultShell)
+	processID := strings.TrimSpace(firstNonEmpty(params.ProcessID, params.ID))
+	registeredCommandExec := false
+	if method == "command/exec" {
+		if processID == "" {
+			processID = s.nextCommandExecProcessID()
+		}
+		registeredCommandExec = s.registerCommandExecProcess(processID)
+	}
 	snapshot, err := processSvc.Start(ctx, toolprocess.StartRequest{
+		ID:             processID,
 		Command:        params.Command,
 		Args:           params.Args,
 		Shell:          shell,
@@ -1271,6 +1676,9 @@ func (s *Server) handleProcessStart(ctx context.Context, method string, raw json
 		MaxOutputBytes: params.MaxOutputBytes,
 	})
 	if err != nil {
+		if registeredCommandExec {
+			s.unregisterCommandExecProcess(processID)
+		}
 		return nil, mapError(method, err)
 	}
 	return map[string]any{"process": processSnapshotResultFrom(snapshot)}, nil
@@ -1486,6 +1894,13 @@ func (s *Server) requireDaemon(method string) (*DaemonService, *protocol.Error) 
 	return s.daemon, nil
 }
 
+func (s *Server) requireMemory(method string) (*MemoryService, *protocol.Error) {
+	if s.memory == nil {
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "memory service is not configured")
+	}
+	return s.memory, nil
+}
+
 func (s *Server) requireRuntime(method string) (store.Store, *RuntimeService, *protocol.Error) {
 	st, rpcErr := s.requireStore(method)
 	if rpcErr != nil {
@@ -1495,6 +1910,22 @@ func (s *Server) requireRuntime(method string) (store.Store, *RuntimeService, *p
 		return nil, nil, protocol.MethodUnavailableErrorWithReason(method, "turn runtime is not configured")
 	}
 	return st, s.runtime, nil
+}
+
+func (s *Server) threadStoreAndID(raw json.RawMessage, method string) (store.Store, string, *protocol.Error) {
+	st, rpcErr := s.requireStore(method)
+	if rpcErr != nil {
+		return nil, "", rpcErr
+	}
+	var params threadIDParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, "", rpcErr
+	}
+	threadID := params.threadID()
+	if threadID == "" {
+		return nil, "", invalidParams("threadId is required", nil)
+	}
+	return st, threadID, nil
 }
 
 func decodeParams(raw json.RawMessage, out any) *protocol.Error {
@@ -1573,10 +2004,13 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, toolprocess.ErrInvalidWorkDir),
 		errors.Is(err, toolprocess.ErrProcessNotFound),
 		errors.Is(err, toolprocess.ErrProcessNotRunning),
+		errors.Is(err, toolprocess.ErrProcessAlreadyExists),
 		errors.Is(err, store.ErrThreadNotFound),
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
 		errors.Is(err, store.ErrThreadDeleted),
+		errors.Is(err, ErrMemoryRootRequired),
+		errors.Is(err, ErrMemoryRootUnsafe),
 		errors.Is(err, ErrRuntimePromptEmpty):
 		return invalidParams("invalid params", err)
 	case errors.Is(err, toolfs.ErrApprovalDenied),
@@ -1585,6 +2019,8 @@ func mapError(method string, err error) *protocol.Error {
 		return rpcError(protocol.CodeInvalidRequest, "operation denied by approval policy", err)
 	case errors.Is(err, ErrRuntimeNotConfigured):
 		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime model factory is not configured")
+	case errors.Is(err, ErrRuntimeShuttingDown):
+		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime is shutting down")
 	default:
 		return rpcError(protocol.CodeInternalError, "internal app-server error", err)
 	}
@@ -1633,6 +2069,47 @@ func processSnapshotResultFrom(snapshot *toolprocess.Snapshot) processSnapshotRe
 	}
 }
 
+func backgroundTerminalResultsFromSnapshots(snapshots []toolprocess.Snapshot) []backgroundTerminalResult {
+	terminals := make([]backgroundTerminalResult, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		terminals = append(terminals, backgroundTerminalResultFromSnapshot(snapshot))
+	}
+	return terminals
+}
+
+func backgroundTerminalResultFromSnapshot(snapshot toolprocess.Snapshot) backgroundTerminalResult {
+	process := processSnapshotResultFrom(&snapshot)
+	title := snapshot.Command
+	if len(snapshot.Args) > 0 {
+		title = strings.TrimSpace(snapshot.Command + " " + strings.Join(snapshot.Args, " "))
+	}
+	return backgroundTerminalResult{
+		ID:         snapshot.ID,
+		TerminalID: snapshot.ID,
+		ProcessID:  snapshot.ID,
+		PID:        snapshot.PID,
+		Title:      title,
+		Command:    snapshot.Command,
+		Args:       append([]string(nil), snapshot.Args...),
+		WorkDir:    snapshot.WorkDir,
+		Status:     snapshot.Status,
+		StartedAt:  snapshot.StartedAt,
+		EndedAt:    snapshot.EndedAt,
+		ExitCode:   snapshot.ExitCode,
+		Error:      snapshot.Error,
+		Process:    process,
+	}
+}
+
+func cloneBackgroundTerminalResults(in []backgroundTerminalResult) []backgroundTerminalResult {
+	out := make([]backgroundTerminalResult, 0, len(in))
+	for _, terminal := range in {
+		terminal.Args = append([]string(nil), terminal.Args...)
+		out = append(out, terminal)
+	}
+	return out
+}
+
 func okResult(path string) map[string]any {
 	if path == "" {
 		return map[string]any{"ok": true}
@@ -1662,6 +2139,47 @@ type threadListParams struct {
 	Limit          int                  `json:"limit,omitempty"`
 }
 
+type threadLoadedListParams struct {
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+type threadLoadedListResult struct {
+	Data       []string `json:"data"`
+	NextCursor *string  `json:"nextCursor"`
+}
+
+type threadUnsubscribeResponse struct {
+	Status string `json:"status"`
+}
+
+type threadSearchParams struct {
+	Cursor        string   `json:"cursor,omitempty"`
+	Limit         int      `json:"limit,omitempty"`
+	SortKey       string   `json:"sortKey,omitempty"`
+	SortDirection string   `json:"sortDirection,omitempty"`
+	SourceKinds   []string `json:"sourceKinds,omitempty"`
+	Archived      *bool    `json:"archived,omitempty"`
+	SearchTerm    string   `json:"searchTerm,omitempty"`
+	Query         string   `json:"query,omitempty"`
+	Q             string   `json:"q,omitempty"`
+}
+
+func (p threadSearchParams) query() string {
+	return strings.TrimSpace(firstNonEmpty(p.SearchTerm, p.Query, p.Q))
+}
+
+type threadSearchResult struct {
+	Thread  *store.Thread `json:"thread"`
+	Snippet string        `json:"snippet"`
+}
+
+type threadSearchResponse struct {
+	Data            []threadSearchResult `json:"data"`
+	NextCursor      *string              `json:"nextCursor"`
+	BackwardsCursor *string              `json:"backwardsCursor"`
+}
+
 type threadIDParams struct {
 	ID       string `json:"id,omitempty"`
 	ThreadID string `json:"threadId,omitempty"`
@@ -1688,6 +2206,31 @@ type threadReadResult struct {
 	Thread *store.Thread `json:"thread"`
 	Turns  []*store.Turn `json:"turns,omitempty"`
 	Items  []*store.Item `json:"items,omitempty"`
+}
+
+type threadGoalResult struct {
+	ThreadID string        `json:"threadId"`
+	Goal     any           `json:"goal"`
+	Set      bool          `json:"set"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+}
+
+type threadGoalClearResult struct {
+	ThreadID string        `json:"threadId"`
+	Cleared  bool          `json:"cleared"`
+	Thread   *store.Thread `json:"thread,omitempty"`
+}
+
+type threadMemoryModeSetResult struct {
+	ThreadID   string        `json:"threadId"`
+	MemoryMode string        `json:"memoryMode"`
+	Thread     *store.Thread `json:"thread,omitempty"`
+}
+
+type threadNameSetResult struct {
+	ThreadID string        `json:"threadId"`
+	Name     string        `json:"name"`
+	Thread   *store.Thread `json:"thread,omitempty"`
 }
 
 type threadForkParams struct {
@@ -1764,6 +2307,8 @@ type metadataResult struct {
 }
 
 type processStartParams struct {
+	ID             string            `json:"id,omitempty"`
+	ProcessID      string            `json:"processId,omitempty"`
 	Command        string            `json:"command"`
 	Args           []string          `json:"args,omitempty"`
 	Shell          *bool             `json:"shell,omitempty"`
@@ -1791,6 +2336,47 @@ type processResizeParams struct {
 	ProcessID string `json:"processId,omitempty"`
 	Cols      int    `json:"cols"`
 	Rows      int    `json:"rows"`
+}
+
+type backgroundTerminalIDParams struct {
+	ID                   string `json:"id,omitempty"`
+	TerminalID           string `json:"terminalId,omitempty"`
+	BackgroundTerminalID string `json:"backgroundTerminalId,omitempty"`
+	ProcessID            string `json:"processId,omitempty"`
+}
+
+func (p backgroundTerminalIDParams) id() string {
+	return firstNonEmpty(p.ID, p.TerminalID, p.BackgroundTerminalID, p.ProcessID)
+}
+
+type backgroundTerminalListResult struct {
+	Terminals           []backgroundTerminalResult `json:"terminals"`
+	BackgroundTerminals []backgroundTerminalResult `json:"backgroundTerminals"`
+	Data                []backgroundTerminalResult `json:"data"`
+}
+
+type backgroundTerminalCleanResult struct {
+	Removed             []backgroundTerminalResult `json:"removed"`
+	BackgroundTerminals []backgroundTerminalResult `json:"backgroundTerminals"`
+	Data                []backgroundTerminalResult `json:"data"`
+	RemovedCount        int                        `json:"removedCount"`
+}
+
+type backgroundTerminalResult struct {
+	ID         string                `json:"id"`
+	TerminalID string                `json:"terminalId"`
+	ProcessID  string                `json:"processId"`
+	PID        int                   `json:"pid"`
+	Title      string                `json:"title"`
+	Command    string                `json:"command"`
+	Args       []string              `json:"args,omitempty"`
+	WorkDir    string                `json:"workDir"`
+	Status     toolprocess.Status    `json:"status"`
+	StartedAt  time.Time             `json:"startedAt"`
+	EndedAt    time.Time             `json:"endedAt,omitempty"`
+	ExitCode   int                   `json:"exitCode"`
+	Error      string                `json:"error,omitempty"`
+	Process    processSnapshotResult `json:"process"`
 }
 
 type processSnapshotResult struct {
