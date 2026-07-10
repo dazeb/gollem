@@ -700,49 +700,6 @@ func lastRuntimeAssistantText(messages []core.ModelMessage) string {
 	return ""
 }
 
-func runtimeMessagesFromItems(items []*store.Item) []core.ModelMessage {
-	messages := make([]core.ModelMessage, 0, len(items))
-	for _, item := range items {
-		if item == nil || len(item.Payload) == 0 {
-			continue
-		}
-		if item.Kind == threadInjectedResponseItemKind {
-			if message, ok := runtimeMessageFromInjectedResponseItem(item.Payload); ok {
-				messages = append(messages, message)
-			}
-			continue
-		}
-		if item.Kind == threadCompactionItemKind {
-			if message, ok := runtimeMessageFromCompactionItem(item.Payload); ok {
-				messages = append(messages, message)
-			}
-			continue
-		}
-		if item.Kind != "message" {
-			continue
-		}
-		var payload runtimeMessagePayload
-		if err := json.Unmarshal(item.Payload, &payload); err != nil {
-			continue
-		}
-		switch payload.Role {
-		case "user":
-			messages = append(messages, core.ModelRequest{
-				Parts:     []core.ModelRequestPart{core.UserPromptPart{Content: payload.Text, Timestamp: payload.CreatedAt}},
-				Timestamp: payload.CreatedAt,
-			})
-		case "assistant":
-			messages = append(messages, core.ModelResponse{
-				Parts:        []core.ModelResponsePart{core.TextPart{Content: payload.Text}},
-				ModelName:    payload.Model,
-				FinishReason: core.FinishReasonStop,
-				Timestamp:    payload.CreatedAt,
-			})
-		}
-	}
-	return messages
-}
-
 func runtimePromptFromInput(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
