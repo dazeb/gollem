@@ -15,6 +15,7 @@ const (
 type MethodState string
 
 const (
+	MethodImplemented       MethodState = "implemented"
 	MethodBlocked           MethodState = "blocked"
 	MethodDeferredStub      MethodState = "deferred-stub"
 	MethodRenamedEquivalent MethodState = "renamed-equivalent"
