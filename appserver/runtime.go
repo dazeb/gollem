@@ -288,6 +288,13 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	fileChangeItems := newRuntimeFileChangeTracker(st, notifier, turn, toolItems)
 	unsubscribeArtifactChanged := core.Subscribe(bus, fileChangeItems.artifactChanged)
 	defer unsubscribeArtifactChanged()
+	commandItems := newRuntimeCommandItemTracker(st, notifier, turn, toolItems)
+	unsubscribeCommandStarted := core.Subscribe(bus, commandItems.commandStarted)
+	defer unsubscribeCommandStarted()
+	unsubscribeCommandOutput := core.Subscribe(bus, commandItems.commandOutput)
+	defer unsubscribeCommandOutput()
+	unsubscribeCommandCompleted := core.Subscribe(bus, commandItems.commandCompleted)
+	defer unsubscribeCommandCompleted()
 
 	agentOptions := []core.AgentOption[string]{core.WithEventBus[string](bus)}
 	if len(s.tools) > 0 {
@@ -324,6 +331,9 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	}
 	if err == nil {
 		err = fileChangeItems.Err()
+	}
+	if err == nil {
+		err = commandItems.Err()
 	}
 	s.complete(st, notifier, turn, statusFromRuntimeError(err), result, err, info)
 }

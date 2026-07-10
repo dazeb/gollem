@@ -305,9 +305,14 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 	if err != nil {
 		gitSvc = nil
 	}
+	runtimeTools := appserver.FilesystemRuntimeTools(fsSvc)
+	runtimeTools = append(runtimeTools, appserver.ProcessRuntimeTools(processSvc)...)
+	if gitSvc != nil {
+		runtimeTools = append(runtimeTools, appserver.GitRuntimeTools(gitSvc)...)
+	}
 	runtimeSvc := appserver.NewRuntimeService(
 		appserver.WithRuntimeModelFactory(runtimeFactory),
-		appserver.WithRuntimeTools(appserver.FilesystemRuntimeTools(fsSvc)...),
+		appserver.WithRuntimeTools(runtimeTools...),
 	)
 
 	version := gitCommit

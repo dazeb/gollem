@@ -251,7 +251,7 @@ func (s *ApprovalService) base(ctx context.Context, reason string) approvalReque
 	runtimeContext := runtimeTurnContextFrom(ctx)
 	threadID := firstNonEmpty(runtimeContext.ThreadID, approvalThreadID)
 	turnID := firstNonEmpty(runtimeContext.TurnID, approvalTurnID)
-	itemID := firstNonEmpty(core.ToolCallIDFromContext(ctx), requestID)
+	itemID := firstNonEmpty(runtimeApprovalItemIDFrom(ctx), core.ToolCallIDFromContext(ctx), requestID)
 	return approvalRequestBase{
 		requestID:   requestID,
 		ThreadID:    threadID,
