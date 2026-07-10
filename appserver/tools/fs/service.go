@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,10 @@ var (
 	ErrApprovalDenied         = errors.New("appserver/fs: operation denied by approval policy")
 	ErrRefusingRoot           = errors.New("appserver/fs: refusing to mutate workspace root")
 	ErrInvalidCopyDestination = errors.New("appserver/fs: invalid copy destination")
+	ErrWatchPathNotAbsolute   = errors.New("appserver/fs: watch path must be absolute")
+	ErrWatchIDRequired        = errors.New("appserver/fs: watch id is required")
+	ErrWatchAlreadyExists     = errors.New("appserver/fs: watch id already exists")
+	ErrWatchNotFound          = errors.New("appserver/fs: watch id not found")
 )
 
 type OperationKind string
@@ -29,6 +34,8 @@ const (
 	OperationMetadata        OperationKind = "getMetadata"
 	OperationRemove          OperationKind = "remove"
 	OperationCopy            OperationKind = "copy"
+	OperationWatch           OperationKind = "watch"
+	OperationUnwatch         OperationKind = "unwatch"
 )
 
 type Operation struct {
@@ -69,6 +76,9 @@ type Service struct {
 	rootEval string
 	approve  ApprovalFunc
 	audit    AuditSink
+
+	mu      sync.Mutex
+	watches map[string]*watchRegistration
 }
 
 type FileContent struct {
