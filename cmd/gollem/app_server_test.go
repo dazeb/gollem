@@ -18,6 +18,7 @@ import (
 	appserver "github.com/fugue-labs/gollem/appserver"
 	"github.com/fugue-labs/gollem/appserver/catalog"
 	"github.com/fugue-labs/gollem/appserver/protocol"
+	"github.com/fugue-labs/gollem/core"
 )
 
 func TestParseAppServerFlags(t *testing.T) {
@@ -489,6 +490,66 @@ func TestCLIAppServerThreadStartUsesRuntimeProviderFlag(t *testing.T) {
 		t.Fatalf("thread/start error: %v", resp.Error)
 	}
 	waitCLINotification(t, server, "turn/completed")
+}
+
+func TestCLIAppServerRuntimeUsesApprovedScopedFilesystemTool(t *testing.T) {
+	workDir := t.TempDir()
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(
+			"workspace_write_file",
+			`{"path":"from-runtime.txt","content":"cli runtime write\n"}`,
+			"call-cli-write",
+		),
+		core.TextResponse("write complete"),
+	)
+	server, cleanup, err := newCLIAppServerWithRuntimeFactory(
+		appServerFlags{workDir: workDir, storePath: ":memory:", stdio: true},
+		"stdio",
+		func(context.Context, appserver.RuntimeModelSelection) (core.Model, appserver.RuntimeModelInfo, error) {
+			return model, appserver.RuntimeModelInfo{ProviderID: "test", Model: "test-model"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("newCLIAppServerWithRuntimeFactory: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	resp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("start-runtime-write"),
+		Method: "thread/start",
+		Params: json.RawMessage(`{"prompt":"write the file"}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for runtime filesystem approval")
+	}
+	requests := server.DrainRequests()
+	if len(requests) != 1 || requests[0].Method != "item/fileChange/requestApproval" {
+		t.Fatalf("runtime approval requests = %#v", requests)
+	}
+	requestID, _ := requests[0].ID.Value().(string)
+	approval := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("approve-runtime-write"),
+		Method: "approval/respond",
+		Params: json.RawMessage(`{"requestId":"` + requestID + `","approved":true}`),
+	})
+	if approval.Error != nil {
+		t.Fatalf("approval/respond error: %v", approval.Error)
+	}
+	waitCLINotification(t, server, "turn/completed")
+
+	data, err := os.ReadFile(filepath.Join(workDir, "from-runtime.txt"))
+	if err != nil {
+		t.Fatalf("read runtime-written file: %v", err)
+	}
+	if string(data) != "cli runtime write\n" {
+		t.Fatalf("runtime-written content = %q", data)
+	}
 }
 
 func TestCLIAppServerCleanupStopsActiveRuntimeBeforeStoreClose(t *testing.T) {
