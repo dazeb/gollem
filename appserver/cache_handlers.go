@@ -28,6 +28,7 @@ func (s *Server) handleCacheBenchmark(raw json.RawMessage) (any, *protocol.Error
 	if err != nil {
 		return nil, invalidParams("invalid cache/benchmark params", err)
 	}
+	s.publishCacheBenchmarkCompleted(result)
 	return result, nil
 }
 
