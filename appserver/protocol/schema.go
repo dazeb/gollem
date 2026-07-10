@@ -84,6 +84,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRequestBase", Type: reflect.TypeFor[ApprovalRequestBase]()},
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
+		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
 		{Name: "CommandExecutionAction", Type: reflect.TypeFor[CommandExecutionAction]()},
 		{Name: "CommandExecutionApprovalRequestParams", Type: reflect.TypeFor[CommandExecutionApprovalRequestParams]()},
 		{Name: "CommandExecutionItem", Type: reflect.TypeFor[CommandExecutionItem]()},

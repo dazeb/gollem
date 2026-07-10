@@ -21,6 +21,21 @@ not require an envelope-version change.
 - Deferred and unavailable methods remain in the method inventory so clients
   can distinguish capability gaps from unknown methods.
 
+## Version 1 Initialize Migration
+
+`gollem.appserver.v1` makes the initialize wire compatible with the public
+Codex identity and environment fields. Clients must send non-empty
+`clientInfo.name` and `clientInfo.version`; `clientInfo.title` remains nullable
+and optional on the JSON wire. Initialize capabilities accept the public
+experimental API, attestation, MCP form-elicitation, and notification opt-out
+fields, while Gollem's keyed experimental map remains an extension.
+
+Initialize responses now require `userAgent`, `codexHome`, `platformFamily`,
+and `platformOs`. Existing Gollem `protocolVersion`, `serverInfo`, server
+capabilities, and method inventory fields remain present as additive
+extensions. This required-field change is why the protocol version advances
+from v0 to v1; the schema metadata representation remains v1.
+
 ## Generation
 
 Run:

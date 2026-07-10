@@ -11,7 +11,7 @@ func TestMessagesOmitJSONRPCOnMarshal(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      NewNumberID(1),
 		Method:  "initialize",
-		Params:  json.RawMessage(`{"clientInfo":{"name":"test"}}`),
+		Params:  json.RawMessage(`{"clientInfo":{"name":"test","version":"1.0.0"}}`),
 	}
 	data, err := json.Marshal(req)
 	if err != nil {

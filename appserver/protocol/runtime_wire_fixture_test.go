@@ -59,7 +59,10 @@ func TestInitializeWireV1FixtureUsesExportedContracts(t *testing.T) {
 	if err := decodeRuntimeFixture(requestPayload, &params); err != nil {
 		t.Fatalf("decode InitializeParams: %v", err)
 	}
-	if params.ClientInfo.Name != "gollem-typescript-fixture" || !params.Capabilities.Experimental["typedInitialize"] {
+	if params.ClientInfo.Name != "gollem-typescript-fixture" || params.ClientInfo.Version != "1.0.0" ||
+		params.Capabilities == nil || !params.Capabilities.ExperimentalAPI || params.Capabilities.RequestAttestation ||
+		!params.Capabilities.MCPServerOpenAIFormElicitation ||
+		!params.Capabilities.Experimental["typedInitialize"] {
 		t.Fatalf("initialize params = %+v", params)
 	}
 	assertBinding(t, WireTypeBindings(), "initialize", SurfaceClientRequest, "InitializeParams")
@@ -73,7 +76,9 @@ func TestInitializeWireV1FixtureUsesExportedContracts(t *testing.T) {
 	if err := decodeRuntimeFixture(responsePayload, &response); err != nil {
 		t.Fatalf("decode InitializeResponse: %v", err)
 	}
-	if response.ProtocolVersion != ProtocolVersion || len(response.Methods) != 2 {
+	if response.ProtocolVersion != ProtocolVersion || response.UserAgent != "gollem-appserver/dev" ||
+		response.CodexHome != "/workspace/.gollem" || response.PlatformFamily != "unix" || response.PlatformOS != "macos" ||
+		len(response.Methods) != 2 {
 		t.Fatalf("initialize response = %+v", response)
 	}
 	if response.Methods[0].Surface != SurfaceClientRequest || response.Methods[1].State != MethodImplemented {

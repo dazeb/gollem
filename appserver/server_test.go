@@ -27,17 +27,30 @@ import (
 
 func TestServerHandshakeAndUnavailable(t *testing.T) {
 	ctx := context.Background()
-	server := NewServer(WithImplementationInfo(protocol.ImplementationInfo{Name: "test-server", Version: "v1"}))
+	server := NewServer(
+		WithImplementationInfo(protocol.ImplementationInfo{Name: "test-server", Version: "v1"}),
+		WithInitializeHome("/tmp/test-gollem-home"),
+	)
 
 	preInit := server.HandleRequest(ctx, request("thread/list", nil))
 	if preInit.Error == nil || preInit.Error.Code != protocol.CodeInvalidRequest {
 		t.Fatalf("pre-init error = %#v, want invalid request", preInit.Error)
 	}
+	missingVersion := server.HandleRequest(ctx, request("initialize", protocol.InitializeParams{
+		ClientInfo: protocol.ClientInfo{Name: "test-client"},
+	}))
+	if missingVersion.Error == nil || missingVersion.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing client version error = %#v, want invalid params", missingVersion.Error)
+	}
 
 	initResp := server.HandleRequest(ctx, request("initialize", protocol.InitializeParams{
-		ClientInfo: protocol.ImplementationInfo{Name: "test-client"},
-		Capabilities: protocol.InitializeCapabilities{
-			OptOutNotificationMethods: []string{"thread/status/changed"},
+		ClientInfo: protocol.ClientInfo{Name: "test-client", Version: "1.0.0"},
+		Capabilities: &protocol.InitializeCapabilities{
+			ExperimentalAPI:                true,
+			RequestAttestation:             true,
+			MCPServerOpenAIFormElicitation: true,
+			OptOutNotificationMethods:      []string{"thread/status/changed"},
+			Experimental:                   map[string]bool{"gollemFeature": true},
 		},
 	}))
 	if initResp.Error != nil {
@@ -45,11 +58,24 @@ func TestServerHandshakeAndUnavailable(t *testing.T) {
 	}
 	var initResult protocol.InitializeResponse
 	decodeResult(t, initResp, &initResult)
-	if initResult.ProtocolVersion != protocol.ProtocolVersion || initResult.ServerInfo.Name != "test-server" {
+	if initResult.ProtocolVersion != protocol.ProtocolVersion || initResult.ServerInfo.Name != "test-server" ||
+		initResult.UserAgent != "test-server/v1" || initResult.CodexHome != "/tmp/test-gollem-home" ||
+		initResult.PlatformFamily == "" || initResult.PlatformOS == "" {
 		t.Fatalf("initialize result = %#v", initResult)
 	}
 	if server.NotificationEnabled("thread/status/changed") {
 		t.Fatal("NotificationEnabled returned true for opted-out method")
+	}
+	clientCapabilities := server.ClientCapabilities()
+	if !clientCapabilities.ExperimentalAPI || !clientCapabilities.RequestAttestation ||
+		!clientCapabilities.MCPServerOpenAIFormElicitation || !clientCapabilities.Experimental["gollemFeature"] {
+		t.Fatalf("client capabilities = %+v", clientCapabilities)
+	}
+	clientCapabilities.Experimental["gollemFeature"] = false
+	clientCapabilities.OptOutNotificationMethods[0] = "changed"
+	freshCapabilities := server.ClientCapabilities()
+	if !freshCapabilities.Experimental["gollemFeature"] || freshCapabilities.OptOutNotificationMethods[0] != "thread/status/changed" {
+		t.Fatal("ClientCapabilities returned mutable server storage")
 	}
 
 	beforeReady := server.HandleRequest(ctx, request("thread/list", nil))
@@ -630,7 +656,7 @@ func TestServerThreadRollbackHandler(t *testing.T) {
 		t.Fatalf("CreateTurn tui: %v", err)
 	}
 	tuiServer := NewServer(WithStore(st))
-	_ = tuiServer.HandleRequest(ctx, request("initialize", protocol.InitializeParams{ClientInfo: protocol.ImplementationInfo{Name: "codex-tui"}}))
+	_ = tuiServer.HandleRequest(ctx, request("initialize", protocol.InitializeParams{ClientInfo: protocol.ClientInfo{Name: "codex-tui", Version: "1.0.0"}}))
 	if err := tuiServer.HandleNotification(ctx, protocol.Notification{Method: "initialized"}); err != nil {
 		t.Fatalf("initialized tui: %v", err)
 	}
@@ -2141,7 +2167,7 @@ func TestServerGitHandlers(t *testing.T) {
 func readyServer(opts ...Option) *Server {
 	server := NewServer(opts...)
 	_ = server.HandleRequest(context.Background(), request("initialize", protocol.InitializeParams{
-		ClientInfo: protocol.ImplementationInfo{Name: "test-client"},
+		ClientInfo: protocol.ClientInfo{Name: "test-client", Version: "1.0.0"},
 	}))
 	if err := server.HandleNotification(context.Background(), protocol.Notification{Method: "initialized"}); err != nil {
 		panic(err)

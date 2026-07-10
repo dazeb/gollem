@@ -36,7 +36,7 @@ func TestServeWebSocketRoundTripAndDaemonStop(t *testing.T) {
 	}
 	defer conn.Close()
 
-	writeWebSocketMessage(t, conn, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"ws-test"}}}`)
+	writeWebSocketMessage(t, conn, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"ws-test","version":"1.0.0"}}}`)
 	initResp := readWebSocketResponse(t, conn)
 	if initResp.Error != nil {
 		t.Fatalf("initialize error: %v", initResp.Error)

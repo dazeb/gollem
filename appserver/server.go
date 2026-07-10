@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	iofs "io/fs"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +40,9 @@ type Server struct {
 	mu          sync.Mutex
 	state       connectionState
 	serverInfo  protocol.ImplementationInfo
-	clientInfo  protocol.ImplementationInfo
+	clientInfo  protocol.ClientInfo
+	clientCaps  protocol.InitializeCapabilities
+	appHome     string
 	optOut      map[string]struct{}
 	loaded      map[string]struct{}
 	subscribed  map[string]struct{}
@@ -77,6 +80,21 @@ func WithImplementationInfo(info protocol.ImplementationInfo) Option {
 		if info.Name != "" {
 			s.serverInfo = info
 		}
+	}
+}
+
+// WithInitializeHome sets the absolute Gollem state root exposed through the
+// Codex-compatible initialize response field.
+func WithInitializeHome(home string) Option {
+	return func(s *Server) {
+		home = strings.TrimSpace(home)
+		if home == "" {
+			return
+		}
+		if absolute, err := filepath.Abs(home); err == nil {
+			home = absolute
+		}
+		s.appHome = filepath.Clean(home)
 	}
 }
 
@@ -189,6 +207,7 @@ func WithRequestSchedulerLimit(limit int) Option {
 func NewServer(opts ...Option) *Server {
 	s := &Server{
 		serverInfo:            protocol.ImplementationInfo{Name: "gollem-appserver"},
+		appHome:               defaultInitializeHome(),
 		optOut:                make(map[string]struct{}),
 		loaded:                make(map[string]struct{}),
 		subscribed:            make(map[string]struct{}),
@@ -343,6 +362,25 @@ func (s *Server) NotificationEnabled(method string) bool {
 	return !disabled
 }
 
+// ClientCapabilities returns a defensive copy of the capabilities negotiated
+// by the current connection.
+func (s *Server) ClientCapabilities() protocol.InitializeCapabilities {
+	if s == nil {
+		return protocol.InitializeCapabilities{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	capabilities := s.clientCaps
+	capabilities.OptOutNotificationMethods = append([]string(nil), capabilities.OptOutNotificationMethods...)
+	if capabilities.Experimental != nil {
+		capabilities.Experimental = make(map[string]bool, len(s.clientCaps.Experimental))
+		for name, enabled := range s.clientCaps.Experimental {
+			capabilities.Experimental[name] = enabled
+		}
+	}
+	return capabilities
+}
+
 func (s *Server) NotificationSignal() <-chan struct{} {
 	if s == nil || s.events == nil {
 		return nil
@@ -390,9 +428,22 @@ func (s *Server) PublishNotification(method string, params any) {
 }
 
 func (s *Server) handleInitialize(req protocol.Request) protocol.Response {
+	s.mu.Lock()
+	if s.state != stateNew {
+		s.mu.Unlock()
+		return errorResponse(req.ID, rpcError(protocol.CodeInvalidRequest, "initialize has already completed", nil))
+	}
+	s.mu.Unlock()
+
 	var params protocol.InitializeParams
 	if rpcErr := decodeParams(req.Params, &params); rpcErr != nil {
 		return errorResponse(req.ID, rpcErr)
+	}
+	if strings.TrimSpace(params.ClientInfo.Name) == "" {
+		return errorResponse(req.ID, invalidParams("invalid initialize params", errors.New("clientInfo.name is required")))
+	}
+	if strings.TrimSpace(params.ClientInfo.Version) == "" {
+		return errorResponse(req.ID, invalidParams("invalid initialize params", errors.New("clientInfo.version is required")))
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -400,14 +451,26 @@ func (s *Server) handleInitialize(req protocol.Request) protocol.Response {
 		return errorResponse(req.ID, rpcError(protocol.CodeInvalidRequest, "initialize has already completed", nil))
 	}
 	s.clientInfo = params.ClientInfo
-	s.optOut = make(map[string]struct{}, len(params.Capabilities.OptOutNotificationMethods))
-	for _, method := range params.Capabilities.OptOutNotificationMethods {
+	s.clientCaps = protocol.InitializeCapabilities{}
+	if params.Capabilities != nil {
+		s.clientCaps = *params.Capabilities
+	}
+	s.optOut = make(map[string]struct{}, len(s.clientCaps.OptOutNotificationMethods))
+	for _, method := range s.clientCaps.OptOutNotificationMethods {
 		if method != "" {
 			s.optOut[method] = struct{}{}
 		}
 	}
 	s.state = stateInitialized
-	return resultResponse(req.ID, protocol.DefaultInitializeResponse(s.serverInfo))
+	return resultResponse(req.ID, protocol.DefaultInitializeResponse(s.serverInfo, s.appHome))
+}
+
+func defaultInitializeHome() string {
+	home, err := filepath.Abs(".gollem")
+	if err != nil {
+		return ".gollem"
+	}
+	return home
 }
 
 func (s *Server) requireReady() *protocol.Error {

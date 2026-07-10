@@ -93,7 +93,7 @@ func TestTypeScriptBindingCoversDefinitionsAndBindings(t *testing.T) {
 
 func TestTypeScriptFixtureRejectsEnvelopeSurfaceMismatch(t *testing.T) {
 	fixture := []byte(`{
-		"protocolVersion":"gollem.appserver.v0",
+		"protocolVersion":"gollem.appserver.v1",
 		"schemaVersion":"gollem.appserver.schema.v1",
 		"cases":[{
 			"name":"invalid-initialized-request",

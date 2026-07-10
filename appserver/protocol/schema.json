@@ -69,6 +69,32 @@
       ],
       "type": "object"
     },
+    "ClientInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
     "CommandExecutionAction": {
       "additionalProperties": false,
       "properties": {
@@ -972,6 +998,12 @@
             }
           ]
         },
+        "experimentalApi": {
+          "type": "boolean"
+        },
+        "mcpServerOpenaiFormElicitation": {
+          "type": "boolean"
+        },
         "optOutNotificationMethods": {
           "anyOf": [
             {
@@ -984,6 +1016,9 @@
               "type": "null"
             }
           ]
+        },
+        "requestAttestation": {
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -992,10 +1027,17 @@
       "additionalProperties": false,
       "properties": {
         "capabilities": {
-          "$ref": "#/$defs/InitializeCapabilities"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InitializeCapabilities"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "clientInfo": {
-          "$ref": "#/$defs/ImplementationInfo"
+          "$ref": "#/$defs/ClientInfo"
         }
       },
       "required": [
@@ -1008,6 +1050,9 @@
       "properties": {
         "capabilities": {
           "$ref": "#/$defs/ServerCapabilities"
+        },
+        "codexHome": {
+          "type": "string"
         },
         "methods": {
           "anyOf": [
@@ -1022,14 +1067,27 @@
             }
           ]
         },
+        "platformFamily": {
+          "type": "string"
+        },
+        "platformOs": {
+          "type": "string"
+        },
         "protocolVersion": {
           "type": "string"
         },
         "serverInfo": {
           "$ref": "#/$defs/ImplementationInfo"
+        },
+        "userAgent": {
+          "type": "string"
         }
       },
       "required": [
+        "userAgent",
+        "codexHome",
+        "platformFamily",
+        "platformOs",
         "protocolVersion",
         "serverInfo",
         "capabilities"
@@ -3314,7 +3372,7 @@
       "source": "goal.txt"
     }
   ],
-  "x-gollem-protocol-version": "gollem.appserver.v0",
+  "x-gollem-protocol-version": "gollem.appserver.v1",
   "x-gollem-schema-version": "gollem.appserver.schema.v1",
   "x-gollem-type-bindings": [
     {

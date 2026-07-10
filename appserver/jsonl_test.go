@@ -37,7 +37,7 @@ func TestServeJSONLinesStdioFlow(t *testing.T) {
 	}()
 	scanner := bufio.NewScanner(outR)
 
-	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`)
+	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client","version":"1.0.0"}}}`)
 	writeInputLine(t, inW, `{"method":"initialized"}`)
 
 	var initResp protocol.Response
@@ -138,7 +138,7 @@ func TestServeJSONLinesApprovalRespondFlow(t *testing.T) {
 		errCh <- err
 	}()
 	scanner := bufio.NewScanner(outR)
-	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`)
+	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client","version":"1.0.0"}}}`)
 	writeInputLine(t, inW, `{"method":"initialized"}`)
 	writeInputLine(t, inW, `{"id":"write","method":"fs/writeFile","params":{"path":"approved.txt","content":"ok"}}`)
 
@@ -223,7 +223,7 @@ func TestServeJSONLinesBackpressureAllowsApprovalRespond(t *testing.T) {
 		errCh <- err
 	}()
 	scanner := bufio.NewScanner(outR)
-	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`)
+	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client","version":"1.0.0"}}}`)
 	var initResp protocol.Response
 	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &initResp); err != nil {
 		t.Fatalf("decode init response: %v", err)
@@ -317,7 +317,7 @@ func TestServeJSONLinesBackpressureAllowsApprovalRespond(t *testing.T) {
 func TestServeJSONLinesDaemonStopFlushesResponse(t *testing.T) {
 	server := NewServer(WithDaemonService(NewDaemonService(WithDaemonVersion("test-version"))))
 	input := strings.Join([]string{
-		`{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client"}}}`,
+		`{"id":"init","method":"initialize","params":{"clientInfo":{"name":"test-client","version":"1.0.0"}}}`,
 		`{"method":"initialized"}`,
 		`{"id":"stop","method":"daemon/stop","params":{"reason":"test"}}`,
 		"",
