@@ -55,10 +55,20 @@ func WithRuntimeModel(model core.Model, info RuntimeModelInfo) RuntimeOption {
 	})
 }
 
+// WithRuntimeTools registers provider-neutral core tools for app-server turns.
+// Tool handlers are shared across turns and should be safe for concurrent use.
+func WithRuntimeTools(tools ...core.Tool) RuntimeOption {
+	cloned := append([]core.Tool(nil), tools...)
+	return func(s *RuntimeService) {
+		s.tools = append(s.tools, cloned...)
+	}
+}
+
 type RuntimeService struct {
 	startMu      sync.Mutex
 	mu           sync.Mutex
 	modelFactory RuntimeModelFactory
+	tools        []core.Tool
 	active       map[string]*activeRuntimeTurn
 	shuttingDown bool
 	wg           sync.WaitGroup
@@ -267,8 +277,19 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 		publishRuntimeError(notifier, turn, event.Error)
 	})
 	defer unsubscribeError()
+	toolItems := newRuntimeToolItemTracker(st, notifier, turn, s.tools)
+	unsubscribeToolCalled := core.Subscribe(bus, toolItems.toolCalled)
+	defer unsubscribeToolCalled()
+	unsubscribeToolCompleted := core.Subscribe(bus, toolItems.toolCompleted)
+	defer unsubscribeToolCompleted()
+	unsubscribeToolFailed := core.Subscribe(bus, toolItems.toolFailed)
+	defer unsubscribeToolFailed()
 
-	agent := core.NewAgent[string](model, core.WithEventBus[string](bus))
+	agentOptions := []core.AgentOption[string]{core.WithEventBus[string](bus)}
+	if len(s.tools) > 0 {
+		agentOptions = append(agentOptions, core.WithTools[string](s.tools...))
+	}
+	agent := core.NewAgent[string](model, agentOptions...)
 	runOpts := make([]core.RunOption, 0, 2)
 	if len(req.History) > 0 {
 		runOpts = append(runOpts, core.WithMessages(req.History...))
@@ -293,6 +314,9 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	result, err := stream.Result()
 	if err == nil {
 		err = streamErr
+	}
+	if err == nil {
+		err = toolItems.Err()
 	}
 	s.complete(st, notifier, turn, statusFromRuntimeError(err), result, err, info)
 }
