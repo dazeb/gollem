@@ -15,7 +15,7 @@ func TestMethodUnavailableErrorForKnownMethod(t *testing.T) {
 	if jsonErr := json.Unmarshal(err.Data, &data); jsonErr != nil {
 		t.Fatalf("unmarshal data: %v", jsonErr)
 	}
-	if data.Method != "thread/start" || data.Surface != SurfaceClientRequest || data.Status != MethodBlocked {
+	if data.Method != "thread/start" || data.Surface != SurfaceClientRequest || data.Status != MethodImplemented {
 		t.Fatalf("data = %+v", data)
 	}
 }

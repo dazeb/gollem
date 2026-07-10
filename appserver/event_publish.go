@@ -5,6 +5,7 @@ import (
 
 	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/store"
+	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 )
 
 type cacheBenchmarkNotificationParams struct {
@@ -24,6 +25,13 @@ func (s *Server) publishFileChanged(operation, path, destination string) {
 	})
 }
 
+func (s *Server) publishWatchChanged(event toolfs.WatchEvent) {
+	s.PublishNotification("fs/changed", fsWatchChangedParams{
+		WatchID:      event.WatchID,
+		ChangedPaths: append([]string(nil), event.ChangedPaths...),
+	})
+}
+
 func (s *Server) publishThreadNotification(method string, thread *store.Thread) {
 	if thread == nil {
 		return
@@ -31,6 +39,42 @@ func (s *Server) publishThreadNotification(method string, thread *store.Thread) 
 	s.PublishNotification(method, threadNotificationParams{
 		ThreadID: thread.ID,
 		Status:   thread.Status,
+		Thread:   thread,
+		At:       time.Now().UTC(),
+	})
+}
+
+func (s *Server) publishThreadClosed(threadID string) {
+	if threadID == "" {
+		return
+	}
+	s.PublishNotification("thread/closed", threadClosedNotificationParams{ThreadID: threadID})
+	s.PublishNotification("thread/status/changed", threadNotLoadedStatusNotificationParams{
+		ThreadID: threadID,
+		Status:   map[string]string{"type": "notLoaded"},
+		At:       time.Now().UTC(),
+	})
+}
+
+func (s *Server) publishThreadGoalNotification(method string, thread *store.Thread, goal any) {
+	if thread == nil {
+		return
+	}
+	s.PublishNotification(method, threadGoalNotificationParams{
+		ThreadID: thread.ID,
+		Goal:     goal,
+		Thread:   thread,
+		At:       time.Now().UTC(),
+	})
+}
+
+func (s *Server) publishThreadNameNotification(thread *store.Thread) {
+	if thread == nil {
+		return
+	}
+	s.PublishNotification("thread/name/updated", threadNameNotificationParams{
+		ThreadID: thread.ID,
+		Name:     thread.Title,
 		Thread:   thread,
 		At:       time.Now().UTC(),
 	})

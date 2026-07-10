@@ -190,7 +190,7 @@ func (l classifiedJSONLine) isClientRequest() bool {
 }
 
 func (l classifiedJSONLine) scheduledClientRequest() bool {
-	return l.isClientRequest() && l.Method != "initialize" && l.Method != "approval/respond"
+	return l.isClientRequest() && strings.TrimSpace(l.Method) != "" && l.Method != "initialize" && l.Method != "approval/respond"
 }
 
 func classifyJSONLine(line []byte) (classifiedJSONLine, error) {
