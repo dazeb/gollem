@@ -4,23 +4,35 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	appserver "github.com/fugue-labs/gollem/appserver"
+	appconfig "github.com/fugue-labs/gollem/appserver/config"
+	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
 	"github.com/fugue-labs/gollem/appserver/protocol"
+	appskills "github.com/fugue-labs/gollem/appserver/skills"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
 	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/modelutil"
+	"github.com/gorilla/websocket"
 )
 
 const defaultAppServerStoreRel = ".gollem/appserver.db"
+const defaultAppServerWebSocketPath = "/app-server"
+
+var errAppServerDaemonStopped = errors.New("app-server daemon stop requested")
 
 type appServerFlags struct {
 	workDir         string
@@ -32,8 +44,12 @@ type appServerFlags struct {
 	location        string
 	project         string
 	stdio           bool
+	socketPath      string
+	websocketAddr   string
+	websocketPath   string
 	allowMutations  bool
 	gitRootExplicit bool
+	stdioExplicit   bool
 }
 
 func runAppServer() {
@@ -43,22 +59,11 @@ func runAppServer() {
 		printAppServerUsage()
 		os.Exit(1)
 	}
-	if !flags.stdio {
-		fmt.Fprintln(os.Stderr, "error: only --stdio transport is currently supported")
-		os.Exit(1)
-	}
-
-	server, cleanup, err := newCLIAppServer(flags)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error creating app-server: %v\n", err)
-		os.Exit(1)
-	}
-	defer cleanup()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := appserver.ServeJSONLines(ctx, server, os.Stdin, os.Stdout); err != nil && !errors.Is(err, context.Canceled) {
+	if err := serveCLIAppServerTransports(ctx, flags); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintf(os.Stderr, "error serving app-server: %v\n", err)
 		os.Exit(1)
 	}
@@ -66,7 +71,7 @@ func runAppServer() {
 
 func parseAppServerFlags(args []string) (appServerFlags, error) {
 	workDir, _ := os.Getwd()
-	flags := appServerFlags{workDir: workDir, stdio: true}
+	flags := appServerFlags{workDir: workDir, stdio: true, websocketPath: defaultAppServerWebSocketPath}
 
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
@@ -76,6 +81,7 @@ func parseAppServerFlags(args []string) (appServerFlags, error) {
 				return appServerFlags{}, fmt.Errorf("--stdio: %w", err)
 			}
 			flags.stdio = value
+			flags.stdioExplicit = true
 			i += consumed
 		case strings.HasPrefix(arg, "--stdio="):
 			value, err := parseBoolString(strings.TrimPrefix(arg, "--stdio="))
@@ -83,6 +89,7 @@ func parseAppServerFlags(args []string) (appServerFlags, error) {
 				return appServerFlags{}, fmt.Errorf("--stdio: %w", err)
 			}
 			flags.stdio = value
+			flags.stdioExplicit = true
 		case arg == "--allow-mutations":
 			value, consumed, err := parseOptionalBoolFlag(args, i)
 			if err != nil {
@@ -161,6 +168,33 @@ func parseAppServerFlags(args []string) (appServerFlags, error) {
 			i++
 		case strings.HasPrefix(arg, "--project="):
 			flags.project = strings.TrimSpace(strings.TrimPrefix(arg, "--project="))
+		case arg == "--socket":
+			value, err := requireServeFlagValue(args, i, "--socket")
+			if err != nil {
+				return appServerFlags{}, err
+			}
+			flags.socketPath = strings.TrimSpace(value)
+			i++
+		case strings.HasPrefix(arg, "--socket="):
+			flags.socketPath = strings.TrimSpace(strings.TrimPrefix(arg, "--socket="))
+		case arg == "--websocket":
+			value, err := requireServeFlagValue(args, i, "--websocket")
+			if err != nil {
+				return appServerFlags{}, err
+			}
+			flags.websocketAddr = strings.TrimSpace(value)
+			i++
+		case strings.HasPrefix(arg, "--websocket="):
+			flags.websocketAddr = strings.TrimSpace(strings.TrimPrefix(arg, "--websocket="))
+		case arg == "--websocket-path":
+			value, err := requireServeFlagValue(args, i, "--websocket-path")
+			if err != nil {
+				return appServerFlags{}, err
+			}
+			flags.websocketPath = strings.TrimSpace(value)
+			i++
+		case strings.HasPrefix(arg, "--websocket-path="):
+			flags.websocketPath = strings.TrimSpace(strings.TrimPrefix(arg, "--websocket-path="))
 		case arg == "--help" || arg == "-h":
 			printAppServerUsage()
 			os.Exit(0)
@@ -171,10 +205,27 @@ func parseAppServerFlags(args []string) (appServerFlags, error) {
 	if strings.TrimSpace(flags.workDir) == "" {
 		return appServerFlags{}, errors.New("--workdir must not be empty")
 	}
+	if flags.websocketPath == "" || !strings.HasPrefix(flags.websocketPath, "/") {
+		return appServerFlags{}, errors.New("--websocket-path must start with /")
+	}
+	if (flags.socketPath != "" || flags.websocketAddr != "") && !flags.stdioExplicit {
+		flags.stdio = false
+	}
+	if !flags.stdio && flags.socketPath == "" && flags.websocketAddr == "" {
+		return appServerFlags{}, errors.New("at least one app-server transport must be enabled")
+	}
 	return flags, nil
 }
 
 func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
+	return newCLIAppServerWithTransport(flags, appServerTransportName(flags))
+}
+
+func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*appserver.Server, func(), error) {
+	return newCLIAppServerWithRuntimeFactory(flags, transport, appServerRuntimeModelFactory(flags))
+}
+
+func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, runtimeFactory appserver.RuntimeModelFactory) (*appserver.Server, func(), error) {
 	workDir, err := filepath.Abs(flags.workDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve workdir: %w", err)
@@ -196,6 +247,9 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 	gitOpts := []toolgit.Option{}
 	events := appserver.NewEventQueue()
 	approvals := appserver.NewApprovalService()
+	mcpSvc := appmcp.NewService()
+	interactionSvc := appserver.NewInteractionService()
+	var server *appserver.Server
 	if !flags.allowMutations {
 		fsOpts = append(fsOpts, toolfs.WithApproval(approvals.FilesystemApproval))
 		processOpts = append(processOpts, toolprocess.WithApproval(approvals.ProcessApproval))
@@ -203,10 +257,18 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 	}
 	processOpts = append(processOpts,
 		toolprocess.WithOutputSink(func(ev toolprocess.OutputEvent) {
+			if server != nil {
+				server.PublishProcessOutput(ev)
+				return
+			}
 			method, params := appserver.ProcessOutputNotification(ev)
 			events.Publish(method, params)
 		}),
 		toolprocess.WithExitSink(func(ev toolprocess.ExitEvent) {
+			if server != nil {
+				server.PublishProcessExited(ev)
+				return
+			}
 			method, params := appserver.ProcessExitedNotification(ev)
 			events.Publish(method, params)
 		}),
@@ -227,6 +289,11 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
+	memorySvc, err := appserver.NewMemoryService(filepath.Join(workDir, ".gollem", "memories"))
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
 
 	var gitSvc *toolgit.Service
 	gitRoot := firstNonEmptyAppServer(flags.gitRoot, workDir)
@@ -241,6 +308,17 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 	if err != nil {
 		gitSvc = nil
 	}
+	runtimeTools := appserver.FilesystemRuntimeTools(fsSvc)
+	runtimeTools = append(runtimeTools, appserver.ProcessRuntimeTools(processSvc)...)
+	if gitSvc != nil {
+		runtimeTools = append(runtimeTools, appserver.GitRuntimeTools(gitSvc)...)
+	}
+	runtimeTools = append(runtimeTools, appserver.MCPRuntimeTools(mcpSvc, approvals)...)
+	runtimeTools = append(runtimeTools, appserver.InteractionRuntimeTools(interactionSvc)...)
+	runtimeSvc := appserver.NewRuntimeService(
+		appserver.WithRuntimeModelFactory(runtimeFactory),
+		appserver.WithRuntimeTools(runtimeTools...),
+	)
 
 	version := gitCommit
 	if version == "" {
@@ -251,23 +329,284 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 		appserver.WithDaemonService(appserver.NewDaemonService(
 			appserver.WithDaemonName("gollem-appserver"),
 			appserver.WithDaemonVersion(version),
-			appserver.WithDaemonTransport("stdio"),
+			appserver.WithDaemonTransport(transport),
 			appserver.WithDaemonWorkDir(workDir),
 			appserver.WithDaemonStorePath(storePath),
 		)),
 		appserver.WithStore(st),
 		appserver.WithFilesystem(fsSvc),
 		appserver.WithProcess(processSvc),
+		appserver.WithConfig(appconfig.NewService(appconfig.WithWorkDir(workDir))),
+		appserver.WithMCP(mcpSvc),
+		appserver.WithSkills(appskills.NewService(appskills.WithRoots(
+			filepath.Join(workDir, ".gollem", "skills"),
+			filepath.Join(workDir, ".gollem", "plugins"),
+		))),
+		appserver.WithMemoryService(memorySvc),
 		appserver.WithEventQueue(events),
 		appserver.WithApprovalService(approvals),
-		appserver.WithRuntimeService(appserver.NewRuntimeService(
-			appserver.WithRuntimeModelFactory(appServerRuntimeModelFactory(flags)),
-		)),
+		appserver.WithInteractionService(interactionSvc),
+		appserver.WithRuntimeService(runtimeSvc),
 	}
 	if gitSvc != nil {
 		opts = append(opts, appserver.WithGit(gitSvc))
 	}
-	return appserver.NewServer(opts...), cleanup, nil
+	server = appserver.NewServer(opts...)
+	return server, func() {
+		shutdownCLIAppServerRuntime(runtimeSvc)
+		cleanup()
+	}, nil
+}
+
+func shutdownCLIAppServerRuntime(runtimeSvc *appserver.RuntimeService) {
+	if runtimeSvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = runtimeSvc.Shutdown(ctx)
+}
+
+func serveCLIAppServerTransports(ctx context.Context, flags appServerFlags) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errCh := make(chan error, 3)
+	started := 0
+	if flags.stdio {
+		started++
+		go func() {
+			server, cleanup, err := newCLIAppServerWithTransport(flags, "stdio")
+			if err != nil {
+				errCh <- fmt.Errorf("create stdio app-server: %w", err)
+				return
+			}
+			defer cleanup()
+			errCh <- appserver.ServeJSONLines(ctx, server, os.Stdin, os.Stdout)
+		}()
+	}
+	if flags.socketPath != "" {
+		started++
+		go func() {
+			errCh <- serveAppServerUnixSocket(ctx, flags)
+		}()
+	}
+	if flags.websocketAddr != "" {
+		started++
+		go func() {
+			errCh <- serveAppServerWebSocket(ctx, flags)
+		}()
+	}
+	if started == 0 {
+		return errors.New("no app-server transports enabled")
+	}
+	err := <-errCh
+	cancel()
+	if errors.Is(err, errAppServerDaemonStopped) {
+		return nil
+	}
+	return err
+}
+
+func appServerTransportName(flags appServerFlags) string {
+	var transports []string
+	if flags.stdio {
+		transports = append(transports, "stdio")
+	}
+	if flags.socketPath != "" {
+		transports = append(transports, "socket")
+	}
+	if flags.websocketAddr != "" {
+		transports = append(transports, "websocket")
+	}
+	if len(transports) == 0 {
+		return "unknown"
+	}
+	if len(transports) == 1 {
+		return transports[0]
+	}
+	return "multi"
+}
+
+func serveAppServerUnixSocket(ctx context.Context, flags appServerFlags) error {
+	if runtime.GOOS == "windows" {
+		return errors.New("unix socket app-server transport is not supported on windows")
+	}
+	socketPath, err := filepath.Abs(flags.socketPath)
+	if err != nil {
+		return fmt.Errorf("resolve socket path: %w", err)
+	}
+	if err := prepareAppServerSocketPath(socketPath); err != nil {
+		return err
+	}
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("listen on app-server socket: %w", err)
+	}
+	defer func() {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+	}()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+	connErr := make(chan error, 1)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			select {
+			case stoppedErr := <-connErr:
+				if errors.Is(stoppedErr, errAppServerDaemonStopped) {
+					return nil
+				}
+				return stoppedErr
+			default:
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("accept app-server socket connection: %w", err)
+		}
+		go func() {
+			defer conn.Close()
+			server, cleanup, err := newCLIAppServerWithTransport(flags, "socket")
+			if err != nil {
+				sendAppServerConnError(connErr, err)
+				return
+			}
+			defer cleanup()
+			err = appserver.ServeJSONLines(ctx, server, conn, conn)
+			if server.DaemonShutdownRequested() {
+				cancel()
+				sendAppServerConnError(connErr, errAppServerDaemonStopped)
+				return
+			}
+			if err != nil && !errors.Is(err, context.Canceled) {
+				sendAppServerConnError(connErr, err)
+			}
+		}()
+	}
+}
+
+func serveAppServerWebSocket(ctx context.Context, flags appServerFlags) error {
+	mux := http.NewServeMux()
+	httpServer := &http.Server{
+		Addr:              flags.websocketAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	upgrader := websocket.Upgrader{
+		CheckOrigin: appServerWebSocketOriginAllowed,
+	}
+	connErr := make(chan error, 1)
+	mux.HandleFunc(flags.websocketPath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		server, cleanup, err := newCLIAppServerWithTransport(flags, "websocket")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			cleanup()
+			return
+		}
+		defer cleanup()
+		err = appserver.ServeWebSocket(r.Context(), server, conn)
+		if server.DaemonShutdownRequested() {
+			sendAppServerConnError(connErr, errAppServerDaemonStopped)
+			go shutdownHTTPServer(httpServer)
+			return
+		}
+		if err != nil && !errors.Is(err, context.Canceled) {
+			sendAppServerConnError(connErr, err)
+		}
+	})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(ctx, "tcp", flags.websocketAddr)
+	if err != nil {
+		return fmt.Errorf("listen on app-server websocket address: %w", err)
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownHTTPServer(httpServer)
+	}()
+	serveErr := make(chan error, 1)
+	go func() {
+		err := httpServer.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serveErr <- err
+	}()
+	select {
+	case err := <-connErr:
+		if errors.Is(err, errAppServerDaemonStopped) {
+			return nil
+		}
+		return err
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func prepareAppServerSocketPath(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create socket directory: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat socket path: %w", err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("socket path exists and is not a socket: %s", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove stale socket: %w", err)
+	}
+	return nil
+}
+
+func appServerWebSocketOriginAllowed(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
+}
+
+func shutdownHTTPServer(server *http.Server) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = server.Shutdown(shutdownCtx)
+}
+
+func sendAppServerConnError(ch chan<- error, err error) {
+	select {
+	case ch <- err:
+	default:
+	}
 }
 
 func appServerRuntimeModelFactory(flags appServerFlags) appserver.RuntimeModelFactory {
@@ -310,7 +649,6 @@ func resolveAppServerStorePath(workDir, configured string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve store path: %w", err)
 	}
-	//nolint:gosec // Store path is local operator-supplied daemon configuration.
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", fmt.Errorf("create store directory: %w", err)
 	}
@@ -334,6 +672,9 @@ Usage:
 
 Options:
   --stdio[=bool]            Serve newline-delimited JSON-RPC over stdio (default: true)
+  --socket <path>           Serve newline-delimited JSON-RPC over a Unix domain socket
+  --websocket <addr>        Serve JSON-RPC text messages over WebSocket, e.g. 127.0.0.1:0
+  --websocket-path <path>   WebSocket upgrade path (default: /app-server)
   --workdir <path>          Workspace root for fs/process tools (default: current directory)
   --store <path>            SQLite store path (default: <workdir>/.gollem/appserver.db)
   --git-root <path>         Git repository root (default: workdir; unavailable if not a repo)
@@ -347,5 +688,6 @@ Options:
 
 Protocol:
   One JSON object per line on stdin. Responses are written as one JSON object per line on stdout.
+  Unix socket transport uses the same JSONL framing. WebSocket transport uses one JSON object per text message.
 `)
 }
