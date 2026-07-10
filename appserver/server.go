@@ -36,11 +36,17 @@ const (
 // Server dispatches Codex-style app-server JSON-RPC requests to Gollem
 // services. It is transport-neutral; stdio/socket/WebSocket layers can wrap it.
 type Server struct {
-	mu         sync.Mutex
-	state      connectionState
-	serverInfo protocol.ImplementationInfo
-	clientInfo protocol.ImplementationInfo
-	optOut     map[string]struct{}
+	mu          sync.Mutex
+	state       connectionState
+	serverInfo  protocol.ImplementationInfo
+	clientInfo  protocol.ImplementationInfo
+	optOut      map[string]struct{}
+	loaded      map[string]struct{}
+	subscribed  map[string]struct{}
+	idleUnload  map[string]*threadIdleUnload
+	commands    map[string]threadShellCommandRun
+	commandExec map[string]struct{}
+	commandSeq  int
 
 	store     store.Store
 	fs        *toolfs.Service
@@ -57,8 +63,10 @@ type Server struct {
 	interact  *InteractionService
 	daemon    *DaemonService
 	runtime   *RuntimeService
+	memory    *MemoryService
 
 	requestSchedulerLimit int
+	threadIdleUnloadAfter time.Duration
 }
 
 // Option configures a Server.
@@ -156,6 +164,20 @@ func WithRuntimeService(runtime *RuntimeService) Option {
 	}
 }
 
+func WithMemoryService(memory *MemoryService) Option {
+	return func(s *Server) {
+		s.memory = memory
+	}
+}
+
+func WithThreadIdleUnloadAfter(after time.Duration) Option {
+	return func(s *Server) {
+		if after >= 0 {
+			s.threadIdleUnloadAfter = after
+		}
+	}
+}
+
 func WithRequestSchedulerLimit(limit int) Option {
 	return func(s *Server) {
 		if limit > 0 {
@@ -168,6 +190,11 @@ func NewServer(opts ...Option) *Server {
 	s := &Server{
 		serverInfo:            protocol.ImplementationInfo{Name: "gollem-appserver"},
 		optOut:                make(map[string]struct{}),
+		loaded:                make(map[string]struct{}),
+		subscribed:            make(map[string]struct{}),
+		idleUnload:            make(map[string]*threadIdleUnload),
+		commands:              make(map[string]threadShellCommandRun),
+		commandExec:           make(map[string]struct{}),
 		catalog:               catalog.NewDefault(),
 		config:                appconfig.NewService(),
 		cache:                 appcache.NewService(),
@@ -179,6 +206,7 @@ func NewServer(opts ...Option) *Server {
 		interact:              NewInteractionService(),
 		daemon:                NewDaemonService(),
 		requestSchedulerLimit: defaultRequestSchedulerLimit,
+		threadIdleUnloadAfter: 30 * time.Minute,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -405,10 +433,24 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadResume(ctx, params)
 	case "thread/list":
 		return s.handleThreadList(ctx, params)
+	case "thread/search":
+		return s.handleThreadSearch(ctx, params)
+	case "thread/loaded/list":
+		return s.handleThreadLoadedList(ctx, params)
+	case "thread/unsubscribe":
+		return s.handleThreadUnsubscribe(ctx, params)
 	case "thread/read":
 		return s.handleThreadRead(ctx, params)
 	case "thread/fork":
 		return s.handleThreadFork(ctx, params)
+	case "thread/compact/start":
+		return s.handleThreadCompactStart(ctx, params)
+	case "thread/shellCommand":
+		return s.handleThreadShellCommand(ctx, params)
+	case "thread/approveGuardianDeniedAction":
+		return s.handleThreadApproveGuardianDeniedAction(ctx, params)
+	case "thread/rollback":
+		return s.handleThreadRollback(ctx, params)
 	case "thread/archive":
 		return s.handleThreadStatus(ctx, params, method, store.ThreadArchived)
 	case "thread/unarchive":
@@ -427,6 +469,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadMetadataUpdate(ctx, params)
 	case "thread/memoryMode/set":
 		return s.handleThreadMemoryModeSet(ctx, params)
+	case "memory/reset":
+		return s.handleMemoryReset(ctx)
 	case "thread/name/set":
 		return s.handleThreadNameSet(ctx, params)
 	case "thread/backgroundTerminals/list":
@@ -439,6 +483,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadTurnsList(ctx, params)
 	case "thread/items/list":
 		return s.handleThreadItemsList(ctx, params)
+	case "thread/inject_items":
+		return s.handleThreadInjectItems(ctx, params)
 	case "turn/start":
 		return s.handleTurnStart(ctx, params)
 	case "turn/interrupt":
@@ -589,6 +635,7 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	if err != nil {
 		return nil, mapError("thread/start", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/started", thread)
 	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
 		ThreadID:      thread.ID,
@@ -650,6 +697,7 @@ func (s *Server) handleThreadRead(ctx context.Context, raw json.RawMessage) (any
 	if err != nil {
 		return nil, mapError("thread/read", err)
 	}
+	s.markThreadLoaded(thread)
 	result := threadReadResult{Thread: thread}
 	if boolDefault(params.IncludeTurns, true) {
 		turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: threadID, Limit: params.Limit})
@@ -690,6 +738,7 @@ func (s *Server) handleThreadFork(ctx context.Context, raw json.RawMessage) (any
 	if err != nil {
 		return nil, mapError("thread/fork", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/started", thread)
 	return map[string]any{"thread": thread}, nil
 }
@@ -723,6 +772,11 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 	}
 	if err != nil {
 		return nil, mapError(method, err)
+	}
+	if status == store.ThreadDeleted {
+		s.markThreadUnloaded(thread.ID)
+	} else {
+		s.markThreadLoaded(thread)
 	}
 	s.publishThreadNotification("thread/status/changed", thread)
 	switch status {
@@ -758,6 +812,7 @@ func (s *Server) handleThreadSettingsUpdate(ctx context.Context, raw json.RawMes
 	if err != nil {
 		return nil, mapError("thread/settings/update", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return map[string]any{"thread": thread}, nil
 }
@@ -804,6 +859,7 @@ func (s *Server) handleThreadGoalSet(ctx context.Context, raw json.RawMessage) (
 	if err != nil {
 		return nil, mapError("thread/goal/set", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	s.publishThreadGoalNotification("thread/goal/updated", thread, goal)
 	return threadGoalResult{
@@ -842,6 +898,7 @@ func (s *Server) handleThreadGoalClear(ctx context.Context, raw json.RawMessage)
 	if err != nil {
 		return nil, mapError("thread/goal/clear", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	s.publishThreadGoalNotification("thread/goal/cleared", thread, nil)
 	return threadGoalClearResult{
@@ -883,6 +940,7 @@ func (s *Server) handleThreadMetadataUpdate(ctx context.Context, raw json.RawMes
 	if err != nil {
 		return nil, mapError("thread/metadata/update", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return map[string]any{"thread": thread, "metadata": thread.Metadata}, nil
 }
@@ -913,12 +971,25 @@ func (s *Server) handleThreadMemoryModeSet(ctx context.Context, raw json.RawMess
 	if err != nil {
 		return nil, mapError("thread/memoryMode/set", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
 	return threadMemoryModeSetResult{
 		ThreadID:   thread.ID,
 		MemoryMode: mode,
 		Thread:     thread,
 	}, nil
+}
+
+func (s *Server) handleMemoryReset(ctx context.Context) (any, *protocol.Error) {
+	memorySvc, rpcErr := s.requireMemory("memory/reset")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := memorySvc.Reset(ctx)
+	if err != nil {
+		return nil, mapError("memory/reset", err)
+	}
+	return result, nil
 }
 
 func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -942,6 +1013,7 @@ func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (
 	if err != nil {
 		return nil, mapError("thread/name/set", err)
 	}
+	s.markThreadLoaded(thread)
 	s.publishThreadNameNotification(thread)
 	return threadNameSetResult{
 		ThreadID: thread.ID,
@@ -1170,6 +1242,7 @@ func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, mapError("turn/retry", err)
 	}
+	s.markThreadLoadedID(source.ThreadID)
 	return map[string]any{"turn": turn.Turn, "sourceTurnId": source.ID}, nil
 }
 
@@ -1208,6 +1281,7 @@ func (s *Server) startTurnWithParams(ctx context.Context, method string, params 
 	if err != nil {
 		return nil, mapError(method, err)
 	}
+	s.markThreadLoaded(thread)
 	return map[string]any{"thread": thread, "turn": turn.Turn}, nil
 }
 
@@ -1223,7 +1297,7 @@ func (s *Server) loadThreadHistory(ctx context.Context, st store.Store, threadID
 		}
 		filtered = append(filtered, item)
 	}
-	return runtimeMessagesFromItems(filtered), nil
+	return runtimeMessagesFromItems(compactionWindowItems(filtered)), nil
 }
 
 func firstTurnItemSeq(ctx context.Context, st store.Store, threadID, turnID string) (int64, error) {
@@ -1285,6 +1359,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Skills:       s.skills != nil,
 		Runtime:      s.runtime != nil,
 		Interactions: s.interact != nil,
+		Memory:       s.memory != nil,
 	}), nil
 }
 
@@ -1582,7 +1657,16 @@ func (s *Server) handleProcessStart(ctx context.Context, method string, raw json
 		return nil, invalidParams("timeoutMillis must be non-negative", nil)
 	}
 	shell := boolDefault(params.Shell, defaultShell)
+	processID := strings.TrimSpace(firstNonEmpty(params.ProcessID, params.ID))
+	registeredCommandExec := false
+	if method == "command/exec" {
+		if processID == "" {
+			processID = s.nextCommandExecProcessID()
+		}
+		registeredCommandExec = s.registerCommandExecProcess(processID)
+	}
 	snapshot, err := processSvc.Start(ctx, toolprocess.StartRequest{
+		ID:             processID,
 		Command:        params.Command,
 		Args:           params.Args,
 		Shell:          shell,
@@ -1592,6 +1676,9 @@ func (s *Server) handleProcessStart(ctx context.Context, method string, raw json
 		MaxOutputBytes: params.MaxOutputBytes,
 	})
 	if err != nil {
+		if registeredCommandExec {
+			s.unregisterCommandExecProcess(processID)
+		}
 		return nil, mapError(method, err)
 	}
 	return map[string]any{"process": processSnapshotResultFrom(snapshot)}, nil
@@ -1807,6 +1894,13 @@ func (s *Server) requireDaemon(method string) (*DaemonService, *protocol.Error) 
 	return s.daemon, nil
 }
 
+func (s *Server) requireMemory(method string) (*MemoryService, *protocol.Error) {
+	if s.memory == nil {
+		return nil, protocol.MethodUnavailableErrorWithReason(method, "memory service is not configured")
+	}
+	return s.memory, nil
+}
+
 func (s *Server) requireRuntime(method string) (store.Store, *RuntimeService, *protocol.Error) {
 	st, rpcErr := s.requireStore(method)
 	if rpcErr != nil {
@@ -1910,10 +2004,13 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, toolprocess.ErrInvalidWorkDir),
 		errors.Is(err, toolprocess.ErrProcessNotFound),
 		errors.Is(err, toolprocess.ErrProcessNotRunning),
+		errors.Is(err, toolprocess.ErrProcessAlreadyExists),
 		errors.Is(err, store.ErrThreadNotFound),
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
 		errors.Is(err, store.ErrThreadDeleted),
+		errors.Is(err, ErrMemoryRootRequired),
+		errors.Is(err, ErrMemoryRootUnsafe),
 		errors.Is(err, ErrRuntimePromptEmpty):
 		return invalidParams("invalid params", err)
 	case errors.Is(err, toolfs.ErrApprovalDenied),
@@ -1922,6 +2019,8 @@ func mapError(method string, err error) *protocol.Error {
 		return rpcError(protocol.CodeInvalidRequest, "operation denied by approval policy", err)
 	case errors.Is(err, ErrRuntimeNotConfigured):
 		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime model factory is not configured")
+	case errors.Is(err, ErrRuntimeShuttingDown):
+		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime is shutting down")
 	default:
 		return rpcError(protocol.CodeInternalError, "internal app-server error", err)
 	}
@@ -2038,6 +2137,47 @@ type threadListParams struct {
 	Statuses       []store.ThreadStatus `json:"statuses,omitempty"`
 	IncludeDeleted bool                 `json:"includeDeleted,omitempty"`
 	Limit          int                  `json:"limit,omitempty"`
+}
+
+type threadLoadedListParams struct {
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+type threadLoadedListResult struct {
+	Data       []string `json:"data"`
+	NextCursor *string  `json:"nextCursor"`
+}
+
+type threadUnsubscribeResponse struct {
+	Status string `json:"status"`
+}
+
+type threadSearchParams struct {
+	Cursor        string   `json:"cursor,omitempty"`
+	Limit         int      `json:"limit,omitempty"`
+	SortKey       string   `json:"sortKey,omitempty"`
+	SortDirection string   `json:"sortDirection,omitempty"`
+	SourceKinds   []string `json:"sourceKinds,omitempty"`
+	Archived      *bool    `json:"archived,omitempty"`
+	SearchTerm    string   `json:"searchTerm,omitempty"`
+	Query         string   `json:"query,omitempty"`
+	Q             string   `json:"q,omitempty"`
+}
+
+func (p threadSearchParams) query() string {
+	return strings.TrimSpace(firstNonEmpty(p.SearchTerm, p.Query, p.Q))
+}
+
+type threadSearchResult struct {
+	Thread  *store.Thread `json:"thread"`
+	Snippet string        `json:"snippet"`
+}
+
+type threadSearchResponse struct {
+	Data            []threadSearchResult `json:"data"`
+	NextCursor      *string              `json:"nextCursor"`
+	BackwardsCursor *string              `json:"backwardsCursor"`
 }
 
 type threadIDParams struct {
@@ -2167,6 +2307,8 @@ type metadataResult struct {
 }
 
 type processStartParams struct {
+	ID             string            `json:"id,omitempty"`
+	ProcessID      string            `json:"processId,omitempty"`
 	Command        string            `json:"command"`
 	Args           []string          `json:"args,omitempty"`
 	Shell          *bool             `json:"shell,omitempty"`
