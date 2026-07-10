@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	"github.com/fugue-labs/gollem/core"
 )
@@ -21,47 +22,22 @@ const (
 	runtimeToolPayloadMaxBytes     = 64 * 1024
 )
 
-type runtimeDynamicToolCallPayload struct {
-	Type         string                              `json:"type"`
-	ID           string                              `json:"id,omitempty"`
-	Namespace    *string                             `json:"namespace"`
-	Tool         string                              `json:"tool"`
-	Arguments    any                                 `json:"arguments"`
-	Status       string                              `json:"status"`
-	ContentItems []runtimeDynamicToolCallContentItem `json:"contentItems"`
-	Success      *bool                               `json:"success"`
-	DurationMS   *int64                              `json:"durationMs"`
-}
-
-type runtimeDynamicToolCallContentItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type runtimeToolPayloadSummary struct {
-	Omitted bool   `json:"omitted"`
-	Reason  string `json:"reason"`
-	Bytes   int    `json:"bytes"`
-	SHA256  string `json:"sha256"`
-}
-
-type runtimeToolItemStartedNotificationParams struct {
-	Item        runtimeDynamicToolCallPayload `json:"item"`
-	ThreadID    string                        `json:"threadId"`
-	TurnID      string                        `json:"turnId"`
-	StartedAtMS int64                         `json:"startedAtMs"`
-}
-
-type runtimeToolItemCompletedNotificationParams struct {
-	Item          runtimeDynamicToolCallPayload `json:"item"`
-	ThreadID      string                        `json:"threadId"`
-	TurnID        string                        `json:"turnId"`
-	CompletedAtMS int64                         `json:"completedAtMs"`
-}
+type runtimeDynamicToolCallPayload = protocol.DynamicToolCallItem
+type runtimeDynamicToolCallContentItem = protocol.DynamicToolCallContentItem
+type runtimeToolPayloadSummary = protocol.ToolPayloadSummary
+type runtimeToolItemStartedNotificationParams = protocol.DynamicToolCallItemStartedNotificationParams
+type runtimeToolItemCompletedNotificationParams = protocol.DynamicToolCallItemCompletedNotificationParams
 
 type runtimeToolItemState struct {
 	item    *store.Item
 	payload runtimeDynamicToolCallPayload
+}
+
+type runtimeToolItemIDRequestEvent struct {
+	RunID      string
+	ToolCallID string
+	ToolName   string
+	ItemID     *string
 }
 
 type runtimeToolItemTracker struct {
@@ -224,6 +200,27 @@ func (t *runtimeToolItemTracker) itemID(runID, toolCallID, toolName string) stri
 		return ""
 	}
 	return state.item.ID
+}
+
+func (t *runtimeToolItemTracker) resolveItemID(event runtimeToolItemIDRequestEvent) {
+	if event.ItemID == nil {
+		return
+	}
+	*event.ItemID = t.itemID(event.RunID, event.ToolCallID, event.ToolName)
+}
+
+func runtimeDurableToolItemID(ctx context.Context, rc *core.RunContext) string {
+	if rc == nil || rc.EventBus == nil {
+		return ""
+	}
+	itemID := ""
+	core.Publish(rc.EventBus, runtimeToolItemIDRequestEvent{
+		RunID:      runtimeRunID(rc),
+		ToolCallID: runtimeToolCallID(ctx, rc),
+		ToolName:   runtimeToolName(rc, ""),
+		ItemID:     &itemID,
+	})
+	return itemID
 }
 
 func (t *runtimeToolItemTracker) recordErrorLocked(operation string, err error) {

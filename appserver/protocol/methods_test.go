@@ -107,6 +107,7 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	assertMethod(t, "item/reasoning/textDelta", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "item/commandExecution/outputDelta", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "item/fileChange/patchUpdated", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "item/mcpToolCall/progress", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "item/completed", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "cache/benchmark/completed", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "serverRequest/resolved", SurfaceServerNotification, MethodImplemented)

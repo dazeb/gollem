@@ -333,8 +333,23 @@ func TestSQLiteStoreForkCopiesThreadHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTurn: %v", err)
 	}
-	if _, err := s.AppendItem(ctx, AppendItemRequest{ThreadID: source.ID, TurnID: turn.ID, Kind: "message", Payload: json.RawMessage(`{"text":"fork me"}`)}); err != nil {
+	parent, err := s.AppendItem(ctx, AppendItemRequest{ThreadID: source.ID, TurnID: turn.ID, Kind: "dynamicToolCall", Payload: json.RawMessage(`{"tool":"echo"}`)})
+	if err != nil {
 		t.Fatalf("AppendItem: %v", err)
+	}
+	parent, err = s.UpdateItem(ctx, UpdateItemRequest{ID: parent.ID, Payload: json.RawMessage(`{"id":"` + parent.ID + `","tool":"echo"}`)})
+	if err != nil {
+		t.Fatalf("UpdateItem parent payload ID: %v", err)
+	}
+	child, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID:     source.ID,
+		TurnID:       turn.ID,
+		ParentItemID: parent.ID,
+		Kind:         "commandExecution",
+		Payload:      json.RawMessage(`{"command":"echo fork"}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem child: %v", err)
 	}
 
 	fork, err := s.ForkThread(ctx, ForkThreadRequest{
@@ -364,8 +379,23 @@ func TestSQLiteStoreForkCopiesThreadHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListItems fork: %v", err)
 	}
-	if len(forkItems) != 1 || forkItems[0].ThreadID != fork.ID || forkItems[0].TurnID != forkTurns[0].ID {
+	if len(forkItems) != 2 || forkItems[0].ThreadID != fork.ID || forkItems[0].TurnID != forkTurns[0].ID {
 		t.Fatalf("fork items = %+v turns = %+v", forkItems, forkTurns)
+	}
+	if forkItems[0].ID == parent.ID || forkItems[1].ID == child.ID {
+		t.Fatalf("fork item IDs were not regenerated: source=%q/%q fork=%q/%q", parent.ID, child.ID, forkItems[0].ID, forkItems[1].ID)
+	}
+	if forkItems[1].ParentItemID != forkItems[0].ID {
+		t.Fatalf("fork child parent = %q, want remapped parent %q", forkItems[1].ParentItemID, forkItems[0].ID)
+	}
+	var forkParentPayload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(forkItems[0].Payload, &forkParentPayload); err != nil {
+		t.Fatalf("decode fork parent payload: %v", err)
+	}
+	if forkParentPayload.ID != forkItems[0].ID {
+		t.Fatalf("fork parent payload id = %q, want %q", forkParentPayload.ID, forkItems[0].ID)
 	}
 }
 

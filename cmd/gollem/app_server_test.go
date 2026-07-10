@@ -676,6 +676,77 @@ func TestCLIAppServerRuntimeUsesScopedProcessAndGitTools(t *testing.T) {
 	}
 }
 
+func TestCLIAppServerRuntimeUsesMCPAndSharedInteractionTools(t *testing.T) {
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("mcp_list_servers", `{}`, "call-cli-mcp-list"),
+		core.ToolCallResponseWithID("request_user_input", `{"prompt":"Choose","options":["one","two"]}`, "call-cli-input"),
+		core.TextResponse("interaction complete"),
+	)
+	server, cleanup, err := newCLIAppServerWithRuntimeFactory(
+		appServerFlags{workDir: t.TempDir(), storePath: ":memory:", stdio: true},
+		"stdio",
+		func(context.Context, appserver.RuntimeModelSelection) (core.Model, appserver.RuntimeModelInfo, error) {
+			return model, appserver.RuntimeModelInfo{ProviderID: "test", Model: "test-model"}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("newCLIAppServerWithRuntimeFactory: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	resp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("start-mcp-interaction"),
+		Method: "thread/start",
+		Params: json.RawMessage(`{"prompt":"inspect MCP and ask"}`),
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	var started struct {
+		Thread *store.Thread `json:"thread"`
+	}
+	if err := json.Unmarshal(resp.Result, &started); err != nil {
+		t.Fatalf("decode thread/start: %v", err)
+	}
+	select {
+	case <-server.RequestSignal():
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for runtime interaction")
+	}
+	requests := server.DrainRequests()
+	if len(requests) != 1 || requests[0].Method != appserver.InteractionRequestUserInput {
+		t.Fatalf("runtime interaction requests = %#v", requests)
+	}
+	if err := server.HandleResponse(context.Background(), protocol.Response{
+		ID:     requests[0].ID,
+		Result: json.RawMessage(`{"text":"one"}`),
+	}); err != nil {
+		t.Fatalf("HandleResponse: %v", err)
+	}
+	waitCLINotification(t, server, "turn/completed")
+
+	statusResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("mcp-status"),
+		Method: "mcpServerStatus/list",
+		Params: json.RawMessage(`{}`),
+	})
+	if statusResp.Error != nil || !strings.Contains(string(statusResp.Result), `"servers":[]`) {
+		t.Fatalf("mcpServerStatus/list response = %#v", statusResp)
+	}
+	itemsResp := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("list-mcp-interaction-items"),
+		Method: "thread/items/list",
+		Params: json.RawMessage(`{"threadId":"` + started.Thread.ID + `"}`),
+	})
+	if itemsResp.Error != nil {
+		t.Fatalf("thread/items/list error: %v", itemsResp.Error)
+	}
+	if !strings.Contains(string(itemsResp.Result), `"tool":"mcp_list_servers"`) || !strings.Contains(string(itemsResp.Result), `"tool":"request_user_input"`) {
+		t.Fatalf("runtime MCP/interaction items = %s", itemsResp.Result)
+	}
+}
+
 func TestCLIAppServerCleanupStopsActiveRuntimeBeforeStoreClose(t *testing.T) {
 	t.Setenv("GOLLEM_TEST_MODEL_DELAY", "250ms")
 	workDir := t.TempDir()

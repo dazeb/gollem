@@ -17,6 +17,7 @@ import (
 
 	appserver "github.com/fugue-labs/gollem/appserver"
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
+	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	appskills "github.com/fugue-labs/gollem/appserver/skills"
 	"github.com/fugue-labs/gollem/appserver/store"
@@ -246,6 +247,8 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 	gitOpts := []toolgit.Option{}
 	events := appserver.NewEventQueue()
 	approvals := appserver.NewApprovalService()
+	mcpSvc := appmcp.NewService()
+	interactionSvc := appserver.NewInteractionService()
 	var server *appserver.Server
 	if !flags.allowMutations {
 		fsOpts = append(fsOpts, toolfs.WithApproval(approvals.FilesystemApproval))
@@ -310,6 +313,8 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 	if gitSvc != nil {
 		runtimeTools = append(runtimeTools, appserver.GitRuntimeTools(gitSvc)...)
 	}
+	runtimeTools = append(runtimeTools, appserver.MCPRuntimeTools(mcpSvc, approvals)...)
+	runtimeTools = append(runtimeTools, appserver.InteractionRuntimeTools(interactionSvc)...)
 	runtimeSvc := appserver.NewRuntimeService(
 		appserver.WithRuntimeModelFactory(runtimeFactory),
 		appserver.WithRuntimeTools(runtimeTools...),
@@ -332,6 +337,7 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 		appserver.WithFilesystem(fsSvc),
 		appserver.WithProcess(processSvc),
 		appserver.WithConfig(appconfig.NewService(appconfig.WithWorkDir(workDir))),
+		appserver.WithMCP(mcpSvc),
 		appserver.WithSkills(appskills.NewService(appskills.WithRoots(
 			filepath.Join(workDir, ".gollem", "skills"),
 			filepath.Join(workDir, ".gollem", "plugins"),
@@ -339,6 +345,7 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 		appserver.WithMemoryService(memorySvc),
 		appserver.WithEventQueue(events),
 		appserver.WithApprovalService(approvals),
+		appserver.WithInteractionService(interactionSvc),
 		appserver.WithRuntimeService(runtimeSvc),
 	}
 	if gitSvc != nil {
