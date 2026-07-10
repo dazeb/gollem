@@ -9,6 +9,7 @@ import (
 
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
+	toolgit "github.com/fugue-labs/gollem/appserver/tools/git"
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
 )
 
@@ -19,6 +20,7 @@ const (
 	commandExecutionStatusCompleted  = "completed"
 	commandExecutionStatusFailed     = "failed"
 	commandExecutionStatusDeclined   = "declined"
+	commandExecutionSourceAgent      = "agent"
 	commandExecutionSourceUserShell  = "userShell"
 )
 
@@ -35,41 +37,20 @@ func (p threadShellCommandParams) threadID() string {
 type threadShellCommandResponse struct{}
 
 type threadShellCommandRun struct {
-	ThreadID  string
-	TurnID    string
-	ItemID    string
-	Command   string
-	CWD       string
-	ProcessID string
-	StartedAt time.Time
+	ThreadID   string
+	TurnID     string
+	ItemID     string
+	Command    string
+	CWD        string
+	ProcessID  string
+	BeforeDiff string
+	StartedAt  time.Time
 }
 
-type threadShellCommandPayload struct {
-	Type             string                     `json:"type"`
-	Command          string                     `json:"command"`
-	CWD              string                     `json:"cwd"`
-	ProcessID        *string                    `json:"processId"`
-	Source           string                     `json:"source"`
-	Status           string                     `json:"status"`
-	CommandActions   []threadShellCommandAction `json:"commandActions"`
-	AggregatedOutput *string                    `json:"aggregatedOutput"`
-	ExitCode         *int                       `json:"exitCode"`
-	DurationMS       *int64                     `json:"durationMs"`
-	StartedAt        time.Time                  `json:"startedAt"`
-	CompletedAt      *time.Time                 `json:"completedAt"`
-}
-
-type threadShellCommandAction struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-}
-
-type commandExecutionOutputDeltaNotificationParams struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId"`
-	ItemID   string `json:"itemId"`
-	Delta    string `json:"delta"`
-}
+type threadShellCommandPayload = protocol.CommandExecutionItem
+type threadShellCommandAction = protocol.CommandExecutionAction
+type commandExecutionOutputDeltaNotificationParams = protocol.CommandExecutionOutputDeltaNotificationParams
+type turnDiffUpdatedNotificationParams = protocol.TurnDiffUpdatedNotificationParams
 
 func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	st, rpcErr := s.requireStore("thread/shellCommand")
@@ -146,10 +127,11 @@ func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessa
 		ThreadID: thread.ID,
 		TurnID:   startedTurn.ID,
 		ItemID:   item.ID,
-		Item:     item,
+		Item:     protocolTimelineItem(item),
 		At:       startedAt,
 	})
 
+	beforeDiff := s.currentTurnGitDiff(ctx)
 	snapshot, err := processSvc.Start(ctx, toolprocess.StartRequest{
 		Command: command,
 		Shell:   true,
@@ -161,23 +143,25 @@ func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessa
 			status = commandExecutionStatusDeclined
 		}
 		s.completeThreadShellCommand(context.Background(), threadShellCommandRun{
-			ThreadID:  thread.ID,
-			TurnID:    startedTurn.ID,
-			ItemID:    item.ID,
-			Command:   command,
-			CWD:       cwd,
-			StartedAt: startedAt,
+			ThreadID:   thread.ID,
+			TurnID:     startedTurn.ID,
+			ItemID:     item.ID,
+			Command:    command,
+			CWD:        cwd,
+			BeforeDiff: beforeDiff,
+			StartedAt:  startedAt,
 		}, nil, status, err.Error())
 		return nil, mapError("thread/shellCommand", err)
 	}
 	run := threadShellCommandRun{
-		ThreadID:  thread.ID,
-		TurnID:    startedTurn.ID,
-		ItemID:    item.ID,
-		Command:   command,
-		CWD:       cwd,
-		ProcessID: snapshot.ID,
-		StartedAt: startedAt,
+		ThreadID:   thread.ID,
+		TurnID:     startedTurn.ID,
+		ItemID:     item.ID,
+		Command:    command,
+		CWD:        cwd,
+		ProcessID:  snapshot.ID,
+		BeforeDiff: beforeDiff,
+		StartedAt:  startedAt,
 	}
 	s.registerThreadShellCommandProcess(snapshot.ID, run)
 	if _, err := st.UpdateItem(ctx, store.UpdateItemRequest{
@@ -279,11 +263,42 @@ func (s *Server) completeThreadShellCommand(ctx context.Context, run threadShell
 	if err != nil {
 		return
 	}
+	s.publishTurnDiffUpdatedIfChanged(ctx, completedTurn, run.BeforeDiff)
 	publishItemCompleted(s, completedTurn, item)
 	publishTurnCompleted(s, completedTurn)
 }
 
+func (s *Server) currentTurnGitDiff(ctx context.Context) string {
+	if s == nil || s.git == nil {
+		return ""
+	}
+	diff, err := s.git.Diff(ctx, toolgit.DiffRequest{})
+	if err != nil || diff == nil {
+		return ""
+	}
+	return diff.Patch
+}
+
+func (s *Server) publishTurnDiffUpdatedIfChanged(ctx context.Context, turn *store.Turn, before string) {
+	if s == nil || turn == nil {
+		return
+	}
+	after := s.currentTurnGitDiff(ctx)
+	if after == "" || after == before {
+		return
+	}
+	s.PublishNotification("turn/diff/updated", turnDiffUpdatedNotificationParams{
+		ThreadID: turn.ThreadID,
+		TurnID:   turn.ID,
+		Diff:     after,
+	})
+}
+
 func newThreadShellCommandPayload(command, cwd, processID, status, output string, exitCode *int, startedAt time.Time, completedAt *time.Time) threadShellCommandPayload {
+	return newCommandExecutionPayload(command, cwd, processID, commandExecutionSourceUserShell, status, output, exitCode, startedAt, completedAt)
+}
+
+func newCommandExecutionPayload(command, cwd, processID, source, status, output string, exitCode *int, startedAt time.Time, completedAt *time.Time) threadShellCommandPayload {
 	var processIDPtr *string
 	if processID != "" {
 		processIDPtr = &processID
@@ -302,7 +317,7 @@ func newThreadShellCommandPayload(command, cwd, processID, status, output string
 		Command:   command,
 		CWD:       cwd,
 		ProcessID: processIDPtr,
-		Source:    commandExecutionSourceUserShell,
+		Source:    source,
 		Status:    status,
 		CommandActions: []threadShellCommandAction{{
 			Type:    "unknown",
@@ -364,6 +379,10 @@ func (s *Server) PublishProcessOutput(event toolprocess.OutputEvent) {
 	}
 	method, params := ProcessOutputNotification(event)
 	s.PublishNotification(method, params)
+	if s.isCommandExecProcess(event.ID) {
+		method, params := commandExecOutputDeltaNotification(event)
+		s.PublishNotification(method, params)
+	}
 	run, ok := s.lookupThreadShellCommandProcess(event.ID)
 	if !ok {
 		return
@@ -386,4 +405,5 @@ func (s *Server) PublishProcessExited(event toolprocess.ExitEvent) {
 	}
 	method, params := ProcessExitedNotification(event)
 	s.PublishNotification(method, params)
+	s.unregisterCommandExecProcess(event.Snapshot.ID)
 }
