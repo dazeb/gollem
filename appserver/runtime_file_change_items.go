@@ -2,12 +2,12 @@ package appserver
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	"github.com/fugue-labs/gollem/core"
 )
@@ -22,79 +22,13 @@ const (
 	runtimePatchChangeUpdate = "update"
 )
 
-type runtimeFileChangePayload struct {
-	Type     string                              `json:"type"`
-	ID       string                              `json:"id,omitempty"`
-	Changes  []runtimeFileUpdateChange           `json:"changes"`
-	Status   string                              `json:"status"`
-	Evidence []runtimeFileChangeArtifactEvidence `json:"evidence,omitempty"`
-}
-
-type runtimeFileUpdateChange struct {
-	Path string                 `json:"path"`
-	Kind runtimePatchChangeKind `json:"kind"`
-	Diff string                 `json:"diff"`
-}
-
-type runtimePatchChangeKind struct {
-	Type     string
-	MovePath *string
-}
-
-func (k runtimePatchChangeKind) MarshalJSON() ([]byte, error) {
-	payload := map[string]any{"type": k.Type}
-	if k.Type == runtimePatchChangeUpdate {
-		payload["movePath"] = k.MovePath
-	}
-	return json.Marshal(payload)
-}
-
-func (k *runtimePatchChangeKind) UnmarshalJSON(data []byte) error {
-	var payload struct {
-		Type     string  `json:"type"`
-		MovePath *string `json:"movePath"`
-	}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return err
-	}
-	k.Type = payload.Type
-	k.MovePath = payload.MovePath
-	return nil
-}
-
-type runtimeFileChangeArtifactEvidence struct {
-	Path                 string `json:"path"`
-	Operation            string `json:"operation"`
-	Bytes                int64  `json:"bytes"`
-	BeforeSHA256         string `json:"beforeSha256,omitempty"`
-	AfterSHA256          string `json:"afterSha256,omitempty"`
-	DiffTruncated        bool   `json:"diffTruncated,omitempty"`
-	DiffOmittedReason    string `json:"diffOmittedReason,omitempty"`
-	ContentEncoding      string `json:"contentEncoding,omitempty"`
-	ContentTruncated     bool   `json:"contentTruncated,omitempty"`
-	ContentOmittedReason string `json:"contentOmittedReason,omitempty"`
-}
-
-type runtimeFileChangeItemStartedNotificationParams struct {
-	Item        runtimeFileChangePayload `json:"item"`
-	ThreadID    string                   `json:"threadId"`
-	TurnID      string                   `json:"turnId"`
-	StartedAtMS int64                    `json:"startedAtMs"`
-}
-
-type runtimeFileChangeItemCompletedNotificationParams struct {
-	Item          runtimeFileChangePayload `json:"item"`
-	ThreadID      string                   `json:"threadId"`
-	TurnID        string                   `json:"turnId"`
-	CompletedAtMS int64                    `json:"completedAtMs"`
-}
-
-type runtimeFileChangePatchUpdatedNotificationParams struct {
-	ThreadID string                    `json:"threadId"`
-	TurnID   string                    `json:"turnId"`
-	ItemID   string                    `json:"itemId"`
-	Changes  []runtimeFileUpdateChange `json:"changes"`
-}
+type runtimeFileChangePayload = protocol.FileChangeItem
+type runtimeFileUpdateChange = protocol.FileUpdateChange
+type runtimePatchChangeKind = protocol.PatchChangeKind
+type runtimeFileChangeArtifactEvidence = protocol.FileChangeArtifactEvidence
+type runtimeFileChangeItemStartedNotificationParams = protocol.FileChangeItemStartedNotificationParams
+type runtimeFileChangeItemCompletedNotificationParams = protocol.FileChangeItemCompletedNotificationParams
+type runtimeFileChangePatchUpdatedNotificationParams = protocol.FileChangePatchUpdatedNotificationParams
 
 type runtimeFileChangeTracker struct {
 	mu        sync.Mutex

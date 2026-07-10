@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 )
 
@@ -17,45 +18,11 @@ const (
 	runtimeMCPStatusFailed     = "failed"
 )
 
-type runtimeMCPToolCallPayload struct {
-	Type              string                           `json:"type"`
-	ID                string                           `json:"id,omitempty"`
-	Server            string                           `json:"server"`
-	Tool              string                           `json:"tool"`
-	Status            string                           `json:"status"`
-	Arguments         any                              `json:"arguments"`
-	AppContext        any                              `json:"appContext"`
-	MCPAppResourceURI *string                          `json:"mcpAppResourceUri"`
-	PluginID          *string                          `json:"pluginId"`
-	Result            *runtimeMCPToolCallResultPayload `json:"result"`
-	Error             *runtimeMCPToolCallErrorPayload  `json:"error"`
-	DurationMS        *int64                           `json:"durationMs"`
-}
-
-type runtimeMCPToolCallErrorPayload struct {
-	Message string `json:"message"`
-}
-
-type runtimeMCPItemStartedNotificationParams struct {
-	Item        runtimeMCPToolCallPayload `json:"item"`
-	ThreadID    string                    `json:"threadId"`
-	TurnID      string                    `json:"turnId"`
-	StartedAtMS int64                     `json:"startedAtMs"`
-}
-
-type runtimeMCPItemCompletedNotificationParams struct {
-	Item          runtimeMCPToolCallPayload `json:"item"`
-	ThreadID      string                    `json:"threadId"`
-	TurnID        string                    `json:"turnId"`
-	CompletedAtMS int64                     `json:"completedAtMs"`
-}
-
-type runtimeMCPToolProgressNotificationParams struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId"`
-	ItemID   string `json:"itemId"`
-	Message  string `json:"message"`
-}
+type runtimeMCPToolCallPayload = protocol.MCPToolCallItem
+type runtimeMCPToolCallErrorPayload = protocol.MCPToolCallError
+type runtimeMCPItemStartedNotificationParams = protocol.MCPToolCallItemStartedNotificationParams
+type runtimeMCPItemCompletedNotificationParams = protocol.MCPToolCallItemCompletedNotificationParams
+type runtimeMCPToolProgressNotificationParams = protocol.MCPToolCallProgressNotificationParams
 
 type runtimeMCPItemState struct {
 	item      *store.Item

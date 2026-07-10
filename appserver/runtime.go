@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	"github.com/fugue-labs/gollem/core"
 )
@@ -452,13 +453,7 @@ type turnNotificationParams struct {
 	At       time.Time        `json:"at"`
 }
 
-type runtimeItemNotificationParams struct {
-	ThreadID string      `json:"threadId"`
-	TurnID   string      `json:"turnId,omitempty"`
-	ItemID   string      `json:"itemId,omitempty"`
-	Item     *store.Item `json:"item,omitempty"`
-	At       time.Time   `json:"at"`
-}
+type runtimeItemNotificationParams = protocol.ItemLifecycleNotificationParams
 
 type runtimeDeltaNotificationParams struct {
 	ThreadID string    `json:"threadId"`
@@ -475,25 +470,9 @@ type runtimeErrorNotificationParams struct {
 	At       time.Time `json:"at"`
 }
 
-type threadTokenUsageUpdatedNotificationParams struct {
-	ThreadID   string                  `json:"threadId"`
-	TurnID     string                  `json:"turnId"`
-	TokenUsage threadTokenUsagePayload `json:"tokenUsage"`
-}
-
-type threadTokenUsagePayload struct {
-	Total              tokenUsageBreakdown `json:"total"`
-	Last               tokenUsageBreakdown `json:"last"`
-	ModelContextWindow *int64              `json:"modelContextWindow"`
-}
-
-type tokenUsageBreakdown struct {
-	TotalTokens           int64 `json:"totalTokens"`
-	InputTokens           int64 `json:"inputTokens"`
-	CachedInputTokens     int64 `json:"cachedInputTokens"`
-	OutputTokens          int64 `json:"outputTokens"`
-	ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
-}
+type threadTokenUsageUpdatedNotificationParams = protocol.ThreadTokenUsageUpdatedNotificationParams
+type threadTokenUsagePayload = protocol.TokenUsage
+type tokenUsageBreakdown = protocol.TokenUsageBreakdown
 
 func publishTurnStarted(notifier runtimeNotifier, turn *store.Turn) {
 	if notifier == nil || turn == nil {
@@ -529,9 +508,27 @@ func publishItemCompleted(notifier runtimeNotifier, turn *store.Turn, item *stor
 		ThreadID: turn.ThreadID,
 		TurnID:   turn.ID,
 		ItemID:   item.ID,
-		Item:     item,
+		Item:     protocolTimelineItem(item),
 		At:       time.Now().UTC(),
 	})
+}
+
+func protocolTimelineItem(item *store.Item) *protocol.TimelineItem {
+	if item == nil {
+		return nil
+	}
+	return &protocol.TimelineItem{
+		ID:           item.ID,
+		ThreadID:     item.ThreadID,
+		TurnID:       item.TurnID,
+		ParentItemID: item.ParentItemID,
+		Seq:          item.Seq,
+		Kind:         item.Kind,
+		Status:       item.Status,
+		Payload:      append(json.RawMessage(nil), item.Payload...),
+		CreatedAt:    item.CreatedAt,
+		UpdatedAt:    item.UpdatedAt,
+	}
 }
 
 func publishThreadTokenUsage(notifier runtimeNotifier, st store.Store, turn *store.Turn, last core.RunUsage) {
