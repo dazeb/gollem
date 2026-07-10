@@ -106,6 +106,8 @@ func TestRequestScheduleForThreadControls(t *testing.T) {
 		"thread/loaded/list",
 		"thread/unsubscribe",
 		"thread/compact/start",
+		"thread/shellCommand",
+		"thread/approveGuardianDeniedAction",
 		"thread/rollback",
 		"thread/inject_items",
 		"thread/goal/get",

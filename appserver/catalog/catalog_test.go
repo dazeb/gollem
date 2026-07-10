@@ -121,7 +121,7 @@ func TestToolListAvailability(t *testing.T) {
 	if processTool == nil || !processTool.Available || !processTool.Mutation || !processTool.RequiresApproval {
 		t.Fatalf("process tool metadata = %#v", processTool)
 	}
-	if !containsMethod(processTool.Methods, "thread/backgroundTerminals/list") || !containsMethod(processTool.Methods, "thread/backgroundTerminals/clean") {
+	if !containsMethod(processTool.Methods, "thread/shellCommand") || !containsMethod(processTool.Methods, "thread/backgroundTerminals/list") || !containsMethod(processTool.Methods, "thread/backgroundTerminals/clean") {
 		t.Fatalf("process tool methods = %#v", processTool.Methods)
 	}
 
