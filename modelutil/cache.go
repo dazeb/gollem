@@ -2,10 +2,6 @@ package modelutil
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -16,6 +12,34 @@ import (
 type CacheStore interface {
 	Get(key string) (*core.ModelResponse, bool)
 	Set(key string, response *core.ModelResponse)
+}
+
+// CacheEventType identifies cache hit/miss events emitted by cache wrappers.
+type CacheEventType string
+
+const (
+	CacheEventHit  CacheEventType = "cache.hit"
+	CacheEventMiss CacheEventType = "cache.miss"
+)
+
+// CacheEvent reports one cache lookup outcome for callers that need typed
+// telemetry.
+type CacheEvent struct {
+	Type     CacheEventType `json:"type"`
+	Key      string         `json:"key"`
+	Provider string         `json:"provider,omitempty"`
+	Model    string         `json:"model,omitempty"`
+	At       time.Time      `json:"at"`
+}
+
+// CachedModelOption configures a CachedModel wrapper.
+type CachedModelOption func(*CachedModel)
+
+// WithCachedModelEventHandler receives typed cache hit/miss events.
+func WithCachedModelEventHandler(handler func(CacheEvent)) CachedModelOption {
+	return func(c *CachedModel) {
+		c.onEvent = handler
+	}
 }
 
 // MemoryCache is an in-memory CacheStore with optional TTL.
@@ -73,13 +97,18 @@ func (c *MemoryCache) Set(key string, response *core.ModelResponse) {
 // Request() checks the cache first; on miss, calls the wrapped model and stores the result.
 // RequestStream() is NOT cached (streaming is inherently non-cacheable).
 type CachedModel struct {
-	model core.Model
-	store CacheStore
+	model   core.Model
+	store   CacheStore
+	onEvent func(CacheEvent)
 }
 
 // NewCachedModel creates a response-cached model wrapper.
-func NewCachedModel(model core.Model, store CacheStore) *CachedModel {
-	return &CachedModel{model: model, store: store}
+func NewCachedModel(model core.Model, store CacheStore, opts ...CachedModelOption) *CachedModel {
+	cached := &CachedModel{model: model, store: store}
+	for _, opt := range opts {
+		opt(cached)
+	}
+	return cached
 }
 
 var _ core.Model = (*CachedModel)(nil)
@@ -89,15 +118,18 @@ func (c *CachedModel) ModelName() string {
 }
 
 func (c *CachedModel) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
-	key, keyErr := cacheKey(messages, settings, params)
+	modelName := c.ModelName()
+	key, keyErr := cacheKey(modelName, messages, settings, params)
 	if keyErr != nil {
 		// Cache key computation failed; bypass cache and call model directly.
 		return c.model.Request(ctx, messages, settings, params)
 	}
 
 	if resp, ok := c.store.Get(key); ok {
+		c.emit(CacheEvent{Type: CacheEventHit, Key: key, Model: modelName})
 		return resp, nil
 	}
+	c.emit(CacheEvent{Type: CacheEventMiss, Key: key, Model: modelName})
 
 	resp, err := c.model.Request(ctx, messages, settings, params)
 	if err != nil {
@@ -112,18 +144,20 @@ func (c *CachedModel) RequestStream(ctx context.Context, messages []core.ModelMe
 	return c.model.RequestStream(ctx, messages, settings, params)
 }
 
-// cacheKey computes a SHA-256 hash of the request parameters.
-func cacheKey(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (string, error) {
-	h := sha256.New()
-	enc := json.NewEncoder(h)
-	if err := enc.Encode(messages); err != nil {
-		return "", fmt.Errorf("cache key: encoding messages: %w", err)
+func (c *CachedModel) emit(event CacheEvent) {
+	if c.onEvent == nil {
+		return
 	}
-	if err := enc.Encode(settings); err != nil {
-		return "", fmt.Errorf("cache key: encoding settings: %w", err)
-	}
-	if err := enc.Encode(params); err != nil {
-		return "", fmt.Errorf("cache key: encoding params: %w", err)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	event.At = time.Now().UTC()
+	c.onEvent(event)
+}
+
+// cacheKey computes the stable SHA-256 hash of the request parameters.
+func cacheKey(model string, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (string, error) {
+	return StableCacheKey(StableCacheKeyInput{
+		Model:    model,
+		Messages: messages,
+		Settings: settings,
+		Params:   params,
+	})
 }
