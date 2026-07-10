@@ -41,6 +41,36 @@ type UnavailableData struct {
 	Reason  string      `json:"reason"`
 }
 
+// OverloadedData describes a retryable app-server backpressure rejection.
+type OverloadedData struct {
+	Method           string `json:"method,omitempty"`
+	Limit            int    `json:"limit,omitempty"`
+	Pending          int    `json:"pending,omitempty"`
+	Retryable        bool   `json:"retryable"`
+	RetryAfterMillis int    `json:"retryAfterMillis,omitempty"`
+	Reason           string `json:"reason"`
+}
+
+// OverloadedError returns the Codex-compatible app-server backpressure error.
+func OverloadedError(method string, limit, pending int, reason string) *Error {
+	if reason == "" {
+		reason = "app-server request queue is full"
+	}
+	data, _ := json.Marshal(OverloadedData{
+		Method:           method,
+		Limit:            limit,
+		Pending:          pending,
+		Retryable:        true,
+		RetryAfterMillis: 100,
+		Reason:           reason,
+	})
+	return &Error{
+		Code:    CodeOverloaded,
+		Message: "app-server overloaded",
+		Data:    data,
+	}
+}
+
 // MethodUnavailableError returns a typed unavailable error for a known method.
 // Unknown methods still receive JSON-RPC method-not-found.
 func MethodUnavailableError(method string) *Error {

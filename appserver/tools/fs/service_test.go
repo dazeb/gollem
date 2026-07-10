@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestServiceReadWriteDirectoryMetadata(t *testing.T) {
@@ -190,6 +191,92 @@ func TestServiceHonorsCanceledContext(t *testing.T) {
 	}
 }
 
+func TestServiceWatchReportsMissingFileCreationAndUnwatchStops(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	defer svc.Close()
+	events := make(chan WatchEvent, 4)
+	watchPath := filepath.Join(svc.Root(), "watched.txt")
+	result, err := svc.Watch(ctx, WatchRequest{
+		WatchID:      "watch-file",
+		Path:         watchPath,
+		PollInterval: 20 * time.Millisecond,
+	}, func(ev WatchEvent) {
+		events <- ev
+	})
+	if err != nil {
+		t.Fatalf("Watch: %v", err)
+	}
+	if result.Path != watchPath {
+		t.Fatalf("watch result path = %q, want %q", result.Path, watchPath)
+	}
+	if err := os.WriteFile(watchPath, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("write watched file: %v", err)
+	}
+	event := waitForWatchEvent(t, events)
+	if event.WatchID != "watch-file" || !containsPath(event.ChangedPaths, watchPath) {
+		t.Fatalf("watch event = %#v", event)
+	}
+	if err := svc.Unwatch(ctx, "watch-file"); err != nil {
+		t.Fatalf("Unwatch: %v", err)
+	}
+	drainWatchEvents(events)
+	if err := os.WriteFile(watchPath, []byte("again"), 0o644); err != nil {
+		t.Fatalf("write unwatched file: %v", err)
+	}
+	assertNoWatchEvent(t, events)
+}
+
+func TestServiceWatchDirectoryReportsChangedChildPath(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	defer svc.Close()
+	events := make(chan WatchEvent, 4)
+	watchDir := filepath.Join(svc.Root(), "dir")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatalf("mkdir watch dir: %v", err)
+	}
+	if _, err := svc.Watch(ctx, WatchRequest{
+		WatchID:      "watch-dir",
+		Path:         watchDir,
+		PollInterval: 20 * time.Millisecond,
+	}, func(ev WatchEvent) {
+		events <- ev
+	}); err != nil {
+		t.Fatalf("Watch: %v", err)
+	}
+	child := filepath.Join(watchDir, "child.txt")
+	if err := os.WriteFile(child, []byte("child"), 0o644); err != nil {
+		t.Fatalf("write child: %v", err)
+	}
+	event := waitForWatchEvent(t, events)
+	if event.WatchID != "watch-dir" || !containsPath(event.ChangedPaths, child) {
+		t.Fatalf("watch event = %#v", event)
+	}
+}
+
+func TestServiceWatchRejectsUnsafeRequests(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	defer svc.Close()
+	if _, err := svc.Watch(ctx, WatchRequest{WatchID: "relative", Path: "relative.txt"}, nil); !errors.Is(err, ErrWatchPathNotAbsolute) {
+		t.Fatalf("relative watch error = %v, want ErrWatchPathNotAbsolute", err)
+	}
+	if _, err := svc.Watch(ctx, WatchRequest{WatchID: "outside", Path: filepath.Join(t.TempDir(), "outside.txt")}, nil); !errors.Is(err, ErrPathOutsideRoot) {
+		t.Fatalf("outside watch error = %v, want ErrPathOutsideRoot", err)
+	}
+	watchPath := filepath.Join(svc.Root(), "dup.txt")
+	if _, err := svc.Watch(ctx, WatchRequest{WatchID: "dup", Path: watchPath}, nil); err != nil {
+		t.Fatalf("first Watch: %v", err)
+	}
+	if _, err := svc.Watch(ctx, WatchRequest{WatchID: "dup", Path: watchPath}, nil); !errors.Is(err, ErrWatchAlreadyExists) {
+		t.Fatalf("duplicate watch error = %v, want ErrWatchAlreadyExists", err)
+	}
+	if err := svc.Unwatch(ctx, "missing"); !errors.Is(err, ErrWatchNotFound) {
+		t.Fatalf("missing unwatch error = %v, want ErrWatchNotFound", err)
+	}
+}
+
 func newTestService(t *testing.T, opts ...Option) *Service {
 	t.Helper()
 	svc, err := NewService(t.TempDir(), opts...)
@@ -197,4 +284,47 @@ func newTestService(t *testing.T, opts ...Option) *Service {
 		t.Fatalf("NewService: %v", err)
 	}
 	return svc
+}
+
+func waitForWatchEvent(t *testing.T, events <-chan WatchEvent) WatchEvent {
+	t.Helper()
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if len(ev.ChangedPaths) > 0 {
+				return ev
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for watch event")
+		}
+	}
+}
+
+func assertNoWatchEvent(t *testing.T, events <-chan WatchEvent) {
+	t.Helper()
+	select {
+	case ev := <-events:
+		t.Fatalf("unexpected watch event: %#v", ev)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func drainWatchEvents(events <-chan WatchEvent) {
+	for {
+		select {
+		case <-events:
+		default:
+			return
+		}
+	}
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, path := range paths {
+		if path == want {
+			return true
+		}
+	}
+	return false
 }
