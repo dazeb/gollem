@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -123,6 +124,57 @@ func TestJSONSchemaExportsRuntimeDefinitionsAndBindings(t *testing.T) {
 	}
 }
 
+func TestJSONSchemaExportsInitializeHandshakeAndBindings(t *testing.T) {
+	schema := JSONSchema()
+	defs := schema["$defs"].(Schema)
+	for _, name := range []string{
+		"ImplementationInfo",
+		"InitializeCapabilities",
+		"InitializeParams",
+		"InitializeResponse",
+		"MethodInfo",
+		"MethodState",
+		"ServerCapabilities",
+		"Surface",
+	} {
+		if _, ok := defs[name]; !ok {
+			t.Errorf("$defs missing %s", name)
+		}
+	}
+
+	bindings := WireTypeBindings()
+	assertBinding(t, bindings, "initialize", SurfaceClientRequest, "InitializeParams")
+	assertBinding(t, bindings, "initialize", SurfaceClientRequest, "InitializeResponse")
+	assertBindingMethod(t, bindings, "initialized", SurfaceClientNotification)
+
+	initializeResponse, ok := defs["InitializeResponse"].(Schema)
+	if !ok {
+		t.Fatalf("InitializeResponse definition = %T", defs["InitializeResponse"])
+	}
+	properties := initializeResponse["properties"].(Schema)
+	if got := properties["serverInfo"].(Schema)["$ref"]; got != "#/$defs/ImplementationInfo" {
+		t.Errorf("InitializeResponse.serverInfo ref = %v", got)
+	}
+	if got := properties["capabilities"].(Schema)["$ref"]; got != "#/$defs/ServerCapabilities" {
+		t.Errorf("InitializeResponse.capabilities ref = %v", got)
+	}
+
+	assertSchemaEnum(t, defs, "Surface", []any{
+		string(SurfaceClientRequest),
+		string(SurfaceServerNotification),
+		string(SurfaceServerRequest),
+		string(SurfaceClientNotification),
+		string(SurfaceGollemExtension),
+	})
+	assertSchemaEnum(t, defs, "MethodState", []any{
+		string(MethodImplemented),
+		string(MethodBlocked),
+		string(MethodDeferredStub),
+		string(MethodRenamedEquivalent),
+		string(MethodNotApplicable),
+	})
+}
+
 func TestProtocolBindingsReturnIndependentCopies(t *testing.T) {
 	bindings := WireTypeBindings()
 	bindings[0].Method = "changed"
@@ -198,6 +250,31 @@ func assertBinding(t *testing.T, bindings []WireTypeBinding, method string, surf
 		}
 	}
 	t.Fatalf("binding %s/%s missing type %s", surface, method, typeName)
+}
+
+func assertBindingMethod(t *testing.T, bindings []WireTypeBinding, method string, surface Surface) {
+	t.Helper()
+	for _, binding := range bindings {
+		if binding.Method == method && binding.Surface == surface {
+			return
+		}
+	}
+	t.Fatalf("binding missing %s/%s", surface, method)
+}
+
+func assertSchemaEnum(t *testing.T, defs Schema, name string, want []any) {
+	t.Helper()
+	definition, ok := defs[name].(Schema)
+	if !ok {
+		t.Fatalf("definition %s = %T", name, defs[name])
+	}
+	got, ok := definition["enum"].([]any)
+	if !ok {
+		t.Fatalf("definition %s enum = %T", name, definition["enum"])
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("definition %s enum = %v, want %v", name, got, want)
+	}
 }
 
 func assertEnumContains(t *testing.T, enum []any, want string) {

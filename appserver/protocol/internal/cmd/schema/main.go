@@ -11,14 +11,16 @@ import (
 func main() {
 	writeGenerated("schema.json", protocol.MarshalJSONSchema)
 	writeGenerated(filepath.Join("typescript", "gollem_appserver_protocol.ts"), protocol.MarshalTypeScript)
-	fixture, err := os.ReadFile(filepath.Join("testdata", "runtime_wire_v1.json"))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	for _, name := range []string{"runtime_wire_v1", "initialize_wire_v1"} {
+		fixture, err := os.ReadFile(filepath.Join("testdata", name+".json"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		writeGenerated(filepath.Join("typescript", "testdata", name+".ts"), func() ([]byte, error) {
+			return protocol.MarshalTypeScriptFixture(fixture)
+		})
 	}
-	writeGenerated(filepath.Join("typescript", "testdata", "runtime_wire_v1.ts"), func() ([]byte, error) {
-		return protocol.MarshalTypeScriptFixture(fixture)
-	})
 }
 
 func writeGenerated(path string, generate func() ([]byte, error)) {

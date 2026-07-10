@@ -941,6 +941,101 @@
       ],
       "type": "object"
     },
+    "ImplementationInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "InitializeCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "experimental": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "optOutNotificationMethods": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "InitializeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/InitializeCapabilities"
+        },
+        "clientInfo": {
+          "$ref": "#/$defs/ImplementationInfo"
+        }
+      },
+      "required": [
+        "clientInfo"
+      ],
+      "type": "object"
+    },
+    "InitializeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/ServerCapabilities"
+        },
+        "methods": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/MethodInfo"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocolVersion": {
+          "type": "string"
+        },
+        "serverInfo": {
+          "$ref": "#/$defs/ImplementationInfo"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "serverInfo",
+        "capabilities"
+      ],
+      "type": "object"
+    },
     "ItemLifecycleNotificationParams": {
       "additionalProperties": false,
       "properties": {
@@ -1192,6 +1287,39 @@
         "_meta"
       ],
       "type": "object"
+    },
+    "MethodInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/MethodState"
+        },
+        "surface": {
+          "$ref": "#/$defs/Surface"
+        }
+      },
+      "required": [
+        "method",
+        "surface",
+        "state"
+      ],
+      "type": "object"
+    },
+    "MethodState": {
+      "enum": [
+        "implemented",
+        "blocked",
+        "deferred-stub",
+        "renamed-equivalent",
+        "not-applicable"
+      ],
+      "type": "string"
     },
     "Notification": {
       "additionalProperties": false,
@@ -1564,6 +1692,35 @@
       ],
       "type": "object"
     },
+    "ServerCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "experimental": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocolSchema": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "protocolSchema",
+        "unavailable"
+      ],
+      "type": "object"
+    },
     "ServerRequestResolvedNotificationParams": {
       "additionalProperties": false,
       "properties": {
@@ -1579,6 +1736,16 @@
         "requestId"
       ],
       "type": "object"
+    },
+    "Surface": {
+      "enum": [
+        "client-request",
+        "server-notification",
+        "server-request",
+        "client-notification",
+        "gollem-extension"
+      ],
+      "type": "string"
     },
     "ThreadCompactStartParams": {
       "additionalProperties": false,
@@ -3200,6 +3367,20 @@
       "result": [
         "DaemonVersion"
       ]
+    },
+    {
+      "method": "initialize",
+      "surface": "client-request",
+      "params": [
+        "InitializeParams"
+      ],
+      "result": [
+        "InitializeResponse"
+      ]
+    },
+    {
+      "method": "initialized",
+      "surface": "client-notification"
     },
     {
       "method": "item/commandExecution/outputDelta",

@@ -33,20 +33,24 @@ func TestTypeScriptBindingGoldenIsDeterministic(t *testing.T) {
 }
 
 func TestTypeScriptFixtureGoldenIsDeterministic(t *testing.T) {
-	fixture, err := os.ReadFile(filepath.Join("testdata", "runtime_wire_v1.json"))
-	if err != nil {
-		t.Fatalf("read runtime fixture: %v", err)
-	}
-	generated, err := MarshalTypeScriptFixture(fixture)
-	if err != nil {
-		t.Fatalf("MarshalTypeScriptFixture: %v", err)
-	}
-	golden, err := os.ReadFile(filepath.Join("typescript", "testdata", "runtime_wire_v1.ts"))
-	if err != nil {
-		t.Fatalf("read TypeScript fixture golden: %v", err)
-	}
-	if !bytes.Equal(generated, golden) {
-		t.Fatal("TypeScript fixture is stale; run go generate ./appserver/protocol")
+	for _, name := range []string{"runtime_wire_v1", "initialize_wire_v1"} {
+		t.Run(name, func(t *testing.T) {
+			fixture, err := os.ReadFile(filepath.Join("testdata", name+".json"))
+			if err != nil {
+				t.Fatalf("read %s fixture: %v", name, err)
+			}
+			generated, err := MarshalTypeScriptFixture(fixture)
+			if err != nil {
+				t.Fatalf("MarshalTypeScriptFixture: %v", err)
+			}
+			golden, err := os.ReadFile(filepath.Join("typescript", "testdata", name+".ts"))
+			if err != nil {
+				t.Fatalf("read TypeScript fixture golden: %v", err)
+			}
+			if !bytes.Equal(generated, golden) {
+				t.Fatal("TypeScript fixture is stale; run go generate ./appserver/protocol")
+			}
+		})
 	}
 }
 
@@ -84,6 +88,24 @@ func TestTypeScriptBindingCoversDefinitionsAndBindings(t *testing.T) {
 		if !strings.Contains(source, declaration) {
 			t.Errorf("TypeScript binding missing %q", declaration)
 		}
+	}
+}
+
+func TestTypeScriptFixtureRejectsEnvelopeSurfaceMismatch(t *testing.T) {
+	fixture := []byte(`{
+		"protocolVersion":"gollem.appserver.v0",
+		"schemaVersion":"gollem.appserver.schema.v1",
+		"cases":[{
+			"name":"invalid-initialized-request",
+			"surface":"client-notification",
+			"method":"initialized",
+			"envelope":"request",
+			"message":{"id":1,"method":"initialized"}
+		}]
+	}`)
+	_, err := MarshalTypeScriptFixture(fixture)
+	if err == nil || !strings.Contains(err.Error(), `envelope "request" is incompatible with surface "client-notification"`) {
+		t.Fatalf("MarshalTypeScriptFixture error = %v", err)
 	}
 }
 

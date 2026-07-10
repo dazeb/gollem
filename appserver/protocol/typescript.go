@@ -408,6 +408,7 @@ type typeScriptFixtureCase struct {
 	Name        string          `json:"name"`
 	Surface     Surface         `json:"surface"`
 	Method      string          `json:"method"`
+	Envelope    string          `json:"envelope,omitempty"`
 	ParamsType  string          `json:"paramsType,omitempty"`
 	ResultType  string          `json:"resultType,omitempty"`
 	PayloadType string          `json:"payloadType,omitempty"`
@@ -456,6 +457,8 @@ func MarshalTypeScriptFixture(data []byte) ([]byte, error) {
 	fmt.Fprintf(&out, "export const fixtureSchemaVersion = %s as const;\n\n", typeScriptString(fixture.SchemaVersion))
 
 	seen := make(map[string]bool, len(fixture.Cases))
+	hasInitialize := false
+	hasInitialized := false
 	for _, fixtureCase := range fixture.Cases {
 		identifier := typeScriptIdentifier(fixtureCase.Name)
 		if identifier == "" || seen[identifier] {
@@ -469,21 +472,25 @@ func MarshalTypeScriptFixture(data []byte) ([]byte, error) {
 		if !typeScriptFixtureBindingExists(fixtureCase) {
 			return nil, fmt.Errorf("fixture %s type metadata is not bound to %s", fixtureCase.Name, fixtureCase.Method)
 		}
+		hasInitialize = hasInitialize || fixtureCase.Method == "initialize"
+		hasInitialized = hasInitialized || fixtureCase.Method == "initialized"
 
 		var message bytes.Buffer
 		if err := json.Indent(&message, fixtureCase.Message, "", "  "); err != nil {
 			return nil, fmt.Errorf("format fixture %s: %w", fixtureCase.Name, err)
 		}
+		envelope, err := typeScriptFixtureEnvelope(fixtureCase)
+		if err != nil {
+			return nil, fmt.Errorf("fixture %s: %w", fixtureCase.Name, err)
+		}
 		bindingType := ""
-		switch fixtureCase.Surface {
-		case SurfaceServerNotification:
+		switch envelope {
+		case "notification":
 			bindingType = "BoundNotification<" + typeScriptString(fixtureCase.Method) + ">"
-		case SurfaceServerRequest:
+		case "request":
 			bindingType = "BoundRequest<" + typeScriptString(fixtureCase.Method) + ">"
-		case SurfaceGollemExtension:
+		case "response":
 			bindingType = "BoundResponse<" + typeScriptString(fixtureCase.Method) + ">"
-		default:
-			return nil, fmt.Errorf("fixture %s uses unsupported surface %s", fixtureCase.Name, fixtureCase.Surface)
 		}
 		fmt.Fprintf(&out, "export const %s = %s satisfies %s;\n", identifier, message.String(), bindingType)
 		if fixtureCase.ParamsType != "" {
@@ -505,7 +512,43 @@ func MarshalTypeScriptFixture(data []byte) ([]byte, error) {
 	out.WriteString("export type RejectRequestAsNotification = BoundNotification<\"daemon/status\">;\n")
 	out.WriteString("// @ts-expect-error notification methods cannot use request envelopes.\n")
 	out.WriteString("export type RejectNotificationAsRequest = BoundRequest<\"item/started\">;\n")
+	if hasInitialize {
+		out.WriteString("// @ts-expect-error initialize requires clientInfo.\n")
+		out.WriteString("export const rejectInitializeWithoutClientInfo = { \"capabilities\": {} } satisfies InitializeParams;\n")
+	}
+	if hasInitialized {
+		out.WriteString("// @ts-expect-error initialized does not accept params.\n")
+		out.WriteString("export const rejectInitializedParams = { \"method\": \"initialized\", \"params\": {} } satisfies BoundNotification<\"initialized\">;\n")
+	}
 	return out.Bytes(), nil
+}
+
+func typeScriptFixtureEnvelope(fixtureCase typeScriptFixtureCase) (string, error) {
+	envelope := fixtureCase.Envelope
+	if envelope == "" {
+		switch fixtureCase.Surface {
+		case SurfaceServerNotification, SurfaceClientNotification:
+			envelope = "notification"
+		case SurfaceServerRequest, SurfaceClientRequest:
+			envelope = "request"
+		case SurfaceGollemExtension:
+			envelope = "response"
+		}
+	}
+
+	valid := false
+	switch envelope {
+	case "notification":
+		valid = fixtureCase.Surface == SurfaceServerNotification || fixtureCase.Surface == SurfaceClientNotification
+	case "request", "response":
+		valid = fixtureCase.Surface == SurfaceClientRequest || fixtureCase.Surface == SurfaceServerRequest || fixtureCase.Surface == SurfaceGollemExtension
+	default:
+		return "", fmt.Errorf("unsupported envelope %q", envelope)
+	}
+	if !valid {
+		return "", fmt.Errorf("envelope %q is incompatible with surface %q", envelope, fixtureCase.Surface)
+	}
+	return envelope, nil
 }
 
 func typeScriptFixturePayload(message json.RawMessage) (string, error) {
