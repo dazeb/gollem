@@ -15,6 +15,8 @@ import (
 
 const maxJSONLineBytes = 16 << 20
 
+var errDaemonShutdownRequested = errors.New("appserver: daemon shutdown requested")
+
 // ServeJSONLines serves newline-delimited JSON-RPC messages over the supplied
 // reader and writer. It is intended for stdio first, but tests and future
 // transports can reuse it for any ordered byte stream.
@@ -37,9 +39,9 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 	out := bufio.NewWriter(writer)
 	defer func() { _ = out.Flush() }()
 	var writeMu sync.Mutex
-	var requestMu sync.Mutex
 	var handlers sync.WaitGroup
 	writeErr := make(chan error, 1)
+	scheduler := NewRequestScheduler(server.RequestSchedulerLimit())
 
 	lines := make(chan scannedJSONLine, 1)
 	go func() {
@@ -72,19 +74,21 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 		}
 		return nil
 	}
-	handleLine := func(line []byte, serialize bool) {
+	handleLine := func(line []byte, lease *RequestLease) {
 		defer handlers.Done()
-		if serialize {
-			requestMu.Lock()
-			defer requestMu.Unlock()
-		}
-		response, hasResponse, err := handleJSONLine(ctx, server, line)
-		writeMu.Lock()
-		err = writeJSONLineResponsePayload(response, hasResponse, err, out)
-		if err == nil {
-			err = drainOutboundLocked()
-		}
-		writeMu.Unlock()
+		err := lease.Run(ctx, func() error {
+			response, hasResponse, err := handleJSONLine(ctx, server, line)
+			writeMu.Lock()
+			err = writeJSONLineResponsePayload(response, hasResponse, err, out)
+			if err == nil {
+				err = drainOutboundLocked()
+			}
+			if err == nil && server.DaemonShutdownRequested() {
+				err = errDaemonShutdownRequested
+			}
+			writeMu.Unlock()
+			return err
+		})
 		sendErr(err)
 	}
 	for {
@@ -92,6 +96,9 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-writeErr:
+			if errors.Is(err, errDaemonShutdownRequested) {
+				return nil
+			}
 			return err
 		case <-requestSignal:
 			writeMu.Lock()
@@ -118,6 +125,9 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 				case <-ctx.Done():
 					return ctx.Err()
 				case err := <-writeErr:
+					if errors.Is(err, errDaemonShutdownRequested) {
+						return nil
+					}
 					return err
 				case <-done:
 					writeMu.Lock()
@@ -143,14 +153,23 @@ func ServeJSONLines(ctx context.Context, server *Server, reader io.Reader, write
 				}
 				continue
 			}
-			serialize := classified.isClientRequest() && classified.Method != "initialize" && classified.Method != "approval/respond"
-			if serialize {
+			if classified.scheduledClientRequest() {
+				lease, rpcErr := scheduler.TryAcquire(classified.Method, classified.Params)
+				if rpcErr != nil {
+					writeMu.Lock()
+					err = writeJSONLineOverloadedResponse([]byte(line), rpcErr, out)
+					writeMu.Unlock()
+					if err != nil {
+						return err
+					}
+					continue
+				}
 				handlers.Add(1)
-				go handleLine([]byte(line), true)
+				go handleLine([]byte(line), lease)
 				continue
 			}
 			handlers.Add(1)
-			handleLine([]byte(line), false)
+			handleLine([]byte(line), nil)
 		}
 	}
 }
@@ -163,10 +182,15 @@ type scannedJSONLine struct {
 type classifiedJSONLine struct {
 	ID     json.RawMessage
 	Method string
+	Params json.RawMessage
 }
 
 func (l classifiedJSONLine) isClientRequest() bool {
 	return len(l.ID) > 0
+}
+
+func (l classifiedJSONLine) scheduledClientRequest() bool {
+	return l.isClientRequest() && strings.TrimSpace(l.Method) != "" && l.Method != "initialize" && l.Method != "approval/respond"
 }
 
 func classifyJSONLine(line []byte) (classifiedJSONLine, error) {
@@ -226,6 +250,18 @@ func writeJSONLineRequests(requests []protocol.Request, out *bufio.Writer) error
 		return fmt.Errorf("flush app-server requests: %w", err)
 	}
 	return nil
+}
+
+func writeJSONLineOverloadedResponse(line []byte, rpcErr *protocol.Error, out *bufio.Writer) error {
+	var req protocol.Request
+	if err := json.Unmarshal(line, &req); err != nil {
+		return writeJSONLineResponsePayload(nil, false, err, out)
+	}
+	response, err := json.Marshal(errorResponse(req.ID, rpcErr))
+	if err != nil {
+		return fmt.Errorf("marshal app-server overload response: %w", err)
+	}
+	return writeJSONLineResponsePayload(response, true, nil, out)
 }
 
 func writeJSONLineNotifications(notifications []protocol.Notification, out *bufio.Writer) error {
