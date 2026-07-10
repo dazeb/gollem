@@ -101,6 +101,7 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	assertMethod(t, "thread/tokenUsage/updated", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "turn/started", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "turn/completed", SurfaceServerNotification, MethodImplemented)
+	assertMethod(t, "turn/diff/updated", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "item/started", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "item/agentMessage/delta", SurfaceServerNotification, MethodImplemented)
 	assertMethod(t, "item/reasoning/textDelta", SurfaceServerNotification, MethodImplemented)

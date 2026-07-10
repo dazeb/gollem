@@ -189,7 +189,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "thread/tokenUsage/updated", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1622, typescript:ServerNotification.ts"},
 	{Method: "thread/unarchived", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1614, typescript:ServerNotification.ts"},
 	{Method: "turn/completed", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1625, typescript:ServerNotification.ts"},
-	{Method: "turn/diff/updated", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1627, typescript:ServerNotification.ts"},
+	{Method: "turn/diff/updated", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1627, typescript:ServerNotification.ts"},
 	{Method: "turn/moderationMetadata", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1670, typescript:ServerNotification.ts"},
 	{Method: "turn/plan/updated", Surface: SurfaceServerNotification, State: MethodBlocked, Source: "json schema:ServerNotification, protocol crate:common.rs:1628, typescript:ServerNotification.ts"},
 	{Method: "turn/started", Surface: SurfaceServerNotification, State: MethodImplemented, Source: "json schema:ServerNotification, protocol crate:common.rs:1623, typescript:ServerNotification.ts"},
