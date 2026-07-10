@@ -23,6 +23,8 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "daemon/status", Surface: SurfaceGollemExtension, Result: []string{"DaemonStatus"}},
 	{Method: "daemon/stop", Surface: SurfaceGollemExtension, Params: []string{"DaemonShutdownParams"}, Result: []string{"DaemonStopResult"}},
 	{Method: "daemon/version", Surface: SurfaceGollemExtension, Result: []string{"DaemonVersion"}},
+	{Method: "initialize", Surface: SurfaceClientRequest, Params: []string{"InitializeParams"}, Result: []string{"InitializeResponse"}},
+	{Method: "initialized", Surface: SurfaceClientNotification},
 	{Method: "item/commandExecution/outputDelta", Surface: SurfaceServerNotification, Params: []string{"CommandExecutionOutputDeltaNotificationParams"}},
 	{Method: "item/commandExecution/requestApproval", Surface: SurfaceServerRequest, Params: []string{"CommandExecutionApprovalRequestParams"}},
 	{Method: "item/completed", Surface: SurfaceServerNotification, Params: []string{"ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"}},

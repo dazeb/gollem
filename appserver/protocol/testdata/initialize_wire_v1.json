@@ -1,0 +1,69 @@
+{
+  "protocolVersion": "gollem.appserver.v0",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "initialize-request",
+      "surface": "client-request",
+      "method": "initialize",
+      "envelope": "request",
+      "paramsType": "InitializeParams",
+      "message": {
+        "id": "initialize-1",
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "gollem-typescript-fixture",
+            "version": "1.0.0"
+          },
+          "capabilities": {
+            "optOutNotificationMethods": ["thread/tokenUsage/updated"],
+            "experimental": {"typedInitialize": true}
+          }
+        }
+      }
+    },
+    {
+      "name": "initialize-response",
+      "surface": "client-request",
+      "method": "initialize",
+      "envelope": "response",
+      "resultType": "InitializeResponse",
+      "message": {
+        "id": "initialize-1",
+        "result": {
+          "protocolVersion": "gollem.appserver.v0",
+          "serverInfo": {
+            "name": "gollem-appserver",
+            "version": "dev"
+          },
+          "capabilities": {
+            "protocolSchema": true,
+            "unavailable": true
+          },
+          "methods": [
+            {
+              "method": "initialize",
+              "surface": "client-request",
+              "state": "implemented"
+            },
+            {
+              "method": "initialized",
+              "surface": "client-notification",
+              "state": "implemented"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "initialized-notification",
+      "surface": "client-notification",
+      "method": "initialized",
+      "envelope": "notification",
+      "message": {
+        "method": "initialized"
+      }
+    }
+  ]
+}

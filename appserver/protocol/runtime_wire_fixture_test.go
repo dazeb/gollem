@@ -19,10 +19,85 @@ type runtimeWireFixtureCase struct {
 	Name        string          `json:"name"`
 	Surface     Surface         `json:"surface"`
 	Method      string          `json:"method"`
+	Envelope    string          `json:"envelope,omitempty"`
 	ParamsType  string          `json:"paramsType,omitempty"`
 	ResultType  string          `json:"resultType,omitempty"`
 	PayloadType string          `json:"payloadType,omitempty"`
 	Message     json.RawMessage `json:"message"`
+}
+
+func TestInitializeWireV1FixtureUsesExportedContracts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "initialize_wire_v1.json"))
+	if err != nil {
+		t.Fatalf("read initialize fixture: %v", err)
+	}
+	var fixture runtimeWireFixture
+	if err := decodeRuntimeFixture(data, &fixture); err != nil {
+		t.Fatalf("decode initialize fixture: %v", err)
+	}
+	if fixture.ProtocolVersion != ProtocolVersion || fixture.SchemaVersion != SchemaVersion {
+		t.Fatalf("fixture versions = %s/%s, want %s/%s", fixture.ProtocolVersion, fixture.SchemaVersion, ProtocolVersion, SchemaVersion)
+	}
+	if len(fixture.Cases) != 3 {
+		t.Fatalf("initialize fixture has %d cases, want 3", len(fixture.Cases))
+	}
+
+	cases := make(map[string]runtimeWireFixtureCase, len(fixture.Cases))
+	for _, fixtureCase := range fixture.Cases {
+		if _, exists := cases[fixtureCase.Name]; exists {
+			t.Fatalf("duplicate fixture case %q", fixtureCase.Name)
+		}
+		cases[fixtureCase.Name] = fixtureCase
+	}
+
+	requestCase := requireRuntimeFixtureCase(t, cases, "initialize-request", "initialize", SurfaceClientRequest, "request")
+	requestPayload, err := fixtureMessagePayload(requestCase)
+	if err != nil {
+		t.Fatalf("initialize request: %v", err)
+	}
+	var params InitializeParams
+	if err := decodeRuntimeFixture(requestPayload, &params); err != nil {
+		t.Fatalf("decode InitializeParams: %v", err)
+	}
+	if params.ClientInfo.Name != "gollem-typescript-fixture" || !params.Capabilities.Experimental["typedInitialize"] {
+		t.Fatalf("initialize params = %+v", params)
+	}
+	assertBinding(t, WireTypeBindings(), "initialize", SurfaceClientRequest, "InitializeParams")
+
+	responseCase := requireRuntimeFixtureCase(t, cases, "initialize-response", "initialize", SurfaceClientRequest, "response")
+	responsePayload, err := fixtureMessagePayload(responseCase)
+	if err != nil {
+		t.Fatalf("initialize response: %v", err)
+	}
+	var response InitializeResponse
+	if err := decodeRuntimeFixture(responsePayload, &response); err != nil {
+		t.Fatalf("decode InitializeResponse: %v", err)
+	}
+	if response.ProtocolVersion != ProtocolVersion || len(response.Methods) != 2 {
+		t.Fatalf("initialize response = %+v", response)
+	}
+	if response.Methods[0].Surface != SurfaceClientRequest || response.Methods[1].State != MethodImplemented {
+		t.Fatalf("initialize method metadata = %+v", response.Methods)
+	}
+	assertBinding(t, WireTypeBindings(), "initialize", SurfaceClientRequest, "InitializeResponse")
+
+	notificationCase := requireRuntimeFixtureCase(t, cases, "initialized-notification", "initialized", SurfaceClientNotification, "notification")
+	if _, err := fixtureMessagePayload(notificationCase); err != nil {
+		t.Fatalf("initialized notification: %v", err)
+	}
+	assertBindingMethod(t, WireTypeBindings(), "initialized", SurfaceClientNotification)
+}
+
+func requireRuntimeFixtureCase(t *testing.T, cases map[string]runtimeWireFixtureCase, name, method string, surface Surface, envelope string) runtimeWireFixtureCase {
+	t.Helper()
+	fixtureCase, ok := cases[name]
+	if !ok {
+		t.Fatalf("fixture missing %s", name)
+	}
+	if fixtureCase.Method != method || fixtureCase.Surface != surface || fixtureCase.Envelope != envelope {
+		t.Fatalf("fixture %s metadata = %s/%s/%s, want %s/%s/%s", name, fixtureCase.Surface, fixtureCase.Method, fixtureCase.Envelope, surface, method, envelope)
+	}
+	return fixtureCase
 }
 
 func TestRuntimeWireV1FixtureUsesExportedContracts(t *testing.T) {
@@ -119,8 +194,19 @@ func TestRuntimeWireV1FixtureUsesExportedContracts(t *testing.T) {
 }
 
 func fixtureMessagePayload(fixtureCase runtimeWireFixtureCase) (json.RawMessage, error) {
-	switch fixtureCase.Surface {
-	case SurfaceServerNotification:
+	envelope := fixtureCase.Envelope
+	if envelope == "" {
+		switch fixtureCase.Surface {
+		case SurfaceServerNotification, SurfaceClientNotification:
+			envelope = "notification"
+		case SurfaceServerRequest, SurfaceClientRequest:
+			envelope = "request"
+		case SurfaceGollemExtension:
+			envelope = "response"
+		}
+	}
+	switch envelope {
+	case "notification":
 		var notification Notification
 		if err := decodeRuntimeFixture(fixtureCase.Message, &notification); err != nil {
 			return nil, err
@@ -129,7 +215,7 @@ func fixtureMessagePayload(fixtureCase runtimeWireFixtureCase) (json.RawMessage,
 			return nil, fmt.Errorf("notification method = %q, want %q", notification.Method, fixtureCase.Method)
 		}
 		return notification.Params, nil
-	case SurfaceServerRequest:
+	case "request":
 		var request Request
 		if err := decodeRuntimeFixture(fixtureCase.Message, &request); err != nil {
 			return nil, err
@@ -138,14 +224,14 @@ func fixtureMessagePayload(fixtureCase runtimeWireFixtureCase) (json.RawMessage,
 			return nil, fmt.Errorf("request method = %q, want %q", request.Method, fixtureCase.Method)
 		}
 		return request.Params, nil
-	case SurfaceGollemExtension:
+	case "response":
 		var response Response
 		if err := decodeRuntimeFixture(fixtureCase.Message, &response); err != nil {
 			return nil, err
 		}
 		return response.Result, nil
 	default:
-		return nil, fmt.Errorf("unsupported fixture surface %q", fixtureCase.Surface)
+		return nil, fmt.Errorf("unsupported fixture envelope %q for surface %q", envelope, fixtureCase.Surface)
 	}
 }
 

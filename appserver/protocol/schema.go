@@ -14,7 +14,7 @@ type Schema map[string]any
 // exported wire definitions, and their method and durable-item bindings.
 func JSONSchema() Schema {
 	defs := foundationalSchemaDefinitions()
-	for name, schema := range runtimeSchemaDefinitions() {
+	for name, schema := range wireSchemaDefinitions() {
 		defs[name] = schema
 	}
 	return Schema{
@@ -79,8 +79,8 @@ func foundationalSchemaDefinitions() Schema {
 	}
 }
 
-func runtimeSchemaDefinitions() Schema {
-	definitions := []runtimeSchemaDefinition{
+func wireSchemaDefinitions() Schema {
+	definitions := []wireSchemaDefinition{
 		{Name: "ApprovalRequestBase", Type: reflect.TypeFor[ApprovalRequestBase]()},
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
@@ -108,6 +108,10 @@ func runtimeSchemaDefinitions() Schema {
 		{Name: "FileChangeItemStartedNotificationParams", Type: reflect.TypeFor[FileChangeItemStartedNotificationParams]()},
 		{Name: "FileChangePatchUpdatedNotificationParams", Type: reflect.TypeFor[FileChangePatchUpdatedNotificationParams]()},
 		{Name: "FileUpdateChange", Type: reflect.TypeFor[FileUpdateChange]()},
+		{Name: "ImplementationInfo", Type: reflect.TypeFor[ImplementationInfo]()},
+		{Name: "InitializeCapabilities", Type: reflect.TypeFor[InitializeCapabilities]()},
+		{Name: "InitializeParams", Type: reflect.TypeFor[InitializeParams]()},
+		{Name: "InitializeResponse", Type: reflect.TypeFor[InitializeResponse]()},
 		{Name: "ItemLifecycleNotificationParams", Type: reflect.TypeFor[ItemLifecycleNotificationParams]()},
 		{Name: "MCPContent", Type: reflect.TypeFor[MCPContent]()},
 		{Name: "MCPToolCallError", Type: reflect.TypeFor[MCPToolCallError]()},
@@ -116,9 +120,13 @@ func runtimeSchemaDefinitions() Schema {
 		{Name: "MCPToolCallItemStartedNotificationParams", Type: reflect.TypeFor[MCPToolCallItemStartedNotificationParams]()},
 		{Name: "MCPToolCallProgressNotificationParams", Type: reflect.TypeFor[MCPToolCallProgressNotificationParams]()},
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
+		{Name: "MethodInfo", Type: reflect.TypeFor[MethodInfo]()},
+		{Name: "MethodState", Type: reflect.TypeFor[MethodState]()},
 		{Name: "PatchChangeKind", Type: reflect.TypeFor[PatchChangeKind]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
+		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
+		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
 		{Name: "ThreadCompactStartParams", Type: reflect.TypeFor[ThreadCompactStartParams]()},
 		{Name: "ThreadCompactStartResponse", Type: reflect.TypeFor[ThreadCompactStartResponse]()},
 		{Name: "ThreadCompactedNotificationParams", Type: reflect.TypeFor[ThreadCompactedNotificationParams]()},
@@ -137,10 +145,24 @@ func runtimeSchemaDefinitions() Schema {
 	for _, definition := range definitions {
 		schemas[definition.Name] = schemaForDefinition(definition.Type, names)
 	}
+	schemas["MethodState"] = stringEnumSchema(
+		string(MethodImplemented),
+		string(MethodBlocked),
+		string(MethodDeferredStub),
+		string(MethodRenamedEquivalent),
+		string(MethodNotApplicable),
+	)
+	schemas["Surface"] = stringEnumSchema(
+		string(SurfaceClientRequest),
+		string(SurfaceServerNotification),
+		string(SurfaceServerRequest),
+		string(SurfaceClientNotification),
+		string(SurfaceGollemExtension),
+	)
 	return schemas
 }
 
-type runtimeSchemaDefinition struct {
+type wireSchemaDefinition struct {
 	Name string
 	Type reflect.Type
 }
@@ -163,6 +185,14 @@ func methodEnumSchema(surfaces ...Surface) Schema {
 		if allowed[info.Surface] {
 			enum = append(enum, info.Method)
 		}
+	}
+	return Schema{"type": "string", "enum": enum}
+}
+
+func stringEnumSchema(values ...string) Schema {
+	enum := make([]any, len(values))
+	for i, value := range values {
+		enum[i] = value
 	}
 	return Schema{"type": "string", "enum": enum}
 }
