@@ -45,6 +45,85 @@ func TestThreadGoalSetParamsTracksNullableBudget(t *testing.T) {
 	}
 }
 
+func TestThreadGoalProtocolCompatibilityHelpers(t *testing.T) {
+	for _, status := range []ThreadGoalStatus{
+		ThreadGoalActive,
+		ThreadGoalPaused,
+		ThreadGoalBlocked,
+		ThreadGoalUsageLimited,
+		ThreadGoalBudgetLimited,
+		ThreadGoalComplete,
+	} {
+		if !status.Valid() {
+			t.Errorf("status %q is invalid", status)
+		}
+	}
+	if ThreadGoalStatus("unknown").Valid() {
+		t.Fatal("unknown status is valid")
+	}
+
+	setParams := ThreadGoalSetParams{ThreadID: "public", ID: "legacy"}
+	if setParams.EffectiveThreadID() != "public" {
+		t.Fatalf("set effective id = %q", setParams.EffectiveThreadID())
+	}
+	setParams.ThreadID = ""
+	if setParams.EffectiveThreadID() != "legacy" {
+		t.Fatalf("set legacy id = %q", setParams.EffectiveThreadID())
+	}
+	getParams := ThreadGoalGetParams{ThreadID: "public", ID: "legacy"}
+	if getParams.EffectiveThreadID() != "public" {
+		t.Fatalf("get effective id = %q", getParams.EffectiveThreadID())
+	}
+	getParams.ThreadID = ""
+	if getParams.EffectiveThreadID() != "legacy" {
+		t.Fatalf("get legacy id = %q", getParams.EffectiveThreadID())
+	}
+	clearParams := ThreadGoalClearParams{ThreadID: "public", ID: "legacy"}
+	if clearParams.EffectiveThreadID() != "public" {
+		t.Fatalf("clear effective id = %q", clearParams.EffectiveThreadID())
+	}
+	clearParams.ThreadID = ""
+	if clearParams.EffectiveThreadID() != "legacy" {
+		t.Fatalf("clear legacy id = %q", clearParams.EffectiveThreadID())
+	}
+
+	for _, test := range []struct {
+		name   string
+		params ThreadGoalSetParams
+		want   string
+		ok     bool
+	}{
+		{name: "goal", params: ThreadGoalSetParams{Goal: json.RawMessage(`{"objective":"goal"}`)}, want: `{"objective":"goal"}`, ok: true},
+		{name: "text after null", params: ThreadGoalSetParams{Goal: json.RawMessage("null"), Text: json.RawMessage(`"text"`)}, want: `"text"`, ok: true},
+		{name: "value after empty", params: ThreadGoalSetParams{Text: json.RawMessage(" "), Value: json.RawMessage(`42`)}, want: `42`, ok: true},
+		{name: "none"},
+	} {
+		t.Run("legacy "+test.name, func(t *testing.T) {
+			got, ok := test.params.LegacyGoal()
+			if ok != test.ok || string(got) != test.want {
+				t.Fatalf("LegacyGoal = %q/%v, want %q/%v", got, ok, test.want, test.ok)
+			}
+		})
+	}
+
+	budget := int64(10)
+	setParams = ThreadGoalSetParams{ThreadID: "thread-1", TokenBudget: &budget}
+	encoded, err := json.Marshal(setParams)
+	if err != nil {
+		t.Fatalf("encode numeric budget: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"tokenBudget":10`) || !setParams.HasTokenBudget() {
+		t.Fatalf("numeric budget encoding = %s", encoded)
+	}
+	setParams.Goal = json.RawMessage("{")
+	if _, err := json.Marshal(setParams); err == nil {
+		t.Fatal("invalid legacy JSON encoded successfully")
+	}
+	if err := json.Unmarshal([]byte(`{"threadId":42}`), &setParams); err == nil {
+		t.Fatal("invalid thread id decoded successfully")
+	}
+}
+
 func int64Pointer(value int64) *int64 {
 	return &value
 }

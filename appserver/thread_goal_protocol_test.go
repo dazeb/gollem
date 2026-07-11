@@ -270,3 +270,58 @@ func TestThreadGoalUsageFromTurns(t *testing.T) {
 		t.Fatalf("usage = %d tokens/%d seconds, want 270/8", tokens, elapsed)
 	}
 }
+
+func TestThreadGoalLegacyProjectionVariants(t *testing.T) {
+	createdAt := time.Unix(100, 0).UTC()
+	thread := &store.Thread{ID: "thread-legacy", CreatedAt: createdAt, UpdatedAt: createdAt.Add(time.Minute)}
+	if _, ok := threadGoalFromStored(nil); ok {
+		t.Fatal("nil thread has a goal")
+	}
+	if _, ok := threadGoalFromStored(thread); ok {
+		t.Fatal("thread without settings has a goal")
+	}
+
+	goal := threadGoalFromValue(thread, &protocol.ThreadGoal{
+		Objective: "pointer goal",
+		Status:    protocol.ThreadGoalComplete,
+		CreatedAt: createdAt.Unix(),
+		UpdatedAt: createdAt.Unix(),
+	})
+	if goal.ThreadID != thread.ID || goal.Objective != "pointer goal" || goal.Status != protocol.ThreadGoalComplete {
+		t.Fatalf("pointer goal = %#v", goal)
+	}
+	goal = threadGoalFromValue(thread, json.RawMessage(`{
+		"objective":"raw goal",
+		"status":"usage_limited",
+		"tokenBudget":-1,
+		"tokensUsed":-2,
+		"timeUsedSeconds":-3
+	}`))
+	if goal.Objective != "raw goal" || goal.Status != protocol.ThreadGoalUsageLimited || goal.TokenBudget != nil ||
+		goal.TokensUsed != 0 || goal.TimeUsedSeconds != 0 || goal.CreatedAt != createdAt.Unix() {
+		t.Fatalf("raw goal = %#v", goal)
+	}
+	goal = threadGoalFromValue(thread, []byte(`"byte goal"`))
+	if goal.Objective != "byte goal" || goal.Status != protocol.ThreadGoalActive {
+		t.Fatalf("byte goal = %#v", goal)
+	}
+	goal = threadGoalFromValue(thread, map[string]any{"custom": true})
+	if goal.Objective != `{"custom":true}` {
+		t.Fatalf("object fallback goal = %#v", goal)
+	}
+	if normalizeStoredThreadGoalStatus("budget_limited") != protocol.ThreadGoalBudgetLimited ||
+		normalizeStoredThreadGoalStatus("invalid") != protocol.ThreadGoalActive {
+		t.Fatal("legacy status normalization failed")
+	}
+
+	if params, rpcErr := decodeThreadGoalGetParams(json.RawMessage(`{"id":"legacy-id"}`)); rpcErr != nil || params.EffectiveThreadID() != "legacy-id" {
+		t.Fatalf("legacy get params = %#v/%#v", params, rpcErr)
+	}
+	if _, rpcErr := decodeThreadGoalClearParams(json.RawMessage(`{"threadId":42}`)); rpcErr == nil || rpcErr.Code != protocol.CodeInvalidParams {
+		t.Fatalf("malformed clear params error = %#v", rpcErr)
+	}
+	if _, rpcErr := decodeThreadGoalSetParams(json.RawMessage(`{}`)); rpcErr == nil || rpcErr.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing set id error = %#v", rpcErr)
+	}
+	publishThreadGoalTurnUsage(nil, nil, nil)
+}
