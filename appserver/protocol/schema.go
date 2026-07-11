@@ -230,6 +230,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ReasoningEffort", Type: reflect.TypeFor[ReasoningEffort]()},
 		{Name: "ReasoningItemContent", Type: reflect.TypeFor[ReasoningItemContent]()},
 		{Name: "ReasoningItemReasoningSummary", Type: reflect.TypeFor[ReasoningItemReasoningSummary]()},
+		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
@@ -371,6 +372,7 @@ func wireSchemaDefinitions() Schema {
 		string(LocalShellStatusCompleted), string(LocalShellStatusInProgress), string(LocalShellStatusIncomplete),
 	)
 	schemas["LocalShellAction"] = localShellActionSchema()
+	schemas["ResponseItem"] = responseItemSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
 		string(ImageDetailAuto), string(ImageDetailLow), string(ImageDetailHigh), string(ImageDetailOriginal),
@@ -695,6 +697,103 @@ func localShellActionSchema() Schema {
 
 func nullableUnsignedIntegerSchema() Schema {
 	return Schema{"anyOf": []any{Schema{"type": "integer", "minimum": 0}, Schema{"type": "null"}}}
+}
+
+func responseItemSchema() Schema {
+	return Schema{"oneOf": []any{
+		responseItemVariantSchema("message", []string{"role", "content"}, Schema{
+			"role":    Schema{"type": "string"},
+			"content": Schema{"type": "array", "items": Schema{"$ref": "#/$defs/ContentItem"}},
+			"phase":   Schema{"$ref": "#/$defs/MessagePhase"},
+		}, true),
+		responseItemVariantSchema("agent_message", []string{"author", "recipient", "content"}, Schema{
+			"author":    Schema{"type": "string"},
+			"recipient": Schema{"type": "string"},
+			"content":   Schema{"type": "array", "items": Schema{"$ref": "#/$defs/AgentMessageInputContent"}},
+		}, true),
+		responseItemVariantSchema("reasoning", []string{"summary", "encrypted_content"}, Schema{
+			"summary":           Schema{"type": "array", "items": Schema{"$ref": "#/$defs/ReasoningItemReasoningSummary"}},
+			"content":           Schema{"type": "array", "items": Schema{"$ref": "#/$defs/ReasoningItemContent"}},
+			"encrypted_content": nullableStringSchema(),
+		}, true),
+		responseItemVariantSchema("local_shell_call", []string{"call_id", "status", "action"}, Schema{
+			"call_id": nullableStringSchema(),
+			"status":  Schema{"$ref": "#/$defs/LocalShellStatus"},
+			"action":  Schema{"$ref": "#/$defs/LocalShellAction"},
+		}, true),
+		responseItemVariantSchema("function_call", []string{"name", "arguments", "call_id"}, Schema{
+			"name":      Schema{"type": "string"},
+			"namespace": Schema{"type": "string"},
+			"arguments": Schema{"type": "string"},
+			"call_id":   Schema{"type": "string"},
+		}, true),
+		responseItemVariantSchema("tool_search_call", []string{"call_id", "execution", "arguments"}, Schema{
+			"call_id":   nullableStringSchema(),
+			"status":    Schema{"type": "string"},
+			"execution": Schema{"type": "string"},
+			"arguments": Schema{},
+		}, true),
+		responseItemVariantSchema("function_call_output", []string{"call_id", "output"}, Schema{
+			"call_id": Schema{"type": "string"},
+			"output":  Schema{"$ref": "#/$defs/FunctionCallOutputBody"},
+		}, true),
+		responseItemVariantSchema("custom_tool_call", []string{"call_id", "name", "input"}, Schema{
+			"status":    Schema{"type": "string"},
+			"call_id":   Schema{"type": "string"},
+			"name":      Schema{"type": "string"},
+			"namespace": Schema{"type": "string"},
+			"input":     Schema{"type": "string"},
+		}, true),
+		responseItemVariantSchema("custom_tool_call_output", []string{"call_id", "output"}, Schema{
+			"call_id": Schema{"type": "string"},
+			"name":    Schema{"type": "string"},
+			"output":  Schema{"$ref": "#/$defs/FunctionCallOutputBody"},
+		}, true),
+		responseItemVariantSchema("tool_search_output", []string{"call_id", "status", "execution", "tools"}, Schema{
+			"call_id":   nullableStringSchema(),
+			"status":    Schema{"type": "string"},
+			"execution": Schema{"type": "string"},
+			"tools":     Schema{"type": "array", "items": Schema{}},
+		}, true),
+		responseItemVariantSchema("web_search_call", nil, Schema{
+			"status": Schema{"type": "string"},
+			"action": Schema{"$ref": "#/$defs/WebSearchAction"},
+		}, true),
+		responseItemVariantSchema("image_generation_call", []string{"status", "result"}, Schema{
+			"status":         Schema{"type": "string"},
+			"revised_prompt": Schema{"type": "string"},
+			"result":         Schema{"type": "string"},
+		}, true),
+		responseItemVariantSchema("compaction", []string{"encrypted_content"}, Schema{
+			"encrypted_content": Schema{"type": "string"},
+		}, true),
+		responseItemVariantSchema("compaction_trigger", nil, nil, false),
+		responseItemVariantSchema("context_compaction", nil, Schema{
+			"encrypted_content": Schema{"type": "string"},
+		}, true),
+		responseItemVariantSchema("other", nil, nil, false),
+	}}
+}
+
+func responseItemVariantSchema(itemType string, requiredFields []string, fields Schema, common bool) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{itemType}},
+	}
+	if common {
+		properties["id"] = Schema{"type": "string"}
+		properties[responseItemMetadataField] = Schema{"$ref": "#/$defs/InternalChatMessageMetadataPassthrough"}
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	required := []string{"type"}
+	required = append(required, requiredFields...)
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
 }
 
 func commandActionVariantSchema(actionType string, requiredFields []string, fields Schema) Schema {

@@ -4652,6 +4652,526 @@
       ],
       "type": "object"
     },
+    "ResponseItem": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "items": {
+                "$ref": "#/$defs/ContentItem"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "phase": {
+              "$ref": "#/$defs/MessagePhase"
+            },
+            "role": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "message"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "role",
+            "content"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "author": {
+              "type": "string"
+            },
+            "content": {
+              "items": {
+                "$ref": "#/$defs/AgentMessageInputContent"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "agent_message"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "author",
+            "recipient",
+            "content"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "items": {
+                "$ref": "#/$defs/ReasoningItemContent"
+              },
+              "type": "array"
+            },
+            "encrypted_content": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "summary": {
+              "items": {
+                "$ref": "#/$defs/ReasoningItemReasoningSummary"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "reasoning"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "summary",
+            "encrypted_content"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/LocalShellAction"
+            },
+            "call_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "status": {
+              "$ref": "#/$defs/LocalShellStatus"
+            },
+            "type": {
+              "enum": [
+                "local_shell_call"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "status",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arguments": {
+              "type": "string"
+            },
+            "call_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "name": {
+              "type": "string"
+            },
+            "namespace": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "function_call"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "arguments",
+            "call_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arguments": {},
+            "call_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "execution": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "status": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "tool_search_call"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "execution",
+            "arguments"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "call_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "output": {
+              "$ref": "#/$defs/FunctionCallOutputBody"
+            },
+            "type": {
+              "enum": [
+                "function_call_output"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "output"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "call_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "input": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "name": {
+              "type": "string"
+            },
+            "namespace": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "custom_tool_call"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "name",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "call_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "name": {
+              "type": "string"
+            },
+            "output": {
+              "$ref": "#/$defs/FunctionCallOutputBody"
+            },
+            "type": {
+              "enum": [
+                "custom_tool_call_output"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "output"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "call_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "execution": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "status": {
+              "type": "string"
+            },
+            "tools": {
+              "items": {},
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "tool_search_output"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "call_id",
+            "status",
+            "execution",
+            "tools"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/WebSearchAction"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "status": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "web_search_call"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "result": {
+              "type": "string"
+            },
+            "revised_prompt": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "image_generation_call"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "status",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "encrypted_content": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "type": {
+              "enum": [
+                "compaction"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "encrypted_content"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "compaction_trigger"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "encrypted_content": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "internal_chat_message_metadata_passthrough": {
+              "$ref": "#/$defs/InternalChatMessageMetadataPassthrough"
+            },
+            "type": {
+              "enum": [
+                "context_compaction"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ResponsesApiWebSearchAction": {
       "oneOf": [
         {

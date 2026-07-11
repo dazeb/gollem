@@ -1548,6 +1548,109 @@ export type Response = {
   "result"?: unknown;
 };
 
+export type ResponseItem = {
+  "content": Array<ContentItem>;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "phase"?: MessagePhase;
+  "role": string;
+  "type": "message";
+} | {
+  "author": string;
+  "content": Array<AgentMessageInputContent>;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "recipient": string;
+  "type": "agent_message";
+} | {
+  "content"?: Array<ReasoningItemContent>;
+  "encrypted_content": string | null;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "summary": Array<ReasoningItemReasoningSummary>;
+  "type": "reasoning";
+} | {
+  "action": LocalShellAction;
+  "call_id": string | null;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "status": LocalShellStatus;
+  "type": "local_shell_call";
+} | {
+  "arguments": string;
+  "call_id": string;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "name": string;
+  "namespace"?: string;
+  "type": "function_call";
+} | {
+  "arguments": unknown;
+  "call_id": string | null;
+  "execution": string;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "status"?: string;
+  "type": "tool_search_call";
+} | {
+  "call_id": string;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "output": FunctionCallOutputBody;
+  "type": "function_call_output";
+} | {
+  "call_id": string;
+  "id"?: string;
+  "input": string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "name": string;
+  "namespace"?: string;
+  "status"?: string;
+  "type": "custom_tool_call";
+} | {
+  "call_id": string;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "name"?: string;
+  "output": FunctionCallOutputBody;
+  "type": "custom_tool_call_output";
+} | {
+  "call_id": string | null;
+  "execution": string;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "status": string;
+  "tools": Array<unknown>;
+  "type": "tool_search_output";
+} | {
+  "action"?: WebSearchAction;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "status"?: string;
+  "type": "web_search_call";
+} | {
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "result": string;
+  "revised_prompt"?: string;
+  "status": string;
+  "type": "image_generation_call";
+} | {
+  "encrypted_content": string;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "type": "compaction";
+} | {
+  "type": "compaction_trigger";
+} | {
+  "encrypted_content"?: string;
+  "id"?: string;
+  "internal_chat_message_metadata_passthrough"?: InternalChatMessageMetadataPassthrough;
+  "type": "context_compaction";
+} | {
+  "type": "other";
+};
+
 export type ResponsesApiWebSearchAction = {
   "queries"?: Array<string>;
   "query"?: string;
