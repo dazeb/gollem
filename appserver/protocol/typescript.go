@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"unicode"
@@ -413,6 +414,76 @@ type typeScriptFixtureCase struct {
 	ResultType  string          `json:"resultType,omitempty"`
 	PayloadType string          `json:"payloadType,omitempty"`
 	Message     json.RawMessage `json:"message"`
+}
+
+type permissionProfileTypeScriptFixtureDocument struct {
+	ProtocolVersion string          `json:"protocolVersion"`
+	SchemaVersion   string          `json:"schemaVersion"`
+	Request         json.RawMessage `json:"request"`
+	Response        json.RawMessage `json:"response"`
+}
+
+// MarshalPermissionProfileTypeScriptFixture generates a strict compile fixture
+// for the exported public permission types without creating a live binding.
+func MarshalPermissionProfileTypeScriptFixture(data []byte) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var fixture permissionProfileTypeScriptFixtureDocument
+	if err := decoder.Decode(&fixture); err != nil {
+		return nil, fmt.Errorf("decode permission profile fixture: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("permission profile fixture must contain one JSON value")
+		}
+		return nil, err
+	}
+	if fixture.ProtocolVersion != ProtocolVersion || fixture.SchemaVersion != SchemaVersion {
+		return nil, fmt.Errorf("fixture versions %s/%s do not match %s/%s", fixture.ProtocolVersion, fixture.SchemaVersion, ProtocolVersion, SchemaVersion)
+	}
+	var request, response bytes.Buffer
+	if err := json.Indent(&request, fixture.Request, "", "  "); err != nil {
+		return nil, fmt.Errorf("format permission request: %w", err)
+	}
+	if err := json.Indent(&response, fixture.Response, "", "  "); err != nil {
+		return nil, fmt.Errorf("format permission response: %w", err)
+	}
+
+	var out bytes.Buffer
+	out.WriteString(typeScriptGeneratedHeader)
+	out.WriteString("import type {\n")
+	for _, name := range []string{
+		"ActivePermissionProfile",
+		"AdditionalPermissionProfile",
+		"FileSystemAccessMode",
+		"FileSystemPath",
+		"MethodResultsByName",
+		"PermissionGrantScope",
+		"PermissionsRequestApprovalParams",
+		"PermissionsRequestApprovalResponse",
+	} {
+		fmt.Fprintf(&out, "  %s,\n", name)
+	}
+	out.WriteString("} from \"../gollem_appserver_protocol\";\n\n")
+	fmt.Fprintf(&out, "export const fixtureProtocolVersion = %s as const;\n", typeScriptString(fixture.ProtocolVersion))
+	fmt.Fprintf(&out, "export const fixtureSchemaVersion = %s as const;\n\n", typeScriptString(fixture.SchemaVersion))
+	fmt.Fprintf(&out, "export const permissionProfileRequest = %s satisfies PermissionsRequestApprovalParams;\n\n", request.String())
+	fmt.Fprintf(&out, "export const permissionProfileResponse = %s satisfies PermissionsRequestApprovalResponse;\n\n", response.String())
+	out.WriteString("export const activePermissionProfile = { id: \":workspace\", extends: null } satisfies ActivePermissionProfile;\n")
+	out.WriteString("export const additionalPermissionProfile = { network: null, fileSystem: null } satisfies AdditionalPermissionProfile;\n\n")
+	out.WriteString("// @ts-expect-error filesystem access modes are closed.\n")
+	out.WriteString("export const rejectInvalidFilesystemAccess = \"execute\" satisfies FileSystemAccessMode;\n")
+	out.WriteString("// @ts-expect-error filesystem path variants cannot cross fields.\n")
+	out.WriteString("export const rejectCrossedFilesystemPath = { type: \"path\", pattern: \"*.go\" } satisfies FileSystemPath;\n")
+	out.WriteString("// @ts-expect-error permission grant scopes are closed.\n")
+	out.WriteString("export const rejectInvalidPermissionScope = \"workspace\" satisfies PermissionGrantScope;\n")
+	out.WriteString("// @ts-expect-error canonical permission requests require nullable environmentId.\n")
+	out.WriteString("export const rejectMissingPermissionEnvironment = { threadId: \"t\", turnId: \"u\", itemId: \"i\", startedAtMs: 1, cwd: \"/workspace\", reason: null, permissions: { network: null, fileSystem: null } } satisfies PermissionsRequestApprovalParams;\n")
+	out.WriteString("// @ts-expect-error canonical permission responses require scope.\n")
+	out.WriteString("export const rejectMissingPermissionScope = { permissions: {} } satisfies PermissionsRequestApprovalResponse;\n")
+	out.WriteString("// @ts-expect-error the incompatible live permission result remains unbound.\n")
+	out.WriteString("export type RejectPermissionResultBinding = MethodResultsByName[\"item/permissions/requestApproval\"];\n")
+	return out.Bytes(), nil
 }
 
 // MarshalTypeScriptFixture converts the versioned JSON wire examples into a

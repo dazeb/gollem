@@ -81,6 +81,11 @@ func foundationalSchemaDefinitions() Schema {
 
 func wireSchemaDefinitions() Schema {
 	definitions := []wireSchemaDefinition{
+		{Name: "AbsolutePathBuf", Type: reflect.TypeFor[AbsolutePathBuf]()},
+		{Name: "ActivePermissionProfile", Type: reflect.TypeFor[ActivePermissionProfile]()},
+		{Name: "AdditionalFileSystemPermissions", Type: reflect.TypeFor[AdditionalFileSystemPermissions]()},
+		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
+		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
 		{Name: "ApprovalRequestBase", Type: reflect.TypeFor[ApprovalRequestBase]()},
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
@@ -126,11 +131,17 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FileChangeItemStartedNotificationParams", Type: reflect.TypeFor[FileChangeItemStartedNotificationParams]()},
 		{Name: "FileChangePatchUpdatedNotificationParams", Type: reflect.TypeFor[FileChangePatchUpdatedNotificationParams]()},
 		{Name: "FileUpdateChange", Type: reflect.TypeFor[FileUpdateChange]()},
+		{Name: "FileSystemAccessMode", Type: reflect.TypeFor[FileSystemAccessMode]()},
+		{Name: "FileSystemPath", Type: reflect.TypeFor[FileSystemPath]()},
+		{Name: "FileSystemSandboxEntry", Type: reflect.TypeFor[FileSystemSandboxEntry]()},
+		{Name: "FileSystemSpecialPath", Type: reflect.TypeFor[FileSystemSpecialPath]()},
+		{Name: "GrantedPermissionProfile", Type: reflect.TypeFor[GrantedPermissionProfile]()},
 		{Name: "ImplementationInfo", Type: reflect.TypeFor[ImplementationInfo]()},
 		{Name: "InitializeCapabilities", Type: reflect.TypeFor[InitializeCapabilities]()},
 		{Name: "InitializeParams", Type: reflect.TypeFor[InitializeParams]()},
 		{Name: "InitializeResponse", Type: reflect.TypeFor[InitializeResponse]()},
 		{Name: "ItemLifecycleNotificationParams", Type: reflect.TypeFor[ItemLifecycleNotificationParams]()},
+		{Name: "LegacyAppPathString", Type: reflect.TypeFor[LegacyAppPathString]()},
 		{Name: "MCPContent", Type: reflect.TypeFor[MCPContent]()},
 		{Name: "MCPToolCallError", Type: reflect.TypeFor[MCPToolCallError]()},
 		{Name: "MCPToolCallItem", Type: reflect.TypeFor[MCPToolCallItem]()},
@@ -169,7 +180,11 @@ func wireSchemaDefinitions() Schema {
 		{Name: "NetworkPolicyRuleAction", Type: reflect.TypeFor[NetworkPolicyRuleAction]()},
 		{Name: "PatchApplyStatus", Type: reflect.TypeFor[PatchApplyStatus]()},
 		{Name: "PatchChangeKind", Type: reflect.TypeFor[PatchChangeKind]()},
+		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
+		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
+		{Name: "PermissionsRequestApprovalResponse", Type: reflect.TypeFor[PermissionsRequestApprovalResponse]()},
+		{Name: "RequestPermissionProfile", Type: reflect.TypeFor[RequestPermissionProfile]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
@@ -271,6 +286,27 @@ func wireSchemaDefinitions() Schema {
 		string(CommandExecOutputStdout), string(CommandExecOutputStderr),
 	)
 	schemas["CommandExecutionApprovalDecision"] = commandExecutionApprovalDecisionSchema()
+	schemas["AbsolutePathBuf"] = Schema{
+		"type":        "string",
+		"description": "An absolute, lexically normalized local path.",
+	}
+	schemas["FileSystemAccessMode"] = stringEnumSchema(
+		string(FileSystemAccessRead), string(FileSystemAccessWrite), string(FileSystemAccessDeny),
+	)
+	schemas["FileSystemPath"] = fileSystemPathSchema()
+	schemas["FileSystemSpecialPath"] = fileSystemSpecialPathSchema()
+	schemas["LegacyAppPathString"] = Schema{"type": "string"}
+	schemas["PermissionGrantScope"] = stringEnumSchema(
+		string(PermissionGrantTurn), string(PermissionGrantSession),
+	)
+	setSchemaIntegerMinimum(schemas["AdditionalFileSystemPermissions"].(Schema), 1, "globScanMaxDepth")
+	if response, ok := schemas["PermissionsRequestApprovalResponse"].(Schema); ok {
+		if properties, ok := response["properties"].(Schema); ok {
+			if scope, ok := properties["scope"].(Schema); ok {
+				scope["default"] = string(PermissionGrantTurn)
+			}
+		}
+	}
 	schemas["FileChangeApprovalDecision"] = stringEnumSchema(
 		string(FileChangeApprovalAccept),
 		string(FileChangeApprovalAcceptForSession),
@@ -367,6 +403,58 @@ func wireSchemaDefinitions() Schema {
 		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
+}
+
+func fileSystemSpecialPathSchema() Schema {
+	return Schema{"oneOf": []any{
+		fileSystemSpecialPathVariantSchema("root", false, false),
+		fileSystemSpecialPathVariantSchema("minimal", false, false),
+		fileSystemSpecialPathVariantSchema("project_roots", false, true),
+		fileSystemSpecialPathVariantSchema("tmpdir", false, false),
+		fileSystemSpecialPathVariantSchema("slash_tmp", false, false),
+		fileSystemSpecialPathVariantSchema("unknown", true, true),
+	}}
+}
+
+func fileSystemSpecialPathVariantSchema(kind string, includePath, includeSubpath bool) Schema {
+	properties := Schema{
+		"kind": Schema{"type": "string", "enum": []any{kind}},
+	}
+	required := []string{"kind"}
+	if includePath {
+		properties["path"] = Schema{"type": "string"}
+		required = append(required, "path")
+	}
+	if includeSubpath {
+		properties["subpath"] = nullableStringSchema()
+		required = append(required, "subpath")
+	}
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+}
+
+func fileSystemPathSchema() Schema {
+	return Schema{"oneOf": []any{
+		fileSystemPathVariantSchema("path", "path", Schema{"$ref": "#/$defs/LegacyAppPathString"}),
+		fileSystemPathVariantSchema("glob_pattern", "pattern", Schema{"type": "string"}),
+		fileSystemPathVariantSchema("special", "value", Schema{"$ref": "#/$defs/FileSystemSpecialPath"}),
+	}}
+}
+
+func fileSystemPathVariantSchema(pathType, valueField string, valueSchema Schema) Schema {
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"type":     Schema{"type": "string", "enum": []any{pathType}},
+			valueField: valueSchema,
+		},
+		"required":             []string{"type", valueField},
+		"additionalProperties": false,
+	}
 }
 
 func patchChangeKindSchema() Schema {

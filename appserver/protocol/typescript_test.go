@@ -54,6 +54,31 @@ func TestTypeScriptFixtureGoldenIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestPermissionProfileTypeScriptFixtureGoldenIsDeterministic(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("testdata", "permission_profile_wire_v1.json"))
+	if err != nil {
+		t.Fatalf("read permission profile fixture: %v", err)
+	}
+	generated, err := MarshalPermissionProfileTypeScriptFixture(fixture)
+	if err != nil {
+		t.Fatalf("MarshalPermissionProfileTypeScriptFixture: %v", err)
+	}
+	second, err := MarshalPermissionProfileTypeScriptFixture(fixture)
+	if err != nil {
+		t.Fatalf("MarshalPermissionProfileTypeScriptFixture second call: %v", err)
+	}
+	if !bytes.Equal(generated, second) {
+		t.Fatal("permission profile TypeScript fixture is nondeterministic")
+	}
+	golden, err := os.ReadFile(filepath.Join("typescript", "testdata", "permission_profile_wire_v1.ts"))
+	if err != nil {
+		t.Fatalf("read permission profile TypeScript fixture: %v", err)
+	}
+	if !bytes.Equal(generated, golden) {
+		t.Fatal("permission profile TypeScript fixture is stale; run go generate ./appserver/protocol")
+	}
+}
+
 func TestTypeScriptBindingCoversDefinitionsAndBindings(t *testing.T) {
 	generated, err := MarshalTypeScript()
 	if err != nil {
