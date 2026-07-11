@@ -206,12 +206,8 @@ type threadNotLoadedStatusNotificationParams struct {
 	At       time.Time         `json:"at"`
 }
 
-type deprecationNoticeNotificationParams struct {
-	Summary string  `json:"summary"`
-	Details *string `json:"details"`
-}
-
-type contextCompactedNotificationParams = protocol.ThreadCompactedNotificationParams
+type deprecationNoticeNotificationParams = protocol.DeprecationNoticeNotification
+type contextCompactedNotificationParams = protocol.ContextCompactedNotification
 
 func ProcessOutputNotification(event toolprocess.OutputEvent) (string, any) {
 	data, encoding := encodeContent(event.Data)
