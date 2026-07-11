@@ -42,6 +42,18 @@
       }
     },
     {
+      "name": "thread-goal-set-legacy-id-request",
+      "surface": "client-request",
+      "method": "thread/goal/set",
+      "envelope": "request",
+      "paramsType": "ThreadGoalSetParams",
+      "message": {
+        "id": "goal-set-legacy-1",
+        "method": "thread/goal/set",
+        "params": {"id": "thread-1", "goal": "Legacy objective"}
+      }
+    },
+    {
       "name": "thread-goal-get-request",
       "surface": "client-request",
       "method": "thread/goal/get",
@@ -62,6 +74,18 @@
       "message": {"id": "goal-get-1", "result": {"goal": null}}
     },
     {
+      "name": "thread-goal-get-legacy-id-request",
+      "surface": "client-request",
+      "method": "thread/goal/get",
+      "envelope": "request",
+      "paramsType": "ThreadGoalGetParams",
+      "message": {
+        "id": "goal-get-legacy-1",
+        "method": "thread/goal/get",
+        "params": {"id": "thread-1"}
+      }
+    },
+    {
       "name": "thread-goal-clear-request",
       "surface": "client-request",
       "method": "thread/goal/clear",
@@ -80,6 +104,18 @@
       "envelope": "response",
       "resultType": "ThreadGoalClearResponse",
       "message": {"id": "goal-clear-1", "result": {"cleared": true}}
+    },
+    {
+      "name": "thread-goal-clear-legacy-id-request",
+      "surface": "client-request",
+      "method": "thread/goal/clear",
+      "envelope": "request",
+      "paramsType": "ThreadGoalClearParams",
+      "message": {
+        "id": "goal-clear-legacy-1",
+        "method": "thread/goal/clear",
+        "params": {"id": "thread-1"}
+      }
     },
     {
       "name": "thread-goal-updated-notification",

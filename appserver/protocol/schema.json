@@ -1954,19 +1954,38 @@
       "type": "object"
     },
     "ThreadGoalClearParams": {
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "type": "string"
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
         },
-        "threadId": {
-          "type": "string"
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "threadId"
-      ],
-      "type": "object"
+      ]
     },
     "ThreadGoalClearResponse": {
       "additionalProperties": false,
@@ -2027,19 +2046,38 @@
       "type": "object"
     },
     "ThreadGoalGetParams": {
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "type": "string"
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
         },
-        "threadId": {
-          "type": "string"
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "threadId"
-      ],
-      "type": "object"
+      ]
     },
     "ThreadGoalGetResponse": {
       "additionalProperties": false,
@@ -2084,52 +2122,104 @@
       "type": "object"
     },
     "ThreadGoalSetParams": {
-      "additionalProperties": false,
-      "properties": {
-        "goal": {},
-        "id": {
-          "type": "string"
-        },
-        "objective": {
-          "anyOf": [
-            {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "goal": {},
+            "id": {
               "type": "string"
             },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "status": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ThreadGoalStatus"
+            "objective": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "text": {},
-        "threadId": {
-          "type": "string"
-        },
-        "tokenBudget": {
-          "anyOf": [
-            {
-              "type": "integer"
+            "status": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ThreadGoalStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
-            {
-              "type": "null"
-            }
-          ]
+            "text": {},
+            "threadId": {
+              "type": "string"
+            },
+            "tokenBudget": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "value": {}
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
         },
-        "value": {}
-      },
-      "required": [
-        "threadId"
-      ],
-      "type": "object"
+        {
+          "additionalProperties": false,
+          "properties": {
+            "goal": {},
+            "id": {
+              "type": "string"
+            },
+            "objective": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ThreadGoalStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {},
+            "threadId": {
+              "type": "string"
+            },
+            "tokenBudget": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "value": {}
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "ThreadGoalSetResponse": {
       "additionalProperties": false,

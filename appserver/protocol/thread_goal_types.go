@@ -39,7 +39,7 @@ type ThreadGoal struct {
 }
 
 type ThreadGoalSetParams struct {
-	ThreadID    string            `json:"threadId"`
+	ThreadID    string            `json:"threadId,omitempty"`
 	Objective   *string           `json:"objective,omitempty"`
 	Status      *ThreadGoalStatus `json:"status,omitempty"`
 	TokenBudget *int64            `json:"tokenBudget,omitempty"`
@@ -114,7 +114,7 @@ type ThreadGoalSetResponse struct {
 }
 
 type ThreadGoalGetParams struct {
-	ThreadID string `json:"threadId"`
+	ThreadID string `json:"threadId,omitempty"`
 	ID       string `json:"id,omitempty"`
 }
 
@@ -133,7 +133,7 @@ type ThreadGoalGetResponse struct {
 }
 
 type ThreadGoalClearParams struct {
-	ThreadID string `json:"threadId"`
+	ThreadID string `json:"threadId,omitempty"`
 	ID       string `json:"id,omitempty"`
 }
 

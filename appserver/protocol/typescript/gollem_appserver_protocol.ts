@@ -925,6 +925,9 @@ export type ThreadGoal = {
 export type ThreadGoalClearParams = {
   "id"?: string;
   "threadId": string;
+} | {
+  "id": string;
+  "threadId"?: string;
 };
 
 export type ThreadGoalClearResponse = {
@@ -942,6 +945,9 @@ export type ThreadGoalClearedNotification = {
 export type ThreadGoalGetParams = {
   "id"?: string;
   "threadId": string;
+} | {
+  "id": string;
+  "threadId"?: string;
 };
 
 export type ThreadGoalGetResponse = {
@@ -958,6 +964,15 @@ export type ThreadGoalSetParams = {
   "status"?: ThreadGoalStatus | null;
   "text"?: unknown;
   "threadId": string;
+  "tokenBudget"?: number | null;
+  "value"?: unknown;
+} | {
+  "goal"?: unknown;
+  "id": string;
+  "objective"?: string | null;
+  "status"?: ThreadGoalStatus | null;
+  "text"?: unknown;
+  "threadId"?: string;
   "tokenBudget"?: number | null;
   "value"?: unknown;
 };

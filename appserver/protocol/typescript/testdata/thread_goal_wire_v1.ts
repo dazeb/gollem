@@ -46,6 +46,16 @@ export const threadGoalSetResponse = {
 } satisfies BoundResponse<"thread/goal/set">;
 export const threadGoalSetResponseResult = threadGoalSetResponse.result satisfies ThreadGoalSetResponse;
 
+export const threadGoalSetLegacyIdRequest = {
+  "id": "goal-set-legacy-1",
+  "method": "thread/goal/set",
+  "params": {
+    "id": "thread-1",
+    "goal": "Legacy objective"
+  }
+} satisfies BoundRequest<"thread/goal/set">;
+export const threadGoalSetLegacyIdRequestParams = threadGoalSetLegacyIdRequest.params satisfies ThreadGoalSetParams;
+
 export const threadGoalGetRequest = {
   "id": "goal-get-1",
   "method": "thread/goal/get",
@@ -63,6 +73,15 @@ export const threadGoalGetResponse = {
 } satisfies BoundResponse<"thread/goal/get">;
 export const threadGoalGetResponseResult = threadGoalGetResponse.result satisfies ThreadGoalGetResponse;
 
+export const threadGoalGetLegacyIdRequest = {
+  "id": "goal-get-legacy-1",
+  "method": "thread/goal/get",
+  "params": {
+    "id": "thread-1"
+  }
+} satisfies BoundRequest<"thread/goal/get">;
+export const threadGoalGetLegacyIdRequestParams = threadGoalGetLegacyIdRequest.params satisfies ThreadGoalGetParams;
+
 export const threadGoalClearRequest = {
   "id": "goal-clear-1",
   "method": "thread/goal/clear",
@@ -79,6 +98,15 @@ export const threadGoalClearResponse = {
   }
 } satisfies BoundResponse<"thread/goal/clear">;
 export const threadGoalClearResponseResult = threadGoalClearResponse.result satisfies ThreadGoalClearResponse;
+
+export const threadGoalClearLegacyIdRequest = {
+  "id": "goal-clear-legacy-1",
+  "method": "thread/goal/clear",
+  "params": {
+    "id": "thread-1"
+  }
+} satisfies BoundRequest<"thread/goal/clear">;
+export const threadGoalClearLegacyIdRequestParams = threadGoalClearLegacyIdRequest.params satisfies ThreadGoalClearParams;
 
 export const threadGoalUpdatedNotification = {
   "method": "thread/goal/updated",

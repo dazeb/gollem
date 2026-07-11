@@ -203,6 +203,9 @@ func wireSchemaDefinitions() Schema {
 		string(ThreadGoalActive), string(ThreadGoalPaused), string(ThreadGoalBlocked),
 		string(ThreadGoalUsageLimited), string(ThreadGoalBudgetLimited), string(ThreadGoalComplete),
 	)
+	for _, name := range []string{"ThreadGoalSetParams", "ThreadGoalGetParams", "ThreadGoalClearParams"} {
+		schemas[name] = schemaWithRequiredIDAlternative(schemas[name].(Schema))
+	}
 	schemas["ThreadListCwdFilter"] = Schema{"oneOf": []any{
 		Schema{"type": "string"},
 		Schema{"type": "array", "items": Schema{"type": "string"}},
@@ -225,6 +228,19 @@ func wireSchemaDefinitions() Schema {
 		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
+}
+
+func schemaWithRequiredIDAlternative(base Schema) Schema {
+	variants := make([]any, 0, 2)
+	for _, required := range []string{"threadId", "id"} {
+		variant := make(Schema, len(base))
+		for key, value := range base {
+			variant[key] = value
+		}
+		variant["required"] = []string{required}
+		variants = append(variants, variant)
+	}
+	return Schema{"oneOf": variants}
 }
 
 type wireSchemaDefinition struct {

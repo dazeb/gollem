@@ -93,6 +93,47 @@ func TestServerThreadGoalHandlersUseStructuredProtocol(t *testing.T) {
 	if accounted.Goal == nil || accounted.Goal.TokensUsed != 1100 || accounted.Goal.Status != protocol.ThreadGoalBudgetLimited || accounted.Goal.CreatedAt != createdAt {
 		t.Fatalf("accounted goal = %#v", accounted)
 	}
+	clearBudgetResp := server.HandleRequest(ctx, request("thread/goal/set", map[string]any{
+		"threadId":    thread.ID,
+		"tokenBudget": nil,
+	}))
+	if clearBudgetResp.Error != nil {
+		t.Fatalf("thread/goal/set clear budget error: %v", clearBudgetResp.Error)
+	}
+	var budgetCleared protocol.ThreadGoalSetResponse
+	decodeResult(t, clearBudgetResp, &budgetCleared)
+	if budgetCleared.Goal.TokenBudget != nil || budgetCleared.Goal.Status != protocol.ThreadGoalActive {
+		t.Fatalf("cleared budget goal = %#v", budgetCleared.Goal)
+	}
+	_ = server.DrainNotifications()
+
+	resetBudgetResp := server.HandleRequest(ctx, request("thread/goal/set", map[string]any{
+		"threadId":    thread.ID,
+		"tokenBudget": 1000,
+	}))
+	if resetBudgetResp.Error != nil {
+		t.Fatalf("thread/goal/set reset budget error: %v", resetBudgetResp.Error)
+	}
+	var budgetLimited protocol.ThreadGoalSetResponse
+	decodeResult(t, resetBudgetResp, &budgetLimited)
+	if budgetLimited.Goal.Status != protocol.ThreadGoalBudgetLimited {
+		t.Fatalf("reset budget goal = %#v", budgetLimited.Goal)
+	}
+	_ = server.DrainNotifications()
+
+	raiseBudgetResp := server.HandleRequest(ctx, request("thread/goal/set", map[string]any{
+		"threadId":    thread.ID,
+		"tokenBudget": 2000,
+	}))
+	if raiseBudgetResp.Error != nil {
+		t.Fatalf("thread/goal/set raise budget error: %v", raiseBudgetResp.Error)
+	}
+	var budgetRaised protocol.ThreadGoalSetResponse
+	decodeResult(t, raiseBudgetResp, &budgetRaised)
+	if budgetRaised.Goal.TokenBudget == nil || *budgetRaised.Goal.TokenBudget != 2000 || budgetRaised.Goal.Status != protocol.ThreadGoalActive {
+		t.Fatalf("raised budget goal = %#v", budgetRaised.Goal)
+	}
+	_ = server.DrainNotifications()
 
 	updateResp := server.HandleRequest(ctx, request("thread/goal/set", map[string]any{
 		"threadId":    thread.ID,
@@ -322,6 +363,23 @@ func TestThreadGoalLegacyProjectionVariants(t *testing.T) {
 	}
 	if _, rpcErr := decodeThreadGoalSetParams(json.RawMessage(`{}`)); rpcErr == nil || rpcErr.Code != protocol.CodeInvalidParams {
 		t.Fatalf("missing set id error = %#v", rpcErr)
+	}
+	var legacySet protocol.ThreadGoalSetParams
+	if err := json.Unmarshal([]byte(`{"threadId":"thread-legacy","goal":"new legacy goal","tokenBudget":10}`), &legacySet); err != nil {
+		t.Fatalf("decode legacy set: %v", err)
+	}
+	preGoalTurn := &store.Turn{
+		ThreadID:  thread.ID,
+		CreatedAt: createdAt.Add(time.Second),
+		Usage:     map[string]any{"usage": map[string]any{"inputTokens": 20}},
+	}
+	setAt := createdAt.Add(2 * time.Minute)
+	newGoal, rpcErr := applyThreadGoalSet(thread, legacySet, []*store.Turn{preGoalTurn}, setAt)
+	if rpcErr != nil {
+		t.Fatalf("apply legacy set: %v", rpcErr)
+	}
+	if newGoal.CreatedAt != setAt.Unix() || newGoal.UpdatedAt != setAt.Unix() || newGoal.TokensUsed != 0 || newGoal.Objective != "new legacy goal" {
+		t.Fatalf("new legacy goal = %#v", newGoal)
 	}
 	publishThreadGoalTurnUsage(nil, nil, nil)
 }

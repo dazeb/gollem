@@ -154,15 +154,15 @@ func TestThreadGoalSchemaAndBindings(t *testing.T) {
 	assertSchemaRequired(t, defs["ThreadGoal"].(Schema),
 		"threadId", "objective", "status", "tokenBudget", "tokensUsed", "timeUsedSeconds", "createdAt", "updatedAt")
 	assertSchemaNullableProperty(t, defs["ThreadGoal"].(Schema), "tokenBudget")
-	for _, name := range []string{"ThreadGoalGetParams", "ThreadGoalClearParams"} {
-		assertSchemaRequired(t, defs[name].(Schema), "threadId")
+	for _, name := range []string{"ThreadGoalGetParams", "ThreadGoalClearParams", "ThreadGoalSetParams"} {
+		assertSchemaRequiredIDAlternative(t, defs[name].(Schema))
 	}
-	assertSchemaRequired(t, defs["ThreadGoalSetParams"].(Schema), "threadId")
+	setParamsSchema := firstSchemaVariant(t, defs["ThreadGoalSetParams"].(Schema))
 	for _, field := range []string{"objective", "status", "tokenBudget"} {
-		if slices.Contains(schemaRequiredFields(defs["ThreadGoalSetParams"].(Schema)), field) {
+		if slices.Contains(schemaRequiredFields(setParamsSchema), field) {
 			t.Errorf("ThreadGoalSetParams.%s must remain optional", field)
 		}
-		assertSchemaNullableProperty(t, defs["ThreadGoalSetParams"].(Schema), field)
+		assertSchemaNullableProperty(t, setParamsSchema, field)
 	}
 	assertSchemaRequired(t, defs["ThreadGoalSetResponse"].(Schema), "goal")
 	assertSchemaRequired(t, defs["ThreadGoalGetResponse"].(Schema), "goal")
@@ -189,6 +189,47 @@ func TestThreadGoalSchemaAndBindings(t *testing.T) {
 	assertBinding(t, bindings, "thread/goal/cleared", SurfaceServerNotification, "ThreadGoalClearedNotification")
 }
 
+func assertSchemaRequiredIDAlternative(t *testing.T, definition Schema) {
+	t.Helper()
+	variants, _ := definition["oneOf"].([]any)
+	if len(variants) != 2 {
+		t.Fatalf("id alternatives = %#v, want two variants", variants)
+	}
+	want := map[string]bool{"threadId": false, "id": false}
+	for _, raw := range variants {
+		variant, ok := raw.(Schema)
+		if !ok {
+			t.Fatalf("id alternative = %#v, want schema", raw)
+		}
+		required := schemaRequiredFields(variant)
+		if len(required) != 1 || want[required[0]] {
+			t.Fatalf("id alternative required = %v", required)
+		}
+		if _, ok := want[required[0]]; !ok {
+			t.Fatalf("unexpected id alternative %q", required[0])
+		}
+		want[required[0]] = true
+	}
+	for field, seen := range want {
+		if !seen {
+			t.Errorf("missing required %s alternative", field)
+		}
+	}
+}
+
+func firstSchemaVariant(t *testing.T, definition Schema) Schema {
+	t.Helper()
+	variants, _ := definition["oneOf"].([]any)
+	if len(variants) == 0 {
+		t.Fatalf("schema has no variants: %#v", definition)
+	}
+	variant, ok := variants[0].(Schema)
+	if !ok {
+		t.Fatalf("schema variant = %#v", variants[0])
+	}
+	return variant
+}
+
 func TestThreadGoalWireV1FixtureUsesExportedContracts(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "thread_goal_wire_v1.json"))
 	if err != nil {
@@ -201,8 +242,8 @@ func TestThreadGoalWireV1FixtureUsesExportedContracts(t *testing.T) {
 	if fixture.ProtocolVersion != ProtocolVersion || fixture.SchemaVersion != SchemaVersion {
 		t.Fatalf("fixture versions = %s/%s, want %s/%s", fixture.ProtocolVersion, fixture.SchemaVersion, ProtocolVersion, SchemaVersion)
 	}
-	if len(fixture.Cases) != 8 {
-		t.Fatalf("thread goal fixture has %d cases, want 8", len(fixture.Cases))
+	if len(fixture.Cases) != 11 {
+		t.Fatalf("thread goal fixture has %d cases, want 11", len(fixture.Cases))
 	}
 	bindings := WireTypeBindings()
 	seen := make(map[string]bool, len(fixture.Cases))

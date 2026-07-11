@@ -81,7 +81,10 @@ Legacy `id` and arbitrary `goal`/`text`/`value` request fields remain optional
 Gollem extensions, and existing stored goal strings or objects are decoded into
 the structured response without discarding the stored value. Oversized legacy
 objectives are projected to the public 4,000-character limit without rewriting
-the underlying compatibility data.
+the underlying compatibility data. Generated validators and TypeScript require
+either public `threadId` or legacy `id`; empty identifier objects remain invalid.
+New legacy-form goals start accounting at set time, so earlier thread turns are
+not charged to a newly created goal.
 
 Turn records are the durable source of goal usage. On turn completion Gollem
 derives token/time counters and budget-limited state from persisted turns,
@@ -90,6 +93,8 @@ emits a turn-correlated goal update, and returns the same derived snapshot from
 concurrent user goal edit. Public goal mutations persist the structured goal,
 preserve creation time and prior usage, validate the six closed status values,
 limit objectives to 4,000 characters, and require positive non-null budgets.
+Clearing or raising a derived exhausted budget returns the goal to `active`
+unless the request also supplies an explicit status.
 
 ## Generation
 

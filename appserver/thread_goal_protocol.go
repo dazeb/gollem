@@ -57,6 +57,10 @@ func applyThreadGoalSet(thread *store.Thread, params protocol.ThreadGoalSetParam
 	legacyGoal, hasLegacyGoal := params.LegacyGoal()
 	if !exists && hasLegacyGoal {
 		goal = threadGoalFromValue(thread, legacyGoal)
+		goal.CreatedAt = now.Unix()
+		goal.UpdatedAt = now.Unix()
+		goal.TokensUsed = 0
+		goal.TimeUsedSeconds = 0
 		exists = true
 	}
 	if !exists {
@@ -103,6 +107,10 @@ func applyThreadGoalSet(thread *store.Thread, params protocol.ThreadGoalSetParam
 			return protocol.ThreadGoal{}, invalidParams("tokenBudget must be positive when provided", nil)
 		}
 		goal.TokenBudget = cloneInt64Pointer(params.TokenBudget)
+	}
+	if params.Status == nil && params.HasTokenBudget() && goal.Status == protocol.ThreadGoalBudgetLimited &&
+		(goal.TokenBudget == nil || goal.TokensUsed < *goal.TokenBudget) {
+		goal.Status = protocol.ThreadGoalActive
 	}
 	goal.ThreadID = thread.ID
 	if goal.CreatedAt <= 0 {
