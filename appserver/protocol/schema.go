@@ -115,6 +115,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecutionItemCompletedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemCompletedNotificationParams]()},
 		{Name: "CommandExecutionItemStartedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemStartedNotificationParams]()},
 		{Name: "CommandExecutionOutputDeltaNotificationParams", Type: reflect.TypeFor[CommandExecutionOutputDeltaNotificationParams]()},
+		{Name: "ContentItem", Type: reflect.TypeFor[ContentItem]()},
 		{Name: "ContextCompactionItem", Type: reflect.TypeFor[ContextCompactionItem]()},
 		{Name: "DaemonShutdownParams", Type: reflect.TypeFor[DaemonShutdownParams]()},
 		{Name: "DaemonShutdownState", Type: reflect.TypeFor[DaemonShutdownState]()},
@@ -165,6 +166,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FsWatchResponse", Type: reflect.TypeFor[FsWatchResponse]()},
 		{Name: "FsWriteFileParams", Type: reflect.TypeFor[FsWriteFileParams]()},
 		{Name: "FsWriteFileResponse", Type: reflect.TypeFor[FsWriteFileResponse]()},
+		{Name: "FunctionCallOutputBody", Type: reflect.TypeFor[FunctionCallOutputBody]()},
+		{Name: "FunctionCallOutputContentItem", Type: reflect.TypeFor[FunctionCallOutputContentItem]()},
 		{Name: "GrantedPermissionProfile", Type: reflect.TypeFor[GrantedPermissionProfile]()},
 		{Name: "HookPromptFragment", Type: reflect.TypeFor[HookPromptFragment]()},
 		{Name: "ImageDetail", Type: reflect.TypeFor[ImageDetail]()},
@@ -172,8 +175,11 @@ func wireSchemaDefinitions() Schema {
 		{Name: "InitializeCapabilities", Type: reflect.TypeFor[InitializeCapabilities]()},
 		{Name: "InitializeParams", Type: reflect.TypeFor[InitializeParams]()},
 		{Name: "InitializeResponse", Type: reflect.TypeFor[InitializeResponse]()},
+		{Name: "InternalChatMessageMetadataPassthrough", Type: reflect.TypeFor[InternalChatMessageMetadataPassthrough]()},
 		{Name: "ItemLifecycleNotificationParams", Type: reflect.TypeFor[ItemLifecycleNotificationParams]()},
 		{Name: "LegacyAppPathString", Type: reflect.TypeFor[LegacyAppPathString]()},
+		{Name: "LocalShellAction", Type: reflect.TypeFor[LocalShellAction]()},
+		{Name: "LocalShellStatus", Type: reflect.TypeFor[LocalShellStatus]()},
 		{Name: "MCPContent", Type: reflect.TypeFor[MCPContent]()},
 		{Name: "MCPToolCallError", Type: reflect.TypeFor[MCPToolCallError]()},
 		{Name: "MCPToolCallItem", Type: reflect.TypeFor[MCPToolCallItem]()},
@@ -357,6 +363,14 @@ func wireSchemaDefinitions() Schema {
 	schemas["ReasoningItemContent"] = rawResponseContentSchema(reasoningItemContentVariants)
 	schemas["ReasoningItemReasoningSummary"] = rawResponseContentSchema(reasoningItemSummaryVariants)
 	schemas["ResponsesApiWebSearchAction"] = responsesAPIWebSearchActionSchema()
+	schemas["ContentItem"] = contentItemSchema(contentItemVariants)
+	schemas["FunctionCallOutputContentItem"] = contentItemSchema(functionCallOutputContentItemVariants)
+	schemas["FunctionCallOutputBody"] = functionCallOutputBodySchema()
+	schemas["InternalChatMessageMetadataPassthrough"] = internalChatMessageMetadataSchema()
+	schemas["LocalShellStatus"] = stringEnumSchema(
+		string(LocalShellStatusCompleted), string(LocalShellStatusInProgress), string(LocalShellStatusIncomplete),
+	)
+	schemas["LocalShellAction"] = localShellActionSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
 		string(ImageDetailAuto), string(ImageDetailLow), string(ImageDetailHigh), string(ImageDetailOriginal),
@@ -621,6 +635,66 @@ func responsesAPIWebSearchActionVariantSchema(actionType string, fields Schema) 
 		"required":             []string{"type"},
 		"additionalProperties": false,
 	}
+}
+
+func contentItemSchema(variants []contentItemVariant) Schema {
+	items := make([]any, 0, len(variants))
+	for _, variant := range variants {
+		properties := Schema{
+			"type":        Schema{"type": "string", "enum": []any{variant.itemType}},
+			variant.field: Schema{"type": "string"},
+		}
+		if variant.optionalDetail {
+			properties["detail"] = Schema{"$ref": "#/$defs/ImageDetail"}
+		}
+		items = append(items, Schema{
+			"type":                 "object",
+			"properties":           properties,
+			"required":             []string{"type", variant.field},
+			"additionalProperties": false,
+		})
+	}
+	return Schema{"oneOf": items}
+}
+
+func functionCallOutputBodySchema() Schema {
+	return Schema{"anyOf": []any{
+		Schema{"type": "string"},
+		Schema{"type": "array", "items": Schema{"$ref": "#/$defs/FunctionCallOutputContentItem"}},
+	}}
+}
+
+func internalChatMessageMetadataSchema() Schema {
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"turn_id": Schema{"type": "string"},
+		},
+		"additionalProperties": false,
+	}
+}
+
+func localShellActionSchema() Schema {
+	return Schema{"oneOf": []any{Schema{
+		"type": "object",
+		"properties": Schema{
+			"type":              Schema{"type": "string", "enum": []any{"exec"}},
+			"command":           Schema{"type": "array", "items": Schema{"type": "string"}},
+			"timeout_ms":        nullableUnsignedIntegerSchema(),
+			"working_directory": nullableStringSchema(),
+			"env": Schema{"anyOf": []any{
+				Schema{"type": "object", "additionalProperties": Schema{"type": "string"}},
+				Schema{"type": "null"},
+			}},
+			"user": nullableStringSchema(),
+		},
+		"required":             []string{"type", "command", "timeout_ms", "working_directory", "env", "user"},
+		"additionalProperties": false,
+	}}}
+}
+
+func nullableUnsignedIntegerSchema() Schema {
+	return Schema{"anyOf": []any{Schema{"type": "integer", "minimum": 0}, Schema{"type": "null"}}}
 }
 
 func commandActionVariantSchema(actionType string, requiredFields []string, fields Schema) Schema {

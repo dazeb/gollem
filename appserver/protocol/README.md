@@ -313,6 +313,15 @@ canonically when absent, following generated TypeScript rather than the looser
 app-server action, add a provider/tool, export full `ResponseItem`, or bind live
 web-search events.
 
+The remaining standalone `ResponseItem` dependency values are exported without
+exporting the full response-item union: strict input/output content items,
+function-call output bodies, internal chat-message metadata, and local-shell
+actions/status. Optional image detail and metadata fields are non-null when
+present; local-shell execution keeps all generated TypeScript nullable fields
+required and validates unsigned JSON timeouts. These values are not bound to
+provider payloads, durable timeline items, live shell execution, or raw-response
+notifications.
+
 ## Generation
 
 Run:

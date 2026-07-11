@@ -739,6 +739,18 @@ export type CommandExecutionRequestApprovalResponse = {
 
 export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
 
+export type ContentItem = {
+  "text": string;
+  "type": "input_text";
+} | {
+  "detail"?: ImageDetail;
+  "image_url": string;
+  "type": "input_image";
+} | {
+  "text": string;
+  "type": "output_text";
+};
+
 export type ContextCompactedNotification = {
   "threadId": string;
   "turnId": string;
@@ -1100,6 +1112,20 @@ export type FsWriteFileResponse = {
   "path"?: string;
 };
 
+export type FunctionCallOutputBody = string | Array<FunctionCallOutputContentItem>;
+
+export type FunctionCallOutputContentItem = {
+  "text": string;
+  "type": "input_text";
+} | {
+  "detail"?: ImageDetail;
+  "image_url": string;
+  "type": "input_image";
+} | {
+  "encrypted_content": string;
+  "type": "encrypted_content";
+};
+
 export type GrantedPermissionProfile = {
   "fileSystem"?: AdditionalFileSystemPermissions;
   "network"?: AdditionalNetworkPermissions;
@@ -1141,6 +1167,10 @@ export type InitializeResponse = {
   "userAgent": string;
 };
 
+export type InternalChatMessageMetadataPassthrough = {
+  "turn_id"?: string;
+};
+
 export type ItemLifecycleNotificationParams = {
   "at": string;
   "item"?: TimelineItem | null;
@@ -1150,6 +1180,17 @@ export type ItemLifecycleNotificationParams = {
 };
 
 export type LegacyAppPathString = string;
+
+export type LocalShellAction = {
+  "command": Array<string>;
+  "env": Record<string, string> | null;
+  "timeout_ms": number | null;
+  "type": "exec";
+  "user": string | null;
+  "working_directory": string | null;
+};
+
+export type LocalShellStatus = "completed" | "in_progress" | "incomplete";
 
 export type MCPContent = {
   "text"?: string;
