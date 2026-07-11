@@ -324,6 +324,12 @@ app-server `WebSearchAction` contract and does not bind provider payloads,
 durable timeline items, live shell execution, lifecycle methods, or
 raw-response notifications.
 
+The next standalone `ThreadItem` dependencies are also exported without live
+item adoption: recursive precision-preserving `JsonValue`, strict image
+generation records, and exact JSON-valued `McpToolCallResult`. The existing
+all-caps MCP runtime result remains distinct because it still carries legacy
+`MCPContent[]` rather than general JSON values.
+
 ## Generation
 
 Run:
