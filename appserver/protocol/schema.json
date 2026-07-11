@@ -8086,6 +8086,18 @@
       ],
       "type": "string"
     },
+    "ThreadStartedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
     "ThreadStatus": {
       "oneOf": [
         {
@@ -8156,6 +8168,22 @@
           "type": "object"
         }
       ]
+    },
+    "ThreadStatusChangedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/ThreadStatus"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "status"
+      ],
+      "type": "object"
     },
     "ThreadTokenUsage": {
       "additionalProperties": false,
@@ -8643,6 +8671,22 @@
       ],
       "type": "object"
     },
+    "TurnCompletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turn": {
+          "$ref": "#/$defs/Turn"
+        }
+      },
+      "required": [
+        "threadId",
+        "turn"
+      ],
+      "type": "object"
+    },
     "TurnDiffUpdatedNotification": {
       "additionalProperties": false,
       "properties": {
@@ -8786,6 +8830,22 @@
         "status",
         "createdAt",
         "updatedAt"
+      ],
+      "type": "object"
+    },
+    "TurnStartedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turn": {
+          "$ref": "#/$defs/Turn"
+        }
+      },
+      "required": [
+        "threadId",
+        "turn"
       ],
       "type": "object"
     },

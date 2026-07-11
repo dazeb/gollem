@@ -2194,6 +2194,10 @@ export type ThreadSource = string;
 
 export type ThreadSourceKind = "cli" | "vscode" | "exec" | "appServer" | "subAgent" | "subAgentReview" | "subAgentCompact" | "subAgentThreadSpawn" | "subAgentOther" | "unknown";
 
+export type ThreadStartedNotification = {
+  "thread": Thread;
+};
+
 export type ThreadStatus = {
   "type": "notLoaded";
 } | {
@@ -2203,6 +2207,11 @@ export type ThreadStatus = {
 } | {
   "activeFlags": Array<ThreadActiveFlag>;
   "type": "active";
+};
+
+export type ThreadStatusChangedNotification = {
+  "status": ThreadStatus;
+  "threadId": string;
 };
 
 export type ThreadTokenUsage = {
@@ -2325,6 +2334,11 @@ export type Turn = {
   "status": TurnStatus;
 };
 
+export type TurnCompletedNotification = {
+  "threadId": string;
+  "turn": Turn;
+};
+
 export type TurnDiffUpdatedNotification = {
   "diff": string;
   "threadId": string;
@@ -2357,6 +2371,11 @@ export type TurnRecord = {
   "threadId": string;
   "updatedAt": string;
   "usage"?: Record<string, unknown> | null;
+};
+
+export type TurnStartedNotification = {
+  "threadId": string;
+  "turn": Turn;
 };
 
 export type TurnStatus = "completed" | "interrupted" | "failed" | "inProgress";
