@@ -804,11 +804,10 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadIDParams
-	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+	threadID, rpcErr := decodeThreadStatusID(raw, method)
+	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
 	if threadID == "" {
 		return nil, invalidParams("threadId is required", nil)
 	}
@@ -843,7 +842,7 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 	case store.ThreadDeleted:
 		s.publishThreadNotification("thread/deleted", thread)
 	}
-	return map[string]any{"thread": thread}, nil
+	return protocolThreadStatusResponse(method, thread), nil
 }
 
 func (s *Server) handleThreadSettingsUpdate(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1053,15 +1052,15 @@ func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadNameSetParams
+	var params protocol.ThreadSetNameParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
+	threadID := params.EffectiveThreadID()
 	if threadID == "" {
 		return nil, invalidParams("threadId is required", nil)
 	}
-	name := params.name()
+	name := strings.TrimSpace(params.EffectiveName())
 	if name == "" {
 		return nil, invalidParams("name is required", nil)
 	}
@@ -1071,10 +1070,11 @@ func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (
 	}
 	s.markThreadLoaded(thread)
 	s.publishThreadNameNotification(thread)
-	return threadNameSetResult{
+	record := protocolThreadRecord(thread)
+	return protocol.ThreadSetNameResponse{
 		ThreadID: thread.ID,
 		Name:     thread.Title,
-		Thread:   thread,
+		Thread:   &record,
 	}, nil
 }
 
@@ -2189,20 +2189,6 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-type threadLoadedListParams struct {
-	Cursor string `json:"cursor,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
-}
-
-type threadLoadedListResult struct {
-	Data       []string `json:"data"`
-	NextCursor *string  `json:"nextCursor"`
-}
-
-type threadUnsubscribeResponse struct {
-	Status string `json:"status"`
-}
-
 type threadSearchParams struct {
 	Cursor        string   `json:"cursor,omitempty"`
 	Limit         int      `json:"limit,omitempty"`
@@ -2256,12 +2242,6 @@ type threadMemoryModeSetResult struct {
 	ThreadID   string        `json:"threadId"`
 	MemoryMode string        `json:"memoryMode"`
 	Thread     *store.Thread `json:"thread,omitempty"`
-}
-
-type threadNameSetResult struct {
-	ThreadID string        `json:"threadId"`
-	Name     string        `json:"name"`
-	Thread   *store.Thread `json:"thread,omitempty"`
 }
 
 type threadForkParams struct {

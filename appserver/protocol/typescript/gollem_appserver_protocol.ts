@@ -881,6 +881,15 @@ export type SortDirection = "asc" | "desc";
 
 export type Surface = "client-request" | "server-notification" | "server-request" | "client-notification" | "gollem-extension";
 
+export type ThreadArchiveParams = {
+  "id"?: string;
+  "threadId": string;
+};
+
+export type ThreadArchiveResponse = {
+  "thread"?: ThreadRecord | null;
+};
+
 export type ThreadCompactStartParams = {
   "id"?: string;
   "threadId"?: string;
@@ -891,6 +900,15 @@ export type ThreadCompactStartResponse = Record<string, never>;
 export type ThreadCompactedNotificationParams = {
   "threadId": string;
   "turnId": string;
+};
+
+export type ThreadDeleteParams = {
+  "id"?: string;
+  "threadId": string;
+};
+
+export type ThreadDeleteResponse = {
+  "thread"?: ThreadRecord | null;
 };
 
 export type ThreadLifecycleStatus = "active" | "archived" | "deleted";
@@ -917,6 +935,16 @@ export type ThreadListResponse = {
   "data": Array<ThreadRecord>;
   "nextCursor"?: string | null;
   "threads"?: Array<ThreadRecord>;
+};
+
+export type ThreadLoadedListParams = {
+  "cursor"?: string | null;
+  "limit"?: number | null;
+};
+
+export type ThreadLoadedListResponse = {
+  "data": Array<string>;
+  "nextCursor"?: string | null;
 };
 
 export type ThreadReadParams = {
@@ -949,6 +977,19 @@ export type ThreadRecord = {
   "workspace"?: string;
 };
 
+export type ThreadSetNameParams = {
+  "id"?: string;
+  "name": string;
+  "threadId": string;
+  "title"?: string;
+};
+
+export type ThreadSetNameResponse = {
+  "name"?: string;
+  "thread"?: ThreadRecord | null;
+  "threadId"?: string;
+};
+
 export type ThreadSortKey = "created_at" | "updated_at" | "recency_at";
 
 export type ThreadSourceKind = "cli" | "vscode" | "exec" | "appServer" | "subAgent" | "subAgentReview" | "subAgentCompact" | "subAgentThreadSpawn" | "subAgentOther" | "unknown";
@@ -958,6 +999,26 @@ export type ThreadTokenUsageUpdatedNotificationParams = {
   "tokenUsage": TokenUsage;
   "turnId": string;
 };
+
+export type ThreadUnarchiveParams = {
+  "id"?: string;
+  "threadId": string;
+};
+
+export type ThreadUnarchiveResponse = {
+  "thread": ThreadRecord;
+};
+
+export type ThreadUnsubscribeParams = {
+  "id"?: string;
+  "threadId": string;
+};
+
+export type ThreadUnsubscribeResponse = {
+  "status": ThreadUnsubscribeStatus;
+};
+
+export type ThreadUnsubscribeStatus = "notLoaded" | "notSubscribed" | "unsubscribed";
 
 export type TimelineItem = {
   "createdAt": string;
@@ -1042,11 +1103,17 @@ export const wireTypeBindings = [
   { "method": "item/permissions/requestApproval", "surface": "server-request", "params": ["PermissionsApprovalRequestParams"] },
   { "method": "item/started", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
   { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotificationParams"] },
+  { "method": "thread/archive", "surface": "client-request", "params": ["ThreadArchiveParams"], "result": ["ThreadArchiveResponse"] },
   { "method": "thread/compact/start", "surface": "client-request", "params": ["ThreadCompactStartParams"], "result": ["ThreadCompactStartResponse"] },
   { "method": "thread/compacted", "surface": "server-notification", "params": ["ThreadCompactedNotificationParams"] },
+  { "method": "thread/delete", "surface": "client-request", "params": ["ThreadDeleteParams"], "result": ["ThreadDeleteResponse"] },
   { "method": "thread/list", "surface": "client-request", "params": ["ThreadListParams"], "result": ["ThreadListResponse"] },
+  { "method": "thread/loaded/list", "surface": "client-request", "params": ["ThreadLoadedListParams"], "result": ["ThreadLoadedListResponse"] },
+  { "method": "thread/name/set", "surface": "client-request", "params": ["ThreadSetNameParams"], "result": ["ThreadSetNameResponse"] },
   { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResponse"] },
   { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotificationParams"] },
+  { "method": "thread/unarchive", "surface": "client-request", "params": ["ThreadUnarchiveParams"], "result": ["ThreadUnarchiveResponse"] },
+  { "method": "thread/unsubscribe", "surface": "client-request", "params": ["ThreadUnsubscribeParams"], "result": ["ThreadUnsubscribeResponse"] },
   { "method": "turn/diff/updated", "surface": "server-notification", "params": ["TurnDiffUpdatedNotificationParams"] },
 ] as const satisfies readonly WireTypeBinding[];
 
@@ -1068,11 +1135,17 @@ export interface MethodParamsByName {
   "item/permissions/requestApproval": PermissionsApprovalRequestParams;
   "item/started": ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
   "serverRequest/resolved": ServerRequestResolvedNotificationParams;
+  "thread/archive": ThreadArchiveParams;
   "thread/compact/start": ThreadCompactStartParams;
   "thread/compacted": ThreadCompactedNotificationParams;
+  "thread/delete": ThreadDeleteParams;
   "thread/list": ThreadListParams;
+  "thread/loaded/list": ThreadLoadedListParams;
+  "thread/name/set": ThreadSetNameParams;
   "thread/read": ThreadReadParams;
   "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotificationParams;
+  "thread/unarchive": ThreadUnarchiveParams;
+  "thread/unsubscribe": ThreadUnsubscribeParams;
   "turn/diff/updated": TurnDiffUpdatedNotificationParams;
 }
 
@@ -1084,9 +1157,15 @@ export interface MethodResultsByName {
   "daemon/stop": DaemonStopResult;
   "daemon/version": DaemonVersion;
   "initialize": InitializeResponse;
+  "thread/archive": ThreadArchiveResponse;
   "thread/compact/start": ThreadCompactStartResponse;
+  "thread/delete": ThreadDeleteResponse;
   "thread/list": ThreadListResponse;
+  "thread/loaded/list": ThreadLoadedListResponse;
+  "thread/name/set": ThreadSetNameResponse;
   "thread/read": ThreadReadResponse;
+  "thread/unarchive": ThreadUnarchiveResponse;
+  "thread/unsubscribe": ThreadUnsubscribeResponse;
 }
 
 export type BoundRequestMethod = Extract<
