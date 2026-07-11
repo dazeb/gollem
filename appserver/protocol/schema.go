@@ -89,6 +89,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRequestBase", Type: reflect.TypeFor[ApprovalRequestBase]()},
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
+		{Name: "ByteRange", Type: reflect.TypeFor[ByteRange]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
 		{Name: "CommandExecOutputDeltaNotification", Type: reflect.TypeFor[CommandExecOutputDeltaNotification]()},
 		{Name: "CommandExecOutputStream", Type: reflect.TypeFor[CommandExecOutputStream]()},
@@ -158,6 +159,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FsWriteFileParams", Type: reflect.TypeFor[FsWriteFileParams]()},
 		{Name: "FsWriteFileResponse", Type: reflect.TypeFor[FsWriteFileResponse]()},
 		{Name: "GrantedPermissionProfile", Type: reflect.TypeFor[GrantedPermissionProfile]()},
+		{Name: "HookPromptFragment", Type: reflect.TypeFor[HookPromptFragment]()},
+		{Name: "ImageDetail", Type: reflect.TypeFor[ImageDetail]()},
 		{Name: "ImplementationInfo", Type: reflect.TypeFor[ImplementationInfo]()},
 		{Name: "InitializeCapabilities", Type: reflect.TypeFor[InitializeCapabilities]()},
 		{Name: "InitializeParams", Type: reflect.TypeFor[InitializeParams]()},
@@ -171,6 +174,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallItemStartedNotificationParams", Type: reflect.TypeFor[MCPToolCallItemStartedNotificationParams]()},
 		{Name: "MCPToolCallProgressNotificationParams", Type: reflect.TypeFor[MCPToolCallProgressNotificationParams]()},
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
+		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
+		{Name: "MemoryCitationEntry", Type: reflect.TypeFor[MemoryCitationEntry]()},
+		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},
 		{Name: "McpElicitationArrayType", Type: reflect.TypeFor[McpElicitationArrayType]()},
 		{Name: "McpElicitationBooleanSchema", Type: reflect.TypeFor[McpElicitationBooleanSchema]()},
 		{Name: "McpElicitationBooleanType", Type: reflect.TypeFor[McpElicitationBooleanType]()},
@@ -258,6 +264,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadUnsubscribeParams", Type: reflect.TypeFor[ThreadUnsubscribeParams]()},
 		{Name: "ThreadUnsubscribeResponse", Type: reflect.TypeFor[ThreadUnsubscribeResponse]()},
 		{Name: "ThreadUnsubscribeStatus", Type: reflect.TypeFor[ThreadUnsubscribeStatus]()},
+		{Name: "TextElement", Type: reflect.TypeFor[TextElement]()},
 		{Name: "TimelineItem", Type: reflect.TypeFor[TimelineItem]()},
 		{Name: "TokenUsage", Type: reflect.TypeFor[TokenUsage]()},
 		{Name: "TokenUsageBreakdown", Type: reflect.TypeFor[TokenUsageBreakdown]()},
@@ -270,6 +277,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
+		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
@@ -309,6 +317,15 @@ func wireSchemaDefinitions() Schema {
 		string(SurfaceGollemExtension),
 	)
 	schemas["SortDirection"] = stringEnumSchema(string(SortDirectionAsc), string(SortDirectionDesc))
+	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
+	schemas["ImageDetail"] = stringEnumSchema(
+		string(ImageDetailAuto), string(ImageDetailLow), string(ImageDetailHigh), string(ImageDetailOriginal),
+	)
+	setSchemaIntegerMinimum(schemas["MemoryCitationEntry"].(Schema), 0, "lineStart", "lineEnd")
+	schemas["MessagePhase"] = stringEnumSchema(
+		string(MessagePhaseCommentary), string(MessagePhaseFinalAnswer),
+	)
+	schemas["UserInput"] = userInputSchema()
 	schemas["ThreadLifecycleStatus"] = stringEnumSchema(
 		string(ThreadLifecycleActive), string(ThreadLifecycleArchived), string(ThreadLifecycleDeleted),
 	)
@@ -474,6 +491,51 @@ func wireSchemaDefinitions() Schema {
 		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
+}
+
+func userInputSchema() Schema {
+	return Schema{"oneOf": []any{
+		userInputVariantSchema("text", []string{"text", "text_elements"}, Schema{
+			"text": Schema{"type": "string"},
+			"text_elements": Schema{
+				"type":  "array",
+				"items": Schema{"$ref": "#/$defs/TextElement"},
+			},
+		}),
+		userInputVariantSchema("image", []string{"url"}, Schema{
+			"detail": Schema{"$ref": "#/$defs/ImageDetail"},
+			"url":    Schema{"type": "string"},
+		}),
+		userInputVariantSchema("localImage", []string{"path"}, Schema{
+			"detail": Schema{"$ref": "#/$defs/ImageDetail"},
+			"path":   Schema{"type": "string"},
+		}),
+		userInputVariantSchema("skill", []string{"name", "path"}, Schema{
+			"name": Schema{"type": "string"},
+			"path": Schema{"type": "string"},
+		}),
+		userInputVariantSchema("mention", []string{"name", "path"}, Schema{
+			"name": Schema{"type": "string"},
+			"path": Schema{"type": "string"},
+		}),
+	}}
+}
+
+func userInputVariantSchema(inputType string, requiredFields []string, fields Schema) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{inputType}},
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	required := []string{"type"}
+	required = append(required, requiredFields...)
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
 }
 
 func fileSystemSpecialPathSchema() Schema {

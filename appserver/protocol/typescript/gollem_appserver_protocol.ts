@@ -536,6 +536,11 @@ export type ApprovalRespondResult = {
   "requestId": string;
 };
 
+export type ByteRange = {
+  "end": number;
+  "start": number;
+};
+
 export type ClientInfo = {
   "name": string;
   "title"?: string | null;
@@ -1060,6 +1065,13 @@ export type GrantedPermissionProfile = {
   "network"?: AdditionalNetworkPermissions;
 };
 
+export type HookPromptFragment = {
+  "hookRunId": string;
+  "text": string;
+};
+
+export type ImageDetail = "auto" | "low" | "high" | "original";
+
 export type ImplementationInfo = {
   "name": string;
   "version"?: string;
@@ -1324,6 +1336,20 @@ export type McpToolCallProgressNotification = {
 
 export type McpToolCallStatus = "inProgress" | "completed" | "failed";
 
+export type MemoryCitation = {
+  "entries": Array<MemoryCitationEntry>;
+  "threadIds": Array<string>;
+};
+
+export type MemoryCitationEntry = {
+  "lineEnd": number;
+  "lineStart": number;
+  "note": string;
+  "path": string;
+};
+
+export type MessagePhase = "commentary" | "final_answer";
+
 export type MethodInfo = {
   "method": string;
   "source"?: string;
@@ -1433,6 +1459,11 @@ export type ServerRequestResolvedNotificationParams = ServerRequestResolvedNotif
 export type SortDirection = "asc" | "desc";
 
 export type Surface = "client-request" | "server-notification" | "server-request" | "client-notification" | "gollem-extension";
+
+export type TextElement = {
+  "byteRange": ByteRange;
+  "placeholder": string | null;
+};
 
 export type ThreadArchiveParams = {
   "id"?: string;
@@ -1841,6 +1872,28 @@ export type TurnRecord = {
   "threadId": string;
   "updatedAt": string;
   "usage"?: Record<string, unknown> | null;
+};
+
+export type UserInput = {
+  "text": string;
+  "text_elements": Array<TextElement>;
+  "type": "text";
+} | {
+  "detail"?: ImageDetail;
+  "type": "image";
+  "url": string;
+} | {
+  "detail"?: ImageDetail;
+  "path": string;
+  "type": "localImage";
+} | {
+  "name": string;
+  "path": string;
+  "type": "skill";
+} | {
+  "name": string;
+  "path": string;
+  "type": "mention";
 };
 
 export type WireTypeBinding = {

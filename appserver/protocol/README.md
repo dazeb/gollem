@@ -244,6 +244,24 @@ asynchronously and returns a process snapshot, while the public contract
 requires argv, PTY/sandbox/stream/cap/timeout controls and a deferred buffered
 result after process exit.
 
+## Exported Thread-Item Message Prerequisites
+
+The schema exports the exact public `ByteRange`, `TextElement`, `ImageDetail`,
+`UserInput`, `MessagePhase`, `MemoryCitationEntry`, `MemoryCitation`, and
+`HookPromptFragment` contracts. Byte and citation offsets are nonnegative but
+do not impose range ordering. Text elements retain a required nullable
+placeholder, text input retains the public snake-case `text_elements` field,
+and image detail remains optional but rejects explicit null. Citation and hook
+fields use their public camel-case spellings, and paths remain uninterpreted
+strings rather than gaining absolute-path requirements.
+
+These definitions are prerequisites only. They do not alias Gollem's durable
+`ThreadRecord`, `TurnRecord`, or `TimelineItem`; bind `item/started` or
+`item/completed` to the still-incomplete public `ThreadItem`; or claim that the
+runtime emits message, memory-citation, or hook-prompt items. Those bindings
+remain separate work after the full item family and its runtime data paths are
+implemented.
+
 ## Generation
 
 Run:
@@ -271,14 +289,16 @@ binding metadata. It also rewrites the TypeScript compile fixtures at
 permission profile fixture at
 `typescript/testdata/permission_profile_wire_v1.ts`. File-change item, dynamic
 tool-call, user-input, MCP-elicitation, command-approval, and permission-profile
-variants also have strict negative compile contracts. Tests compare generated
+variants also have strict negative compile contracts. The exported thread-item
+message prerequisites have a separate strict compile contract at
+`typescript/testdata/thread_item_message_contract.ts`. Tests compare generated
 bytes with the checked-in files, verify every type binding references a known
 method and definition, and enforce a compatibility floor for runtime items,
 daemon status, initialization, thread discovery, thread controls, thread goals,
 metadata, lifecycle notifications, command-exec controls, and file changes.
 Dynamic client-tool, structured user-input, MCP-elicitation, command approval,
-and permission-profile contracts are covered by the same floor and strict
-fixtures.
+permission-profile, and thread-item prerequisite contracts are covered by the
+same floor and strict fixtures.
 
 `testdata/runtime_wire_v1.json` contains versioned request, response, and
 notification examples for generated-client compatibility tests.
