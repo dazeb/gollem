@@ -171,11 +171,13 @@ func wireSchemaDefinitions() Schema {
 		{Name: "GrantedPermissionProfile", Type: reflect.TypeFor[GrantedPermissionProfile]()},
 		{Name: "HookPromptFragment", Type: reflect.TypeFor[HookPromptFragment]()},
 		{Name: "ImageDetail", Type: reflect.TypeFor[ImageDetail]()},
+		{Name: "ImageGenerationItem", Type: reflect.TypeFor[ImageGenerationItem]()},
 		{Name: "ImplementationInfo", Type: reflect.TypeFor[ImplementationInfo]()},
 		{Name: "InitializeCapabilities", Type: reflect.TypeFor[InitializeCapabilities]()},
 		{Name: "InitializeParams", Type: reflect.TypeFor[InitializeParams]()},
 		{Name: "InitializeResponse", Type: reflect.TypeFor[InitializeResponse]()},
 		{Name: "InternalChatMessageMetadataPassthrough", Type: reflect.TypeFor[InternalChatMessageMetadataPassthrough]()},
+		{Name: "JsonValue", Type: reflect.TypeFor[JsonValue]()},
 		{Name: "ItemLifecycleNotificationParams", Type: reflect.TypeFor[ItemLifecycleNotificationParams]()},
 		{Name: "LegacyAppPathString", Type: reflect.TypeFor[LegacyAppPathString]()},
 		{Name: "LocalShellAction", Type: reflect.TypeFor[LocalShellAction]()},
@@ -188,6 +190,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallProgressNotificationParams", Type: reflect.TypeFor[MCPToolCallProgressNotificationParams]()},
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
 		{Name: "McpToolCallAppContext", Type: reflect.TypeFor[McpToolCallAppContext]()},
+		{Name: "McpToolCallResult", Type: reflect.TypeFor[McpToolCallResult]()},
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
 		{Name: "MemoryCitationEntry", Type: reflect.TypeFor[MemoryCitationEntry]()},
 		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},
@@ -373,6 +376,7 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["LocalShellAction"] = localShellActionSchema()
 	schemas["ResponseItem"] = responseItemSchema()
+	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
 		string(ImageDetailAuto), string(ImageDetailLow), string(ImageDetailHigh), string(ImageDetailOriginal),
@@ -697,6 +701,20 @@ func localShellActionSchema() Schema {
 
 func nullableUnsignedIntegerSchema() Schema {
 	return Schema{"anyOf": []any{Schema{"type": "integer", "minimum": 0}, Schema{"type": "null"}}}
+}
+
+func jsonValueSchema() Schema {
+	return Schema{"anyOf": []any{
+		Schema{"type": "number"},
+		Schema{"type": "string"},
+		Schema{"type": "boolean"},
+		Schema{"type": "array", "items": Schema{"$ref": "#/$defs/JsonValue"}},
+		Schema{
+			"type": "object", "additionalProperties": Schema{"$ref": "#/$defs/JsonValue"},
+			"x-gollem-typescript-recursive-map": true,
+		},
+		Schema{"type": "null"},
+	}}
 }
 
 func responseItemSchema() Schema {

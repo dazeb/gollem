@@ -1138,6 +1138,14 @@ export type HookPromptFragment = {
 
 export type ImageDetail = "auto" | "low" | "high" | "original";
 
+export type ImageGenerationItem = {
+  "id": string;
+  "result": string;
+  "revisedPrompt": string | null;
+  "savedPath"?: AbsolutePathBuf;
+  "status": string;
+};
+
 export type ImplementationInfo = {
   "name": string;
   "version"?: string;
@@ -1178,6 +1186,8 @@ export type ItemLifecycleNotificationParams = {
   "threadId": string;
   "turnId"?: string;
 };
+
+export type JsonValue = number | string | boolean | Array<JsonValue> | { [key: string]: JsonValue } | null;
 
 export type LegacyAppPathString = string;
 
@@ -1422,6 +1432,12 @@ export type McpToolCallProgressNotification = {
   "message": string;
   "threadId": string;
   "turnId": string;
+};
+
+export type McpToolCallResult = {
+  "_meta": JsonValue | null;
+  "content": Array<JsonValue>;
+  "structuredContent": JsonValue | null;
 };
 
 export type McpToolCallStatus = "inProgress" | "completed" | "failed";

@@ -2668,6 +2668,40 @@
       ],
       "type": "string"
     },
+    "ImageGenerationItem": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "result": {
+          "type": "string"
+        },
+        "revisedPrompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "savedPath": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "revisedPrompt",
+        "result"
+      ],
+      "type": "object"
+    },
     "ImplementationInfo": {
       "additionalProperties": false,
       "properties": {
@@ -2836,6 +2870,35 @@
         "at"
       ],
       "type": "object"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object",
+          "x-gollem-typescript-recursive-map": true
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "LegacyAppPathString": {
       "type": "string"
@@ -3888,6 +3951,43 @@
         "turnId",
         "itemId",
         "message"
+      ],
+      "type": "object"
+    },
+    "McpToolCallResult": {
+      "additionalProperties": false,
+      "properties": {
+        "_meta": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content": {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "array"
+        },
+        "structuredContent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "structuredContent",
+        "_meta"
       ],
       "type": "object"
     },
