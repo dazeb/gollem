@@ -311,6 +311,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ToolRequestUserInputParams", Type: reflect.TypeFor[ToolRequestUserInputParams]()},
 		{Name: "ToolRequestUserInputQuestion", Type: reflect.TypeFor[ToolRequestUserInputQuestion]()},
 		{Name: "ToolRequestUserInputResponse", Type: reflect.TypeFor[ToolRequestUserInputResponse]()},
+		{Name: "Turn", Type: reflect.TypeFor[Turn]()},
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
 		{Name: "TurnError", Type: reflect.TypeFor[TurnError]()},
 		{Name: "TurnItemsView", Type: reflect.TypeFor[TurnItemsView]()},
