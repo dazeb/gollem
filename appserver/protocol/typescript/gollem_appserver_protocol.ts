@@ -557,6 +557,28 @@ export type ClientInfo = {
   "version": string;
 };
 
+export type CodexErrorInfo = "contextWindowExceeded" | "sessionBudgetExceeded" | "usageLimitExceeded" | "serverOverloaded" | "cyberPolicy" | "internalServerError" | "unauthorized" | "badRequest" | "threadRollbackFailed" | "sandboxError" | "other" | {
+  "httpConnectionFailed": {
+    "httpStatusCode": number | null;
+  };
+} | {
+  "responseStreamConnectionFailed": {
+    "httpStatusCode": number | null;
+  };
+} | {
+  "responseStreamDisconnected": {
+    "httpStatusCode": number | null;
+  };
+} | {
+  "responseTooManyFailedAttempts": {
+    "httpStatusCode": number | null;
+  };
+} | {
+  "activeTurnNotSteerable": {
+    "turnKind": NonSteerableTurnKind;
+  };
+};
+
 export type CollabAgentState = {
   "message": string | null;
   "status": CollabAgentStatus;
@@ -1725,9 +1747,27 @@ export type ServerRequestResolvedNotification = {
 
 export type ServerRequestResolvedNotificationParams = ServerRequestResolvedNotification;
 
+export type SessionSource = "cli" | "vscode" | "exec" | "appServer" | "unknown" | {
+  "custom": string;
+} | {
+  "subAgent": SubAgentSource;
+};
+
 export type SortDirection = "asc" | "desc";
 
 export type SubAgentActivityKind = "started" | "interacted" | "interrupted";
+
+export type SubAgentSource = "review" | "compact" | "memory_consolidation" | {
+  "thread_spawn": {
+    "agent_nickname": string | null;
+    "agent_path": AgentPath | null;
+    "agent_role": string | null;
+    "depth": number;
+    "parent_thread_id": ThreadId;
+  };
+} | {
+  "other": string;
+};
 
 export type Surface = "client-request" | "server-notification" | "server-request" | "client-notification" | "gollem-extension";
 
@@ -2130,6 +2170,17 @@ export type ThreadSource = string;
 
 export type ThreadSourceKind = "cli" | "vscode" | "exec" | "appServer" | "subAgent" | "subAgentReview" | "subAgentCompact" | "subAgentThreadSpawn" | "subAgentOther" | "unknown";
 
+export type ThreadStatus = {
+  "type": "notLoaded";
+} | {
+  "type": "idle";
+} | {
+  "type": "systemError";
+} | {
+  "activeFlags": Array<ThreadActiveFlag>;
+  "type": "active";
+};
+
 export type ThreadTokenUsage = {
   "last": TokenUsageBreakdown;
   "modelContextWindow": number | null;
@@ -2246,6 +2297,12 @@ export type TurnDiffUpdatedNotification = {
 };
 
 export type TurnDiffUpdatedNotificationParams = TurnDiffUpdatedNotification;
+
+export type TurnError = {
+  "additionalDetails": string | null;
+  "codexErrorInfo": CodexErrorInfo | null;
+  "message": string;
+};
 
 export type TurnItemsView = "notLoaded" | "summary" | "full";
 

@@ -93,6 +93,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ByteRange", Type: reflect.TypeFor[ByteRange]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
+		{Name: "CodexErrorInfo", Type: reflect.TypeFor[CodexErrorInfo]()},
 		{Name: "CollabAgentState", Type: reflect.TypeFor[CollabAgentState]()},
 		{Name: "CollabAgentStatus", Type: reflect.TypeFor[CollabAgentStatus]()},
 		{Name: "CollabAgentTool", Type: reflect.TypeFor[CollabAgentTool]()},
@@ -243,9 +244,11 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
+		{Name: "SessionSource", Type: reflect.TypeFor[SessionSource]()},
 		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
 		{Name: "SortDirection", Type: reflect.TypeFor[SortDirection]()},
 		{Name: "SubAgentActivityKind", Type: reflect.TypeFor[SubAgentActivityKind]()},
+		{Name: "SubAgentSource", Type: reflect.TypeFor[SubAgentSource]()},
 		{Name: "ThreadActiveFlag", Type: reflect.TypeFor[ThreadActiveFlag]()},
 		{Name: "ThreadArchiveParams", Type: reflect.TypeFor[ThreadArchiveParams]()},
 		{Name: "ThreadArchiveResponse", Type: reflect.TypeFor[ThreadArchiveResponse]()},
@@ -289,6 +292,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadSortKey", Type: reflect.TypeFor[ThreadSortKey]()},
 		{Name: "ThreadSource", Type: reflect.TypeFor[ThreadSource]()},
 		{Name: "ThreadSourceKind", Type: reflect.TypeFor[ThreadSourceKind]()},
+		{Name: "ThreadStatus", Type: reflect.TypeFor[ThreadStatus]()},
 		{Name: "ThreadItem", Type: reflect.TypeFor[ThreadItem]()},
 		{Name: "ThreadTokenUsageUpdatedNotificationParams", Type: reflect.TypeFor[ThreadTokenUsageUpdatedNotificationParams]()},
 		{Name: "ThreadUnarchiveParams", Type: reflect.TypeFor[ThreadUnarchiveParams]()},
@@ -308,6 +312,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ToolRequestUserInputQuestion", Type: reflect.TypeFor[ToolRequestUserInputQuestion]()},
 		{Name: "ToolRequestUserInputResponse", Type: reflect.TypeFor[ToolRequestUserInputResponse]()},
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
+		{Name: "TurnError", Type: reflect.TypeFor[TurnError]()},
 		{Name: "TurnItemsView", Type: reflect.TypeFor[TurnItemsView]()},
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
@@ -575,6 +580,10 @@ func wireSchemaDefinitions() Schema {
 		string(TurnStatusCompleted), string(TurnStatusInterrupted), string(TurnStatusFailed),
 		string(TurnStatusInProgress),
 	)
+	schemas["CodexErrorInfo"] = codexErrorInfoSchema()
+	schemas["ThreadStatus"] = threadStatusSchema()
+	schemas["SubAgentSource"] = subAgentSourceSchema()
+	schemas["SessionSource"] = sessionSourceSchema()
 	schemas["ThreadUnsubscribeStatus"] = stringEnumSchema(
 		string(ThreadUnsubscribeNotLoaded), string(ThreadUnsubscribeNotSubscribed),
 		string(ThreadUnsubscribeUnsubscribed),
@@ -584,6 +593,99 @@ func wireSchemaDefinitions() Schema {
 		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
+}
+
+func codexErrorInfoSchema() Schema {
+	variants := []any{stringEnumSchema(codexErrorInfoStrings...)}
+	for _, name := range codexErrorHTTPVariants {
+		variants = append(variants, threadTurnDependencyObjectVariant(name, Schema{
+			"type": "object",
+			"properties": Schema{
+				"httpStatusCode": Schema{"anyOf": []any{
+					Schema{"type": "integer", "minimum": 0, "maximum": 65535},
+					Schema{"type": "null"},
+				}},
+			},
+			"required":             []string{"httpStatusCode"},
+			"additionalProperties": false,
+		}))
+	}
+	variants = append(variants, threadTurnDependencyObjectVariant("activeTurnNotSteerable", Schema{
+		"type": "object",
+		"properties": Schema{
+			"turnKind": Schema{"$ref": "#/$defs/NonSteerableTurnKind"},
+		},
+		"required":             []string{"turnKind"},
+		"additionalProperties": false,
+	}))
+	return Schema{"oneOf": variants}
+}
+
+func threadStatusSchema() Schema {
+	variants := make([]any, 0, 4)
+	for _, statusType := range []string{"notLoaded", "idle", "systemError"} {
+		variants = append(variants, Schema{
+			"type": "object",
+			"properties": Schema{
+				"type": stringEnumSchema(statusType),
+			},
+			"required":             []string{"type"},
+			"additionalProperties": false,
+		})
+	}
+	variants = append(variants, Schema{
+		"type": "object",
+		"properties": Schema{
+			"type": stringEnumSchema("active"),
+			"activeFlags": Schema{
+				"type":  "array",
+				"items": Schema{"$ref": "#/$defs/ThreadActiveFlag"},
+			},
+		},
+		"required":             []string{"type", "activeFlags"},
+		"additionalProperties": false,
+	})
+	return Schema{"oneOf": variants}
+}
+
+func subAgentSourceSchema() Schema {
+	return Schema{"oneOf": []any{
+		stringEnumSchema("review", "compact", "memory_consolidation"),
+		threadTurnDependencyObjectVariant("thread_spawn", Schema{
+			"type": "object",
+			"properties": Schema{
+				"parent_thread_id": Schema{"$ref": "#/$defs/ThreadId"},
+				"depth": Schema{
+					"type": "integer", "minimum": -2147483648, "maximum": 2147483647,
+				},
+				"agent_path":     nullableSchemaRef("AgentPath"),
+				"agent_nickname": nullableStringSchema(),
+				"agent_role":     nullableStringSchema(),
+			},
+			"required": []string{
+				"parent_thread_id", "depth", "agent_path", "agent_nickname", "agent_role",
+			},
+			"additionalProperties": false,
+		}),
+		threadTurnDependencyObjectVariant("other", Schema{"type": "string"}),
+	}}
+}
+
+func sessionSourceSchema() Schema {
+	return Schema{"oneOf": []any{
+		stringEnumSchema("cli", "vscode", "exec", "appServer", "unknown"),
+		threadTurnDependencyObjectVariant("custom", Schema{"type": "string"}),
+		threadTurnDependencyObjectVariant("subAgent", Schema{"$ref": "#/$defs/SubAgentSource"}),
+	}}
+}
+
+func threadTurnDependencyObjectVariant(name string, value Schema) Schema {
+	return Schema{
+		"type":                 "object",
+		"properties":           Schema{name: value},
+		"required":             []string{name},
+		"additionalProperties": false,
+	}
 }
 
 func commandActionSchema() Schema {
