@@ -1,0 +1,185 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "filesystem-read-request",
+      "surface": "client-request",
+      "method": "fs/readFile",
+      "paramsType": "FsReadFileParams",
+      "message": { "id": "read", "method": "fs/readFile", "params": { "path": "/workspace/file.bin" } }
+    },
+    {
+      "name": "filesystem-read-response",
+      "surface": "client-request",
+      "method": "fs/readFile",
+      "envelope": "response",
+      "resultType": "FsReadFileResponse",
+      "message": {
+        "id": "read",
+        "result": {
+          "dataBase64": "AAEC/w==",
+          "path": "file.bin",
+          "content": "AAEC/w==",
+          "encoding": "base64",
+          "size": 4,
+          "mode": 420,
+          "modTime": "2026-07-11T12:00:00Z",
+          "contentTruncated": false
+        }
+      }
+    },
+    {
+      "name": "filesystem-write-request",
+      "surface": "client-request",
+      "method": "fs/writeFile",
+      "paramsType": "FsWriteFileParams",
+      "message": { "id": "write", "method": "fs/writeFile", "params": { "path": "/workspace/file.bin", "dataBase64": "AAEC/w==" } }
+    },
+    {
+      "name": "filesystem-write-response",
+      "surface": "client-request",
+      "method": "fs/writeFile",
+      "envelope": "response",
+      "resultType": "FsWriteFileResponse",
+      "message": { "id": "write", "result": {} }
+    },
+    {
+      "name": "filesystem-create-directory-request",
+      "surface": "client-request",
+      "method": "fs/createDirectory",
+      "paramsType": "FsCreateDirectoryParams",
+      "message": { "id": "mkdir", "method": "fs/createDirectory", "params": { "path": "/workspace/new/dir", "recursive": null } }
+    },
+    {
+      "name": "filesystem-create-directory-response",
+      "surface": "client-request",
+      "method": "fs/createDirectory",
+      "envelope": "response",
+      "resultType": "FsCreateDirectoryResponse",
+      "message": { "id": "mkdir", "result": {} }
+    },
+    {
+      "name": "filesystem-metadata-request",
+      "surface": "client-request",
+      "method": "fs/getMetadata",
+      "paramsType": "FsGetMetadataParams",
+      "message": { "id": "metadata", "method": "fs/getMetadata", "params": { "path": "/workspace/file.bin" } }
+    },
+    {
+      "name": "filesystem-metadata-response",
+      "surface": "client-request",
+      "method": "fs/getMetadata",
+      "envelope": "response",
+      "resultType": "FsGetMetadataResponse",
+      "message": {
+        "id": "metadata",
+        "result": { "isDirectory": false, "isFile": true, "isSymlink": false, "createdAtMs": 0, "modifiedAtMs": 1783771200000 }
+      }
+    },
+    {
+      "name": "filesystem-read-directory-request",
+      "surface": "client-request",
+      "method": "fs/readDirectory",
+      "paramsType": "FsReadDirectoryParams",
+      "message": { "id": "list", "method": "fs/readDirectory", "params": { "path": "/workspace" } }
+    },
+    {
+      "name": "filesystem-read-directory-response",
+      "surface": "client-request",
+      "method": "fs/readDirectory",
+      "envelope": "response",
+      "resultType": "FsReadDirectoryResponse",
+      "message": {
+        "id": "list",
+        "result": {
+          "entries": [{
+            "fileName": "file.bin",
+            "isDirectory": false,
+            "isFile": true,
+            "Path": "file.bin",
+            "Name": "file.bin",
+            "IsDir": false,
+            "Size": 4,
+            "Mode": 420,
+            "ModTime": "2026-07-11T12:00:00Z"
+          }]
+        }
+      }
+    },
+    {
+      "name": "filesystem-remove-request",
+      "surface": "client-request",
+      "method": "fs/remove",
+      "paramsType": "FsRemoveParams",
+      "message": { "id": "remove", "method": "fs/remove", "params": { "path": "/workspace/file.bin", "recursive": false, "force": null } }
+    },
+    {
+      "name": "filesystem-remove-response",
+      "surface": "client-request",
+      "method": "fs/remove",
+      "envelope": "response",
+      "resultType": "FsRemoveResponse",
+      "message": { "id": "remove", "result": {} }
+    },
+    {
+      "name": "filesystem-copy-request",
+      "surface": "client-request",
+      "method": "fs/copy",
+      "paramsType": "FsCopyParams",
+      "message": { "id": "copy", "method": "fs/copy", "params": { "sourcePath": "/workspace/source", "destinationPath": "/workspace/destination", "recursive": true } }
+    },
+    {
+      "name": "filesystem-copy-response",
+      "surface": "client-request",
+      "method": "fs/copy",
+      "envelope": "response",
+      "resultType": "FsCopyResponse",
+      "message": { "id": "copy", "result": {} }
+    },
+    {
+      "name": "filesystem-watch-request",
+      "surface": "client-request",
+      "method": "fs/watch",
+      "paramsType": "FsWatchParams",
+      "message": { "id": "watch", "method": "fs/watch", "params": { "watchId": "watch-1", "path": "/workspace/file.bin" } }
+    },
+    {
+      "name": "filesystem-watch-response",
+      "surface": "client-request",
+      "method": "fs/watch",
+      "envelope": "response",
+      "resultType": "FsWatchResponse",
+      "message": { "id": "watch", "result": { "path": "/workspace/file.bin" } }
+    },
+    {
+      "name": "filesystem-unwatch-request",
+      "surface": "client-request",
+      "method": "fs/unwatch",
+      "paramsType": "FsUnwatchParams",
+      "message": { "id": "unwatch", "method": "fs/unwatch", "params": { "watchId": "watch-1" } }
+    },
+    {
+      "name": "filesystem-unwatch-response",
+      "surface": "client-request",
+      "method": "fs/unwatch",
+      "envelope": "response",
+      "resultType": "FsUnwatchResponse",
+      "message": { "id": "unwatch", "result": {} }
+    },
+    {
+      "name": "filesystem-watch-changed-notification",
+      "surface": "server-notification",
+      "method": "fs/changed",
+      "paramsType": "FsChangedNotification",
+      "message": { "method": "fs/changed", "params": { "watchId": "watch-1", "changedPaths": ["/workspace/file.bin"] } }
+    },
+    {
+      "name": "filesystem-mutation-changed-notification",
+      "surface": "server-notification",
+      "method": "fs/changed",
+      "paramsType": "FileChangedNotification",
+      "message": { "method": "fs/changed", "params": { "path": "file.bin", "operation": "writeFile", "at": "2026-07-11T12:00:00Z" } }
+    }
+  ]
+}

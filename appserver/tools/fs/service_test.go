@@ -165,6 +165,127 @@ func TestServiceRemove(t *testing.T) {
 	}
 }
 
+func TestServiceMutationOptions(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+
+	if err := svc.CreateDirectoryWithOptions(ctx, "missing/child", CreateDirectoryOptions{Recursive: false}); err == nil {
+		t.Fatal("non-recursive create with a missing parent succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(svc.Root(), "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing parent stat error = %v, want not exist", err)
+	}
+	if err := svc.CreateDirectory(ctx, "parent"); err != nil {
+		t.Fatalf("CreateDirectory parent: %v", err)
+	}
+	if err := svc.CreateDirectoryWithOptions(ctx, "parent/child", CreateDirectoryOptions{Recursive: false}); err != nil {
+		t.Fatalf("non-recursive CreateDirectory: %v", err)
+	}
+
+	if err := svc.RemoveWithOptions(ctx, "absent", RemoveOptions{Recursive: true, Force: false}); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("non-force missing remove error = %v, want not exist", err)
+	}
+	if err := svc.RemoveWithOptions(ctx, "absent", RemoveOptions{Recursive: true, Force: true}); err != nil {
+		t.Fatalf("force missing remove: %v", err)
+	}
+	if err := svc.WriteFile(ctx, "populated/file.txt", []byte("keep"), 0); err != nil {
+		t.Fatalf("WriteFile populated: %v", err)
+	}
+	if err := svc.RemoveWithOptions(ctx, "populated", RemoveOptions{Recursive: false, Force: true}); err == nil {
+		t.Fatal("non-recursive populated directory remove succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(svc.Root(), "populated/file.txt")); err != nil {
+		t.Fatalf("file removed by failed non-recursive remove: %v", err)
+	}
+	if err := svc.CreateDirectory(ctx, "empty"); err != nil {
+		t.Fatalf("CreateDirectory empty: %v", err)
+	}
+	if err := svc.RemoveWithOptions(ctx, "empty", RemoveOptions{Recursive: false, Force: false}); err != nil {
+		t.Fatalf("non-recursive empty directory remove: %v", err)
+	}
+	if err := svc.WriteFile(ctx, "single.txt", []byte("single"), 0); err != nil {
+		t.Fatalf("WriteFile single: %v", err)
+	}
+	if err := svc.RemoveWithOptions(ctx, "single.txt", RemoveOptions{Recursive: false, Force: false}); err != nil {
+		t.Fatalf("non-recursive file remove: %v", err)
+	}
+
+	if err := svc.WriteFile(ctx, "tree/nested/file.txt", []byte("copy"), 0); err != nil {
+		t.Fatalf("WriteFile tree: %v", err)
+	}
+	if err := svc.CopyWithOptions(ctx, "tree", "tree-flat", CopyOptions{Recursive: false}); !errors.Is(err, ErrRecursiveRequired) {
+		t.Fatalf("non-recursive directory copy error = %v, want ErrRecursiveRequired", err)
+	}
+	if _, err := os.Stat(filepath.Join(svc.Root(), "tree-flat")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("non-recursive copy destination stat error = %v, want not exist", err)
+	}
+	if err := svc.CopyWithOptions(ctx, "tree/nested/file.txt", "file-copy.txt", CopyOptions{Recursive: false}); err != nil {
+		t.Fatalf("non-recursive file copy: %v", err)
+	}
+	if err := svc.CopyWithOptions(ctx, "tree", "tree-copy", CopyOptions{Recursive: true}); err != nil {
+		t.Fatalf("recursive directory copy: %v", err)
+	}
+}
+
+func TestServiceMutationOptionsUseApprovalAndAuditPath(t *testing.T) {
+	ctx := context.Background()
+	var approved []Operation
+	var audited []AuditEvent
+	svc := newTestService(t,
+		WithApproval(func(_ context.Context, operation Operation) error {
+			approved = append(approved, operation)
+			return nil
+		}),
+		WithAuditSink(func(event AuditEvent) {
+			audited = append(audited, event)
+		}),
+	)
+	if err := os.Mkdir(filepath.Join(svc.Root(), "parent"), 0o755); err != nil {
+		t.Fatalf("Mkdir parent: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(svc.Root(), "source.txt"), []byte("source"), 0o644); err != nil {
+		t.Fatalf("WriteFile source: %v", err)
+	}
+
+	if err := svc.CreateDirectoryWithOptions(ctx, "parent/child", CreateDirectoryOptions{Recursive: false}); err != nil {
+		t.Fatalf("CreateDirectoryWithOptions: %v", err)
+	}
+	if err := svc.CopyWithOptions(ctx, "source.txt", "copy.txt", CopyOptions{Recursive: false}); err != nil {
+		t.Fatalf("CopyWithOptions: %v", err)
+	}
+	if err := svc.RemoveWithOptions(ctx, "copy.txt", RemoveOptions{Recursive: false, Force: false}); err != nil {
+		t.Fatalf("RemoveWithOptions: %v", err)
+	}
+
+	want := []OperationKind{OperationCreateDirectory, OperationCopy, OperationRemove}
+	if len(approved) != len(want) || len(audited) != len(want) {
+		t.Fatalf("approved/audited counts = %d/%d, want %d/%d", len(approved), len(audited), len(want), len(want))
+	}
+	for index, kind := range want {
+		if approved[index].Kind != kind || audited[index].Operation.Kind != kind || !audited[index].Allowed {
+			t.Fatalf("mutation %d approved/audited = %+v/%+v, want %s allowed", index, approved[index], audited[index], kind)
+		}
+	}
+}
+
+func TestServiceMetadataReportsInternalSymlinkTargetKind(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	if err := os.WriteFile(filepath.Join(svc.Root(), "target.txt"), []byte("target"), 0o644); err != nil {
+		t.Fatalf("WriteFile target: %v", err)
+	}
+	if err := os.Symlink("target.txt", filepath.Join(svc.Root(), "link.txt")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	metadata, err := svc.Metadata(ctx, "link.txt")
+	if err != nil {
+		t.Fatalf("Metadata symlink: %v", err)
+	}
+	if metadata.IsDir || !metadata.IsFile || !metadata.IsSymlink {
+		t.Fatalf("symlink metadata = %+v", metadata)
+	}
+}
+
 func TestServiceRefusesRootRemove(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)

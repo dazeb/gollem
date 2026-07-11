@@ -11,7 +11,7 @@ import (
 func main() {
 	writeGenerated("schema.json", protocol.MarshalJSONSchema)
 	writeGenerated(filepath.Join("typescript", "gollem_appserver_protocol.ts"), protocol.MarshalTypeScript)
-	for _, name := range []string{"runtime_wire_v1", "initialize_wire_v1", "thread_discovery_wire_v1", "thread_control_wire_v1", "thread_goal_wire_v1", "thread_metadata_wire_v1", "thread_lifecycle_notification_wire_v1", "command_exec_control_wire_v1", "file_change_item_wire_v1", "dynamic_tool_call_wire_v1", "user_input_wire_v1", "mcp_elicitation_wire_v1", "command_approval_response_wire_v1"} {
+	for _, name := range []string{"runtime_wire_v1", "initialize_wire_v1", "thread_discovery_wire_v1", "thread_control_wire_v1", "thread_goal_wire_v1", "thread_metadata_wire_v1", "thread_lifecycle_notification_wire_v1", "command_exec_control_wire_v1", "file_change_item_wire_v1", "dynamic_tool_call_wire_v1", "user_input_wire_v1", "mcp_elicitation_wire_v1", "command_approval_response_wire_v1", "filesystem_wire_v1"} {
 		fixture, err := os.ReadFile(filepath.Join("testdata", name+".json"))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

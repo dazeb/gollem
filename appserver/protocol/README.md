@@ -203,6 +203,29 @@ without either move-path field fail closed.
 `inProgress` then `completed` lifecycle; exporting the remaining public values
 does not invent failure or denial items where no live file-change event exists.
 
+## Version 1 Filesystem Contracts
+
+The nine `fs/*` requests and `fs/changed` notification bind the exact public
+filesystem family. Generated clients use absolute paths, base64 file contents,
+required metadata flags and millisecond timestamps, and non-null directory and
+watch-path arrays. Gollem continues to accept its existing relative workspace
+paths and text/encoding write form at runtime. Read, metadata, directory, and
+mutation responses include the public fields plus optional legacy detail fields;
+public empty mutation responses remain valid.
+
+Create and remove preserve the public default of recursive operation, with
+remove also defaulting to force. Explicit false values use non-recursive and
+non-force service operations rather than being ignored. Public `sourcePath` and
+`destinationPath` directory copies require `recursive: true`, while legacy
+`source`/`destination` requests retain Gollem's recursive default. Both forms
+stay on the same scoped path-resolution, approval, and audit path.
+
+`fs/changed` has two explicit payload variants. `FsChangedNotification` is the
+public watch event with `watchId` and absolute `changedPaths`;
+`FileChangedNotification` is Gollem's mutation-level extension with operation,
+timestamp, and optional source/destination paths. Consumers must narrow the
+union by fields instead of assuming every event belongs to a watch.
+
 ## Version 1 Command Exec Controls
 
 `command/exec/write`, `command/exec/resize`, and `command/exec/terminate` use
@@ -286,7 +309,9 @@ metadata, and action/content/meta responses.
 approval request's advertised decision subset and the exact direct response.
 `testdata/permission_profile_wire_v1.json` covers the exact exported public
 permission request/response and filesystem/network profile family without
-adding an incompatible live result binding.
+adding an incompatible live result binding. `testdata/filesystem_wire_v1.json`
+covers all public filesystem requests and responses, empty response forms,
+watch notifications, and the mutation notification extension.
 
 The current `request_mcp_elicitation` runtime tool validates and emits only the
 public `form` variant. The `openai/form` and `url` variants are exported for

@@ -891,6 +891,13 @@ export type FileChangeRequestApprovalResponse = {
   "decision": FileChangeApprovalDecision;
 };
 
+export type FileChangedNotification = {
+  "at": string;
+  "destination"?: string;
+  "operation": string;
+  "path"?: string;
+};
+
 export type FileSystemAccessMode = "read" | "write" | "deny";
 
 export type FileSystemPath = {
@@ -930,6 +937,122 @@ export type FileUpdateChange = {
   "diff": string;
   "kind": PatchChangeKind;
   "path": string;
+};
+
+export type FsChangedNotification = {
+  "changedPaths": Array<AbsolutePathBuf>;
+  "watchId": string;
+};
+
+export type FsCopyParams = {
+  "destinationPath": AbsolutePathBuf;
+  "recursive"?: boolean;
+  "sourcePath": AbsolutePathBuf;
+};
+
+export type FsCopyResponse = {
+  "destination"?: string;
+  "ok"?: boolean;
+  "source"?: string;
+};
+
+export type FsCreateDirectoryParams = {
+  "path": AbsolutePathBuf;
+  "recursive"?: boolean | null;
+};
+
+export type FsCreateDirectoryResponse = {
+  "ok"?: boolean;
+  "path"?: string;
+};
+
+export type FsGetMetadataParams = {
+  "path": AbsolutePathBuf;
+};
+
+export type FsGetMetadataResponse = {
+  "createdAtMs": number;
+  "isDir"?: boolean;
+  "isDirectory": boolean;
+  "isFile": boolean;
+  "isSymlink": boolean;
+  "modTime"?: string;
+  "mode"?: number;
+  "modifiedAtMs": number;
+  "path"?: string;
+  "size"?: number;
+};
+
+export type FsReadDirectoryEntry = {
+  "IsDir"?: boolean;
+  "ModTime"?: string;
+  "Mode"?: number;
+  "Name"?: string;
+  "Path"?: string;
+  "Size"?: number;
+  "fileName": string;
+  "isDirectory": boolean;
+  "isFile": boolean;
+};
+
+export type FsReadDirectoryParams = {
+  "path": AbsolutePathBuf;
+};
+
+export type FsReadDirectoryResponse = {
+  "entries": Array<FsReadDirectoryEntry>;
+};
+
+export type FsReadFileParams = {
+  "path": AbsolutePathBuf;
+};
+
+export type FsReadFileResponse = {
+  "content"?: string;
+  "contentTruncated"?: boolean;
+  "dataBase64": string;
+  "encoding"?: string;
+  "modTime"?: string;
+  "mode"?: number;
+  "path"?: string;
+  "size"?: number;
+};
+
+export type FsRemoveParams = {
+  "force"?: boolean | null;
+  "path": AbsolutePathBuf;
+  "recursive"?: boolean | null;
+};
+
+export type FsRemoveResponse = {
+  "ok"?: boolean;
+  "path"?: string;
+};
+
+export type FsUnwatchParams = {
+  "watchId": string;
+};
+
+export type FsUnwatchResponse = Record<string, never>;
+
+export type FsWatchParams = {
+  "path": AbsolutePathBuf;
+  "pollIntervalMillis"?: number;
+  "watchId": string;
+};
+
+export type FsWatchResponse = {
+  "path": AbsolutePathBuf;
+};
+
+export type FsWriteFileParams = {
+  "dataBase64": string;
+  "path": AbsolutePathBuf;
+};
+
+export type FsWriteFileResponse = {
+  "ok"?: boolean;
+  "path"?: string;
 };
 
 export type GrantedPermissionProfile = {
@@ -1739,6 +1862,16 @@ export const wireTypeBindings = [
   { "method": "daemon/stop", "surface": "gollem-extension", "params": ["DaemonShutdownParams"], "result": ["DaemonStopResult"] },
   { "method": "daemon/version", "surface": "gollem-extension", "result": ["DaemonVersion"] },
   { "method": "deprecationNotice", "surface": "server-notification", "params": ["DeprecationNoticeNotification"] },
+  { "method": "fs/changed", "surface": "server-notification", "params": ["FsChangedNotification", "FileChangedNotification"] },
+  { "method": "fs/copy", "surface": "client-request", "params": ["FsCopyParams"], "result": ["FsCopyResponse"] },
+  { "method": "fs/createDirectory", "surface": "client-request", "params": ["FsCreateDirectoryParams"], "result": ["FsCreateDirectoryResponse"] },
+  { "method": "fs/getMetadata", "surface": "client-request", "params": ["FsGetMetadataParams"], "result": ["FsGetMetadataResponse"] },
+  { "method": "fs/readDirectory", "surface": "client-request", "params": ["FsReadDirectoryParams"], "result": ["FsReadDirectoryResponse"] },
+  { "method": "fs/readFile", "surface": "client-request", "params": ["FsReadFileParams"], "result": ["FsReadFileResponse"] },
+  { "method": "fs/remove", "surface": "client-request", "params": ["FsRemoveParams"], "result": ["FsRemoveResponse"] },
+  { "method": "fs/unwatch", "surface": "client-request", "params": ["FsUnwatchParams"], "result": ["FsUnwatchResponse"] },
+  { "method": "fs/watch", "surface": "client-request", "params": ["FsWatchParams"], "result": ["FsWatchResponse"] },
+  { "method": "fs/writeFile", "surface": "client-request", "params": ["FsWriteFileParams"], "result": ["FsWriteFileResponse"] },
   { "method": "initialize", "surface": "client-request", "params": ["InitializeParams"], "result": ["InitializeResponse"] },
   { "method": "initialized", "surface": "client-notification" },
   { "method": "item/commandExecution/outputDelta", "surface": "server-notification", "params": ["CommandExecutionOutputDeltaNotification"] },
@@ -1791,6 +1924,16 @@ export interface MethodParamsByName {
   "daemon/stop": DaemonShutdownParams;
   "daemon/version": undefined;
   "deprecationNotice": DeprecationNoticeNotification;
+  "fs/changed": FsChangedNotification | FileChangedNotification;
+  "fs/copy": FsCopyParams;
+  "fs/createDirectory": FsCreateDirectoryParams;
+  "fs/getMetadata": FsGetMetadataParams;
+  "fs/readDirectory": FsReadDirectoryParams;
+  "fs/readFile": FsReadFileParams;
+  "fs/remove": FsRemoveParams;
+  "fs/unwatch": FsUnwatchParams;
+  "fs/watch": FsWatchParams;
+  "fs/writeFile": FsWriteFileParams;
   "initialize": InitializeParams;
   "initialized": undefined;
   "item/commandExecution/outputDelta": CommandExecutionOutputDeltaNotification;
@@ -1841,6 +1984,15 @@ export interface MethodResultsByName {
   "daemon/status": DaemonStatus;
   "daemon/stop": DaemonStopResult;
   "daemon/version": DaemonVersion;
+  "fs/copy": FsCopyResponse;
+  "fs/createDirectory": FsCreateDirectoryResponse;
+  "fs/getMetadata": FsGetMetadataResponse;
+  "fs/readDirectory": FsReadDirectoryResponse;
+  "fs/readFile": FsReadFileResponse;
+  "fs/remove": FsRemoveResponse;
+  "fs/unwatch": FsUnwatchResponse;
+  "fs/watch": FsWatchResponse;
+  "fs/writeFile": FsWriteFileResponse;
   "initialize": InitializeResponse;
   "item/commandExecution/requestApproval": CommandExecutionRequestApprovalResponse;
   "item/fileChange/requestApproval": FileChangeRequestApprovalResponse;

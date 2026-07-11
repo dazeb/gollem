@@ -530,6 +530,7 @@ func MarshalTypeScriptFixture(data []byte) ([]byte, error) {
 	seen := make(map[string]bool, len(fixture.Cases))
 	hasInitialize := false
 	hasInitialized := false
+	hasFilesystem := false
 	for _, fixtureCase := range fixture.Cases {
 		identifier := typeScriptIdentifier(fixtureCase.Name)
 		if identifier == "" || seen[identifier] {
@@ -545,6 +546,7 @@ func MarshalTypeScriptFixture(data []byte) ([]byte, error) {
 		}
 		hasInitialize = hasInitialize || fixtureCase.Method == "initialize"
 		hasInitialized = hasInitialized || fixtureCase.Method == "initialized"
+		hasFilesystem = hasFilesystem || strings.HasPrefix(fixtureCase.Method, "fs/")
 
 		var message bytes.Buffer
 		if err := json.Indent(&message, fixtureCase.Message, "", "  "); err != nil {
@@ -592,6 +594,18 @@ func MarshalTypeScriptFixture(data []byte) ([]byte, error) {
 	if hasInitialized {
 		out.WriteString("// @ts-expect-error initialized does not accept params.\n")
 		out.WriteString("export const rejectInitializedParams = { \"method\": \"initialized\", \"params\": {} } satisfies BoundNotification<\"initialized\">;\n")
+	}
+	if hasFilesystem {
+		out.WriteString("// @ts-expect-error public writes require base64 data.\n")
+		out.WriteString("export const rejectFilesystemWriteWithoutData = { path: \"/workspace/file\" } satisfies FsWriteFileParams;\n")
+		out.WriteString("// @ts-expect-error copy recursive is non-null when present.\n")
+		out.WriteString("export const rejectFilesystemCopyNullRecursive = { sourcePath: \"/workspace/a\", destinationPath: \"/workspace/b\", recursive: null } satisfies FsCopyParams;\n")
+		out.WriteString("// @ts-expect-error directory responses require a non-null entries array.\n")
+		out.WriteString("export const rejectFilesystemNullEntries = { entries: null } satisfies FsReadDirectoryResponse;\n")
+		out.WriteString("// @ts-expect-error watch notifications require changedPaths.\n")
+		out.WriteString("export const rejectFilesystemChangedWithoutPaths = { watchId: \"watch\" } satisfies FsChangedNotification;\n")
+		out.WriteString("// @ts-expect-error metadata responses require every public field.\n")
+		out.WriteString("export const rejectFilesystemPartialMetadata = { isFile: true } satisfies FsGetMetadataResponse;\n")
 	}
 	return out.Bytes(), nil
 }
