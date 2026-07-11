@@ -36,6 +36,8 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "serverRequest/resolved", Surface: SurfaceServerNotification, Params: []string{"ServerRequestResolvedNotificationParams"}},
 	{Method: "thread/compact/start", Surface: SurfaceClientRequest, Params: []string{"ThreadCompactStartParams"}, Result: []string{"ThreadCompactStartResponse"}},
 	{Method: "thread/compacted", Surface: SurfaceServerNotification, Params: []string{"ThreadCompactedNotificationParams"}},
+	{Method: "thread/list", Surface: SurfaceClientRequest, Params: []string{"ThreadListParams"}, Result: []string{"ThreadListResponse"}},
+	{Method: "thread/read", Surface: SurfaceClientRequest, Params: []string{"ThreadReadParams"}, Result: []string{"ThreadReadResponse"}},
 	{Method: "thread/tokenUsage/updated", Surface: SurfaceServerNotification, Params: []string{"ThreadTokenUsageUpdatedNotificationParams"}},
 	{Method: "turn/diff/updated", Surface: SurfaceServerNotification, Params: []string{"TurnDiffUpdatedNotificationParams"}},
 }

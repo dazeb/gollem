@@ -271,6 +271,14 @@ func runtimeFixtureTarget(name string) any {
 		return new(FileChangeApprovalRequestParams)
 	case "DaemonStatus":
 		return new(DaemonStatus)
+	case "ThreadListParams":
+		return new(ThreadListParams)
+	case "ThreadListResponse":
+		return new(ThreadListResponse)
+	case "ThreadReadParams":
+		return new(ThreadReadParams)
+	case "ThreadReadResponse":
+		return new(ThreadReadResponse)
 	default:
 		return nil
 	}

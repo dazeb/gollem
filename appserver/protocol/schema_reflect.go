@@ -105,15 +105,25 @@ func collectSchemaFields(t reflect.Type, visiting map[reflect.Type]bool, names m
 			name = field.Name
 		}
 		fieldSchema := schemaForType(fieldType, visiting, names, root)
-		if schemaTypeCanBeNil(fieldType) && len(fieldSchema) > 0 {
+		if schemaTypeCanBeNil(fieldType) && len(fieldSchema) > 0 && !schemaTagEnabled(field.Tag.Get("jsonschema"), "nonnullable") {
 			fieldSchema = Schema{"anyOf": []any{fieldSchema, Schema{"type": "null"}}}
 		}
 		applyProtocolSchemaTag(fieldSchema, field.Tag.Get("jsonschema"))
 		properties[name] = fieldSchema
-		if !omitempty {
+		if !omitempty && !schemaTagEnabled(field.Tag.Get("jsonschema"), "optional") {
 			*required = append(*required, name)
 		}
 	}
+}
+
+func schemaTagEnabled(tag string, name string) bool {
+	for _, directive := range strings.Split(tag, ",") {
+		key, value, ok := strings.Cut(strings.TrimSpace(directive), "=")
+		if ok && key == name && strings.EqualFold(strings.TrimSpace(value), "true") {
+			return true
+		}
+	}
+	return false
 }
 
 func jsonFieldName(field reflect.StructField) (string, bool, bool) {

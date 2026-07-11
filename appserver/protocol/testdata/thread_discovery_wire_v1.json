@@ -1,0 +1,153 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "thread-list-request",
+      "surface": "client-request",
+      "method": "thread/list",
+      "envelope": "request",
+      "paramsType": "ThreadListParams",
+      "message": {
+        "id": "thread-list-1",
+        "method": "thread/list",
+        "params": {
+          "cursor": "0",
+          "limit": 20,
+          "sortKey": "updated_at",
+          "sortDirection": "desc",
+          "modelProviders": ["openai"],
+          "sourceKinds": ["appServer"],
+          "archived": false,
+          "cwd": ["/workspace/a", "/workspace/b"],
+          "useStateDbOnly": true,
+          "searchTerm": "typed protocol",
+          "statuses": ["active"],
+          "includeDeleted": false
+        }
+      }
+    },
+    {
+      "name": "thread-list-response",
+      "surface": "client-request",
+      "method": "thread/list",
+      "envelope": "response",
+      "resultType": "ThreadListResponse",
+      "message": {
+        "id": "thread-list-1",
+        "result": {
+          "data": [
+            {
+              "id": "thread-1",
+              "title": "Typed protocol",
+              "workspace": "/workspace/a",
+              "status": "active",
+              "settings": {"providerId": "openai"},
+              "metadata": {"sourceKind": "appServer"},
+              "createdAt": "2026-07-10T20:30:00Z",
+              "updatedAt": "2026-07-10T20:35:00Z"
+            }
+          ],
+          "nextCursor": null,
+          "backwardsCursor": "0",
+          "threads": [
+            {
+              "id": "thread-1",
+              "title": "Typed protocol",
+              "workspace": "/workspace/a",
+              "status": "active",
+              "settings": {"providerId": "openai"},
+              "metadata": {"sourceKind": "appServer"},
+              "createdAt": "2026-07-10T20:30:00Z",
+              "updatedAt": "2026-07-10T20:35:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "thread-read-request",
+      "surface": "client-request",
+      "method": "thread/read",
+      "envelope": "request",
+      "paramsType": "ThreadReadParams",
+      "message": {
+        "id": "thread-read-1",
+        "method": "thread/read",
+        "params": {
+          "threadId": "thread-1",
+          "includeTurns": true,
+          "includeItems": true,
+          "afterSeq": 0,
+          "limit": 100
+        }
+      }
+    },
+    {
+      "name": "thread-read-response",
+      "surface": "client-request",
+      "method": "thread/read",
+      "envelope": "response",
+      "resultType": "ThreadReadResponse",
+      "message": {
+        "id": "thread-read-1",
+        "result": {
+          "thread": {
+            "id": "thread-1",
+            "title": "Typed protocol",
+            "workspace": "/workspace/a",
+            "status": "active",
+            "createdAt": "2026-07-10T20:30:00Z",
+            "updatedAt": "2026-07-10T20:35:00Z",
+            "turns": [
+              {
+                "id": "turn-1",
+                "threadId": "thread-1",
+                "status": "completed",
+                "input": {"prompt": "hello"},
+                "createdAt": "2026-07-10T20:31:00Z",
+                "updatedAt": "2026-07-10T20:32:00Z",
+                "items": [
+                  {
+                    "id": "item-1",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "seq": 1,
+                    "kind": "message",
+                    "status": "completed",
+                    "payload": {"role": "user", "text": "hello"},
+                    "createdAt": "2026-07-10T20:31:00Z",
+                    "updatedAt": "2026-07-10T20:31:00Z"
+                  }
+                ]
+              }
+            ]
+          },
+          "turns": [
+            {
+              "id": "turn-1",
+              "threadId": "thread-1",
+              "status": "completed",
+              "input": {"prompt": "hello"},
+              "createdAt": "2026-07-10T20:31:00Z",
+              "updatedAt": "2026-07-10T20:32:00Z"
+            }
+          ],
+          "items": [
+            {
+              "id": "item-1",
+              "threadId": "thread-1",
+              "turnId": "turn-1",
+              "seq": 1,
+              "kind": "message",
+              "status": "completed",
+              "payload": {"role": "user", "text": "hello"},
+              "createdAt": "2026-07-10T20:31:00Z",
+              "updatedAt": "2026-07-10T20:31:00Z"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

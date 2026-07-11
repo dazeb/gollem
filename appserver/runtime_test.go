@@ -46,7 +46,7 @@ func TestServerRuntimeThreadStartCompletesTurn(t *testing.T) {
 	if readResp.Error != nil {
 		t.Fatalf("thread/read error: %v", readResp.Error)
 	}
-	var read threadReadResult
+	var read legacyThreadReadResult
 	decodeResult(t, readResp, &read)
 	if len(read.Turns) != 1 || read.Turns[0].Status != store.TurnCompleted {
 		t.Fatalf("turns = %#v", read.Turns)
