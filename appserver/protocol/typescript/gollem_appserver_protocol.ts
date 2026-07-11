@@ -1030,6 +1030,69 @@ export type ThreadLoadedListResponse = {
   "nextCursor"?: string | null;
 };
 
+export type ThreadMemoryMode = "enabled" | "disabled";
+
+export type ThreadMemoryModeSetParams = {
+  "id"?: string;
+  "memoryMode"?: ThreadMemoryMode;
+  "mode": ThreadMemoryMode;
+  "threadId": string;
+} | {
+  "id": string;
+  "memoryMode"?: ThreadMemoryMode;
+  "mode": ThreadMemoryMode;
+  "threadId"?: string;
+} | {
+  "id"?: string;
+  "memoryMode": ThreadMemoryMode;
+  "mode"?: ThreadMemoryMode;
+  "threadId": string;
+} | {
+  "id": string;
+  "memoryMode": ThreadMemoryMode;
+  "mode"?: ThreadMemoryMode;
+  "threadId"?: string;
+};
+
+export type ThreadMemoryModeSetResponse = {
+  "memoryMode"?: ThreadMemoryMode;
+  "thread"?: ThreadRecord | null;
+  "threadId"?: string;
+};
+
+export type ThreadMetadataGitInfoUpdateParams = {
+  "branch"?: string | null;
+  "originUrl"?: string | null;
+  "sha"?: string | null;
+};
+
+export type ThreadMetadataUpdateParams = {
+  "gitInfo"?: ThreadMetadataGitInfoUpdateParams | null;
+  "id"?: string;
+  "metadata"?: Record<string, unknown> | null;
+  "replace"?: boolean;
+  "threadId": string;
+} | {
+  "gitInfo"?: ThreadMetadataGitInfoUpdateParams | null;
+  "id": string;
+  "metadata"?: Record<string, unknown> | null;
+  "replace"?: boolean;
+  "threadId"?: string;
+};
+
+export type ThreadMetadataUpdateResponse = {
+  "metadata"?: Record<string, unknown> | null;
+  "thread": ThreadRecord;
+};
+
+export type ThreadNameUpdatedNotification = {
+  "at"?: string | null;
+  "name"?: string;
+  "thread"?: ThreadRecord | null;
+  "threadId": string;
+  "threadName"?: string;
+};
+
 export type ThreadReadParams = {
   "afterSeq"?: number;
   "id"?: string;
@@ -1197,7 +1260,10 @@ export const wireTypeBindings = [
   { "method": "thread/goal/updated", "surface": "server-notification", "params": ["ThreadGoalUpdatedNotification"] },
   { "method": "thread/list", "surface": "client-request", "params": ["ThreadListParams"], "result": ["ThreadListResponse"] },
   { "method": "thread/loaded/list", "surface": "client-request", "params": ["ThreadLoadedListParams"], "result": ["ThreadLoadedListResponse"] },
+  { "method": "thread/memoryMode/set", "surface": "client-request", "params": ["ThreadMemoryModeSetParams"], "result": ["ThreadMemoryModeSetResponse"] },
+  { "method": "thread/metadata/update", "surface": "client-request", "params": ["ThreadMetadataUpdateParams"], "result": ["ThreadMetadataUpdateResponse"] },
   { "method": "thread/name/set", "surface": "client-request", "params": ["ThreadSetNameParams"], "result": ["ThreadSetNameResponse"] },
+  { "method": "thread/name/updated", "surface": "server-notification", "params": ["ThreadNameUpdatedNotification"] },
   { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResponse"] },
   { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotificationParams"] },
   { "method": "thread/unarchive", "surface": "client-request", "params": ["ThreadUnarchiveParams"], "result": ["ThreadUnarchiveResponse"] },
@@ -1234,7 +1300,10 @@ export interface MethodParamsByName {
   "thread/goal/updated": ThreadGoalUpdatedNotification;
   "thread/list": ThreadListParams;
   "thread/loaded/list": ThreadLoadedListParams;
+  "thread/memoryMode/set": ThreadMemoryModeSetParams;
+  "thread/metadata/update": ThreadMetadataUpdateParams;
   "thread/name/set": ThreadSetNameParams;
+  "thread/name/updated": ThreadNameUpdatedNotification;
   "thread/read": ThreadReadParams;
   "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotificationParams;
   "thread/unarchive": ThreadUnarchiveParams;
@@ -1258,6 +1327,8 @@ export interface MethodResultsByName {
   "thread/goal/set": ThreadGoalSetResponse;
   "thread/list": ThreadListResponse;
   "thread/loaded/list": ThreadLoadedListResponse;
+  "thread/memoryMode/set": ThreadMemoryModeSetResponse;
+  "thread/metadata/update": ThreadMetadataUpdateResponse;
   "thread/name/set": ThreadSetNameResponse;
   "thread/read": ThreadReadResponse;
   "thread/unarchive": ThreadUnarchiveResponse;

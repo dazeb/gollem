@@ -968,26 +968,50 @@ func (s *Server) handleThreadMetadataUpdate(ctx context.Context, raw json.RawMes
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadMetadataUpdateParams
+	var params protocol.ThreadMetadataUpdateParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
+	threadID := params.EffectiveThreadID()
 	if threadID == "" {
 		return nil, invalidParams("threadId is required", nil)
 	}
-	if params.Metadata == nil {
-		return nil, invalidParams("metadata is required", nil)
+	if params.Metadata == nil && !params.HasGitInfo() {
+		return nil, invalidParams("gitInfo or metadata is required", nil)
 	}
 	req := store.UpdateThreadSettingsRequest{
 		ID:       threadID,
 		Metadata: params.Metadata,
 	}
-	if params.Replace {
+	var gitInfoPatch protocol.ThreadMetadataGitInfoUpdateParams
+	if params.HasGitInfo() {
+		var rpcErr *protocol.Error
+		gitInfoPatch, rpcErr = normalizeThreadMetadataGitInfoPatch(params.GitInfo)
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+	}
+	var current *store.Thread
+	if params.Replace || params.HasGitInfo() {
 		thread, err := st.GetThread(ctx, threadID)
 		if err != nil {
 			return nil, mapError("thread/metadata/update", err)
 		}
+		current = thread
+	}
+	if params.HasGitInfo() {
+		gitInfo := current.Metadata[threadGitInfoMetadataKey]
+		if supplied, ok := params.Metadata[threadGitInfoMetadataKey]; ok {
+			gitInfo = supplied
+		}
+		req.Metadata = cloneSettings(params.Metadata)
+		if req.Metadata == nil {
+			req.Metadata = make(map[string]any)
+		}
+		req.Metadata[threadGitInfoMetadataKey] = applyThreadMetadataGitInfoPatch(gitInfo, gitInfoPatch)
+	}
+	if params.Replace {
+		thread := current
 		req.Settings = cloneSettings(thread.Settings)
 		req.Replace = true
 	}
@@ -997,7 +1021,10 @@ func (s *Server) handleThreadMetadataUpdate(ctx context.Context, raw json.RawMes
 	}
 	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
-	return map[string]any{"thread": thread, "metadata": thread.Metadata}, nil
+	return protocol.ThreadMetadataUpdateResponse{
+		Thread:   protocolThreadRecord(thread),
+		Metadata: cloneSettings(thread.Metadata),
+	}, nil
 }
 
 func (s *Server) handleThreadMemoryModeSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1005,33 +1032,32 @@ func (s *Server) handleThreadMemoryModeSet(ctx context.Context, raw json.RawMess
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadMemoryModeSetParams
+	var params protocol.ThreadMemoryModeSetParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
+	threadID := params.EffectiveThreadID()
 	if threadID == "" {
 		return nil, invalidParams("threadId is required", nil)
 	}
-	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(params.MemoryMode, params.Mode)))
-	switch mode {
-	case "enabled", "disabled":
-	default:
+	mode := protocol.ThreadMemoryMode(strings.ToLower(strings.TrimSpace(string(params.EffectiveMode()))))
+	if !mode.Valid() {
 		return nil, invalidParams("mode must be enabled or disabled", nil)
 	}
 	thread, err := st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
 		ID:       threadID,
-		Settings: map[string]any{threadMemoryModeSettingKey: mode},
+		Settings: map[string]any{threadMemoryModeSettingKey: string(mode)},
 	})
 	if err != nil {
 		return nil, mapError("thread/memoryMode/set", err)
 	}
 	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
-	return threadMemoryModeSetResult{
+	record := protocolThreadRecord(thread)
+	return protocol.ThreadMemoryModeSetResponse{
 		ThreadID:   thread.ID,
 		MemoryMode: mode,
-		Thread:     thread,
+		Thread:     &record,
 	}, nil
 }
 
@@ -2198,12 +2224,6 @@ type threadSearchResponse struct {
 	Data            []threadSearchResult `json:"data"`
 	NextCursor      *string              `json:"nextCursor"`
 	BackwardsCursor *string              `json:"backwardsCursor"`
-}
-
-type threadMemoryModeSetResult struct {
-	ThreadID   string        `json:"threadId"`
-	MemoryMode string        `json:"memoryMode"`
-	Thread     *store.Thread `json:"thread,omitempty"`
 }
 
 type threadForkParams struct {

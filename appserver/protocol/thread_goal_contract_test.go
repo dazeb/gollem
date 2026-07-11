@@ -191,7 +191,7 @@ func TestThreadGoalSchemaAndBindings(t *testing.T) {
 
 func assertSchemaRequiredIDAlternative(t *testing.T, definition Schema) {
 	t.Helper()
-	variants, _ := definition["oneOf"].([]any)
+	variants := requiredFieldAlternatives(definition)
 	if len(variants) != 2 {
 		t.Fatalf("id alternatives = %#v, want two variants", variants)
 	}
@@ -219,7 +219,7 @@ func assertSchemaRequiredIDAlternative(t *testing.T, definition Schema) {
 
 func firstSchemaVariant(t *testing.T, definition Schema) Schema {
 	t.Helper()
-	variants, _ := definition["oneOf"].([]any)
+	variants := requiredFieldAlternatives(definition)
 	if len(variants) == 0 {
 		t.Fatalf("schema has no variants: %#v", definition)
 	}
@@ -228,6 +228,11 @@ func firstSchemaVariant(t *testing.T, definition Schema) Schema {
 		t.Fatalf("schema variant = %#v", variants[0])
 	}
 	return variant
+}
+
+func requiredFieldAlternatives(definition Schema) []any {
+	variants, _ := definition["anyOf"].([]any)
+	return variants
 }
 
 func TestThreadGoalWireV1FixtureUsesExportedContracts(t *testing.T) {

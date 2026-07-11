@@ -1954,7 +1954,7 @@
       "type": "object"
     },
     "ThreadGoalClearParams": {
-      "oneOf": [
+      "anyOf": [
         {
           "additionalProperties": false,
           "properties": {
@@ -2046,7 +2046,7 @@
       "type": "object"
     },
     "ThreadGoalGetParams": {
-      "oneOf": [
+      "anyOf": [
         {
           "additionalProperties": false,
           "properties": {
@@ -2122,7 +2122,7 @@
       "type": "object"
     },
     "ThreadGoalSetParams": {
-      "oneOf": [
+      "anyOf": [
         {
           "additionalProperties": false,
           "properties": {
@@ -2546,6 +2546,307 @@
       },
       "required": [
         "data"
+      ],
+      "type": "object"
+    },
+    "ThreadMemoryMode": {
+      "enum": [
+        "enabled",
+        "disabled"
+      ],
+      "type": "string"
+    },
+    "ThreadMemoryModeSetParams": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "memoryMode": {
+              "$ref": "#/$defs/ThreadMemoryMode"
+            },
+            "mode": {
+              "$ref": "#/$defs/ThreadMemoryMode"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "memoryMode": {
+              "$ref": "#/$defs/ThreadMemoryMode"
+            },
+            "mode": {
+              "$ref": "#/$defs/ThreadMemoryMode"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "memoryMode": {
+              "$ref": "#/$defs/ThreadMemoryMode"
+            },
+            "mode": {
+              "$ref": "#/$defs/ThreadMemoryMode"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId",
+            "memoryMode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "memoryMode": {
+              "$ref": "#/$defs/ThreadMemoryMode"
+            },
+            "mode": {
+              "$ref": "#/$defs/ThreadMemoryMode"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "memoryMode"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadMemoryModeSetResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "memoryMode": {
+          "$ref": "#/$defs/ThreadMemoryMode"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ThreadMetadataGitInfoUpdateParams": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "originUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ThreadMetadataUpdateParams": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "gitInfo": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ThreadMetadataGitInfoUpdateParams"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "replace": {
+              "type": "boolean"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "gitInfo": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ThreadMetadataGitInfoUpdateParams"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "replace": {
+              "type": "boolean"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadMetadataUpdateResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread": {
+          "$ref": "#/$defs/ThreadRecord"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
+    "ThreadNameUpdatedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "threadName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
       ],
       "type": "object"
     },
@@ -4664,6 +4965,26 @@
       ]
     },
     {
+      "method": "thread/memoryMode/set",
+      "surface": "client-request",
+      "params": [
+        "ThreadMemoryModeSetParams"
+      ],
+      "result": [
+        "ThreadMemoryModeSetResponse"
+      ]
+    },
+    {
+      "method": "thread/metadata/update",
+      "surface": "client-request",
+      "params": [
+        "ThreadMetadataUpdateParams"
+      ],
+      "result": [
+        "ThreadMetadataUpdateResponse"
+      ]
+    },
+    {
       "method": "thread/name/set",
       "surface": "client-request",
       "params": [
@@ -4671,6 +4992,13 @@
       ],
       "result": [
         "ThreadSetNameResponse"
+      ]
+    },
+    {
+      "method": "thread/name/updated",
+      "surface": "server-notification",
+      "params": [
+        "ThreadNameUpdatedNotification"
       ]
     },
     {

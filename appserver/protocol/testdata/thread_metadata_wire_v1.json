@@ -1,0 +1,98 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "thread-metadata-update-request",
+      "surface": "client-request",
+      "method": "thread/metadata/update",
+      "envelope": "request",
+      "paramsType": "ThreadMetadataUpdateParams",
+      "message": {
+        "id": "metadata-1",
+        "method": "thread/metadata/update",
+        "params": {
+          "threadId": "thread-1",
+          "gitInfo": {"sha": "abc123", "branch": null, "originUrl": "https://example.test/repo.git"}
+        }
+      }
+    },
+    {
+      "name": "thread-metadata-update-legacy-request",
+      "surface": "client-request",
+      "method": "thread/metadata/update",
+      "envelope": "request",
+      "paramsType": "ThreadMetadataUpdateParams",
+      "message": {
+        "id": "metadata-legacy-1",
+        "method": "thread/metadata/update",
+        "params": {"id": "thread-1", "metadata": {"reviewed": true}}
+      }
+    },
+    {
+      "name": "thread-metadata-update-response",
+      "surface": "client-request",
+      "method": "thread/metadata/update",
+      "envelope": "response",
+      "resultType": "ThreadMetadataUpdateResponse",
+      "message": {
+        "id": "metadata-1",
+        "result": {
+          "thread": {
+            "id": "thread-1",
+            "title": "Metadata controls",
+            "workspace": "/workspace",
+            "status": "active",
+            "createdAt": "2026-07-10T21:00:00Z",
+            "updatedAt": "2026-07-10T21:05:00Z",
+            "metadata": {"gitInfo": {"sha": "abc123", "originUrl": "https://example.test/repo.git"}}
+          },
+          "metadata": {"gitInfo": {"sha": "abc123", "originUrl": "https://example.test/repo.git"}}
+        }
+      }
+    },
+    {
+      "name": "thread-memory-mode-set-request",
+      "surface": "client-request",
+      "method": "thread/memoryMode/set",
+      "envelope": "request",
+      "paramsType": "ThreadMemoryModeSetParams",
+      "message": {
+        "id": "memory-mode-1",
+        "method": "thread/memoryMode/set",
+        "params": {"threadId": "thread-1", "mode": "disabled"}
+      }
+    },
+    {
+      "name": "thread-memory-mode-set-legacy-request",
+      "surface": "client-request",
+      "method": "thread/memoryMode/set",
+      "envelope": "request",
+      "paramsType": "ThreadMemoryModeSetParams",
+      "message": {
+        "id": "memory-mode-legacy-1",
+        "method": "thread/memoryMode/set",
+        "params": {"id": "thread-1", "memoryMode": "enabled"}
+      }
+    },
+    {
+      "name": "thread-memory-mode-set-response",
+      "surface": "client-request",
+      "method": "thread/memoryMode/set",
+      "envelope": "response",
+      "resultType": "ThreadMemoryModeSetResponse",
+      "message": {"id": "memory-mode-1", "result": {}}
+    },
+    {
+      "name": "thread-name-updated-notification",
+      "surface": "server-notification",
+      "method": "thread/name/updated",
+      "envelope": "notification",
+      "paramsType": "ThreadNameUpdatedNotification",
+      "message": {
+        "method": "thread/name/updated",
+        "params": {"threadId": "thread-1", "threadName": "Renamed metadata controls"}
+      }
+    }
+  ]
+}
