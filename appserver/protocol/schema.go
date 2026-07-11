@@ -108,6 +108,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "DaemonStopResult", Type: reflect.TypeFor[DaemonStopResult]()},
 		{Name: "DaemonVersion", Type: reflect.TypeFor[DaemonVersion]()},
 		{Name: "DynamicToolCallContentItem", Type: reflect.TypeFor[DynamicToolCallContentItem]()},
+		{Name: "DynamicToolCallOutputContentItem", Type: reflect.TypeFor[DynamicToolCallOutputContentItem]()},
+		{Name: "DynamicToolCallParams", Type: reflect.TypeFor[DynamicToolCallParams]()},
+		{Name: "DynamicToolCallResponse", Type: reflect.TypeFor[DynamicToolCallResponse]()},
 		{Name: "DynamicToolCallItem", Type: reflect.TypeFor[DynamicToolCallItem]()},
 		{Name: "DynamicToolCallItemCompletedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemCompletedNotificationParams]()},
 		{Name: "DynamicToolCallItemStartedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemStartedNotificationParams]()},
@@ -243,6 +246,7 @@ func wireSchemaDefinitions() Schema {
 		string(PatchApplyStatusFailed), string(PatchApplyStatusDeclined),
 	)
 	schemas["PatchChangeKind"] = patchChangeKindSchema()
+	schemas["DynamicToolCallOutputContentItem"] = dynamicToolCallOutputContentItemSchema()
 	schemas["CommandExecWriteParams"] = schemaWithRequiredFieldAlternatives(
 		schemas["CommandExecWriteParams"].(Schema),
 		[]string{"processId"},
@@ -303,6 +307,25 @@ func patchChangeKindSchema() Schema {
 		patchChangeKindVariantSchema("update", "move_path"),
 		patchChangeKindVariantSchema("update", "movePath"),
 	}}
+}
+
+func dynamicToolCallOutputContentItemSchema() Schema {
+	return Schema{"oneOf": []any{
+		dynamicToolCallOutputContentItemVariantSchema("inputText", "text"),
+		dynamicToolCallOutputContentItemVariantSchema("inputImage", "imageUrl"),
+	}}
+}
+
+func dynamicToolCallOutputContentItemVariantSchema(contentType, valueField string) Schema {
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"type":     Schema{"type": "string", "enum": []any{contentType}},
+			valueField: Schema{"type": "string"},
+		},
+		"required":             []string{"type", valueField},
+		"additionalProperties": false,
+	}
 }
 
 func patchChangeKindVariantSchema(kind, requiredMovePath string) Schema {

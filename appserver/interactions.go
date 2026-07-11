@@ -73,6 +73,8 @@ type DynamicToolCallRequest struct {
 	ThreadID  string          `json:"threadId,omitempty"`
 	TurnID    string          `json:"turnId,omitempty"`
 	ItemID    string          `json:"itemId,omitempty"`
+	CallID    string          `json:"callId,omitempty"`
+	Namespace *string         `json:"namespace"`
 	ToolName  string          `json:"toolName"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	Metadata  map[string]any  `json:"metadata,omitempty"`
@@ -124,6 +126,9 @@ func (s *InteractionService) RequestUserInput(ctx context.Context, req UserInput
 
 func (s *InteractionService) RequestToolCall(ctx context.Context, req DynamicToolCallRequest) (InteractionResponse, error) {
 	params := map[string]any{
+		"callId":    strings.TrimSpace(req.CallID),
+		"namespace": req.Namespace,
+		"tool":      req.ToolName,
 		"toolName":  req.ToolName,
 		"name":      req.ToolName,
 		"arguments": json.RawMessage(append([]byte(nil), req.Arguments...)),
@@ -188,6 +193,12 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 	payload["turnId"] = meta.TurnID
 	payload["itemId"] = meta.ItemID
 	payload["startedAtMs"] = time.Now().UnixMilli()
+	if method == InteractionToolCall {
+		callID, _ := payload["callId"].(string)
+		if strings.TrimSpace(callID) == "" {
+			payload["callId"] = firstNonEmpty(meta.ItemID, requestID)
+		}
+	}
 	if strings.TrimSpace(req.Reason) != "" {
 		payload["reason"] = strings.TrimSpace(req.Reason)
 	}
@@ -241,8 +252,23 @@ func (s *InteractionService) Respond(resp protocol.Response) (InteractionRespons
 		Result:                 append(json.RawMessage(nil), resp.Result...),
 		Error:                  resp.Error,
 	}
+	var responseErr error
+	if pending.meta.Method == InteractionToolCall && response.Error == nil {
+		if len(response.Result) > runtimeInteractionPayloadMaxBytes {
+			responseErr = fmt.Errorf("dynamic tool call response exceeds %d bytes", runtimeInteractionPayloadMaxBytes)
+		} else {
+			var result protocol.DynamicToolCallResponse
+			if err := json.Unmarshal(response.Result, &result); err != nil {
+				responseErr = fmt.Errorf("decode dynamic tool call response: %w", err)
+			}
+		}
+		if responseErr != nil {
+			response.Error = &protocol.Error{Code: protocol.CodeInvalidParams, Message: "invalid dynamic tool call response"}
+			response.Result = nil
+		}
+	}
 	pending.ch <- response
-	return response, true, nil
+	return response, true, responseErr
 }
 
 func (s *InteractionService) nextRequestID() string {

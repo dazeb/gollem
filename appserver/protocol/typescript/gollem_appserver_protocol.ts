@@ -737,6 +737,35 @@ export type DynamicToolCallItemStartedNotificationParams = {
   "turnId": string;
 };
 
+export type DynamicToolCallOutputContentItem = {
+  "text": string;
+  "type": "inputText";
+} | {
+  "imageUrl": string;
+  "type": "inputImage";
+};
+
+export type DynamicToolCallParams = {
+  "arguments": unknown;
+  "callId": string;
+  "itemId"?: string;
+  "metadata"?: Record<string, unknown> | null;
+  "name"?: string;
+  "namespace": string | null;
+  "reason"?: string;
+  "requestId"?: string;
+  "startedAtMs"?: number;
+  "threadId": string;
+  "tool": string;
+  "toolName"?: string;
+  "turnId": string;
+};
+
+export type DynamicToolCallResponse = {
+  "contentItems": Array<DynamicToolCallOutputContentItem>;
+  "success": boolean;
+};
+
 export type Error = ({
   "code": number;
   "data"?: unknown;
@@ -1369,6 +1398,7 @@ export const wireTypeBindings = [
   { "method": "item/mcpToolCall/progress", "surface": "server-notification", "params": ["MCPToolCallProgressNotificationParams"] },
   { "method": "item/permissions/requestApproval", "surface": "server-request", "params": ["PermissionsApprovalRequestParams"] },
   { "method": "item/started", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
+  { "method": "item/tool/call", "surface": "server-request", "params": ["DynamicToolCallParams"], "result": ["DynamicToolCallResponse"] },
   { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotificationParams"] },
   { "method": "thread/archive", "surface": "client-request", "params": ["ThreadArchiveParams"], "result": ["ThreadArchiveResponse"] },
   { "method": "thread/archived", "surface": "server-notification", "params": ["ThreadArchivedNotification"] },
@@ -1417,6 +1447,7 @@ export interface MethodParamsByName {
   "item/mcpToolCall/progress": MCPToolCallProgressNotificationParams;
   "item/permissions/requestApproval": PermissionsApprovalRequestParams;
   "item/started": ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
+  "item/tool/call": DynamicToolCallParams;
   "serverRequest/resolved": ServerRequestResolvedNotificationParams;
   "thread/archive": ThreadArchiveParams;
   "thread/archived": ThreadArchivedNotification;
@@ -1456,6 +1487,7 @@ export interface MethodResultsByName {
   "daemon/version": DaemonVersion;
   "initialize": InitializeResponse;
   "item/fileChange/requestApproval": FileChangeRequestApprovalResponse;
+  "item/tool/call": DynamicToolCallResponse;
   "thread/archive": ThreadArchiveResponse;
   "thread/compact/start": ThreadCompactStartResponse;
   "thread/delete": ThreadDeleteResponse;

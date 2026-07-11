@@ -105,18 +105,21 @@ func TestInteractionRuntimeClientToolAndMCPElicitationUseTypedRequests(t *testin
 		toolName   string
 		args       string
 		wantMethod string
+		response   string
 	}{
 		{
 			name:       "client tool",
 			toolName:   "call_client_tool",
 			args:       `{"toolName":"client.search","arguments":{"query":"gollem"},"timeoutSeconds":30}`,
 			wantMethod: InteractionToolCall,
+			response:   `{"contentItems":[{"type":"inputText","text":"match"}],"success":true}`,
 		},
 		{
 			name:       "MCP elicitation",
 			toolName:   "request_mcp_elicitation",
 			args:       `{"server":"repo","message":"Choose access","schema":{"type":"object"},"timeoutSeconds":30}`,
 			wantMethod: InteractionMCPElicitation,
+			response:   `{"ok":true}`,
 		},
 	}
 	for _, tt := range tests {
@@ -140,7 +143,7 @@ func TestInteractionRuntimeClientToolAndMCPElicitationUseTypedRequests(t *testin
 			if serverRequest.Method != tt.wantMethod {
 				t.Fatalf("request method = %q, want %q", serverRequest.Method, tt.wantMethod)
 			}
-			if err := server.HandleResponse(context.Background(), protocol.Response{ID: serverRequest.ID, Result: json.RawMessage(`{"ok":true}`)}); err != nil {
+			if err := server.HandleResponse(context.Background(), protocol.Response{ID: serverRequest.ID, Result: json.RawMessage(tt.response)}); err != nil {
 				t.Fatalf("HandleResponse: %v", err)
 			}
 			got := <-resultCh
@@ -163,6 +166,7 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 		wantMethod    string
 		argumentKey   string
 		argumentValue any
+		response      string
 	}{
 		{
 			name:          "client tool",
@@ -171,6 +175,7 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 			wantMethod:    InteractionToolCall,
 			argumentKey:   "toolName",
 			argumentValue: "client.search",
+			response:      `{"contentItems":[],"success":true}`,
 		},
 		{
 			name:          "MCP elicitation",
@@ -179,6 +184,7 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 			wantMethod:    InteractionMCPElicitation,
 			argumentKey:   "server",
 			argumentValue: "repo",
+			response:      `{"ok":true}`,
 		},
 	}
 	for _, tt := range tests {
@@ -219,7 +225,11 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 			if itemID == "" || itemID == "call-runtime-interaction" || params["threadId"] != started.Thread.ID || params["turnId"] != started.Turn.ID {
 				t.Fatalf("server request correlation = %#v", params)
 			}
-			if err := server.HandleResponse(ctx, protocol.Response{ID: serverRequest.ID, Result: json.RawMessage(`{"ok":true}`)}); err != nil {
+			if tt.wantMethod == InteractionToolCall &&
+				(params["callId"] != "call-runtime-interaction" || params["tool"] != "client.search" || params["namespace"] != nil) {
+				t.Fatalf("public dynamic tool correlation = %#v", params)
+			}
+			if err := server.HandleResponse(ctx, protocol.Response{ID: serverRequest.ID, Result: json.RawMessage(tt.response)}); err != nil {
 				t.Fatalf("HandleResponse: %v", err)
 			}
 			waitForNotificationSet(t, server, "serverRequest/resolved", "turn/completed")
