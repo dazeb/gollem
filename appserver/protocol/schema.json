@@ -5858,6 +5858,164 @@
       ],
       "type": "object"
     },
+    "Thread": {
+      "additionalProperties": false,
+      "properties": {
+        "agentNickname": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agentRole": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cliVersion": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "cwd": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "ephemeral": {
+          "type": "boolean"
+        },
+        "forkedFromId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gitInfo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GitInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "modelProvider": {
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parentThreadId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preview": {
+          "type": "string"
+        },
+        "recencyAt": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SessionSource"
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadStatus"
+        },
+        "threadSource": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/Turn"
+          },
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "sessionId",
+        "forkedFromId",
+        "parentThreadId",
+        "preview",
+        "ephemeral",
+        "modelProvider",
+        "createdAt",
+        "updatedAt",
+        "recencyAt",
+        "status",
+        "path",
+        "cwd",
+        "cliVersion",
+        "source",
+        "threadSource",
+        "agentNickname",
+        "agentRole",
+        "gitInfo",
+        "name",
+        "turns"
+      ],
+      "type": "object"
+    },
     "ThreadActiveFlag": {
       "enum": [
         "waitingOnApproval",
