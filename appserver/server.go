@@ -873,21 +873,24 @@ func (s *Server) handleThreadSettingsUpdate(ctx context.Context, raw json.RawMes
 }
 
 func (s *Server) handleThreadGoalGet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
-	st, threadID, rpcErr := s.threadStoreAndID(raw, "thread/goal/get")
+	st, rpcErr := s.requireStore("thread/goal/get")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	thread, err := st.GetThread(ctx, threadID)
+	params, rpcErr := decodeThreadGoalGetParams(raw)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	thread, err := st.GetThread(ctx, params.EffectiveThreadID())
 	if err != nil {
 		return nil, mapError("thread/goal/get", err)
 	}
-	goal, set := thread.Settings[threadGoalSettingKey]
-	return threadGoalResult{
-		ThreadID: thread.ID,
-		Goal:     goal,
-		Set:      set,
-		Thread:   thread,
-	}, nil
+	goal, set := threadGoalFromStored(thread)
+	if !set {
+		return threadGoalGetResponse(thread, nil), nil
+	}
+	goal = refreshThreadGoalUsage(ctx, st, goal)
+	return threadGoalGetResponse(thread, &goal), nil
 }
 
 func (s *Server) handleThreadGoalSet(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -895,19 +898,24 @@ func (s *Server) handleThreadGoalSet(ctx context.Context, raw json.RawMessage) (
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadGoalSetParams
-	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+	params, rpcErr := decodeThreadGoalSetParams(raw)
+	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
-	if threadID == "" {
-		return nil, invalidParams("threadId is required", nil)
+	threadID := params.EffectiveThreadID()
+	thread, err := st.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, mapError("thread/goal/set", err)
 	}
-	goal, ok := params.goal()
-	if !ok {
-		return nil, invalidParams("goal is required", nil)
+	turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: threadID})
+	if err != nil {
+		return nil, mapError("thread/goal/set", err)
 	}
-	thread, err := st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
+	goal, rpcErr := applyThreadGoalSet(thread, params, turns, time.Now().UTC())
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	thread, err = st.UpdateThreadSettings(ctx, store.UpdateThreadSettingsRequest{
 		ID:       threadID,
 		Settings: map[string]any{threadGoalSettingKey: goal},
 	})
@@ -916,31 +924,27 @@ func (s *Server) handleThreadGoalSet(ctx context.Context, raw json.RawMessage) (
 	}
 	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
-	s.publishThreadGoalNotification("thread/goal/updated", thread, goal)
-	return threadGoalResult{
-		ThreadID: thread.ID,
-		Goal:     goal,
-		Set:      true,
-		Thread:   thread,
-	}, nil
+	s.publishThreadGoalUpdated(thread, goal, nil)
+	return threadGoalSetResponse(thread, goal), nil
 }
 
 func (s *Server) handleThreadGoalClear(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
-	st, threadID, rpcErr := s.threadStoreAndID(raw, "thread/goal/clear")
+	st, rpcErr := s.requireStore("thread/goal/clear")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
+	params, rpcErr := decodeThreadGoalClearParams(raw)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	threadID := params.EffectiveThreadID()
 	thread, err := st.GetThread(ctx, threadID)
 	if err != nil {
 		return nil, mapError("thread/goal/clear", err)
 	}
 	_, hadGoal := thread.Settings[threadGoalSettingKey]
 	if !hadGoal {
-		return threadGoalClearResult{
-			ThreadID: thread.ID,
-			Cleared:  false,
-			Thread:   thread,
-		}, nil
+		return threadGoalClearResponse(thread, false), nil
 	}
 	nextSettings := cloneSettings(thread.Settings)
 	delete(nextSettings, threadGoalSettingKey)
@@ -955,12 +959,8 @@ func (s *Server) handleThreadGoalClear(ctx context.Context, raw json.RawMessage)
 	}
 	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
-	s.publishThreadGoalNotification("thread/goal/cleared", thread, nil)
-	return threadGoalClearResult{
-		ThreadID: thread.ID,
-		Cleared:  hadGoal,
-		Thread:   thread,
-	}, nil
+	s.publishThreadGoalCleared(thread)
+	return threadGoalClearResponse(thread, hadGoal), nil
 }
 
 func (s *Server) handleThreadMetadataUpdate(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1968,22 +1968,6 @@ func (s *Server) requireRuntime(method string) (store.Store, *RuntimeService, *p
 	return st, s.runtime, nil
 }
 
-func (s *Server) threadStoreAndID(raw json.RawMessage, method string) (store.Store, string, *protocol.Error) {
-	st, rpcErr := s.requireStore(method)
-	if rpcErr != nil {
-		return nil, "", rpcErr
-	}
-	var params threadIDParams
-	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
-		return nil, "", rpcErr
-	}
-	threadID := params.threadID()
-	if threadID == "" {
-		return nil, "", invalidParams("threadId is required", nil)
-	}
-	return st, threadID, nil
-}
-
 func decodeParams(raw json.RawMessage, out any) *protocol.Error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -2214,28 +2198,6 @@ type threadSearchResponse struct {
 	Data            []threadSearchResult `json:"data"`
 	NextCursor      *string              `json:"nextCursor"`
 	BackwardsCursor *string              `json:"backwardsCursor"`
-}
-
-type threadIDParams struct {
-	ID       string `json:"id,omitempty"`
-	ThreadID string `json:"threadId,omitempty"`
-}
-
-func (p threadIDParams) threadID() string {
-	return firstNonEmpty(p.ThreadID, p.ID)
-}
-
-type threadGoalResult struct {
-	ThreadID string        `json:"threadId"`
-	Goal     any           `json:"goal"`
-	Set      bool          `json:"set"`
-	Thread   *store.Thread `json:"thread,omitempty"`
-}
-
-type threadGoalClearResult struct {
-	ThreadID string        `json:"threadId"`
-	Cleared  bool          `json:"cleared"`
-	Thread   *store.Thread `json:"thread,omitempty"`
 }
 
 type threadMemoryModeSetResult struct {

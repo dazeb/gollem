@@ -136,6 +136,16 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadCompactedNotificationParams", Type: reflect.TypeFor[ThreadCompactedNotificationParams]()},
 		{Name: "ThreadDeleteParams", Type: reflect.TypeFor[ThreadDeleteParams]()},
 		{Name: "ThreadDeleteResponse", Type: reflect.TypeFor[ThreadDeleteResponse]()},
+		{Name: "ThreadGoal", Type: reflect.TypeFor[ThreadGoal]()},
+		{Name: "ThreadGoalClearParams", Type: reflect.TypeFor[ThreadGoalClearParams]()},
+		{Name: "ThreadGoalClearResponse", Type: reflect.TypeFor[ThreadGoalClearResponse]()},
+		{Name: "ThreadGoalClearedNotification", Type: reflect.TypeFor[ThreadGoalClearedNotification]()},
+		{Name: "ThreadGoalGetParams", Type: reflect.TypeFor[ThreadGoalGetParams]()},
+		{Name: "ThreadGoalGetResponse", Type: reflect.TypeFor[ThreadGoalGetResponse]()},
+		{Name: "ThreadGoalSetParams", Type: reflect.TypeFor[ThreadGoalSetParams]()},
+		{Name: "ThreadGoalSetResponse", Type: reflect.TypeFor[ThreadGoalSetResponse]()},
+		{Name: "ThreadGoalStatus", Type: reflect.TypeFor[ThreadGoalStatus]()},
+		{Name: "ThreadGoalUpdatedNotification", Type: reflect.TypeFor[ThreadGoalUpdatedNotification]()},
 		{Name: "ThreadLifecycleStatus", Type: reflect.TypeFor[ThreadLifecycleStatus]()},
 		{Name: "ThreadListCwdFilter", Type: reflect.TypeFor[ThreadListCwdFilter]()},
 		{Name: "ThreadListParams", Type: reflect.TypeFor[ThreadListParams]()},
@@ -188,6 +198,10 @@ func wireSchemaDefinitions() Schema {
 	schemas["SortDirection"] = stringEnumSchema(string(SortDirectionAsc), string(SortDirectionDesc))
 	schemas["ThreadLifecycleStatus"] = stringEnumSchema(
 		string(ThreadLifecycleActive), string(ThreadLifecycleArchived), string(ThreadLifecycleDeleted),
+	)
+	schemas["ThreadGoalStatus"] = stringEnumSchema(
+		string(ThreadGoalActive), string(ThreadGoalPaused), string(ThreadGoalBlocked),
+		string(ThreadGoalUsageLimited), string(ThreadGoalBudgetLimited), string(ThreadGoalComplete),
 	)
 	schemas["ThreadListCwdFilter"] = Schema{"oneOf": []any{
 		Schema{"type": "string"},

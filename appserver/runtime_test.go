@@ -174,6 +174,69 @@ func TestServerRuntimePublishesThreadTokenUsageUpdated(t *testing.T) {
 	assertTokenUsageBreakdown(t, "second total", secondUsage.TokenUsage.Total, 25, 15, 4, 10, 3)
 }
 
+func TestServerRuntimeAccountsStructuredThreadGoal(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Goal runtime"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	response := core.TextResponse("goal answer")
+	response.Usage = core.Usage{InputTokens: 7, OutputTokens: 5}
+	model := core.NewTestModel(response)
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}))),
+	)
+
+	goalResp := server.HandleRequest(ctx, request("thread/goal/set", map[string]any{
+		"threadId":    thread.ID,
+		"objective":   "Finish one runtime turn",
+		"tokenBudget": 10,
+	}))
+	if goalResp.Error != nil {
+		t.Fatalf("thread/goal/set error: %v", goalResp.Error)
+	}
+	_ = server.DrainNotifications()
+
+	resumeResp := server.HandleRequest(ctx, request("thread/resume", map[string]any{
+		"threadId": thread.ID,
+		"prompt":   "account this turn",
+	}))
+	if resumeResp.Error != nil {
+		t.Fatalf("thread/resume error: %v", resumeResp.Error)
+	}
+	var resumed struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, resumeResp, &resumed)
+	events := waitForNotificationSet(t, server, "thread/tokenUsage/updated", "thread/goal/updated", "turn/completed")
+	var goalUpdate protocol.ThreadGoalUpdatedNotification
+	found := false
+	for _, event := range events {
+		if event.Method != "thread/goal/updated" {
+			continue
+		}
+		if err := json.Unmarshal(event.Params, &goalUpdate); err != nil {
+			t.Fatalf("decode goal update: %v", err)
+		}
+		found = goalUpdate.TurnID != nil && *goalUpdate.TurnID == resumed.Turn.ID
+	}
+	if !found || goalUpdate.Goal.TokensUsed != 12 || goalUpdate.Goal.Status != protocol.ThreadGoalBudgetLimited {
+		t.Fatalf("runtime goal update = %#v", goalUpdate)
+	}
+
+	getResp := server.HandleRequest(ctx, request("thread/goal/get", map[string]any{"threadId": thread.ID}))
+	if getResp.Error != nil {
+		t.Fatalf("thread/goal/get error: %v", getResp.Error)
+	}
+	var got protocol.ThreadGoalGetResponse
+	decodeResult(t, getResp, &got)
+	if got.Goal == nil || got.Goal.TokensUsed != 12 || got.Goal.Status != protocol.ThreadGoalBudgetLimited {
+		t.Fatalf("durable runtime goal = %#v", got.Goal)
+	}
+}
+
 func TestServerRuntimePersistsDynamicToolCallLifecycle(t *testing.T) {
 	ctx := context.Background()
 	st := newRuntimeTestStore(t)

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	appcache "github.com/fugue-labs/gollem/appserver/cache"
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
 )
@@ -56,15 +57,31 @@ func (s *Server) publishThreadClosed(threadID string) {
 	})
 }
 
-func (s *Server) publishThreadGoalNotification(method string, thread *store.Thread, goal any) {
+func (s *Server) publishThreadGoalUpdated(thread *store.Thread, goal protocol.ThreadGoal, turnID *string) {
 	if thread == nil {
 		return
 	}
-	s.PublishNotification(method, threadGoalNotificationParams{
+	now := time.Now().UTC()
+	record := protocolThreadRecord(thread)
+	s.PublishNotification("thread/goal/updated", protocol.ThreadGoalUpdatedNotification{
 		ThreadID: thread.ID,
+		TurnID:   turnID,
 		Goal:     goal,
-		Thread:   thread,
-		At:       time.Now().UTC(),
+		Thread:   &record,
+		At:       &now,
+	})
+}
+
+func (s *Server) publishThreadGoalCleared(thread *store.Thread) {
+	if thread == nil {
+		return
+	}
+	now := time.Now().UTC()
+	record := protocolThreadRecord(thread)
+	s.PublishNotification("thread/goal/cleared", protocol.ThreadGoalClearedNotification{
+		ThreadID: thread.ID,
+		Thread:   &record,
+		At:       &now,
 	})
 }
 
