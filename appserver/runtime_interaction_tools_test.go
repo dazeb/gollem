@@ -121,7 +121,7 @@ func TestInteractionRuntimeClientToolAndMCPElicitationUseTypedRequests(t *testin
 			toolName:   "request_mcp_elicitation",
 			args:       `{"server":"repo","message":"Choose access","schema":{"type":"object"},"timeoutSeconds":30}`,
 			wantMethod: InteractionMCPElicitation,
-			response:   `{"ok":true}`,
+			response:   `{"action":"accept","content":{"choice":"safe"},"_meta":null}`,
 		},
 	}
 	for _, tt := range tests {
@@ -144,6 +144,16 @@ func TestInteractionRuntimeClientToolAndMCPElicitationUseTypedRequests(t *testin
 			serverRequest := waitForServerRequest(t, server)
 			if serverRequest.Method != tt.wantMethod {
 				t.Fatalf("request method = %q, want %q", serverRequest.Method, tt.wantMethod)
+			}
+			if tt.wantMethod == InteractionMCPElicitation {
+				var params protocol.McpServerElicitationRequestParams
+				if err := json.Unmarshal(serverRequest.Params, &params); err != nil {
+					t.Fatalf("decode MCP elicitation params: %v", err)
+				}
+				if params.Mode != protocol.McpServerElicitationModeForm || params.ServerName != "repo" ||
+					params.TurnID == nil || *params.TurnID != "turn-runtime" || params.Message != "Choose access" {
+					t.Fatalf("MCP elicitation params = %#v", params)
+				}
 			}
 			if err := server.HandleResponse(context.Background(), protocol.Response{ID: serverRequest.ID, Result: json.RawMessage(tt.response)}); err != nil {
 				t.Fatalf("HandleResponse: %v", err)
@@ -186,7 +196,7 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 			wantMethod:    InteractionMCPElicitation,
 			argumentKey:   "server",
 			argumentValue: "repo",
-			response:      `{"ok":true}`,
+			response:      `{"action":"accept","content":{"choice":"safe"},"_meta":null}`,
 		},
 	}
 	for _, tt := range tests {
@@ -230,6 +240,16 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 			if tt.wantMethod == InteractionToolCall &&
 				(params["callId"] != "call-runtime-interaction" || params["tool"] != "client.search" || params["namespace"] != nil) {
 				t.Fatalf("public dynamic tool correlation = %#v", params)
+			}
+			if tt.wantMethod == InteractionMCPElicitation {
+				var typed protocol.McpServerElicitationRequestParams
+				if err := json.Unmarshal(serverRequest.Params, &typed); err != nil {
+					t.Fatalf("decode MCP elicitation params: %v", err)
+				}
+				if typed.Mode != protocol.McpServerElicitationModeForm || typed.ServerName != "repo" ||
+					typed.TurnID == nil || *typed.TurnID != started.Turn.ID || typed.ItemID != itemID {
+					t.Fatalf("public MCP elicitation correlation = %#v", typed)
+				}
 			}
 			if err := server.HandleResponse(ctx, protocol.Response{ID: serverRequest.ID, Result: json.RawMessage(tt.response)}); err != nil {
 				t.Fatalf("HandleResponse: %v", err)

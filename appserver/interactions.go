@@ -171,11 +171,62 @@ func (s *InteractionService) RequestToolCall(ctx context.Context, req DynamicToo
 }
 
 func (s *InteractionService) RequestMCPElicitation(ctx context.Context, req MCPElicitationRequest) (InteractionResponse, error) {
-	params := map[string]any{
-		"serverId": req.ServerID,
-		"message":  req.Message,
-		"schema":   cloneStringAnyMap(req.Schema),
-		"metadata": cloneStringAnyMap(req.Metadata),
+	schema := cloneStringAnyMap(req.Schema)
+	if len(schema) == 0 {
+		schema = map[string]any{"type": "object", "properties": map[string]any{}}
+	} else if schema["type"] == "object" {
+		if _, ok := schema["properties"]; !ok {
+			schema["properties"] = map[string]any{}
+		}
+	}
+	schemaJSON, err := json.Marshal(schema)
+	if err != nil {
+		return InteractionResponse{}, fmt.Errorf("encode MCP elicitation schema: %w", err)
+	}
+	var requestedSchema protocol.McpElicitationSchema
+	if err := json.Unmarshal(schemaJSON, &requestedSchema); err != nil {
+		return InteractionResponse{}, fmt.Errorf("validate MCP elicitation schema: %w", err)
+	}
+	requestedSchemaJSON, err := json.Marshal(requestedSchema)
+	if err != nil {
+		return InteractionResponse{}, fmt.Errorf("encode validated MCP elicitation schema: %w", err)
+	}
+	if err := json.Unmarshal(requestedSchemaJSON, &schema); err != nil {
+		return InteractionResponse{}, fmt.Errorf("decode validated MCP elicitation schema: %w", err)
+	}
+	meta := json.RawMessage("null")
+	if req.Metadata != nil {
+		meta, err = json.Marshal(cloneStringAnyMap(req.Metadata))
+		if err != nil {
+			return InteractionResponse{}, fmt.Errorf("encode MCP elicitation metadata: %w", err)
+		}
+	}
+	var turnID *string
+	if value := strings.TrimSpace(req.TurnID); value != "" {
+		turnID = &value
+	}
+	typedParams := protocol.McpServerElicitationRequestParams{
+		ThreadID:        strings.TrimSpace(req.ThreadID),
+		TurnID:          turnID,
+		ServerName:      strings.TrimSpace(req.ServerID),
+		Mode:            protocol.McpServerElicitationModeForm,
+		Meta:            meta,
+		Message:         req.Message,
+		RequestedSchema: requestedSchemaJSON,
+		ServerID:        strings.TrimSpace(req.ServerID),
+		Schema:          schema,
+		Metadata:        cloneStringAnyMap(req.Metadata),
+	}
+	paramsJSON, err := json.Marshal(typedParams)
+	if err != nil {
+		return InteractionResponse{}, fmt.Errorf("encode MCP elicitation request: %w", err)
+	}
+	if len(paramsJSON) > runtimeInteractionPayloadMaxBytes {
+		return InteractionResponse{}, fmt.Errorf("MCP elicitation request exceeds %d bytes", runtimeInteractionPayloadMaxBytes)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(paramsJSON, &params); err != nil {
+		return InteractionResponse{}, fmt.Errorf("decode MCP elicitation request: %w", err)
 	}
 	return s.Request(ctx, InteractionRequest{
 		Method:   InteractionMCPElicitation,
@@ -216,7 +267,11 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 	payload := cloneStringAnyMap(req.Params)
 	payload["requestId"] = requestID
 	payload["threadId"] = meta.ThreadID
-	payload["turnId"] = meta.TurnID
+	if method == InteractionMCPElicitation && meta.TurnID == "" {
+		payload["turnId"] = nil
+	} else {
+		payload["turnId"] = meta.TurnID
+	}
 	payload["itemId"] = meta.ItemID
 	payload["startedAtMs"] = time.Now().UnixMilli()
 	if method == InteractionToolCall {
@@ -304,6 +359,11 @@ func validateInteractionResult(method string, result json.RawMessage) error {
 		var response protocol.DynamicToolCallResponse
 		if err := json.Unmarshal(result, &response); err != nil {
 			return fmt.Errorf("decode dynamic tool call response: %w", err)
+		}
+	case InteractionMCPElicitation:
+		var response protocol.McpServerElicitationRequestResponse
+		if err := json.Unmarshal(result, &response); err != nil {
+			return fmt.Errorf("decode MCP elicitation response: %w", err)
 		}
 	}
 	return nil

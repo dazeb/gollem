@@ -39,6 +39,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "item/started", Surface: SurfaceServerNotification, Params: []string{"ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"}},
 	{Method: "item/tool/call", Surface: SurfaceServerRequest, Params: []string{"DynamicToolCallParams"}, Result: []string{"DynamicToolCallResponse"}},
 	{Method: "item/tool/requestUserInput", Surface: SurfaceServerRequest, Params: []string{"ToolRequestUserInputParams"}, Result: []string{"ToolRequestUserInputResponse"}},
+	{Method: "mcpServer/elicitation/request", Surface: SurfaceServerRequest, Params: []string{"McpServerElicitationRequestParams"}, Result: []string{"McpServerElicitationRequestResponse"}},
 	{Method: "serverRequest/resolved", Surface: SurfaceServerNotification, Params: []string{"ServerRequestResolvedNotificationParams"}},
 	{Method: "thread/archive", Surface: SurfaceClientRequest, Params: []string{"ThreadArchiveParams"}, Result: []string{"ThreadArchiveResponse"}},
 	{Method: "thread/archived", Surface: SurfaceServerNotification, Params: []string{"ThreadArchivedNotification"}},

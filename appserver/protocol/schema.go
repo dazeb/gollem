@@ -135,6 +135,31 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallItemStartedNotificationParams", Type: reflect.TypeFor[MCPToolCallItemStartedNotificationParams]()},
 		{Name: "MCPToolCallProgressNotificationParams", Type: reflect.TypeFor[MCPToolCallProgressNotificationParams]()},
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
+		{Name: "McpElicitationArrayType", Type: reflect.TypeFor[McpElicitationArrayType]()},
+		{Name: "McpElicitationBooleanSchema", Type: reflect.TypeFor[McpElicitationBooleanSchema]()},
+		{Name: "McpElicitationBooleanType", Type: reflect.TypeFor[McpElicitationBooleanType]()},
+		{Name: "McpElicitationConstOption", Type: reflect.TypeFor[McpElicitationConstOption]()},
+		{Name: "McpElicitationEnumSchema", Type: reflect.TypeFor[McpElicitationEnumSchema]()},
+		{Name: "McpElicitationLegacyTitledEnumSchema", Type: reflect.TypeFor[McpElicitationLegacyTitledEnumSchema]()},
+		{Name: "McpElicitationMultiSelectEnumSchema", Type: reflect.TypeFor[McpElicitationMultiSelectEnumSchema]()},
+		{Name: "McpElicitationNumberSchema", Type: reflect.TypeFor[McpElicitationNumberSchema]()},
+		{Name: "McpElicitationNumberType", Type: reflect.TypeFor[McpElicitationNumberType]()},
+		{Name: "McpElicitationObjectType", Type: reflect.TypeFor[McpElicitationObjectType]()},
+		{Name: "McpElicitationPrimitiveSchema", Type: reflect.TypeFor[McpElicitationPrimitiveSchema]()},
+		{Name: "McpElicitationSchema", Type: reflect.TypeFor[McpElicitationSchema]()},
+		{Name: "McpElicitationSingleSelectEnumSchema", Type: reflect.TypeFor[McpElicitationSingleSelectEnumSchema]()},
+		{Name: "McpElicitationStringFormat", Type: reflect.TypeFor[McpElicitationStringFormat]()},
+		{Name: "McpElicitationStringSchema", Type: reflect.TypeFor[McpElicitationStringSchema]()},
+		{Name: "McpElicitationStringType", Type: reflect.TypeFor[McpElicitationStringType]()},
+		{Name: "McpElicitationTitledEnumItems", Type: reflect.TypeFor[McpElicitationTitledEnumItems]()},
+		{Name: "McpElicitationTitledMultiSelectEnumSchema", Type: reflect.TypeFor[McpElicitationTitledMultiSelectEnumSchema]()},
+		{Name: "McpElicitationTitledSingleSelectEnumSchema", Type: reflect.TypeFor[McpElicitationTitledSingleSelectEnumSchema]()},
+		{Name: "McpElicitationUntitledEnumItems", Type: reflect.TypeFor[McpElicitationUntitledEnumItems]()},
+		{Name: "McpElicitationUntitledMultiSelectEnumSchema", Type: reflect.TypeFor[McpElicitationUntitledMultiSelectEnumSchema]()},
+		{Name: "McpElicitationUntitledSingleSelectEnumSchema", Type: reflect.TypeFor[McpElicitationUntitledSingleSelectEnumSchema]()},
+		{Name: "McpServerElicitationAction", Type: reflect.TypeFor[McpServerElicitationAction]()},
+		{Name: "McpServerElicitationRequestParams", Type: reflect.TypeFor[McpServerElicitationRequestParams]()},
+		{Name: "McpServerElicitationRequestResponse", Type: reflect.TypeFor[McpServerElicitationRequestResponse]()},
 		{Name: "MethodInfo", Type: reflect.TypeFor[MethodInfo]()},
 		{Name: "MethodState", Type: reflect.TypeFor[MethodState]()},
 		{Name: "PatchApplyStatus", Type: reflect.TypeFor[PatchApplyStatus]()},
@@ -252,6 +277,36 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["PatchChangeKind"] = patchChangeKindSchema()
 	schemas["DynamicToolCallOutputContentItem"] = dynamicToolCallOutputContentItemSchema()
+	schemas["McpElicitationArrayType"] = stringEnumSchema("array")
+	schemas["McpElicitationBooleanType"] = stringEnumSchema("boolean")
+	schemas["McpElicitationEnumSchema"] = schemaRefUnion(
+		"McpElicitationSingleSelectEnumSchema",
+		"McpElicitationMultiSelectEnumSchema",
+		"McpElicitationLegacyTitledEnumSchema",
+	)
+	schemas["McpElicitationMultiSelectEnumSchema"] = schemaRefUnion(
+		"McpElicitationUntitledMultiSelectEnumSchema",
+		"McpElicitationTitledMultiSelectEnumSchema",
+	)
+	schemas["McpElicitationNumberType"] = stringEnumSchema("number", "integer")
+	schemas["McpElicitationObjectType"] = stringEnumSchema("object")
+	schemas["McpElicitationPrimitiveSchema"] = schemaRefUnion(
+		"McpElicitationEnumSchema",
+		"McpElicitationStringSchema",
+		"McpElicitationNumberSchema",
+		"McpElicitationBooleanSchema",
+	)
+	schemas["McpElicitationSingleSelectEnumSchema"] = schemaRefUnion(
+		"McpElicitationUntitledSingleSelectEnumSchema",
+		"McpElicitationTitledSingleSelectEnumSchema",
+	)
+	schemas["McpElicitationStringFormat"] = stringEnumSchema("email", "uri", "date", "date-time")
+	schemas["McpElicitationStringType"] = stringEnumSchema("string")
+	setSchemaIntegerMinimum(schemas["McpElicitationStringSchema"].(Schema), 0, "minLength", "maxLength")
+	setSchemaIntegerMinimum(schemas["McpElicitationTitledMultiSelectEnumSchema"].(Schema), 0, "minItems", "maxItems")
+	setSchemaIntegerMinimum(schemas["McpElicitationUntitledMultiSelectEnumSchema"].(Schema), 0, "minItems", "maxItems")
+	schemas["McpServerElicitationAction"] = stringEnumSchema("accept", "decline", "cancel")
+	schemas["McpServerElicitationRequestParams"] = mcpServerElicitationRequestParamsSchema()
 	schemas["CommandExecWriteParams"] = schemaWithRequiredFieldAlternatives(
 		schemas["CommandExecWriteParams"].(Schema),
 		[]string{"processId"},
@@ -330,6 +385,74 @@ func dynamicToolCallOutputContentItemVariantSchema(contentType, valueField strin
 		},
 		"required":             []string{"type", valueField},
 		"additionalProperties": false,
+	}
+}
+
+func schemaRefUnion(names ...string) Schema {
+	variants := make([]any, 0, len(names))
+	for _, name := range names {
+		variants = append(variants, Schema{"$ref": "#/$defs/" + name})
+	}
+	return Schema{"anyOf": variants}
+}
+
+func mcpServerElicitationRequestParamsSchema() Schema {
+	return Schema{"oneOf": []any{
+		mcpServerElicitationRequestVariantSchema("form"),
+		mcpServerElicitationRequestVariantSchema("openai/form"),
+		mcpServerElicitationRequestVariantSchema("url"),
+	}}
+}
+
+func mcpServerElicitationRequestVariantSchema(mode string) Schema {
+	properties := Schema{
+		"threadId":    Schema{"type": "string"},
+		"turnId":      Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}},
+		"serverName":  Schema{"type": "string"},
+		"mode":        Schema{"type": "string", "enum": []any{mode}},
+		"_meta":       Schema{},
+		"message":     Schema{"type": "string"},
+		"requestId":   Schema{"type": "string"},
+		"itemId":      Schema{"type": "string"},
+		"startedAtMs": Schema{"type": "integer"},
+		"serverId":    Schema{"type": "string"},
+		"schema": Schema{"anyOf": []any{
+			Schema{"type": "object", "additionalProperties": Schema{}},
+			Schema{"type": "null"},
+		}},
+		"metadata": Schema{"anyOf": []any{
+			Schema{"type": "object", "additionalProperties": Schema{}},
+			Schema{"type": "null"},
+		}},
+		"reason": Schema{"type": "string"},
+	}
+	required := []string{"threadId", "turnId", "serverName", "mode", "_meta", "message"}
+	switch mode {
+	case "form":
+		properties["requestedSchema"] = Schema{"$ref": "#/$defs/McpElicitationSchema"}
+		required = append(required, "requestedSchema")
+	case "openai/form":
+		properties["requestedSchema"] = Schema{}
+		required = append(required, "requestedSchema")
+	case "url":
+		properties["url"] = Schema{"type": "string"}
+		properties["elicitationId"] = Schema{"type": "string"}
+		required = append(required, "url", "elicitationId")
+	}
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+}
+
+func setSchemaIntegerMinimum(schema Schema, minimum int, names ...string) {
+	properties, _ := schema["properties"].(Schema)
+	for _, name := range names {
+		if property, ok := properties[name].(Schema); ok {
+			property["minimum"] = minimum
+		}
 	}
 }
 
