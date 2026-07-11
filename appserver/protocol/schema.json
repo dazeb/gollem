@@ -3879,6 +3879,174 @@
       ],
       "type": "object"
     },
+    "ToolRequestUserInputAnswer": {
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "answers"
+      ],
+      "type": "object"
+    },
+    "ToolRequestUserInputOption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "description"
+      ],
+      "type": "object"
+    },
+    "ToolRequestUserInputParams": {
+      "additionalProperties": false,
+      "properties": {
+        "autoResolutionMs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "placeholder": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/ToolRequestUserInputQuestion"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "startedAtMs": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "questions",
+        "autoResolutionMs"
+      ],
+      "type": "object"
+    },
+    "ToolRequestUserInputQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "header": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "isOther": {
+          "type": "boolean"
+        },
+        "isSecret": {
+          "type": "boolean"
+        },
+        "options": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ToolRequestUserInputOption"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "header",
+        "question",
+        "isOther",
+        "isSecret",
+        "options"
+      ],
+      "type": "object"
+    },
+    "ToolRequestUserInputResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ToolRequestUserInputAnswer"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "answers"
+      ],
+      "type": "object"
+    },
     "TurnDiffUpdatedNotificationParams": {
       "additionalProperties": false,
       "properties": {
@@ -5532,6 +5700,16 @@
       ],
       "result": [
         "DynamicToolCallResponse"
+      ]
+    },
+    {
+      "method": "item/tool/requestUserInput",
+      "surface": "server-request",
+      "params": [
+        "ToolRequestUserInputParams"
+      ],
+      "result": [
+        "ToolRequestUserInputResponse"
       ]
     },
     {

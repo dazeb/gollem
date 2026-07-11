@@ -84,6 +84,7 @@ func InteractionRuntimeTools(service *InteractionService) []core.Tool {
 					ThreadID:    turn.ThreadID,
 					TurnID:      turn.TurnID,
 					ItemID:      runtimeDurableToolItemID(ctx, rc),
+					QuestionID:  rc.ToolCallID,
 					Prompt:      strings.TrimSpace(params.Prompt),
 					Placeholder: params.Placeholder,
 					Required:    params.Required,

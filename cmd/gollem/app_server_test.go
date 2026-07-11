@@ -726,9 +726,17 @@ func TestCLIAppServerRuntimeUsesMCPAndSharedInteractionTools(t *testing.T) {
 	if len(requests) != 1 || requests[0].Method != appserver.InteractionRequestUserInput {
 		t.Fatalf("runtime interaction requests = %#v", requests)
 	}
+	var inputParams protocol.ToolRequestUserInputParams
+	if err := json.Unmarshal(requests[0].Params, &inputParams); err != nil {
+		t.Fatalf("decode runtime user-input request: %v", err)
+	}
+	if len(inputParams.Questions) != 1 || inputParams.Questions[0].ID != "call-cli-input" ||
+		inputParams.Questions[0].Question != "Choose" || len(inputParams.Questions[0].Options) != 2 {
+		t.Fatalf("runtime user-input request = %#v", inputParams)
+	}
 	if err := server.HandleResponse(context.Background(), protocol.Response{
 		ID:     requests[0].ID,
-		Result: json.RawMessage(`{"text":"one"}`),
+		Result: json.RawMessage(`{"answers":{"call-cli-input":{"answers":["one"]}}}`),
 	}); err != nil {
 		t.Fatalf("HandleResponse: %v", err)
 	}

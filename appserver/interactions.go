@@ -59,14 +59,19 @@ type InteractionResponse struct {
 }
 
 type UserInputRequest struct {
-	ThreadID    string         `json:"threadId,omitempty"`
-	TurnID      string         `json:"turnId,omitempty"`
-	ItemID      string         `json:"itemId,omitempty"`
-	Prompt      string         `json:"prompt"`
-	Placeholder string         `json:"placeholder,omitempty"`
-	Required    bool           `json:"required,omitempty"`
-	Options     []string       `json:"options,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	ThreadID         string         `json:"threadId,omitempty"`
+	TurnID           string         `json:"turnId,omitempty"`
+	ItemID           string         `json:"itemId,omitempty"`
+	QuestionID       string         `json:"questionId,omitempty"`
+	Header           string         `json:"header,omitempty"`
+	Prompt           string         `json:"prompt"`
+	Placeholder      string         `json:"placeholder,omitempty"`
+	Required         bool           `json:"required,omitempty"`
+	IsOther          bool           `json:"isOther,omitempty"`
+	IsSecret         bool           `json:"isSecret,omitempty"`
+	Options          []string       `json:"options,omitempty"`
+	AutoResolutionMS *uint64        `json:"autoResolutionMs"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
 }
 
 type DynamicToolCallRequest struct {
@@ -107,12 +112,33 @@ func (s *InteractionService) setRequestQueue(q *RequestQueue) {
 }
 
 func (s *InteractionService) RequestUserInput(ctx context.Context, req UserInputRequest) (InteractionResponse, error) {
+	questionID := firstNonEmpty(strings.TrimSpace(req.QuestionID), strings.TrimSpace(req.ItemID), "input")
+	header := strings.TrimSpace(req.Header)
+	if header == "" {
+		header = "Input"
+	}
+	var publicOptions []protocol.ToolRequestUserInputOption
+	if len(req.Options) > 0 {
+		publicOptions = make([]protocol.ToolRequestUserInputOption, 0, len(req.Options))
+		for _, option := range req.Options {
+			publicOptions = append(publicOptions, protocol.ToolRequestUserInputOption{Label: option, Description: ""})
+		}
+	}
 	params := map[string]any{
-		"prompt":      req.Prompt,
-		"placeholder": req.Placeholder,
-		"required":    req.Required,
-		"options":     append([]string(nil), req.Options...),
-		"metadata":    cloneStringAnyMap(req.Metadata),
+		"questions": []protocol.ToolRequestUserInputQuestion{{
+			ID:       questionID,
+			Header:   header,
+			Question: req.Prompt,
+			IsOther:  req.IsOther,
+			IsSecret: req.IsSecret,
+			Options:  publicOptions,
+		}},
+		"autoResolutionMs": req.AutoResolutionMS,
+		"prompt":           req.Prompt,
+		"placeholder":      req.Placeholder,
+		"required":         req.Required,
+		"options":          append([]string(nil), req.Options...),
+		"metadata":         cloneStringAnyMap(req.Metadata),
 	}
 	return s.Request(ctx, InteractionRequest{
 		Method:   InteractionRequestUserInput,
@@ -253,22 +279,34 @@ func (s *InteractionService) Respond(resp protocol.Response) (InteractionRespons
 		Error:                  resp.Error,
 	}
 	var responseErr error
-	if pending.meta.Method == InteractionToolCall && response.Error == nil {
-		if len(response.Result) > runtimeInteractionPayloadMaxBytes {
-			responseErr = fmt.Errorf("dynamic tool call response exceeds %d bytes", runtimeInteractionPayloadMaxBytes)
-		} else {
-			var result protocol.DynamicToolCallResponse
-			if err := json.Unmarshal(response.Result, &result); err != nil {
-				responseErr = fmt.Errorf("decode dynamic tool call response: %w", err)
-			}
-		}
+	if response.Error == nil {
+		responseErr = validateInteractionResult(pending.meta.Method, response.Result)
 		if responseErr != nil {
-			response.Error = &protocol.Error{Code: protocol.CodeInvalidParams, Message: "invalid dynamic tool call response"}
+			response.Error = &protocol.Error{Code: protocol.CodeInvalidParams, Message: "invalid interaction response"}
 			response.Result = nil
 		}
 	}
 	pending.ch <- response
 	return response, true, responseErr
+}
+
+func validateInteractionResult(method string, result json.RawMessage) error {
+	if len(result) > runtimeInteractionPayloadMaxBytes {
+		return fmt.Errorf("%s response exceeds %d bytes", method, runtimeInteractionPayloadMaxBytes)
+	}
+	switch method {
+	case InteractionRequestUserInput:
+		var response protocol.ToolRequestUserInputResponse
+		if err := json.Unmarshal(result, &response); err != nil {
+			return fmt.Errorf("decode user input response: %w", err)
+		}
+	case InteractionToolCall:
+		var response protocol.DynamicToolCallResponse
+		if err := json.Unmarshal(result, &response); err != nil {
+			return fmt.Errorf("decode dynamic tool call response: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *InteractionService) nextRequestID() string {
