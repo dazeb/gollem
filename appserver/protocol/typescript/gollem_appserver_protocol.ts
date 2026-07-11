@@ -2154,6 +2154,12 @@ export type WebSearchAction = {
   "type": "other";
 };
 
+export type WebSearchItem = {
+  "action": WebSearchAction | null;
+  "id": string;
+  "query": string;
+};
+
 export type WireTypeBinding = {
   "method": KnownMethod;
   "surface": ProtocolSurface;
