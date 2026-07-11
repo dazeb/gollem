@@ -301,26 +301,28 @@ The exact standalone raw-response content prerequisites are exported as strict
 validated unions: snake-case input-text/encrypted-content agent message input,
 reasoning-text/text reasoning content, and summary-text reasoning summary.
 Required content stays non-null, crossed and unknown fields fail closed, and
-canonical output preserves public snake-case names. These definitions do not
-export full `ResponseItem`, bind raw-response notifications, map provider
-payloads, or change live agent/reasoning deltas.
+canonical output preserves public snake-case names. They remain independently
+validated dependencies; the parent `ResponseItem` export does not bind
+raw-response notifications, map provider payloads, or change live
+agent/reasoning deltas.
 
 The distinct `ResponsesApiWebSearchAction` union is also exported independently
 with snake-case search/open-page/find-in-page/other discriminators. Optional
 query, query-list, URL, and pattern fields are non-null when present and omit
 canonically when absent, following generated TypeScript rather than the looser
-`Option`-derived JSON Schema nullability. This does not alias the camel-case
-app-server action, add a provider/tool, export full `ResponseItem`, or bind live
-web-search events.
+`Option`-derived JSON Schema nullability. This remains distinct from the
+app-server action referenced by `ResponseItem` and does not add a provider/tool
+or bind live web-search events.
 
-The remaining standalone `ResponseItem` dependency values are exported without
-exporting the full response-item union: strict input/output content items,
-function-call output bodies, internal chat-message metadata, and local-shell
-actions/status. Optional image detail and metadata fields are non-null when
-present; local-shell execution keeps all generated TypeScript nullable fields
-required and validates unsigned JSON timeouts. These values are not bound to
-provider payloads, durable timeline items, live shell execution, or raw-response
-notifications.
+The standalone `ResponseItem` dependencies and full 16-variant response-item
+union are exported as strict validated values. Optional ids, phases, statuses,
+namespaces, prompts, actions, content, encrypted content, and metadata are
+non-null when present; fields declared nullable by generated TypeScript remain
+required and explicit. Arbitrary tool-search arguments and tool arrays retain
+all valid JSON values with number precision. The union references the existing
+app-server `WebSearchAction` contract and does not bind provider payloads,
+durable timeline items, live shell execution, lifecycle methods, or
+raw-response notifications.
 
 ## Generation
 
