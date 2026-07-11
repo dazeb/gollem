@@ -83,6 +83,7 @@ func wireSchemaDefinitions() Schema {
 	definitions := []wireSchemaDefinition{
 		{Name: "AbsolutePathBuf", Type: reflect.TypeFor[AbsolutePathBuf]()},
 		{Name: "ActivePermissionProfile", Type: reflect.TypeFor[ActivePermissionProfile]()},
+		{Name: "AgentPath", Type: reflect.TypeFor[AgentPath]()},
 		{Name: "AdditionalFileSystemPermissions", Type: reflect.TypeFor[AdditionalFileSystemPermissions]()},
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
@@ -91,6 +92,10 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ByteRange", Type: reflect.TypeFor[ByteRange]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
+		{Name: "CollabAgentState", Type: reflect.TypeFor[CollabAgentState]()},
+		{Name: "CollabAgentStatus", Type: reflect.TypeFor[CollabAgentStatus]()},
+		{Name: "CollabAgentTool", Type: reflect.TypeFor[CollabAgentTool]()},
+		{Name: "CollabAgentToolCallStatus", Type: reflect.TypeFor[CollabAgentToolCallStatus]()},
 		{Name: "CommandAction", Type: reflect.TypeFor[CommandAction]()},
 		{Name: "CommandExecOutputDeltaNotification", Type: reflect.TypeFor[CommandExecOutputDeltaNotification]()},
 		{Name: "CommandExecOutputStream", Type: reflect.TypeFor[CommandExecOutputStream]()},
@@ -215,10 +220,12 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
 		{Name: "PermissionsRequestApprovalResponse", Type: reflect.TypeFor[PermissionsRequestApprovalResponse]()},
 		{Name: "RequestPermissionProfile", Type: reflect.TypeFor[RequestPermissionProfile]()},
+		{Name: "ReasoningEffort", Type: reflect.TypeFor[ReasoningEffort]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
 		{Name: "SortDirection", Type: reflect.TypeFor[SortDirection]()},
+		{Name: "SubAgentActivityKind", Type: reflect.TypeFor[SubAgentActivityKind]()},
 		{Name: "ThreadArchiveParams", Type: reflect.TypeFor[ThreadArchiveParams]()},
 		{Name: "ThreadArchiveResponse", Type: reflect.TypeFor[ThreadArchiveResponse]()},
 		{Name: "ThreadArchivedNotification", Type: reflect.TypeFor[ThreadArchivedNotification]()},
@@ -320,6 +327,28 @@ func wireSchemaDefinitions() Schema {
 		string(SurfaceGollemExtension),
 	)
 	schemas["SortDirection"] = stringEnumSchema(string(SortDirectionAsc), string(SortDirectionDesc))
+	schemas["AgentPath"] = Schema{"type": "string"}
+	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
+	schemas["CollabAgentStatus"] = stringEnumSchema(
+		string(CollabAgentStatusPendingInit), string(CollabAgentStatusRunning),
+		string(CollabAgentStatusInterrupted), string(CollabAgentStatusCompleted),
+		string(CollabAgentStatusErrored), string(CollabAgentStatusShutdown),
+		string(CollabAgentStatusNotFound),
+	)
+	schemas["CollabAgentTool"] = stringEnumSchema(
+		string(CollabAgentToolSpawnAgent), string(CollabAgentToolSendInput),
+		string(CollabAgentToolResumeAgent), string(CollabAgentToolWait),
+		string(CollabAgentToolCloseAgent),
+	)
+	schemas["CollabAgentToolCallStatus"] = stringEnumSchema(
+		string(CollabAgentToolCallStatusInProgress), string(CollabAgentToolCallStatusCompleted),
+		string(CollabAgentToolCallStatusFailed),
+	)
+	schemas["SubAgentActivityKind"] = stringEnumSchema(
+		string(SubAgentActivityStarted), string(SubAgentActivityInteracted),
+		string(SubAgentActivityInterrupted),
+	)
+	schemas["CollabAgentState"] = collabAgentStateSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
 		string(ImageDetailAuto), string(ImageDetailLow), string(ImageDetailHigh), string(ImageDetailOriginal),
@@ -518,6 +547,18 @@ func commandActionSchema() Schema {
 			"command": Schema{"type": "string"},
 		}),
 	}}
+}
+
+func collabAgentStateSchema() Schema {
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"status":  Schema{"$ref": "#/$defs/CollabAgentStatus"},
+			"message": nullableStringSchema(),
+		},
+		"required":             []string{"status", "message"},
+		"additionalProperties": false,
+	}
 }
 
 func commandActionVariantSchema(actionType string, requiredFields []string, fields Schema) Schema {
