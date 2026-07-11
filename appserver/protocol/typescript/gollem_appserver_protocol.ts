@@ -1776,6 +1776,30 @@ export type TextElement = {
   "placeholder": string | null;
 };
 
+export type Thread = {
+  "agentNickname": string | null;
+  "agentRole": string | null;
+  "cliVersion": string;
+  "createdAt": number;
+  "cwd": AbsolutePathBuf;
+  "ephemeral": boolean;
+  "forkedFromId": string | null;
+  "gitInfo": GitInfo | null;
+  "id": string;
+  "modelProvider": string;
+  "name": string | null;
+  "parentThreadId": string | null;
+  "path": string | null;
+  "preview": string;
+  "recencyAt": number | null;
+  "sessionId": string;
+  "source": SessionSource;
+  "status": ThreadStatus;
+  "threadSource": ThreadSource | null;
+  "turns": Array<Turn>;
+  "updatedAt": number;
+};
+
 export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
 
 export type ThreadArchiveParams = {

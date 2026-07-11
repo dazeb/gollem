@@ -249,6 +249,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "SortDirection", Type: reflect.TypeFor[SortDirection]()},
 		{Name: "SubAgentActivityKind", Type: reflect.TypeFor[SubAgentActivityKind]()},
 		{Name: "SubAgentSource", Type: reflect.TypeFor[SubAgentSource]()},
+		{Name: "Thread", Type: reflect.TypeFor[Thread]()},
 		{Name: "ThreadActiveFlag", Type: reflect.TypeFor[ThreadActiveFlag]()},
 		{Name: "ThreadArchiveParams", Type: reflect.TypeFor[ThreadArchiveParams]()},
 		{Name: "ThreadArchiveResponse", Type: reflect.TypeFor[ThreadArchiveResponse]()},
