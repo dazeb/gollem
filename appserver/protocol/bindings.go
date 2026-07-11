@@ -27,6 +27,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "daemon/status", Surface: SurfaceGollemExtension, Result: []string{"DaemonStatus"}},
 	{Method: "daemon/stop", Surface: SurfaceGollemExtension, Params: []string{"DaemonShutdownParams"}, Result: []string{"DaemonStopResult"}},
 	{Method: "daemon/version", Surface: SurfaceGollemExtension, Result: []string{"DaemonVersion"}},
+	{Method: "deprecationNotice", Surface: SurfaceServerNotification, Params: []string{"DeprecationNoticeNotification"}},
 	{Method: "initialize", Surface: SurfaceClientRequest, Params: []string{"InitializeParams"}, Result: []string{"InitializeResponse"}},
 	{Method: "initialized", Surface: SurfaceClientNotification},
 	{Method: "item/commandExecution/outputDelta", Surface: SurfaceServerNotification, Params: []string{"CommandExecutionOutputDeltaNotificationParams"}},
@@ -45,7 +46,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "thread/archived", Surface: SurfaceServerNotification, Params: []string{"ThreadArchivedNotification"}},
 	{Method: "thread/closed", Surface: SurfaceServerNotification, Params: []string{"ThreadClosedNotification"}},
 	{Method: "thread/compact/start", Surface: SurfaceClientRequest, Params: []string{"ThreadCompactStartParams"}, Result: []string{"ThreadCompactStartResponse"}},
-	{Method: "thread/compacted", Surface: SurfaceServerNotification, Params: []string{"ThreadCompactedNotificationParams"}},
+	{Method: "thread/compacted", Surface: SurfaceServerNotification, Params: []string{"ContextCompactedNotification"}},
 	{Method: "thread/delete", Surface: SurfaceClientRequest, Params: []string{"ThreadDeleteParams"}, Result: []string{"ThreadDeleteResponse"}},
 	{Method: "thread/deleted", Surface: SurfaceServerNotification, Params: []string{"ThreadDeletedNotification"}},
 	{Method: "thread/goal/clear", Surface: SurfaceClientRequest, Params: []string{"ThreadGoalClearParams"}, Result: []string{"ThreadGoalClearResponse"}},
@@ -60,11 +61,11 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "thread/name/set", Surface: SurfaceClientRequest, Params: []string{"ThreadSetNameParams"}, Result: []string{"ThreadSetNameResponse"}},
 	{Method: "thread/name/updated", Surface: SurfaceServerNotification, Params: []string{"ThreadNameUpdatedNotification"}},
 	{Method: "thread/read", Surface: SurfaceClientRequest, Params: []string{"ThreadReadParams"}, Result: []string{"ThreadReadResponse"}},
-	{Method: "thread/tokenUsage/updated", Surface: SurfaceServerNotification, Params: []string{"ThreadTokenUsageUpdatedNotificationParams"}},
+	{Method: "thread/tokenUsage/updated", Surface: SurfaceServerNotification, Params: []string{"ThreadTokenUsageUpdatedNotification"}},
 	{Method: "thread/unarchive", Surface: SurfaceClientRequest, Params: []string{"ThreadUnarchiveParams"}, Result: []string{"ThreadUnarchiveResponse"}},
 	{Method: "thread/unarchived", Surface: SurfaceServerNotification, Params: []string{"ThreadUnarchivedNotification"}},
 	{Method: "thread/unsubscribe", Surface: SurfaceClientRequest, Params: []string{"ThreadUnsubscribeParams"}, Result: []string{"ThreadUnsubscribeResponse"}},
-	{Method: "turn/diff/updated", Surface: SurfaceServerNotification, Params: []string{"TurnDiffUpdatedNotificationParams"}},
+	{Method: "turn/diff/updated", Surface: SurfaceServerNotification, Params: []string{"TurnDiffUpdatedNotification"}},
 }
 
 var itemPayloadBindings = []ItemPayloadBinding{

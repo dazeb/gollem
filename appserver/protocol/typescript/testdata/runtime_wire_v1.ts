@@ -5,17 +5,18 @@ import type {
   BoundRequest,
   BoundResponse,
   CommandExecutionItemCompletedNotificationParams,
+  ContextCompactedNotification,
   ContextCompactionItem,
   DaemonStatus,
+  DeprecationNoticeNotification,
   DynamicToolCallItemStartedNotificationParams,
   FileChangeApprovalRequestParams,
   FileChangeItemCompletedNotificationParams,
   FileChangeRequestApprovalResponse,
   ItemLifecycleNotificationParams,
   MCPToolCallItemCompletedNotificationParams,
-  ThreadCompactedNotificationParams,
-  ThreadTokenUsageUpdatedNotificationParams,
-  TurnDiffUpdatedNotificationParams,
+  ThreadTokenUsageUpdatedNotification,
+  TurnDiffUpdatedNotification,
 } from "../gollem_appserver_protocol";
 
 export const fixtureProtocolVersion = "gollem.appserver.v1" as const;
@@ -176,6 +177,15 @@ export const contextCompactionItemPayload = {
   "createdAt": "2026-07-10T20:31:00Z"
 } satisfies ContextCompactionItem;
 
+export const deprecationNotice = {
+  "method": "deprecationNotice",
+  "params": {
+    "summary": "thread/rollback is deprecated; use thread/fork instead",
+    "details": null
+  }
+} satisfies BoundNotification<"deprecationNotice">;
+export const deprecationNoticeParams = deprecationNotice.params satisfies DeprecationNoticeNotification;
+
 export const threadCompacted = {
   "method": "thread/compacted",
   "params": {
@@ -183,7 +193,7 @@ export const threadCompacted = {
     "turnId": "turn-compact"
   }
 } satisfies BoundNotification<"thread/compacted">;
-export const threadCompactedParams = threadCompacted.params satisfies ThreadCompactedNotificationParams;
+export const threadCompactedParams = threadCompacted.params satisfies ContextCompactedNotification;
 
 export const tokenUsageUpdated = {
   "method": "thread/tokenUsage/updated",
@@ -209,7 +219,7 @@ export const tokenUsageUpdated = {
     }
   }
 } satisfies BoundNotification<"thread/tokenUsage/updated">;
-export const tokenUsageUpdatedParams = tokenUsageUpdated.params satisfies ThreadTokenUsageUpdatedNotificationParams;
+export const tokenUsageUpdatedParams = tokenUsageUpdated.params satisfies ThreadTokenUsageUpdatedNotification;
 
 export const turnDiffUpdated = {
   "method": "turn/diff/updated",
@@ -219,7 +229,7 @@ export const turnDiffUpdated = {
     "diff": "diff --git a/README.md b/README.md\n"
   }
 } satisfies BoundNotification<"turn/diff/updated">;
-export const turnDiffUpdatedParams = turnDiffUpdated.params satisfies TurnDiffUpdatedNotificationParams;
+export const turnDiffUpdatedParams = turnDiffUpdated.params satisfies TurnDiffUpdatedNotification;
 
 export const fileChangeApproval = {
   "id": "approval-1",

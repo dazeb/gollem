@@ -328,18 +328,17 @@ type ContextCompactionItem struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-type ThreadCompactedNotificationParams struct {
+type ContextCompactedNotification struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
 }
 
-type ThreadTokenUsageUpdatedNotificationParams struct {
-	ThreadID   string     `json:"threadId"`
-	TurnID     string     `json:"turnId"`
-	TokenUsage TokenUsage `json:"tokenUsage"`
+type DeprecationNoticeNotification struct {
+	Summary string  `json:"summary" jsonschema:"description=Concise summary of what is deprecated."`
+	Details *string `json:"details" jsonschema:"description=Optional extra guidance such as migration steps or rationale."`
 }
 
-type TokenUsage struct {
+type ThreadTokenUsage struct {
 	Total              TokenUsageBreakdown `json:"total"`
 	Last               TokenUsageBreakdown `json:"last"`
 	ModelContextWindow *int64              `json:"modelContextWindow"`
@@ -353,11 +352,23 @@ type TokenUsageBreakdown struct {
 	ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
 }
 
-type TurnDiffUpdatedNotificationParams struct {
+type ThreadTokenUsageUpdatedNotification struct {
+	ThreadID   string           `json:"threadId"`
+	TurnID     string           `json:"turnId"`
+	TokenUsage ThreadTokenUsage `json:"tokenUsage"`
+}
+
+type TurnDiffUpdatedNotification struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
 	Diff     string `json:"diff"`
 }
+
+// Gollem v1 compatibility aliases. New bindings use the exact public names.
+type ThreadCompactedNotificationParams = ContextCompactedNotification
+type ThreadTokenUsageUpdatedNotificationParams = ThreadTokenUsageUpdatedNotification
+type TokenUsage = ThreadTokenUsage
+type TurnDiffUpdatedNotificationParams = TurnDiffUpdatedNotification
 
 type ItemLifecycleNotificationParams struct {
 	ThreadID string        `json:"threadId"`

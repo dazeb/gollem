@@ -861,6 +861,22 @@
       ],
       "type": "object"
     },
+    "ContextCompactedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "ContextCompactionItem": {
       "additionalProperties": false,
       "properties": {
@@ -1046,6 +1062,31 @@
         "goVersion",
         "goos",
         "goarch"
+      ],
+      "type": "object"
+    },
+    "DeprecationNoticeNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "details": {
+          "anyOf": [
+            {
+              "description": "Optional extra guidance such as migration steps or rationale.",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "description": "Concise summary of what is deprecated.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "details"
       ],
       "type": "object"
     },
@@ -3670,20 +3711,7 @@
       "type": "object"
     },
     "ThreadCompactedNotificationParams": {
-      "additionalProperties": false,
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "turnId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId",
-        "turnId"
-      ],
-      "type": "object"
+      "$ref": "#/$defs/ContextCompactedNotification"
     },
     "ThreadDeleteParams": {
       "additionalProperties": false,
@@ -4892,14 +4920,41 @@
       ],
       "type": "string"
     },
-    "ThreadTokenUsageUpdatedNotificationParams": {
+    "ThreadTokenUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "last": {
+          "$ref": "#/$defs/TokenUsageBreakdown"
+        },
+        "modelContextWindow": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total": {
+          "$ref": "#/$defs/TokenUsageBreakdown"
+        }
+      },
+      "required": [
+        "total",
+        "last",
+        "modelContextWindow"
+      ],
+      "type": "object"
+    },
+    "ThreadTokenUsageUpdatedNotification": {
       "additionalProperties": false,
       "properties": {
         "threadId": {
           "type": "string"
         },
         "tokenUsage": {
-          "$ref": "#/$defs/TokenUsage"
+          "$ref": "#/$defs/ThreadTokenUsage"
         },
         "turnId": {
           "type": "string"
@@ -4911,6 +4966,9 @@
         "tokenUsage"
       ],
       "type": "object"
+    },
+    "ThreadTokenUsageUpdatedNotificationParams": {
+      "$ref": "#/$defs/ThreadTokenUsageUpdatedNotification"
     },
     "ThreadUnarchiveParams": {
       "additionalProperties": false,
@@ -5055,31 +5113,7 @@
       "type": "object"
     },
     "TokenUsage": {
-      "additionalProperties": false,
-      "properties": {
-        "last": {
-          "$ref": "#/$defs/TokenUsageBreakdown"
-        },
-        "modelContextWindow": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "total": {
-          "$ref": "#/$defs/TokenUsageBreakdown"
-        }
-      },
-      "required": [
-        "total",
-        "last",
-        "modelContextWindow"
-      ],
-      "type": "object"
+      "$ref": "#/$defs/ThreadTokenUsage"
     },
     "TokenUsageBreakdown": {
       "additionalProperties": false,
@@ -5301,7 +5335,7 @@
       ],
       "type": "object"
     },
-    "TurnDiffUpdatedNotificationParams": {
+    "TurnDiffUpdatedNotification": {
       "additionalProperties": false,
       "properties": {
         "diff": {
@@ -5320,6 +5354,9 @@
         "diff"
       ],
       "type": "object"
+    },
+    "TurnDiffUpdatedNotificationParams": {
+      "$ref": "#/$defs/TurnDiffUpdatedNotification"
     },
     "TurnLifecycleStatus": {
       "enum": [
@@ -6866,6 +6903,13 @@
       ]
     },
     {
+      "method": "deprecationNotice",
+      "surface": "server-notification",
+      "params": [
+        "DeprecationNoticeNotification"
+      ]
+    },
+    {
       "method": "initialize",
       "surface": "client-request",
       "params": [
@@ -7024,7 +7068,7 @@
       "method": "thread/compacted",
       "surface": "server-notification",
       "params": [
-        "ThreadCompactedNotificationParams"
+        "ContextCompactedNotification"
       ]
     },
     {
@@ -7159,7 +7203,7 @@
       "method": "thread/tokenUsage/updated",
       "surface": "server-notification",
       "params": [
-        "ThreadTokenUsageUpdatedNotificationParams"
+        "ThreadTokenUsageUpdatedNotification"
       ]
     },
     {
@@ -7193,7 +7237,7 @@
       "method": "turn/diff/updated",
       "surface": "server-notification",
       "params": [
-        "TurnDiffUpdatedNotificationParams"
+        "TurnDiffUpdatedNotification"
       ]
     }
   ]

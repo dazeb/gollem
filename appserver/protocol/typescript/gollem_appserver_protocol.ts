@@ -690,6 +690,11 @@ export type CommandExecutionRequestApprovalResponse = {
   "decision": CommandExecutionApprovalDecision;
 };
 
+export type ContextCompactedNotification = {
+  "threadId": string;
+  "turnId": string;
+};
+
 export type ContextCompactionItem = {
   "createdAt": string;
   "summary"?: string;
@@ -742,6 +747,11 @@ export type DaemonVersion = {
   "name": string;
   "protocolVersion": string;
   "version": string;
+};
+
+export type DeprecationNoticeNotification = {
+  "details": string | null;
+  "summary": string;
 };
 
 export type DynamicToolCallContentItem = {
@@ -1310,10 +1320,7 @@ export type ThreadCompactStartParams = {
 
 export type ThreadCompactStartResponse = Record<string, never>;
 
-export type ThreadCompactedNotificationParams = {
-  "threadId": string;
-  "turnId": string;
-};
+export type ThreadCompactedNotificationParams = ContextCompactedNotification;
 
 export type ThreadDeleteParams = {
   "id"?: string;
@@ -1560,11 +1567,19 @@ export type ThreadSortKey = "created_at" | "updated_at" | "recency_at";
 
 export type ThreadSourceKind = "cli" | "vscode" | "exec" | "appServer" | "subAgent" | "subAgentReview" | "subAgentCompact" | "subAgentThreadSpawn" | "subAgentOther" | "unknown";
 
-export type ThreadTokenUsageUpdatedNotificationParams = {
+export type ThreadTokenUsage = {
+  "last": TokenUsageBreakdown;
+  "modelContextWindow": number | null;
+  "total": TokenUsageBreakdown;
+};
+
+export type ThreadTokenUsageUpdatedNotification = {
   "threadId": string;
-  "tokenUsage": TokenUsage;
+  "tokenUsage": ThreadTokenUsage;
   "turnId": string;
 };
+
+export type ThreadTokenUsageUpdatedNotificationParams = ThreadTokenUsageUpdatedNotification;
 
 export type ThreadUnarchiveParams = {
   "id"?: string;
@@ -1606,11 +1621,7 @@ export type TimelineItem = {
   "updatedAt": string;
 };
 
-export type TokenUsage = {
-  "last": TokenUsageBreakdown;
-  "modelContextWindow": number | null;
-  "total": TokenUsageBreakdown;
-};
+export type TokenUsage = ThreadTokenUsage;
 
 export type TokenUsageBreakdown = {
   "cachedInputTokens": number;
@@ -1665,11 +1676,13 @@ export type ToolRequestUserInputResponse = {
   "answers": Record<string, ToolRequestUserInputAnswer>;
 };
 
-export type TurnDiffUpdatedNotificationParams = {
+export type TurnDiffUpdatedNotification = {
   "diff": string;
   "threadId": string;
   "turnId": string;
 };
+
+export type TurnDiffUpdatedNotificationParams = TurnDiffUpdatedNotification;
 
 export type TurnLifecycleStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
 
@@ -1707,6 +1720,7 @@ export const wireTypeBindings = [
   { "method": "daemon/status", "surface": "gollem-extension", "result": ["DaemonStatus"] },
   { "method": "daemon/stop", "surface": "gollem-extension", "params": ["DaemonShutdownParams"], "result": ["DaemonStopResult"] },
   { "method": "daemon/version", "surface": "gollem-extension", "result": ["DaemonVersion"] },
+  { "method": "deprecationNotice", "surface": "server-notification", "params": ["DeprecationNoticeNotification"] },
   { "method": "initialize", "surface": "client-request", "params": ["InitializeParams"], "result": ["InitializeResponse"] },
   { "method": "initialized", "surface": "client-notification" },
   { "method": "item/commandExecution/outputDelta", "surface": "server-notification", "params": ["CommandExecutionOutputDeltaNotificationParams"] },
@@ -1725,7 +1739,7 @@ export const wireTypeBindings = [
   { "method": "thread/archived", "surface": "server-notification", "params": ["ThreadArchivedNotification"] },
   { "method": "thread/closed", "surface": "server-notification", "params": ["ThreadClosedNotification"] },
   { "method": "thread/compact/start", "surface": "client-request", "params": ["ThreadCompactStartParams"], "result": ["ThreadCompactStartResponse"] },
-  { "method": "thread/compacted", "surface": "server-notification", "params": ["ThreadCompactedNotificationParams"] },
+  { "method": "thread/compacted", "surface": "server-notification", "params": ["ContextCompactedNotification"] },
   { "method": "thread/delete", "surface": "client-request", "params": ["ThreadDeleteParams"], "result": ["ThreadDeleteResponse"] },
   { "method": "thread/deleted", "surface": "server-notification", "params": ["ThreadDeletedNotification"] },
   { "method": "thread/goal/clear", "surface": "client-request", "params": ["ThreadGoalClearParams"], "result": ["ThreadGoalClearResponse"] },
@@ -1740,11 +1754,11 @@ export const wireTypeBindings = [
   { "method": "thread/name/set", "surface": "client-request", "params": ["ThreadSetNameParams"], "result": ["ThreadSetNameResponse"] },
   { "method": "thread/name/updated", "surface": "server-notification", "params": ["ThreadNameUpdatedNotification"] },
   { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResponse"] },
-  { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotificationParams"] },
+  { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotification"] },
   { "method": "thread/unarchive", "surface": "client-request", "params": ["ThreadUnarchiveParams"], "result": ["ThreadUnarchiveResponse"] },
   { "method": "thread/unarchived", "surface": "server-notification", "params": ["ThreadUnarchivedNotification"] },
   { "method": "thread/unsubscribe", "surface": "client-request", "params": ["ThreadUnsubscribeParams"], "result": ["ThreadUnsubscribeResponse"] },
-  { "method": "turn/diff/updated", "surface": "server-notification", "params": ["TurnDiffUpdatedNotificationParams"] },
+  { "method": "turn/diff/updated", "surface": "server-notification", "params": ["TurnDiffUpdatedNotification"] },
 ] as const satisfies readonly WireTypeBinding[];
 
 export interface MethodParamsByName {
@@ -1758,6 +1772,7 @@ export interface MethodParamsByName {
   "daemon/status": undefined;
   "daemon/stop": DaemonShutdownParams;
   "daemon/version": undefined;
+  "deprecationNotice": DeprecationNoticeNotification;
   "initialize": InitializeParams;
   "initialized": undefined;
   "item/commandExecution/outputDelta": CommandExecutionOutputDeltaNotificationParams;
@@ -1776,7 +1791,7 @@ export interface MethodParamsByName {
   "thread/archived": ThreadArchivedNotification;
   "thread/closed": ThreadClosedNotification;
   "thread/compact/start": ThreadCompactStartParams;
-  "thread/compacted": ThreadCompactedNotificationParams;
+  "thread/compacted": ContextCompactedNotification;
   "thread/delete": ThreadDeleteParams;
   "thread/deleted": ThreadDeletedNotification;
   "thread/goal/clear": ThreadGoalClearParams;
@@ -1791,11 +1806,11 @@ export interface MethodParamsByName {
   "thread/name/set": ThreadSetNameParams;
   "thread/name/updated": ThreadNameUpdatedNotification;
   "thread/read": ThreadReadParams;
-  "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotificationParams;
+  "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotification;
   "thread/unarchive": ThreadUnarchiveParams;
   "thread/unarchived": ThreadUnarchivedNotification;
   "thread/unsubscribe": ThreadUnsubscribeParams;
-  "turn/diff/updated": TurnDiffUpdatedNotificationParams;
+  "turn/diff/updated": TurnDiffUpdatedNotification;
 }
 
 export interface MethodResultsByName {

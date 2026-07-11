@@ -114,6 +114,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "DaemonStatus", Type: reflect.TypeFor[DaemonStatus]()},
 		{Name: "DaemonStopResult", Type: reflect.TypeFor[DaemonStopResult]()},
 		{Name: "DaemonVersion", Type: reflect.TypeFor[DaemonVersion]()},
+		{Name: "DeprecationNoticeNotification", Type: reflect.TypeFor[DeprecationNoticeNotification]()},
 		{Name: "DynamicToolCallContentItem", Type: reflect.TypeFor[DynamicToolCallContentItem]()},
 		{Name: "DynamicToolCallOutputContentItem", Type: reflect.TypeFor[DynamicToolCallOutputContentItem]()},
 		{Name: "DynamicToolCallParams", Type: reflect.TypeFor[DynamicToolCallParams]()},
@@ -248,6 +249,12 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
+		// Register exact public names after their aliases so nested schemas refer
+		// to the public names. JSON and TypeScript output remain key-sorted.
+		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
+		{Name: "ThreadTokenUsage", Type: reflect.TypeFor[ThreadTokenUsage]()},
+		{Name: "ThreadTokenUsageUpdatedNotification", Type: reflect.TypeFor[ThreadTokenUsageUpdatedNotification]()},
+		{Name: "TurnDiffUpdatedNotification", Type: reflect.TypeFor[TurnDiffUpdatedNotification]()},
 	}
 	names := make(map[reflect.Type]string, len(definitions))
 	for _, definition := range definitions {
@@ -299,6 +306,14 @@ func wireSchemaDefinitions() Schema {
 	schemas["PermissionGrantScope"] = stringEnumSchema(
 		string(PermissionGrantTurn), string(PermissionGrantSession),
 	)
+	for alias, canonical := range map[string]string{
+		"ThreadCompactedNotificationParams":         "ContextCompactedNotification",
+		"ThreadTokenUsageUpdatedNotificationParams": "ThreadTokenUsageUpdatedNotification",
+		"TokenUsage":                        "ThreadTokenUsage",
+		"TurnDiffUpdatedNotificationParams": "TurnDiffUpdatedNotification",
+	} {
+		schemas[alias] = Schema{"$ref": "#/$defs/" + canonical}
+	}
 	setSchemaIntegerMinimum(schemas["AdditionalFileSystemPermissions"].(Schema), 1, "globScanMaxDepth")
 	if response, ok := schemas["PermissionsRequestApprovalResponse"].(Schema); ok {
 		if properties, ok := response["properties"].(Schema); ok {

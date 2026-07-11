@@ -126,6 +126,18 @@ notification remains the exact public `{ threadId }` shape. These lifecycle
 types intentionally do not make `thread/status/changed` public: that method
 still depends on the distinct Codex runtime `ThreadStatus` model.
 
+## Version 1 Exact Live Notification Values
+
+`deprecationNotice`, `thread/compacted`, `thread/tokenUsage/updated`, and
+`turn/diff/updated` bind the exact public `DeprecationNoticeNotification`,
+`ContextCompactedNotification`, `ThreadTokenUsageUpdatedNotification`, and
+`TurnDiffUpdatedNotification` names. Token usage uses the exact public
+`ThreadTokenUsage` value and keeps both `modelContextWindow` and deprecation
+`details` required and nullable on the wire. Gollem's original
+`ThreadCompactedNotificationParams`, `ThreadTokenUsageUpdatedNotificationParams`,
+`TokenUsage`, and `TurnDiffUpdatedNotificationParams` exports remain aliases so
+existing protocol-v1 generated clients continue to compile.
+
 ## Version 1 File-Change Approval Responses
 
 `item/fileChange/requestApproval` binds the public `accept`,

@@ -248,6 +248,7 @@ func TestRuntimeWireV1FixtureUsesExportedContracts(t *testing.T) {
 		"file-change-completed":         false,
 		"mcp-call-completed":            false,
 		"context-compaction-item":       false,
+		"deprecation-notice":            false,
 		"thread-compacted":              false,
 		"token-usage-updated":           false,
 		"turn-diff-updated":             false,
@@ -420,6 +421,14 @@ func runtimeFixtureTarget(name string) any {
 		return new(ItemLifecycleNotificationParams)
 	case "ContextCompactionItem":
 		return new(ContextCompactionItem)
+	case "ContextCompactedNotification":
+		return new(ContextCompactedNotification)
+	case "DeprecationNoticeNotification":
+		return new(DeprecationNoticeNotification)
+	case "ThreadTokenUsageUpdatedNotification":
+		return new(ThreadTokenUsageUpdatedNotification)
+	case "TurnDiffUpdatedNotification":
+		return new(TurnDiffUpdatedNotification)
 	case "ThreadCompactedNotificationParams":
 		return new(ThreadCompactedNotificationParams)
 	case "ThreadTokenUsageUpdatedNotificationParams":

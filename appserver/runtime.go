@@ -471,8 +471,8 @@ type runtimeErrorNotificationParams struct {
 	At       time.Time `json:"at"`
 }
 
-type threadTokenUsageUpdatedNotificationParams = protocol.ThreadTokenUsageUpdatedNotificationParams
-type threadTokenUsagePayload = protocol.TokenUsage
+type threadTokenUsageUpdatedNotificationParams = protocol.ThreadTokenUsageUpdatedNotification
+type threadTokenUsagePayload = protocol.ThreadTokenUsage
 type tokenUsageBreakdown = protocol.TokenUsageBreakdown
 
 func publishTurnStarted(notifier runtimeNotifier, turn *store.Turn) {

@@ -58,8 +58,11 @@ func TestJSONSchemaExportsRuntimeDefinitionsAndBindings(t *testing.T) {
 		"FileChangeItem",
 		"MCPToolCallItem",
 		"ContextCompactionItem",
-		"ThreadTokenUsageUpdatedNotificationParams",
-		"TurnDiffUpdatedNotificationParams",
+		"ContextCompactedNotification",
+		"DeprecationNoticeNotification",
+		"ThreadTokenUsage",
+		"ThreadTokenUsageUpdatedNotification",
+		"TurnDiffUpdatedNotification",
 		"FileChangeApprovalRequestParams",
 		"DaemonStatus",
 	} {
@@ -74,7 +77,8 @@ func TestJSONSchemaExportsRuntimeDefinitionsAndBindings(t *testing.T) {
 	}
 	assertBinding(t, bindings, "item/started", SurfaceServerNotification, "DynamicToolCallItemStartedNotificationParams")
 	assertBinding(t, bindings, "item/completed", SurfaceServerNotification, "MCPToolCallItemCompletedNotificationParams")
-	assertBinding(t, bindings, "thread/tokenUsage/updated", SurfaceServerNotification, "ThreadTokenUsageUpdatedNotificationParams")
+	assertBinding(t, bindings, "deprecationNotice", SurfaceServerNotification, "DeprecationNoticeNotification")
+	assertBinding(t, bindings, "thread/tokenUsage/updated", SurfaceServerNotification, "ThreadTokenUsageUpdatedNotification")
 	assertBinding(t, bindings, "item/fileChange/requestApproval", SurfaceServerRequest, "FileChangeApprovalRequestParams")
 	assertBinding(t, bindings, "daemon/status", SurfaceGollemExtension, "DaemonStatus")
 
