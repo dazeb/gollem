@@ -1181,12 +1181,26 @@ export type InternalChatMessageMetadataPassthrough = {
   "turn_id"?: string;
 };
 
+export type ItemCompletedNotification = {
+  "completedAtMs": number;
+  "item": ThreadItem;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type ItemLifecycleNotificationParams = {
   "at": string;
   "item"?: TimelineItem | null;
   "itemId"?: string;
   "threadId": string;
   "turnId"?: string;
+};
+
+export type ItemStartedNotification = {
+  "item": ThreadItem;
+  "startedAtMs": number;
+  "threadId": string;
+  "turnId": string;
 };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key: string]: JsonValue } | null;
@@ -2307,12 +2321,12 @@ export const wireTypeBindings = [
   { "method": "initialized", "surface": "client-notification" },
   { "method": "item/commandExecution/outputDelta", "surface": "server-notification", "params": ["CommandExecutionOutputDeltaNotification"] },
   { "method": "item/commandExecution/requestApproval", "surface": "server-request", "params": ["CommandExecutionApprovalRequestParams"], "result": ["CommandExecutionRequestApprovalResponse"] },
-  { "method": "item/completed", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"] },
+  { "method": "item/completed", "surface": "server-notification", "params": ["ItemCompletedNotification", "ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"] },
   { "method": "item/fileChange/patchUpdated", "surface": "server-notification", "params": ["FileChangePatchUpdatedNotification"] },
   { "method": "item/fileChange/requestApproval", "surface": "server-request", "params": ["FileChangeApprovalRequestParams"], "result": ["FileChangeRequestApprovalResponse"] },
   { "method": "item/mcpToolCall/progress", "surface": "server-notification", "params": ["McpToolCallProgressNotification"] },
   { "method": "item/permissions/requestApproval", "surface": "server-request", "params": ["PermissionsApprovalRequestParams"] },
-  { "method": "item/started", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
+  { "method": "item/started", "surface": "server-notification", "params": ["ItemStartedNotification", "ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
   { "method": "item/tool/call", "surface": "server-request", "params": ["DynamicToolCallParams"], "result": ["DynamicToolCallResponse"] },
   { "method": "item/tool/requestUserInput", "surface": "server-request", "params": ["ToolRequestUserInputParams"], "result": ["ToolRequestUserInputResponse"] },
   { "method": "mcpServer/elicitation/request", "surface": "server-request", "params": ["McpServerElicitationRequestParams"], "result": ["McpServerElicitationRequestResponse"] },
@@ -2369,12 +2383,12 @@ export interface MethodParamsByName {
   "initialized": undefined;
   "item/commandExecution/outputDelta": CommandExecutionOutputDeltaNotification;
   "item/commandExecution/requestApproval": CommandExecutionApprovalRequestParams;
-  "item/completed": ItemLifecycleNotificationParams | DynamicToolCallItemCompletedNotificationParams | CommandExecutionItemCompletedNotificationParams | FileChangeItemCompletedNotificationParams | MCPToolCallItemCompletedNotificationParams;
+  "item/completed": ItemCompletedNotification | ItemLifecycleNotificationParams | DynamicToolCallItemCompletedNotificationParams | CommandExecutionItemCompletedNotificationParams | FileChangeItemCompletedNotificationParams | MCPToolCallItemCompletedNotificationParams;
   "item/fileChange/patchUpdated": FileChangePatchUpdatedNotification;
   "item/fileChange/requestApproval": FileChangeApprovalRequestParams;
   "item/mcpToolCall/progress": McpToolCallProgressNotification;
   "item/permissions/requestApproval": PermissionsApprovalRequestParams;
-  "item/started": ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
+  "item/started": ItemStartedNotification | ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
   "item/tool/call": DynamicToolCallParams;
   "item/tool/requestUserInput": ToolRequestUserInputParams;
   "mcpServer/elicitation/request": McpServerElicitationRequestParams;

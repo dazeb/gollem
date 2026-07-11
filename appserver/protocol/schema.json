@@ -2847,6 +2847,30 @@
       },
       "type": "object"
     },
+    "ItemCompletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "completedAtMs": {
+          "type": "integer"
+        },
+        "item": {
+          "$ref": "#/$defs/ThreadItem"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "threadId",
+        "turnId",
+        "completedAtMs"
+      ],
+      "type": "object"
+    },
     "ItemLifecycleNotificationParams": {
       "additionalProperties": false,
       "properties": {
@@ -2877,6 +2901,30 @@
       "required": [
         "threadId",
         "at"
+      ],
+      "type": "object"
+    },
+    "ItemStartedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ThreadItem"
+        },
+        "startedAtMs": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "threadId",
+        "turnId",
+        "startedAtMs"
       ],
       "type": "object"
     },
@@ -9907,6 +9955,7 @@
       "method": "item/completed",
       "surface": "server-notification",
       "params": [
+        "ItemCompletedNotification",
         "ItemLifecycleNotificationParams",
         "DynamicToolCallItemCompletedNotificationParams",
         "CommandExecutionItemCompletedNotificationParams",
@@ -9949,6 +9998,7 @@
       "method": "item/started",
       "surface": "server-notification",
       "params": [
+        "ItemStartedNotification",
         "ItemLifecycleNotificationParams",
         "DynamicToolCallItemStartedNotificationParams",
         "CommandExecutionItemStartedNotificationParams",
