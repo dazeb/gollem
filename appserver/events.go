@@ -200,10 +200,6 @@ type threadNotificationParams struct {
 	At       time.Time          `json:"at"`
 }
 
-type threadClosedNotificationParams struct {
-	ThreadID string `json:"threadId"`
-}
-
 type threadNotLoadedStatusNotificationParams struct {
 	ThreadID string            `json:"threadId"`
 	Status   map[string]string `json:"status"`

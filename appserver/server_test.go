@@ -506,7 +506,7 @@ func TestServerThreadUnsubscribeHandler(t *testing.T) {
 		t.Fatalf("final unsubscribe = %#v", final)
 	}
 	events := waitForNotificationMethods(t, server, "thread/closed", "thread/status/changed")
-	var closed threadClosedNotificationParams
+	var closed protocol.ThreadClosedNotification
 	if err := json.Unmarshal(events[0].Params, &closed); err != nil {
 		t.Fatalf("decode closed notice: %v", err)
 	}

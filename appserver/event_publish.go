@@ -37,11 +37,39 @@ func (s *Server) publishThreadNotification(method string, thread *store.Thread) 
 	if thread == nil {
 		return
 	}
+	now := time.Now().UTC()
+	record := protocolThreadRecord(thread)
+	switch method {
+	case "thread/archived":
+		s.PublishNotification(method, protocol.ThreadArchivedNotification{
+			ThreadID: thread.ID,
+			Status:   protocol.ThreadLifecycleStatus(thread.Status),
+			Thread:   &record,
+			At:       &now,
+		})
+		return
+	case "thread/deleted":
+		s.PublishNotification(method, protocol.ThreadDeletedNotification{
+			ThreadID: thread.ID,
+			Status:   protocol.ThreadLifecycleStatus(thread.Status),
+			Thread:   &record,
+			At:       &now,
+		})
+		return
+	case "thread/unarchived":
+		s.PublishNotification(method, protocol.ThreadUnarchivedNotification{
+			ThreadID: thread.ID,
+			Status:   protocol.ThreadLifecycleStatus(thread.Status),
+			Thread:   &record,
+			At:       &now,
+		})
+		return
+	}
 	s.PublishNotification(method, threadNotificationParams{
 		ThreadID: thread.ID,
 		Status:   thread.Status,
 		Thread:   thread,
-		At:       time.Now().UTC(),
+		At:       now,
 	})
 }
 
@@ -49,7 +77,7 @@ func (s *Server) publishThreadClosed(threadID string) {
 	if threadID == "" {
 		return
 	}
-	s.PublishNotification("thread/closed", threadClosedNotificationParams{ThreadID: threadID})
+	s.PublishNotification("thread/closed", protocol.ThreadClosedNotification{ThreadID: threadID})
 	s.PublishNotification("thread/status/changed", threadNotLoadedStatusNotificationParams{
 		ThreadID: threadID,
 		Status:   map[string]string{"type": "notLoaded"},

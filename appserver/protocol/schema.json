@@ -1843,6 +1843,54 @@
       },
       "type": "object"
     },
+    "ThreadArchivedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadLifecycleStatus"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadClosedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
     "ThreadCompactStartParams": {
       "additionalProperties": false,
       "properties": {
@@ -1904,6 +1952,42 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "ThreadDeletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadLifecycleStatus"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
       "type": "object"
     },
     "ThreadGoal": {
@@ -3090,6 +3174,42 @@
       },
       "required": [
         "thread"
+      ],
+      "type": "object"
+    },
+    "ThreadUnarchivedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadLifecycleStatus"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
       ],
       "type": "object"
     },
@@ -4874,6 +4994,20 @@
       ]
     },
     {
+      "method": "thread/archived",
+      "surface": "server-notification",
+      "params": [
+        "ThreadArchivedNotification"
+      ]
+    },
+    {
+      "method": "thread/closed",
+      "surface": "server-notification",
+      "params": [
+        "ThreadClosedNotification"
+      ]
+    },
+    {
       "method": "thread/compact/start",
       "surface": "client-request",
       "params": [
@@ -4898,6 +5032,13 @@
       ],
       "result": [
         "ThreadDeleteResponse"
+      ]
+    },
+    {
+      "method": "thread/deleted",
+      "surface": "server-notification",
+      "params": [
+        "ThreadDeletedNotification"
       ]
     },
     {
@@ -5026,6 +5167,13 @@
       ],
       "result": [
         "ThreadUnarchiveResponse"
+      ]
+    },
+    {
+      "method": "thread/unarchived",
+      "surface": "server-notification",
+      "params": [
+        "ThreadUnarchivedNotification"
       ]
     },
     {
