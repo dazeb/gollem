@@ -83,6 +83,7 @@ func wireSchemaDefinitions() Schema {
 	definitions := []wireSchemaDefinition{
 		{Name: "AbsolutePathBuf", Type: reflect.TypeFor[AbsolutePathBuf]()},
 		{Name: "ActivePermissionProfile", Type: reflect.TypeFor[ActivePermissionProfile]()},
+		{Name: "AgentMessageInputContent", Type: reflect.TypeFor[AgentMessageInputContent]()},
 		{Name: "AgentPath", Type: reflect.TypeFor[AgentPath]()},
 		{Name: "AdditionalFileSystemPermissions", Type: reflect.TypeFor[AdditionalFileSystemPermissions]()},
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
@@ -221,6 +222,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PermissionsRequestApprovalResponse", Type: reflect.TypeFor[PermissionsRequestApprovalResponse]()},
 		{Name: "RequestPermissionProfile", Type: reflect.TypeFor[RequestPermissionProfile]()},
 		{Name: "ReasoningEffort", Type: reflect.TypeFor[ReasoningEffort]()},
+		{Name: "ReasoningItemContent", Type: reflect.TypeFor[ReasoningItemContent]()},
+		{Name: "ReasoningItemReasoningSummary", Type: reflect.TypeFor[ReasoningItemReasoningSummary]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
@@ -349,6 +352,9 @@ func wireSchemaDefinitions() Schema {
 		string(SubAgentActivityInterrupted),
 	)
 	schemas["CollabAgentState"] = collabAgentStateSchema()
+	schemas["AgentMessageInputContent"] = rawResponseContentSchema(agentMessageInputContentVariants)
+	schemas["ReasoningItemContent"] = rawResponseContentSchema(reasoningItemContentVariants)
+	schemas["ReasoningItemReasoningSummary"] = rawResponseContentSchema(reasoningItemSummaryVariants)
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
 		string(ImageDetailAuto), string(ImageDetailLow), string(ImageDetailHigh), string(ImageDetailOriginal),
@@ -557,6 +563,26 @@ func collabAgentStateSchema() Schema {
 			"message": nullableStringSchema(),
 		},
 		"required":             []string{"status", "message"},
+		"additionalProperties": false,
+	}
+}
+
+func rawResponseContentSchema(variants []rawResponseContentVariant) Schema {
+	oneOf := make([]any, 0, len(variants))
+	for _, variant := range variants {
+		oneOf = append(oneOf, rawResponseContentVariantSchema(variant))
+	}
+	return Schema{"oneOf": oneOf}
+}
+
+func rawResponseContentVariantSchema(variant rawResponseContentVariant) Schema {
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"type":        Schema{"type": "string", "enum": []any{variant.contentType}},
+			variant.field: Schema{"type": "string"},
+		},
+		"required":             []string{"type", variant.field},
 		"additionalProperties": false,
 	}
 }

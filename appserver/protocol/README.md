@@ -297,6 +297,14 @@ do not alias current internal agent state, add multi-agent methods, bind collab
 or subagent items, alter provider reasoning settings, or claim full public item
 parity.
 
+The exact standalone raw-response content prerequisites are exported as strict
+validated unions: snake-case input-text/encrypted-content agent message input,
+reasoning-text/text reasoning content, and summary-text reasoning summary.
+Required content stays non-null, crossed and unknown fields fail closed, and
+canonical output preserves public snake-case names. These definitions do not
+export full `ResponseItem`, bind raw-response notifications, map provider
+payloads, or change live agent/reasoning deltas.
+
 ## Generation
 
 Run:
