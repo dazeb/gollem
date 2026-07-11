@@ -124,6 +124,9 @@
       ],
       "type": "object"
     },
+    "AgentPath": {
+      "type": "string"
+    },
     "ApprovalRequestBase": {
       "additionalProperties": false,
       "properties": {
@@ -236,6 +239,59 @@
         "version"
       ],
       "type": "object"
+    },
+    "CollabAgentState": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/CollabAgentStatus"
+        }
+      },
+      "required": [
+        "status",
+        "message"
+      ],
+      "type": "object"
+    },
+    "CollabAgentStatus": {
+      "enum": [
+        "pendingInit",
+        "running",
+        "interrupted",
+        "completed",
+        "errored",
+        "shutdown",
+        "notFound"
+      ],
+      "type": "string"
+    },
+    "CollabAgentTool": {
+      "enum": [
+        "spawnAgent",
+        "sendInput",
+        "resumeAgent",
+        "wait",
+        "closeAgent"
+      ],
+      "type": "string"
+    },
+    "CollabAgentToolCallStatus": {
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
     },
     "CommandAction": {
       "oneOf": [
@@ -4033,6 +4089,10 @@
       ],
       "type": "object"
     },
+    "ReasoningEffort": {
+      "minLength": 1,
+      "type": "string"
+    },
     "Request": {
       "additionalProperties": false,
       "properties": {
@@ -4305,6 +4365,14 @@
       "enum": [
         "asc",
         "desc"
+      ],
+      "type": "string"
+    },
+    "SubAgentActivityKind": {
+      "enum": [
+        "started",
+        "interacted",
+        "interrupted"
       ],
       "type": "string"
     },

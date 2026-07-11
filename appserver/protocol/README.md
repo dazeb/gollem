@@ -287,6 +287,16 @@ contract. It does not alias the distinct snake-case
 `ResponsesApiWebSearchAction`, add a search provider, bind a public thread item,
 or change current runtime events.
 
+The schema also exports the exact standalone collab/subagent prerequisite
+values: unrestricted logical `AgentPath`, non-empty open `ReasoningEffort`,
+closed collab status/tool/tool-call-status and subagent activity enums, and
+`CollabAgentState` with required status plus required nullable message. The
+state follows the generated v2 TypeScript required-nullable shape rather than
+the looser `Option`-derived public JSON Schema required list. These definitions
+do not alias current internal agent state, add multi-agent methods, bind collab
+or subagent items, alter provider reasoning settings, or claim full public item
+parity.
+
 ## Generation
 
 Run:

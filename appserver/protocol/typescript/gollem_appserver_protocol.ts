@@ -515,6 +515,8 @@ export type AdditionalPermissionProfile = {
   "network": AdditionalNetworkPermissions | null;
 };
 
+export type AgentPath = string;
+
 export type ApprovalRequestBase = {
   "itemId": string;
   "reason"?: string;
@@ -546,6 +548,17 @@ export type ClientInfo = {
   "title"?: string | null;
   "version": string;
 };
+
+export type CollabAgentState = {
+  "message": string | null;
+  "status": CollabAgentStatus;
+};
+
+export type CollabAgentStatus = "pendingInit" | "running" | "interrupted" | "completed" | "errored" | "shutdown" | "notFound";
+
+export type CollabAgentTool = "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+
+export type CollabAgentToolCallStatus = "inProgress" | "completed" | "failed";
 
 export type CommandAction = {
   "command": string;
@@ -1450,6 +1463,8 @@ export type PermissionsRequestApprovalResponse = {
   "strictAutoReview"?: boolean;
 };
 
+export type ReasoningEffort = string;
+
 export type Request = {
   "id": RequestID;
   "method": "account/login/cancel" | "account/login/start" | "account/logout" | "account/rateLimitResetCredit/consume" | "account/rateLimits/read" | "account/read" | "account/sendAddCreditsNudgeEmail" | "account/usage/read" | "account/workspaceMessages/read" | "app/list" | "collaborationMode/list" | "command/exec" | "command/exec/resize" | "command/exec/terminate" | "command/exec/write" | "config/batchWrite" | "config/mcpServer/reload" | "config/read" | "config/value/write" | "configRequirements/read" | "environment/add" | "environment/info" | "experimentalFeature/enablement/set" | "experimentalFeature/list" | "externalAgentConfig/detect" | "externalAgentConfig/import" | "externalAgentConfig/import/readHistories" | "feedback/upload" | "fs/copy" | "fs/createDirectory" | "fs/getMetadata" | "fs/readDirectory" | "fs/readFile" | "fs/remove" | "fs/unwatch" | "fs/watch" | "fs/writeFile" | "fuzzyFileSearch" | "fuzzyFileSearch/sessionStart" | "fuzzyFileSearch/sessionStop" | "fuzzyFileSearch/sessionUpdate" | "getAuthStatus" | "getConversationSummary" | "gitDiffToRemote" | "hooks/list" | "initialize" | "marketplace/add" | "marketplace/remove" | "marketplace/upgrade" | "mcpServer/oauth/login" | "mcpServer/resource/read" | "mcpServer/tool/call" | "mcpServerStatus/list" | "memory/reset" | "mock/experimentalMethod" | "model/list" | "modelProvider/capabilities/read" | "permissionProfile/list" | "plugin/install" | "plugin/installed" | "plugin/list" | "plugin/read" | "plugin/share/checkout" | "plugin/share/delete" | "plugin/share/list" | "plugin/share/save" | "plugin/share/updateTargets" | "plugin/skill/read" | "plugin/uninstall" | "process/kill" | "process/resizePty" | "process/spawn" | "process/writeStdin" | "remoteControl/client/list" | "remoteControl/client/revoke" | "remoteControl/disable" | "remoteControl/enable" | "remoteControl/pairing/start" | "remoteControl/pairing/status" | "remoteControl/status/read" | "review/start" | "skills/config/write" | "skills/extraRoots/set" | "skills/list" | "thread/approveGuardianDeniedAction" | "thread/archive" | "thread/backgroundTerminals/clean" | "thread/backgroundTerminals/list" | "thread/backgroundTerminals/terminate" | "thread/compact/start" | "thread/decrement_elicitation" | "thread/delete" | "thread/fork" | "thread/goal/clear" | "thread/goal/get" | "thread/goal/set" | "thread/increment_elicitation" | "thread/inject_items" | "thread/items/list" | "thread/list" | "thread/loaded/list" | "thread/memoryMode/set" | "thread/metadata/update" | "thread/name/set" | "thread/read" | "thread/realtime/appendAudio" | "thread/realtime/appendSpeech" | "thread/realtime/appendText" | "thread/realtime/listVoices" | "thread/realtime/start" | "thread/realtime/stop" | "thread/resume" | "thread/rollback" | "thread/search" | "thread/settings/update" | "thread/shellCommand" | "thread/start" | "thread/turns/list" | "thread/unarchive" | "thread/unsubscribe" | "turn/interrupt" | "turn/start" | "turn/steer" | "windowsSandbox/readiness" | "windowsSandbox/setupStart" | "approval/respond" | "cache/benchmark" | "cache/stats" | "daemon/restart" | "daemon/start" | "daemon/status" | "daemon/stop" | "daemon/version" | "git/commit" | "git/diff" | "git/status" | "git/worktree/create" | "git/worktree/list" | "provider/capabilities/read" | "provider/list" | "tool/list" | "turn/retry";
@@ -1485,6 +1500,8 @@ export type ServerRequestResolvedNotification = {
 export type ServerRequestResolvedNotificationParams = ServerRequestResolvedNotification;
 
 export type SortDirection = "asc" | "desc";
+
+export type SubAgentActivityKind = "started" | "interacted" | "interrupted";
 
 export type Surface = "client-request" | "server-notification" | "server-request" | "client-notification" | "gollem-extension";
 
