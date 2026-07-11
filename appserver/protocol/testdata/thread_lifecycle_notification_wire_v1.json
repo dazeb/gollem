@@ -1,0 +1,38 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "thread-archived-notification",
+      "surface": "server-notification",
+      "method": "thread/archived",
+      "envelope": "notification",
+      "paramsType": "ThreadArchivedNotification",
+      "message": {"method": "thread/archived", "params": {"threadId": "thread-1"}}
+    },
+    {
+      "name": "thread-closed-notification",
+      "surface": "server-notification",
+      "method": "thread/closed",
+      "envelope": "notification",
+      "paramsType": "ThreadClosedNotification",
+      "message": {"method": "thread/closed", "params": {"threadId": "thread-1"}}
+    },
+    {
+      "name": "thread-deleted-notification",
+      "surface": "server-notification",
+      "method": "thread/deleted",
+      "envelope": "notification",
+      "paramsType": "ThreadDeletedNotification",
+      "message": {"method": "thread/deleted", "params": {"threadId": "thread-1"}}
+    },
+    {
+      "name": "thread-unarchived-notification",
+      "surface": "server-notification",
+      "method": "thread/unarchived",
+      "envelope": "notification",
+      "paramsType": "ThreadUnarchivedNotification",
+      "message": {"method": "thread/unarchived", "params": {"threadId": "thread-1"}}
+    }
+  ]
+}

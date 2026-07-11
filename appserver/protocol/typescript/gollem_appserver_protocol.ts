@@ -890,6 +890,17 @@ export type ThreadArchiveResponse = {
   "thread"?: ThreadRecord | null;
 };
 
+export type ThreadArchivedNotification = {
+  "at"?: string | null;
+  "status"?: ThreadLifecycleStatus;
+  "thread"?: ThreadRecord | null;
+  "threadId": string;
+};
+
+export type ThreadClosedNotification = {
+  "threadId": string;
+};
+
 export type ThreadCompactStartParams = {
   "id"?: string;
   "threadId"?: string;
@@ -909,6 +920,13 @@ export type ThreadDeleteParams = {
 
 export type ThreadDeleteResponse = {
   "thread"?: ThreadRecord | null;
+};
+
+export type ThreadDeletedNotification = {
+  "at"?: string | null;
+  "status"?: ThreadLifecycleStatus;
+  "thread"?: ThreadRecord | null;
+  "threadId": string;
 };
 
 export type ThreadGoal = {
@@ -1155,6 +1173,13 @@ export type ThreadUnarchiveResponse = {
   "thread": ThreadRecord;
 };
 
+export type ThreadUnarchivedNotification = {
+  "at"?: string | null;
+  "status"?: ThreadLifecycleStatus;
+  "thread"?: ThreadRecord | null;
+  "threadId": string;
+};
+
 export type ThreadUnsubscribeParams = {
   "id"?: string;
   "threadId": string;
@@ -1250,9 +1275,12 @@ export const wireTypeBindings = [
   { "method": "item/started", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
   { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotificationParams"] },
   { "method": "thread/archive", "surface": "client-request", "params": ["ThreadArchiveParams"], "result": ["ThreadArchiveResponse"] },
+  { "method": "thread/archived", "surface": "server-notification", "params": ["ThreadArchivedNotification"] },
+  { "method": "thread/closed", "surface": "server-notification", "params": ["ThreadClosedNotification"] },
   { "method": "thread/compact/start", "surface": "client-request", "params": ["ThreadCompactStartParams"], "result": ["ThreadCompactStartResponse"] },
   { "method": "thread/compacted", "surface": "server-notification", "params": ["ThreadCompactedNotificationParams"] },
   { "method": "thread/delete", "surface": "client-request", "params": ["ThreadDeleteParams"], "result": ["ThreadDeleteResponse"] },
+  { "method": "thread/deleted", "surface": "server-notification", "params": ["ThreadDeletedNotification"] },
   { "method": "thread/goal/clear", "surface": "client-request", "params": ["ThreadGoalClearParams"], "result": ["ThreadGoalClearResponse"] },
   { "method": "thread/goal/cleared", "surface": "server-notification", "params": ["ThreadGoalClearedNotification"] },
   { "method": "thread/goal/get", "surface": "client-request", "params": ["ThreadGoalGetParams"], "result": ["ThreadGoalGetResponse"] },
@@ -1267,6 +1295,7 @@ export const wireTypeBindings = [
   { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResponse"] },
   { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotificationParams"] },
   { "method": "thread/unarchive", "surface": "client-request", "params": ["ThreadUnarchiveParams"], "result": ["ThreadUnarchiveResponse"] },
+  { "method": "thread/unarchived", "surface": "server-notification", "params": ["ThreadUnarchivedNotification"] },
   { "method": "thread/unsubscribe", "surface": "client-request", "params": ["ThreadUnsubscribeParams"], "result": ["ThreadUnsubscribeResponse"] },
   { "method": "turn/diff/updated", "surface": "server-notification", "params": ["TurnDiffUpdatedNotificationParams"] },
 ] as const satisfies readonly WireTypeBinding[];
@@ -1290,9 +1319,12 @@ export interface MethodParamsByName {
   "item/started": ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
   "serverRequest/resolved": ServerRequestResolvedNotificationParams;
   "thread/archive": ThreadArchiveParams;
+  "thread/archived": ThreadArchivedNotification;
+  "thread/closed": ThreadClosedNotification;
   "thread/compact/start": ThreadCompactStartParams;
   "thread/compacted": ThreadCompactedNotificationParams;
   "thread/delete": ThreadDeleteParams;
+  "thread/deleted": ThreadDeletedNotification;
   "thread/goal/clear": ThreadGoalClearParams;
   "thread/goal/cleared": ThreadGoalClearedNotification;
   "thread/goal/get": ThreadGoalGetParams;
@@ -1307,6 +1339,7 @@ export interface MethodParamsByName {
   "thread/read": ThreadReadParams;
   "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotificationParams;
   "thread/unarchive": ThreadUnarchiveParams;
+  "thread/unarchived": ThreadUnarchivedNotification;
   "thread/unsubscribe": ThreadUnsubscribeParams;
   "turn/diff/updated": TurnDiffUpdatedNotificationParams;
 }
