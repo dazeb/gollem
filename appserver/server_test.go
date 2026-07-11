@@ -1865,8 +1865,7 @@ func TestServerFilesystemApprovalRespondFlow(t *testing.T) {
 		t.Fatal("fs/writeFile did not finish after approval")
 	}
 
-	events := server.DrainNotifications()
-	assertNotificationMethods(t, events, "serverRequest/resolved", "fs/changed")
+	waitForNotificationSet(t, server, "serverRequest/resolved", "fs/changed")
 }
 
 func TestServerProcessHandlers(t *testing.T) {
