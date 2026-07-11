@@ -1836,6 +1836,120 @@ export type ThreadGoalUpdatedNotification = {
   "turnId": string | null;
 };
 
+export type ThreadItem = {
+  "clientId": string | null;
+  "content": Array<UserInput>;
+  "id": string;
+  "type": "userMessage";
+} | {
+  "fragments": Array<HookPromptFragment>;
+  "id": string;
+  "type": "hookPrompt";
+} | {
+  "id": string;
+  "memoryCitation": MemoryCitation | null;
+  "phase": MessagePhase | null;
+  "text": string;
+  "type": "agentMessage";
+} | {
+  "id": string;
+  "text": string;
+  "type": "plan";
+} | {
+  "content": Array<string>;
+  "id": string;
+  "summary": Array<string>;
+  "type": "reasoning";
+} | {
+  "aggregatedOutput": string | null;
+  "command": string;
+  "commandActions": Array<CommandAction>;
+  "cwd": LegacyAppPathString;
+  "durationMs": number | null;
+  "exitCode": number | null;
+  "id": string;
+  "processId": string | null;
+  "source": CommandExecutionSource;
+  "status": CommandExecutionStatus;
+  "type": "commandExecution";
+} | {
+  "changes": Array<FileUpdateChange>;
+  "id": string;
+  "status": PatchApplyStatus;
+  "type": "fileChange";
+} | {
+  "appContext": McpToolCallAppContext | null;
+  "arguments": JsonValue;
+  "durationMs": number | null;
+  "error": McpToolCallError | null;
+  "id": string;
+  "mcpAppResourceUri"?: string;
+  "pluginId": string | null;
+  "result": McpToolCallResult | null;
+  "server": string;
+  "status": McpToolCallStatus;
+  "tool": string;
+  "type": "mcpToolCall";
+} | {
+  "arguments": JsonValue;
+  "contentItems": Array<DynamicToolCallOutputContentItem> | null;
+  "durationMs": number | null;
+  "id": string;
+  "namespace": string | null;
+  "status": DynamicToolCallStatus;
+  "success": boolean | null;
+  "tool": string;
+  "type": "dynamicToolCall";
+} | {
+  "agentsStates": { [key in string]?: CollabAgentState };
+  "id": string;
+  "model": string | null;
+  "prompt": string | null;
+  "reasoningEffort": ReasoningEffort | null;
+  "receiverThreadIds": Array<string>;
+  "senderThreadId": string;
+  "status": CollabAgentToolCallStatus;
+  "tool": CollabAgentTool;
+  "type": "collabAgentToolCall";
+} | {
+  "agentPath": string;
+  "agentThreadId": string;
+  "id": string;
+  "kind": SubAgentActivityKind;
+  "type": "subAgentActivity";
+} | {
+  "action": WebSearchAction | null;
+  "id": string;
+  "query": string;
+  "type": "webSearch";
+} | {
+  "id": string;
+  "path": LegacyAppPathString;
+  "type": "imageView";
+} | {
+  "durationMs": number;
+  "id": string;
+  "type": "sleep";
+} | {
+  "id": string;
+  "result": string;
+  "revisedPrompt": string | null;
+  "savedPath"?: AbsolutePathBuf;
+  "status": string;
+  "type": "imageGeneration";
+} | {
+  "id": string;
+  "review": string;
+  "type": "enteredReviewMode";
+} | {
+  "id": string;
+  "review": string;
+  "type": "exitedReviewMode";
+} | {
+  "id": string;
+  "type": "contextCompaction";
+};
+
 export type ThreadLifecycleStatus = "active" | "archived" | "deleted";
 
 export type ThreadListCwdFilter = string | Array<string>;

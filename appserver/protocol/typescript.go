@@ -280,6 +280,9 @@ func typeScriptObjectType(schema Schema, indent int) (string, error) {
 			if recursive, _ := schema["x-gollem-typescript-recursive-map"].(bool); recursive {
 				return "{ [key: string]: " + valueType + " }", nil
 			}
+			if optional, _ := schema["x-gollem-typescript-optional-map"].(bool); optional {
+				return "{ [key in string]?: " + valueType + " }", nil
+			}
 			return "Record<string, " + valueType + ">", nil
 		}
 		if !additionalAllowed {
