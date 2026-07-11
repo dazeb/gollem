@@ -1812,6 +1812,37 @@
       ],
       "type": "string"
     },
+    "ThreadArchiveParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadArchiveResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ThreadCompactStartParams": {
       "additionalProperties": false,
       "properties": {
@@ -1842,6 +1873,37 @@
         "threadId",
         "turnId"
       ],
+      "type": "object"
+    },
+    "ThreadDeleteParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadDeleteResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
       "type": "object"
     },
     "ThreadLifecycleStatus": {
@@ -2027,6 +2089,57 @@
       ],
       "type": "object"
     },
+    "ThreadLoadedListParams": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ThreadLoadedListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "type": "object"
+    },
     "ThreadReadParams": {
       "additionalProperties": false,
       "properties": {
@@ -2156,6 +2269,50 @@
       ],
       "type": "object"
     },
+    "ThreadSetNameParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ThreadSetNameResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "ThreadSortKey": {
       "enum": [
         "created_at",
@@ -2198,6 +2355,68 @@
         "tokenUsage"
       ],
       "type": "object"
+    },
+    "ThreadUnarchiveParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadUnarchiveResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/ThreadRecord"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
+    "ThreadUnsubscribeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadUnsubscribeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/ThreadUnsubscribeStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "ThreadUnsubscribeStatus": {
+      "enum": [
+        "notLoaded",
+        "notSubscribed",
+        "unsubscribed"
+      ],
+      "type": "string"
     },
     "TimelineItem": {
       "additionalProperties": false,
@@ -3935,6 +4154,16 @@
       ]
     },
     {
+      "method": "thread/archive",
+      "surface": "client-request",
+      "params": [
+        "ThreadArchiveParams"
+      ],
+      "result": [
+        "ThreadArchiveResponse"
+      ]
+    },
+    {
       "method": "thread/compact/start",
       "surface": "client-request",
       "params": [
@@ -3952,6 +4181,16 @@
       ]
     },
     {
+      "method": "thread/delete",
+      "surface": "client-request",
+      "params": [
+        "ThreadDeleteParams"
+      ],
+      "result": [
+        "ThreadDeleteResponse"
+      ]
+    },
+    {
       "method": "thread/list",
       "surface": "client-request",
       "params": [
@@ -3959,6 +4198,26 @@
       ],
       "result": [
         "ThreadListResponse"
+      ]
+    },
+    {
+      "method": "thread/loaded/list",
+      "surface": "client-request",
+      "params": [
+        "ThreadLoadedListParams"
+      ],
+      "result": [
+        "ThreadLoadedListResponse"
+      ]
+    },
+    {
+      "method": "thread/name/set",
+      "surface": "client-request",
+      "params": [
+        "ThreadSetNameParams"
+      ],
+      "result": [
+        "ThreadSetNameResponse"
       ]
     },
     {
@@ -3976,6 +4235,26 @@
       "surface": "server-notification",
       "params": [
         "ThreadTokenUsageUpdatedNotificationParams"
+      ]
+    },
+    {
+      "method": "thread/unarchive",
+      "surface": "client-request",
+      "params": [
+        "ThreadUnarchiveParams"
+      ],
+      "result": [
+        "ThreadUnarchiveResponse"
+      ]
+    },
+    {
+      "method": "thread/unsubscribe",
+      "surface": "client-request",
+      "params": [
+        "ThreadUnsubscribeParams"
+      ],
+      "result": [
+        "ThreadUnsubscribeResponse"
       ]
     },
     {

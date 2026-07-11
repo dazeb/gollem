@@ -279,6 +279,30 @@ func runtimeFixtureTarget(name string) any {
 		return new(ThreadReadParams)
 	case "ThreadReadResponse":
 		return new(ThreadReadResponse)
+	case "ThreadArchiveParams":
+		return new(ThreadArchiveParams)
+	case "ThreadArchiveResponse":
+		return new(ThreadArchiveResponse)
+	case "ThreadDeleteParams":
+		return new(ThreadDeleteParams)
+	case "ThreadDeleteResponse":
+		return new(ThreadDeleteResponse)
+	case "ThreadLoadedListParams":
+		return new(ThreadLoadedListParams)
+	case "ThreadLoadedListResponse":
+		return new(ThreadLoadedListResponse)
+	case "ThreadSetNameParams":
+		return new(ThreadSetNameParams)
+	case "ThreadSetNameResponse":
+		return new(ThreadSetNameResponse)
+	case "ThreadUnarchiveParams":
+		return new(ThreadUnarchiveParams)
+	case "ThreadUnarchiveResponse":
+		return new(ThreadUnarchiveResponse)
+	case "ThreadUnsubscribeParams":
+		return new(ThreadUnsubscribeParams)
+	case "ThreadUnsubscribeResponse":
+		return new(ThreadUnsubscribeResponse)
 	default:
 		return nil
 	}

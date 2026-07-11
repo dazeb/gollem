@@ -287,7 +287,7 @@ func TestServerThreadInjectItemsHandler(t *testing.T) {
 	if loadedResp.Error != nil {
 		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
 	}
-	var loaded threadLoadedListResult
+	var loaded protocol.ThreadLoadedListResponse
 	decodeResult(t, loadedResp, &loaded)
 	if !sameStringSet(loaded.Data, []string{thread.ID}) {
 		t.Fatalf("loaded after inject = %#v", loaded.Data)
@@ -363,7 +363,7 @@ func TestServerThreadDiscoveryHandlers(t *testing.T) {
 	if loadedResp.Error != nil {
 		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
 	}
-	var loadedPage threadLoadedListResult
+	var loadedPage protocol.ThreadLoadedListResponse
 	decodeResult(t, loadedResp, &loadedPage)
 	if len(loadedPage.Data) != 1 || loadedPage.NextCursor == nil {
 		t.Fatalf("loaded first page = %#v, want one result and next cursor", loadedPage)
@@ -372,7 +372,7 @@ func TestServerThreadDiscoveryHandlers(t *testing.T) {
 	if nextLoadedResp.Error != nil {
 		t.Fatalf("thread/loaded/list next error: %v", nextLoadedResp.Error)
 	}
-	var loadedNext threadLoadedListResult
+	var loadedNext protocol.ThreadLoadedListResponse
 	decodeResult(t, nextLoadedResp, &loadedNext)
 	loadedIDs := append(loadedPage.Data, loadedNext.Data...)
 	if !sameStringSet(loadedIDs, []string{alpha.ID, beta.ID}) || loadedNext.NextCursor != nil {
@@ -459,7 +459,7 @@ func TestServerThreadUnsubscribeHandler(t *testing.T) {
 	if firstResp.Error != nil {
 		t.Fatalf("thread/unsubscribe error: %v", firstResp.Error)
 	}
-	var first threadUnsubscribeResponse
+	var first protocol.ThreadUnsubscribeResponse
 	decodeResult(t, firstResp, &first)
 	if first.Status != "unsubscribed" {
 		t.Fatalf("first unsubscribe = %#v", first)
@@ -468,7 +468,7 @@ func TestServerThreadUnsubscribeHandler(t *testing.T) {
 	if loadedResp.Error != nil {
 		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
 	}
-	var loaded threadLoadedListResult
+	var loaded protocol.ThreadLoadedListResponse
 	decodeResult(t, loadedResp, &loaded)
 	if !sameStringSet(loaded.Data, []string{thread.ID}) {
 		t.Fatalf("loaded after unsubscribe = %#v", loaded.Data)
@@ -481,7 +481,7 @@ func TestServerThreadUnsubscribeHandler(t *testing.T) {
 	if secondResp.Error != nil {
 		t.Fatalf("second thread/unsubscribe error: %v", secondResp.Error)
 	}
-	var second threadUnsubscribeResponse
+	var second protocol.ThreadUnsubscribeResponse
 	decodeResult(t, secondResp, &second)
 	if second.Status != "notSubscribed" {
 		t.Fatalf("second unsubscribe = %#v", second)
@@ -500,7 +500,7 @@ func TestServerThreadUnsubscribeHandler(t *testing.T) {
 	if finalResp.Error != nil {
 		t.Fatalf("final thread/unsubscribe error: %v", finalResp.Error)
 	}
-	var final threadUnsubscribeResponse
+	var final protocol.ThreadUnsubscribeResponse
 	decodeResult(t, finalResp, &final)
 	if final.Status != "unsubscribed" {
 		t.Fatalf("final unsubscribe = %#v", final)
@@ -525,7 +525,7 @@ func TestServerThreadUnsubscribeHandler(t *testing.T) {
 	if loadedResp.Error != nil {
 		t.Fatalf("thread/loaded/list after close error: %v", loadedResp.Error)
 	}
-	loaded = threadLoadedListResult{}
+	loaded = protocol.ThreadLoadedListResponse{}
 	decodeResult(t, loadedResp, &loaded)
 	if len(loaded.Data) != 0 {
 		t.Fatalf("loaded after idle close = %#v", loaded.Data)
@@ -544,7 +544,7 @@ func TestServerThreadUnsubscribeHandler(t *testing.T) {
 			if resp.Error != nil {
 				t.Fatalf("thread/unsubscribe error: %v", resp.Error)
 			}
-			var result threadUnsubscribeResponse
+			var result protocol.ThreadUnsubscribeResponse
 			decodeResult(t, resp, &result)
 			if result.Status != "notLoaded" {
 				t.Fatalf("unsubscribe %s = %#v, want notLoaded", tc.name, result)
@@ -634,7 +634,7 @@ func TestServerThreadRollbackHandler(t *testing.T) {
 	if loadedResp.Error != nil {
 		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
 	}
-	var loaded threadLoadedListResult
+	var loaded protocol.ThreadLoadedListResponse
 	decodeResult(t, loadedResp, &loaded)
 	if !sameStringSet(loaded.Data, []string{thread.ID}) {
 		t.Fatalf("loaded after rollback = %#v", loaded.Data)
@@ -746,7 +746,7 @@ func TestServerThreadCompactStartHandler(t *testing.T) {
 	if loadedResp.Error != nil {
 		t.Fatalf("thread/loaded/list error: %v", loadedResp.Error)
 	}
-	var loaded threadLoadedListResult
+	var loaded protocol.ThreadLoadedListResponse
 	decodeResult(t, loadedResp, &loaded)
 	if !sameStringSet(loaded.Data, []string{thread.ID}) {
 		t.Fatalf("loaded after compact = %#v", loaded.Data)
@@ -1035,7 +1035,7 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	if nameResp.Error != nil {
 		t.Fatalf("thread/name/set error: %v", nameResp.Error)
 	}
-	var nameResult threadNameSetResult
+	var nameResult protocol.ThreadSetNameResponse
 	decodeResult(t, nameResp, &nameResult)
 	if nameResult.Name != "Renamed Controls" || nameResult.Thread.Title != "Renamed Controls" || nameResult.Thread.Settings[threadMemoryModeSettingKey] != "disabled" {
 		t.Fatalf("name result = %#v", nameResult)

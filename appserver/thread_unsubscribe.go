@@ -14,24 +14,24 @@ func (s *Server) handleThreadUnsubscribe(ctx context.Context, raw json.RawMessag
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadIDParams
+	var params protocol.ThreadUnsubscribeParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
+	threadID := params.EffectiveThreadID()
 	if threadID == "" {
 		return nil, invalidParams("threadId is required", nil)
 	}
 	thread, err := st.GetThread(ctx, threadID)
 	if err != nil {
 		if errors.Is(err, store.ErrThreadNotFound) {
-			return threadUnsubscribeResponse{Status: "notLoaded"}, nil
+			return protocol.ThreadUnsubscribeResponse{Status: protocol.ThreadUnsubscribeNotLoaded}, nil
 		}
 		return nil, mapError("thread/unsubscribe", err)
 	}
 	if thread.Status == store.ThreadDeleted {
 		s.markThreadUnloaded(thread.ID)
-		return threadUnsubscribeResponse{Status: "notLoaded"}, nil
+		return protocol.ThreadUnsubscribeResponse{Status: protocol.ThreadUnsubscribeNotLoaded}, nil
 	}
-	return threadUnsubscribeResponse{Status: s.unsubscribeThread(thread.ID)}, nil
+	return protocol.ThreadUnsubscribeResponse{Status: protocol.ThreadUnsubscribeStatus(s.unsubscribeThread(thread.ID))}, nil
 }

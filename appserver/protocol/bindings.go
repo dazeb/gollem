@@ -34,11 +34,17 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "item/permissions/requestApproval", Surface: SurfaceServerRequest, Params: []string{"PermissionsApprovalRequestParams"}},
 	{Method: "item/started", Surface: SurfaceServerNotification, Params: []string{"ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"}},
 	{Method: "serverRequest/resolved", Surface: SurfaceServerNotification, Params: []string{"ServerRequestResolvedNotificationParams"}},
+	{Method: "thread/archive", Surface: SurfaceClientRequest, Params: []string{"ThreadArchiveParams"}, Result: []string{"ThreadArchiveResponse"}},
 	{Method: "thread/compact/start", Surface: SurfaceClientRequest, Params: []string{"ThreadCompactStartParams"}, Result: []string{"ThreadCompactStartResponse"}},
 	{Method: "thread/compacted", Surface: SurfaceServerNotification, Params: []string{"ThreadCompactedNotificationParams"}},
+	{Method: "thread/delete", Surface: SurfaceClientRequest, Params: []string{"ThreadDeleteParams"}, Result: []string{"ThreadDeleteResponse"}},
 	{Method: "thread/list", Surface: SurfaceClientRequest, Params: []string{"ThreadListParams"}, Result: []string{"ThreadListResponse"}},
+	{Method: "thread/loaded/list", Surface: SurfaceClientRequest, Params: []string{"ThreadLoadedListParams"}, Result: []string{"ThreadLoadedListResponse"}},
+	{Method: "thread/name/set", Surface: SurfaceClientRequest, Params: []string{"ThreadSetNameParams"}, Result: []string{"ThreadSetNameResponse"}},
 	{Method: "thread/read", Surface: SurfaceClientRequest, Params: []string{"ThreadReadParams"}, Result: []string{"ThreadReadResponse"}},
 	{Method: "thread/tokenUsage/updated", Surface: SurfaceServerNotification, Params: []string{"ThreadTokenUsageUpdatedNotificationParams"}},
+	{Method: "thread/unarchive", Surface: SurfaceClientRequest, Params: []string{"ThreadUnarchiveParams"}, Result: []string{"ThreadUnarchiveResponse"}},
+	{Method: "thread/unsubscribe", Surface: SurfaceClientRequest, Params: []string{"ThreadUnsubscribeParams"}, Result: []string{"ThreadUnsubscribeResponse"}},
 	{Method: "turn/diff/updated", Surface: SurfaceServerNotification, Params: []string{"TurnDiffUpdatedNotificationParams"}},
 }
 

@@ -1,0 +1,144 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "thread-loaded-list-request",
+      "surface": "client-request",
+      "method": "thread/loaded/list",
+      "envelope": "request",
+      "paramsType": "ThreadLoadedListParams",
+      "message": {
+        "id": "loaded-list-1",
+        "method": "thread/loaded/list",
+        "params": {"cursor": "0", "limit": 20}
+      }
+    },
+    {
+      "name": "thread-loaded-list-response",
+      "surface": "client-request",
+      "method": "thread/loaded/list",
+      "envelope": "response",
+      "resultType": "ThreadLoadedListResponse",
+      "message": {
+        "id": "loaded-list-1",
+        "result": {"data": ["thread-1"], "nextCursor": null}
+      }
+    },
+    {
+      "name": "thread-archive-request",
+      "surface": "client-request",
+      "method": "thread/archive",
+      "envelope": "request",
+      "paramsType": "ThreadArchiveParams",
+      "message": {
+        "id": "archive-1",
+        "method": "thread/archive",
+        "params": {"threadId": "thread-1"}
+      }
+    },
+    {
+      "name": "thread-archive-response",
+      "surface": "client-request",
+      "method": "thread/archive",
+      "envelope": "response",
+      "resultType": "ThreadArchiveResponse",
+      "message": {"id": "archive-1", "result": {}}
+    },
+    {
+      "name": "thread-unarchive-request",
+      "surface": "client-request",
+      "method": "thread/unarchive",
+      "envelope": "request",
+      "paramsType": "ThreadUnarchiveParams",
+      "message": {
+        "id": "unarchive-1",
+        "method": "thread/unarchive",
+        "params": {"threadId": "thread-1"}
+      }
+    },
+    {
+      "name": "thread-unarchive-response",
+      "surface": "client-request",
+      "method": "thread/unarchive",
+      "envelope": "response",
+      "resultType": "ThreadUnarchiveResponse",
+      "message": {
+        "id": "unarchive-1",
+        "result": {
+          "thread": {
+            "id": "thread-1",
+            "title": "Lifecycle",
+            "workspace": "/workspace",
+            "status": "active",
+            "createdAt": "2026-07-10T20:30:00Z",
+            "updatedAt": "2026-07-10T20:35:00Z"
+          }
+        }
+      }
+    },
+    {
+      "name": "thread-delete-request",
+      "surface": "client-request",
+      "method": "thread/delete",
+      "envelope": "request",
+      "paramsType": "ThreadDeleteParams",
+      "message": {
+        "id": "delete-1",
+        "method": "thread/delete",
+        "params": {"threadId": "thread-1"}
+      }
+    },
+    {
+      "name": "thread-delete-response",
+      "surface": "client-request",
+      "method": "thread/delete",
+      "envelope": "response",
+      "resultType": "ThreadDeleteResponse",
+      "message": {"id": "delete-1", "result": {}}
+    },
+    {
+      "name": "thread-unsubscribe-request",
+      "surface": "client-request",
+      "method": "thread/unsubscribe",
+      "envelope": "request",
+      "paramsType": "ThreadUnsubscribeParams",
+      "message": {
+        "id": "unsubscribe-1",
+        "method": "thread/unsubscribe",
+        "params": {"threadId": "thread-1"}
+      }
+    },
+    {
+      "name": "thread-unsubscribe-response",
+      "surface": "client-request",
+      "method": "thread/unsubscribe",
+      "envelope": "response",
+      "resultType": "ThreadUnsubscribeResponse",
+      "message": {
+        "id": "unsubscribe-1",
+        "result": {"status": "unsubscribed"}
+      }
+    },
+    {
+      "name": "thread-set-name-request",
+      "surface": "client-request",
+      "method": "thread/name/set",
+      "envelope": "request",
+      "paramsType": "ThreadSetNameParams",
+      "message": {
+        "id": "set-name-1",
+        "method": "thread/name/set",
+        "params": {"threadId": "thread-1", "name": "Renamed thread"}
+      }
+    },
+    {
+      "name": "thread-set-name-response",
+      "surface": "client-request",
+      "method": "thread/name/set",
+      "envelope": "response",
+      "resultType": "ThreadSetNameResponse",
+      "message": {"id": "set-name-1", "result": {}}
+    }
+  ]
+}

@@ -28,11 +28,15 @@ func (s *Server) handleThreadLoadedList(ctx context.Context, raw json.RawMessage
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadLoadedListParams
+	var params protocol.ThreadLoadedListParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	offset, rpcErr := parseCursor(params.Cursor, "thread/loaded/list")
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+	offset, rpcErr := parseCursor(cursor, "thread/loaded/list")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -48,8 +52,12 @@ func (s *Server) handleThreadLoadedList(ctx context.Context, raw json.RawMessage
 		}
 		ids = append(ids, thread.ID)
 	}
-	data, nextCursor := paginateStrings(ids, offset, params.Limit)
-	return threadLoadedListResult{
+	limit := 0
+	if params.Limit != nil {
+		limit = int(*params.Limit)
+	}
+	data, nextCursor := paginateStrings(ids, offset, limit)
+	return protocol.ThreadLoadedListResponse{
 		Data:       data,
 		NextCursor: nextCursor,
 	}, nil
