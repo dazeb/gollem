@@ -134,6 +134,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
 		{Name: "MethodInfo", Type: reflect.TypeFor[MethodInfo]()},
 		{Name: "MethodState", Type: reflect.TypeFor[MethodState]()},
+		{Name: "PatchApplyStatus", Type: reflect.TypeFor[PatchApplyStatus]()},
 		{Name: "PatchChangeKind", Type: reflect.TypeFor[PatchChangeKind]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
@@ -237,6 +238,11 @@ func wireSchemaDefinitions() Schema {
 		string(FileChangeApprovalDecline),
 		string(FileChangeApprovalCancel),
 	)
+	schemas["PatchApplyStatus"] = stringEnumSchema(
+		string(PatchApplyStatusInProgress), string(PatchApplyStatusCompleted),
+		string(PatchApplyStatusFailed), string(PatchApplyStatusDeclined),
+	)
+	schemas["PatchChangeKind"] = patchChangeKindSchema()
 	schemas["CommandExecWriteParams"] = schemaWithRequiredFieldAlternatives(
 		schemas["CommandExecWriteParams"].(Schema),
 		[]string{"processId"},
@@ -288,6 +294,37 @@ func wireSchemaDefinitions() Schema {
 		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
+}
+
+func patchChangeKindSchema() Schema {
+	return Schema{"oneOf": []any{
+		patchChangeKindVariantSchema("add", ""),
+		patchChangeKindVariantSchema("delete", ""),
+		patchChangeKindVariantSchema("update", "move_path"),
+		patchChangeKindVariantSchema("update", "movePath"),
+	}}
+}
+
+func patchChangeKindVariantSchema(kind, requiredMovePath string) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{kind}},
+	}
+	required := []string{"type"}
+	if kind == "update" {
+		properties["move_path"] = nullableStringSchema()
+		properties["movePath"] = nullableStringSchema()
+		required = append(required, requiredMovePath)
+	}
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+}
+
+func nullableStringSchema() Schema {
+	return Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}}
 }
 
 func schemaWithRequiredIDAlternative(base Schema) Schema {

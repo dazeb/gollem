@@ -270,6 +270,10 @@ func runtimeFixtureTarget(name string) any {
 		return new(CommandExecutionItemCompletedNotificationParams)
 	case "FileChangeItemCompletedNotificationParams":
 		return new(FileChangeItemCompletedNotificationParams)
+	case "FileChangeItemStartedNotificationParams":
+		return new(FileChangeItemStartedNotificationParams)
+	case "FileChangePatchUpdatedNotificationParams":
+		return new(FileChangePatchUpdatedNotificationParams)
 	case "MCPToolCallItemCompletedNotificationParams":
 		return new(MCPToolCallItemCompletedNotificationParams)
 	case "ItemLifecycleNotificationParams":

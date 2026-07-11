@@ -85,6 +85,7 @@ export const fileChangeCompleted = {
           "path": "README.md",
           "kind": {
             "type": "update",
+            "move_path": null,
             "movePath": null
           },
           "diff": "@@ -1 +1 @@\n-old\n+new\n"

@@ -254,7 +254,7 @@ func runtimeReplayFileChangeRecord(item *store.Item) (runtimeReplayToolRecord, b
 	if item == nil || json.Unmarshal(item.Payload, &payload) != nil || len(payload.Changes) == 0 {
 		return runtimeReplayToolRecord{}, false
 	}
-	status := firstRuntimeNonEmpty(item.Status, payload.Status, runtimeFileChangeStatusInProgress)
+	status := firstRuntimeNonEmpty(item.Status, string(payload.Status), runtimeFileChangeStatusInProgress)
 	result := map[string]any{
 		"status":   status,
 		"changes":  payload.Changes,

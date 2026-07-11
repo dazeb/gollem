@@ -2,6 +2,8 @@ package protocol
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 )
 
@@ -113,11 +115,20 @@ type CommandExecutionOutputDeltaNotificationParams struct {
 	Delta    string `json:"delta"`
 }
 
+type PatchApplyStatus string
+
+const (
+	PatchApplyStatusInProgress PatchApplyStatus = ItemStatusInProgress
+	PatchApplyStatusCompleted  PatchApplyStatus = ItemStatusCompleted
+	PatchApplyStatusFailed     PatchApplyStatus = ItemStatusFailed
+	PatchApplyStatusDeclined   PatchApplyStatus = ItemStatusDeclined
+)
+
 type FileChangeItem struct {
 	Type     string                       `json:"type" jsonschema:"enum=fileChange"`
 	ID       string                       `json:"id,omitempty"`
 	Changes  []FileUpdateChange           `json:"changes"`
-	Status   string                       `json:"status" jsonschema:"enum=inProgress|completed"`
+	Status   PatchApplyStatus             `json:"status"`
 	Evidence []FileChangeArtifactEvidence `json:"evidence,omitempty"`
 }
 
@@ -129,28 +140,94 @@ type FileUpdateChange struct {
 
 type PatchChangeKind struct {
 	Type     string  `json:"type" jsonschema:"enum=add|delete|update"`
-	MovePath *string `json:"movePath,omitempty"`
+	MovePath *string `json:"-"`
 }
 
 func (k PatchChangeKind) MarshalJSON() ([]byte, error) {
-	payload := map[string]any{"type": k.Type}
-	if k.Type == "update" {
-		payload["movePath"] = k.MovePath
+	switch k.Type {
+	case "add", "delete":
+		if k.MovePath != nil {
+			return nil, fmt.Errorf("patch change kind %q cannot include a move path", k.Type)
+		}
+		return json.Marshal(struct {
+			Type string `json:"type"`
+		}{Type: k.Type})
+	case "update":
+		return json.Marshal(struct {
+			Type           string  `json:"type"`
+			PublicMovePath *string `json:"move_path"`
+			LegacyMovePath *string `json:"movePath"`
+		}{Type: k.Type, PublicMovePath: k.MovePath, LegacyMovePath: k.MovePath})
+	default:
+		return nil, fmt.Errorf("unknown patch change kind %q", k.Type)
 	}
-	return json.Marshal(payload)
 }
 
 func (k *PatchChangeKind) UnmarshalJSON(data []byte) error {
-	var payload struct {
-		Type     string  `json:"type"`
-		MovePath *string `json:"movePath"`
+	if k == nil {
+		return errors.New("decode patch change kind into nil receiver")
 	}
+	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return err
 	}
-	k.Type = payload.Type
-	k.MovePath = payload.MovePath
-	return nil
+	for name := range payload {
+		switch name {
+		case "type", "move_path", "movePath":
+		default:
+			return fmt.Errorf("unknown patch change kind field %q", name)
+		}
+	}
+	typeRaw, ok := payload["type"]
+	if !ok {
+		return errors.New("patch change kind requires type")
+	}
+	var kind string
+	if err := json.Unmarshal(typeRaw, &kind); err != nil {
+		return fmt.Errorf("decode patch change kind type: %w", err)
+	}
+	publicRaw, hasPublic := payload["move_path"]
+	legacyRaw, hasLegacy := payload["movePath"]
+	publicMovePath, err := decodeNullableMovePath(publicRaw, hasPublic, "move_path")
+	if err != nil {
+		return err
+	}
+	legacyMovePath, err := decodeNullableMovePath(legacyRaw, hasLegacy, "movePath")
+	if err != nil {
+		return err
+	}
+
+	switch kind {
+	case "add", "delete":
+		if hasPublic || hasLegacy {
+			return fmt.Errorf("patch change kind %q cannot include a move path", kind)
+		}
+		*k = PatchChangeKind{Type: kind}
+		return nil
+	case "update":
+		if !hasPublic && !hasLegacy {
+			return fmt.Errorf("patch change kind %q requires move_path or movePath", kind)
+		}
+		movePath := legacyMovePath
+		if hasPublic {
+			movePath = publicMovePath
+		}
+		*k = PatchChangeKind{Type: kind, MovePath: movePath}
+		return nil
+	default:
+		return fmt.Errorf("unknown patch change kind %q", kind)
+	}
+}
+
+func decodeNullableMovePath(raw json.RawMessage, present bool, name string) (*string, error) {
+	if !present {
+		return nil, nil
+	}
+	var value *string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("decode patch change kind %s: %w", name, err)
+	}
+	return value, nil
 }
 
 type FileChangeArtifactEvidence struct {
