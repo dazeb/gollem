@@ -70,15 +70,17 @@ func TestServerRuntimeUserInputUsesDurableToolItemCorrelation(t *testing.T) {
 	if serverRequest.Method != InteractionRequestUserInput {
 		t.Fatalf("interaction method = %q", serverRequest.Method)
 	}
-	var params map[string]any
+	var params protocol.ToolRequestUserInputParams
 	if err := json.Unmarshal(serverRequest.Params, &params); err != nil {
 		t.Fatalf("decode interaction request: %v", err)
 	}
-	itemID, _ := params["itemId"].(string)
-	if params["threadId"] != started.Thread.ID || params["turnId"] != started.Turn.ID || itemID == "" || itemID == "call-user-input" {
+	itemID := params.ItemID
+	if params.ThreadID != started.Thread.ID || params.TurnID != started.Turn.ID || itemID == "" || itemID == "call-user-input" ||
+		len(params.Questions) != 1 || params.Questions[0].ID != "call-user-input" ||
+		params.Questions[0].Question != "Choose a mode" || len(params.Questions[0].Options) != 2 {
 		t.Fatalf("interaction correlation = %#v", params)
 	}
-	if err := server.HandleResponse(ctx, protocol.Response{ID: serverRequest.ID, Result: json.RawMessage(`{"text":"safe"}`)}); err != nil {
+	if err := server.HandleResponse(ctx, protocol.Response{ID: serverRequest.ID, Result: json.RawMessage(`{"answers":{"call-user-input":{"answers":["safe"]}}}`)}); err != nil {
 		t.Fatalf("HandleResponse: %v", err)
 	}
 	waitForNotificationSet(t, server, "serverRequest/resolved", "turn/completed")

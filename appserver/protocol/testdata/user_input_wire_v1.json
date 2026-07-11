@@ -1,0 +1,58 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "user-input-request",
+      "surface": "server-request",
+      "method": "item/tool/requestUserInput",
+      "paramsType": "ToolRequestUserInputParams",
+      "message": {
+        "id": "interaction-1",
+        "method": "item/tool/requestUserInput",
+        "params": {
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "itemId": "item-tool-1",
+          "questions": [
+            {
+              "id": "call-1",
+              "header": "Mode",
+              "question": "Choose a mode",
+              "isOther": false,
+              "isSecret": false,
+              "options": [
+                {"label": "safe", "description": ""},
+                {"label": "fast", "description": ""}
+              ]
+            }
+          ],
+          "autoResolutionMs": null,
+          "requestId": "interaction-1",
+          "startedAtMs": 1783715400000,
+          "prompt": "Choose a mode",
+          "placeholder": "safe",
+          "required": true,
+          "options": ["safe", "fast"],
+          "metadata": {"source": "runtime"},
+          "reason": "Choose a mode"
+        }
+      }
+    },
+    {
+      "name": "user-input-response",
+      "surface": "server-request",
+      "method": "item/tool/requestUserInput",
+      "envelope": "response",
+      "resultType": "ToolRequestUserInputResponse",
+      "message": {
+        "id": "interaction-1",
+        "result": {
+          "answers": {
+            "call-1": {"answers": ["safe"]}
+          }
+        }
+      }
+    }
+  ]
+}

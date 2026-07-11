@@ -1346,6 +1346,44 @@ export type ToolPayloadSummary = {
   "sha256": string;
 };
 
+export type ToolRequestUserInputAnswer = {
+  "answers": Array<string>;
+};
+
+export type ToolRequestUserInputOption = {
+  "description": string;
+  "label": string;
+};
+
+export type ToolRequestUserInputParams = {
+  "autoResolutionMs": number | null;
+  "itemId": string;
+  "metadata"?: Record<string, unknown> | null;
+  "options"?: Array<string> | null;
+  "placeholder"?: string;
+  "prompt"?: string;
+  "questions": Array<ToolRequestUserInputQuestion>;
+  "reason"?: string;
+  "requestId"?: string;
+  "required"?: boolean;
+  "startedAtMs"?: number;
+  "threadId": string;
+  "turnId": string;
+};
+
+export type ToolRequestUserInputQuestion = {
+  "header": string;
+  "id": string;
+  "isOther": boolean;
+  "isSecret": boolean;
+  "options": Array<ToolRequestUserInputOption> | null;
+  "question": string;
+};
+
+export type ToolRequestUserInputResponse = {
+  "answers": Record<string, ToolRequestUserInputAnswer>;
+};
+
 export type TurnDiffUpdatedNotificationParams = {
   "diff": string;
   "threadId": string;
@@ -1399,6 +1437,7 @@ export const wireTypeBindings = [
   { "method": "item/permissions/requestApproval", "surface": "server-request", "params": ["PermissionsApprovalRequestParams"] },
   { "method": "item/started", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
   { "method": "item/tool/call", "surface": "server-request", "params": ["DynamicToolCallParams"], "result": ["DynamicToolCallResponse"] },
+  { "method": "item/tool/requestUserInput", "surface": "server-request", "params": ["ToolRequestUserInputParams"], "result": ["ToolRequestUserInputResponse"] },
   { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotificationParams"] },
   { "method": "thread/archive", "surface": "client-request", "params": ["ThreadArchiveParams"], "result": ["ThreadArchiveResponse"] },
   { "method": "thread/archived", "surface": "server-notification", "params": ["ThreadArchivedNotification"] },
@@ -1448,6 +1487,7 @@ export interface MethodParamsByName {
   "item/permissions/requestApproval": PermissionsApprovalRequestParams;
   "item/started": ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
   "item/tool/call": DynamicToolCallParams;
+  "item/tool/requestUserInput": ToolRequestUserInputParams;
   "serverRequest/resolved": ServerRequestResolvedNotificationParams;
   "thread/archive": ThreadArchiveParams;
   "thread/archived": ThreadArchivedNotification;
@@ -1488,6 +1528,7 @@ export interface MethodResultsByName {
   "initialize": InitializeResponse;
   "item/fileChange/requestApproval": FileChangeRequestApprovalResponse;
   "item/tool/call": DynamicToolCallResponse;
+  "item/tool/requestUserInput": ToolRequestUserInputResponse;
   "thread/archive": ThreadArchiveResponse;
   "thread/compact/start": ThreadCompactStartResponse;
   "thread/delete": ThreadDeleteResponse;

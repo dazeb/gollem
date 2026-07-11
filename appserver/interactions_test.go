@@ -34,16 +34,19 @@ func TestInteractionUserInputRequestResolvesFromJSONRPCResponse(t *testing.T) {
 	if req.Method != InteractionRequestUserInput {
 		t.Fatalf("request method = %q, want %s", req.Method, InteractionRequestUserInput)
 	}
-	var params map[string]any
+	var params protocol.ToolRequestUserInputParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		t.Fatalf("decode request params: %v", err)
 	}
-	if params["prompt"] != "Need a value" || params["threadId"] != "thread-1" || params["turnId"] != "turn-1" {
+	if params.Prompt != "Need a value" || params.ThreadID != "thread-1" || params.TurnID != "turn-1" ||
+		params.ItemID == "" || params.AutoResolutionMS != nil || len(params.Questions) != 1 ||
+		params.Questions[0].ID != "input" || params.Questions[0].Header != "Input" ||
+		len(params.Questions[0].Options) != 2 || params.Questions[0].Options[0].Label != "one" {
 		t.Fatalf("request params = %#v", params)
 	}
 	if err := server.HandleResponse(ctx, protocol.Response{
 		ID:     req.ID,
-		Result: json.RawMessage(`{"text":"one"}`),
+		Result: json.RawMessage(`{"answers":{"input":{"answers":["one"]}}}`),
 	}); err != nil {
 		t.Fatalf("HandleResponse: %v", err)
 	}
@@ -52,7 +55,7 @@ func TestInteractionUserInputRequestResolvesFromJSONRPCResponse(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("interaction result error: %v", got.err)
 	}
-	if string(got.resp.Result) != `{"text":"one"}` || got.resp.ThreadID != "thread-1" {
+	if string(got.resp.Result) != `{"answers":{"input":{"answers":["one"]}}}` || got.resp.ThreadID != "thread-1" {
 		t.Fatalf("interaction response = %#v", got.resp)
 	}
 	notification := waitForNotification(t, server, "serverRequest/resolved")
@@ -63,6 +66,57 @@ func TestInteractionUserInputRequestResolvesFromJSONRPCResponse(t *testing.T) {
 	requestID, _ := req.ID.Value().(string)
 	if resolved.RequestID != requestID || resolved.ThreadID != "thread-1" {
 		t.Fatalf("resolved params = %#v, requestID=%q", resolved, requestID)
+	}
+}
+
+func TestInteractionUserInputResponseUsesExactBoundedContract(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   string
+		wantFail bool
+	}{
+		{name: "answer", result: `{"answers":{"question-1":{"answers":["safe"]}}}`},
+		{name: "empty answer map", result: `{"answers":{}}`},
+		{name: "missing answers", result: `{}`, wantFail: true},
+		{name: "null answers", result: `{"answers":null}`, wantFail: true},
+		{name: "null answer list", result: `{"answers":{"question-1":{"answers":null}}}`, wantFail: true},
+		{name: "unknown answer field", result: `{"answers":{"question-1":{"answers":[],"extra":true}}}`, wantFail: true},
+		{name: "unknown response field", result: `{"answers":{},"extra":true}`, wantFail: true},
+		{
+			name:     "oversized",
+			result:   `{"answers":{"question-1":{"answers":["` + strings.Repeat("x", runtimeInteractionPayloadMaxBytes) + `"]}}}`,
+			wantFail: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := readyServer()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			resultCh := make(chan interactionResult, 1)
+			go func() {
+				resp, err := server.interact.RequestUserInput(ctx, UserInputRequest{
+					ThreadID:   "thread-contract",
+					TurnID:     "turn-contract",
+					ItemID:     "item-contract",
+					QuestionID: "question-1",
+					Prompt:     "Choose",
+				})
+				resultCh <- interactionResult{resp: resp, err: err}
+			}()
+			req := waitForServerRequest(t, server)
+			err := server.HandleResponse(ctx, protocol.Response{ID: req.ID, Result: json.RawMessage(tt.result)})
+			got := <-resultCh
+			if tt.wantFail {
+				if err == nil || !errors.Is(got.err, ErrInteractionRequestFailed) || got.resp.Error == nil {
+					t.Fatalf("HandleResponse error = %v, interaction = %#v/%v", err, got.resp, got.err)
+				}
+				return
+			}
+			if err != nil || got.err != nil || string(got.resp.Result) != tt.result {
+				t.Fatalf("HandleResponse error = %v, interaction = %#v/%v", err, got.resp, got.err)
+			}
+		})
 	}
 }
 
@@ -162,6 +216,16 @@ func TestInteractionToolCallResponseUsesExactBoundedContract(t *testing.T) {
 				t.Fatalf("HandleResponse error = %v, interaction = %#v/%v", err, got.resp, got.err)
 			}
 		})
+	}
+}
+
+func TestInteractionMCPResponseUsesSharedPayloadBound(t *testing.T) {
+	if err := validateInteractionResult(InteractionMCPElicitation, json.RawMessage(`{"accepted":true}`)); err != nil {
+		t.Fatalf("valid MCP response: %v", err)
+	}
+	result := json.RawMessage(`{"value":"` + strings.Repeat("x", runtimeInteractionPayloadMaxBytes) + `"}`)
+	if err := validateInteractionResult(InteractionMCPElicitation, result); err == nil {
+		t.Fatal("oversized MCP response succeeded")
 	}
 }
 
@@ -306,6 +370,103 @@ func TestServeJSONLinesResolvesExactDynamicToolCall(t *testing.T) {
 	var response protocol.DynamicToolCallResponse
 	if err := json.Unmarshal(got.resp.Result, &response); err != nil || !response.Success || len(response.ContentItems) != 1 {
 		t.Fatalf("dynamic tool response = %#v, error %v", response, err)
+	}
+	if err := inW.Close(); err != nil {
+		t.Fatalf("close input: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeJSONLines: %v", err)
+	}
+}
+
+func TestServeJSONLinesResolvesExactUserInput(t *testing.T) {
+	server := NewServer()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		err := ServeJSONLines(ctx, server, inR, outW)
+		if err != nil {
+			_ = outW.CloseWithError(err)
+		} else {
+			_ = outW.Close()
+		}
+		errCh <- err
+	}()
+	scanner := bufio.NewScanner(outR)
+	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"user-input-jsonl","version":"1.0.0"}}}`)
+	var initResp protocol.Response
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &initResp); err != nil || initResp.Error != nil {
+		t.Fatalf("initialize response = %#v, error %v", initResp, err)
+	}
+	writeInputLine(t, inW, `{"method":"initialized"}`)
+
+	autoResolutionMS := uint64(1500)
+	resultCh := make(chan interactionResult, 1)
+	go func() {
+		resp, err := server.interact.RequestUserInput(ctx, UserInputRequest{
+			ThreadID:         "thread-input-jsonl",
+			TurnID:           "turn-input-jsonl",
+			ItemID:           "item-input-jsonl",
+			QuestionID:       "question-input-jsonl",
+			Header:           "Target",
+			Prompt:           "Choose a target",
+			Placeholder:      "target name",
+			Required:         true,
+			IsOther:          true,
+			IsSecret:         false,
+			Options:          []string{"staging", "production"},
+			AutoResolutionMS: &autoResolutionMS,
+		})
+		resultCh <- interactionResult{resp: resp, err: err}
+	}()
+
+	var serverReq protocol.Request
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &serverReq); err != nil {
+		t.Fatalf("decode server request: %v", err)
+	}
+	var params protocol.ToolRequestUserInputParams
+	if err := json.Unmarshal(serverReq.Params, &params); err != nil {
+		t.Fatalf("decode user input params: %v", err)
+	}
+	if serverReq.Method != InteractionRequestUserInput || params.ThreadID != "thread-input-jsonl" ||
+		params.TurnID != "turn-input-jsonl" || params.ItemID != "item-input-jsonl" ||
+		params.AutoResolutionMS == nil || *params.AutoResolutionMS != autoResolutionMS || len(params.Questions) != 1 {
+		t.Fatalf("user input request = %s/%#v", serverReq.Method, params)
+	}
+	question := params.Questions[0]
+	if question.ID != "question-input-jsonl" || question.Header != "Target" || question.Question != "Choose a target" ||
+		!question.IsOther || question.IsSecret || len(question.Options) != 2 || question.Options[0].Label != "staging" ||
+		question.Options[0].Description != "" || params.Prompt != "Choose a target" || !params.Required {
+		t.Fatalf("user input question = %#v, params = %#v", question, params)
+	}
+	responseLine, err := json.Marshal(protocol.Response{
+		ID: serverReq.ID,
+		Result: mustInteractionJSON(t, protocol.ToolRequestUserInputResponse{
+			Answers: map[string]protocol.ToolRequestUserInputAnswer{
+				"question-input-jsonl": {Answers: []string{"production"}},
+			},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("encode response: %v", err)
+	}
+	writeInputLine(t, inW, string(responseLine))
+	var resolved protocol.Notification
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &resolved); err != nil || resolved.Method != "serverRequest/resolved" {
+		t.Fatalf("resolved notification = %#v, error %v", resolved, err)
+	}
+	got := <-resultCh
+	if got.err != nil {
+		t.Fatalf("user input result: %v", got.err)
+	}
+	var response protocol.ToolRequestUserInputResponse
+	if err := json.Unmarshal(got.resp.Result, &response); err != nil ||
+		len(response.Answers["question-input-jsonl"].Answers) != 1 ||
+		response.Answers["question-input-jsonl"].Answers[0] != "production" {
+		t.Fatalf("user input response = %#v, error %v", response, err)
 	}
 	if err := inW.Close(); err != nil {
 		t.Fatalf("close input: %v", err)
