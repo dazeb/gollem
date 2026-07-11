@@ -19,10 +19,10 @@ const (
 )
 
 type runtimeMCPToolCallPayload = protocol.MCPToolCallItem
-type runtimeMCPToolCallErrorPayload = protocol.MCPToolCallError
+type runtimeMCPToolCallErrorPayload = protocol.McpToolCallError
 type runtimeMCPItemStartedNotificationParams = protocol.MCPToolCallItemStartedNotificationParams
 type runtimeMCPItemCompletedNotificationParams = protocol.MCPToolCallItemCompletedNotificationParams
-type runtimeMCPToolProgressNotificationParams = protocol.MCPToolCallProgressNotificationParams
+type runtimeMCPToolProgressNotificationParams = protocol.McpToolCallProgressNotification
 
 type runtimeMCPItemState struct {
 	item      *store.Item

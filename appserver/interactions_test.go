@@ -64,7 +64,7 @@ func TestInteractionUserInputRequestResolvesFromJSONRPCResponse(t *testing.T) {
 		t.Fatalf("decode resolved notification: %v", err)
 	}
 	requestID, _ := req.ID.Value().(string)
-	if resolved.RequestID != requestID || resolved.ThreadID != "thread-1" {
+	if resolved.RequestID.Value() != requestID || resolved.ThreadID != "thread-1" {
 		t.Fatalf("resolved params = %#v, requestID=%q", resolved, requestID)
 	}
 }

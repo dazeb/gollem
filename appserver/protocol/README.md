@@ -138,6 +138,20 @@ still depends on the distinct Codex runtime `ThreadStatus` model.
 `TokenUsage`, and `TurnDiffUpdatedNotificationParams` exports remain aliases so
 existing protocol-v1 generated clients continue to compile.
 
+## Version 1 Exact Live Primitive Values
+
+`item/commandExecution/outputDelta`, `item/fileChange/patchUpdated`,
+`item/mcpToolCall/progress`, and `serverRequest/resolved` bind the exact public
+notification names. `RequestId` preserves either a string or signed integer
+JSON-RPC id without coercion, and empty file-change patch arrays are emitted as
+`[]` rather than `null`. Command-execution, dynamic-tool-call, and MCP-tool-call
+item statuses reference their exact public closed enums; MCP errors reference
+the exact public `McpToolCallError` spelling.
+
+Gollem's original `*NotificationParams` names and `MCPToolCallError` remain
+generated aliases. Their JSON shapes and source compatibility are preserved
+while new clients infer the exact public names from method bindings.
+
 ## Version 1 File-Change Approval Responses
 
 `item/fileChange/requestApproval` binds the public `accept`,

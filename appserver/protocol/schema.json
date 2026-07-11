@@ -746,13 +746,7 @@
           "type": "string"
         },
         "status": {
-          "enum": [
-            "inProgress",
-            "completed",
-            "failed",
-            "declined"
-          ],
-          "type": "string"
+          "$ref": "#/$defs/CommandExecutionStatus"
         },
         "type": {
           "enum": [
@@ -825,7 +819,7 @@
       ],
       "type": "object"
     },
-    "CommandExecutionOutputDeltaNotificationParams": {
+    "CommandExecutionOutputDeltaNotification": {
       "additionalProperties": false,
       "properties": {
         "delta": {
@@ -849,6 +843,9 @@
       ],
       "type": "object"
     },
+    "CommandExecutionOutputDeltaNotificationParams": {
+      "$ref": "#/$defs/CommandExecutionOutputDeltaNotification"
+    },
     "CommandExecutionRequestApprovalResponse": {
       "additionalProperties": false,
       "properties": {
@@ -860,6 +857,15 @@
         "decision"
       ],
       "type": "object"
+    },
+    "CommandExecutionStatus": {
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed",
+        "declined"
+      ],
+      "type": "string"
     },
     "ContextCompactedNotification": {
       "additionalProperties": false,
@@ -1147,12 +1153,7 @@
           ]
         },
         "status": {
-          "enum": [
-            "inProgress",
-            "completed",
-            "failed"
-          ],
-          "type": "string"
+          "$ref": "#/$defs/DynamicToolCallStatus"
         },
         "success": {
           "anyOf": [
@@ -1360,6 +1361,14 @@
         "success"
       ],
       "type": "object"
+    },
+    "DynamicToolCallStatus": {
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
     },
     "Error": {
       "properties": {
@@ -1580,21 +1589,14 @@
       ],
       "type": "object"
     },
-    "FileChangePatchUpdatedNotificationParams": {
+    "FileChangePatchUpdatedNotification": {
       "additionalProperties": false,
       "properties": {
         "changes": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/FileUpdateChange"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "items": {
+            "$ref": "#/$defs/FileUpdateChange"
+          },
+          "type": "array"
         },
         "itemId": {
           "type": "string"
@@ -1613,6 +1615,9 @@
         "changes"
       ],
       "type": "object"
+    },
+    "FileChangePatchUpdatedNotificationParams": {
+      "$ref": "#/$defs/FileChangePatchUpdatedNotification"
     },
     "FileChangeRequestApprovalResponse": {
       "additionalProperties": false,
@@ -2042,16 +2047,7 @@
       "type": "object"
     },
     "MCPToolCallError": {
-      "additionalProperties": false,
-      "properties": {
-        "message": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "message"
-      ],
-      "type": "object"
+      "$ref": "#/$defs/McpToolCallError"
     },
     "MCPToolCallItem": {
       "additionalProperties": false,
@@ -2071,7 +2067,7 @@
         "error": {
           "anyOf": [
             {
-              "$ref": "#/$defs/MCPToolCallError"
+              "$ref": "#/$defs/McpToolCallError"
             },
             {
               "type": "null"
@@ -2115,12 +2111,7 @@
           "type": "string"
         },
         "status": {
-          "enum": [
-            "inProgress",
-            "completed",
-            "failed"
-          ],
-          "type": "string"
+          "$ref": "#/$defs/McpToolCallStatus"
         },
         "tool": {
           "type": "string"
@@ -2196,28 +2187,7 @@
       "type": "object"
     },
     "MCPToolCallProgressNotificationParams": {
-      "additionalProperties": false,
-      "properties": {
-        "itemId": {
-          "type": "string"
-        },
-        "message": {
-          "type": "string"
-        },
-        "threadId": {
-          "type": "string"
-        },
-        "turnId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId",
-        "turnId",
-        "itemId",
-        "message"
-      ],
-      "type": "object"
+      "$ref": "#/$defs/McpToolCallProgressNotification"
     },
     "MCPToolCallResult": {
       "additionalProperties": false,
@@ -2927,6 +2897,50 @@
       ],
       "type": "object"
     },
+    "McpToolCallError": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
+    "McpToolCallProgressNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "message"
+      ],
+      "type": "object"
+    },
+    "McpToolCallStatus": {
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    },
     "MethodInfo": {
       "additionalProperties": false,
       "properties": {
@@ -3507,6 +3521,9 @@
         }
       ]
     },
+    "RequestId": {
+      "$ref": "#/$defs/RequestID"
+    },
     "RequestPermissionProfile": {
       "additionalProperties": false,
       "properties": {
@@ -3582,11 +3599,11 @@
       ],
       "type": "object"
     },
-    "ServerRequestResolvedNotificationParams": {
+    "ServerRequestResolvedNotification": {
       "additionalProperties": false,
       "properties": {
         "requestId": {
-          "type": "string"
+          "$ref": "#/$defs/RequestId"
         },
         "threadId": {
           "type": "string"
@@ -3597,6 +3614,9 @@
         "requestId"
       ],
       "type": "object"
+    },
+    "ServerRequestResolvedNotificationParams": {
+      "$ref": "#/$defs/ServerRequestResolvedNotification"
     },
     "SortDirection": {
       "enum": [
@@ -6927,7 +6947,7 @@
       "method": "item/commandExecution/outputDelta",
       "surface": "server-notification",
       "params": [
-        "CommandExecutionOutputDeltaNotificationParams"
+        "CommandExecutionOutputDeltaNotification"
       ]
     },
     {
@@ -6955,7 +6975,7 @@
       "method": "item/fileChange/patchUpdated",
       "surface": "server-notification",
       "params": [
-        "FileChangePatchUpdatedNotificationParams"
+        "FileChangePatchUpdatedNotification"
       ]
     },
     {
@@ -6972,7 +6992,7 @@
       "method": "item/mcpToolCall/progress",
       "surface": "server-notification",
       "params": [
-        "MCPToolCallProgressNotificationParams"
+        "McpToolCallProgressNotification"
       ]
     },
     {
@@ -7027,7 +7047,7 @@
       "method": "serverRequest/resolved",
       "surface": "server-notification",
       "params": [
-        "ServerRequestResolvedNotificationParams"
+        "ServerRequestResolvedNotification"
       ]
     },
     {

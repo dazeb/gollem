@@ -49,7 +49,7 @@ type threadShellCommandRun struct {
 
 type threadShellCommandPayload = protocol.CommandExecutionItem
 type threadShellCommandAction = protocol.CommandExecutionAction
-type commandExecutionOutputDeltaNotificationParams = protocol.CommandExecutionOutputDeltaNotificationParams
+type commandExecutionOutputDeltaNotificationParams = protocol.CommandExecutionOutputDeltaNotification
 type turnDiffUpdatedNotificationParams = protocol.TurnDiffUpdatedNotification
 
 func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {

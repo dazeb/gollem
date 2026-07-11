@@ -57,6 +57,21 @@
       }
     },
     {
+      "name": "command-output-delta",
+      "surface": "server-notification",
+      "method": "item/commandExecution/outputDelta",
+      "paramsType": "CommandExecutionOutputDeltaNotification",
+      "message": {
+        "method": "item/commandExecution/outputDelta",
+        "params": {
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "itemId": "item-command",
+          "delta": "ok\n"
+        }
+      }
+    },
+    {
       "name": "file-change-completed",
       "surface": "server-notification",
       "method": "item/completed",
@@ -119,6 +134,62 @@
           "threadId": "thread-1",
           "turnId": "turn-1",
           "completedAtMs": 1783715400750
+        }
+      }
+    },
+    {
+      "name": "file-change-patch-updated",
+      "surface": "server-notification",
+      "method": "item/fileChange/patchUpdated",
+      "paramsType": "FileChangePatchUpdatedNotification",
+      "message": {
+        "method": "item/fileChange/patchUpdated",
+        "params": {
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "itemId": "item-file",
+          "changes": []
+        }
+      }
+    },
+    {
+      "name": "mcp-call-progress",
+      "surface": "server-notification",
+      "method": "item/mcpToolCall/progress",
+      "paramsType": "McpToolCallProgressNotification",
+      "message": {
+        "method": "item/mcpToolCall/progress",
+        "params": {
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "itemId": "item-mcp",
+          "message": "Searching repository"
+        }
+      }
+    },
+    {
+      "name": "server-request-resolved-string",
+      "surface": "server-notification",
+      "method": "serverRequest/resolved",
+      "paramsType": "ServerRequestResolvedNotification",
+      "message": {
+        "method": "serverRequest/resolved",
+        "params": {
+          "threadId": "thread-1",
+          "requestId": "approval-1"
+        }
+      }
+    },
+    {
+      "name": "server-request-resolved-number",
+      "surface": "server-notification",
+      "method": "serverRequest/resolved",
+      "paramsType": "ServerRequestResolvedNotification",
+      "message": {
+        "method": "serverRequest/resolved",
+        "params": {
+          "threadId": "thread-1",
+          "requestId": 42
         }
       }
     },

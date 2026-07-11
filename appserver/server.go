@@ -343,7 +343,7 @@ func (s *Server) HandleResponse(ctx context.Context, resp protocol.Response) err
 			result.resolve()
 			s.PublishNotification("serverRequest/resolved", serverRequestResolvedParams{
 				ThreadID:  firstNonEmpty(result.ThreadID, approvalThreadID),
-				RequestID: result.RequestID,
+				RequestID: protocol.NewStringID(result.RequestID),
 			})
 			if err != nil {
 				return invalidParams("invalid approval response", err)
@@ -363,7 +363,7 @@ func (s *Server) HandleResponse(ctx context.Context, resp protocol.Response) err
 	}
 	s.PublishNotification("serverRequest/resolved", serverRequestResolvedParams{
 		ThreadID:  firstNonEmpty(result.ThreadID, "appserver"),
-		RequestID: result.RequestID,
+		RequestID: protocol.NewStringID(result.RequestID),
 	})
 	return nil
 }

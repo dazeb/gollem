@@ -102,7 +102,7 @@
       "name": "file-change-patch-updated-public-precedence",
       "surface": "server-notification",
       "method": "item/fileChange/patchUpdated",
-      "paramsType": "FileChangePatchUpdatedNotificationParams",
+      "paramsType": "FileChangePatchUpdatedNotification",
       "message": {
         "method": "item/fileChange/patchUpdated",
         "params": {

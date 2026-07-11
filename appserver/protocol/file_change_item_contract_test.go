@@ -207,7 +207,7 @@ func TestFileChangeItemWireV1FixtureUsesPublicAndLegacyContracts(t *testing.T) {
 			continue
 		}
 		if fixtureCase.Name == "file-change-patch-updated-public-precedence" {
-			var params FileChangePatchUpdatedNotificationParams
+			var params FileChangePatchUpdatedNotification
 			if err := decodeRuntimeFixture(payload, &params); err != nil {
 				t.Fatalf("%s decode: %v", fixtureCase.Name, err)
 			}

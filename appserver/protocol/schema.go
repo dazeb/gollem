@@ -252,6 +252,15 @@ func wireSchemaDefinitions() Schema {
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
+		{Name: "RequestId", Type: reflect.TypeFor[RequestId]()},
+		{Name: "CommandExecutionOutputDeltaNotification", Type: reflect.TypeFor[CommandExecutionOutputDeltaNotification]()},
+		{Name: "CommandExecutionStatus", Type: reflect.TypeFor[CommandExecutionStatus]()},
+		{Name: "DynamicToolCallStatus", Type: reflect.TypeFor[DynamicToolCallStatus]()},
+		{Name: "FileChangePatchUpdatedNotification", Type: reflect.TypeFor[FileChangePatchUpdatedNotification]()},
+		{Name: "McpToolCallError", Type: reflect.TypeFor[McpToolCallError]()},
+		{Name: "McpToolCallProgressNotification", Type: reflect.TypeFor[McpToolCallProgressNotification]()},
+		{Name: "McpToolCallStatus", Type: reflect.TypeFor[McpToolCallStatus]()},
+		{Name: "ServerRequestResolvedNotification", Type: reflect.TypeFor[ServerRequestResolvedNotification]()},
 		{Name: "ThreadTokenUsage", Type: reflect.TypeFor[ThreadTokenUsage]()},
 		{Name: "ThreadTokenUsageUpdatedNotification", Type: reflect.TypeFor[ThreadTokenUsageUpdatedNotification]()},
 		{Name: "TurnDiffUpdatedNotification", Type: reflect.TypeFor[TurnDiffUpdatedNotification]()},
@@ -307,12 +316,38 @@ func wireSchemaDefinitions() Schema {
 		string(PermissionGrantTurn), string(PermissionGrantSession),
 	)
 	for alias, canonical := range map[string]string{
-		"ThreadCompactedNotificationParams":         "ContextCompactedNotification",
-		"ThreadTokenUsageUpdatedNotificationParams": "ThreadTokenUsageUpdatedNotification",
+		"CommandExecutionOutputDeltaNotificationParams": "CommandExecutionOutputDeltaNotification",
+		"FileChangePatchUpdatedNotificationParams":      "FileChangePatchUpdatedNotification",
+		"MCPToolCallError":                              "McpToolCallError",
+		"MCPToolCallProgressNotificationParams":         "McpToolCallProgressNotification",
+		"ServerRequestResolvedNotificationParams":       "ServerRequestResolvedNotification",
+		"ThreadCompactedNotificationParams":             "ContextCompactedNotification",
+		"ThreadTokenUsageUpdatedNotificationParams":     "ThreadTokenUsageUpdatedNotification",
 		"TokenUsage":                        "ThreadTokenUsage",
 		"TurnDiffUpdatedNotificationParams": "TurnDiffUpdatedNotification",
 	} {
 		schemas[alias] = Schema{"$ref": "#/$defs/" + canonical}
+	}
+	schemas["RequestId"] = Schema{"$ref": "#/$defs/RequestID"}
+	schemas["CommandExecutionStatus"] = stringEnumSchema(
+		string(CommandExecutionStatusInProgress), string(CommandExecutionStatusCompleted),
+		string(CommandExecutionStatusFailed), string(CommandExecutionStatusDeclined),
+	)
+	schemas["DynamicToolCallStatus"] = stringEnumSchema(
+		string(DynamicToolCallStatusInProgress), string(DynamicToolCallStatusCompleted),
+		string(DynamicToolCallStatusFailed),
+	)
+	schemas["McpToolCallStatus"] = stringEnumSchema(
+		string(McpToolCallStatusInProgress), string(McpToolCallStatusCompleted),
+		string(McpToolCallStatusFailed),
+	)
+	for definition, status := range map[string]string{
+		"CommandExecutionItem": "CommandExecutionStatus",
+		"DynamicToolCallItem":  "DynamicToolCallStatus",
+		"MCPToolCallItem":      "McpToolCallStatus",
+	} {
+		properties := schemas[definition].(Schema)["properties"].(Schema)
+		properties["status"] = Schema{"$ref": "#/$defs/" + status}
 	}
 	setSchemaIntegerMinimum(schemas["AdditionalFileSystemPermissions"].(Schema), 1, "globScanMaxDepth")
 	if response, ok := schemas["PermissionsRequestApprovalResponse"].(Schema); ok {
