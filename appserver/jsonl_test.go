@@ -13,6 +13,7 @@ import (
 
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
+	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
 )
 
 func TestServeJSONLinesStdioFlow(t *testing.T) {
@@ -267,6 +268,83 @@ func TestServeJSONLinesDirectFileChangeApprovalResponseFlow(t *testing.T) {
 	}
 	if !seenWrite || !seenResolved || !seenChanged {
 		t.Fatalf("outputs: write=%t resolved=%t changed=%t", seenWrite, seenResolved, seenChanged)
+	}
+}
+
+func TestServeJSONLinesDirectCommandApprovalResponseFlow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	approvals := NewApprovalService()
+	server := NewServer(WithApprovalService(approvals))
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		err := ServeJSONLines(ctx, server, inR, outW)
+		if err != nil {
+			_ = outW.CloseWithError(err)
+		} else {
+			_ = outW.Close()
+		}
+		errCh <- err
+	}()
+	scanner := bufio.NewScanner(outR)
+	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"command-approval-client","version":"1.0.0"}}}`)
+	writeInputLine(t, inW, `{"method":"initialized"}`)
+	var initResp protocol.Response
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &initResp); err != nil || initResp.Error != nil {
+		t.Fatalf("initialize response = %#v, error=%v", initResp, err)
+	}
+
+	approvalResult := make(chan error, 1)
+	go func() {
+		approvalResult <- approvals.ProcessApproval(ctx, toolprocess.Operation{
+			Kind:    toolprocess.OperationStart,
+			Command: "printf",
+			Args:    []string{"ok"},
+		})
+	}()
+	var approvalReq protocol.Request
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &approvalReq); err != nil {
+		t.Fatalf("decode command approval request: %v", err)
+	}
+	requestID, _ := approvalReq.ID.Value().(string)
+	if approvalReq.Method != "item/commandExecution/requestApproval" || requestID == "" {
+		t.Fatalf("command approval request = %#v", approvalReq)
+	}
+	var params protocol.CommandExecutionApprovalRequestParams
+	if err := json.Unmarshal(approvalReq.Params, &params); err != nil {
+		t.Fatalf("decode command approval params: %v", err)
+	}
+	if len(params.AvailableDecisions) != 3 || params.AvailableDecisions[0].Action() != protocol.CommandExecutionApprovalAccept {
+		t.Fatalf("available command decisions = %#v", params.AvailableDecisions)
+	}
+	writeInputLine(t, inW, `{"id":"`+requestID+`","result":{"decision":"accept"}}`)
+	if err := <-approvalResult; err != nil {
+		t.Fatalf("command approval result: %v", err)
+	}
+	if err := inW.Close(); err != nil {
+		t.Fatalf("close input: %v", err)
+	}
+
+	seenResolved := false
+	for scanner.Scan() {
+		var envelope struct {
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil {
+			t.Fatalf("decode output %q: %v", scanner.Text(), err)
+		}
+		seenResolved = seenResolved || envelope.Method == "serverRequest/resolved"
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan output: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeJSONLines: %v", err)
+	}
+	if !seenResolved {
+		t.Fatal("missing command approval resolved notification")
 	}
 }
 

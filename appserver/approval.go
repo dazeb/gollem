@@ -1,10 +1,12 @@
 package appserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,8 +23,9 @@ import (
 var ErrApprovalRequestDenied = errors.New("appserver: approval request denied")
 
 const (
-	approvalThreadID = "appserver"
-	approvalTurnID   = "appserver"
+	approvalThreadID                = "appserver"
+	approvalTurnID                  = "appserver"
+	approvalResponsePayloadMaxBytes = 64 * 1024
 )
 
 // ApprovalService bridges synchronous tool approval hooks to app-server
@@ -36,11 +39,12 @@ type ApprovalService struct {
 }
 
 type pendingApproval struct {
-	ch             chan approvalResolution
-	threadID       string
-	turnID         string
-	method         string
-	sessionTargets []string
+	ch                      chan approvalResolution
+	threadID                string
+	turnID                  string
+	method                  string
+	sessionTargets          []string
+	allowedCommandDecisions []string
 }
 
 type approvalResolution struct {
@@ -124,13 +128,22 @@ func (s *ApprovalService) FilesystemApproval(ctx context.Context, op toolfs.Oper
 		Destination:         op.Destination,
 		Destructive:         op.Destructive,
 	}
-	return s.requestApproval(ctx, "item/fileChange/requestApproval", base.requestID, params, sessionTargets)
+	return s.requestApproval(ctx, "item/fileChange/requestApproval", base.requestID, params, sessionTargets, nil)
 }
 
 func (s *ApprovalService) ProcessApproval(ctx context.Context, op toolprocess.Operation) error {
 	command := strings.TrimSpace(strings.Join(append([]string{op.Command}, op.Args...), " "))
 	reason := fmt.Sprintf("Approve process %s", op.Kind)
 	base := s.base(ctx, reason)
+	allowedDecisions := []string{
+		protocol.CommandExecutionApprovalAccept,
+		protocol.CommandExecutionApprovalDecline,
+		protocol.CommandExecutionApprovalCancel,
+	}
+	availableDecisions, err := protocol.NewCommandExecutionApprovalDecisions(allowedDecisions...)
+	if err != nil {
+		return fmt.Errorf("build command approval decisions: %w", err)
+	}
 	params := protocol.CommandExecutionApprovalRequestParams{
 		ApprovalRequestBase: base.ApprovalRequestBase,
 		Command:             command,
@@ -139,8 +152,9 @@ func (s *ApprovalService) ProcessApproval(ctx context.Context, op toolprocess.Op
 		Operation:           string(op.Kind),
 		Signal:              op.Signal,
 		Destructive:         op.Destructive,
+		AvailableDecisions:  availableDecisions,
 	}
-	return s.requestApproval(ctx, "item/commandExecution/requestApproval", base.requestID, params, nil)
+	return s.requestApproval(ctx, "item/commandExecution/requestApproval", base.requestID, params, nil, allowedDecisions)
 }
 
 func (s *ApprovalService) GitApproval(ctx context.Context, op toolgit.Operation) error {
@@ -165,7 +179,7 @@ func (s *ApprovalService) GitApproval(ctx context.Context, op toolgit.Operation)
 			"mutating":  op.Mutating,
 		},
 	}
-	return s.requestApproval(ctx, "item/permissions/requestApproval", requestBase.requestID, params, nil)
+	return s.requestApproval(ctx, "item/permissions/requestApproval", requestBase.requestID, params, nil, nil)
 }
 
 func (s *ApprovalService) MCPToolApproval(ctx context.Context, serverName, toolName string, args map[string]any) error {
@@ -188,7 +202,7 @@ func (s *ApprovalService) MCPToolApproval(ctx context.Context, serverName, toolN
 			"mutating":     true,
 		},
 	}
-	return s.requestApproval(ctx, "item/permissions/requestApproval", base.requestID, params, nil)
+	return s.requestApproval(ctx, "item/permissions/requestApproval", base.requestID, params, nil, nil)
 }
 
 func (s *Server) handleApprovalRespond(raw json.RawMessage) (any, *protocol.Error) {
@@ -257,42 +271,87 @@ func (s *ApprovalService) RespondResponse(resp protocol.Response) (approvalRespo
 	}
 	resolution := approvalResolution{Message: "approval response was rejected"}
 	var responseErr error
-	if pending.method != "item/fileChange/requestApproval" {
-		responseErr = fmt.Errorf("direct response is not implemented for %s", pending.method)
-	} else if resp.Error != nil {
-		resolution.Message = resp.Error.Message
-	} else {
-		var response protocol.FileChangeRequestApprovalResponse
-		if err := json.Unmarshal(resp.Result, &response); err != nil {
-			responseErr = fmt.Errorf("decode file-change approval response: %w", err)
+	if resp.Error != nil {
+		if len(resp.Error.Message) > approvalResponsePayloadMaxBytes {
+			responseErr = fmt.Errorf("%s error response exceeds %d bytes", pending.method, approvalResponsePayloadMaxBytes)
 		} else {
-			switch response.Decision {
-			case protocol.FileChangeApprovalAccept:
-				resolution.Approved = true
-				resolution.Message = ""
-			case protocol.FileChangeApprovalAcceptForSession:
-				resolution.Approved = true
-				resolution.Message = ""
-				if s.fileChangeSessionPaths == nil {
-					s.fileChangeSessionPaths = make(map[string]struct{})
+			resolution.Message = resp.Error.Message
+		}
+	} else if len(resp.Result) > approvalResponsePayloadMaxBytes {
+		responseErr = fmt.Errorf("%s response exceeds %d bytes", pending.method, approvalResponsePayloadMaxBytes)
+	} else {
+		switch pending.method {
+		case "item/fileChange/requestApproval":
+			var response protocol.FileChangeRequestApprovalResponse
+			if err := decodeStrictApprovalResult(resp.Result, &response); err != nil {
+				responseErr = fmt.Errorf("decode file-change approval response: %w", err)
+			} else {
+				switch response.Decision {
+				case protocol.FileChangeApprovalAccept:
+					resolution.Approved = true
+					resolution.Message = ""
+				case protocol.FileChangeApprovalAcceptForSession:
+					resolution.Approved = true
+					resolution.Message = ""
+					if s.fileChangeSessionPaths == nil {
+						s.fileChangeSessionPaths = make(map[string]struct{})
+					}
+					for _, target := range pending.sessionTargets {
+						s.fileChangeSessionPaths[target] = struct{}{}
+					}
+				case protocol.FileChangeApprovalDecline:
+					resolution.Message = "file change declined"
+				case protocol.FileChangeApprovalCancel:
+					resolution.Message = "file change canceled"
+					result.CancelTurn = true
+				default:
+					responseErr = fmt.Errorf("unsupported file-change approval decision %q", response.Decision)
 				}
-				for _, target := range pending.sessionTargets {
-					s.fileChangeSessionPaths[target] = struct{}{}
-				}
-			case protocol.FileChangeApprovalDecline:
-				resolution.Message = "file change declined"
-			case protocol.FileChangeApprovalCancel:
-				resolution.Message = "file change canceled"
-				result.CancelTurn = true
-			default:
-				responseErr = fmt.Errorf("unsupported file-change approval decision %q", response.Decision)
 			}
+		case "item/commandExecution/requestApproval":
+			var response protocol.CommandExecutionRequestApprovalResponse
+			if err := decodeStrictApprovalResult(resp.Result, &response); err != nil {
+				responseErr = fmt.Errorf("decode command-execution approval response: %w", err)
+			} else {
+				action := response.Decision.Action()
+				if !slices.Contains(pending.allowedCommandDecisions, action) {
+					responseErr = fmt.Errorf("command-execution approval decision %q was not offered", action)
+				} else {
+					switch action {
+					case protocol.CommandExecutionApprovalAccept:
+						resolution.Approved = true
+						resolution.Message = ""
+					case protocol.CommandExecutionApprovalDecline:
+						resolution.Message = "command execution declined"
+					case protocol.CommandExecutionApprovalCancel:
+						resolution.Message = "command execution canceled"
+						result.CancelTurn = true
+					}
+				}
+			}
+		default:
+			responseErr = fmt.Errorf("direct response is not implemented for %s", pending.method)
 		}
 	}
 	delete(s.pending, requestID)
 	s.mu.Unlock()
 	result.resolution = resolution
 	return result, true, responseErr
+}
+
+func decodeStrictApprovalResult(data json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("approval response must contain one JSON value")
+		}
+		return err
+	}
+	return nil
 }
 
 type serverRequestResolvedParams = protocol.ServerRequestResolvedNotificationParams
@@ -325,7 +384,14 @@ func (s *ApprovalService) nextRequestID() string {
 	return fmt.Sprintf("approval-%d", s.counter)
 }
 
-func (s *ApprovalService) requestApproval(ctx context.Context, method, requestID string, params any, sessionTargets []string) error {
+func (s *ApprovalService) requestApproval(
+	ctx context.Context,
+	method string,
+	requestID string,
+	params any,
+	sessionTargets []string,
+	allowedCommandDecisions []string,
+) error {
 	if s == nil || s.requests == nil {
 		return errors.New("approval service is not configured")
 	}
@@ -334,11 +400,12 @@ func (s *ApprovalService) requestApproval(ctx context.Context, method, requestID
 	}
 	runtimeContext := runtimeTurnContextFrom(ctx)
 	pending := pendingApproval{
-		ch:             make(chan approvalResolution, 1),
-		threadID:       firstNonEmpty(runtimeContext.ThreadID, approvalThreadID),
-		turnID:         firstNonEmpty(runtimeContext.TurnID, approvalTurnID),
-		method:         method,
-		sessionTargets: append([]string(nil), sessionTargets...),
+		ch:                      make(chan approvalResolution, 1),
+		threadID:                firstNonEmpty(runtimeContext.ThreadID, approvalThreadID),
+		turnID:                  firstNonEmpty(runtimeContext.TurnID, approvalTurnID),
+		method:                  method,
+		sessionTargets:          append([]string(nil), sessionTargets...),
+		allowedCommandDecisions: append([]string(nil), allowedCommandDecisions...),
 	}
 	s.mu.Lock()
 	if s.pending == nil {

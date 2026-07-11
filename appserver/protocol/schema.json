@@ -387,6 +387,76 @@
       ],
       "type": "object"
     },
+    "CommandExecutionApprovalDecision": {
+      "oneOf": [
+        {
+          "enum": [
+            "accept"
+          ],
+          "type": "string"
+        },
+        {
+          "enum": [
+            "acceptForSession"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "acceptWithExecpolicyAmendment": {
+              "additionalProperties": false,
+              "properties": {
+                "execpolicy_amendment": {
+                  "$ref": "#/$defs/ExecPolicyAmendment"
+                }
+              },
+              "required": [
+                "execpolicy_amendment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "acceptWithExecpolicyAmendment"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "applyNetworkPolicyAmendment": {
+              "additionalProperties": false,
+              "properties": {
+                "network_policy_amendment": {
+                  "$ref": "#/$defs/NetworkPolicyAmendment"
+                }
+              },
+              "required": [
+                "network_policy_amendment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "applyNetworkPolicyAmendment"
+          ],
+          "type": "object"
+        },
+        {
+          "enum": [
+            "decline"
+          ],
+          "type": "string"
+        },
+        {
+          "enum": [
+            "cancel"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "CommandExecutionApprovalRequestParams": {
       "additionalProperties": false,
       "properties": {
@@ -405,6 +475,12 @@
               "type": "null"
             }
           ]
+        },
+        "availableDecisions": {
+          "items": {
+            "$ref": "#/$defs/CommandExecutionApprovalDecision"
+          },
+          "type": "array"
         },
         "command": {
           "type": "string"
@@ -646,6 +722,18 @@
         "turnId",
         "itemId",
         "delta"
+      ],
+      "type": "object"
+    },
+    "CommandExecutionRequestApprovalResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/CommandExecutionApprovalDecision"
+        }
+      },
+      "required": [
+        "decision"
       ],
       "type": "object"
     },
@@ -1123,6 +1211,12 @@
         "message"
       ],
       "type": "object"
+    },
+    "ExecPolicyAmendment": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "FileChangeApprovalDecision": {
       "enum": [
@@ -2478,6 +2572,29 @@
         "deferred-stub",
         "renamed-equivalent",
         "not-applicable"
+      ],
+      "type": "string"
+    },
+    "NetworkPolicyAmendment": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/NetworkPolicyRuleAction"
+        },
+        "host": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "action"
+      ],
+      "type": "object"
+    },
+    "NetworkPolicyRuleAction": {
+      "enum": [
+        "allow",
+        "deny"
       ],
       "type": "string"
     },
@@ -6319,6 +6436,9 @@
       "surface": "server-request",
       "params": [
         "CommandExecutionApprovalRequestParams"
+      ],
+      "result": [
+        "CommandExecutionRequestApprovalResponse"
       ]
     },
     {

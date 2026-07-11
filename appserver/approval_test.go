@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,7 @@ func TestServerResolvesDirectFileChangeApprovalResponses(t *testing.T) {
 		decision  protocol.FileChangeApprovalDecision
 		response  *protocol.Error
 		malformed bool
+		rawResult string
 		wantOK    bool
 		wantError bool
 	}{
@@ -92,6 +94,8 @@ func TestServerResolvesDirectFileChangeApprovalResponses(t *testing.T) {
 		{name: "cancel", decision: protocol.FileChangeApprovalCancel},
 		{name: "client error", response: &protocol.Error{Code: protocol.CodeInternalError, Message: "handler failed"}},
 		{name: "malformed", malformed: true, wantError: true},
+		{name: "unknown field", rawResult: `{"decision":"accept","extra":true}`, wantError: true},
+		{name: "oversized", rawResult: `{"decision":"accept","padding":"` + strings.Repeat("x", approvalResponsePayloadMaxBytes) + `"}`, wantError: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -107,7 +111,9 @@ func TestServerResolvesDirectFileChangeApprovalResponses(t *testing.T) {
 			req := waitForApprovalRequest(t, approvals)
 			resp := protocol.Response{ID: req.ID, Error: tc.response}
 			if tc.response == nil {
-				if tc.malformed {
+				if tc.rawResult != "" {
+					resp.Result = json.RawMessage(tc.rawResult)
+				} else if tc.malformed {
 					resp.Result = json.RawMessage(`{"decision":"unknown"}`)
 				} else {
 					resp.Result = mustApprovalJSON(t, protocol.FileChangeRequestApprovalResponse{Decision: tc.decision})
@@ -188,23 +194,99 @@ func TestFileChangeAcceptForSessionCachesOnlyTheSameTarget(t *testing.T) {
 	}
 }
 
-func TestDirectResponseForUnboundApprovalFamilyFailsClosed(t *testing.T) {
+func TestServerResolvesDirectCommandExecutionApprovalResponses(t *testing.T) {
+	tests := []struct {
+		name      string
+		result    string
+		response  *protocol.Error
+		wantOK    bool
+		wantError bool
+	}{
+		{name: "accept", result: `{"decision":"accept"}`, wantOK: true},
+		{name: "decline", result: `{"decision":"decline"}`},
+		{name: "cancel", result: `{"decision":"cancel"}`},
+		{name: "client error", response: &protocol.Error{Code: protocol.CodeInternalError, Message: "handler failed"}},
+		{name: "oversized client error", response: &protocol.Error{Code: protocol.CodeInternalError, Message: strings.Repeat("x", approvalResponsePayloadMaxBytes+1)}, wantError: true},
+		{name: "session not offered", result: `{"decision":"acceptForSession"}`, wantError: true},
+		{name: "exec amendment not offered", result: `{"decision":{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["git","status"]}}}`, wantError: true},
+		{name: "network amendment not offered", result: `{"decision":{"applyNetworkPolicyAmendment":{"network_policy_amendment":{"host":"example.com","action":"allow"}}}}`, wantError: true},
+		{name: "unknown decision", result: `{"decision":"approve"}`, wantError: true},
+		{name: "unknown field", result: `{"decision":"accept","extra":true}`, wantError: true},
+		{name: "second object", result: `{"decision":"accept"} {}`, wantError: true},
+		{name: "second scalar", result: `{"decision":"accept"} true`, wantError: true},
+		{name: "oversized", result: `{"decision":"accept","padding":"` + strings.Repeat("x", approvalResponsePayloadMaxBytes) + `"}`, wantError: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			approvals := NewApprovalService()
+			server := readyServer(WithApprovalService(approvals))
+			errCh := make(chan error, 1)
+			go func() {
+				errCh <- approvals.ProcessApproval(context.Background(), toolprocess.Operation{
+					Kind:    toolprocess.OperationStart,
+					Command: "true",
+				})
+			}()
+			req := waitForApprovalRequest(t, approvals)
+			if req.Method != "item/commandExecution/requestApproval" {
+				t.Fatalf("approval method = %q", req.Method)
+			}
+			var params protocol.CommandExecutionApprovalRequestParams
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				t.Fatalf("decode command approval params: %v", err)
+			}
+			var actions []string
+			for _, decision := range params.AvailableDecisions {
+				actions = append(actions, decision.Action())
+			}
+			if strings.Join(actions, ",") != "accept,decline,cancel" {
+				t.Fatalf("available decisions = %#v", actions)
+			}
+			resp := protocol.Response{ID: req.ID, Error: tc.response, Result: json.RawMessage(tc.result)}
+			err := server.HandleResponse(context.Background(), resp)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("HandleResponse error = %v, want error %t", err, tc.wantError)
+			}
+			approvalErr := <-errCh
+			if tc.wantOK {
+				if approvalErr != nil {
+					t.Fatalf("approval error = %v", approvalErr)
+				}
+			} else if !errors.Is(approvalErr, ErrApprovalRequestDenied) {
+				t.Fatalf("approval error = %v, want denied", approvalErr)
+			}
+			requestID, _ := req.ID.Value().(string)
+			if _, err := approvals.Respond(approvalRespondParams{RequestID: requestID, Approved: true}); err == nil {
+				t.Fatal("legacy response unexpectedly resolved an already completed request")
+			}
+		})
+	}
+}
+
+func TestDirectResponseForPermissionsApprovalRemainsFailClosed(t *testing.T) {
 	approvals := NewApprovalService()
 	server := readyServer(WithApprovalService(approvals))
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- approvals.ProcessApproval(context.Background(), toolprocess.Operation{
-			Kind:    toolprocess.OperationStart,
-			Command: "true",
+		errCh <- approvals.GitApproval(context.Background(), toolgit.Operation{
+			Kind:     toolgit.OperationCommit,
+			Message:  "commit",
+			Mutating: true,
 		})
 	}()
 	req := waitForApprovalRequest(t, approvals)
-	err := server.HandleResponse(context.Background(), protocol.Response{ID: req.ID, Result: json.RawMessage(`{"decision":"accept"}`)})
+	if req.Method != "item/permissions/requestApproval" {
+		t.Fatalf("approval method = %q", req.Method)
+	}
+	err := server.HandleResponse(context.Background(), protocol.Response{
+		ID:     req.ID,
+		Result: json.RawMessage(`{"permissions":{},"scope":"turn"}`),
+	})
 	if err == nil {
-		t.Fatal("unbound direct response unexpectedly succeeded")
+		t.Fatal("unbound permissions response unexpectedly succeeded")
 	}
 	if approvalErr := <-errCh; !errors.Is(approvalErr, ErrApprovalRequestDenied) {
-		t.Fatalf("unbound direct approval = %v, want denied", approvalErr)
+		t.Fatalf("permissions approval = %v, want denied", approvalErr)
 	}
 }
 
