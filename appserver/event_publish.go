@@ -18,18 +18,24 @@ type cacheBenchmarkNotificationParams struct {
 }
 
 func (s *Server) publishFileChanged(operation, path, destination string) {
-	s.PublishNotification("fs/changed", fileChangedParams{
-		Path:        path,
-		Destination: destination,
-		Operation:   operation,
-		At:          time.Now().UTC(),
-	})
+	params := protocol.FileChangedNotification{Operation: operation, At: time.Now().UTC()}
+	if path != "" {
+		params.Path = &path
+	}
+	if destination != "" {
+		params.Destination = &destination
+	}
+	s.PublishNotification("fs/changed", params)
 }
 
 func (s *Server) publishWatchChanged(event toolfs.WatchEvent) {
-	s.PublishNotification("fs/changed", fsWatchChangedParams{
+	changedPaths := make([]protocol.AbsolutePathBuf, len(event.ChangedPaths))
+	for index, path := range event.ChangedPaths {
+		changedPaths[index] = protocol.AbsolutePathBuf(path)
+	}
+	s.PublishNotification("fs/changed", protocol.FsChangedNotification{
 		WatchID:      event.WatchID,
-		ChangedPaths: append([]string(nil), event.ChangedPaths...),
+		ChangedPaths: changedPaths,
 	})
 }
 

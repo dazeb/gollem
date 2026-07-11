@@ -1587,14 +1587,17 @@ func (s *Server) handleFSReadFile(ctx context.Context, raw json.RawMessage) (any
 		return nil, mapError("fs/readFile", err)
 	}
 	content, encoding := encodeContent(file.Content)
-	return fileContentResult{
-		Path:             file.Path,
-		Content:          content,
-		Encoding:         encoding,
-		Size:             file.Size,
-		Mode:             uint32(file.Mode),
-		ModTime:          file.ModTime,
-		ContentTruncated: false,
+	mode := uint32(file.Mode)
+	contentTruncated := false
+	return protocol.FsReadFileResponse{
+		DataBase64:       base64.StdEncoding.EncodeToString(file.Content),
+		Path:             &file.Path,
+		Content:          &content,
+		Encoding:         &encoding,
+		Size:             &file.Size,
+		Mode:             &mode,
+		ModTime:          &file.ModTime,
+		ContentTruncated: &contentTruncated,
 	}, nil
 }
 
@@ -1610,15 +1613,25 @@ func (s *Server) handleFSWriteFile(ctx context.Context, raw json.RawMessage) (an
 	if params.Path == "" {
 		return nil, invalidParams("path is required", nil)
 	}
-	content, err := decodeContent(params.Content, params.Encoding)
-	if err != nil {
-		return nil, invalidParams("invalid file content encoding", err)
+	var content []byte
+	var err error
+	if params.DataBase64 != nil {
+		content, err = base64.StdEncoding.DecodeString(*params.DataBase64)
+		if err != nil {
+			return nil, invalidParams("invalid dataBase64", err)
+		}
+	} else {
+		content, err = decodeContent(params.Content, params.Encoding)
+		if err != nil {
+			return nil, invalidParams("invalid file content encoding", err)
+		}
 	}
 	if err := fsSvc.WriteFile(ctx, params.Path, content, iofs.FileMode(params.Mode)); err != nil {
 		return nil, mapError("fs/writeFile", err)
 	}
 	s.publishFileChanged("writeFile", params.Path, "")
-	return okResult(params.Path), nil
+	ok := true
+	return protocol.FsWriteFileResponse{OK: &ok, Path: &params.Path}, nil
 }
 
 func (s *Server) handleFSCreateDirectory(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1633,11 +1646,14 @@ func (s *Server) handleFSCreateDirectory(ctx context.Context, raw json.RawMessag
 	if params.Path == "" {
 		return nil, invalidParams("path is required", nil)
 	}
-	if err := fsSvc.CreateDirectory(ctx, params.Path); err != nil {
+	if err := fsSvc.CreateDirectoryWithOptions(ctx, params.Path, toolfs.CreateDirectoryOptions{
+		Recursive: boolDefault(params.Recursive, true),
+	}); err != nil {
 		return nil, mapError("fs/createDirectory", err)
 	}
 	s.publishFileChanged("createDirectory", params.Path, "")
-	return okResult(params.Path), nil
+	ok := true
+	return protocol.FsCreateDirectoryResponse{OK: &ok, Path: &params.Path}, nil
 }
 
 func (s *Server) handleFSReadDirectory(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1653,7 +1669,27 @@ func (s *Server) handleFSReadDirectory(ctx context.Context, raw json.RawMessage)
 	if err != nil {
 		return nil, mapError("fs/readDirectory", err)
 	}
-	return map[string]any{"entries": entries}, nil
+	result := protocol.FsReadDirectoryResponse{Entries: make([]protocol.FsReadDirectoryEntry, 0, len(entries))}
+	for _, entry := range entries {
+		path := entry.Path
+		name := entry.Name
+		isDir := entry.IsDir
+		size := entry.Size
+		mode := uint32(entry.Mode)
+		modTime := entry.ModTime
+		result.Entries = append(result.Entries, protocol.FsReadDirectoryEntry{
+			FileName:      entry.Name,
+			IsDirectory:   entry.IsDir,
+			IsFile:        entry.IsFile,
+			LegacyPath:    &path,
+			LegacyName:    &name,
+			LegacyIsDir:   &isDir,
+			LegacySize:    &size,
+			LegacyMode:    &mode,
+			LegacyModTime: &modTime,
+		})
+	}
+	return result, nil
 }
 
 func (s *Server) handleFSMetadata(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1672,7 +1708,20 @@ func (s *Server) handleFSMetadata(ctx context.Context, raw json.RawMessage) (any
 	if err != nil {
 		return nil, mapError("fs/getMetadata", err)
 	}
-	return metadataResult{Path: meta.Path, IsDir: meta.IsDir, Size: meta.Size, Mode: uint32(meta.Mode), ModTime: meta.ModTime}, nil
+	isDir := meta.IsDir
+	mode := uint32(meta.Mode)
+	return protocol.FsGetMetadataResponse{
+		IsDirectory:  meta.IsDir,
+		IsFile:       meta.IsFile,
+		IsSymlink:    meta.IsSymlink,
+		CreatedAtMS:  0,
+		ModifiedAtMS: meta.ModTime.UnixMilli(),
+		Path:         &meta.Path,
+		IsDir:        &isDir,
+		Size:         &meta.Size,
+		Mode:         &mode,
+		ModTime:      &meta.ModTime,
+	}, nil
 }
 
 func (s *Server) handleFSRemove(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1687,11 +1736,15 @@ func (s *Server) handleFSRemove(ctx context.Context, raw json.RawMessage) (any, 
 	if params.Path == "" {
 		return nil, invalidParams("path is required", nil)
 	}
-	if err := fsSvc.Remove(ctx, params.Path); err != nil {
+	if err := fsSvc.RemoveWithOptions(ctx, params.Path, toolfs.RemoveOptions{
+		Recursive: boolDefault(params.Recursive, true),
+		Force:     boolDefault(params.Force, true),
+	}); err != nil {
 		return nil, mapError("fs/remove", err)
 	}
 	s.publishFileChanged("remove", params.Path, "")
-	return okResult(params.Path), nil
+	ok := true
+	return protocol.FsRemoveResponse{OK: &ok, Path: &params.Path}, nil
 }
 
 func (s *Server) handleFSCopy(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1703,16 +1756,20 @@ func (s *Server) handleFSCopy(ctx context.Context, raw json.RawMessage) (any, *p
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	src := firstNonEmpty(params.Source, params.SourcePath, params.Path)
-	dst := firstNonEmpty(params.Destination, params.DestinationPath)
+	publicShape := params.SourcePath != "" || params.DestinationPath != ""
+	src := firstNonEmpty(params.SourcePath, params.Source, params.Path)
+	dst := firstNonEmpty(params.DestinationPath, params.Destination)
 	if src == "" || dst == "" {
 		return nil, invalidParams("source and destination are required", nil)
 	}
-	if err := fsSvc.Copy(ctx, src, dst); err != nil {
+	if err := fsSvc.CopyWithOptions(ctx, src, dst, toolfs.CopyOptions{
+		Recursive: boolDefault(params.Recursive, !publicShape),
+	}); err != nil {
 		return nil, mapError("fs/copy", err)
 	}
 	s.publishFileChanged("copy", src, dst)
-	return map[string]any{"ok": true, "source": src, "destination": dst}, nil
+	ok := true
+	return protocol.FsCopyResponse{OK: &ok, Source: &src, Destination: &dst}, nil
 }
 
 func (s *Server) handleFSWatch(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1741,7 +1798,7 @@ func (s *Server) handleFSWatch(ctx context.Context, raw json.RawMessage) (any, *
 	if err != nil {
 		return nil, mapError("fs/watch", err)
 	}
-	return fsWatchResult{Path: result.Path}, nil
+	return protocol.FsWatchResponse{Path: protocol.AbsolutePathBuf(result.Path)}, nil
 }
 
 func (s *Server) handleFSUnwatch(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1759,7 +1816,7 @@ func (s *Server) handleFSUnwatch(ctx context.Context, raw json.RawMessage) (any,
 	if err := fsSvc.Unwatch(ctx, params.WatchID); err != nil {
 		return nil, mapError("fs/unwatch", err)
 	}
-	return map[string]any{}, nil
+	return protocol.FsUnwatchResponse{}, nil
 }
 
 func (s *Server) handleProcessStart(ctx context.Context, method string, raw json.RawMessage, defaultShell bool) (any, *protocol.Error) {
@@ -2141,6 +2198,7 @@ func mapError(method string, err error) *protocol.Error {
 		return protocol.MethodUnavailableErrorWithReason(method, "pty resize is not supported until a PTY backend is configured")
 	case errors.Is(err, toolfs.ErrPathOutsideRoot),
 		errors.Is(err, toolfs.ErrInvalidCopyDestination),
+		errors.Is(err, toolfs.ErrRecursiveRequired),
 		errors.Is(err, toolfs.ErrRefusingRoot),
 		errors.Is(err, toolfs.ErrWatchPathNotAbsolute),
 		errors.Is(err, toolfs.ErrWatchIDRequired),
@@ -2332,14 +2390,17 @@ type threadItemsListParams struct {
 }
 
 type pathParams struct {
-	Path string `json:"path,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Recursive *bool  `json:"recursive,omitempty"`
+	Force     *bool  `json:"force,omitempty"`
 }
 
 type writeFileParams struct {
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	Encoding string `json:"encoding,omitempty"`
-	Mode     uint32 `json:"mode,omitempty"`
+	Path       string  `json:"path"`
+	DataBase64 *string `json:"dataBase64"`
+	Content    string  `json:"content"`
+	Encoding   string  `json:"encoding,omitempty"`
+	Mode       uint32  `json:"mode,omitempty"`
 }
 
 type copyParams struct {
@@ -2348,6 +2409,7 @@ type copyParams struct {
 	SourcePath      string `json:"sourcePath,omitempty"`
 	Destination     string `json:"destination,omitempty"`
 	DestinationPath string `json:"destinationPath,omitempty"`
+	Recursive       *bool  `json:"recursive,omitempty"`
 }
 
 type fsWatchParams struct {
@@ -2372,14 +2434,6 @@ type fileContentResult struct {
 	Mode             uint32    `json:"mode"`
 	ModTime          time.Time `json:"modTime"`
 	ContentTruncated bool      `json:"contentTruncated"`
-}
-
-type metadataResult struct {
-	Path    string    `json:"path"`
-	IsDir   bool      `json:"isDir"`
-	Size    int64     `json:"size"`
-	Mode    uint32    `json:"mode"`
-	ModTime time.Time `json:"modTime"`
 }
 
 type processStartParams struct {

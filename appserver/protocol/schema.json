@@ -1631,6 +1631,29 @@
       ],
       "type": "object"
     },
+    "FileChangedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "at"
+      ],
+      "type": "object"
+    },
     "FileSystemAccessMode": {
       "enum": [
         "read",
@@ -1854,6 +1877,380 @@
         "kind",
         "diff"
       ],
+      "type": "object"
+    },
+    "FsChangedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "changedPaths": {
+          "items": {
+            "$ref": "#/$defs/AbsolutePathBuf"
+          },
+          "type": "array"
+        },
+        "watchId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "watchId",
+        "changedPaths"
+      ],
+      "type": "object"
+    },
+    "FsCopyParams": {
+      "additionalProperties": false,
+      "properties": {
+        "destinationPath": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "recursive": {
+          "type": "boolean"
+        },
+        "sourcePath": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "sourcePath",
+        "destinationPath"
+      ],
+      "type": "object"
+    },
+    "FsCopyResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "destination": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "FsCreateDirectoryParams": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "recursive": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "FsCreateDirectoryResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "FsGetMetadataParams": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "FsGetMetadataResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAtMs": {
+          "type": "integer"
+        },
+        "isDir": {
+          "type": "boolean"
+        },
+        "isDirectory": {
+          "type": "boolean"
+        },
+        "isFile": {
+          "type": "boolean"
+        },
+        "isSymlink": {
+          "type": "boolean"
+        },
+        "modTime": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "mode": {
+          "type": "integer"
+        },
+        "modifiedAtMs": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "isDirectory",
+        "isFile",
+        "isSymlink",
+        "createdAtMs",
+        "modifiedAtMs"
+      ],
+      "type": "object"
+    },
+    "FsReadDirectoryEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "IsDir": {
+          "type": "boolean"
+        },
+        "ModTime": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "Mode": {
+          "type": "integer"
+        },
+        "Name": {
+          "type": "string"
+        },
+        "Path": {
+          "type": "string"
+        },
+        "Size": {
+          "type": "integer"
+        },
+        "fileName": {
+          "type": "string"
+        },
+        "isDirectory": {
+          "type": "boolean"
+        },
+        "isFile": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "fileName",
+        "isDirectory",
+        "isFile"
+      ],
+      "type": "object"
+    },
+    "FsReadDirectoryParams": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "FsReadDirectoryResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/FsReadDirectoryEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    },
+    "FsReadFileParams": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "FsReadFileResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "contentTruncated": {
+          "type": "boolean"
+        },
+        "dataBase64": {
+          "type": "string"
+        },
+        "encoding": {
+          "type": "string"
+        },
+        "modTime": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "mode": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dataBase64"
+      ],
+      "type": "object"
+    },
+    "FsRemoveParams": {
+      "additionalProperties": false,
+      "properties": {
+        "force": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "recursive": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "FsRemoveResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "FsUnwatchParams": {
+      "additionalProperties": false,
+      "properties": {
+        "watchId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "watchId"
+      ],
+      "type": "object"
+    },
+    "FsUnwatchResponse": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "FsWatchParams": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "pollIntervalMillis": {
+          "type": "integer"
+        },
+        "watchId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "watchId",
+        "path"
+      ],
+      "type": "object"
+    },
+    "FsWatchResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "FsWriteFileParams": {
+      "additionalProperties": false,
+      "properties": {
+        "dataBase64": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        }
+      },
+      "required": [
+        "path",
+        "dataBase64"
+      ],
+      "type": "object"
+    },
+    "FsWriteFileResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "GrantedPermissionProfile": {
@@ -6927,6 +7324,104 @@
       "surface": "server-notification",
       "params": [
         "DeprecationNoticeNotification"
+      ]
+    },
+    {
+      "method": "fs/changed",
+      "surface": "server-notification",
+      "params": [
+        "FsChangedNotification",
+        "FileChangedNotification"
+      ]
+    },
+    {
+      "method": "fs/copy",
+      "surface": "client-request",
+      "params": [
+        "FsCopyParams"
+      ],
+      "result": [
+        "FsCopyResponse"
+      ]
+    },
+    {
+      "method": "fs/createDirectory",
+      "surface": "client-request",
+      "params": [
+        "FsCreateDirectoryParams"
+      ],
+      "result": [
+        "FsCreateDirectoryResponse"
+      ]
+    },
+    {
+      "method": "fs/getMetadata",
+      "surface": "client-request",
+      "params": [
+        "FsGetMetadataParams"
+      ],
+      "result": [
+        "FsGetMetadataResponse"
+      ]
+    },
+    {
+      "method": "fs/readDirectory",
+      "surface": "client-request",
+      "params": [
+        "FsReadDirectoryParams"
+      ],
+      "result": [
+        "FsReadDirectoryResponse"
+      ]
+    },
+    {
+      "method": "fs/readFile",
+      "surface": "client-request",
+      "params": [
+        "FsReadFileParams"
+      ],
+      "result": [
+        "FsReadFileResponse"
+      ]
+    },
+    {
+      "method": "fs/remove",
+      "surface": "client-request",
+      "params": [
+        "FsRemoveParams"
+      ],
+      "result": [
+        "FsRemoveResponse"
+      ]
+    },
+    {
+      "method": "fs/unwatch",
+      "surface": "client-request",
+      "params": [
+        "FsUnwatchParams"
+      ],
+      "result": [
+        "FsUnwatchResponse"
+      ]
+    },
+    {
+      "method": "fs/watch",
+      "surface": "client-request",
+      "params": [
+        "FsWatchParams"
+      ],
+      "result": [
+        "FsWatchResponse"
+      ]
+    },
+    {
+      "method": "fs/writeFile",
+      "surface": "client-request",
+      "params": [
+        "FsWriteFileParams"
+      ],
+      "result": [
+        "FsWriteFileResponse"
       ]
     },
     {

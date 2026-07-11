@@ -18,6 +18,7 @@ var (
 	ErrApprovalDenied         = errors.New("appserver/fs: operation denied by approval policy")
 	ErrRefusingRoot           = errors.New("appserver/fs: refusing to mutate workspace root")
 	ErrInvalidCopyDestination = errors.New("appserver/fs: invalid copy destination")
+	ErrRecursiveRequired      = errors.New("appserver/fs: recursive option is required for directory copy")
 	ErrWatchPathNotAbsolute   = errors.New("appserver/fs: watch path must be absolute")
 	ErrWatchIDRequired        = errors.New("appserver/fs: watch id is required")
 	ErrWatchAlreadyExists     = errors.New("appserver/fs: watch id already exists")
@@ -93,17 +94,33 @@ type DirEntry struct {
 	Path    string
 	Name    string
 	IsDir   bool
+	IsFile  bool
 	Size    int64
 	Mode    iofs.FileMode
 	ModTime time.Time
 }
 
 type Metadata struct {
-	Path    string
-	IsDir   bool
-	Size    int64
-	Mode    iofs.FileMode
-	ModTime time.Time
+	Path      string
+	IsDir     bool
+	IsFile    bool
+	IsSymlink bool
+	Size      int64
+	Mode      iofs.FileMode
+	ModTime   time.Time
+}
+
+type CreateDirectoryOptions struct {
+	Recursive bool
+}
+
+type RemoveOptions struct {
+	Recursive bool
+	Force     bool
+}
+
+type CopyOptions struct {
+	Recursive bool
 }
 
 func NewService(root string, opts ...Option) (*Service, error) {
@@ -194,6 +211,10 @@ func (s *Service) WriteFile(ctx context.Context, path string, content []byte, pe
 }
 
 func (s *Service) CreateDirectory(ctx context.Context, path string) error {
+	return s.CreateDirectoryWithOptions(ctx, path, CreateDirectoryOptions{Recursive: true})
+}
+
+func (s *Service) CreateDirectoryWithOptions(ctx context.Context, path string, options CreateDirectoryOptions) error {
 	op := Operation{Kind: OperationCreateDirectory, Path: path}
 	if err := checkContext(ctx); err != nil {
 		s.emit(op, "", "", false, err)
@@ -208,7 +229,11 @@ func (s *Service) CreateDirectory(ctx context.Context, path string) error {
 		s.emit(op, resolved, "", false, err)
 		return err
 	}
-	if err := os.MkdirAll(resolved, 0o755); err != nil {
+	create := os.Mkdir
+	if options.Recursive {
+		create = os.MkdirAll
+	}
+	if err := create(resolved, 0o755); err != nil {
 		s.emit(op, resolved, "", false, err)
 		return fmt.Errorf("create directory: %w", err)
 	}
@@ -244,6 +269,7 @@ func (s *Service) ReadDirectory(ctx context.Context, path string) ([]DirEntry, e
 			Path:    s.rel(child),
 			Name:    entry.Name(),
 			IsDir:   entry.IsDir(),
+			IsFile:  info.Mode().IsRegular(),
 			Size:    info.Size(),
 			Mode:    info.Mode(),
 			ModTime: info.ModTime(),
@@ -271,15 +297,21 @@ func (s *Service) Metadata(ctx context.Context, path string) (*Metadata, error) 
 	}
 	s.emit(op, resolved, "", true, nil)
 	return &Metadata{
-		Path:    s.rel(resolved),
-		IsDir:   info.IsDir(),
-		Size:    info.Size(),
-		Mode:    info.Mode(),
-		ModTime: info.ModTime(),
+		Path:      s.rel(resolved),
+		IsDir:     info.IsDir(),
+		IsFile:    info.Mode().IsRegular(),
+		IsSymlink: isSymlink(resolved),
+		Size:      info.Size(),
+		Mode:      info.Mode(),
+		ModTime:   info.ModTime(),
 	}, nil
 }
 
 func (s *Service) Remove(ctx context.Context, path string) error {
+	return s.RemoveWithOptions(ctx, path, RemoveOptions{Recursive: true, Force: true})
+}
+
+func (s *Service) RemoveWithOptions(ctx context.Context, path string, options RemoveOptions) error {
 	op := Operation{Kind: OperationRemove, Path: path, Destructive: true}
 	if err := checkContext(ctx); err != nil {
 		s.emit(op, "", "", false, err)
@@ -298,15 +330,35 @@ func (s *Service) Remove(ctx context.Context, path string) error {
 		s.emit(op, resolved, "", false, err)
 		return err
 	}
-	if err := os.RemoveAll(resolved); err != nil {
-		s.emit(op, resolved, "", false, err)
-		return fmt.Errorf("remove path: %w", err)
+	var removeErr error
+	if options.Recursive {
+		if !options.Force {
+			if _, err := os.Lstat(resolved); err != nil {
+				removeErr = err
+			}
+		}
+		if removeErr == nil {
+			removeErr = os.RemoveAll(resolved)
+		}
+	} else {
+		removeErr = os.Remove(resolved)
+		if options.Force && errors.Is(removeErr, os.ErrNotExist) {
+			removeErr = nil
+		}
+	}
+	if removeErr != nil {
+		s.emit(op, resolved, "", false, removeErr)
+		return fmt.Errorf("remove path: %w", removeErr)
 	}
 	s.emit(op, resolved, "", true, nil)
 	return nil
 }
 
 func (s *Service) Copy(ctx context.Context, src, dst string) error {
+	return s.CopyWithOptions(ctx, src, dst, CopyOptions{Recursive: true})
+}
+
+func (s *Service) CopyWithOptions(ctx context.Context, src, dst string, options CopyOptions) error {
 	op := Operation{Kind: OperationCopy, Path: src, Destination: dst}
 	if err := checkContext(ctx); err != nil {
 		s.emit(op, "", "", false, err)
@@ -331,6 +383,10 @@ func (s *Service) Copy(ctx context.Context, src, dst string) error {
 		s.emit(op, resolvedSrc, resolvedDst, false, ErrInvalidCopyDestination)
 		return ErrInvalidCopyDestination
 	}
+	if info.IsDir() && !options.Recursive {
+		s.emit(op, resolvedSrc, resolvedDst, false, ErrRecursiveRequired)
+		return ErrRecursiveRequired
+	}
 	if err := s.requireApproval(ctx, op); err != nil {
 		s.emit(op, resolvedSrc, resolvedDst, false, err)
 		return err
@@ -346,6 +402,11 @@ func (s *Service) Copy(ctx context.Context, src, dst string) error {
 	}
 	s.emit(op, resolvedSrc, resolvedDst, true, nil)
 	return nil
+}
+
+func isSymlink(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&iofs.ModeSymlink != 0
 }
 
 func (s *Service) resolve(path string) (string, error) {
