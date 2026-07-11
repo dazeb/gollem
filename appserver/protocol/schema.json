@@ -193,6 +193,24 @@
       ],
       "type": "object"
     },
+    "ByteRange": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "type": "object"
+    },
     "ClientInfo": {
       "additionalProperties": false,
       "properties": {
@@ -2265,6 +2283,31 @@
       },
       "type": "object"
     },
+    "HookPromptFragment": {
+      "additionalProperties": false,
+      "properties": {
+        "hookRunId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "hookRunId"
+      ],
+      "type": "object"
+    },
+    "ImageDetail": {
+      "enum": [
+        "auto",
+        "low",
+        "high",
+        "original"
+      ],
+      "type": "string"
+    },
     "ImplementationInfo": {
       "additionalProperties": false,
       "properties": {
@@ -3338,6 +3381,61 @@
       ],
       "type": "string"
     },
+    "MemoryCitation": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/MemoryCitationEntry"
+          },
+          "type": "array"
+        },
+        "threadIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries",
+        "threadIds"
+      ],
+      "type": "object"
+    },
+    "MemoryCitationEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "lineEnd": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lineStart": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "note": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "lineStart",
+        "lineEnd",
+        "note"
+      ],
+      "type": "object"
+    },
+    "MessagePhase": {
+      "enum": [
+        "commentary",
+        "final_answer"
+      ],
+      "type": "string"
+    },
     "MethodInfo": {
       "additionalProperties": false,
       "properties": {
@@ -4031,6 +4129,29 @@
         "gollem-extension"
       ],
       "type": "string"
+    },
+    "TextElement": {
+      "additionalProperties": false,
+      "properties": {
+        "byteRange": {
+          "$ref": "#/$defs/ByteRange"
+        },
+        "placeholder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "byteRange",
+        "placeholder"
+      ],
+      "type": "object"
     },
     "ThreadArchiveParams": {
       "additionalProperties": false,
@@ -5855,6 +5976,126 @@
         "updatedAt"
       ],
       "type": "object"
+    },
+    "UserInput": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "text_elements": {
+              "items": {
+                "$ref": "#/$defs/TextElement"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "text"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "text",
+            "text_elements"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "detail": {
+              "$ref": "#/$defs/ImageDetail"
+            },
+            "type": {
+              "enum": [
+                "image"
+              ],
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "detail": {
+              "$ref": "#/$defs/ImageDetail"
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "localImage"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "skill"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "mention"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "path"
+          ],
+          "type": "object"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
