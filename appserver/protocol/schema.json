@@ -3458,6 +3458,73 @@
       ],
       "type": "object"
     },
+    "McpToolCallAppContext": {
+      "additionalProperties": false,
+      "properties": {
+        "actionName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "appName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "connectorId": {
+          "type": "string"
+        },
+        "linkId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resourceUri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "templateId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "connectorId",
+        "linkId",
+        "resourceUri",
+        "appName",
+        "templateId",
+        "actionName"
+      ],
+      "type": "object"
+    },
     "McpToolCallError": {
       "additionalProperties": false,
       "properties": {

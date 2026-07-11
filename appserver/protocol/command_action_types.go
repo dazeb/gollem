@@ -75,7 +75,7 @@ func validateCommandActionJSON(data []byte) (json.RawMessage, error) {
 		if err := rejectThreadItemFields(payload, "listFiles command action", "type", "command", "path"); err != nil {
 			return nil, err
 		}
-		path, err := decodeRequiredNullableCommandActionString(payload, "listFiles command action", "path")
+		path, err := decodeRequiredNullableThreadItemString(payload, "listFiles command action", "path")
 		if err != nil {
 			return nil, err
 		}
@@ -88,11 +88,11 @@ func validateCommandActionJSON(data []byte) (json.RawMessage, error) {
 		if err := rejectThreadItemFields(payload, "search command action", "type", "command", "query", "path"); err != nil {
 			return nil, err
 		}
-		query, err := decodeRequiredNullableCommandActionString(payload, "search command action", "query")
+		query, err := decodeRequiredNullableThreadItemString(payload, "search command action", "query")
 		if err != nil {
 			return nil, err
 		}
-		path, err := decodeRequiredNullableCommandActionString(payload, "search command action", "path")
+		path, err := decodeRequiredNullableThreadItemString(payload, "search command action", "path")
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +115,7 @@ func validateCommandActionJSON(data []byte) (json.RawMessage, error) {
 	}
 }
 
-func decodeRequiredNullableCommandActionString(payload map[string]json.RawMessage, objectName, fieldName string) (*string, error) {
+func decodeRequiredNullableThreadItemString(payload map[string]json.RawMessage, objectName, fieldName string) (*string, error) {
 	raw, ok := payload[fieldName]
 	if !ok {
 		return nil, fmt.Errorf("%s requires %s", objectName, fieldName)
