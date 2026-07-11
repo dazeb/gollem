@@ -280,6 +280,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
+		{Name: "WebSearchAction", Type: reflect.TypeFor[WebSearchAction]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
@@ -343,6 +344,7 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["CommandExecutionApprovalDecision"] = commandExecutionApprovalDecisionSchema()
 	schemas["CommandAction"] = commandActionSchema()
+	schemas["WebSearchAction"] = webSearchActionSchema()
 	schemas["AbsolutePathBuf"] = Schema{
 		"type":        "string",
 		"description": "An absolute, lexically normalized local path.",
@@ -519,6 +521,43 @@ func commandActionSchema() Schema {
 }
 
 func commandActionVariantSchema(actionType string, requiredFields []string, fields Schema) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{actionType}},
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	required := []string{"type"}
+	required = append(required, requiredFields...)
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+}
+
+func webSearchActionSchema() Schema {
+	return Schema{"oneOf": []any{
+		webSearchActionVariantSchema("search", []string{"query", "queries"}, Schema{
+			"query": nullableStringSchema(),
+			"queries": Schema{"oneOf": []any{
+				Schema{"type": "array", "items": Schema{"type": "string"}},
+				Schema{"type": "null"},
+			}},
+		}),
+		webSearchActionVariantSchema("openPage", []string{"url"}, Schema{
+			"url": nullableStringSchema(),
+		}),
+		webSearchActionVariantSchema("findInPage", []string{"url", "pattern"}, Schema{
+			"url":     nullableStringSchema(),
+			"pattern": nullableStringSchema(),
+		}),
+		webSearchActionVariantSchema("other", nil, nil),
+	}}
+}
+
+func webSearchActionVariantSchema(actionType string, requiredFields []string, fields Schema) Schema {
 	properties := Schema{
 		"type": Schema{"type": "string", "enum": []any{actionType}},
 	}

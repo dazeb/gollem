@@ -277,6 +277,16 @@ and canonical output includes explicit nulls. This definition is not bound into
 Gollem's legacy MCP item, projected from deprecated `mcpAppResourceUri`, or
 treated as evidence that connector metadata exists on current runtime calls.
 
+The exact public `WebSearchAction` union is exported independently with strict
+`search`, `openPage`, `findInPage`, and `other` variants. The search query and
+query-list, open-page URL, and find-in-page URL/pattern follow the generated v2
+TypeScript contract: each variant field is required nullable and canonical
+output includes explicit nulls. This deliberately resolves the public JSON
+Schema's looser `Option`-derived required list in favor of the generated client
+contract. It does not alias the distinct snake-case
+`ResponsesApiWebSearchAction`, add a search provider, bind a public thread item,
+or change current runtime events.
+
 ## Generation
 
 Run:
