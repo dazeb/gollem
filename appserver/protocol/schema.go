@@ -91,6 +91,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ByteRange", Type: reflect.TypeFor[ByteRange]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
+		{Name: "CommandAction", Type: reflect.TypeFor[CommandAction]()},
 		{Name: "CommandExecOutputDeltaNotification", Type: reflect.TypeFor[CommandExecOutputDeltaNotification]()},
 		{Name: "CommandExecOutputStream", Type: reflect.TypeFor[CommandExecOutputStream]()},
 		{Name: "CommandExecResizeParams", Type: reflect.TypeFor[CommandExecResizeParams]()},
@@ -340,6 +341,7 @@ func wireSchemaDefinitions() Schema {
 		string(CommandExecOutputStdout), string(CommandExecOutputStderr),
 	)
 	schemas["CommandExecutionApprovalDecision"] = commandExecutionApprovalDecisionSchema()
+	schemas["CommandAction"] = commandActionSchema()
 	schemas["AbsolutePathBuf"] = Schema{
 		"type":        "string",
 		"description": "An absolute, lexically normalized local path.",
@@ -491,6 +493,45 @@ func wireSchemaDefinitions() Schema {
 		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
+}
+
+func commandActionSchema() Schema {
+	return Schema{"oneOf": []any{
+		commandActionVariantSchema("read", []string{"command", "name", "path"}, Schema{
+			"command": Schema{"type": "string"},
+			"name":    Schema{"type": "string"},
+			"path":    Schema{"$ref": "#/$defs/AbsolutePathBuf"},
+		}),
+		commandActionVariantSchema("listFiles", []string{"command", "path"}, Schema{
+			"command": Schema{"type": "string"},
+			"path":    nullableStringSchema(),
+		}),
+		commandActionVariantSchema("search", []string{"command", "query", "path"}, Schema{
+			"command": Schema{"type": "string"},
+			"query":   nullableStringSchema(),
+			"path":    nullableStringSchema(),
+		}),
+		commandActionVariantSchema("unknown", []string{"command"}, Schema{
+			"command": Schema{"type": "string"},
+		}),
+	}}
+}
+
+func commandActionVariantSchema(actionType string, requiredFields []string, fields Schema) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{actionType}},
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	required := []string{"type"}
+	required = append(required, requiredFields...)
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
 }
 
 func userInputSchema() Schema {

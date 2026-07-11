@@ -244,7 +244,7 @@ asynchronously and returns a process snapshot, while the public contract
 requires argv, PTY/sandbox/stream/cap/timeout controls and a deferred buffered
 result after process exit.
 
-## Exported Thread-Item Message Prerequisites
+## Exported Thread-Item Prerequisites
 
 The schema exports the exact public `ByteRange`, `TextElement`, `ImageDetail`,
 `UserInput`, `MessagePhase`, `MemoryCitationEntry`, `MemoryCitation`, and
@@ -261,6 +261,14 @@ These definitions are prerequisites only. They do not alias Gollem's durable
 runtime emits message, memory-citation, or hook-prompt items. Those bindings
 remain separate work after the full item family and its runtime data paths are
 implemented.
+
+The exact public `CommandAction` union is also exported independently. Its
+`read` path reuses the absolute normalized `AbsolutePathBuf` contract, while
+`listFiles.path`, `search.query`, and `search.path` are required nullable
+unrestricted strings. The four read/listFiles/search/unknown variants reject
+crossed and unknown fields. Exporting this parsed-command value does not parse
+live commands, change `CommandExecutionSource`, bind it into Gollem's legacy
+command item, or claim that the runtime emits public command actions.
 
 ## Generation
 
