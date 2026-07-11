@@ -6033,6 +6033,758 @@
       ],
       "type": "object"
     },
+    "ThreadItem": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "clientId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "content": {
+              "items": {
+                "$ref": "#/$defs/UserInput"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "userMessage"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "clientId",
+            "content"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "fragments": {
+              "items": {
+                "$ref": "#/$defs/HookPromptFragment"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "hookPrompt"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "fragments"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "memoryCitation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MemoryCitation"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MessagePhase"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "agentMessage"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "text",
+            "phase",
+            "memoryCitation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "plan"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "summary": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "reasoning"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "summary",
+            "content"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "aggregatedOutput": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "command": {
+              "type": "string"
+            },
+            "commandActions": {
+              "items": {
+                "$ref": "#/$defs/CommandAction"
+              },
+              "type": "array"
+            },
+            "cwd": {
+              "$ref": "#/$defs/LegacyAppPathString"
+            },
+            "durationMs": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "exitCode": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "processId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "source": {
+              "$ref": "#/$defs/CommandExecutionSource"
+            },
+            "status": {
+              "$ref": "#/$defs/CommandExecutionStatus"
+            },
+            "type": {
+              "enum": [
+                "commandExecution"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "command",
+            "cwd",
+            "processId",
+            "source",
+            "status",
+            "commandActions",
+            "aggregatedOutput",
+            "exitCode",
+            "durationMs"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "changes": {
+              "items": {
+                "$ref": "#/$defs/FileUpdateChange"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "status": {
+              "$ref": "#/$defs/PatchApplyStatus"
+            },
+            "type": {
+              "enum": [
+                "fileChange"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "changes",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "appContext": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/McpToolCallAppContext"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "arguments": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "durationMs": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/McpToolCallError"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "mcpAppResourceUri": {
+              "type": "string"
+            },
+            "pluginId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/McpToolCallResult"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "server": {
+              "type": "string"
+            },
+            "status": {
+              "$ref": "#/$defs/McpToolCallStatus"
+            },
+            "tool": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "mcpToolCall"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "server",
+            "tool",
+            "status",
+            "arguments",
+            "appContext",
+            "pluginId",
+            "result",
+            "error",
+            "durationMs"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "arguments": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "contentItems": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "durationMs": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "namespace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "success": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tool": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "dynamicToolCall"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "namespace",
+            "tool",
+            "arguments",
+            "status",
+            "contentItems",
+            "success",
+            "durationMs"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "agentsStates": {
+              "additionalProperties": {
+                "$ref": "#/$defs/CollabAgentState"
+              },
+              "type": "object",
+              "x-gollem-typescript-optional-map": true
+            },
+            "id": {
+              "type": "string"
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "prompt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reasoningEffort": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReasoningEffort"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "receiverThreadIds": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "senderThreadId": {
+              "type": "string"
+            },
+            "status": {
+              "$ref": "#/$defs/CollabAgentToolCallStatus"
+            },
+            "tool": {
+              "$ref": "#/$defs/CollabAgentTool"
+            },
+            "type": {
+              "enum": [
+                "collabAgentToolCall"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "tool",
+            "status",
+            "senderThreadId",
+            "receiverThreadIds",
+            "prompt",
+            "model",
+            "reasoningEffort",
+            "agentsStates"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "agentPath": {
+              "type": "string"
+            },
+            "agentThreadId": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/SubAgentActivityKind"
+            },
+            "type": {
+              "enum": [
+                "subAgentActivity"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "kind",
+            "agentThreadId",
+            "agentPath"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/WebSearchAction"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "webSearch"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "query",
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "path": {
+              "$ref": "#/$defs/LegacyAppPathString"
+            },
+            "type": {
+              "enum": [
+                "imageView"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "durationMs": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "sleep"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "durationMs"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "result": {
+              "type": "string"
+            },
+            "revisedPrompt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "savedPath": {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            "status": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "imageGeneration"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "status",
+            "revisedPrompt",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "review": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "enteredReviewMode"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "review"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "review": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "exitedReviewMode"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "review"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "contextCompaction"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ThreadLifecycleStatus": {
       "enum": [
         "active",

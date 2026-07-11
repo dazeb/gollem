@@ -281,6 +281,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadSetNameResponse", Type: reflect.TypeFor[ThreadSetNameResponse]()},
 		{Name: "ThreadSortKey", Type: reflect.TypeFor[ThreadSortKey]()},
 		{Name: "ThreadSourceKind", Type: reflect.TypeFor[ThreadSourceKind]()},
+		{Name: "ThreadItem", Type: reflect.TypeFor[ThreadItem]()},
 		{Name: "ThreadTokenUsageUpdatedNotificationParams", Type: reflect.TypeFor[ThreadTokenUsageUpdatedNotificationParams]()},
 		{Name: "ThreadUnarchiveParams", Type: reflect.TypeFor[ThreadUnarchiveParams]()},
 		{Name: "ThreadUnarchiveResponse", Type: reflect.TypeFor[ThreadUnarchiveResponse]()},
@@ -378,6 +379,7 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["LocalShellAction"] = localShellActionSchema()
 	schemas["ResponseItem"] = responseItemSchema()
+	schemas["ThreadItem"] = threadItemSchema()
 	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
@@ -797,6 +799,188 @@ func responseItemSchema() Schema {
 		}, true),
 		responseItemVariantSchema("other", nil, nil, false),
 	}}
+}
+
+func threadItemSchema() Schema {
+	return Schema{"oneOf": []any{
+		threadItemVariantSchema("userMessage", []string{"id", "clientId", "content"}, Schema{
+			"id":       Schema{"type": "string"},
+			"clientId": nullableStringSchema(),
+			"content":  schemaArrayRef("UserInput"),
+		}),
+		threadItemVariantSchema("hookPrompt", []string{"id", "fragments"}, Schema{
+			"id":        Schema{"type": "string"},
+			"fragments": schemaArrayRef("HookPromptFragment"),
+		}),
+		threadItemVariantSchema("agentMessage", []string{"id", "text", "phase", "memoryCitation"}, Schema{
+			"id":             Schema{"type": "string"},
+			"text":           Schema{"type": "string"},
+			"phase":          nullableSchemaRef("MessagePhase"),
+			"memoryCitation": nullableSchemaRef("MemoryCitation"),
+		}),
+		threadItemVariantSchema("plan", []string{"id", "text"}, Schema{
+			"id":   Schema{"type": "string"},
+			"text": Schema{"type": "string"},
+		}),
+		threadItemVariantSchema("reasoning", []string{"id", "summary", "content"}, Schema{
+			"id":      Schema{"type": "string"},
+			"summary": Schema{"type": "array", "items": Schema{"type": "string"}},
+			"content": Schema{"type": "array", "items": Schema{"type": "string"}},
+		}),
+		threadItemVariantSchema(
+			"commandExecution",
+			[]string{
+				"id", "command", "cwd", "processId", "source", "status", "commandActions",
+				"aggregatedOutput", "exitCode", "durationMs",
+			},
+			Schema{
+				"id":               Schema{"type": "string"},
+				"command":          Schema{"type": "string"},
+				"cwd":              Schema{"$ref": "#/$defs/LegacyAppPathString"},
+				"processId":        nullableStringSchema(),
+				"source":           Schema{"$ref": "#/$defs/CommandExecutionSource"},
+				"status":           Schema{"$ref": "#/$defs/CommandExecutionStatus"},
+				"commandActions":   schemaArrayRef("CommandAction"),
+				"aggregatedOutput": nullableStringSchema(),
+				"exitCode":         nullableIntegerSchema(),
+				"durationMs":       nullableIntegerSchema(),
+			},
+		),
+		threadItemVariantSchema("fileChange", []string{"id", "changes", "status"}, Schema{
+			"id":      Schema{"type": "string"},
+			"changes": schemaArrayRef("FileUpdateChange"),
+			"status":  Schema{"$ref": "#/$defs/PatchApplyStatus"},
+		}),
+		threadItemVariantSchema(
+			"mcpToolCall",
+			[]string{
+				"id", "server", "tool", "status", "arguments", "appContext", "pluginId",
+				"result", "error", "durationMs",
+			},
+			Schema{
+				"id":                Schema{"type": "string"},
+				"server":            Schema{"type": "string"},
+				"tool":              Schema{"type": "string"},
+				"status":            Schema{"$ref": "#/$defs/McpToolCallStatus"},
+				"arguments":         Schema{"$ref": "#/$defs/JsonValue"},
+				"appContext":        nullableSchemaRef("McpToolCallAppContext"),
+				"mcpAppResourceUri": Schema{"type": "string"},
+				"pluginId":          nullableStringSchema(),
+				"result":            nullableSchemaRef("McpToolCallResult"),
+				"error":             nullableSchemaRef("McpToolCallError"),
+				"durationMs":        nullableIntegerSchema(),
+			},
+		),
+		threadItemVariantSchema(
+			"dynamicToolCall",
+			[]string{"id", "namespace", "tool", "arguments", "status", "contentItems", "success", "durationMs"},
+			Schema{
+				"id":           Schema{"type": "string"},
+				"namespace":    nullableStringSchema(),
+				"tool":         Schema{"type": "string"},
+				"arguments":    Schema{"$ref": "#/$defs/JsonValue"},
+				"status":       Schema{"$ref": "#/$defs/DynamicToolCallStatus"},
+				"contentItems": nullableArrayRef("DynamicToolCallOutputContentItem"),
+				"success":      nullableBooleanSchema(),
+				"durationMs":   nullableIntegerSchema(),
+			},
+		),
+		threadItemVariantSchema(
+			"collabAgentToolCall",
+			[]string{
+				"id", "tool", "status", "senderThreadId", "receiverThreadIds", "prompt", "model",
+				"reasoningEffort", "agentsStates",
+			},
+			Schema{
+				"id":                Schema{"type": "string"},
+				"tool":              Schema{"$ref": "#/$defs/CollabAgentTool"},
+				"status":            Schema{"$ref": "#/$defs/CollabAgentToolCallStatus"},
+				"senderThreadId":    Schema{"type": "string"},
+				"receiverThreadIds": Schema{"type": "array", "items": Schema{"type": "string"}},
+				"prompt":            nullableStringSchema(),
+				"model":             nullableStringSchema(),
+				"reasoningEffort":   nullableSchemaRef("ReasoningEffort"),
+				"agentsStates": Schema{
+					"type": "object", "additionalProperties": Schema{"$ref": "#/$defs/CollabAgentState"},
+					"x-gollem-typescript-optional-map": true,
+				},
+			},
+		),
+		threadItemVariantSchema("subAgentActivity", []string{"id", "kind", "agentThreadId", "agentPath"}, Schema{
+			"id":            Schema{"type": "string"},
+			"kind":          Schema{"$ref": "#/$defs/SubAgentActivityKind"},
+			"agentThreadId": Schema{"type": "string"},
+			"agentPath":     Schema{"type": "string"},
+		}),
+		threadItemVariantSchema("webSearch", []string{"id", "query", "action"}, Schema{
+			"id":     Schema{"type": "string"},
+			"query":  Schema{"type": "string"},
+			"action": nullableSchemaRef("WebSearchAction"),
+		}),
+		threadItemVariantSchema("imageView", []string{"id", "path"}, Schema{
+			"id":   Schema{"type": "string"},
+			"path": Schema{"$ref": "#/$defs/LegacyAppPathString"},
+		}),
+		threadItemVariantSchema("sleep", []string{"id", "durationMs"}, Schema{
+			"id":         Schema{"type": "string"},
+			"durationMs": Schema{"type": "integer", "minimum": 0},
+		}),
+		threadItemVariantSchema("imageGeneration", []string{"id", "status", "revisedPrompt", "result"}, Schema{
+			"id":            Schema{"type": "string"},
+			"status":        Schema{"type": "string"},
+			"revisedPrompt": nullableStringSchema(),
+			"result":        Schema{"type": "string"},
+			"savedPath":     Schema{"$ref": "#/$defs/AbsolutePathBuf"},
+		}),
+		threadItemVariantSchema("enteredReviewMode", []string{"id", "review"}, Schema{
+			"id":     Schema{"type": "string"},
+			"review": Schema{"type": "string"},
+		}),
+		threadItemVariantSchema("exitedReviewMode", []string{"id", "review"}, Schema{
+			"id":     Schema{"type": "string"},
+			"review": Schema{"type": "string"},
+		}),
+		threadItemVariantSchema("contextCompaction", []string{"id"}, Schema{
+			"id": Schema{"type": "string"},
+		}),
+	}}
+}
+
+func threadItemVariantSchema(itemType string, requiredFields []string, fields Schema) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{itemType}},
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	required := []string{"type"}
+	required = append(required, requiredFields...)
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+}
+
+func schemaArrayRef(name string) Schema {
+	return Schema{"type": "array", "items": Schema{"$ref": "#/$defs/" + name}}
+}
+
+func nullableArrayRef(name string) Schema {
+	return Schema{"anyOf": []any{schemaArrayRef(name), Schema{"type": "null"}}}
+}
+
+func nullableSchemaRef(name string) Schema {
+	return Schema{"anyOf": []any{Schema{"$ref": "#/$defs/" + name}, Schema{"type": "null"}}}
+}
+
+func nullableIntegerSchema() Schema {
+	return Schema{"anyOf": []any{Schema{"type": "integer"}, Schema{"type": "null"}}}
+}
+
+func nullableBooleanSchema() Schema {
+	return Schema{"anyOf": []any{Schema{"type": "boolean"}, Schema{"type": "null"}}}
 }
 
 func responseItemVariantSchema(itemType string, requiredFields []string, fields Schema, common bool) Schema {
