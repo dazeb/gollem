@@ -1507,6 +1507,21 @@ export type Response = {
   "result"?: unknown;
 };
 
+export type ResponsesApiWebSearchAction = {
+  "queries"?: Array<string>;
+  "query"?: string;
+  "type": "search";
+} | {
+  "type": "open_page";
+  "url"?: string;
+} | {
+  "pattern"?: string;
+  "type": "find_in_page";
+  "url"?: string;
+} | {
+  "type": "other";
+};
+
 export type ServerCapabilities = {
   "experimental"?: Array<string> | null;
   "protocolSchema": boolean;

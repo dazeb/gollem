@@ -305,6 +305,14 @@ canonical output preserves public snake-case names. These definitions do not
 export full `ResponseItem`, bind raw-response notifications, map provider
 payloads, or change live agent/reasoning deltas.
 
+The distinct `ResponsesApiWebSearchAction` union is also exported independently
+with snake-case search/open-page/find-in-page/other discriminators. Optional
+query, query-list, URL, and pattern fields are non-null when present and omit
+canonically when absent, following generated TypeScript rather than the looser
+`Option`-derived JSON Schema nullability. This does not alias the camel-case
+app-server action, add a provider/tool, export full `ResponseItem`, or bind live
+web-search events.
+
 ## Generation
 
 Run:

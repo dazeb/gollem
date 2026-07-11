@@ -4420,6 +4420,88 @@
       ],
       "type": "object"
     },
+    "ResponsesApiWebSearchAction": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "queries": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "query": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "search"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "open_page"
+              ],
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "pattern": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "find_in_page"
+              ],
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ServerCapabilities": {
       "additionalProperties": false,
       "properties": {

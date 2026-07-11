@@ -224,6 +224,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ReasoningEffort", Type: reflect.TypeFor[ReasoningEffort]()},
 		{Name: "ReasoningItemContent", Type: reflect.TypeFor[ReasoningItemContent]()},
 		{Name: "ReasoningItemReasoningSummary", Type: reflect.TypeFor[ReasoningItemReasoningSummary]()},
+		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
@@ -355,6 +356,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["AgentMessageInputContent"] = rawResponseContentSchema(agentMessageInputContentVariants)
 	schemas["ReasoningItemContent"] = rawResponseContentSchema(reasoningItemContentVariants)
 	schemas["ReasoningItemReasoningSummary"] = rawResponseContentSchema(reasoningItemSummaryVariants)
+	schemas["ResponsesApiWebSearchAction"] = responsesAPIWebSearchActionSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
 		string(ImageDetailAuto), string(ImageDetailLow), string(ImageDetailHigh), string(ImageDetailOriginal),
@@ -583,6 +585,40 @@ func rawResponseContentVariantSchema(variant rawResponseContentVariant) Schema {
 			variant.field: Schema{"type": "string"},
 		},
 		"required":             []string{"type", variant.field},
+		"additionalProperties": false,
+	}
+}
+
+func responsesAPIWebSearchActionSchema() Schema {
+	return Schema{"oneOf": []any{
+		responsesAPIWebSearchActionVariantSchema("search", Schema{
+			"query": Schema{"type": "string"},
+			"queries": Schema{
+				"type": "array", "items": Schema{"type": "string"},
+			},
+		}),
+		responsesAPIWebSearchActionVariantSchema("open_page", Schema{
+			"url": Schema{"type": "string"},
+		}),
+		responsesAPIWebSearchActionVariantSchema("find_in_page", Schema{
+			"url":     Schema{"type": "string"},
+			"pattern": Schema{"type": "string"},
+		}),
+		responsesAPIWebSearchActionVariantSchema("other", nil),
+	}}
+}
+
+func responsesAPIWebSearchActionVariantSchema(actionType string, fields Schema) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{actionType}},
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             []string{"type"},
 		"additionalProperties": false,
 	}
 }
