@@ -169,6 +169,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FsWriteFileResponse", Type: reflect.TypeFor[FsWriteFileResponse]()},
 		{Name: "FunctionCallOutputBody", Type: reflect.TypeFor[FunctionCallOutputBody]()},
 		{Name: "FunctionCallOutputContentItem", Type: reflect.TypeFor[FunctionCallOutputContentItem]()},
+		{Name: "GitInfo", Type: reflect.TypeFor[GitInfo]()},
 		{Name: "GrantedPermissionProfile", Type: reflect.TypeFor[GrantedPermissionProfile]()},
 		{Name: "HookPromptFragment", Type: reflect.TypeFor[HookPromptFragment]()},
 		{Name: "ImageDetail", Type: reflect.TypeFor[ImageDetail]()},
@@ -197,6 +198,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
 		{Name: "MemoryCitationEntry", Type: reflect.TypeFor[MemoryCitationEntry]()},
 		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},
+		{Name: "NonSteerableTurnKind", Type: reflect.TypeFor[NonSteerableTurnKind]()},
 		{Name: "McpElicitationArrayType", Type: reflect.TypeFor[McpElicitationArrayType]()},
 		{Name: "McpElicitationBooleanSchema", Type: reflect.TypeFor[McpElicitationBooleanSchema]()},
 		{Name: "McpElicitationBooleanType", Type: reflect.TypeFor[McpElicitationBooleanType]()},
@@ -244,6 +246,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
 		{Name: "SortDirection", Type: reflect.TypeFor[SortDirection]()},
 		{Name: "SubAgentActivityKind", Type: reflect.TypeFor[SubAgentActivityKind]()},
+		{Name: "ThreadActiveFlag", Type: reflect.TypeFor[ThreadActiveFlag]()},
 		{Name: "ThreadArchiveParams", Type: reflect.TypeFor[ThreadArchiveParams]()},
 		{Name: "ThreadArchiveResponse", Type: reflect.TypeFor[ThreadArchiveResponse]()},
 		{Name: "ThreadArchivedNotification", Type: reflect.TypeFor[ThreadArchivedNotification]()},
@@ -264,6 +267,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadGoalSetResponse", Type: reflect.TypeFor[ThreadGoalSetResponse]()},
 		{Name: "ThreadGoalStatus", Type: reflect.TypeFor[ThreadGoalStatus]()},
 		{Name: "ThreadGoalUpdatedNotification", Type: reflect.TypeFor[ThreadGoalUpdatedNotification]()},
+		{Name: "ThreadId", Type: reflect.TypeFor[ThreadId]()},
 		{Name: "ThreadLifecycleStatus", Type: reflect.TypeFor[ThreadLifecycleStatus]()},
 		{Name: "ThreadListCwdFilter", Type: reflect.TypeFor[ThreadListCwdFilter]()},
 		{Name: "ThreadListParams", Type: reflect.TypeFor[ThreadListParams]()},
@@ -283,6 +287,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadSetNameParams", Type: reflect.TypeFor[ThreadSetNameParams]()},
 		{Name: "ThreadSetNameResponse", Type: reflect.TypeFor[ThreadSetNameResponse]()},
 		{Name: "ThreadSortKey", Type: reflect.TypeFor[ThreadSortKey]()},
+		{Name: "ThreadSource", Type: reflect.TypeFor[ThreadSource]()},
 		{Name: "ThreadSourceKind", Type: reflect.TypeFor[ThreadSourceKind]()},
 		{Name: "ThreadItem", Type: reflect.TypeFor[ThreadItem]()},
 		{Name: "ThreadTokenUsageUpdatedNotificationParams", Type: reflect.TypeFor[ThreadTokenUsageUpdatedNotificationParams]()},
@@ -303,8 +308,10 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ToolRequestUserInputQuestion", Type: reflect.TypeFor[ToolRequestUserInputQuestion]()},
 		{Name: "ToolRequestUserInputResponse", Type: reflect.TypeFor[ToolRequestUserInputResponse]()},
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
+		{Name: "TurnItemsView", Type: reflect.TypeFor[TurnItemsView]()},
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
+		{Name: "TurnStatus", Type: reflect.TypeFor[TurnStatus]()},
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
 		{Name: "WebSearchAction", Type: reflect.TypeFor[WebSearchAction]()},
 		{Name: "WebSearchItem", Type: reflect.TypeFor[WebSearchItem]()},
@@ -554,6 +561,19 @@ func wireSchemaDefinitions() Schema {
 		string(ThreadSourceAppServer), string(ThreadSourceSubAgent), string(ThreadSourceSubAgentReview),
 		string(ThreadSourceSubAgentCompact), string(ThreadSourceSubAgentSpawn),
 		string(ThreadSourceSubAgentOther), string(ThreadSourceUnknown),
+	)
+	schemas["NonSteerableTurnKind"] = stringEnumSchema(
+		string(NonSteerableTurnKindReview), string(NonSteerableTurnKindCompact),
+	)
+	schemas["ThreadActiveFlag"] = stringEnumSchema(
+		string(ThreadActiveFlagWaitingOnApproval), string(ThreadActiveFlagWaitingOnUserInput),
+	)
+	schemas["TurnItemsView"] = stringEnumSchema(
+		string(TurnItemsViewNotLoaded), string(TurnItemsViewSummary), string(TurnItemsViewFull),
+	)
+	schemas["TurnStatus"] = stringEnumSchema(
+		string(TurnStatusCompleted), string(TurnStatusInterrupted), string(TurnStatusFailed),
+		string(TurnStatusInProgress),
 	)
 	schemas["ThreadUnsubscribeStatus"] = stringEnumSchema(
 		string(ThreadUnsubscribeNotLoaded), string(ThreadUnsubscribeNotSubscribed),

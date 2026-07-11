@@ -1128,6 +1128,12 @@ export type FunctionCallOutputContentItem = {
   "type": "encrypted_content";
 };
 
+export type GitInfo = {
+  "branch": string | null;
+  "originUrl": string | null;
+  "sha": string | null;
+};
+
 export type GrantedPermissionProfile = {
   "fileSystem"?: AdditionalFileSystemPermissions;
   "network"?: AdditionalNetworkPermissions;
@@ -1488,6 +1494,8 @@ export type NetworkPolicyAmendment = {
 
 export type NetworkPolicyRuleAction = "allow" | "deny";
 
+export type NonSteerableTurnKind = "review" | "compact";
+
 export type Notification = {
   "method": "account/login/completed" | "account/rateLimits/updated" | "account/updated" | "app/list/updated" | "command/exec/outputDelta" | "configWarning" | "deprecationNotice" | "error" | "externalAgentConfig/import/completed" | "externalAgentConfig/import/progress" | "fs/changed" | "fuzzyFileSearch/sessionCompleted" | "fuzzyFileSearch/sessionUpdated" | "guardianWarning" | "hook/completed" | "hook/started" | "item/agentMessage/delta" | "item/autoApprovalReview/completed" | "item/autoApprovalReview/started" | "item/commandExecution/outputDelta" | "item/commandExecution/terminalInteraction" | "item/completed" | "item/fileChange/outputDelta" | "item/fileChange/patchUpdated" | "item/mcpToolCall/progress" | "item/plan/delta" | "item/reasoning/summaryPartAdded" | "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" | "item/started" | "mcpServer/oauthLogin/completed" | "mcpServer/startupStatus/updated" | "model/rerouted" | "model/safetyBuffering/updated" | "model/verification" | "process/exited" | "process/outputDelta" | "rawResponseItem/completed" | "remoteControl/status/changed" | "serverRequest/resolved" | "skills/changed" | "thread/archived" | "thread/closed" | "thread/compacted" | "thread/deleted" | "thread/goal/cleared" | "thread/goal/updated" | "thread/name/updated" | "thread/realtime/closed" | "thread/realtime/error" | "thread/realtime/itemAdded" | "thread/realtime/outputAudio/delta" | "thread/realtime/sdp" | "thread/realtime/started" | "thread/realtime/transcript/delta" | "thread/realtime/transcript/done" | "thread/settings/updated" | "thread/started" | "thread/status/changed" | "thread/tokenUsage/updated" | "thread/unarchived" | "turn/completed" | "turn/diff/updated" | "turn/moderationMetadata" | "turn/plan/updated" | "turn/started" | "warning" | "windows/worldWritableWarning" | "windowsSandbox/setupCompleted" | "cache/benchmark/completed" | "initialized";
   "params"?: unknown;
@@ -1728,6 +1736,8 @@ export type TextElement = {
   "placeholder": string | null;
 };
 
+export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
+
 export type ThreadArchiveParams = {
   "id"?: string;
   "threadId": string;
@@ -1855,6 +1865,8 @@ export type ThreadGoalUpdatedNotification = {
   "threadId": string;
   "turnId": string | null;
 };
+
+export type ThreadId = string;
 
 export type ThreadItem = {
   "clientId": string | null;
@@ -2114,6 +2126,8 @@ export type ThreadSetNameResponse = {
 
 export type ThreadSortKey = "created_at" | "updated_at" | "recency_at";
 
+export type ThreadSource = string;
+
 export type ThreadSourceKind = "cli" | "vscode" | "exec" | "appServer" | "subAgent" | "subAgentReview" | "subAgentCompact" | "subAgentThreadSpawn" | "subAgentOther" | "unknown";
 
 export type ThreadTokenUsage = {
@@ -2233,6 +2247,8 @@ export type TurnDiffUpdatedNotification = {
 
 export type TurnDiffUpdatedNotificationParams = TurnDiffUpdatedNotification;
 
+export type TurnItemsView = "notLoaded" | "summary" | "full";
+
 export type TurnLifecycleStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
 
 export type TurnRecord = {
@@ -2250,6 +2266,8 @@ export type TurnRecord = {
   "updatedAt": string;
   "usage"?: Record<string, unknown> | null;
 };
+
+export type TurnStatus = "completed" | "interrupted" | "failed" | "inProgress";
 
 export type UserInput = {
   "text": string;
