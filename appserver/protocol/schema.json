@@ -1130,11 +1130,7 @@
           "type": "string"
         },
         "status": {
-          "enum": [
-            "inProgress",
-            "completed"
-          ],
-          "type": "string"
+          "$ref": "#/$defs/PatchApplyStatus"
         },
         "type": {
           "enum": [
@@ -1762,32 +1758,120 @@
       ],
       "type": "object"
     },
-    "PatchChangeKind": {
-      "additionalProperties": false,
-      "properties": {
-        "movePath": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "type": {
-          "enum": [
-            "add",
-            "delete",
-            "update"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
+    "PatchApplyStatus": {
+      "enum": [
+        "inProgress",
+        "completed",
+        "failed",
+        "declined"
       ],
-      "type": "object"
+      "type": "string"
+    },
+    "PatchChangeKind": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "add"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "delete"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "movePath": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "move_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "enum": [
+                "update"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "move_path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "movePath": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "move_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "enum": [
+                "update"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "movePath"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "PermissionsApprovalRequestParams": {
       "additionalProperties": false,

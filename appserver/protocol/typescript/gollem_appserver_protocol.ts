@@ -775,7 +775,7 @@ export type FileChangeItem = {
   "changes": Array<FileUpdateChange> | null;
   "evidence"?: Array<FileChangeArtifactEvidence> | null;
   "id"?: string;
-  "status": "inProgress" | "completed";
+  "status": PatchApplyStatus;
   "type": "fileChange";
 };
 
@@ -912,9 +912,20 @@ export type Notification = {
   "params"?: unknown;
 };
 
+export type PatchApplyStatus = "inProgress" | "completed" | "failed" | "declined";
+
 export type PatchChangeKind = {
+  "type": "add";
+} | {
+  "type": "delete";
+} | {
   "movePath"?: string | null;
-  "type": "add" | "delete" | "update";
+  "move_path": string | null;
+  "type": "update";
+} | {
+  "movePath": string | null;
+  "move_path"?: string | null;
+  "type": "update";
 };
 
 export type PermissionsApprovalRequestParams = {

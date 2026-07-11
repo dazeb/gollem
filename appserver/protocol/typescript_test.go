@@ -33,7 +33,7 @@ func TestTypeScriptBindingGoldenIsDeterministic(t *testing.T) {
 }
 
 func TestTypeScriptFixtureGoldenIsDeterministic(t *testing.T) {
-	for _, name := range []string{"runtime_wire_v1", "initialize_wire_v1", "thread_discovery_wire_v1", "thread_control_wire_v1", "thread_goal_wire_v1", "thread_metadata_wire_v1", "thread_lifecycle_notification_wire_v1", "command_exec_control_wire_v1"} {
+	for _, name := range []string{"runtime_wire_v1", "initialize_wire_v1", "thread_discovery_wire_v1", "thread_control_wire_v1", "thread_goal_wire_v1", "thread_metadata_wire_v1", "thread_lifecycle_notification_wire_v1", "command_exec_control_wire_v1", "file_change_item_wire_v1"} {
 		t.Run(name, func(t *testing.T) {
 			fixture, err := os.ReadFile(filepath.Join("testdata", name+".json"))
 			if err != nil {

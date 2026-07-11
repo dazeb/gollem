@@ -1,0 +1,127 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "file-change-add-started",
+      "surface": "server-notification",
+      "method": "item/started",
+      "paramsType": "FileChangeItemStartedNotificationParams",
+      "message": {
+        "method": "item/started",
+        "params": {
+          "item": {
+            "type": "fileChange",
+            "id": "item-add",
+            "changes": [
+              {"path": "added.txt", "kind": {"type": "add"}, "diff": "+added\n"}
+            ],
+            "status": "inProgress"
+          },
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "startedAtMs": 1783715400000
+        }
+      }
+    },
+    {
+      "name": "file-change-delete-completed",
+      "surface": "server-notification",
+      "method": "item/completed",
+      "paramsType": "FileChangeItemCompletedNotificationParams",
+      "message": {
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "type": "fileChange",
+            "id": "item-delete",
+            "changes": [
+              {"path": "deleted.txt", "kind": {"type": "delete"}, "diff": "-deleted\n"}
+            ],
+            "status": "completed"
+          },
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "completedAtMs": 1783715400100
+        }
+      }
+    },
+    {
+      "name": "file-change-public-update-failed",
+      "surface": "server-notification",
+      "method": "item/completed",
+      "paramsType": "FileChangeItemCompletedNotificationParams",
+      "message": {
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "type": "fileChange",
+            "id": "item-update-public",
+            "changes": [
+              {
+                "path": "updated.txt",
+                "kind": {"type": "update", "move_path": null},
+                "diff": "@@ -1 +1 @@\n-old\n+new\n"
+              }
+            ],
+            "status": "failed"
+          },
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "completedAtMs": 1783715400200
+        }
+      }
+    },
+    {
+      "name": "file-change-legacy-update-declined",
+      "surface": "server-notification",
+      "method": "item/completed",
+      "paramsType": "FileChangeItemCompletedNotificationParams",
+      "message": {
+        "method": "item/completed",
+        "params": {
+          "item": {
+            "type": "fileChange",
+            "id": "item-update-legacy",
+            "changes": [
+              {
+                "path": "old-name.txt",
+                "kind": {"type": "update", "movePath": "new-name.txt"},
+                "diff": ""
+              }
+            ],
+            "status": "declined"
+          },
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "completedAtMs": 1783715400300
+        }
+      }
+    },
+    {
+      "name": "file-change-patch-updated-public-precedence",
+      "surface": "server-notification",
+      "method": "item/fileChange/patchUpdated",
+      "paramsType": "FileChangePatchUpdatedNotificationParams",
+      "message": {
+        "method": "item/fileChange/patchUpdated",
+        "params": {
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "itemId": "item-update-precedence",
+          "changes": [
+            {
+              "path": "source.txt",
+              "kind": {
+                "type": "update",
+                "move_path": "public-name.txt",
+                "movePath": "legacy-name.txt"
+              },
+              "diff": ""
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -89,25 +89,6 @@ func TestRuntimeItemTypesPreserveCurrentWireShapes(t *testing.T) {
 	}
 }
 
-func TestPatchChangeKindUpdateRoundTripsMovePath(t *testing.T) {
-	movePath := "renamed.txt"
-	original := PatchChangeKind{Type: "update", MovePath: &movePath}
-	encoded, err := json.Marshal(original)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if string(encoded) != `{"movePath":"renamed.txt","type":"update"}` && string(encoded) != `{"type":"update","movePath":"renamed.txt"}` {
-		t.Fatalf("encoded = %s", encoded)
-	}
-	var decoded PatchChangeKind
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if decoded.Type != original.Type || decoded.MovePath == nil || *decoded.MovePath != movePath {
-		t.Fatalf("decoded = %#v", decoded)
-	}
-}
-
 func TestApprovalAndDaemonTypesArePublicWireContracts(t *testing.T) {
 	request := FileChangeApprovalRequestParams{
 		ApprovalRequestBase: ApprovalRequestBase{

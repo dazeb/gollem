@@ -136,6 +136,21 @@ runtime turn. The `approval/respond` extension remains available for legacy
 clients. Command-execution and permissions direct responses remain unbound
 until their policy-amendment and granted-profile dependencies are implemented.
 
+## Version 1 File-Change Item Contracts
+
+`FileUpdateChange`, `PatchChangeKind`, and `PatchApplyStatus` now use the public
+file-change item contracts. Add and delete kinds carry only their discriminator.
+Update kinds require nullable snake-case `move_path`; Gollem also accepts the
+previous camel-case `movePath` form and emits both fields so existing v1
+consumers continue to decode updates. When both inputs are present, the public
+field wins even when null or empty. Unknown kinds, fields, and update payloads
+without either move-path field fail closed.
+
+`FileChangeItem.status` uses the exact `inProgress`, `completed`, `failed`, and
+`declined` enum. The current artifact-change tracker emits its proven
+`inProgress` then `completed` lifecycle; exporting the remaining public values
+does not invent failure or denial items where no live file-change event exists.
+
 ## Version 1 Command Exec Controls
 
 `command/exec/write`, `command/exec/resize`, and `command/exec/terminate` use
@@ -172,11 +187,13 @@ binding metadata. It also rewrites the TypeScript compile fixtures at
 `typescript/testdata/thread_goal_wire_v1.ts`, plus
 `typescript/testdata/thread_metadata_wire_v1.ts` and
 `typescript/testdata/thread_lifecycle_notification_wire_v1.ts`, plus
-`typescript/testdata/command_exec_control_wire_v1.ts`. Tests compare generated
+`typescript/testdata/command_exec_control_wire_v1.ts` and
+`typescript/testdata/file_change_item_wire_v1.ts`. File-change item variants
+also have a strict negative compile contract. Tests compare generated
 bytes with the checked-in files, verify every type binding references a known
 method and definition, and enforce a compatibility floor for runtime items,
 daemon status, initialization, thread discovery, thread controls, thread goals,
-metadata, lifecycle notifications, and command-exec controls.
+metadata, lifecycle notifications, command-exec controls, and file changes.
 
 `testdata/runtime_wire_v1.json` contains versioned request, response, and
 notification examples for generated-client compatibility tests.
@@ -194,9 +211,10 @@ public rename notification.
 delete, and unarchive notifications.
 `testdata/command_exec_control_wire_v1.json` covers public and legacy write,
 resize, and terminate controls, empty-compatible responses, and streamed
-output. Consumers can use
-`x-gollem-type-bindings` to select method parameter/result definitions and
-`x-gollem-item-payload-bindings` to decode `TimelineItem.payload` by `kind`.
+output. `testdata/file_change_item_wire_v1.json` covers add/delete, public and
+legacy updates, public-field precedence, and all four patch statuses. Consumers
+can use `x-gollem-type-bindings` to select method parameter/result definitions
+and `x-gollem-item-payload-bindings` to decode `TimelineItem.payload` by `kind`.
 
 When TypeScript is installed, verify the generated binding and v1 fixtures with:
 

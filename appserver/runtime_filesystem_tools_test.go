@@ -323,6 +323,10 @@ func TestServerRuntimePersistsUpdateAndDeleteFileChanges(t *testing.T) {
 		!strings.Contains(updated.Payload.Changes[0].Diff, "+after") {
 		t.Fatalf("updated file change = %#v", updated.Payload.Changes[0])
 	}
+	updatedPayload := string(updated.Item.Payload)
+	if !strings.Contains(updatedPayload, `"move_path":null`) || !strings.Contains(updatedPayload, `"movePath":null`) {
+		t.Fatalf("stored update payload lacks public/legacy move paths: %s", updatedPayload)
+	}
 	deleted := findRuntimeFileChangeItem(t, items, "delete.txt")
 	if deleted.Payload.Changes[0].Kind.Type != runtimePatchChangeDelete || !strings.Contains(deleted.Payload.Changes[0].Diff, "-remove me") {
 		t.Fatalf("deleted file change = %#v", deleted.Payload.Changes[0])
@@ -335,7 +339,12 @@ func TestServerRuntimePersistsUpdateAndDeleteFileChanges(t *testing.T) {
 		t.Fatalf("updated file = %q, error %v", data, err)
 	}
 	var finalDiff string
+	var sawCanonicalUpdatePatch bool
 	for _, event := range events {
+		if event.Method == "item/fileChange/patchUpdated" && strings.Contains(string(event.Params), `"path":"update.txt"`) {
+			params := string(event.Params)
+			sawCanonicalUpdatePatch = strings.Contains(params, `"move_path":null`) && strings.Contains(params, `"movePath":null`)
+		}
 		if event.Method != "turn/diff/updated" {
 			continue
 		}
@@ -347,6 +356,9 @@ func TestServerRuntimePersistsUpdateAndDeleteFileChanges(t *testing.T) {
 	}
 	if !strings.Contains(finalDiff, "update.txt") || !strings.Contains(finalDiff, "delete.txt") {
 		t.Fatalf("cumulative turn diff = %q", finalDiff)
+	}
+	if !sawCanonicalUpdatePatch {
+		t.Fatal("update patch notification lacks public and legacy move-path fields")
 	}
 }
 
