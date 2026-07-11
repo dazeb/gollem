@@ -59,28 +59,6 @@ const (
 	threadMemoryModeSettingKey = "memoryMode"
 )
 
-type threadMetadataUpdateParams struct {
-	ID       string         `json:"id,omitempty"`
-	ThreadID string         `json:"threadId,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-	Replace  bool           `json:"replace,omitempty"`
-}
-
-func (p threadMetadataUpdateParams) threadID() string {
-	return firstNonEmpty(p.ThreadID, p.ID)
-}
-
-type threadMemoryModeSetParams struct {
-	ID         string `json:"id,omitempty"`
-	ThreadID   string `json:"threadId,omitempty"`
-	Mode       string `json:"mode,omitempty"`
-	MemoryMode string `json:"memoryMode,omitempty"`
-}
-
-func (p threadMemoryModeSetParams) threadID() string {
-	return firstNonEmpty(p.ThreadID, p.ID)
-}
-
 type turnStartParams struct {
 	ID       string         `json:"id,omitempty"`
 	ThreadID string         `json:"threadId,omitempty"`

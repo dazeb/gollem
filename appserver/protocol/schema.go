@@ -152,6 +152,13 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadListResponse", Type: reflect.TypeFor[ThreadListResponse]()},
 		{Name: "ThreadLoadedListParams", Type: reflect.TypeFor[ThreadLoadedListParams]()},
 		{Name: "ThreadLoadedListResponse", Type: reflect.TypeFor[ThreadLoadedListResponse]()},
+		{Name: "ThreadMemoryMode", Type: reflect.TypeFor[ThreadMemoryMode]()},
+		{Name: "ThreadMemoryModeSetParams", Type: reflect.TypeFor[ThreadMemoryModeSetParams]()},
+		{Name: "ThreadMemoryModeSetResponse", Type: reflect.TypeFor[ThreadMemoryModeSetResponse]()},
+		{Name: "ThreadMetadataGitInfoUpdateParams", Type: reflect.TypeFor[ThreadMetadataGitInfoUpdateParams]()},
+		{Name: "ThreadMetadataUpdateParams", Type: reflect.TypeFor[ThreadMetadataUpdateParams]()},
+		{Name: "ThreadMetadataUpdateResponse", Type: reflect.TypeFor[ThreadMetadataUpdateResponse]()},
+		{Name: "ThreadNameUpdatedNotification", Type: reflect.TypeFor[ThreadNameUpdatedNotification]()},
 		{Name: "ThreadReadParams", Type: reflect.TypeFor[ThreadReadParams]()},
 		{Name: "ThreadReadResponse", Type: reflect.TypeFor[ThreadReadResponse]()},
 		{Name: "ThreadRecord", Type: reflect.TypeFor[ThreadRecord]()},
@@ -203,9 +210,22 @@ func wireSchemaDefinitions() Schema {
 		string(ThreadGoalActive), string(ThreadGoalPaused), string(ThreadGoalBlocked),
 		string(ThreadGoalUsageLimited), string(ThreadGoalBudgetLimited), string(ThreadGoalComplete),
 	)
+	schemas["ThreadMemoryMode"] = stringEnumSchema(
+		string(ThreadMemoryModeEnabled), string(ThreadMemoryModeDisabled),
+	)
 	for _, name := range []string{"ThreadGoalSetParams", "ThreadGoalGetParams", "ThreadGoalClearParams"} {
 		schemas[name] = schemaWithRequiredIDAlternative(schemas[name].(Schema))
 	}
+	schemas["ThreadMetadataUpdateParams"] = schemaWithRequiredIDAlternative(
+		schemas["ThreadMetadataUpdateParams"].(Schema),
+	)
+	schemas["ThreadMemoryModeSetParams"] = schemaWithRequiredFieldAlternatives(
+		schemas["ThreadMemoryModeSetParams"].(Schema),
+		[]string{"threadId", "mode"},
+		[]string{"id", "mode"},
+		[]string{"threadId", "memoryMode"},
+		[]string{"id", "memoryMode"},
+	)
 	schemas["ThreadListCwdFilter"] = Schema{"oneOf": []any{
 		Schema{"type": "string"},
 		Schema{"type": "array", "items": Schema{"type": "string"}},
@@ -231,16 +251,20 @@ func wireSchemaDefinitions() Schema {
 }
 
 func schemaWithRequiredIDAlternative(base Schema) Schema {
-	variants := make([]any, 0, 2)
-	for _, required := range []string{"threadId", "id"} {
+	return schemaWithRequiredFieldAlternatives(base, []string{"threadId"}, []string{"id"})
+}
+
+func schemaWithRequiredFieldAlternatives(base Schema, requiredFields ...[]string) Schema {
+	variants := make([]any, 0, len(requiredFields))
+	for _, required := range requiredFields {
 		variant := make(Schema, len(base))
 		for key, value := range base {
 			variant[key] = value
 		}
-		variant["required"] = []string{required}
+		variant["required"] = append([]string(nil), required...)
 		variants = append(variants, variant)
 	}
-	return Schema{"oneOf": variants}
+	return Schema{"anyOf": variants}
 }
 
 type wireSchemaDefinition struct {

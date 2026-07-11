@@ -217,13 +217,6 @@ type deprecationNoticeNotificationParams struct {
 
 type contextCompactedNotificationParams = protocol.ThreadCompactedNotificationParams
 
-type threadNameNotificationParams struct {
-	ThreadID string        `json:"threadId"`
-	Name     string        `json:"name"`
-	Thread   *store.Thread `json:"thread,omitempty"`
-	At       time.Time     `json:"at"`
-}
-
 func ProcessOutputNotification(event toolprocess.OutputEvent) (string, any) {
 	data, encoding := encodeContent(event.Data)
 	return "process/outputDelta", processOutputDeltaParams{

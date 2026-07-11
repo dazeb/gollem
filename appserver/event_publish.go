@@ -89,11 +89,15 @@ func (s *Server) publishThreadNameNotification(thread *store.Thread) {
 	if thread == nil {
 		return
 	}
-	s.PublishNotification("thread/name/updated", threadNameNotificationParams{
-		ThreadID: thread.ID,
-		Name:     thread.Title,
-		Thread:   thread,
-		At:       time.Now().UTC(),
+	now := time.Now().UTC()
+	name := thread.Title
+	record := protocolThreadRecord(thread)
+	s.PublishNotification("thread/name/updated", protocol.ThreadNameUpdatedNotification{
+		ThreadID:   thread.ID,
+		ThreadName: &name,
+		Name:       thread.Title,
+		Thread:     &record,
+		At:         &now,
 	})
 }
 

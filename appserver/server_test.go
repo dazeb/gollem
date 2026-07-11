@@ -1018,7 +1018,7 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	if memoryResp.Error != nil {
 		t.Fatalf("thread/memoryMode/set error: %v", memoryResp.Error)
 	}
-	var memoryResult threadMemoryModeSetResult
+	var memoryResult protocol.ThreadMemoryModeSetResponse
 	decodeResult(t, memoryResp, &memoryResult)
 	if memoryResult.MemoryMode != "disabled" || memoryResult.Thread.Settings[threadMemoryModeSettingKey] != "disabled" {
 		t.Fatalf("memory result = %#v", memoryResult)
@@ -1040,7 +1040,7 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	}
 	events = server.DrainNotifications()
 	assertNotificationMethods(t, events, "thread/name/updated")
-	var nameNotice threadNameNotificationParams
+	var nameNotice protocol.ThreadNameUpdatedNotification
 	if err := json.Unmarshal(events[0].Params, &nameNotice); err != nil {
 		t.Fatalf("decode name notice: %v", err)
 	}

@@ -291,6 +291,16 @@ func runtimeFixtureTarget(name string) any {
 		return new(ThreadLoadedListParams)
 	case "ThreadLoadedListResponse":
 		return new(ThreadLoadedListResponse)
+	case "ThreadMemoryModeSetParams":
+		return new(ThreadMemoryModeSetParams)
+	case "ThreadMemoryModeSetResponse":
+		return new(ThreadMemoryModeSetResponse)
+	case "ThreadMetadataUpdateParams":
+		return new(ThreadMetadataUpdateParams)
+	case "ThreadMetadataUpdateResponse":
+		return new(ThreadMetadataUpdateResponse)
+	case "ThreadNameUpdatedNotification":
+		return new(ThreadNameUpdatedNotification)
 	case "ThreadGoalClearParams":
 		return new(ThreadGoalClearParams)
 	case "ThreadGoalClearResponse":
