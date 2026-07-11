@@ -547,6 +547,25 @@ export type ClientInfo = {
   "version": string;
 };
 
+export type CommandAction = {
+  "command": string;
+  "name": string;
+  "path": AbsolutePathBuf;
+  "type": "read";
+} | {
+  "command": string;
+  "path": string | null;
+  "type": "listFiles";
+} | {
+  "command": string;
+  "path": string | null;
+  "query": string | null;
+  "type": "search";
+} | {
+  "command": string;
+  "type": "unknown";
+};
+
 export type CommandExecOutputDeltaNotification = {
   "capReached": boolean;
   "deltaBase64": string;
