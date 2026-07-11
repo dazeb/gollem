@@ -119,16 +119,17 @@ func TestRuntimeWireV1FixtureUsesExportedContracts(t *testing.T) {
 	}
 
 	wantCases := map[string]bool{
-		"dynamic-tool-started":    false,
-		"command-completed":       false,
-		"file-change-completed":   false,
-		"mcp-call-completed":      false,
-		"context-compaction-item": false,
-		"thread-compacted":        false,
-		"token-usage-updated":     false,
-		"turn-diff-updated":       false,
-		"file-change-approval":    false,
-		"daemon-status":           false,
+		"dynamic-tool-started":          false,
+		"command-completed":             false,
+		"file-change-completed":         false,
+		"mcp-call-completed":            false,
+		"context-compaction-item":       false,
+		"thread-compacted":              false,
+		"token-usage-updated":           false,
+		"turn-diff-updated":             false,
+		"file-change-approval":          false,
+		"file-change-approval-response": false,
+		"daemon-status":                 false,
 	}
 	bindings := WireTypeBindings()
 	payloadBindings := ItemPayloadBindings()
@@ -283,6 +284,8 @@ func runtimeFixtureTarget(name string) any {
 		return new(TurnDiffUpdatedNotificationParams)
 	case "FileChangeApprovalRequestParams":
 		return new(FileChangeApprovalRequestParams)
+	case "FileChangeRequestApprovalResponse":
+		return new(FileChangeRequestApprovalResponse)
 	case "DaemonStatus":
 		return new(DaemonStatus)
 	case "ThreadListParams":

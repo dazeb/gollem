@@ -326,12 +326,30 @@ func (s *Server) HandleNotification(ctx context.Context, notification protocol.N
 
 // HandleResponse handles one client response to a server-to-client request.
 func (s *Server) HandleResponse(ctx context.Context, resp protocol.Response) error {
-	_ = ctx
 	if s == nil {
 		return rpcError(protocol.CodeInternalError, "server not configured", nil)
 	}
 	if err := s.requireReady(); err != nil {
 		return err
+	}
+	if s.approvals != nil {
+		result, ok, err := s.approvals.RespondResponse(resp)
+		if ok {
+			if result.CancelTurn {
+				if cancelErr := s.cancelApprovalTurn(ctx, result.TurnID); err == nil {
+					err = cancelErr
+				}
+			}
+			result.resolve()
+			s.PublishNotification("serverRequest/resolved", serverRequestResolvedParams{
+				ThreadID:  firstNonEmpty(result.ThreadID, approvalThreadID),
+				RequestID: result.RequestID,
+			})
+			if err != nil {
+				return invalidParams("invalid approval response", err)
+			}
+			return nil
+		}
 	}
 	if s.interact == nil {
 		return protocol.MethodUnavailableErrorWithReason("server response", "interaction service is not configured")
@@ -348,6 +366,24 @@ func (s *Server) HandleResponse(ctx context.Context, resp protocol.Response) err
 		RequestID: result.RequestID,
 	})
 	return nil
+}
+
+func (s *Server) cancelApprovalTurn(ctx context.Context, turnID string) error {
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" || turnID == approvalTurnID {
+		return nil
+	}
+	if s.runtime == nil || s.store == nil {
+		return errors.New("turn runtime is not configured for canceled approval")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := s.runtime.Interrupt(ctx, s.store, turnID)
+	if errors.Is(err, ErrRuntimeTurnNotActive) {
+		return nil
+	}
+	return err
 }
 
 // NotificationEnabled reports whether the connected client opted out of a

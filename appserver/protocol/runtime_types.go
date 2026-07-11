@@ -307,6 +307,19 @@ type FileChangeApprovalRequestParams struct {
 	Destructive bool    `json:"destructive,omitempty"`
 }
 
+type FileChangeApprovalDecision string
+
+const (
+	FileChangeApprovalAccept           FileChangeApprovalDecision = "accept"
+	FileChangeApprovalAcceptForSession FileChangeApprovalDecision = "acceptForSession"
+	FileChangeApprovalDecline          FileChangeApprovalDecision = "decline"
+	FileChangeApprovalCancel           FileChangeApprovalDecision = "cancel"
+)
+
+type FileChangeRequestApprovalResponse struct {
+	Decision FileChangeApprovalDecision `json:"decision"`
+}
+
 type CommandExecutionApprovalRequestParams struct {
 	ApprovalRequestBase
 	ApprovalID     string                   `json:"approvalId,omitempty"`

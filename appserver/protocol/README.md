@@ -126,6 +126,16 @@ notification remains the exact public `{ threadId }` shape. These lifecycle
 types intentionally do not make `thread/status/changed` public: that method
 still depends on the distinct Codex runtime `ThreadStatus` model.
 
+## Version 1 File-Change Approval Responses
+
+`item/fileChange/requestApproval` binds the public `accept`,
+`acceptForSession`, `decline`, and `cancel` decisions to its direct JSON-RPC
+response. Session acceptance is connection-scoped and suppresses later prompts
+only for the same normalized mutation target; cancel interrupts an active
+runtime turn. The `approval/respond` extension remains available for legacy
+clients. Command-execution and permissions direct responses remain unbound
+until their policy-amendment and granted-profile dependencies are implemented.
+
 ## Version 1 Command Exec Controls
 
 `command/exec/write`, `command/exec/resize`, and `command/exec/terminate` use

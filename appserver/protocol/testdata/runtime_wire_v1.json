@@ -229,6 +229,17 @@
       }
     },
     {
+      "name": "file-change-approval-response",
+      "surface": "server-request",
+      "method": "item/fileChange/requestApproval",
+      "envelope": "response",
+      "resultType": "FileChangeRequestApprovalResponse",
+      "message": {
+        "id": "approval-1",
+        "result": {"decision": "acceptForSession"}
+      }
+    },
+    {
       "name": "daemon-status",
       "surface": "gollem-extension",
       "method": "daemon/status",

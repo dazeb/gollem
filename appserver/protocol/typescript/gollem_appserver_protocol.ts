@@ -743,6 +743,8 @@ export type Error = ({
   "message": string;
 } & Record<string, unknown>);
 
+export type FileChangeApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
+
 export type FileChangeApprovalRequestParams = {
   "destination"?: string;
   "destructive"?: boolean;
@@ -796,6 +798,10 @@ export type FileChangePatchUpdatedNotificationParams = {
   "itemId": string;
   "threadId": string;
   "turnId": string;
+};
+
+export type FileChangeRequestApprovalResponse = {
+  "decision": FileChangeApprovalDecision;
 };
 
 export type FileUpdateChange = {
@@ -1348,7 +1354,7 @@ export const wireTypeBindings = [
   { "method": "item/commandExecution/requestApproval", "surface": "server-request", "params": ["CommandExecutionApprovalRequestParams"] },
   { "method": "item/completed", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"] },
   { "method": "item/fileChange/patchUpdated", "surface": "server-notification", "params": ["FileChangePatchUpdatedNotificationParams"] },
-  { "method": "item/fileChange/requestApproval", "surface": "server-request", "params": ["FileChangeApprovalRequestParams"] },
+  { "method": "item/fileChange/requestApproval", "surface": "server-request", "params": ["FileChangeApprovalRequestParams"], "result": ["FileChangeRequestApprovalResponse"] },
   { "method": "item/mcpToolCall/progress", "surface": "server-notification", "params": ["MCPToolCallProgressNotificationParams"] },
   { "method": "item/permissions/requestApproval", "surface": "server-request", "params": ["PermissionsApprovalRequestParams"] },
   { "method": "item/started", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
@@ -1438,6 +1444,7 @@ export interface MethodResultsByName {
   "daemon/stop": DaemonStopResult;
   "daemon/version": DaemonVersion;
   "initialize": InitializeResponse;
+  "item/fileChange/requestApproval": FileChangeRequestApprovalResponse;
   "thread/archive": ThreadArchiveResponse;
   "thread/compact/start": ThreadCompactStartResponse;
   "thread/delete": ThreadDeleteResponse;

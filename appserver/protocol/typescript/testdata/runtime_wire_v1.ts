@@ -10,6 +10,7 @@ import type {
   DynamicToolCallItemStartedNotificationParams,
   FileChangeApprovalRequestParams,
   FileChangeItemCompletedNotificationParams,
+  FileChangeRequestApprovalResponse,
   ItemLifecycleNotificationParams,
   MCPToolCallItemCompletedNotificationParams,
   ThreadCompactedNotificationParams,
@@ -235,6 +236,14 @@ export const fileChangeApproval = {
   }
 } satisfies BoundRequest<"item/fileChange/requestApproval">;
 export const fileChangeApprovalParams = fileChangeApproval.params satisfies FileChangeApprovalRequestParams;
+
+export const fileChangeApprovalResponse = {
+  "id": "approval-1",
+  "result": {
+    "decision": "acceptForSession"
+  }
+} satisfies BoundResponse<"item/fileChange/requestApproval">;
+export const fileChangeApprovalResponseResult = fileChangeApprovalResponse.result satisfies FileChangeRequestApprovalResponse;
 
 export const daemonStatus = {
   "id": "daemon-status-1",
