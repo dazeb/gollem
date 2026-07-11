@@ -2290,6 +2290,17 @@ export type ToolRequestUserInputResponse = {
   "answers": Record<string, ToolRequestUserInputAnswer>;
 };
 
+export type Turn = {
+  "completedAt": number | null;
+  "durationMs": number | null;
+  "error": TurnError | null;
+  "id": string;
+  "items": Array<ThreadItem>;
+  "itemsView": TurnItemsView;
+  "startedAt": number | null;
+  "status": TurnStatus;
+};
+
 export type TurnDiffUpdatedNotification = {
   "diff": string;
   "threadId": string;

@@ -8414,6 +8414,77 @@
       ],
       "type": "object"
     },
+    "Turn": {
+      "additionalProperties": false,
+      "properties": {
+        "completedAt": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durationMs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ThreadItem"
+          },
+          "type": "array"
+        },
+        "itemsView": {
+          "$ref": "#/$defs/TurnItemsView"
+        },
+        "startedAt": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        }
+      },
+      "required": [
+        "id",
+        "items",
+        "itemsView",
+        "status",
+        "error",
+        "startedAt",
+        "completedAt",
+        "durationMs"
+      ],
+      "type": "object"
+    },
     "TurnDiffUpdatedNotification": {
       "additionalProperties": false,
       "properties": {
