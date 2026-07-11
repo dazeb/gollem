@@ -13,6 +13,10 @@ type RequestID struct {
 	raw json.RawMessage
 }
 
+// RequestId is the exact public app-server name for a JSON-RPC request id.
+// RequestID remains available for Gollem v1 source compatibility.
+type RequestId = RequestID
+
 // NewStringID creates a string request id.
 func NewStringID(id string) RequestID {
 	data, _ := json.Marshal(id)

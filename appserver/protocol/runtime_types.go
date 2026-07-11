@@ -20,6 +20,31 @@ const (
 	ItemStatusDeclined   = "declined"
 )
 
+type CommandExecutionStatus string
+
+const (
+	CommandExecutionStatusInProgress CommandExecutionStatus = ItemStatusInProgress
+	CommandExecutionStatusCompleted  CommandExecutionStatus = ItemStatusCompleted
+	CommandExecutionStatusFailed     CommandExecutionStatus = ItemStatusFailed
+	CommandExecutionStatusDeclined   CommandExecutionStatus = ItemStatusDeclined
+)
+
+type DynamicToolCallStatus string
+
+const (
+	DynamicToolCallStatusInProgress DynamicToolCallStatus = ItemStatusInProgress
+	DynamicToolCallStatusCompleted  DynamicToolCallStatus = ItemStatusCompleted
+	DynamicToolCallStatusFailed     DynamicToolCallStatus = ItemStatusFailed
+)
+
+type McpToolCallStatus string
+
+const (
+	McpToolCallStatusInProgress McpToolCallStatus = ItemStatusInProgress
+	McpToolCallStatusCompleted  McpToolCallStatus = ItemStatusCompleted
+	McpToolCallStatusFailed     McpToolCallStatus = ItemStatusFailed
+)
+
 // TimelineItem is the durable item envelope returned by thread item APIs.
 // Payload contains one of the concrete item types below when Kind is known.
 type TimelineItem struct {
@@ -108,12 +133,14 @@ type CommandExecutionItemCompletedNotificationParams struct {
 	CompletedAtMS int64                `json:"completedAtMs"`
 }
 
-type CommandExecutionOutputDeltaNotificationParams struct {
+type CommandExecutionOutputDeltaNotification struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
 	ItemID   string `json:"itemId"`
 	Delta    string `json:"delta"`
 }
+
+type CommandExecutionOutputDeltaNotificationParams = CommandExecutionOutputDeltaNotification
 
 type PatchApplyStatus string
 
@@ -257,12 +284,22 @@ type FileChangeItemCompletedNotificationParams struct {
 	CompletedAtMS int64          `json:"completedAtMs"`
 }
 
-type FileChangePatchUpdatedNotificationParams struct {
+type FileChangePatchUpdatedNotification struct {
 	ThreadID string             `json:"threadId"`
 	TurnID   string             `json:"turnId"`
 	ItemID   string             `json:"itemId"`
-	Changes  []FileUpdateChange `json:"changes"`
+	Changes  []FileUpdateChange `json:"changes" jsonschema:"nonnullable=true"`
 }
+
+func (n FileChangePatchUpdatedNotification) MarshalJSON() ([]byte, error) {
+	type notification FileChangePatchUpdatedNotification
+	if n.Changes == nil {
+		n.Changes = []FileUpdateChange{}
+	}
+	return json.Marshal(notification(n))
+}
+
+type FileChangePatchUpdatedNotificationParams = FileChangePatchUpdatedNotification
 
 type MCPToolCallItem struct {
 	Type              string             `json:"type" jsonschema:"enum=mcpToolCall"`
@@ -275,7 +312,7 @@ type MCPToolCallItem struct {
 	MCPAppResourceURI *string            `json:"mcpAppResourceUri"`
 	PluginID          *string            `json:"pluginId"`
 	Result            *MCPToolCallResult `json:"result"`
-	Error             *MCPToolCallError  `json:"error"`
+	Error             *McpToolCallError  `json:"error"`
 	DurationMS        *int64             `json:"durationMs"`
 }
 
@@ -290,9 +327,11 @@ type MCPToolCallResult struct {
 	Meta              any          `json:"_meta"`
 }
 
-type MCPToolCallError struct {
+type McpToolCallError struct {
 	Message string `json:"message"`
 }
+
+type MCPToolCallError = McpToolCallError
 
 type MCPToolCallItemStartedNotificationParams struct {
 	Item        MCPToolCallItem `json:"item"`
@@ -308,12 +347,14 @@ type MCPToolCallItemCompletedNotificationParams struct {
 	CompletedAtMS int64           `json:"completedAtMs"`
 }
 
-type MCPToolCallProgressNotificationParams struct {
+type McpToolCallProgressNotification struct {
 	ThreadID string `json:"threadId"`
 	TurnID   string `json:"turnId"`
 	ItemID   string `json:"itemId"`
 	Message  string `json:"message"`
 }
+
+type MCPToolCallProgressNotificationParams = McpToolCallProgressNotification
 
 type ThreadCompactStartParams struct {
 	ID       string `json:"id,omitempty"`
@@ -446,10 +487,12 @@ type ApprovalRespondResult struct {
 	Approved  bool   `json:"approved"`
 }
 
-type ServerRequestResolvedNotificationParams struct {
-	ThreadID  string `json:"threadId"`
-	RequestID string `json:"requestId"`
+type ServerRequestResolvedNotification struct {
+	ThreadID  string    `json:"threadId"`
+	RequestID RequestId `json:"requestId"`
 }
+
+type ServerRequestResolvedNotificationParams = ServerRequestResolvedNotification
 
 type DaemonShutdownState struct {
 	Requested bool   `json:"requested"`

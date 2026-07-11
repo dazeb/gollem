@@ -661,7 +661,7 @@ export type CommandExecutionItem = {
   "processId": string | null;
   "source": "agent" | "userShell";
   "startedAt": string;
-  "status": "inProgress" | "completed" | "failed" | "declined";
+  "status": CommandExecutionStatus;
   "type": "commandExecution";
 };
 
@@ -679,16 +679,20 @@ export type CommandExecutionItemStartedNotificationParams = {
   "turnId": string;
 };
 
-export type CommandExecutionOutputDeltaNotificationParams = {
+export type CommandExecutionOutputDeltaNotification = {
   "delta": string;
   "itemId": string;
   "threadId": string;
   "turnId": string;
 };
 
+export type CommandExecutionOutputDeltaNotificationParams = CommandExecutionOutputDeltaNotification;
+
 export type CommandExecutionRequestApprovalResponse = {
   "decision": CommandExecutionApprovalDecision;
 };
+
+export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
 
 export type ContextCompactedNotification = {
   "threadId": string;
@@ -765,7 +769,7 @@ export type DynamicToolCallItem = {
   "durationMs": number | null;
   "id"?: string;
   "namespace": string | null;
-  "status": "inProgress" | "completed" | "failed";
+  "status": DynamicToolCallStatus;
   "success": boolean | null;
   "tool": string;
   "type": "dynamicToolCall";
@@ -813,6 +817,8 @@ export type DynamicToolCallResponse = {
   "contentItems": Array<DynamicToolCallOutputContentItem>;
   "success": boolean;
 };
+
+export type DynamicToolCallStatus = "inProgress" | "completed" | "failed";
 
 export type Error = ({
   "code": number;
@@ -872,12 +878,14 @@ export type FileChangeItemStartedNotificationParams = {
   "turnId": string;
 };
 
-export type FileChangePatchUpdatedNotificationParams = {
-  "changes": Array<FileUpdateChange> | null;
+export type FileChangePatchUpdatedNotification = {
+  "changes": Array<FileUpdateChange>;
   "itemId": string;
   "threadId": string;
   "turnId": string;
 };
+
+export type FileChangePatchUpdatedNotificationParams = FileChangePatchUpdatedNotification;
 
 export type FileChangeRequestApprovalResponse = {
   "decision": FileChangeApprovalDecision;
@@ -973,21 +981,19 @@ export type MCPContent = {
   "type": string;
 };
 
-export type MCPToolCallError = {
-  "message": string;
-};
+export type MCPToolCallError = McpToolCallError;
 
 export type MCPToolCallItem = {
   "appContext": unknown;
   "arguments": unknown;
   "durationMs": number | null;
-  "error": MCPToolCallError | null;
+  "error": McpToolCallError | null;
   "id"?: string;
   "mcpAppResourceUri": string | null;
   "pluginId": string | null;
   "result": MCPToolCallResult | null;
   "server": string;
-  "status": "inProgress" | "completed" | "failed";
+  "status": McpToolCallStatus;
   "tool": string;
   "type": "mcpToolCall";
 };
@@ -1006,12 +1012,7 @@ export type MCPToolCallItemStartedNotificationParams = {
   "turnId": string;
 };
 
-export type MCPToolCallProgressNotificationParams = {
-  "itemId": string;
-  "message": string;
-  "threadId": string;
-  "turnId": string;
-};
+export type MCPToolCallProgressNotificationParams = McpToolCallProgressNotification;
 
 export type MCPToolCallResult = {
   "_meta": unknown;
@@ -1187,6 +1188,19 @@ export type McpServerElicitationRequestResponse = {
   "content": unknown;
 };
 
+export type McpToolCallError = {
+  "message": string;
+};
+
+export type McpToolCallProgressNotification = {
+  "itemId": string;
+  "message": string;
+  "threadId": string;
+  "turnId": string;
+};
+
+export type McpToolCallStatus = "inProgress" | "completed" | "failed";
+
 export type MethodInfo = {
   "method": string;
   "source"?: string;
@@ -1267,6 +1281,8 @@ export type Request = {
 
 export type RequestID = string | number;
 
+export type RequestId = RequestID;
+
 export type RequestPermissionProfile = {
   "fileSystem": AdditionalFileSystemPermissions | null;
   "network": AdditionalNetworkPermissions | null;
@@ -1284,10 +1300,12 @@ export type ServerCapabilities = {
   "unavailable": boolean;
 };
 
-export type ServerRequestResolvedNotificationParams = {
-  "requestId": string;
+export type ServerRequestResolvedNotification = {
+  "requestId": RequestId;
   "threadId": string;
 };
+
+export type ServerRequestResolvedNotificationParams = ServerRequestResolvedNotification;
 
 export type SortDirection = "asc" | "desc";
 
@@ -1723,18 +1741,18 @@ export const wireTypeBindings = [
   { "method": "deprecationNotice", "surface": "server-notification", "params": ["DeprecationNoticeNotification"] },
   { "method": "initialize", "surface": "client-request", "params": ["InitializeParams"], "result": ["InitializeResponse"] },
   { "method": "initialized", "surface": "client-notification" },
-  { "method": "item/commandExecution/outputDelta", "surface": "server-notification", "params": ["CommandExecutionOutputDeltaNotificationParams"] },
+  { "method": "item/commandExecution/outputDelta", "surface": "server-notification", "params": ["CommandExecutionOutputDeltaNotification"] },
   { "method": "item/commandExecution/requestApproval", "surface": "server-request", "params": ["CommandExecutionApprovalRequestParams"], "result": ["CommandExecutionRequestApprovalResponse"] },
   { "method": "item/completed", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"] },
-  { "method": "item/fileChange/patchUpdated", "surface": "server-notification", "params": ["FileChangePatchUpdatedNotificationParams"] },
+  { "method": "item/fileChange/patchUpdated", "surface": "server-notification", "params": ["FileChangePatchUpdatedNotification"] },
   { "method": "item/fileChange/requestApproval", "surface": "server-request", "params": ["FileChangeApprovalRequestParams"], "result": ["FileChangeRequestApprovalResponse"] },
-  { "method": "item/mcpToolCall/progress", "surface": "server-notification", "params": ["MCPToolCallProgressNotificationParams"] },
+  { "method": "item/mcpToolCall/progress", "surface": "server-notification", "params": ["McpToolCallProgressNotification"] },
   { "method": "item/permissions/requestApproval", "surface": "server-request", "params": ["PermissionsApprovalRequestParams"] },
   { "method": "item/started", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
   { "method": "item/tool/call", "surface": "server-request", "params": ["DynamicToolCallParams"], "result": ["DynamicToolCallResponse"] },
   { "method": "item/tool/requestUserInput", "surface": "server-request", "params": ["ToolRequestUserInputParams"], "result": ["ToolRequestUserInputResponse"] },
   { "method": "mcpServer/elicitation/request", "surface": "server-request", "params": ["McpServerElicitationRequestParams"], "result": ["McpServerElicitationRequestResponse"] },
-  { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotificationParams"] },
+  { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotification"] },
   { "method": "thread/archive", "surface": "client-request", "params": ["ThreadArchiveParams"], "result": ["ThreadArchiveResponse"] },
   { "method": "thread/archived", "surface": "server-notification", "params": ["ThreadArchivedNotification"] },
   { "method": "thread/closed", "surface": "server-notification", "params": ["ThreadClosedNotification"] },
@@ -1775,18 +1793,18 @@ export interface MethodParamsByName {
   "deprecationNotice": DeprecationNoticeNotification;
   "initialize": InitializeParams;
   "initialized": undefined;
-  "item/commandExecution/outputDelta": CommandExecutionOutputDeltaNotificationParams;
+  "item/commandExecution/outputDelta": CommandExecutionOutputDeltaNotification;
   "item/commandExecution/requestApproval": CommandExecutionApprovalRequestParams;
   "item/completed": ItemLifecycleNotificationParams | DynamicToolCallItemCompletedNotificationParams | CommandExecutionItemCompletedNotificationParams | FileChangeItemCompletedNotificationParams | MCPToolCallItemCompletedNotificationParams;
-  "item/fileChange/patchUpdated": FileChangePatchUpdatedNotificationParams;
+  "item/fileChange/patchUpdated": FileChangePatchUpdatedNotification;
   "item/fileChange/requestApproval": FileChangeApprovalRequestParams;
-  "item/mcpToolCall/progress": MCPToolCallProgressNotificationParams;
+  "item/mcpToolCall/progress": McpToolCallProgressNotification;
   "item/permissions/requestApproval": PermissionsApprovalRequestParams;
   "item/started": ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
   "item/tool/call": DynamicToolCallParams;
   "item/tool/requestUserInput": ToolRequestUserInputParams;
   "mcpServer/elicitation/request": McpServerElicitationRequestParams;
-  "serverRequest/resolved": ServerRequestResolvedNotificationParams;
+  "serverRequest/resolved": ServerRequestResolvedNotification;
   "thread/archive": ThreadArchiveParams;
   "thread/archived": ThreadArchivedNotification;
   "thread/closed": ThreadClosedNotification;

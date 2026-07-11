@@ -6,7 +6,7 @@ import type {
   BoundResponse,
   FileChangeItemCompletedNotificationParams,
   FileChangeItemStartedNotificationParams,
-  FileChangePatchUpdatedNotificationParams,
+  FileChangePatchUpdatedNotification,
 } from "../gollem_appserver_protocol";
 
 export const fixtureProtocolVersion = "gollem.appserver.v1" as const;
@@ -129,7 +129,7 @@ export const fileChangePatchUpdatedPublicPrecedence = {
     ]
   }
 } satisfies BoundNotification<"item/fileChange/patchUpdated">;
-export const fileChangePatchUpdatedPublicPrecedenceParams = fileChangePatchUpdatedPublicPrecedence.params satisfies FileChangePatchUpdatedNotificationParams;
+export const fileChangePatchUpdatedPublicPrecedenceParams = fileChangePatchUpdatedPublicPrecedence.params satisfies FileChangePatchUpdatedNotification;
 
 // @ts-expect-error request methods cannot use notification envelopes.
 export type RejectRequestAsNotification = BoundNotification<"daemon/status">;

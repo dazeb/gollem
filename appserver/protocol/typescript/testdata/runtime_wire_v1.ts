@@ -5,6 +5,7 @@ import type {
   BoundRequest,
   BoundResponse,
   CommandExecutionItemCompletedNotificationParams,
+  CommandExecutionOutputDeltaNotification,
   ContextCompactedNotification,
   ContextCompactionItem,
   DaemonStatus,
@@ -12,9 +13,12 @@ import type {
   DynamicToolCallItemStartedNotificationParams,
   FileChangeApprovalRequestParams,
   FileChangeItemCompletedNotificationParams,
+  FileChangePatchUpdatedNotification,
   FileChangeRequestApprovalResponse,
   ItemLifecycleNotificationParams,
   MCPToolCallItemCompletedNotificationParams,
+  McpToolCallProgressNotification,
+  ServerRequestResolvedNotification,
   ThreadTokenUsageUpdatedNotification,
   TurnDiffUpdatedNotification,
 } from "../gollem_appserver_protocol";
@@ -74,6 +78,17 @@ export const commandCompleted = {
   }
 } satisfies BoundNotification<"item/completed">;
 export const commandCompletedParams = commandCompleted.params satisfies CommandExecutionItemCompletedNotificationParams;
+
+export const commandOutputDelta = {
+  "method": "item/commandExecution/outputDelta",
+  "params": {
+    "threadId": "thread-1",
+    "turnId": "turn-1",
+    "itemId": "item-command",
+    "delta": "ok\n"
+  }
+} satisfies BoundNotification<"item/commandExecution/outputDelta">;
+export const commandOutputDeltaParams = commandOutputDelta.params satisfies CommandExecutionOutputDeltaNotification;
 
 export const fileChangeCompleted = {
   "method": "item/completed",
@@ -145,6 +160,46 @@ export const mcpCallCompleted = {
   }
 } satisfies BoundNotification<"item/completed">;
 export const mcpCallCompletedParams = mcpCallCompleted.params satisfies MCPToolCallItemCompletedNotificationParams;
+
+export const fileChangePatchUpdated = {
+  "method": "item/fileChange/patchUpdated",
+  "params": {
+    "threadId": "thread-1",
+    "turnId": "turn-1",
+    "itemId": "item-file",
+    "changes": []
+  }
+} satisfies BoundNotification<"item/fileChange/patchUpdated">;
+export const fileChangePatchUpdatedParams = fileChangePatchUpdated.params satisfies FileChangePatchUpdatedNotification;
+
+export const mcpCallProgress = {
+  "method": "item/mcpToolCall/progress",
+  "params": {
+    "threadId": "thread-1",
+    "turnId": "turn-1",
+    "itemId": "item-mcp",
+    "message": "Searching repository"
+  }
+} satisfies BoundNotification<"item/mcpToolCall/progress">;
+export const mcpCallProgressParams = mcpCallProgress.params satisfies McpToolCallProgressNotification;
+
+export const serverRequestResolvedString = {
+  "method": "serverRequest/resolved",
+  "params": {
+    "threadId": "thread-1",
+    "requestId": "approval-1"
+  }
+} satisfies BoundNotification<"serverRequest/resolved">;
+export const serverRequestResolvedStringParams = serverRequestResolvedString.params satisfies ServerRequestResolvedNotification;
+
+export const serverRequestResolvedNumber = {
+  "method": "serverRequest/resolved",
+  "params": {
+    "threadId": "thread-1",
+    "requestId": 42
+  }
+} satisfies BoundNotification<"serverRequest/resolved">;
+export const serverRequestResolvedNumberParams = serverRequestResolvedNumber.params satisfies ServerRequestResolvedNotification;
 
 export const contextCompactionItem = {
   "method": "item/completed",

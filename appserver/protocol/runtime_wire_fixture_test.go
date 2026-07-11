@@ -243,18 +243,23 @@ func TestRuntimeWireV1FixtureUsesExportedContracts(t *testing.T) {
 	}
 
 	wantCases := map[string]bool{
-		"dynamic-tool-started":          false,
-		"command-completed":             false,
-		"file-change-completed":         false,
-		"mcp-call-completed":            false,
-		"context-compaction-item":       false,
-		"deprecation-notice":            false,
-		"thread-compacted":              false,
-		"token-usage-updated":           false,
-		"turn-diff-updated":             false,
-		"file-change-approval":          false,
-		"file-change-approval-response": false,
-		"daemon-status":                 false,
+		"dynamic-tool-started":           false,
+		"command-completed":              false,
+		"command-output-delta":           false,
+		"file-change-completed":          false,
+		"file-change-patch-updated":      false,
+		"mcp-call-completed":             false,
+		"mcp-call-progress":              false,
+		"server-request-resolved-string": false,
+		"server-request-resolved-number": false,
+		"context-compaction-item":        false,
+		"deprecation-notice":             false,
+		"thread-compacted":               false,
+		"token-usage-updated":            false,
+		"turn-diff-updated":              false,
+		"file-change-approval":           false,
+		"file-change-approval-response":  false,
+		"daemon-status":                  false,
 	}
 	bindings := WireTypeBindings()
 	payloadBindings := ItemPayloadBindings()
@@ -409,14 +414,22 @@ func runtimeFixtureTarget(name string) any {
 		return new(CommandExecutionRequestApprovalResponse)
 	case "CommandExecutionItemCompletedNotificationParams":
 		return new(CommandExecutionItemCompletedNotificationParams)
+	case "CommandExecutionOutputDeltaNotification":
+		return new(CommandExecutionOutputDeltaNotification)
 	case "FileChangeItemCompletedNotificationParams":
 		return new(FileChangeItemCompletedNotificationParams)
 	case "FileChangeItemStartedNotificationParams":
 		return new(FileChangeItemStartedNotificationParams)
 	case "FileChangePatchUpdatedNotificationParams":
 		return new(FileChangePatchUpdatedNotificationParams)
+	case "FileChangePatchUpdatedNotification":
+		return new(FileChangePatchUpdatedNotification)
 	case "MCPToolCallItemCompletedNotificationParams":
 		return new(MCPToolCallItemCompletedNotificationParams)
+	case "McpToolCallProgressNotification":
+		return new(McpToolCallProgressNotification)
+	case "ServerRequestResolvedNotification":
+		return new(ServerRequestResolvedNotification)
 	case "ItemLifecycleNotificationParams":
 		return new(ItemLifecycleNotificationParams)
 	case "ContextCompactionItem":

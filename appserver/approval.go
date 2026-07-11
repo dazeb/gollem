@@ -219,7 +219,7 @@ func (s *Server) handleApprovalRespond(raw json.RawMessage) (any, *protocol.Erro
 	}
 	s.PublishNotification("serverRequest/resolved", serverRequestResolvedParams{
 		ThreadID:  firstNonEmpty(result.threadID, approvalThreadID),
-		RequestID: result.RequestID,
+		RequestID: protocol.NewStringID(result.RequestID),
 	})
 	return result, nil
 }
@@ -354,7 +354,7 @@ func decodeStrictApprovalResult(data json.RawMessage, target any) error {
 	return nil
 }
 
-type serverRequestResolvedParams = protocol.ServerRequestResolvedNotificationParams
+type serverRequestResolvedParams = protocol.ServerRequestResolvedNotification
 
 func (s *ApprovalService) base(ctx context.Context, reason string) approvalRequestBase {
 	requestID := s.nextRequestID()

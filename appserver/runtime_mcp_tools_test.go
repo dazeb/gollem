@@ -405,7 +405,7 @@ func findServerRequestResolved(t *testing.T, notifications []protocol.Notificati
 		if err := json.Unmarshal(notification.Params, &params); err != nil {
 			t.Fatalf("decode serverRequest/resolved: %v", err)
 		}
-		if params.RequestID == requestID {
+		if params.RequestID.Value() == requestID {
 			return params
 		}
 	}

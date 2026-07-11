@@ -28,7 +28,7 @@ type runtimePatchChangeKind = protocol.PatchChangeKind
 type runtimeFileChangeArtifactEvidence = protocol.FileChangeArtifactEvidence
 type runtimeFileChangeItemStartedNotificationParams = protocol.FileChangeItemStartedNotificationParams
 type runtimeFileChangeItemCompletedNotificationParams = protocol.FileChangeItemCompletedNotificationParams
-type runtimeFileChangePatchUpdatedNotificationParams = protocol.FileChangePatchUpdatedNotificationParams
+type runtimeFileChangePatchUpdatedNotificationParams = protocol.FileChangePatchUpdatedNotification
 
 type runtimeFileChangeTracker struct {
 	mu        sync.Mutex
@@ -137,7 +137,7 @@ func (t *runtimeFileChangeTracker) artifactChanged(event core.ArtifactChangedEve
 		ThreadID: t.turn.ThreadID,
 		TurnID:   t.turn.ID,
 		ItemID:   item.ID,
-		Changes:  append([]runtimeFileUpdateChange(nil), payload.Changes...),
+		Changes:  append([]runtimeFileUpdateChange{}, payload.Changes...),
 	})
 	if len(t.turnDiffs) > 0 {
 		t.notifier.PublishNotification("turn/diff/updated", turnDiffUpdatedNotificationParams{
