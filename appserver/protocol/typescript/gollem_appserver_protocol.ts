@@ -1544,6 +1544,12 @@ export type PermissionsRequestApprovalResponse = {
   "strictAutoReview"?: boolean;
 };
 
+export type RawResponseItemCompletedNotification = {
+  "item": ResponseItem;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type ReasoningEffort = string;
 
 export type ReasoningItemContent = {

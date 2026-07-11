@@ -4520,6 +4520,26 @@
       ],
       "type": "object"
     },
+    "RawResponseItemCompletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/ResponseItem"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "item"
+      ],
+      "type": "object"
+    },
     "ReasoningEffort": {
       "minLength": 1,
       "type": "string"
