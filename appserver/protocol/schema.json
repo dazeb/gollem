@@ -2640,6 +2640,47 @@
         }
       ]
     },
+    "GitInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "originUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sha",
+        "branch",
+        "originUrl"
+      ],
+      "type": "object"
+    },
     "GrantedPermissionProfile": {
       "additionalProperties": false,
       "properties": {
@@ -4167,6 +4208,13 @@
       ],
       "type": "string"
     },
+    "NonSteerableTurnKind": {
+      "enum": [
+        "review",
+        "compact"
+      ],
+      "type": "string"
+    },
     "Notification": {
       "additionalProperties": false,
       "properties": {
@@ -5527,6 +5575,13 @@
       ],
       "type": "object"
     },
+    "ThreadActiveFlag": {
+      "enum": [
+        "waitingOnApproval",
+        "waitingOnUserInput"
+      ],
+      "type": "string"
+    },
     "ThreadArchiveParams": {
       "additionalProperties": false,
       "properties": {
@@ -6100,6 +6155,9 @@
         "goal"
       ],
       "type": "object"
+    },
+    "ThreadId": {
+      "type": "string"
     },
     "ThreadItem": {
       "oneOf": [
@@ -7569,6 +7627,9 @@
       ],
       "type": "string"
     },
+    "ThreadSource": {
+      "type": "string"
+    },
     "ThreadSourceKind": {
       "enum": [
         "cli",
@@ -8022,6 +8083,14 @@
     "TurnDiffUpdatedNotificationParams": {
       "$ref": "#/$defs/TurnDiffUpdatedNotification"
     },
+    "TurnItemsView": {
+      "enum": [
+        "notLoaded",
+        "summary",
+        "full"
+      ],
+      "type": "string"
+    },
     "TurnLifecycleStatus": {
       "enum": [
         "queued",
@@ -8102,6 +8171,15 @@
         "updatedAt"
       ],
       "type": "object"
+    },
+    "TurnStatus": {
+      "enum": [
+        "completed",
+        "interrupted",
+        "failed",
+        "inProgress"
+      ],
+      "type": "string"
     },
     "UserInput": {
       "oneOf": [
