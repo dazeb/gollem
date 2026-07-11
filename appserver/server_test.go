@@ -1956,17 +1956,33 @@ func TestServerCommandExecPublishesCommandOutputDelta(t *testing.T) {
 		t.Fatalf("duplicate command/exec error = %#v, want invalid params", duplicateResp.Error)
 	}
 
-	writeResp := server.HandleRequest(ctx, request("command/exec/write", map[string]any{
+	resizeResp := server.HandleRequest(ctx, request("command/exec/resize", map[string]any{
 		"processId": "client-command-1",
-		"data":      "cmd-output\n",
-		"close":     true,
+		"size": map[string]any{
+			"cols": 80,
+			"rows": 24,
+		},
+	}))
+	if resizeResp.Error == nil || resizeResp.Error.Code != protocol.CodeMethodUnavailable {
+		t.Fatalf("command/exec/resize error = %#v, want unavailable", resizeResp.Error)
+	}
+
+	writeResp := server.HandleRequest(ctx, request("command/exec/write", map[string]any{
+		"processId":   "client-command-1",
+		"deltaBase64": base64.StdEncoding.EncodeToString([]byte("cmd-output\n")),
+		"closeStdin":  true,
 	}))
 	if writeResp.Error != nil {
 		t.Fatalf("command/exec/write error: %v", writeResp.Error)
 	}
+	var writeResult protocol.CommandExecWriteResponse
+	decodeResult(t, writeResp, &writeResult)
+	if !writeResult.OK || writeResult.Path != "client-command-1" {
+		t.Fatalf("command/exec/write result = %#v", writeResult)
+	}
 
 	events := waitForNotificationSet(t, server, "process/outputDelta", "command/exec/outputDelta", "process/exited")
-	var delta commandExecOutputDeltaNotificationParams
+	var delta protocol.CommandExecOutputDeltaNotification
 	for _, event := range events {
 		if event.Method != "command/exec/outputDelta" {
 			continue
@@ -1979,8 +1995,77 @@ func TestServerCommandExecPublishesCommandOutputDelta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode delta base64: %v", err)
 	}
-	if delta.ProcessID != "client-command-1" || delta.Stream != string(toolprocess.StreamStdout) || string(decoded) != "cmd-output\n" || delta.CapReached {
+	if delta.ProcessID != "client-command-1" || delta.Stream != protocol.CommandExecOutputStdout || string(decoded) != "cmd-output\n" || delta.CapReached {
 		t.Fatalf("command exec delta = %#v decoded=%q", delta, decoded)
+	}
+}
+
+func TestServerCommandExecTerminateUsesExportedContract(t *testing.T) {
+	ctx := context.Background()
+	processSvc, err := toolprocess.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithProcess(processSvc))
+
+	startResp := server.HandleRequest(ctx, request("command/exec", map[string]any{
+		"processId": "terminate-command",
+		"command":   "cat",
+	}))
+	if startResp.Error != nil {
+		t.Fatalf("command/exec start error: %v", startResp.Error)
+	}
+	terminateResp := server.HandleRequest(ctx, request("command/exec/terminate", map[string]any{
+		"processId": "terminate-command",
+	}))
+	if terminateResp.Error != nil {
+		t.Fatalf("command/exec/terminate error: %v", terminateResp.Error)
+	}
+	var result protocol.CommandExecTerminateResponse
+	decodeResult(t, terminateResp, &result)
+	if !result.OK || result.Path != "terminate-command" {
+		t.Fatalf("command/exec/terminate result = %#v", result)
+	}
+	if _, err := processSvc.Wait(ctx, "terminate-command"); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+}
+
+func TestServerCommandExecControlsRejectGenericProcessIDs(t *testing.T) {
+	ctx := context.Background()
+	processSvc, err := toolprocess.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithProcess(processSvc))
+
+	spawnResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"processId": "generic-process",
+		"command":   "cat",
+	}))
+	if spawnResp.Error != nil {
+		t.Fatalf("process/spawn error: %v", spawnResp.Error)
+	}
+	for _, test := range []struct {
+		method string
+		params map[string]any
+	}{
+		{method: "command/exec/write", params: map[string]any{"processId": "generic-process", "closeStdin": true}},
+		{method: "command/exec/resize", params: map[string]any{"processId": "generic-process", "size": map[string]any{"cols": 80, "rows": 24}}},
+		{method: "command/exec/terminate", params: map[string]any{"processId": "generic-process"}},
+	} {
+		resp := server.HandleRequest(ctx, request(test.method, test.params))
+		if resp.Error == nil || resp.Error.Code != protocol.CodeInvalidParams {
+			t.Errorf("%s error = %#v, want invalid params", test.method, resp.Error)
+		}
+	}
+
+	killResp := server.HandleRequest(ctx, request("process/kill", map[string]any{"processId": "generic-process"}))
+	if killResp.Error != nil {
+		t.Fatalf("process/kill error: %v", killResp.Error)
+	}
+	if _, err := processSvc.Wait(ctx, "generic-process"); err != nil {
+		t.Fatalf("Wait: %v", err)
 	}
 }
 

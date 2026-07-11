@@ -18,6 +18,10 @@ type ItemPayloadBinding struct {
 
 var wireTypeBindings = []WireTypeBinding{
 	{Method: "approval/respond", Surface: SurfaceGollemExtension, Params: []string{"ApprovalRespondParams"}, Result: []string{"ApprovalRespondResult"}},
+	{Method: "command/exec/outputDelta", Surface: SurfaceServerNotification, Params: []string{"CommandExecOutputDeltaNotification"}},
+	{Method: "command/exec/resize", Surface: SurfaceClientRequest, Params: []string{"CommandExecResizeParams"}, Result: []string{"CommandExecResizeResponse"}},
+	{Method: "command/exec/terminate", Surface: SurfaceClientRequest, Params: []string{"CommandExecTerminateParams"}, Result: []string{"CommandExecTerminateResponse"}},
+	{Method: "command/exec/write", Surface: SurfaceClientRequest, Params: []string{"CommandExecWriteParams"}, Result: []string{"CommandExecWriteResponse"}},
 	{Method: "daemon/restart", Surface: SurfaceGollemExtension, Params: []string{"DaemonShutdownParams"}, Result: []string{"DaemonStopResult"}},
 	{Method: "daemon/start", Surface: SurfaceGollemExtension, Result: []string{"DaemonStartResult"}},
 	{Method: "daemon/status", Surface: SurfaceGollemExtension, Result: []string{"DaemonStatus"}},

@@ -1,0 +1,130 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "command-exec-write-public-request",
+      "surface": "client-request",
+      "method": "command/exec/write",
+      "envelope": "request",
+      "paramsType": "CommandExecWriteParams",
+      "message": {
+        "id": "write-public-1",
+        "method": "command/exec/write",
+        "params": {"processId": "command-1", "deltaBase64": "aGVsbG8K", "closeStdin": true}
+      }
+    },
+    {
+      "name": "command-exec-write-public-null-request",
+      "surface": "client-request",
+      "method": "command/exec/write",
+      "envelope": "request",
+      "paramsType": "CommandExecWriteParams",
+      "message": {
+        "id": "write-public-null-1",
+        "method": "command/exec/write",
+        "params": {"processId": "command-1", "deltaBase64": null, "closeStdin": false}
+      }
+    },
+    {
+      "name": "command-exec-write-legacy-request",
+      "surface": "client-request",
+      "method": "command/exec/write",
+      "envelope": "request",
+      "paramsType": "CommandExecWriteParams",
+      "message": {
+        "id": "write-legacy-1",
+        "method": "command/exec/write",
+        "params": {"id": "command-1", "data": "hello\n", "encoding": "utf8", "close": true}
+      }
+    },
+    {
+      "name": "command-exec-write-response",
+      "surface": "client-request",
+      "method": "command/exec/write",
+      "envelope": "response",
+      "resultType": "CommandExecWriteResponse",
+      "message": {"id": "write-public-1", "result": {"ok": true, "path": "command-1"}}
+    },
+    {
+      "name": "command-exec-resize-public-request",
+      "surface": "client-request",
+      "method": "command/exec/resize",
+      "envelope": "request",
+      "paramsType": "CommandExecResizeParams",
+      "message": {
+        "id": "resize-public-1",
+        "method": "command/exec/resize",
+        "params": {"processId": "command-1", "size": {"rows": 24, "cols": 80}}
+      }
+    },
+    {
+      "name": "command-exec-resize-legacy-request",
+      "surface": "client-request",
+      "method": "command/exec/resize",
+      "envelope": "request",
+      "paramsType": "CommandExecResizeParams",
+      "message": {
+        "id": "resize-legacy-1",
+        "method": "command/exec/resize",
+        "params": {"id": "command-1", "rows": 24, "cols": 80}
+      }
+    },
+    {
+      "name": "command-exec-resize-response",
+      "surface": "client-request",
+      "method": "command/exec/resize",
+      "envelope": "response",
+      "resultType": "CommandExecResizeResponse",
+      "message": {"id": "resize-public-1", "result": {}}
+    },
+    {
+      "name": "command-exec-terminate-public-request",
+      "surface": "client-request",
+      "method": "command/exec/terminate",
+      "envelope": "request",
+      "paramsType": "CommandExecTerminateParams",
+      "message": {
+        "id": "terminate-public-1",
+        "method": "command/exec/terminate",
+        "params": {"processId": "command-1"}
+      }
+    },
+    {
+      "name": "command-exec-terminate-legacy-request",
+      "surface": "client-request",
+      "method": "command/exec/terminate",
+      "envelope": "request",
+      "paramsType": "CommandExecTerminateParams",
+      "message": {
+        "id": "terminate-legacy-1",
+        "method": "command/exec/terminate",
+        "params": {"id": "command-1"}
+      }
+    },
+    {
+      "name": "command-exec-terminate-response",
+      "surface": "client-request",
+      "method": "command/exec/terminate",
+      "envelope": "response",
+      "resultType": "CommandExecTerminateResponse",
+      "message": {"id": "terminate-public-1", "result": {}}
+    },
+    {
+      "name": "command-exec-output-delta-notification",
+      "surface": "server-notification",
+      "method": "command/exec/outputDelta",
+      "envelope": "notification",
+      "paramsType": "CommandExecOutputDeltaNotification",
+      "message": {
+        "method": "command/exec/outputDelta",
+        "params": {
+          "processId": "command-1",
+          "stream": "stdout",
+          "deltaBase64": "aGVsbG8K",
+          "capReached": false
+        }
+      }
+    }
+  ]
+}

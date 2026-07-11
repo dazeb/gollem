@@ -4,20 +4,14 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
 )
 
-type commandExecOutputDeltaNotificationParams struct {
-	ProcessID   string `json:"processId"`
-	Stream      string `json:"stream"`
-	DeltaBase64 string `json:"deltaBase64"`
-	CapReached  bool   `json:"capReached"`
-}
-
 func commandExecOutputDeltaNotification(event toolprocess.OutputEvent) (string, any) {
-	return "command/exec/outputDelta", commandExecOutputDeltaNotificationParams{
+	return "command/exec/outputDelta", protocol.CommandExecOutputDeltaNotification{
 		ProcessID:   event.ID,
-		Stream:      string(event.Stream),
+		Stream:      protocol.CommandExecOutputStream(event.Stream),
 		DeltaBase64: base64.StdEncoding.EncodeToString(event.Data),
 		CapReached:  false,
 	}

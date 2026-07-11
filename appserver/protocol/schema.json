@@ -95,6 +95,282 @@
       ],
       "type": "object"
     },
+    "CommandExecOutputDeltaNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "capReached": {
+          "type": "boolean"
+        },
+        "deltaBase64": {
+          "type": "string"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "stream": {
+          "$ref": "#/$defs/CommandExecOutputStream"
+        }
+      },
+      "required": [
+        "processId",
+        "stream",
+        "deltaBase64",
+        "capReached"
+      ],
+      "type": "object"
+    },
+    "CommandExecOutputStream": {
+      "enum": [
+        "stdout",
+        "stderr"
+      ],
+      "type": "string"
+    },
+    "CommandExecResizeParams": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cols": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "processId": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "integer"
+            },
+            "size": {
+              "$ref": "#/$defs/CommandExecTerminalSize"
+            }
+          },
+          "required": [
+            "processId",
+            "size"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cols": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "processId": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "integer"
+            },
+            "size": {
+              "$ref": "#/$defs/CommandExecTerminalSize"
+            }
+          },
+          "required": [
+            "processId",
+            "cols",
+            "rows"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cols": {
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "processId": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "integer"
+            },
+            "size": {
+              "$ref": "#/$defs/CommandExecTerminalSize"
+            }
+          },
+          "required": [
+            "id",
+            "cols",
+            "rows"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CommandExecResizeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CommandExecTerminalSize": {
+      "additionalProperties": false,
+      "properties": {
+        "cols": {
+          "type": "integer"
+        },
+        "rows": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rows",
+        "cols"
+      ],
+      "type": "object"
+    },
+    "CommandExecTerminateParams": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "processId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "processId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "processId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CommandExecTerminateResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CommandExecWriteParams": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "close": {
+              "type": "boolean"
+            },
+            "closeStdin": {
+              "type": "boolean"
+            },
+            "data": {
+              "type": "string"
+            },
+            "deltaBase64": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "encoding": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "processId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "processId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "close": {
+              "type": "boolean"
+            },
+            "closeStdin": {
+              "type": "boolean"
+            },
+            "data": {
+              "type": "string"
+            },
+            "deltaBase64": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "encoding": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "processId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CommandExecWriteResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "CommandExecutionAction": {
       "additionalProperties": false,
       "properties": {
@@ -4855,6 +5131,43 @@
       ],
       "result": [
         "ApprovalRespondResult"
+      ]
+    },
+    {
+      "method": "command/exec/outputDelta",
+      "surface": "server-notification",
+      "params": [
+        "CommandExecOutputDeltaNotification"
+      ]
+    },
+    {
+      "method": "command/exec/resize",
+      "surface": "client-request",
+      "params": [
+        "CommandExecResizeParams"
+      ],
+      "result": [
+        "CommandExecResizeResponse"
+      ]
+    },
+    {
+      "method": "command/exec/terminate",
+      "surface": "client-request",
+      "params": [
+        "CommandExecTerminateParams"
+      ],
+      "result": [
+        "CommandExecTerminateResponse"
+      ]
+    },
+    {
+      "method": "command/exec/write",
+      "surface": "client-request",
+      "params": [
+        "CommandExecWriteParams"
+      ],
+      "result": [
+        "CommandExecWriteResponse"
       ]
     },
     {

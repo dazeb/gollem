@@ -85,6 +85,15 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
+		{Name: "CommandExecOutputDeltaNotification", Type: reflect.TypeFor[CommandExecOutputDeltaNotification]()},
+		{Name: "CommandExecOutputStream", Type: reflect.TypeFor[CommandExecOutputStream]()},
+		{Name: "CommandExecResizeParams", Type: reflect.TypeFor[CommandExecResizeParams]()},
+		{Name: "CommandExecResizeResponse", Type: reflect.TypeFor[CommandExecResizeResponse]()},
+		{Name: "CommandExecTerminalSize", Type: reflect.TypeFor[CommandExecTerminalSize]()},
+		{Name: "CommandExecTerminateParams", Type: reflect.TypeFor[CommandExecTerminateParams]()},
+		{Name: "CommandExecTerminateResponse", Type: reflect.TypeFor[CommandExecTerminateResponse]()},
+		{Name: "CommandExecWriteParams", Type: reflect.TypeFor[CommandExecWriteParams]()},
+		{Name: "CommandExecWriteResponse", Type: reflect.TypeFor[CommandExecWriteResponse]()},
 		{Name: "CommandExecutionAction", Type: reflect.TypeFor[CommandExecutionAction]()},
 		{Name: "CommandExecutionApprovalRequestParams", Type: reflect.TypeFor[CommandExecutionApprovalRequestParams]()},
 		{Name: "CommandExecutionItem", Type: reflect.TypeFor[CommandExecutionItem]()},
@@ -216,6 +225,25 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["ThreadMemoryMode"] = stringEnumSchema(
 		string(ThreadMemoryModeEnabled), string(ThreadMemoryModeDisabled),
+	)
+	schemas["CommandExecOutputStream"] = stringEnumSchema(
+		string(CommandExecOutputStdout), string(CommandExecOutputStderr),
+	)
+	schemas["CommandExecWriteParams"] = schemaWithRequiredFieldAlternatives(
+		schemas["CommandExecWriteParams"].(Schema),
+		[]string{"processId"},
+		[]string{"id"},
+	)
+	schemas["CommandExecTerminateParams"] = schemaWithRequiredFieldAlternatives(
+		schemas["CommandExecTerminateParams"].(Schema),
+		[]string{"processId"},
+		[]string{"id"},
+	)
+	schemas["CommandExecResizeParams"] = schemaWithRequiredFieldAlternatives(
+		schemas["CommandExecResizeParams"].(Schema),
+		[]string{"processId", "size"},
+		[]string{"processId", "cols", "rows"},
+		[]string{"id", "cols", "rows"},
 	)
 	for _, name := range []string{"ThreadGoalSetParams", "ThreadGoalGetParams", "ThreadGoalClearParams"} {
 		schemas[name] = schemaWithRequiredIDAlternative(schemas[name].(Schema))
