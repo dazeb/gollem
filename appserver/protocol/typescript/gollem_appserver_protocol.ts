@@ -1924,6 +1924,21 @@ export type UserInput = {
   "type": "mention";
 };
 
+export type WebSearchAction = {
+  "queries": Array<string> | null;
+  "query": string | null;
+  "type": "search";
+} | {
+  "type": "openPage";
+  "url": string | null;
+} | {
+  "pattern": string | null;
+  "type": "findInPage";
+  "url": string | null;
+} | {
+  "type": "other";
+};
+
 export type WireTypeBinding = {
   "method": KnownMethod;
   "surface": ProtocolSurface;
