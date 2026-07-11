@@ -737,6 +737,8 @@ export type CommandExecutionRequestApprovalResponse = {
   "decision": CommandExecutionApprovalDecision;
 };
 
+export type CommandExecutionSource = "agent" | "userShell" | "unifiedExecStartup" | "unifiedExecInteraction";
+
 export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
 
 export type ContentItem = {

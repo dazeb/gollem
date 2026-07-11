@@ -115,6 +115,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecutionItemCompletedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemCompletedNotificationParams]()},
 		{Name: "CommandExecutionItemStartedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemStartedNotificationParams]()},
 		{Name: "CommandExecutionOutputDeltaNotificationParams", Type: reflect.TypeFor[CommandExecutionOutputDeltaNotificationParams]()},
+		{Name: "CommandExecutionSource", Type: reflect.TypeFor[CommandExecutionSource]()},
 		{Name: "ContentItem", Type: reflect.TypeFor[ContentItem]()},
 		{Name: "ContextCompactionItem", Type: reflect.TypeFor[ContextCompactionItem]()},
 		{Name: "DaemonShutdownParams", Type: reflect.TypeFor[DaemonShutdownParams]()},
@@ -432,6 +433,10 @@ func wireSchemaDefinitions() Schema {
 	schemas["CommandExecutionStatus"] = stringEnumSchema(
 		string(CommandExecutionStatusInProgress), string(CommandExecutionStatusCompleted),
 		string(CommandExecutionStatusFailed), string(CommandExecutionStatusDeclined),
+	)
+	schemas["CommandExecutionSource"] = stringEnumSchema(
+		string(CommandExecutionSourceAgent), string(CommandExecutionSourceUserShell),
+		string(CommandExecutionSourceUnifiedExecStartup), string(CommandExecutionSourceUnifiedExecInteraction),
 	)
 	schemas["DynamicToolCallStatus"] = stringEnumSchema(
 		string(DynamicToolCallStatusInProgress), string(DynamicToolCallStatusCompleted),
