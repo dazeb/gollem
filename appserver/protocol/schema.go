@@ -175,6 +175,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallItemStartedNotificationParams", Type: reflect.TypeFor[MCPToolCallItemStartedNotificationParams]()},
 		{Name: "MCPToolCallProgressNotificationParams", Type: reflect.TypeFor[MCPToolCallProgressNotificationParams]()},
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
+		{Name: "McpToolCallAppContext", Type: reflect.TypeFor[McpToolCallAppContext]()},
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
 		{Name: "MemoryCitationEntry", Type: reflect.TypeFor[MemoryCitationEntry]()},
 		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},

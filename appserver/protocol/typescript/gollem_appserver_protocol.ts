@@ -1342,6 +1342,15 @@ export type McpServerElicitationRequestResponse = {
   "content": unknown;
 };
 
+export type McpToolCallAppContext = {
+  "actionName": string | null;
+  "appName": string | null;
+  "connectorId": string;
+  "linkId": string | null;
+  "resourceUri": string | null;
+  "templateId": string | null;
+};
+
 export type McpToolCallError = {
   "message": string;
 };

@@ -270,6 +270,13 @@ crossed and unknown fields. Exporting this parsed-command value does not parse
 live commands, change `CommandExecutionSource`, bind it into Gollem's legacy
 command item, or claim that the runtime emits public command actions.
 
+The exact public `McpToolCallAppContext` value is exported with required
+`connectorId` and required nullable `linkId`, `resourceUri`, `appName`,
+`templateId`, and `actionName` fields. All use the public camel-case spelling,
+and canonical output includes explicit nulls. This definition is not bound into
+Gollem's legacy MCP item, projected from deprecated `mcpAppResourceUri`, or
+treated as evidence that connector metadata exists on current runtime calls.
+
 ## Generation
 
 Run:
