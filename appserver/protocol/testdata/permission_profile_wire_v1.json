@@ -1,0 +1,71 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "request": {
+    "threadId": "thread-1",
+    "turnId": "turn-1",
+    "itemId": "item-1",
+    "environmentId": "local",
+    "startedAtMs": 1783715400000,
+    "cwd": "/workspace/project",
+    "reason": "Grant network and workspace access",
+    "permissions": {
+      "network": {
+        "enabled": true
+      },
+      "fileSystem": {
+        "read": [
+          "/workspace/project"
+        ],
+        "write": [
+          "/workspace/project"
+        ],
+        "globScanMaxDepth": 3,
+        "entries": [
+          {
+            "path": {
+              "type": "special",
+              "value": {
+                "kind": "project_roots",
+                "subpath": null
+              }
+            },
+            "access": "write"
+          },
+          {
+            "path": {
+              "type": "glob_pattern",
+              "pattern": "**/.env"
+            },
+            "access": "deny"
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "permissions": {
+      "network": {
+        "enabled": true
+      },
+      "fileSystem": {
+        "read": null,
+        "write": null,
+        "entries": [
+          {
+            "path": {
+              "type": "special",
+              "value": {
+                "kind": "project_roots",
+                "subpath": null
+              }
+            },
+            "access": "write"
+          }
+        ]
+      }
+    },
+    "scope": "session",
+    "strictAutoReview": false
+  }
+}

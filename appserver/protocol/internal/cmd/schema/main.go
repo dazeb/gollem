@@ -21,6 +21,14 @@ func main() {
 			return protocol.MarshalTypeScriptFixture(fixture)
 		})
 	}
+	permissionFixture, err := os.ReadFile(filepath.Join("testdata", "permission_profile_wire_v1.json"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	writeGenerated(filepath.Join("typescript", "testdata", "permission_profile_wire_v1.ts"), func() ([]byte, error) {
+		return protocol.MarshalPermissionProfileTypeScriptFixture(permissionFixture)
+	})
 }
 
 func writeGenerated(path string, generate func() ([]byte, error)) {
