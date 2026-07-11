@@ -112,6 +112,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "DynamicToolCallItemCompletedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemCompletedNotificationParams]()},
 		{Name: "DynamicToolCallItemStartedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemStartedNotificationParams]()},
 		{Name: "FileChangeApprovalRequestParams", Type: reflect.TypeFor[FileChangeApprovalRequestParams]()},
+		{Name: "FileChangeApprovalDecision", Type: reflect.TypeFor[FileChangeApprovalDecision]()},
+		{Name: "FileChangeRequestApprovalResponse", Type: reflect.TypeFor[FileChangeRequestApprovalResponse]()},
 		{Name: "FileChangeArtifactEvidence", Type: reflect.TypeFor[FileChangeArtifactEvidence]()},
 		{Name: "FileChangeItem", Type: reflect.TypeFor[FileChangeItem]()},
 		{Name: "FileChangeItemCompletedNotificationParams", Type: reflect.TypeFor[FileChangeItemCompletedNotificationParams]()},
@@ -228,6 +230,12 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["CommandExecOutputStream"] = stringEnumSchema(
 		string(CommandExecOutputStdout), string(CommandExecOutputStderr),
+	)
+	schemas["FileChangeApprovalDecision"] = stringEnumSchema(
+		string(FileChangeApprovalAccept),
+		string(FileChangeApprovalAcceptForSession),
+		string(FileChangeApprovalDecline),
+		string(FileChangeApprovalCancel),
 	)
 	schemas["CommandExecWriteParams"] = schemaWithRequiredFieldAlternatives(
 		schemas["CommandExecWriteParams"].(Schema),

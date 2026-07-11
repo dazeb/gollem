@@ -485,6 +485,65 @@ func TestServerRuntimeInterruptCancelsPendingFilesystemApproval(t *testing.T) {
 	}
 }
 
+func TestFileChangeApprovalCancelInterruptsActiveTurn(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	st := newRuntimeTestStore(t)
+	approvals := NewApprovalService()
+	fsSvc, err := toolfs.NewService(root, toolfs.WithApproval(approvals.FilesystemApproval))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(
+			"workspace_write_file",
+			`{"path":"canceled.txt","content":"must not exist\n"}`,
+			"call-canceled",
+		),
+		core.TextResponse("should not run"),
+	)
+	server := readyServer(
+		WithStore(st),
+		WithFilesystem(fsSvc),
+		WithApprovalService(approvals),
+		WithRuntimeService(NewRuntimeService(
+			WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+			WithRuntimeTools(FilesystemRuntimeTools(fsSvc)...),
+		)),
+	)
+
+	resp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "cancel this write"}))
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	var started struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, resp, &started)
+	approvalRequest := waitForServerRequest(t, server)
+	if err := server.HandleResponse(ctx, protocol.Response{
+		ID: approvalRequest.ID,
+		Result: mustApprovalJSON(t, protocol.FileChangeRequestApprovalResponse{
+			Decision: protocol.FileChangeApprovalCancel,
+		}),
+	}); err != nil {
+		t.Fatalf("HandleResponse: %v", err)
+	}
+	waitForNotificationSet(t, server, "serverRequest/resolved", "turn/completed")
+
+	completed, err := st.GetTurn(ctx, started.Turn.ID)
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	if completed.Status != store.TurnInterrupted {
+		t.Fatalf("canceled turn status = %q, want interrupted", completed.Status)
+	}
+	if _, err := os.Stat(filepath.Join(root, "canceled.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("canceled file stat error = %v, want not-exist", err)
+	}
+}
+
 func findRuntimeToolByName(t *testing.T, tools []core.Tool, name string) core.Tool {
 	t.Helper()
 	for _, tool := range tools {

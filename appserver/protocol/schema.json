@@ -997,6 +997,15 @@
       ],
       "type": "object"
     },
+    "FileChangeApprovalDecision": {
+      "enum": [
+        "accept",
+        "acceptForSession",
+        "decline",
+        "cancel"
+      ],
+      "type": "string"
+    },
     "FileChangeApprovalRequestParams": {
       "additionalProperties": false,
       "properties": {
@@ -1220,6 +1229,18 @@
         "turnId",
         "itemId",
         "changes"
+      ],
+      "type": "object"
+    },
+    "FileChangeRequestApprovalResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/FileChangeApprovalDecision"
+        }
+      },
+      "required": [
+        "decision"
       ],
       "type": "object"
     },
@@ -5262,6 +5283,9 @@
       "surface": "server-request",
       "params": [
         "FileChangeApprovalRequestParams"
+      ],
+      "result": [
+        "FileChangeRequestApprovalResponse"
       ]
     },
     {

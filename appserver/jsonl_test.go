@@ -201,6 +201,75 @@ func TestServeJSONLinesApprovalRespondFlow(t *testing.T) {
 	}
 }
 
+func TestServeJSONLinesDirectFileChangeApprovalResponseFlow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	approvals := NewApprovalService()
+	fsSvc, err := toolfs.NewService(t.TempDir(), toolfs.WithApproval(approvals.FilesystemApproval))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := NewServer(WithFilesystem(fsSvc), WithApprovalService(approvals))
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		err := ServeJSONLines(ctx, server, inR, outW)
+		if err != nil {
+			_ = outW.CloseWithError(err)
+		} else {
+			_ = outW.Close()
+		}
+		errCh <- err
+	}()
+	scanner := bufio.NewScanner(outR)
+	writeInputLine(t, inW, `{"id":"init","method":"initialize","params":{"clientInfo":{"name":"direct-approval-client","version":"1.0.0"}}}`)
+	writeInputLine(t, inW, `{"method":"initialized"}`)
+	writeInputLine(t, inW, `{"id":"write","method":"fs/writeFile","params":{"path":"approved.txt","content":"ok"}}`)
+
+	var initResp protocol.Response
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &initResp); err != nil || initResp.Error != nil {
+		t.Fatalf("initialize response = %#v, error=%v", initResp, err)
+	}
+	var approvalReq protocol.Request
+	if err := json.Unmarshal([]byte(readOutputLine(t, scanner)), &approvalReq); err != nil {
+		t.Fatalf("decode approval request: %v", err)
+	}
+	requestID, _ := approvalReq.ID.Value().(string)
+	if approvalReq.Method != "item/fileChange/requestApproval" || requestID == "" {
+		t.Fatalf("approval request = %#v", approvalReq)
+	}
+	writeInputLine(t, inW, `{"id":"`+requestID+`","result":{"decision":"accept"}}`)
+	if err := inW.Close(); err != nil {
+		t.Fatalf("close input: %v", err)
+	}
+
+	seenWrite := false
+	seenResolved := false
+	seenChanged := false
+	for scanner.Scan() {
+		var envelope struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &envelope); err != nil {
+			t.Fatalf("decode output %q: %v", scanner.Text(), err)
+		}
+		seenWrite = seenWrite || envelope.ID == "write"
+		seenResolved = seenResolved || envelope.Method == "serverRequest/resolved"
+		seenChanged = seenChanged || envelope.Method == "fs/changed"
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan output: %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("ServeJSONLines: %v", err)
+	}
+	if !seenWrite || !seenResolved || !seenChanged {
+		t.Fatalf("outputs: write=%t resolved=%t changed=%t", seenWrite, seenResolved, seenChanged)
+	}
+}
+
 func TestServeJSONLinesBackpressureAllowsApprovalRespond(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -25,22 +26,41 @@ const (
 )
 
 // ApprovalService bridges synchronous tool approval hooks to app-server
-// server-to-client approval requests resolved by approval/respond.
+// server-to-client approval requests resolved directly or by approval/respond.
 type ApprovalService struct {
-	mu       sync.Mutex
-	counter  int64
-	pending  map[string]pendingApproval
-	requests *RequestQueue
+	mu                     sync.Mutex
+	counter                int64
+	pending                map[string]pendingApproval
+	fileChangeSessionPaths map[string]struct{}
+	requests               *RequestQueue
 }
 
 type pendingApproval struct {
-	ch       chan approvalResolution
-	threadID string
+	ch             chan approvalResolution
+	threadID       string
+	turnID         string
+	method         string
+	sessionTargets []string
 }
 
 type approvalResolution struct {
 	Approved bool
 	Message  string
+}
+
+type approvalResponseResult struct {
+	RequestID  string
+	ThreadID   string
+	TurnID     string
+	CancelTurn bool
+	ch         chan approvalResolution
+	resolution approvalResolution
+}
+
+func (r approvalResponseResult) resolve() {
+	if r.ch != nil {
+		r.ch <- r.resolution
+	}
 }
 
 type approvalRequestBase struct {
@@ -60,8 +80,9 @@ type approvalRespondResult struct {
 
 func NewApprovalService() *ApprovalService {
 	return &ApprovalService{
-		pending:  make(map[string]pendingApproval),
-		requests: NewRequestQueue(),
+		pending:                make(map[string]pendingApproval),
+		fileChangeSessionPaths: make(map[string]struct{}),
+		requests:               NewRequestQueue(),
 	}
 }
 
@@ -89,6 +110,10 @@ func (s *ApprovalService) DrainRequests() []protocol.Request {
 }
 
 func (s *ApprovalService) FilesystemApproval(ctx context.Context, op toolfs.Operation) error {
+	sessionTargets := fileChangeApprovalSessionTargets(op)
+	if s.fileChangeSessionApproved(sessionTargets) {
+		return nil
+	}
 	reason := fmt.Sprintf("Approve filesystem %s for %s", op.Kind, op.Path)
 	base := s.base(ctx, reason)
 	params := protocol.FileChangeApprovalRequestParams{
@@ -99,7 +124,7 @@ func (s *ApprovalService) FilesystemApproval(ctx context.Context, op toolfs.Oper
 		Destination:         op.Destination,
 		Destructive:         op.Destructive,
 	}
-	return s.requestApproval(ctx, "item/fileChange/requestApproval", base.requestID, params)
+	return s.requestApproval(ctx, "item/fileChange/requestApproval", base.requestID, params, sessionTargets)
 }
 
 func (s *ApprovalService) ProcessApproval(ctx context.Context, op toolprocess.Operation) error {
@@ -115,7 +140,7 @@ func (s *ApprovalService) ProcessApproval(ctx context.Context, op toolprocess.Op
 		Signal:              op.Signal,
 		Destructive:         op.Destructive,
 	}
-	return s.requestApproval(ctx, "item/commandExecution/requestApproval", base.requestID, params)
+	return s.requestApproval(ctx, "item/commandExecution/requestApproval", base.requestID, params, nil)
 }
 
 func (s *ApprovalService) GitApproval(ctx context.Context, op toolgit.Operation) error {
@@ -140,7 +165,7 @@ func (s *ApprovalService) GitApproval(ctx context.Context, op toolgit.Operation)
 			"mutating":  op.Mutating,
 		},
 	}
-	return s.requestApproval(ctx, "item/permissions/requestApproval", requestBase.requestID, params)
+	return s.requestApproval(ctx, "item/permissions/requestApproval", requestBase.requestID, params, nil)
 }
 
 func (s *ApprovalService) MCPToolApproval(ctx context.Context, serverName, toolName string, args map[string]any) error {
@@ -163,7 +188,7 @@ func (s *ApprovalService) MCPToolApproval(ctx context.Context, serverName, toolN
 			"mutating":     true,
 		},
 	}
-	return s.requestApproval(ctx, "item/permissions/requestApproval", base.requestID, params)
+	return s.requestApproval(ctx, "item/permissions/requestApproval", base.requestID, params, nil)
 }
 
 func (s *Server) handleApprovalRespond(raw json.RawMessage) (any, *protocol.Error) {
@@ -209,6 +234,67 @@ func (s *ApprovalService) Respond(params approvalRespondParams) (approvalRespond
 	}, nil
 }
 
+func (s *ApprovalService) RespondResponse(resp protocol.Response) (approvalResponseResult, bool, error) {
+	if s == nil {
+		return approvalResponseResult{}, false, errors.New("approval service is not configured")
+	}
+	requestID := requestIDString(resp.ID)
+	if requestID == "" {
+		return approvalResponseResult{}, false, errors.New("response id is required")
+	}
+
+	s.mu.Lock()
+	pending, ok := s.pending[requestID]
+	if !ok {
+		s.mu.Unlock()
+		return approvalResponseResult{}, false, nil
+	}
+	result := approvalResponseResult{
+		RequestID: requestID,
+		ThreadID:  pending.threadID,
+		TurnID:    pending.turnID,
+		ch:        pending.ch,
+	}
+	resolution := approvalResolution{Message: "approval response was rejected"}
+	var responseErr error
+	if pending.method != "item/fileChange/requestApproval" {
+		responseErr = fmt.Errorf("direct response is not implemented for %s", pending.method)
+	} else if resp.Error != nil {
+		resolution.Message = resp.Error.Message
+	} else {
+		var response protocol.FileChangeRequestApprovalResponse
+		if err := json.Unmarshal(resp.Result, &response); err != nil {
+			responseErr = fmt.Errorf("decode file-change approval response: %w", err)
+		} else {
+			switch response.Decision {
+			case protocol.FileChangeApprovalAccept:
+				resolution.Approved = true
+				resolution.Message = ""
+			case protocol.FileChangeApprovalAcceptForSession:
+				resolution.Approved = true
+				resolution.Message = ""
+				if s.fileChangeSessionPaths == nil {
+					s.fileChangeSessionPaths = make(map[string]struct{})
+				}
+				for _, target := range pending.sessionTargets {
+					s.fileChangeSessionPaths[target] = struct{}{}
+				}
+			case protocol.FileChangeApprovalDecline:
+				resolution.Message = "file change declined"
+			case protocol.FileChangeApprovalCancel:
+				resolution.Message = "file change canceled"
+				result.CancelTurn = true
+			default:
+				responseErr = fmt.Errorf("unsupported file-change approval decision %q", response.Decision)
+			}
+		}
+	}
+	delete(s.pending, requestID)
+	s.mu.Unlock()
+	result.resolution = resolution
+	return result, true, responseErr
+}
+
 type serverRequestResolvedParams = protocol.ServerRequestResolvedNotificationParams
 
 func (s *ApprovalService) base(ctx context.Context, reason string) approvalRequestBase {
@@ -239,7 +325,7 @@ func (s *ApprovalService) nextRequestID() string {
 	return fmt.Sprintf("approval-%d", s.counter)
 }
 
-func (s *ApprovalService) requestApproval(ctx context.Context, method, requestID string, params any) error {
+func (s *ApprovalService) requestApproval(ctx context.Context, method, requestID string, params any, sessionTargets []string) error {
 	if s == nil || s.requests == nil {
 		return errors.New("approval service is not configured")
 	}
@@ -248,8 +334,11 @@ func (s *ApprovalService) requestApproval(ctx context.Context, method, requestID
 	}
 	runtimeContext := runtimeTurnContextFrom(ctx)
 	pending := pendingApproval{
-		ch:       make(chan approvalResolution, 1),
-		threadID: firstNonEmpty(runtimeContext.ThreadID, approvalThreadID),
+		ch:             make(chan approvalResolution, 1),
+		threadID:       firstNonEmpty(runtimeContext.ThreadID, approvalThreadID),
+		turnID:         firstNonEmpty(runtimeContext.TurnID, approvalTurnID),
+		method:         method,
+		sessionTargets: append([]string(nil), sessionTargets...),
 	}
 	s.mu.Lock()
 	if s.pending == nil {
@@ -274,4 +363,34 @@ func (s *ApprovalService) requestApproval(ctx context.Context, method, requestID
 		s.mu.Unlock()
 		return ctx.Err()
 	}
+}
+
+func (s *ApprovalService) fileChangeSessionApproved(targets []string) bool {
+	if s == nil || len(targets) == 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, target := range targets {
+		if _, ok := s.fileChangeSessionPaths[target]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func fileChangeApprovalSessionTargets(op toolfs.Operation) []string {
+	paths := []string{op.Path}
+	if op.Kind == toolfs.OperationCopy {
+		paths = []string{op.Destination}
+	}
+	targets := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		targets = append(targets, filepath.ToSlash(filepath.Clean(path)))
+	}
+	return targets
 }
