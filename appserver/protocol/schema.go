@@ -303,6 +303,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
 		{Name: "WebSearchAction", Type: reflect.TypeFor[WebSearchAction]()},
+		{Name: "WebSearchItem", Type: reflect.TypeFor[WebSearchItem]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
