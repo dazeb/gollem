@@ -599,9 +599,20 @@ export type CommandExecutionAction = {
   "type": string;
 };
 
+export type CommandExecutionApprovalDecision = "accept" | "acceptForSession" | {
+  "acceptWithExecpolicyAmendment": {
+    "execpolicy_amendment": ExecPolicyAmendment;
+  };
+} | {
+  "applyNetworkPolicyAmendment": {
+    "network_policy_amendment": NetworkPolicyAmendment;
+  };
+} | "decline" | "cancel";
+
 export type CommandExecutionApprovalRequestParams = {
   "approvalId"?: string;
   "args"?: Array<string> | null;
+  "availableDecisions"?: Array<CommandExecutionApprovalDecision>;
   "command"?: string;
   "commandActions"?: Array<CommandExecutionAction> | null;
   "cwd"?: string;
@@ -650,6 +661,10 @@ export type CommandExecutionOutputDeltaNotificationParams = {
   "itemId": string;
   "threadId": string;
   "turnId": string;
+};
+
+export type CommandExecutionRequestApprovalResponse = {
+  "decision": CommandExecutionApprovalDecision;
 };
 
 export type ContextCompactionItem = {
@@ -771,6 +786,8 @@ export type Error = ({
   "data"?: unknown;
   "message": string;
 } & Record<string, unknown>);
+
+export type ExecPolicyAmendment = Array<string>;
 
 export type FileChangeApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
@@ -1103,6 +1120,13 @@ export type MethodInfo = {
 };
 
 export type MethodState = "implemented" | "blocked" | "deferred-stub" | "renamed-equivalent" | "not-applicable";
+
+export type NetworkPolicyAmendment = {
+  "action": NetworkPolicyRuleAction;
+  "host": string;
+};
+
+export type NetworkPolicyRuleAction = "allow" | "deny";
 
 export type Notification = {
   "method": "account/login/completed" | "account/rateLimits/updated" | "account/updated" | "app/list/updated" | "command/exec/outputDelta" | "configWarning" | "deprecationNotice" | "error" | "externalAgentConfig/import/completed" | "externalAgentConfig/import/progress" | "fs/changed" | "fuzzyFileSearch/sessionCompleted" | "fuzzyFileSearch/sessionUpdated" | "guardianWarning" | "hook/completed" | "hook/started" | "item/agentMessage/delta" | "item/autoApprovalReview/completed" | "item/autoApprovalReview/started" | "item/commandExecution/outputDelta" | "item/commandExecution/terminalInteraction" | "item/completed" | "item/fileChange/outputDelta" | "item/fileChange/patchUpdated" | "item/mcpToolCall/progress" | "item/plan/delta" | "item/reasoning/summaryPartAdded" | "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" | "item/started" | "mcpServer/oauthLogin/completed" | "mcpServer/startupStatus/updated" | "model/rerouted" | "model/safetyBuffering/updated" | "model/verification" | "process/exited" | "process/outputDelta" | "rawResponseItem/completed" | "remoteControl/status/changed" | "serverRequest/resolved" | "skills/changed" | "thread/archived" | "thread/closed" | "thread/compacted" | "thread/deleted" | "thread/goal/cleared" | "thread/goal/updated" | "thread/name/updated" | "thread/realtime/closed" | "thread/realtime/error" | "thread/realtime/itemAdded" | "thread/realtime/outputAudio/delta" | "thread/realtime/sdp" | "thread/realtime/started" | "thread/realtime/transcript/delta" | "thread/realtime/transcript/done" | "thread/settings/updated" | "thread/started" | "thread/status/changed" | "thread/tokenUsage/updated" | "thread/unarchived" | "turn/completed" | "turn/diff/updated" | "turn/moderationMetadata" | "turn/plan/updated" | "turn/started" | "warning" | "windows/worldWritableWarning" | "windowsSandbox/setupCompleted" | "cache/benchmark/completed" | "initialized";
@@ -1597,7 +1621,7 @@ export const wireTypeBindings = [
   { "method": "initialize", "surface": "client-request", "params": ["InitializeParams"], "result": ["InitializeResponse"] },
   { "method": "initialized", "surface": "client-notification" },
   { "method": "item/commandExecution/outputDelta", "surface": "server-notification", "params": ["CommandExecutionOutputDeltaNotificationParams"] },
-  { "method": "item/commandExecution/requestApproval", "surface": "server-request", "params": ["CommandExecutionApprovalRequestParams"] },
+  { "method": "item/commandExecution/requestApproval", "surface": "server-request", "params": ["CommandExecutionApprovalRequestParams"], "result": ["CommandExecutionRequestApprovalResponse"] },
   { "method": "item/completed", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"] },
   { "method": "item/fileChange/patchUpdated", "surface": "server-notification", "params": ["FileChangePatchUpdatedNotificationParams"] },
   { "method": "item/fileChange/requestApproval", "surface": "server-request", "params": ["FileChangeApprovalRequestParams"], "result": ["FileChangeRequestApprovalResponse"] },
@@ -1696,6 +1720,7 @@ export interface MethodResultsByName {
   "daemon/stop": DaemonStopResult;
   "daemon/version": DaemonVersion;
   "initialize": InitializeResponse;
+  "item/commandExecution/requestApproval": CommandExecutionRequestApprovalResponse;
   "item/fileChange/requestApproval": FileChangeRequestApprovalResponse;
   "item/tool/call": DynamicToolCallResponse;
   "item/tool/requestUserInput": ToolRequestUserInputResponse;

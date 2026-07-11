@@ -399,14 +399,15 @@ type FileChangeRequestApprovalResponse struct {
 
 type CommandExecutionApprovalRequestParams struct {
 	ApprovalRequestBase
-	ApprovalID     string                   `json:"approvalId,omitempty"`
-	Command        string                   `json:"command,omitempty"`
-	Args           []string                 `json:"args,omitempty"`
-	CWD            string                   `json:"cwd,omitempty"`
-	Operation      string                   `json:"operation,omitempty"`
-	Signal         string                   `json:"signal,omitempty"`
-	Destructive    bool                     `json:"destructive,omitempty"`
-	CommandActions []CommandExecutionAction `json:"commandActions,omitempty"`
+	ApprovalID         string                             `json:"approvalId,omitempty"`
+	Command            string                             `json:"command,omitempty"`
+	Args               []string                           `json:"args,omitempty"`
+	CWD                string                             `json:"cwd,omitempty"`
+	Operation          string                             `json:"operation,omitempty"`
+	Signal             string                             `json:"signal,omitempty"`
+	Destructive        bool                               `json:"destructive,omitempty"`
+	CommandActions     []CommandExecutionAction           `json:"commandActions,omitempty"`
+	AvailableDecisions []CommandExecutionApprovalDecision `json:"availableDecisions,omitempty" jsonschema:"nonnullable=true"`
 }
 
 type PermissionsApprovalRequestParams struct {

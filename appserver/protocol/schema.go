@@ -95,7 +95,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecWriteParams", Type: reflect.TypeFor[CommandExecWriteParams]()},
 		{Name: "CommandExecWriteResponse", Type: reflect.TypeFor[CommandExecWriteResponse]()},
 		{Name: "CommandExecutionAction", Type: reflect.TypeFor[CommandExecutionAction]()},
+		{Name: "CommandExecutionApprovalDecision", Type: reflect.TypeFor[CommandExecutionApprovalDecision]()},
 		{Name: "CommandExecutionApprovalRequestParams", Type: reflect.TypeFor[CommandExecutionApprovalRequestParams]()},
+		{Name: "CommandExecutionRequestApprovalResponse", Type: reflect.TypeFor[CommandExecutionRequestApprovalResponse]()},
 		{Name: "CommandExecutionItem", Type: reflect.TypeFor[CommandExecutionItem]()},
 		{Name: "CommandExecutionItemCompletedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemCompletedNotificationParams]()},
 		{Name: "CommandExecutionItemStartedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemStartedNotificationParams]()},
@@ -114,6 +116,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "DynamicToolCallItem", Type: reflect.TypeFor[DynamicToolCallItem]()},
 		{Name: "DynamicToolCallItemCompletedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemCompletedNotificationParams]()},
 		{Name: "DynamicToolCallItemStartedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemStartedNotificationParams]()},
+		{Name: "ExecPolicyAmendment", Type: reflect.TypeFor[ExecPolicyAmendment]()},
 		{Name: "FileChangeApprovalRequestParams", Type: reflect.TypeFor[FileChangeApprovalRequestParams]()},
 		{Name: "FileChangeApprovalDecision", Type: reflect.TypeFor[FileChangeApprovalDecision]()},
 		{Name: "FileChangeRequestApprovalResponse", Type: reflect.TypeFor[FileChangeRequestApprovalResponse]()},
@@ -162,6 +165,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpServerElicitationRequestResponse", Type: reflect.TypeFor[McpServerElicitationRequestResponse]()},
 		{Name: "MethodInfo", Type: reflect.TypeFor[MethodInfo]()},
 		{Name: "MethodState", Type: reflect.TypeFor[MethodState]()},
+		{Name: "NetworkPolicyAmendment", Type: reflect.TypeFor[NetworkPolicyAmendment]()},
+		{Name: "NetworkPolicyRuleAction", Type: reflect.TypeFor[NetworkPolicyRuleAction]()},
 		{Name: "PatchApplyStatus", Type: reflect.TypeFor[PatchApplyStatus]()},
 		{Name: "PatchChangeKind", Type: reflect.TypeFor[PatchChangeKind]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
@@ -265,6 +270,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["CommandExecOutputStream"] = stringEnumSchema(
 		string(CommandExecOutputStdout), string(CommandExecOutputStderr),
 	)
+	schemas["CommandExecutionApprovalDecision"] = commandExecutionApprovalDecisionSchema()
 	schemas["FileChangeApprovalDecision"] = stringEnumSchema(
 		string(FileChangeApprovalAccept),
 		string(FileChangeApprovalAcceptForSession),
@@ -307,6 +313,9 @@ func wireSchemaDefinitions() Schema {
 	setSchemaIntegerMinimum(schemas["McpElicitationUntitledMultiSelectEnumSchema"].(Schema), 0, "minItems", "maxItems")
 	schemas["McpServerElicitationAction"] = stringEnumSchema("accept", "decline", "cancel")
 	schemas["McpServerElicitationRequestParams"] = mcpServerElicitationRequestParamsSchema()
+	schemas["NetworkPolicyRuleAction"] = stringEnumSchema(
+		string(NetworkPolicyRuleAllow), string(NetworkPolicyRuleDeny),
+	)
 	schemas["CommandExecWriteParams"] = schemaWithRequiredFieldAlternatives(
 		schemas["CommandExecWriteParams"].(Schema),
 		[]string{"processId"},
@@ -386,6 +395,47 @@ func dynamicToolCallOutputContentItemVariantSchema(contentType, valueField strin
 		"required":             []string{"type", valueField},
 		"additionalProperties": false,
 	}
+}
+
+func commandExecutionApprovalDecisionSchema() Schema {
+	execPolicyVariant := Schema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": Schema{
+			CommandExecutionApprovalAcceptWithExecpolicyAmendment: Schema{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": Schema{
+					"execpolicy_amendment": Schema{"$ref": "#/$defs/ExecPolicyAmendment"},
+				},
+				"required": []any{"execpolicy_amendment"},
+			},
+		},
+		"required": []any{CommandExecutionApprovalAcceptWithExecpolicyAmendment},
+	}
+	networkPolicyVariant := Schema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": Schema{
+			CommandExecutionApprovalApplyNetworkPolicyAmendment: Schema{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": Schema{
+					"network_policy_amendment": Schema{"$ref": "#/$defs/NetworkPolicyAmendment"},
+				},
+				"required": []any{"network_policy_amendment"},
+			},
+		},
+		"required": []any{CommandExecutionApprovalApplyNetworkPolicyAmendment},
+	}
+	return Schema{"oneOf": []any{
+		stringEnumSchema(CommandExecutionApprovalAccept),
+		stringEnumSchema(CommandExecutionApprovalAcceptForSession),
+		execPolicyVariant,
+		networkPolicyVariant,
+		stringEnumSchema(CommandExecutionApprovalDecline),
+		stringEnumSchema(CommandExecutionApprovalCancel),
+	}}
 }
 
 func schemaRefUnion(names ...string) Schema {

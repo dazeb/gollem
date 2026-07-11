@@ -278,6 +278,64 @@ func TestServerRuntimeDeniedCommandPersistsDeclinedItem(t *testing.T) {
 	}
 }
 
+func TestServerRuntimeCommandApprovalCancelInterruptsActiveTurn(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	approvals := NewApprovalService()
+	processSvc, err := toolprocess.NewService(t.TempDir(), toolprocess.WithApproval(approvals.ProcessApproval))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID(
+			"workspace_run_command",
+			`{"command":"printf","args":["must not run"]}`,
+			"call-cancel-command",
+		),
+		core.TextResponse("should not run"),
+	)
+	server := readyServer(
+		WithStore(st),
+		WithProcess(processSvc),
+		WithApprovalService(approvals),
+		WithRuntimeService(NewRuntimeService(
+			WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+			WithRuntimeTools(ProcessRuntimeTools(processSvc)...),
+		)),
+	)
+	resp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "cancel a command"}))
+	if resp.Error != nil {
+		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	var started struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, resp, &started)
+	approvalRequest := waitForServerRequest(t, server)
+	if err := server.HandleResponse(ctx, protocol.Response{
+		ID:     approvalRequest.ID,
+		Result: json.RawMessage(`{"decision":"cancel"}`),
+	}); err != nil {
+		t.Fatalf("HandleResponse: %v", err)
+	}
+	waitForNotificationSet(t, server, "serverRequest/resolved", "turn/completed")
+
+	turn, err := st.GetTurn(ctx, started.Turn.ID)
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	if turn.Status != store.TurnInterrupted {
+		t.Fatalf("turn status = %q, want interrupted", turn.Status)
+	}
+	processes, err := processSvc.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(processes) != 0 {
+		t.Fatalf("canceled command processes = %+v", processes)
+	}
+}
+
 func TestServerRuntimeCommandOutputIsBounded(t *testing.T) {
 	ctx := context.Background()
 	st := newRuntimeTestStore(t)

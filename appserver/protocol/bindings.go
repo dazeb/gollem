@@ -30,7 +30,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "initialize", Surface: SurfaceClientRequest, Params: []string{"InitializeParams"}, Result: []string{"InitializeResponse"}},
 	{Method: "initialized", Surface: SurfaceClientNotification},
 	{Method: "item/commandExecution/outputDelta", Surface: SurfaceServerNotification, Params: []string{"CommandExecutionOutputDeltaNotificationParams"}},
-	{Method: "item/commandExecution/requestApproval", Surface: SurfaceServerRequest, Params: []string{"CommandExecutionApprovalRequestParams"}},
+	{Method: "item/commandExecution/requestApproval", Surface: SurfaceServerRequest, Params: []string{"CommandExecutionApprovalRequestParams"}, Result: []string{"CommandExecutionRequestApprovalResponse"}},
 	{Method: "item/completed", Surface: SurfaceServerNotification, Params: []string{"ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"}},
 	{Method: "item/fileChange/patchUpdated", Surface: SurfaceServerNotification, Params: []string{"FileChangePatchUpdatedNotificationParams"}},
 	{Method: "item/fileChange/requestApproval", Surface: SurfaceServerRequest, Params: []string{"FileChangeApprovalRequestParams"}, Result: []string{"FileChangeRequestApprovalResponse"}},
