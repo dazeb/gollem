@@ -515,6 +515,14 @@ export type AdditionalPermissionProfile = {
   "network": AdditionalNetworkPermissions | null;
 };
 
+export type AgentMessageInputContent = {
+  "text": string;
+  "type": "input_text";
+} | {
+  "encrypted_content": string;
+  "type": "encrypted_content";
+};
+
 export type AgentPath = string;
 
 export type ApprovalRequestBase = {
@@ -1464,6 +1472,19 @@ export type PermissionsRequestApprovalResponse = {
 };
 
 export type ReasoningEffort = string;
+
+export type ReasoningItemContent = {
+  "text": string;
+  "type": "reasoning_text";
+} | {
+  "text": string;
+  "type": "text";
+};
+
+export type ReasoningItemReasoningSummary = {
+  "text": string;
+  "type": "summary_text";
+};
 
 export type Request = {
   "id": RequestID;
