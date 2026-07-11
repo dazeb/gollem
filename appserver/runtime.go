@@ -403,6 +403,7 @@ func (s *RuntimeService) complete(st store.Store, notifier runtimeNotifier, turn
 		if result != nil {
 			publishThreadTokenUsage(notifier, st, completed, result.Usage)
 		}
+		publishThreadGoalTurnUsage(notifier, st, completed)
 		publishTurnCompleted(notifier, completed)
 	}
 }

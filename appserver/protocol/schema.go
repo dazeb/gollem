@@ -136,6 +136,16 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadCompactedNotificationParams", Type: reflect.TypeFor[ThreadCompactedNotificationParams]()},
 		{Name: "ThreadDeleteParams", Type: reflect.TypeFor[ThreadDeleteParams]()},
 		{Name: "ThreadDeleteResponse", Type: reflect.TypeFor[ThreadDeleteResponse]()},
+		{Name: "ThreadGoal", Type: reflect.TypeFor[ThreadGoal]()},
+		{Name: "ThreadGoalClearParams", Type: reflect.TypeFor[ThreadGoalClearParams]()},
+		{Name: "ThreadGoalClearResponse", Type: reflect.TypeFor[ThreadGoalClearResponse]()},
+		{Name: "ThreadGoalClearedNotification", Type: reflect.TypeFor[ThreadGoalClearedNotification]()},
+		{Name: "ThreadGoalGetParams", Type: reflect.TypeFor[ThreadGoalGetParams]()},
+		{Name: "ThreadGoalGetResponse", Type: reflect.TypeFor[ThreadGoalGetResponse]()},
+		{Name: "ThreadGoalSetParams", Type: reflect.TypeFor[ThreadGoalSetParams]()},
+		{Name: "ThreadGoalSetResponse", Type: reflect.TypeFor[ThreadGoalSetResponse]()},
+		{Name: "ThreadGoalStatus", Type: reflect.TypeFor[ThreadGoalStatus]()},
+		{Name: "ThreadGoalUpdatedNotification", Type: reflect.TypeFor[ThreadGoalUpdatedNotification]()},
 		{Name: "ThreadLifecycleStatus", Type: reflect.TypeFor[ThreadLifecycleStatus]()},
 		{Name: "ThreadListCwdFilter", Type: reflect.TypeFor[ThreadListCwdFilter]()},
 		{Name: "ThreadListParams", Type: reflect.TypeFor[ThreadListParams]()},
@@ -189,6 +199,13 @@ func wireSchemaDefinitions() Schema {
 	schemas["ThreadLifecycleStatus"] = stringEnumSchema(
 		string(ThreadLifecycleActive), string(ThreadLifecycleArchived), string(ThreadLifecycleDeleted),
 	)
+	schemas["ThreadGoalStatus"] = stringEnumSchema(
+		string(ThreadGoalActive), string(ThreadGoalPaused), string(ThreadGoalBlocked),
+		string(ThreadGoalUsageLimited), string(ThreadGoalBudgetLimited), string(ThreadGoalComplete),
+	)
+	for _, name := range []string{"ThreadGoalSetParams", "ThreadGoalGetParams", "ThreadGoalClearParams"} {
+		schemas[name] = schemaWithRequiredIDAlternative(schemas[name].(Schema))
+	}
 	schemas["ThreadListCwdFilter"] = Schema{"oneOf": []any{
 		Schema{"type": "string"},
 		Schema{"type": "array", "items": Schema{"type": "string"}},
@@ -211,6 +228,19 @@ func wireSchemaDefinitions() Schema {
 		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
+}
+
+func schemaWithRequiredIDAlternative(base Schema) Schema {
+	variants := make([]any, 0, 2)
+	for _, required := range []string{"threadId", "id"} {
+		variant := make(Schema, len(base))
+		for key, value := range base {
+			variant[key] = value
+		}
+		variant["required"] = []string{required}
+		variants = append(variants, variant)
+	}
+	return Schema{"oneOf": variants}
 }
 
 type wireSchemaDefinition struct {

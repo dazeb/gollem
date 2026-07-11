@@ -942,9 +942,9 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	if getResp.Error != nil {
 		t.Fatalf("thread/goal/get error: %v", getResp.Error)
 	}
-	var initialGoal threadGoalResult
+	var initialGoal protocol.ThreadGoalGetResponse
 	decodeResult(t, getResp, &initialGoal)
-	if initialGoal.Set || initialGoal.Goal != nil {
+	if initialGoal.Set == nil || *initialGoal.Set || initialGoal.Goal != nil {
 		t.Fatalf("initial goal = %#v", initialGoal)
 	}
 
@@ -960,20 +960,18 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	if setResp.Error != nil {
 		t.Fatalf("thread/goal/set error: %v", setResp.Error)
 	}
-	var setGoal threadGoalResult
+	var setGoal protocol.ThreadGoalSetResponse
 	decodeResult(t, setResp, &setGoal)
-	gotGoal, ok := setGoal.Goal.(map[string]any)
-	if !setGoal.Set || !ok || gotGoal["objective"] != "finish PR" || setGoal.Thread.Settings[threadGoalSettingKey] == nil {
+	if setGoal.Set == nil || !*setGoal.Set || setGoal.Goal.Objective != "finish PR" || setGoal.Thread == nil || setGoal.Thread.Settings[threadGoalSettingKey] == nil {
 		t.Fatalf("set goal = %#v", setGoal)
 	}
 	events := server.DrainNotifications()
 	assertNotificationMethods(t, events, "thread/settings/updated", "thread/goal/updated")
-	var goalNotice threadGoalNotificationParams
+	var goalNotice protocol.ThreadGoalUpdatedNotification
 	if err := json.Unmarshal(events[1].Params, &goalNotice); err != nil {
 		t.Fatalf("decode goal notice: %v", err)
 	}
-	noticeGoal, ok := goalNotice.Goal.(map[string]any)
-	if goalNotice.ThreadID != thread.ID || !ok || noticeGoal["status"] != "active" {
+	if goalNotice.ThreadID != thread.ID || goalNotice.Goal.Status != protocol.ThreadGoalActive {
 		t.Fatalf("goal notice = %#v", goalNotice)
 	}
 
@@ -1070,9 +1068,9 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	if clearResp.Error != nil {
 		t.Fatalf("thread/goal/clear error: %v", clearResp.Error)
 	}
-	var cleared threadGoalClearResult
+	var cleared protocol.ThreadGoalClearResponse
 	decodeResult(t, clearResp, &cleared)
-	if !cleared.Cleared || cleared.Thread.Settings[threadGoalSettingKey] != nil || cleared.Thread.Settings[threadMemoryModeSettingKey] != "disabled" {
+	if !cleared.Cleared || cleared.Thread == nil || cleared.Thread.Settings[threadGoalSettingKey] != nil || cleared.Thread.Settings[threadMemoryModeSettingKey] != "disabled" {
 		t.Fatalf("cleared goal = %#v", cleared)
 	}
 	events = server.DrainNotifications()
@@ -1082,9 +1080,9 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	if getResp.Error != nil {
 		t.Fatalf("thread/goal/get after clear error: %v", getResp.Error)
 	}
-	var finalGoal threadGoalResult
+	var finalGoal protocol.ThreadGoalGetResponse
 	decodeResult(t, getResp, &finalGoal)
-	if finalGoal.Set || finalGoal.Goal != nil {
+	if finalGoal.Set == nil || *finalGoal.Set || finalGoal.Goal != nil {
 		t.Fatalf("final goal = %#v", finalGoal)
 	}
 
@@ -1092,7 +1090,7 @@ func TestServerThreadControlHandlers(t *testing.T) {
 	if clearAgainResp.Error != nil {
 		t.Fatalf("thread/goal/clear no-op error: %v", clearAgainResp.Error)
 	}
-	var clearAgain threadGoalClearResult
+	var clearAgain protocol.ThreadGoalClearResponse
 	decodeResult(t, clearAgainResp, &clearAgain)
 	if clearAgain.Cleared {
 		t.Fatalf("clear again = %#v, want no-op", clearAgain)

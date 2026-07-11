@@ -1906,6 +1906,415 @@
       },
       "type": "object"
     },
+    "ThreadGoal": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "type": "integer"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadGoalStatus"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "timeUsedSeconds": {
+          "type": "integer"
+        },
+        "tokenBudget": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tokensUsed": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "threadId",
+        "objective",
+        "status",
+        "tokenBudget",
+        "tokensUsed",
+        "timeUsedSeconds",
+        "createdAt",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalClearParams": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadGoalClearResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "cleared": {
+          "type": "boolean"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cleared"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalClearedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalGetParams": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadGoalGetResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "goal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadGoal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "set": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalSetParams": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "goal": {},
+            "id": {
+              "type": "string"
+            },
+            "objective": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ThreadGoalStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {},
+            "threadId": {
+              "type": "string"
+            },
+            "tokenBudget": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "value": {}
+          },
+          "required": [
+            "threadId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "goal": {},
+            "id": {
+              "type": "string"
+            },
+            "objective": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ThreadGoalStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {},
+            "threadId": {
+              "type": "string"
+            },
+            "tokenBudget": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "value": {}
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ThreadGoalSetResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "goal": {
+          "$ref": "#/$defs/ThreadGoal"
+        },
+        "set": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalStatus": {
+      "enum": [
+        "active",
+        "paused",
+        "blocked",
+        "usageLimited",
+        "budgetLimited",
+        "complete"
+      ],
+      "type": "string"
+    },
+    "ThreadGoalUpdatedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "goal": {
+          "$ref": "#/$defs/ThreadGoal"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "goal"
+      ],
+      "type": "object"
+    },
     "ThreadLifecycleStatus": {
       "enum": [
         "active",
@@ -4188,6 +4597,50 @@
       ],
       "result": [
         "ThreadDeleteResponse"
+      ]
+    },
+    {
+      "method": "thread/goal/clear",
+      "surface": "client-request",
+      "params": [
+        "ThreadGoalClearParams"
+      ],
+      "result": [
+        "ThreadGoalClearResponse"
+      ]
+    },
+    {
+      "method": "thread/goal/cleared",
+      "surface": "server-notification",
+      "params": [
+        "ThreadGoalClearedNotification"
+      ]
+    },
+    {
+      "method": "thread/goal/get",
+      "surface": "client-request",
+      "params": [
+        "ThreadGoalGetParams"
+      ],
+      "result": [
+        "ThreadGoalGetResponse"
+      ]
+    },
+    {
+      "method": "thread/goal/set",
+      "surface": "client-request",
+      "params": [
+        "ThreadGoalSetParams"
+      ],
+      "result": [
+        "ThreadGoalSetResponse"
+      ]
+    },
+    {
+      "method": "thread/goal/updated",
+      "surface": "server-notification",
+      "params": [
+        "ThreadGoalUpdatedNotification"
       ]
     },
     {

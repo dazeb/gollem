@@ -59,33 +59,6 @@ const (
 	threadMemoryModeSettingKey = "memoryMode"
 )
 
-type threadGoalSetParams struct {
-	ID       string          `json:"id,omitempty"`
-	ThreadID string          `json:"threadId,omitempty"`
-	Goal     json.RawMessage `json:"goal,omitempty"`
-	Text     json.RawMessage `json:"text,omitempty"`
-	Value    json.RawMessage `json:"value,omitempty"`
-}
-
-func (p threadGoalSetParams) threadID() string {
-	return firstNonEmpty(p.ThreadID, p.ID)
-}
-
-func (p threadGoalSetParams) goal() (any, bool) {
-	raw := firstRaw(p.Goal, p.Text, p.Value)
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, false
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, false
-	}
-	if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
-		return nil, false
-	}
-	return value, true
-}
-
 type threadMetadataUpdateParams struct {
 	ID       string         `json:"id,omitempty"`
 	ThreadID string         `json:"threadId,omitempty"`

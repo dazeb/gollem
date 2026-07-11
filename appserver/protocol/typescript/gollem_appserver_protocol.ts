@@ -911,6 +911,89 @@ export type ThreadDeleteResponse = {
   "thread"?: ThreadRecord | null;
 };
 
+export type ThreadGoal = {
+  "createdAt": number;
+  "objective": string;
+  "status": ThreadGoalStatus;
+  "threadId": string;
+  "timeUsedSeconds": number;
+  "tokenBudget": number | null;
+  "tokensUsed": number;
+  "updatedAt": number;
+};
+
+export type ThreadGoalClearParams = {
+  "id"?: string;
+  "threadId": string;
+} | {
+  "id": string;
+  "threadId"?: string;
+};
+
+export type ThreadGoalClearResponse = {
+  "cleared": boolean;
+  "thread"?: ThreadRecord | null;
+  "threadId"?: string;
+};
+
+export type ThreadGoalClearedNotification = {
+  "at"?: string | null;
+  "thread"?: ThreadRecord | null;
+  "threadId": string;
+};
+
+export type ThreadGoalGetParams = {
+  "id"?: string;
+  "threadId": string;
+} | {
+  "id": string;
+  "threadId"?: string;
+};
+
+export type ThreadGoalGetResponse = {
+  "goal": ThreadGoal | null;
+  "set"?: boolean | null;
+  "thread"?: ThreadRecord | null;
+  "threadId"?: string;
+};
+
+export type ThreadGoalSetParams = {
+  "goal"?: unknown;
+  "id"?: string;
+  "objective"?: string | null;
+  "status"?: ThreadGoalStatus | null;
+  "text"?: unknown;
+  "threadId": string;
+  "tokenBudget"?: number | null;
+  "value"?: unknown;
+} | {
+  "goal"?: unknown;
+  "id": string;
+  "objective"?: string | null;
+  "status"?: ThreadGoalStatus | null;
+  "text"?: unknown;
+  "threadId"?: string;
+  "tokenBudget"?: number | null;
+  "value"?: unknown;
+};
+
+export type ThreadGoalSetResponse = {
+  "goal": ThreadGoal;
+  "set"?: boolean | null;
+  "thread"?: ThreadRecord | null;
+  "threadId"?: string;
+};
+
+export type ThreadGoalStatus = "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
+
+export type ThreadGoalUpdatedNotification = {
+  "at"?: string | null;
+  "goal": ThreadGoal;
+  "thread"?: ThreadRecord | null;
+  "threadId": string;
+  "turnId": string | null;
+};
+
 export type ThreadLifecycleStatus = "active" | "archived" | "deleted";
 
 export type ThreadListCwdFilter = string | Array<string>;
@@ -1107,6 +1190,11 @@ export const wireTypeBindings = [
   { "method": "thread/compact/start", "surface": "client-request", "params": ["ThreadCompactStartParams"], "result": ["ThreadCompactStartResponse"] },
   { "method": "thread/compacted", "surface": "server-notification", "params": ["ThreadCompactedNotificationParams"] },
   { "method": "thread/delete", "surface": "client-request", "params": ["ThreadDeleteParams"], "result": ["ThreadDeleteResponse"] },
+  { "method": "thread/goal/clear", "surface": "client-request", "params": ["ThreadGoalClearParams"], "result": ["ThreadGoalClearResponse"] },
+  { "method": "thread/goal/cleared", "surface": "server-notification", "params": ["ThreadGoalClearedNotification"] },
+  { "method": "thread/goal/get", "surface": "client-request", "params": ["ThreadGoalGetParams"], "result": ["ThreadGoalGetResponse"] },
+  { "method": "thread/goal/set", "surface": "client-request", "params": ["ThreadGoalSetParams"], "result": ["ThreadGoalSetResponse"] },
+  { "method": "thread/goal/updated", "surface": "server-notification", "params": ["ThreadGoalUpdatedNotification"] },
   { "method": "thread/list", "surface": "client-request", "params": ["ThreadListParams"], "result": ["ThreadListResponse"] },
   { "method": "thread/loaded/list", "surface": "client-request", "params": ["ThreadLoadedListParams"], "result": ["ThreadLoadedListResponse"] },
   { "method": "thread/name/set", "surface": "client-request", "params": ["ThreadSetNameParams"], "result": ["ThreadSetNameResponse"] },
@@ -1139,6 +1227,11 @@ export interface MethodParamsByName {
   "thread/compact/start": ThreadCompactStartParams;
   "thread/compacted": ThreadCompactedNotificationParams;
   "thread/delete": ThreadDeleteParams;
+  "thread/goal/clear": ThreadGoalClearParams;
+  "thread/goal/cleared": ThreadGoalClearedNotification;
+  "thread/goal/get": ThreadGoalGetParams;
+  "thread/goal/set": ThreadGoalSetParams;
+  "thread/goal/updated": ThreadGoalUpdatedNotification;
   "thread/list": ThreadListParams;
   "thread/loaded/list": ThreadLoadedListParams;
   "thread/name/set": ThreadSetNameParams;
@@ -1160,6 +1253,9 @@ export interface MethodResultsByName {
   "thread/archive": ThreadArchiveResponse;
   "thread/compact/start": ThreadCompactStartResponse;
   "thread/delete": ThreadDeleteResponse;
+  "thread/goal/clear": ThreadGoalClearResponse;
+  "thread/goal/get": ThreadGoalGetResponse;
+  "thread/goal/set": ThreadGoalSetResponse;
   "thread/list": ThreadListResponse;
   "thread/loaded/list": ThreadLoadedListResponse;
   "thread/name/set": ThreadSetNameResponse;
