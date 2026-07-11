@@ -220,12 +220,130 @@ func TestInteractionToolCallResponseUsesExactBoundedContract(t *testing.T) {
 }
 
 func TestInteractionMCPResponseUsesSharedPayloadBound(t *testing.T) {
-	if err := validateInteractionResult(InteractionMCPElicitation, json.RawMessage(`{"accepted":true}`)); err != nil {
+	if err := validateInteractionResult(InteractionMCPElicitation, json.RawMessage(`{"action":"accept","content":{"choice":"safe"},"_meta":null}`)); err != nil {
 		t.Fatalf("valid MCP response: %v", err)
 	}
 	result := json.RawMessage(`{"value":"` + strings.Repeat("x", runtimeInteractionPayloadMaxBytes) + `"}`)
 	if err := validateInteractionResult(InteractionMCPElicitation, result); err == nil {
 		t.Fatal("oversized MCP response succeeded")
+	}
+}
+
+func TestInteractionMCPElicitationRequestUsesExactCanonicalForm(t *testing.T) {
+	server := readyServer()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resultCh := make(chan interactionResult, 1)
+	go func() {
+		resp, err := server.interact.RequestMCPElicitation(ctx, MCPElicitationRequest{
+			ThreadID: "thread-mcp",
+			TurnID:   "turn-mcp",
+			ItemID:   "item-mcp",
+			ServerID: "repo",
+			Message:  "Choose access",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"scopes": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"oneOf": []any{map[string]any{"const": "read", "title": "Read"}},
+						},
+					},
+				},
+			},
+			Metadata: map[string]any{"source": "runtime"},
+		})
+		resultCh <- interactionResult{resp: resp, err: err}
+	}()
+
+	req := waitForServerRequest(t, server)
+	var params protocol.McpServerElicitationRequestParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatalf("decode MCP elicitation params: %v", err)
+	}
+	if params.ThreadID != "thread-mcp" || params.TurnID == nil || *params.TurnID != "turn-mcp" ||
+		params.ServerName != "repo" || params.Mode != protocol.McpServerElicitationModeForm ||
+		params.ItemID != "item-mcp" || params.ServerID != "repo" || params.Message != "Choose access" ||
+		!strings.Contains(string(params.Meta), `"source":"runtime"`) ||
+		!strings.Contains(string(params.RequestedSchema), `"items":{"anyOf"`) {
+		t.Fatalf("MCP elicitation params = %#v, schema=%s", params, params.RequestedSchema)
+	}
+	if err := server.HandleResponse(ctx, protocol.Response{
+		ID:     req.ID,
+		Result: json.RawMessage(`{"action":"cancel","content":null,"_meta":null}`),
+	}); err != nil {
+		t.Fatalf("HandleResponse: %v", err)
+	}
+	if got := <-resultCh; got.err != nil {
+		t.Fatalf("MCP elicitation result: %v", got.err)
+	}
+
+	if _, err := server.interact.RequestMCPElicitation(ctx, MCPElicitationRequest{
+		ThreadID: "thread-mcp",
+		ServerID: "repo",
+		Message:  "Invalid",
+		Schema:   map[string]any{"type": "array"},
+	}); err == nil || !strings.Contains(err.Error(), "validate MCP elicitation schema") {
+		t.Fatalf("invalid schema error = %v", err)
+	}
+	if _, err := server.interact.RequestMCPElicitation(ctx, MCPElicitationRequest{
+		ThreadID: "thread-mcp",
+		ServerID: "repo",
+		Message:  "Oversized",
+		Metadata: map[string]any{"value": strings.Repeat("x", runtimeInteractionPayloadMaxBytes)},
+	}); err == nil || !strings.Contains(err.Error(), "MCP elicitation request exceeds") {
+		t.Fatalf("oversized request error = %v", err)
+	}
+}
+
+func TestInteractionMCPElicitationResponseUsesExactBoundedContract(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   string
+		wantFail bool
+	}{
+		{name: "accept", result: `{"action":"accept","content":{"choice":"safe"},"_meta":null}`},
+		{name: "decline", result: `{"action":"decline","content":null,"_meta":{"reason":"policy"}}`},
+		{name: "cancel", result: `{"action":"cancel","content":null,"_meta":null}`},
+		{name: "missing action", result: `{"content":null,"_meta":null}`, wantFail: true},
+		{name: "missing content", result: `{"action":"accept","_meta":null}`, wantFail: true},
+		{name: "missing meta", result: `{"action":"accept","content":null}`, wantFail: true},
+		{name: "invalid action", result: `{"action":"approve","content":null,"_meta":null}`, wantFail: true},
+		{name: "unknown field", result: `{"action":"cancel","content":null,"_meta":null,"extra":true}`, wantFail: true},
+		{
+			name:     "oversized",
+			result:   `{"action":"accept","content":{"value":"` + strings.Repeat("x", runtimeInteractionPayloadMaxBytes) + `"},"_meta":null}`,
+			wantFail: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := readyServer()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			resultCh := make(chan interactionResult, 1)
+			go func() {
+				resp, err := server.interact.RequestMCPElicitation(ctx, MCPElicitationRequest{
+					ThreadID: "thread-mcp-contract",
+					ServerID: "repo",
+					Message:  "Choose",
+				})
+				resultCh <- interactionResult{resp: resp, err: err}
+			}()
+			req := waitForServerRequest(t, server)
+			err := server.HandleResponse(ctx, protocol.Response{ID: req.ID, Result: json.RawMessage(tt.result)})
+			got := <-resultCh
+			if tt.wantFail {
+				if err == nil || !errors.Is(got.err, ErrInteractionRequestFailed) || got.resp.Error == nil {
+					t.Fatalf("HandleResponse error = %v, interaction = %#v/%v", err, got.resp, got.err)
+				}
+				return
+			}
+			if err != nil || got.err != nil || string(got.resp.Result) != tt.result {
+				t.Fatalf("HandleResponse error = %v, interaction = %#v/%v", err, got.resp, got.err)
+			}
+		})
 	}
 }
 
@@ -274,8 +392,17 @@ func TestServeJSONLinesResolvesInteractionResponse(t *testing.T) {
 	if serverReq.Method != InteractionMCPElicitation {
 		t.Fatalf("server request method = %q, want %s", serverReq.Method, InteractionMCPElicitation)
 	}
+	var params protocol.McpServerElicitationRequestParams
+	if err := json.Unmarshal(serverReq.Params, &params); err != nil {
+		t.Fatalf("decode MCP elicitation params: %v", err)
+	}
+	if params.ThreadID != "thread-3" || params.TurnID == nil || *params.TurnID != "turn-3" ||
+		params.ServerName != "mcp-test" || params.Mode != protocol.McpServerElicitationModeForm ||
+		params.Message != "choose" {
+		t.Fatalf("MCP elicitation params = %#v", params)
+	}
 	requestID, _ := serverReq.ID.Value().(string)
-	writeInputLine(t, inW, `{"id":"`+requestID+`","result":{"accepted":true}}`)
+	writeInputLine(t, inW, `{"id":"`+requestID+`","result":{"action":"accept","content":{"choice":"safe"},"_meta":null}}`)
 	resolvedLine := readOutputLine(t, scanner)
 	var resolved protocol.Notification
 	if err := json.Unmarshal([]byte(resolvedLine), &resolved); err != nil {
@@ -288,7 +415,7 @@ func TestServeJSONLinesResolvesInteractionResponse(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("interaction result error: %v", got.err)
 	}
-	if strings.TrimSpace(string(got.resp.Result)) != `{"accepted":true}` {
+	if strings.TrimSpace(string(got.resp.Result)) != `{"action":"accept","content":{"choice":"safe"},"_meta":null}` {
 		t.Fatalf("interaction result = %s", got.resp.Result)
 	}
 	if err := inW.Close(); err != nil {

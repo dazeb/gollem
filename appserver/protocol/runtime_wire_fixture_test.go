@@ -155,6 +155,37 @@ func TestUserInputWireV1FixtureUsesExportedContracts(t *testing.T) {
 	}
 }
 
+func TestMcpElicitationWireV1FixtureUsesExportedContracts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "mcp_elicitation_wire_v1.json"))
+	if err != nil {
+		t.Fatalf("read MCP elicitation fixture: %v", err)
+	}
+	var fixture runtimeWireFixture
+	if err := decodeRuntimeFixture(data, &fixture); err != nil {
+		t.Fatalf("decode MCP elicitation fixture: %v", err)
+	}
+	if fixture.ProtocolVersion != ProtocolVersion || fixture.SchemaVersion != SchemaVersion || len(fixture.Cases) != 4 {
+		t.Fatalf("MCP elicitation fixture metadata = %s/%s/%d", fixture.ProtocolVersion, fixture.SchemaVersion, len(fixture.Cases))
+	}
+	bindings := WireTypeBindings()
+	for _, fixtureCase := range fixture.Cases {
+		payload, err := fixtureMessagePayload(fixtureCase)
+		if err != nil {
+			t.Fatalf("%s payload: %v", fixtureCase.Name, err)
+		}
+		target := runtimeFixtureTarget(firstFixtureType(fixtureCase))
+		if err := decodeRuntimeFixture(payload, target); err != nil {
+			t.Fatalf("%s decode: %v", fixtureCase.Name, err)
+		}
+		if fixtureCase.ParamsType != "" {
+			assertBinding(t, bindings, fixtureCase.Method, fixtureCase.Surface, fixtureCase.ParamsType)
+		}
+		if fixtureCase.ResultType != "" {
+			assertBinding(t, bindings, fixtureCase.Method, fixtureCase.Surface, fixtureCase.ResultType)
+		}
+	}
+}
+
 func requireRuntimeFixtureCase(t *testing.T, cases map[string]runtimeWireFixtureCase, name, method string, surface Surface, envelope string) runtimeWireFixtureCase {
 	t.Helper()
 	fixtureCase, ok := cases[name]
@@ -336,6 +367,10 @@ func runtimeFixtureTarget(name string) any {
 		return new(ToolRequestUserInputParams)
 	case "ToolRequestUserInputResponse":
 		return new(ToolRequestUserInputResponse)
+	case "McpServerElicitationRequestParams":
+		return new(McpServerElicitationRequestParams)
+	case "McpServerElicitationRequestResponse":
+		return new(McpServerElicitationRequestResponse)
 	case "CommandExecutionItemCompletedNotificationParams":
 		return new(CommandExecutionItemCompletedNotificationParams)
 	case "FileChangeItemCompletedNotificationParams":

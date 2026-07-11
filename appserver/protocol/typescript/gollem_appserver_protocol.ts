@@ -927,6 +927,174 @@ export type MCPToolCallResult = {
   "structuredContent": unknown;
 };
 
+export type McpElicitationArrayType = "array";
+
+export type McpElicitationBooleanSchema = {
+  "default"?: boolean;
+  "description"?: string;
+  "title"?: string;
+  "type": McpElicitationBooleanType;
+};
+
+export type McpElicitationBooleanType = "boolean";
+
+export type McpElicitationConstOption = {
+  "const": string;
+  "title": string;
+};
+
+export type McpElicitationEnumSchema = McpElicitationSingleSelectEnumSchema | McpElicitationMultiSelectEnumSchema | McpElicitationLegacyTitledEnumSchema;
+
+export type McpElicitationLegacyTitledEnumSchema = {
+  "default"?: string;
+  "description"?: string;
+  "enum": Array<string>;
+  "enumNames"?: Array<string>;
+  "title"?: string;
+  "type": McpElicitationStringType;
+};
+
+export type McpElicitationMultiSelectEnumSchema = McpElicitationUntitledMultiSelectEnumSchema | McpElicitationTitledMultiSelectEnumSchema;
+
+export type McpElicitationNumberSchema = {
+  "default"?: number;
+  "description"?: string;
+  "maximum"?: number;
+  "minimum"?: number;
+  "title"?: string;
+  "type": McpElicitationNumberType;
+};
+
+export type McpElicitationNumberType = "number" | "integer";
+
+export type McpElicitationObjectType = "object";
+
+export type McpElicitationPrimitiveSchema = McpElicitationEnumSchema | McpElicitationStringSchema | McpElicitationNumberSchema | McpElicitationBooleanSchema;
+
+export type McpElicitationSchema = {
+  "$schema"?: string;
+  "properties": Record<string, McpElicitationPrimitiveSchema>;
+  "required"?: Array<string>;
+  "type": McpElicitationObjectType;
+};
+
+export type McpElicitationSingleSelectEnumSchema = McpElicitationUntitledSingleSelectEnumSchema | McpElicitationTitledSingleSelectEnumSchema;
+
+export type McpElicitationStringFormat = "email" | "uri" | "date" | "date-time";
+
+export type McpElicitationStringSchema = {
+  "default"?: string;
+  "description"?: string;
+  "format"?: McpElicitationStringFormat;
+  "maxLength"?: number;
+  "minLength"?: number;
+  "title"?: string;
+  "type": McpElicitationStringType;
+};
+
+export type McpElicitationStringType = "string";
+
+export type McpElicitationTitledEnumItems = {
+  "anyOf": Array<McpElicitationConstOption>;
+};
+
+export type McpElicitationTitledMultiSelectEnumSchema = {
+  "default"?: Array<string>;
+  "description"?: string;
+  "items": McpElicitationTitledEnumItems;
+  "maxItems"?: number;
+  "minItems"?: number;
+  "title"?: string;
+  "type": McpElicitationArrayType;
+};
+
+export type McpElicitationTitledSingleSelectEnumSchema = {
+  "default"?: string;
+  "description"?: string;
+  "oneOf": Array<McpElicitationConstOption>;
+  "title"?: string;
+  "type": McpElicitationStringType;
+};
+
+export type McpElicitationUntitledEnumItems = {
+  "enum": Array<string>;
+  "type": McpElicitationStringType;
+};
+
+export type McpElicitationUntitledMultiSelectEnumSchema = {
+  "default"?: Array<string>;
+  "description"?: string;
+  "items": McpElicitationUntitledEnumItems;
+  "maxItems"?: number;
+  "minItems"?: number;
+  "title"?: string;
+  "type": McpElicitationArrayType;
+};
+
+export type McpElicitationUntitledSingleSelectEnumSchema = {
+  "default"?: string;
+  "description"?: string;
+  "enum": Array<string>;
+  "title"?: string;
+  "type": McpElicitationStringType;
+};
+
+export type McpServerElicitationAction = "accept" | "decline" | "cancel";
+
+export type McpServerElicitationRequestParams = {
+  "_meta": unknown;
+  "itemId"?: string;
+  "message": string;
+  "metadata"?: Record<string, unknown> | null;
+  "mode": "form";
+  "reason"?: string;
+  "requestId"?: string;
+  "requestedSchema": McpElicitationSchema;
+  "schema"?: Record<string, unknown> | null;
+  "serverId"?: string;
+  "serverName": string;
+  "startedAtMs"?: number;
+  "threadId": string;
+  "turnId": string | null;
+} | {
+  "_meta": unknown;
+  "itemId"?: string;
+  "message": string;
+  "metadata"?: Record<string, unknown> | null;
+  "mode": "openai/form";
+  "reason"?: string;
+  "requestId"?: string;
+  "requestedSchema": unknown;
+  "schema"?: Record<string, unknown> | null;
+  "serverId"?: string;
+  "serverName": string;
+  "startedAtMs"?: number;
+  "threadId": string;
+  "turnId": string | null;
+} | {
+  "_meta": unknown;
+  "elicitationId": string;
+  "itemId"?: string;
+  "message": string;
+  "metadata"?: Record<string, unknown> | null;
+  "mode": "url";
+  "reason"?: string;
+  "requestId"?: string;
+  "schema"?: Record<string, unknown> | null;
+  "serverId"?: string;
+  "serverName": string;
+  "startedAtMs"?: number;
+  "threadId": string;
+  "turnId": string | null;
+  "url": string;
+};
+
+export type McpServerElicitationRequestResponse = {
+  "_meta": unknown;
+  "action": McpServerElicitationAction;
+  "content": unknown;
+};
+
 export type MethodInfo = {
   "method": string;
   "source"?: string;
@@ -1438,6 +1606,7 @@ export const wireTypeBindings = [
   { "method": "item/started", "surface": "server-notification", "params": ["ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
   { "method": "item/tool/call", "surface": "server-request", "params": ["DynamicToolCallParams"], "result": ["DynamicToolCallResponse"] },
   { "method": "item/tool/requestUserInput", "surface": "server-request", "params": ["ToolRequestUserInputParams"], "result": ["ToolRequestUserInputResponse"] },
+  { "method": "mcpServer/elicitation/request", "surface": "server-request", "params": ["McpServerElicitationRequestParams"], "result": ["McpServerElicitationRequestResponse"] },
   { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotificationParams"] },
   { "method": "thread/archive", "surface": "client-request", "params": ["ThreadArchiveParams"], "result": ["ThreadArchiveResponse"] },
   { "method": "thread/archived", "surface": "server-notification", "params": ["ThreadArchivedNotification"] },
@@ -1488,6 +1657,7 @@ export interface MethodParamsByName {
   "item/started": ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
   "item/tool/call": DynamicToolCallParams;
   "item/tool/requestUserInput": ToolRequestUserInputParams;
+  "mcpServer/elicitation/request": McpServerElicitationRequestParams;
   "serverRequest/resolved": ServerRequestResolvedNotificationParams;
   "thread/archive": ThreadArchiveParams;
   "thread/archived": ThreadArchivedNotification;
@@ -1529,6 +1699,7 @@ export interface MethodResultsByName {
   "item/fileChange/requestApproval": FileChangeRequestApprovalResponse;
   "item/tool/call": DynamicToolCallResponse;
   "item/tool/requestUserInput": ToolRequestUserInputResponse;
+  "mcpServer/elicitation/request": McpServerElicitationRequestResponse;
   "thread/archive": ThreadArchiveResponse;
   "thread/compact/start": ThreadCompactStartResponse;
   "thread/delete": ThreadDeleteResponse;

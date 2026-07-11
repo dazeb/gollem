@@ -1766,6 +1766,688 @@
       ],
       "type": "object"
     },
+    "McpElicitationArrayType": {
+      "enum": [
+        "array"
+      ],
+      "type": "string"
+    },
+    "McpElicitationBooleanSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationBooleanType"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "McpElicitationBooleanType": {
+      "enum": [
+        "boolean"
+      ],
+      "type": "string"
+    },
+    "McpElicitationConstOption": {
+      "additionalProperties": false,
+      "properties": {
+        "const": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "const",
+        "title"
+      ],
+      "type": "object"
+    },
+    "McpElicitationEnumSchema": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/McpElicitationSingleSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/McpElicitationMultiSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/McpElicitationLegacyTitledEnumSchema"
+        }
+      ]
+    },
+    "McpElicitationLegacyTitledEnumSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "enum": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enumNames": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationStringType"
+        }
+      },
+      "required": [
+        "type",
+        "enum"
+      ],
+      "type": "object"
+    },
+    "McpElicitationMultiSelectEnumSchema": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/McpElicitationUntitledMultiSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/McpElicitationTitledMultiSelectEnumSchema"
+        }
+      ]
+    },
+    "McpElicitationNumberSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationNumberType"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "McpElicitationNumberType": {
+      "enum": [
+        "number",
+        "integer"
+      ],
+      "type": "string"
+    },
+    "McpElicitationObjectType": {
+      "enum": [
+        "object"
+      ],
+      "type": "string"
+    },
+    "McpElicitationPrimitiveSchema": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/McpElicitationEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/McpElicitationStringSchema"
+        },
+        {
+          "$ref": "#/$defs/McpElicitationNumberSchema"
+        },
+        {
+          "$ref": "#/$defs/McpElicitationBooleanSchema"
+        }
+      ]
+    },
+    "McpElicitationSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "properties": {
+          "additionalProperties": {
+            "$ref": "#/$defs/McpElicitationPrimitiveSchema"
+          },
+          "type": "object"
+        },
+        "required": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationObjectType"
+        }
+      },
+      "required": [
+        "type",
+        "properties"
+      ],
+      "type": "object"
+    },
+    "McpElicitationSingleSelectEnumSchema": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/McpElicitationUntitledSingleSelectEnumSchema"
+        },
+        {
+          "$ref": "#/$defs/McpElicitationTitledSingleSelectEnumSchema"
+        }
+      ]
+    },
+    "McpElicitationStringFormat": {
+      "enum": [
+        "email",
+        "uri",
+        "date",
+        "date-time"
+      ],
+      "type": "string"
+    },
+    "McpElicitationStringSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/McpElicitationStringFormat"
+        },
+        "maxLength": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minLength": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationStringType"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "McpElicitationStringType": {
+      "enum": [
+        "string"
+      ],
+      "type": "string"
+    },
+    "McpElicitationTitledEnumItems": {
+      "additionalProperties": false,
+      "properties": {
+        "anyOf": {
+          "items": {
+            "$ref": "#/$defs/McpElicitationConstOption"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "anyOf"
+      ],
+      "type": "object"
+    },
+    "McpElicitationTitledMultiSelectEnumSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "items": {
+          "$ref": "#/$defs/McpElicitationTitledEnumItems"
+        },
+        "maxItems": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minItems": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationArrayType"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "type": "object"
+    },
+    "McpElicitationTitledSingleSelectEnumSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "oneOf": {
+          "items": {
+            "$ref": "#/$defs/McpElicitationConstOption"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationStringType"
+        }
+      },
+      "required": [
+        "type",
+        "oneOf"
+      ],
+      "type": "object"
+    },
+    "McpElicitationUntitledEnumItems": {
+      "additionalProperties": false,
+      "properties": {
+        "enum": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationStringType"
+        }
+      },
+      "required": [
+        "type",
+        "enum"
+      ],
+      "type": "object"
+    },
+    "McpElicitationUntitledMultiSelectEnumSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "items": {
+          "$ref": "#/$defs/McpElicitationUntitledEnumItems"
+        },
+        "maxItems": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minItems": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationArrayType"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "type": "object"
+    },
+    "McpElicitationUntitledSingleSelectEnumSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "enum": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/McpElicitationStringType"
+        }
+      },
+      "required": [
+        "type",
+        "enum"
+      ],
+      "type": "object"
+    },
+    "McpServerElicitationAction": {
+      "enum": [
+        "accept",
+        "decline",
+        "cancel"
+      ],
+      "type": "string"
+    },
+    "McpServerElicitationRequestParams": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "_meta": {},
+            "itemId": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mode": {
+              "enum": [
+                "form"
+              ],
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "requestId": {
+              "type": "string"
+            },
+            "requestedSchema": {
+              "$ref": "#/$defs/McpElicitationSchema"
+            },
+            "schema": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "serverId": {
+              "type": "string"
+            },
+            "serverName": {
+              "type": "string"
+            },
+            "startedAtMs": {
+              "type": "integer"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "turnId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "threadId",
+            "turnId",
+            "serverName",
+            "mode",
+            "_meta",
+            "message",
+            "requestedSchema"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "_meta": {},
+            "itemId": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mode": {
+              "enum": [
+                "openai/form"
+              ],
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "requestId": {
+              "type": "string"
+            },
+            "requestedSchema": {},
+            "schema": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "serverId": {
+              "type": "string"
+            },
+            "serverName": {
+              "type": "string"
+            },
+            "startedAtMs": {
+              "type": "integer"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "turnId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "threadId",
+            "turnId",
+            "serverName",
+            "mode",
+            "_meta",
+            "message",
+            "requestedSchema"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "_meta": {},
+            "elicitationId": {
+              "type": "string"
+            },
+            "itemId": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "metadata": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mode": {
+              "enum": [
+                "url"
+              ],
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "requestId": {
+              "type": "string"
+            },
+            "schema": {
+              "anyOf": [
+                {
+                  "additionalProperties": {},
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "serverId": {
+              "type": "string"
+            },
+            "serverName": {
+              "type": "string"
+            },
+            "startedAtMs": {
+              "type": "integer"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "turnId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "threadId",
+            "turnId",
+            "serverName",
+            "mode",
+            "_meta",
+            "message",
+            "url",
+            "elicitationId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "McpServerElicitationRequestResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "_meta": {},
+        "action": {
+          "$ref": "#/$defs/McpServerElicitationAction"
+        },
+        "content": {}
+      },
+      "required": [
+        "action",
+        "content",
+        "_meta"
+      ],
+      "type": "object"
+    },
     "MethodInfo": {
       "additionalProperties": false,
       "properties": {
@@ -5710,6 +6392,16 @@
       ],
       "result": [
         "ToolRequestUserInputResponse"
+      ]
+    },
+    {
+      "method": "mcpServer/elicitation/request",
+      "surface": "server-request",
+      "params": [
+        "McpServerElicitationRequestParams"
+      ],
+      "result": [
+        "McpServerElicitationRequestResponse"
       ]
     },
     {
