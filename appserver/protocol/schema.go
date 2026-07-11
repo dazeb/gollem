@@ -236,6 +236,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ReasoningEffort", Type: reflect.TypeFor[ReasoningEffort]()},
 		{Name: "ReasoningItemContent", Type: reflect.TypeFor[ReasoningItemContent]()},
 		{Name: "ReasoningItemReasoningSummary", Type: reflect.TypeFor[ReasoningItemReasoningSummary]()},
+		{Name: "RawResponseItemCompletedNotification", Type: reflect.TypeFor[RawResponseItemCompletedNotification]()},
 		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
