@@ -1,0 +1,61 @@
+{
+  "protocolVersion": "gollem.appserver.v1",
+  "schemaVersion": "gollem.appserver.schema.v1",
+  "cases": [
+    {
+      "name": "dynamic-tool-call-request",
+      "surface": "server-request",
+      "method": "item/tool/call",
+      "paramsType": "DynamicToolCallParams",
+      "message": {
+        "id": "interaction-1",
+        "method": "item/tool/call",
+        "params": {
+          "threadId": "thread-1",
+          "turnId": "turn-1",
+          "callId": "call-1",
+          "namespace": null,
+          "tool": "client.search",
+          "arguments": {"query": "gollem"},
+          "requestId": "interaction-1",
+          "itemId": "item-tool-1",
+          "startedAtMs": 1783715400000,
+          "toolName": "client.search",
+          "name": "client.search",
+          "metadata": {"source": "runtime"},
+          "reason": "client.search"
+        }
+      }
+    },
+    {
+      "name": "dynamic-tool-call-text-response",
+      "surface": "server-request",
+      "method": "item/tool/call",
+      "envelope": "response",
+      "resultType": "DynamicToolCallResponse",
+      "message": {
+        "id": "interaction-1",
+        "result": {
+          "contentItems": [{"type": "inputText", "text": "match"}],
+          "success": true
+        }
+      }
+    },
+    {
+      "name": "dynamic-tool-call-image-response",
+      "surface": "server-request",
+      "method": "item/tool/call",
+      "envelope": "response",
+      "resultType": "DynamicToolCallResponse",
+      "message": {
+        "id": "interaction-1",
+        "result": {
+          "contentItems": [
+            {"type": "inputImage", "imageUrl": "data:image/png;base64,AA=="}
+          ],
+          "success": false
+        }
+      }
+    }
+  ]
+}

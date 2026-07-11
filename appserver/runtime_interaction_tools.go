@@ -126,6 +126,7 @@ func InteractionRuntimeTools(service *InteractionService) []core.Tool {
 					ThreadID:  turn.ThreadID,
 					TurnID:    turn.TurnID,
 					ItemID:    runtimeDurableToolItemID(ctx, rc),
+					CallID:    rc.ToolCallID,
 					ToolName:  toolName,
 					Arguments: arguments,
 					Metadata:  cloneStringAnyMap(params.Metadata),
