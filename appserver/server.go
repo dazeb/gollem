@@ -1771,15 +1771,31 @@ func (s *Server) handleProcessWriteStdin(ctx context.Context, method string, raw
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params processWriteParams
-	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
-		return nil, rpcErr
+	var id, input, encoding string
+	var closeStdin bool
+	if method == "command/exec/write" {
+		var params protocol.CommandExecWriteParams
+		if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+			return nil, rpcErr
+		}
+		id = params.EffectiveProcessID()
+		input, encoding = params.EffectiveInput()
+		closeStdin = params.ShouldCloseStdin()
+	} else {
+		var params processWriteParams
+		if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+			return nil, rpcErr
+		}
+		id = firstNonEmpty(params.ID, params.ProcessID)
+		input, encoding, closeStdin = params.Data, params.Encoding, params.Close
 	}
-	id := firstNonEmpty(params.ID, params.ProcessID)
 	if id == "" {
 		return nil, invalidParams("id or processId is required", nil)
 	}
-	data, err := decodeContent(params.Data, params.Encoding)
+	if method == "command/exec/write" && !s.isCommandExecProcess(id) {
+		return nil, invalidParams("processId is not an active command/exec process", nil)
+	}
+	data, err := decodeContent(input, encoding)
 	if err != nil {
 		return nil, invalidParams("invalid stdin encoding", err)
 	}
@@ -1788,10 +1804,13 @@ func (s *Server) handleProcessWriteStdin(ctx context.Context, method string, raw
 			return nil, mapError(method, err)
 		}
 	}
-	if params.Close {
+	if closeStdin {
 		if err := processSvc.CloseStdin(ctx, id); err != nil {
 			return nil, mapError(method, err)
 		}
+	}
+	if method == "command/exec/write" {
+		return protocol.CommandExecWriteResponse{OK: true, Path: id}, nil
 	}
 	return okResult(id), nil
 }
@@ -1801,16 +1820,37 @@ func (s *Server) handleProcessResize(ctx context.Context, method string, raw jso
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params processResizeParams
-	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
-		return nil, rpcErr
+	var id string
+	var cols, rows int
+	if method == "command/exec/resize" {
+		var params protocol.CommandExecResizeParams
+		if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+			return nil, rpcErr
+		}
+		id = params.EffectiveProcessID()
+		var valid bool
+		cols, rows, valid = params.EffectiveSize()
+		if !valid {
+			return nil, invalidParams("size must not be null", nil)
+		}
+	} else {
+		var params processResizeParams
+		if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+			return nil, rpcErr
+		}
+		id, cols, rows = firstNonEmpty(params.ID, params.ProcessID), params.Cols, params.Rows
 	}
-	id := firstNonEmpty(params.ID, params.ProcessID)
 	if id == "" {
 		return nil, invalidParams("id or processId is required", nil)
 	}
-	if err := processSvc.ResizePTY(ctx, id, params.Cols, params.Rows); err != nil {
+	if method == "command/exec/resize" && !s.isCommandExecProcess(id) {
+		return nil, invalidParams("processId is not an active command/exec process", nil)
+	}
+	if err := processSvc.ResizePTY(ctx, id, cols, rows); err != nil {
 		return nil, mapError(method, err)
+	}
+	if method == "command/exec/resize" {
+		return protocol.CommandExecResizeResponse{OK: true, Path: id}, nil
 	}
 	return okResult(id), nil
 }
@@ -1820,14 +1860,21 @@ func (s *Server) handleProcessTerminate(ctx context.Context, raw json.RawMessage
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	id, rpcErr := decodeProcessID(raw)
-	if rpcErr != nil {
+	var params protocol.CommandExecTerminateParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
+	}
+	id := params.EffectiveProcessID()
+	if id == "" {
+		return nil, invalidParams("id or processId is required", nil)
+	}
+	if !s.isCommandExecProcess(id) {
+		return nil, invalidParams("processId is not an active command/exec process", nil)
 	}
 	if err := processSvc.Terminate(ctx, id); err != nil {
 		return nil, mapError("command/exec/terminate", err)
 	}
-	return okResult(id), nil
+	return protocol.CommandExecTerminateResponse{OK: true, Path: id}, nil
 }
 
 func (s *Server) handleProcessKill(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {

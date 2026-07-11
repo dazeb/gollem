@@ -519,6 +519,81 @@ export type ClientInfo = {
   "version": string;
 };
 
+export type CommandExecOutputDeltaNotification = {
+  "capReached": boolean;
+  "deltaBase64": string;
+  "processId": string;
+  "stream": CommandExecOutputStream;
+};
+
+export type CommandExecOutputStream = "stdout" | "stderr";
+
+export type CommandExecResizeParams = {
+  "cols"?: number;
+  "id"?: string;
+  "processId": string;
+  "rows"?: number;
+  "size": CommandExecTerminalSize;
+} | {
+  "cols": number;
+  "id"?: string;
+  "processId": string;
+  "rows": number;
+  "size"?: CommandExecTerminalSize;
+} | {
+  "cols": number;
+  "id": string;
+  "processId"?: string;
+  "rows": number;
+  "size"?: CommandExecTerminalSize;
+};
+
+export type CommandExecResizeResponse = {
+  "ok"?: boolean;
+  "path"?: string;
+};
+
+export type CommandExecTerminalSize = {
+  "cols": number;
+  "rows": number;
+};
+
+export type CommandExecTerminateParams = {
+  "id"?: string;
+  "processId": string;
+} | {
+  "id": string;
+  "processId"?: string;
+};
+
+export type CommandExecTerminateResponse = {
+  "ok"?: boolean;
+  "path"?: string;
+};
+
+export type CommandExecWriteParams = {
+  "close"?: boolean;
+  "closeStdin"?: boolean;
+  "data"?: string;
+  "deltaBase64"?: string | null;
+  "encoding"?: string;
+  "id"?: string;
+  "processId": string;
+} | {
+  "close"?: boolean;
+  "closeStdin"?: boolean;
+  "data"?: string;
+  "deltaBase64"?: string | null;
+  "encoding"?: string;
+  "id": string;
+  "processId"?: string;
+};
+
+export type CommandExecWriteResponse = {
+  "ok"?: boolean;
+  "path"?: string;
+};
+
 export type CommandExecutionAction = {
   "command": string;
   "type": string;
@@ -1258,6 +1333,10 @@ export type WireTypeBinding = {
 
 export const wireTypeBindings = [
   { "method": "approval/respond", "surface": "gollem-extension", "params": ["ApprovalRespondParams"], "result": ["ApprovalRespondResult"] },
+  { "method": "command/exec/outputDelta", "surface": "server-notification", "params": ["CommandExecOutputDeltaNotification"] },
+  { "method": "command/exec/resize", "surface": "client-request", "params": ["CommandExecResizeParams"], "result": ["CommandExecResizeResponse"] },
+  { "method": "command/exec/terminate", "surface": "client-request", "params": ["CommandExecTerminateParams"], "result": ["CommandExecTerminateResponse"] },
+  { "method": "command/exec/write", "surface": "client-request", "params": ["CommandExecWriteParams"], "result": ["CommandExecWriteResponse"] },
   { "method": "daemon/restart", "surface": "gollem-extension", "params": ["DaemonShutdownParams"], "result": ["DaemonStopResult"] },
   { "method": "daemon/start", "surface": "gollem-extension", "result": ["DaemonStartResult"] },
   { "method": "daemon/status", "surface": "gollem-extension", "result": ["DaemonStatus"] },
@@ -1302,6 +1381,10 @@ export const wireTypeBindings = [
 
 export interface MethodParamsByName {
   "approval/respond": ApprovalRespondParams;
+  "command/exec/outputDelta": CommandExecOutputDeltaNotification;
+  "command/exec/resize": CommandExecResizeParams;
+  "command/exec/terminate": CommandExecTerminateParams;
+  "command/exec/write": CommandExecWriteParams;
   "daemon/restart": DaemonShutdownParams;
   "daemon/start": undefined;
   "daemon/status": undefined;
@@ -1346,6 +1429,9 @@ export interface MethodParamsByName {
 
 export interface MethodResultsByName {
   "approval/respond": ApprovalRespondResult;
+  "command/exec/resize": CommandExecResizeResponse;
+  "command/exec/terminate": CommandExecTerminateResponse;
+  "command/exec/write": CommandExecWriteResponse;
   "daemon/restart": DaemonStopResult;
   "daemon/start": DaemonStartResult;
   "daemon/status": DaemonStatus;

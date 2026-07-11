@@ -249,6 +249,20 @@ func firstFixtureType(fixtureCase runtimeWireFixtureCase) string {
 
 func runtimeFixtureTarget(name string) any {
 	switch name {
+	case "CommandExecOutputDeltaNotification":
+		return new(CommandExecOutputDeltaNotification)
+	case "CommandExecResizeParams":
+		return new(CommandExecResizeParams)
+	case "CommandExecResizeResponse":
+		return new(CommandExecResizeResponse)
+	case "CommandExecTerminateParams":
+		return new(CommandExecTerminateParams)
+	case "CommandExecTerminateResponse":
+		return new(CommandExecTerminateResponse)
+	case "CommandExecWriteParams":
+		return new(CommandExecWriteParams)
+	case "CommandExecWriteResponse":
+		return new(CommandExecWriteResponse)
 	case "DynamicToolCallItemStartedNotificationParams":
 		return new(DynamicToolCallItemStartedNotificationParams)
 	case "CommandExecutionItemCompletedNotificationParams":
