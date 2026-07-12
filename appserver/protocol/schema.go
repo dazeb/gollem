@@ -205,6 +205,11 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
 		{Name: "MemoryCitationEntry", Type: reflect.TypeFor[MemoryCitationEntry]()},
 		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},
+		{Name: "ModelRerouteReason", Type: reflect.TypeFor[ModelRerouteReason]()},
+		{Name: "ModelReroutedNotification", Type: reflect.TypeFor[ModelReroutedNotification]()},
+		{Name: "ModelSafetyBufferingUpdatedNotification", Type: reflect.TypeFor[ModelSafetyBufferingUpdatedNotification]()},
+		{Name: "ModelVerification", Type: reflect.TypeFor[ModelVerification]()},
+		{Name: "ModelVerificationNotification", Type: reflect.TypeFor[ModelVerificationNotification]()},
 		{Name: "NonSteerableTurnKind", Type: reflect.TypeFor[NonSteerableTurnKind]()},
 		{Name: "McpElicitationArrayType", Type: reflect.TypeFor[McpElicitationArrayType]()},
 		{Name: "McpElicitationBooleanSchema", Type: reflect.TypeFor[McpElicitationBooleanSchema]()},
@@ -350,6 +355,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnItemsView", Type: reflect.TypeFor[TurnItemsView]()},
 		{Name: "TurnInterruptParams", Type: reflect.TypeFor[TurnInterruptParams]()},
 		{Name: "TurnInterruptResponse", Type: reflect.TypeFor[TurnInterruptResponse]()},
+		{Name: "TurnModerationMetadataNotification", Type: reflect.TypeFor[TurnModerationMetadataNotification]()},
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
 		{Name: "TurnPlanStep", Type: reflect.TypeFor[TurnPlanStep]()},
 		{Name: "TurnPlanStepStatus", Type: reflect.TypeFor[TurnPlanStepStatus]()},
@@ -461,6 +467,8 @@ func wireSchemaDefinitions() Schema {
 	schemas["MessagePhase"] = stringEnumSchema(
 		string(MessagePhaseCommentary), string(MessagePhaseFinalAnswer),
 	)
+	schemas["ModelRerouteReason"] = stringEnumSchema(string(ModelRerouteReasonHighRiskCyberActivity))
+	schemas["ModelVerification"] = stringEnumSchema(string(ModelVerificationTrustedAccessForCyber))
 	schemas["UserInput"] = userInputSchema()
 	schemas["ThreadLifecycleStatus"] = stringEnumSchema(
 		string(ThreadLifecycleActive), string(ThreadLifecycleArchived), string(ThreadLifecycleDeleted),
