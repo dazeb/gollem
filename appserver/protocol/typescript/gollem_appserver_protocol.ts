@@ -1547,6 +1547,34 @@ export type MethodInfo = {
 
 export type MethodState = "implemented" | "blocked" | "deferred-stub" | "renamed-equivalent" | "not-applicable";
 
+export type ModelRerouteReason = "highRiskCyberActivity";
+
+export type ModelReroutedNotification = {
+  "fromModel": string;
+  "reason": ModelRerouteReason;
+  "threadId": string;
+  "toModel": string;
+  "turnId": string;
+};
+
+export type ModelSafetyBufferingUpdatedNotification = {
+  "fasterModel": string | null;
+  "model": string;
+  "reasons": Array<string>;
+  "showBufferingUi": boolean;
+  "threadId": string;
+  "turnId": string;
+  "useCases": Array<string>;
+};
+
+export type ModelVerification = "trustedAccessForCyber";
+
+export type ModelVerificationNotification = {
+  "threadId": string;
+  "turnId": string;
+  "verifications": Array<ModelVerification>;
+};
+
 export type NetworkAccess = "restricted" | "enabled";
 
 export type NetworkPolicyAmendment = {
@@ -2580,6 +2608,12 @@ export type TurnInterruptResponse = Record<string, never>;
 export type TurnItemsView = "notLoaded" | "summary" | "full";
 
 export type TurnLifecycleStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
+
+export type TurnModerationMetadataNotification = {
+  "metadata": JsonValue;
+  "threadId": string;
+  "turnId": string;
+};
 
 export type TurnPlanStep = {
   "status": TurnPlanStepStatus;
