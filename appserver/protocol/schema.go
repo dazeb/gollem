@@ -337,6 +337,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
 		{Name: "TurnError", Type: reflect.TypeFor[TurnError]()},
 		{Name: "TurnItemsView", Type: reflect.TypeFor[TurnItemsView]()},
+		{Name: "TurnInterruptParams", Type: reflect.TypeFor[TurnInterruptParams]()},
+		{Name: "TurnInterruptResponse", Type: reflect.TypeFor[TurnInterruptResponse]()},
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
 		{Name: "TurnStartParams", Type: reflect.TypeFor[TurnStartParams]()},
