@@ -2509,6 +2509,20 @@ export type TurnItemsView = "notLoaded" | "summary" | "full";
 
 export type TurnLifecycleStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
 
+export type TurnPlanStep = {
+  "status": TurnPlanStepStatus;
+  "step": string;
+};
+
+export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
+
+export type TurnPlanUpdatedNotification = {
+  "explanation": string | null;
+  "plan": Array<TurnPlanStep>;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type TurnRecord = {
   "completedAt"?: string;
   "createdAt": string;
