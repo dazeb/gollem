@@ -2552,6 +2552,17 @@ export type TurnStartedNotification = {
 
 export type TurnStatus = "completed" | "interrupted" | "failed" | "inProgress";
 
+export type TurnSteerParams = {
+  "clientUserMessageId"?: string | null;
+  "expectedTurnId": string;
+  "input": Array<UserInput>;
+  "threadId": string;
+};
+
+export type TurnSteerResponse = {
+  "turnId": string;
+};
+
 export type UserInput = {
   "text": string;
   "text_elements": Array<TextElement>;
