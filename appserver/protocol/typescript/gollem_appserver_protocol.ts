@@ -2498,6 +2498,13 @@ export type TurnError = {
   "message": string;
 };
 
+export type TurnInterruptParams = {
+  "threadId": string;
+  "turnId": string;
+};
+
+export type TurnInterruptResponse = Record<string, never>;
+
 export type TurnItemsView = "notLoaded" | "summary" | "full";
 
 export type TurnLifecycleStatus = "queued" | "running" | "completed" | "failed" | "interrupted";

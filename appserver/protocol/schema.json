@@ -9634,6 +9634,26 @@
       ],
       "type": "object"
     },
+    "TurnInterruptParams": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "TurnInterruptResponse": {
+      "additionalProperties": false,
+      "type": "object"
+    },
     "TurnItemsView": {
       "enum": [
         "notLoaded",
