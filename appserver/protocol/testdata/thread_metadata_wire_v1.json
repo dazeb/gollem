@@ -34,7 +34,7 @@
       "surface": "client-request",
       "method": "thread/metadata/update",
       "envelope": "response",
-      "resultType": "ThreadMetadataUpdateResponse",
+      "resultType": "ThreadMetadataUpdateResult",
       "message": {
         "id": "metadata-1",
         "result": {

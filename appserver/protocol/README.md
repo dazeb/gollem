@@ -42,14 +42,22 @@ from v0 to v1; the schema metadata representation remains v1.
 archive, cwd, state-DB, and title-search fields. Lists default to active threads,
 created-at descending, and a 50-record page capped at 100 records. Responses
 include the public `data`, `nextCursor`, and `backwardsCursor` fields and retain
-Gollem's `threads` array. Existing `statuses` and `includeDeleted` parameters
-remain optional Gollem lifecycle extensions; clients that need archived or
-deleted records must now request them explicitly and paginate the result.
+Gollem's `threads` array through the live `ThreadListResult` compatibility
+type. Existing `statuses` and `includeDeleted` parameters remain optional
+Gollem lifecycle extensions; clients that need archived or deleted records
+must now request them explicitly and paginate the result.
 
-`thread/read` accepts public `threadId` and optional `includeTurns`. The response
-nests loaded turns and timeline items under the durable thread record while
-retaining Gollem's top-level `turns` and `items` arrays and the existing `id`,
-`includeItems`, `afterSeq`, and `limit` request extensions.
+`thread/read` accepts public `threadId` and optional `includeTurns`. The live
+`ThreadReadResult` nests loaded turns and timeline items under the durable
+thread record while retaining Gollem's top-level `turns` and `items` arrays and
+the existing `id`, `includeItems`, `afterSeq`, and `limit` request extensions.
+
+Exact standalone `ThreadListResponse` and `ThreadReadResponse` definitions use
+the public `Thread` parent. The list response requires non-null `data` plus
+explicit nullable forward/backward cursors; read requires only `thread`.
+Neither canonical response is bound to a live method until durable records are
+projected into the public parent. The `*Result` binding names make that runtime
+boundary explicit without changing JSON output.
 
 `ThreadLifecycleStatus` and `TurnLifecycleStatus` describe Gollem persistence
 and execution state. They intentionally do not claim compatibility with
@@ -67,9 +75,10 @@ unsubscribe statuses retain their Codex wire names and optionality. Legacy
 Codex archive, delete, and set-name responses are empty objects. Gollem keeps
 its existing returned durable record/name fields as optional response
 extensions, so public empty responses remain valid generated values and v1
-clients do not lose current result data. `ThreadUnarchiveResponse` still
-contains `ThreadRecord`; it must not be treated as public Codex `Thread` until
-the runtime thread/turn/item model converges.
+clients do not lose current result data. The bound `ThreadUnarchiveResult`
+still contains `ThreadRecord`; exact standalone `ThreadUnarchiveResponse`
+contains public `Thread` and remains unbound until the runtime thread/turn/item
+model converges.
 
 ## Version 1 Thread Goals
 
@@ -103,10 +112,10 @@ independently optional nullable `sha`, `branch`, and `originUrl` fields.
 Omission preserves the stored field, explicit null clears it, and non-null
 strings are trimmed and must remain non-empty. Unrelated metadata and unknown
 keys inside `gitInfo` are preserved. Legacy `id`, arbitrary `metadata`, and
-`replace` fields remain optional Gollem extensions. The response intentionally
-contains Gollem `ThreadRecord`, so it is generated and live-typed but must not
-be treated as public Codex `ThreadMetadataUpdateResponse` until the nested
-runtime thread model converges.
+`replace` fields remain optional Gollem extensions. The live
+`ThreadMetadataUpdateResult` intentionally contains Gollem `ThreadRecord`.
+Exact standalone `ThreadMetadataUpdateResponse` contains public `Thread` and
+remains unbound until the nested runtime thread model converges.
 
 `thread/memoryMode/set` uses the public `enabled`/`disabled` enum and accepts
 the public `threadId`/`mode` pair. Legacy `id` and `memoryMode` aliases remain

@@ -7,7 +7,7 @@ import type {
   ThreadMemoryModeSetParams,
   ThreadMemoryModeSetResponse,
   ThreadMetadataUpdateParams,
-  ThreadMetadataUpdateResponse,
+  ThreadMetadataUpdateResult,
   ThreadNameUpdatedNotification,
 } from "../gollem_appserver_protocol";
 
@@ -65,7 +65,7 @@ export const threadMetadataUpdateResponse = {
     }
   }
 } satisfies BoundResponse<"thread/metadata/update">;
-export const threadMetadataUpdateResponseResult = threadMetadataUpdateResponse.result satisfies ThreadMetadataUpdateResponse;
+export const threadMetadataUpdateResponseResult = threadMetadataUpdateResponse.result satisfies ThreadMetadataUpdateResult;
 
 export const threadMemoryModeSetRequest = {
   "id": "memory-mode-1",

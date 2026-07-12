@@ -45,7 +45,7 @@ func TestServerThreadMetadataPublicContracts(t *testing.T) {
 	if updateResp.Error != nil {
 		t.Fatalf("thread/metadata/update error: %v", updateResp.Error)
 	}
-	var updated protocol.ThreadMetadataUpdateResponse
+	var updated protocol.ThreadMetadataUpdateResult
 	decodeResult(t, updateResp, &updated)
 	gitInfo := nestedMetadataMap(t, updated.Metadata, "gitInfo")
 	if gitInfo["sha"] != "new-sha" || gitInfo["branch"] != nil ||
@@ -67,7 +67,7 @@ func TestServerThreadMetadataPublicContracts(t *testing.T) {
 	if clearResp.Error != nil {
 		t.Fatalf("thread/metadata/update clear error: %v", clearResp.Error)
 	}
-	updated = protocol.ThreadMetadataUpdateResponse{}
+	updated = protocol.ThreadMetadataUpdateResult{}
 	decodeResult(t, clearResp, &updated)
 	gitInfo = nestedMetadataMap(t, updated.Metadata, "gitInfo")
 	if gitInfo["sha"] != "new-sha" || gitInfo["originUrl"] != nil || gitInfo["provider"] != "preserved-extension" {
@@ -82,7 +82,7 @@ func TestServerThreadMetadataPublicContracts(t *testing.T) {
 	if legacyResp.Error != nil {
 		t.Fatalf("legacy thread/metadata/update error: %v", legacyResp.Error)
 	}
-	updated = protocol.ThreadMetadataUpdateResponse{}
+	updated = protocol.ThreadMetadataUpdateResult{}
 	decodeResult(t, legacyResp, &updated)
 	if updated.Metadata["reviewed"] != true || updated.Metadata["source"] != "initial" {
 		t.Fatalf("legacy merged metadata = %#v", updated.Metadata)

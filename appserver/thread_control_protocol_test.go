@@ -36,7 +36,7 @@ func TestThreadLifecycleControlsUseExportedContracts(t *testing.T) {
 	if unarchive.Error != nil {
 		t.Fatalf("thread/unarchive error: %v", unarchive.Error)
 	}
-	var unarchived protocol.ThreadUnarchiveResponse
+	var unarchived protocol.ThreadUnarchiveResult
 	decodeResult(t, unarchive, &unarchived)
 	if unarchived.Thread.ID != thread.ID || unarchived.Thread.Status != protocol.ThreadLifecycleActive {
 		t.Fatalf("thread/unarchive = %#v", unarchived)

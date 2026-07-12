@@ -160,7 +160,7 @@ func (p *ThreadMetadataUpdateParams) SetGitInfo(value *ThreadMetadataGitInfoUpda
 	p.gitInfoPresent = true
 }
 
-type ThreadMetadataUpdateResponse struct {
+type ThreadMetadataUpdateResult struct {
 	Thread   ThreadRecord   `json:"thread"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 }

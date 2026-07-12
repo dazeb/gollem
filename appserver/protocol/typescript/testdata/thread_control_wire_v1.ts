@@ -13,7 +13,7 @@ import type {
   ThreadSetNameParams,
   ThreadSetNameResponse,
   ThreadUnarchiveParams,
-  ThreadUnarchiveResponse,
+  ThreadUnarchiveResult,
   ThreadUnsubscribeParams,
   ThreadUnsubscribeResponse,
 } from "../gollem_appserver_protocol";
@@ -79,7 +79,7 @@ export const threadUnarchiveResponse = {
     }
   }
 } satisfies BoundResponse<"thread/unarchive">;
-export const threadUnarchiveResponseResult = threadUnarchiveResponse.result satisfies ThreadUnarchiveResponse;
+export const threadUnarchiveResponseResult = threadUnarchiveResponse.result satisfies ThreadUnarchiveResult;
 
 export const threadDeleteRequest = {
   "id": "delete-1",

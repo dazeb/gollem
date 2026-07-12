@@ -32,7 +32,7 @@
       "surface": "client-request",
       "method": "thread/list",
       "envelope": "response",
-      "resultType": "ThreadListResponse",
+      "resultType": "ThreadListResult",
       "message": {
         "id": "thread-list-1",
         "result": {
@@ -88,7 +88,7 @@
       "surface": "client-request",
       "method": "thread/read",
       "envelope": "response",
-      "resultType": "ThreadReadResponse",
+      "resultType": "ThreadReadResult",
       "message": {
         "id": "thread-read-1",
         "result": {
