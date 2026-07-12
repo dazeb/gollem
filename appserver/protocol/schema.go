@@ -344,6 +344,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnStartParams", Type: reflect.TypeFor[TurnStartParams]()},
 		{Name: "TurnStartResponse", Type: reflect.TypeFor[TurnStartResponse]()},
 		{Name: "TurnStatus", Type: reflect.TypeFor[TurnStatus]()},
+		{Name: "TurnSteerParams", Type: reflect.TypeFor[TurnSteerParams]()},
+		{Name: "TurnSteerResponse", Type: reflect.TypeFor[TurnSteerResponse]()},
 		{Name: "TurnStartedNotification", Type: reflect.TypeFor[TurnStartedNotification]()},
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
 		{Name: "WebSearchAction", Type: reflect.TypeFor[WebSearchAction]()},

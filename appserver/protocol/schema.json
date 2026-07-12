@@ -9909,6 +9909,51 @@
       ],
       "type": "string"
     },
+    "TurnSteerParams": {
+      "additionalProperties": false,
+      "properties": {
+        "clientUserMessageId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expectedTurnId": {
+          "type": "string"
+        },
+        "input": {
+          "items": {
+            "$ref": "#/$defs/UserInput"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "input",
+        "expectedTurnId"
+      ],
+      "type": "object"
+    },
+    "TurnSteerResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turnId"
+      ],
+      "type": "object"
+    },
     "UserInput": {
       "oneOf": [
         {
