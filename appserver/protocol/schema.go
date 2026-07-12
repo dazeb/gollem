@@ -241,6 +241,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PermissionsRequestApprovalResponse", Type: reflect.TypeFor[PermissionsRequestApprovalResponse]()},
 		{Name: "RequestPermissionProfile", Type: reflect.TypeFor[RequestPermissionProfile]()},
 		{Name: "ReasoningEffort", Type: reflect.TypeFor[ReasoningEffort]()},
+		{Name: "ReasoningSummary", Type: reflect.TypeFor[ReasoningSummary]()},
 		{Name: "ReasoningItemContent", Type: reflect.TypeFor[ReasoningItemContent]()},
 		{Name: "ReasoningItemReasoningSummary", Type: reflect.TypeFor[ReasoningItemReasoningSummary]()},
 		{Name: "RawResponseItemCompletedNotification", Type: reflect.TypeFor[RawResponseItemCompletedNotification]()},
@@ -338,6 +339,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnItemsView", Type: reflect.TypeFor[TurnItemsView]()},
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
+		{Name: "TurnStartParams", Type: reflect.TypeFor[TurnStartParams]()},
+		{Name: "TurnStartResponse", Type: reflect.TypeFor[TurnStartResponse]()},
 		{Name: "TurnStatus", Type: reflect.TypeFor[TurnStatus]()},
 		{Name: "TurnStartedNotification", Type: reflect.TypeFor[TurnStartedNotification]()},
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
@@ -384,6 +387,10 @@ func wireSchemaDefinitions() Schema {
 	schemas["SortDirection"] = stringEnumSchema(string(SortDirectionAsc), string(SortDirectionDesc))
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
+	schemas["ReasoningSummary"] = stringEnumSchema(
+		string(ReasoningSummaryAuto), string(ReasoningSummaryConcise),
+		string(ReasoningSummaryDetailed), string(ReasoningSummaryNone),
+	)
 	schemas["CollabAgentStatus"] = stringEnumSchema(
 		string(CollabAgentStatusPendingInit), string(CollabAgentStatusRunning),
 		string(CollabAgentStatusInterrupted), string(CollabAgentStatusCompleted),
@@ -421,6 +428,8 @@ func wireSchemaDefinitions() Schema {
 	schemas["ThreadStartParams"] = threadStartParamsSchema()
 	schemas["ThreadResumeParams"] = threadResumeParamsSchema()
 	schemas["ThreadForkParams"] = threadForkParamsSchema()
+	schemas["TurnStartParams"] = turnStartParamsSchema()
+	schemas["TurnStartResponse"] = turnStartResponseSchema()
 	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
@@ -1412,6 +1421,36 @@ func closedThreadSessionParamSchema(properties Schema, required []string) Schema
 
 func nullableThreadSessionParamSchema(value Schema) Schema {
 	return Schema{"anyOf": []any{value, Schema{"type": "null"}}}
+}
+
+func turnStartParamsSchema() Schema {
+	properties := Schema{
+		"threadId":            Schema{"type": "string"},
+		"clientUserMessageId": nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"input": Schema{
+			"type": "array", "items": Schema{"$ref": "#/$defs/UserInput"},
+		},
+		"cwd":               nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"approvalPolicy":    nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/AskForApproval"}),
+		"approvalsReviewer": nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/ApprovalsReviewer"}),
+		"sandboxPolicy":     nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/SandboxPolicy"}),
+		"model":             nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"serviceTier":       nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"effort":            nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/ReasoningEffort"}),
+		"summary":           nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/ReasoningSummary"}),
+		"personality":       nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/Personality"}),
+		"outputSchema":      nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/JsonValue"}),
+	}
+	return closedThreadSessionParamSchema(properties, []string{"threadId", "input"})
+}
+
+func turnStartResponseSchema() Schema {
+	return Schema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           Schema{"turn": Schema{"$ref": "#/$defs/Turn"}},
+		"required":             []string{"turn"},
+	}
 }
 
 func commandExecutionApprovalDecisionSchema() Schema {

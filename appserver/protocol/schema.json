@@ -4900,6 +4900,15 @@
         }
       ]
     },
+    "ReasoningSummary": {
+      "enum": [
+        "auto",
+        "concise",
+        "detailed",
+        "none"
+      ],
+      "type": "string"
+    },
     "Request": {
       "additionalProperties": false,
       "properties": {
@@ -9711,6 +9720,147 @@
         "status",
         "createdAt",
         "updatedAt"
+      ],
+      "type": "object"
+    },
+    "TurnStartParams": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalPolicy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AskForApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalsReviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalsReviewer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clientUserMessageId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input": {
+          "items": {
+            "$ref": "#/$defs/UserInput"
+          },
+          "type": "array"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outputSchema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "personality": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Personality"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandboxPolicy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SandboxPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "serviceTier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "input"
+      ],
+      "type": "object"
+    },
+    "TurnStartResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "turn": {
+          "$ref": "#/$defs/Turn"
+        }
+      },
+      "required": [
+        "turn"
       ],
       "type": "object"
     },
