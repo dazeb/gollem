@@ -267,6 +267,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadDeleteParams", Type: reflect.TypeFor[ThreadDeleteParams]()},
 		{Name: "ThreadDeleteResponse", Type: reflect.TypeFor[ThreadDeleteResponse]()},
 		{Name: "ThreadDeletedNotification", Type: reflect.TypeFor[ThreadDeletedNotification]()},
+		{Name: "ThreadForkParams", Type: reflect.TypeFor[ThreadForkParams]()},
 		{Name: "ThreadForkResponse", Type: reflect.TypeFor[ThreadForkResponse]()},
 		{Name: "ThreadGoal", Type: reflect.TypeFor[ThreadGoal]()},
 		{Name: "ThreadGoalClearParams", Type: reflect.TypeFor[ThreadGoalClearParams]()},
@@ -298,12 +299,14 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadReadResponse", Type: reflect.TypeFor[ThreadReadResponse]()},
 		{Name: "ThreadReadResult", Type: reflect.TypeFor[ThreadReadResult]()},
 		{Name: "ThreadRecord", Type: reflect.TypeFor[ThreadRecord]()},
+		{Name: "ThreadResumeParams", Type: reflect.TypeFor[ThreadResumeParams]()},
 		{Name: "ThreadResumeResponse", Type: reflect.TypeFor[ThreadResumeResponse]()},
 		{Name: "ThreadSetNameParams", Type: reflect.TypeFor[ThreadSetNameParams]()},
 		{Name: "ThreadSetNameResponse", Type: reflect.TypeFor[ThreadSetNameResponse]()},
 		{Name: "ThreadSortKey", Type: reflect.TypeFor[ThreadSortKey]()},
 		{Name: "ThreadSource", Type: reflect.TypeFor[ThreadSource]()},
 		{Name: "ThreadSourceKind", Type: reflect.TypeFor[ThreadSourceKind]()},
+		{Name: "ThreadStartParams", Type: reflect.TypeFor[ThreadStartParams]()},
 		{Name: "ThreadStartResponse", Type: reflect.TypeFor[ThreadStartResponse]()},
 		{Name: "ThreadStartSource", Type: reflect.TypeFor[ThreadStartSource]()},
 		{Name: "ThreadStartedNotification", Type: reflect.TypeFor[ThreadStartedNotification]()},
@@ -415,6 +418,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["LocalShellAction"] = localShellActionSchema()
 	schemas["ResponseItem"] = responseItemSchema()
 	schemas["ThreadItem"] = threadItemSchema()
+	schemas["ThreadStartParams"] = threadStartParamsSchema()
+	schemas["ThreadResumeParams"] = threadResumeParamsSchema()
+	schemas["ThreadForkParams"] = threadForkParamsSchema()
 	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	schemas["ImageDetail"] = stringEnumSchema(
@@ -1345,6 +1351,67 @@ func dynamicToolCallOutputContentItemVariantSchema(contentType, valueField strin
 		"required":             []string{"type", valueField},
 		"additionalProperties": false,
 	}
+}
+
+func threadStartParamsSchema() Schema {
+	properties := threadSessionParamCommonSchemaProperties()
+	properties["serviceName"] = nullableThreadSessionParamSchema(Schema{"type": "string"})
+	properties["personality"] = nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/Personality"})
+	properties["ephemeral"] = nullableThreadSessionParamSchema(Schema{"type": "boolean"})
+	properties["sessionStartSource"] = nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/ThreadStartSource"})
+	properties["threadSource"] = nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/ThreadSource"})
+	return closedThreadSessionParamSchema(properties, nil)
+}
+
+func threadResumeParamsSchema() Schema {
+	properties := threadSessionParamCommonSchemaProperties()
+	properties["threadId"] = Schema{"type": "string"}
+	properties["personality"] = nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/Personality"})
+	return closedThreadSessionParamSchema(properties, []string{"threadId"})
+}
+
+func threadForkParamsSchema() Schema {
+	properties := threadSessionParamCommonSchemaProperties()
+	properties["threadId"] = Schema{"type": "string"}
+	properties["lastTurnId"] = nullableThreadSessionParamSchema(Schema{"type": "string"})
+	properties["ephemeral"] = Schema{"type": "boolean"}
+	properties["threadSource"] = nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/ThreadSource"})
+	return closedThreadSessionParamSchema(properties, []string{"threadId"})
+}
+
+func threadSessionParamCommonSchemaProperties() Schema {
+	configMap := Schema{
+		"type": "object", "additionalProperties": Schema{"$ref": "#/$defs/JsonValue"},
+		"x-gollem-typescript-optional-map": true,
+	}
+	return Schema{
+		"model":                 nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"modelProvider":         nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"serviceTier":           nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"cwd":                   nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"approvalPolicy":        nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/AskForApproval"}),
+		"approvalsReviewer":     nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/ApprovalsReviewer"}),
+		"sandbox":               nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/SandboxMode"}),
+		"config":                nullableThreadSessionParamSchema(configMap),
+		"baseInstructions":      nullableThreadSessionParamSchema(Schema{"type": "string"}),
+		"developerInstructions": nullableThreadSessionParamSchema(Schema{"type": "string"}),
+	}
+}
+
+func closedThreadSessionParamSchema(properties Schema, required []string) Schema {
+	schema := Schema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           properties,
+	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+
+func nullableThreadSessionParamSchema(value Schema) Schema {
+	return Schema{"anyOf": []any{value, Schema{"type": "null"}}}
 }
 
 func commandExecutionApprovalDecisionSchema() Schema {

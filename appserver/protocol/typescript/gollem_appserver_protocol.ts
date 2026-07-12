@@ -1881,6 +1881,23 @@ export type ThreadDeletedNotification = {
   "threadId": string;
 };
 
+export type ThreadForkParams = {
+  "approvalPolicy"?: AskForApproval | null;
+  "approvalsReviewer"?: ApprovalsReviewer | null;
+  "baseInstructions"?: string | null;
+  "config"?: { [key in string]?: JsonValue } | null;
+  "cwd"?: string | null;
+  "developerInstructions"?: string | null;
+  "ephemeral"?: boolean;
+  "lastTurnId"?: string | null;
+  "model"?: string | null;
+  "modelProvider"?: string | null;
+  "sandbox"?: SandboxMode | null;
+  "serviceTier"?: string | null;
+  "threadId": string;
+  "threadSource"?: ThreadSource | null;
+};
+
 export type ThreadForkResponse = {
   "approvalPolicy": AskForApproval;
   "approvalsReviewer": ApprovalsReviewer;
@@ -2236,6 +2253,21 @@ export type ThreadRecord = {
   "workspace"?: string;
 };
 
+export type ThreadResumeParams = {
+  "approvalPolicy"?: AskForApproval | null;
+  "approvalsReviewer"?: ApprovalsReviewer | null;
+  "baseInstructions"?: string | null;
+  "config"?: { [key in string]?: JsonValue } | null;
+  "cwd"?: string | null;
+  "developerInstructions"?: string | null;
+  "model"?: string | null;
+  "modelProvider"?: string | null;
+  "personality"?: Personality | null;
+  "sandbox"?: SandboxMode | null;
+  "serviceTier"?: string | null;
+  "threadId": string;
+};
+
 export type ThreadResumeResponse = {
   "approvalPolicy": AskForApproval;
   "approvalsReviewer": ApprovalsReviewer;
@@ -2267,6 +2299,24 @@ export type ThreadSortKey = "created_at" | "updated_at" | "recency_at";
 export type ThreadSource = string;
 
 export type ThreadSourceKind = "cli" | "vscode" | "exec" | "appServer" | "subAgent" | "subAgentReview" | "subAgentCompact" | "subAgentThreadSpawn" | "subAgentOther" | "unknown";
+
+export type ThreadStartParams = {
+  "approvalPolicy"?: AskForApproval | null;
+  "approvalsReviewer"?: ApprovalsReviewer | null;
+  "baseInstructions"?: string | null;
+  "config"?: { [key in string]?: JsonValue } | null;
+  "cwd"?: string | null;
+  "developerInstructions"?: string | null;
+  "ephemeral"?: boolean | null;
+  "model"?: string | null;
+  "modelProvider"?: string | null;
+  "personality"?: Personality | null;
+  "sandbox"?: SandboxMode | null;
+  "serviceName"?: string | null;
+  "serviceTier"?: string | null;
+  "sessionStartSource"?: ThreadStartSource | null;
+  "threadSource"?: ThreadSource | null;
+};
 
 export type ThreadStartResponse = {
   "approvalPolicy": AskForApproval;
