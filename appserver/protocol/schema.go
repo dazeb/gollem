@@ -91,6 +91,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRequestBase", Type: reflect.TypeFor[ApprovalRequestBase]()},
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
+		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
+		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
 		{Name: "ByteRange", Type: reflect.TypeFor[ByteRange]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
 		{Name: "CodexErrorInfo", Type: reflect.TypeFor[CodexErrorInfo]()},
@@ -227,6 +229,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpServerElicitationRequestResponse", Type: reflect.TypeFor[McpServerElicitationRequestResponse]()},
 		{Name: "MethodInfo", Type: reflect.TypeFor[MethodInfo]()},
 		{Name: "MethodState", Type: reflect.TypeFor[MethodState]()},
+		{Name: "NetworkAccess", Type: reflect.TypeFor[NetworkAccess]()},
 		{Name: "NetworkPolicyAmendment", Type: reflect.TypeFor[NetworkPolicyAmendment]()},
 		{Name: "NetworkPolicyRuleAction", Type: reflect.TypeFor[NetworkPolicyRuleAction]()},
 		{Name: "PatchApplyStatus", Type: reflect.TypeFor[PatchApplyStatus]()},
@@ -242,6 +245,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "RawResponseItemCompletedNotification", Type: reflect.TypeFor[RawResponseItemCompletedNotification]()},
 		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
+		{Name: "SandboxPolicy", Type: reflect.TypeFor[SandboxPolicy]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "SessionSource", Type: reflect.TypeFor[SessionSource]()},
@@ -435,6 +439,12 @@ func wireSchemaDefinitions() Schema {
 		"type":        "string",
 		"description": "An absolute, lexically normalized local path.",
 	}
+	schemas["ApprovalsReviewer"] = stringEnumSchema(
+		string(ApprovalsReviewerUser),
+		string(ApprovalsReviewerAutoReview),
+		string(ApprovalsReviewerGuardianSubagent),
+	)
+	schemas["AskForApproval"] = askForApprovalSchema()
 	schemas["FileSystemAccessMode"] = stringEnumSchema(
 		string(FileSystemAccessRead), string(FileSystemAccessWrite), string(FileSystemAccessDeny),
 	)
@@ -535,6 +545,10 @@ func wireSchemaDefinitions() Schema {
 	schemas["NetworkPolicyRuleAction"] = stringEnumSchema(
 		string(NetworkPolicyRuleAllow), string(NetworkPolicyRuleDeny),
 	)
+	schemas["NetworkAccess"] = stringEnumSchema(
+		string(NetworkAccessRestricted), string(NetworkAccessEnabled),
+	)
+	schemas["SandboxPolicy"] = sandboxPolicySchema()
 	schemas["CommandExecWriteParams"] = schemaWithRequiredFieldAlternatives(
 		schemas["CommandExecWriteParams"].(Schema),
 		[]string{"processId"},
@@ -1365,6 +1379,81 @@ func schemaRefUnion(names ...string) Schema {
 		variants = append(variants, Schema{"$ref": "#/$defs/" + name})
 	}
 	return Schema{"anyOf": variants}
+}
+
+func askForApprovalSchema() Schema {
+	granular := Schema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": Schema{
+			"sandbox_approval":    Schema{"type": "boolean"},
+			"rules":               Schema{"type": "boolean"},
+			"skill_approval":      Schema{"type": "boolean"},
+			"request_permissions": Schema{"type": "boolean"},
+			"mcp_elicitations":    Schema{"type": "boolean"},
+		},
+		"required": []any{
+			"sandbox_approval", "rules", "skill_approval",
+			"request_permissions", "mcp_elicitations",
+		},
+	}
+	return Schema{"oneOf": []any{
+		stringEnumSchema("untrusted"),
+		stringEnumSchema("on-request"),
+		Schema{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties":           Schema{"granular": granular},
+			"required":             []any{"granular"},
+		},
+		stringEnumSchema("never"),
+	}}
+}
+
+func sandboxPolicySchema() Schema {
+	return Schema{"oneOf": []any{
+		sandboxPolicyVariantSchema("dangerFullAccess", nil, nil),
+		sandboxPolicyVariantSchema(
+			"readOnly",
+			Schema{"networkAccess": Schema{"type": "boolean"}},
+			[]string{"networkAccess"},
+		),
+		sandboxPolicyVariantSchema(
+			"externalSandbox",
+			Schema{"networkAccess": Schema{"$ref": "#/$defs/NetworkAccess"}},
+			[]string{"networkAccess"},
+		),
+		sandboxPolicyVariantSchema(
+			"workspaceWrite",
+			Schema{
+				"writableRoots": Schema{
+					"type":  "array",
+					"items": Schema{"$ref": "#/$defs/AbsolutePathBuf"},
+				},
+				"networkAccess":       Schema{"type": "boolean"},
+				"excludeTmpdirEnvVar": Schema{"type": "boolean"},
+				"excludeSlashTmp":     Schema{"type": "boolean"},
+			},
+			[]string{"writableRoots", "networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp"},
+		),
+	}}
+}
+
+func sandboxPolicyVariantSchema(typeName string, extraProperties Schema, extraRequired []string) Schema {
+	properties := Schema{"type": Schema{"type": "string", "enum": []any{typeName}}}
+	for name, property := range extraProperties {
+		properties[name] = property
+	}
+	required := []any{"type"}
+	for _, name := range extraRequired {
+		required = append(required, name)
+	}
+	return Schema{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           properties,
+		"required":             required,
+	}
 }
 
 func mcpServerElicitationRequestParamsSchema() Schema {

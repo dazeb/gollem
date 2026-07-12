@@ -546,6 +546,18 @@ export type ApprovalRespondResult = {
   "requestId": string;
 };
 
+export type ApprovalsReviewer = "user" | "auto_review" | "guardian_subagent";
+
+export type AskForApproval = "untrusted" | "on-request" | {
+  "granular": {
+    "mcp_elicitations": boolean;
+    "request_permissions": boolean;
+    "rules": boolean;
+    "sandbox_approval": boolean;
+    "skill_approval": boolean;
+  };
+} | "never";
+
 export type ByteRange = {
   "end": number;
   "start": number;
@@ -1509,6 +1521,8 @@ export type MethodInfo = {
 
 export type MethodState = "implemented" | "blocked" | "deferred-stub" | "renamed-equivalent" | "not-applicable";
 
+export type NetworkAccess = "restricted" | "enabled";
+
 export type NetworkPolicyAmendment = {
   "action": NetworkPolicyRuleAction;
   "host": string;
@@ -1732,6 +1746,22 @@ export type ResponsesApiWebSearchAction = {
   "url"?: string;
 } | {
   "type": "other";
+};
+
+export type SandboxPolicy = {
+  "type": "dangerFullAccess";
+} | {
+  "networkAccess": boolean;
+  "type": "readOnly";
+} | {
+  "networkAccess": NetworkAccess;
+  "type": "externalSandbox";
+} | {
+  "excludeSlashTmp": boolean;
+  "excludeTmpdirEnvVar": boolean;
+  "networkAccess": boolean;
+  "type": "workspaceWrite";
+  "writableRoots": Array<AbsolutePathBuf>;
 };
 
 export type ServerCapabilities = {

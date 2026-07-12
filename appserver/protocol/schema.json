@@ -238,6 +238,73 @@
       ],
       "type": "object"
     },
+    "ApprovalsReviewer": {
+      "enum": [
+        "user",
+        "auto_review",
+        "guardian_subagent"
+      ],
+      "type": "string"
+    },
+    "AskForApproval": {
+      "oneOf": [
+        {
+          "enum": [
+            "untrusted"
+          ],
+          "type": "string"
+        },
+        {
+          "enum": [
+            "on-request"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "granular": {
+              "additionalProperties": false,
+              "properties": {
+                "mcp_elicitations": {
+                  "type": "boolean"
+                },
+                "request_permissions": {
+                  "type": "boolean"
+                },
+                "rules": {
+                  "type": "boolean"
+                },
+                "sandbox_approval": {
+                  "type": "boolean"
+                },
+                "skill_approval": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "sandbox_approval",
+                "rules",
+                "skill_approval",
+                "request_permissions",
+                "mcp_elicitations"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "granular"
+          ],
+          "type": "object"
+        },
+        {
+          "enum": [
+            "never"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "ByteRange": {
       "additionalProperties": false,
       "properties": {
@@ -4346,6 +4413,13 @@
       ],
       "type": "string"
     },
+    "NetworkAccess": {
+      "enum": [
+        "restricted",
+        "enabled"
+      ],
+      "type": "string"
+    },
     "NetworkPolicyAmendment": {
       "additionalProperties": false,
       "properties": {
@@ -5635,6 +5709,97 @@
           },
           "required": [
             "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SandboxPolicy": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "dangerFullAccess"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "networkAccess": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "readOnly"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "networkAccess"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "networkAccess": {
+              "$ref": "#/$defs/NetworkAccess"
+            },
+            "type": {
+              "enum": [
+                "externalSandbox"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "networkAccess"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "excludeSlashTmp": {
+              "type": "boolean"
+            },
+            "excludeTmpdirEnvVar": {
+              "type": "boolean"
+            },
+            "networkAccess": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "workspaceWrite"
+              ],
+              "type": "string"
+            },
+            "writableRoots": {
+              "items": {
+                "$ref": "#/$defs/AbsolutePathBuf"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "writableRoots",
+            "networkAccess",
+            "excludeTmpdirEnvVar",
+            "excludeSlashTmp"
           ],
           "type": "object"
         }
