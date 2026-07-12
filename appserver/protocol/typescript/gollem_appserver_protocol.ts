@@ -926,6 +926,13 @@ export type Error = ({
   "message": string;
 } & Record<string, unknown>);
 
+export type ErrorNotification = {
+  "error": TurnError;
+  "threadId": string;
+  "turnId": string;
+  "willRetry": boolean;
+};
+
 export type ExecPolicyAmendment = Array<string>;
 
 export type FileChangeApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
@@ -1178,6 +1185,11 @@ export type GitInfo = {
 export type GrantedPermissionProfile = {
   "fileSystem"?: AdditionalFileSystemPermissions;
   "network"?: AdditionalNetworkPermissions;
+};
+
+export type GuardianWarningNotification = {
+  "message": string;
+  "threadId": string;
 };
 
 export type HookPromptFragment = {
@@ -2646,6 +2658,11 @@ export type UserInput = {
   "name": string;
   "path": string;
   "type": "mention";
+};
+
+export type WarningNotification = {
+  "message": string;
+  "threadId": string | null;
 };
 
 export type WebSearchAction = {

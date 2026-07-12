@@ -484,6 +484,15 @@ reasoning-text producers remain unbound because they omit required `itemId` and
 emit incompatible `index`/`at` extensions. Plan and reasoning-summary methods
 remain blocked until exact producers exist.
 
+Exact standalone warning, guardian-warning, and error notification records
+establish the fixed public warning/error value layer. Canonical warning output
+requires explicit nullable thread id, while decoding also accepts omission to
+match the pinned Rust `Option` input. Guardian warnings require thread id and
+message; errors require strict `TurnError`, retry state, thread id, and turn id.
+The current live error producer remains unbound because it emits a string
+error, optional ids, and an `at` timestamp without retry state. Warning and
+guardian-warning methods remain blocked until exact producers exist.
+
 ## Generation
 
 Run:

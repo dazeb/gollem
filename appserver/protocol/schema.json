@@ -1948,6 +1948,30 @@
       ],
       "type": "object"
     },
+    "ErrorNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/TurnError"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "willRetry": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "error",
+        "willRetry",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "ExecPolicyAmendment": {
       "items": {
         "type": "string"
@@ -2943,6 +2967,22 @@
           "$ref": "#/$defs/AdditionalNetworkPermissions"
         }
       },
+      "type": "object"
+    },
+    "GuardianWarningNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "message"
+      ],
       "type": "object"
     },
     "HookPromptFragment": {
@@ -10333,6 +10373,29 @@
           "type": "object"
         }
       ]
+    },
+    "WarningNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "threadId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "threadId",
+        "message"
+      ],
+      "type": "object"
     },
     "WebSearchAction": {
       "oneOf": [
