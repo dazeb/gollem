@@ -340,6 +340,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnInterruptParams", Type: reflect.TypeFor[TurnInterruptParams]()},
 		{Name: "TurnInterruptResponse", Type: reflect.TypeFor[TurnInterruptResponse]()},
 		{Name: "TurnLifecycleStatus", Type: reflect.TypeFor[TurnLifecycleStatus]()},
+		{Name: "TurnPlanStep", Type: reflect.TypeFor[TurnPlanStep]()},
+		{Name: "TurnPlanStepStatus", Type: reflect.TypeFor[TurnPlanStepStatus]()},
+		{Name: "TurnPlanUpdatedNotification", Type: reflect.TypeFor[TurnPlanUpdatedNotification]()},
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
 		{Name: "TurnStartParams", Type: reflect.TypeFor[TurnStartParams]()},
 		{Name: "TurnStartResponse", Type: reflect.TypeFor[TurnStartResponse]()},
@@ -633,6 +636,10 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["TurnItemsView"] = stringEnumSchema(
 		string(TurnItemsViewNotLoaded), string(TurnItemsViewSummary), string(TurnItemsViewFull),
+	)
+	schemas["TurnPlanStepStatus"] = stringEnumSchema(
+		string(TurnPlanStepStatusPending), string(TurnPlanStepStatusInProgress),
+		string(TurnPlanStepStatusCompleted),
 	)
 	schemas["TurnStatus"] = stringEnumSchema(
 		string(TurnStatusCompleted), string(TurnStatusInterrupted), string(TurnStatusFailed),
