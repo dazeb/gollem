@@ -782,6 +782,13 @@ export type CommandExecutionSource = "agent" | "userShell" | "unifiedExecStartup
 
 export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
 
+export type ConfigWarningNotification = {
+  "details": string | null;
+  "path"?: string;
+  "range"?: TextRange;
+  "summary": string;
+};
+
 export type ContentItem = {
   "text": string;
   "type": "input_text";
@@ -1859,6 +1866,16 @@ export type Surface = "client-request" | "server-notification" | "server-request
 export type TextElement = {
   "byteRange": ByteRange;
   "placeholder": string | null;
+};
+
+export type TextPosition = {
+  "column": number;
+  "line": number;
+};
+
+export type TextRange = {
+  "end": TextPosition;
+  "start": TextPosition;
 };
 
 export type Thread = {

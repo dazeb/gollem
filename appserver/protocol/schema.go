@@ -120,6 +120,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecutionItemStartedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemStartedNotificationParams]()},
 		{Name: "CommandExecutionOutputDeltaNotificationParams", Type: reflect.TypeFor[CommandExecutionOutputDeltaNotificationParams]()},
 		{Name: "CommandExecutionSource", Type: reflect.TypeFor[CommandExecutionSource]()},
+		{Name: "ConfigWarningNotification", Type: reflect.TypeFor[ConfigWarningNotification]()},
 		{Name: "ContentItem", Type: reflect.TypeFor[ContentItem]()},
 		{Name: "ContextCompactionItem", Type: reflect.TypeFor[ContextCompactionItem]()},
 		{Name: "DaemonShutdownParams", Type: reflect.TypeFor[DaemonShutdownParams]()},
@@ -331,6 +332,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadUnsubscribeResponse", Type: reflect.TypeFor[ThreadUnsubscribeResponse]()},
 		{Name: "ThreadUnsubscribeStatus", Type: reflect.TypeFor[ThreadUnsubscribeStatus]()},
 		{Name: "TextElement", Type: reflect.TypeFor[TextElement]()},
+		{Name: "TextPosition", Type: reflect.TypeFor[TextPosition]()},
+		{Name: "TextRange", Type: reflect.TypeFor[TextRange]()},
 		{Name: "TimelineItem", Type: reflect.TypeFor[TimelineItem]()},
 		{Name: "TokenUsage", Type: reflect.TypeFor[TokenUsage]()},
 		{Name: "TokenUsageBreakdown", Type: reflect.TypeFor[TokenUsageBreakdown]()},
@@ -450,6 +453,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["TurnStartResponse"] = turnStartResponseSchema()
 	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
+	setSchemaIntegerMinimum(schemas["TextPosition"].(Schema), 0, "line", "column")
 	schemas["ImageDetail"] = stringEnumSchema(
 		string(ImageDetailAuto), string(ImageDetailLow), string(ImageDetailHigh), string(ImageDetailOriginal),
 	)
