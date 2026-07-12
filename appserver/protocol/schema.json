@@ -124,6 +124,30 @@
       ],
       "type": "object"
     },
+    "AgentMessageDeltaNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "delta"
+      ],
+      "type": "object"
+    },
     "AgentMessageInputContent": {
       "oneOf": [
         {
@@ -4811,6 +4835,30 @@
       ],
       "type": "string"
     },
+    "PlanDeltaNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "delta"
+      ],
+      "type": "object"
+    },
     "RawResponseItemCompletedNotification": {
       "additionalProperties": false,
       "properties": {
@@ -4908,6 +4956,86 @@
         "none"
       ],
       "type": "string"
+    },
+    "ReasoningSummaryPartAddedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "summaryIndex": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "summaryIndex"
+      ],
+      "type": "object"
+    },
+    "ReasoningSummaryTextDeltaNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "summaryIndex": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "delta",
+        "summaryIndex"
+      ],
+      "type": "object"
+    },
+    "ReasoningTextDeltaNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "contentIndex": {
+          "type": "integer"
+        },
+        "delta": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "delta",
+        "contentIndex"
+      ],
+      "type": "object"
     },
     "Request": {
       "additionalProperties": false,
