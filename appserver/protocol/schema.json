@@ -1365,6 +1365,35 @@
       ],
       "type": "string"
     },
+    "ConfigWarningNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "details": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/TextRange"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "details"
+      ],
+      "type": "object"
+    },
     "ContentItem": {
       "oneOf": [
         {
@@ -6213,6 +6242,40 @@
       "required": [
         "byteRange",
         "placeholder"
+      ],
+      "type": "object"
+    },
+    "TextPosition": {
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "line": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "line",
+        "column"
+      ],
+      "type": "object"
+    },
+    "TextRange": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/TextPosition"
+        },
+        "start": {
+          "$ref": "#/$defs/TextPosition"
+        }
+      },
+      "required": [
+        "start",
+        "end"
       ],
       "type": "object"
     },
