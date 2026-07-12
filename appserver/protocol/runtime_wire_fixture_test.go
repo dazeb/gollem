@@ -456,12 +456,12 @@ func runtimeFixtureTarget(name string) any {
 		return new(DaemonStatus)
 	case "ThreadListParams":
 		return new(ThreadListParams)
-	case "ThreadListResponse":
-		return new(ThreadListResponse)
+	case "ThreadListResult":
+		return new(ThreadListResult)
 	case "ThreadReadParams":
 		return new(ThreadReadParams)
-	case "ThreadReadResponse":
-		return new(ThreadReadResponse)
+	case "ThreadReadResult":
+		return new(ThreadReadResult)
 	case "ThreadArchiveParams":
 		return new(ThreadArchiveParams)
 	case "ThreadArchiveResponse":
@@ -486,8 +486,8 @@ func runtimeFixtureTarget(name string) any {
 		return new(ThreadMemoryModeSetResponse)
 	case "ThreadMetadataUpdateParams":
 		return new(ThreadMetadataUpdateParams)
-	case "ThreadMetadataUpdateResponse":
-		return new(ThreadMetadataUpdateResponse)
+	case "ThreadMetadataUpdateResult":
+		return new(ThreadMetadataUpdateResult)
 	case "ThreadNameUpdatedNotification":
 		return new(ThreadNameUpdatedNotification)
 	case "ThreadGoalClearParams":
@@ -512,8 +512,8 @@ func runtimeFixtureTarget(name string) any {
 		return new(ThreadSetNameResponse)
 	case "ThreadUnarchiveParams":
 		return new(ThreadUnarchiveParams)
-	case "ThreadUnarchiveResponse":
-		return new(ThreadUnarchiveResponse)
+	case "ThreadUnarchiveResult":
+		return new(ThreadUnarchiveResult)
 	case "ThreadUnarchivedNotification":
 		return new(ThreadUnarchivedNotification)
 	case "ThreadUnsubscribeParams":

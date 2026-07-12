@@ -62,7 +62,7 @@
       "surface": "client-request",
       "method": "thread/unarchive",
       "envelope": "response",
-      "resultType": "ThreadUnarchiveResponse",
+      "resultType": "ThreadUnarchiveResult",
       "message": {
         "id": "unarchive-1",
         "result": {

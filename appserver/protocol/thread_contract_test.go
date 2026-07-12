@@ -15,8 +15,10 @@ func TestThreadDiscoverySchemaAndBindings(t *testing.T) {
 		"ThreadListCwdFilter",
 		"ThreadListParams",
 		"ThreadListResponse",
+		"ThreadListResult",
 		"ThreadReadParams",
 		"ThreadReadResponse",
+		"ThreadReadResult",
 		"ThreadRecord",
 		"ThreadSortKey",
 		"ThreadSourceKind",
@@ -52,19 +54,19 @@ func TestThreadDiscoverySchemaAndBindings(t *testing.T) {
 	}
 	readParams := defs["ThreadReadParams"].(Schema)
 	assertSchemaRequired(t, readParams, "threadId")
-	listResponse := defs["ThreadListResponse"].(Schema)
-	assertSchemaRequired(t, listResponse, "data")
-	for _, name := range listResponse["required"].([]string) {
+	listResult := defs["ThreadListResult"].(Schema)
+	assertSchemaRequired(t, listResult, "data")
+	for _, name := range listResult["required"].([]string) {
 		if name == "threads" {
-			t.Error("ThreadListResponse legacy threads field must remain optional in the public schema")
+			t.Error("ThreadListResult legacy threads field must remain optional in the live schema")
 		}
 	}
 
 	bindings := WireTypeBindings()
 	assertBinding(t, bindings, "thread/list", SurfaceClientRequest, "ThreadListParams")
-	assertBinding(t, bindings, "thread/list", SurfaceClientRequest, "ThreadListResponse")
+	assertBinding(t, bindings, "thread/list", SurfaceClientRequest, "ThreadListResult")
 	assertBinding(t, bindings, "thread/read", SurfaceClientRequest, "ThreadReadParams")
-	assertBinding(t, bindings, "thread/read", SurfaceClientRequest, "ThreadReadResponse")
+	assertBinding(t, bindings, "thread/read", SurfaceClientRequest, "ThreadReadResult")
 }
 
 func TestThreadListCwdFilterPreservesStringAndArrayWireForms(t *testing.T) {

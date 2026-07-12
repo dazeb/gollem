@@ -5,9 +5,9 @@ import type {
   BoundRequest,
   BoundResponse,
   ThreadListParams,
-  ThreadListResponse,
+  ThreadListResult,
   ThreadReadParams,
-  ThreadReadResponse,
+  ThreadReadResult,
 } from "../gollem_appserver_protocol";
 
 export const fixtureProtocolVersion = "gollem.appserver.v1" as const;
@@ -81,7 +81,7 @@ export const threadListResponse = {
     ]
   }
 } satisfies BoundResponse<"thread/list">;
-export const threadListResponseResult = threadListResponse.result satisfies ThreadListResponse;
+export const threadListResponseResult = threadListResponse.result satisfies ThreadListResult;
 
 export const threadReadRequest = {
   "id": "thread-read-1",
@@ -165,7 +165,7 @@ export const threadReadResponse = {
     ]
   }
 } satisfies BoundResponse<"thread/read">;
-export const threadReadResponseResult = threadReadResponse.result satisfies ThreadReadResponse;
+export const threadReadResponseResult = threadReadResponse.result satisfies ThreadReadResult;
 
 // @ts-expect-error request methods cannot use notification envelopes.
 export type RejectRequestAsNotification = BoundNotification<"daemon/status">;

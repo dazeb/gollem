@@ -789,7 +789,7 @@ func (s *Server) handleThreadRead(ctx context.Context, raw json.RawMessage) (any
 		return nil, mapError("thread/read", err)
 	}
 	s.markThreadLoaded(thread)
-	result := protocol.ThreadReadResponse{Thread: protocolThreadRecord(thread)}
+	result := protocol.ThreadReadResult{Thread: protocolThreadRecord(thread)}
 	if boolDefault(params.IncludeTurns, true) {
 		turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: threadID, Limit: params.Limit})
 		if err != nil {
@@ -1057,7 +1057,7 @@ func (s *Server) handleThreadMetadataUpdate(ctx context.Context, raw json.RawMes
 	}
 	s.markThreadLoaded(thread)
 	s.publishThreadNotification("thread/settings/updated", thread)
-	return protocol.ThreadMetadataUpdateResponse{
+	return protocol.ThreadMetadataUpdateResult{
 		Thread:   protocolThreadRecord(thread),
 		Metadata: cloneSettings(thread.Metadata),
 	}, nil

@@ -66,6 +66,7 @@ func TestThreadMetadataSchemaAndBindings(t *testing.T) {
 		"ThreadMetadataGitInfoUpdateParams",
 		"ThreadMetadataUpdateParams",
 		"ThreadMetadataUpdateResponse",
+		"ThreadMetadataUpdateResult",
 		"ThreadNameUpdatedNotification",
 	} {
 		if defs[name] == nil {
@@ -113,7 +114,7 @@ func TestThreadMetadataSchemaAndBindings(t *testing.T) {
 		result string
 	}{
 		{method: "thread/memoryMode/set", params: "ThreadMemoryModeSetParams", result: "ThreadMemoryModeSetResponse"},
-		{method: "thread/metadata/update", params: "ThreadMetadataUpdateParams", result: "ThreadMetadataUpdateResponse"},
+		{method: "thread/metadata/update", params: "ThreadMetadataUpdateParams", result: "ThreadMetadataUpdateResult"},
 	} {
 		assertBinding(t, bindings, test.method, SurfaceClientRequest, test.params)
 		assertBinding(t, bindings, test.method, SurfaceClientRequest, test.result)

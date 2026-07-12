@@ -38,7 +38,7 @@ func protocolThreadStatusResponse(method string, thread *store.Thread) any {
 	case "thread/archive":
 		return protocol.ThreadArchiveResponse{Thread: &record}
 	case "thread/unarchive":
-		return protocol.ThreadUnarchiveResponse{Thread: record}
+		return protocol.ThreadUnarchiveResult{Thread: record}
 	case "thread/delete":
 		return protocol.ThreadDeleteResponse{Thread: &record}
 	default:

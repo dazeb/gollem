@@ -2066,6 +2066,12 @@ export type ThreadListParams = {
 };
 
 export type ThreadListResponse = {
+  "backwardsCursor": string | null;
+  "data": Array<Thread>;
+  "nextCursor": string | null;
+};
+
+export type ThreadListResult = {
   "backwardsCursor"?: string | null;
   "data": Array<ThreadRecord>;
   "nextCursor"?: string | null;
@@ -2133,6 +2139,10 @@ export type ThreadMetadataUpdateParams = {
 };
 
 export type ThreadMetadataUpdateResponse = {
+  "thread": Thread;
+};
+
+export type ThreadMetadataUpdateResult = {
   "metadata"?: Record<string, unknown> | null;
   "thread": ThreadRecord;
 };
@@ -2155,6 +2165,10 @@ export type ThreadReadParams = {
 };
 
 export type ThreadReadResponse = {
+  "thread": Thread;
+};
+
+export type ThreadReadResult = {
   "items"?: Array<TimelineItem>;
   "thread": ThreadRecord;
   "turns"?: Array<TurnRecord>;
@@ -2234,6 +2248,10 @@ export type ThreadUnarchiveParams = {
 };
 
 export type ThreadUnarchiveResponse = {
+  "thread": Thread;
+};
+
+export type ThreadUnarchiveResult = {
   "thread": ThreadRecord;
 };
 
@@ -2478,15 +2496,15 @@ export const wireTypeBindings = [
   { "method": "thread/goal/get", "surface": "client-request", "params": ["ThreadGoalGetParams"], "result": ["ThreadGoalGetResponse"] },
   { "method": "thread/goal/set", "surface": "client-request", "params": ["ThreadGoalSetParams"], "result": ["ThreadGoalSetResponse"] },
   { "method": "thread/goal/updated", "surface": "server-notification", "params": ["ThreadGoalUpdatedNotification"] },
-  { "method": "thread/list", "surface": "client-request", "params": ["ThreadListParams"], "result": ["ThreadListResponse"] },
+  { "method": "thread/list", "surface": "client-request", "params": ["ThreadListParams"], "result": ["ThreadListResult"] },
   { "method": "thread/loaded/list", "surface": "client-request", "params": ["ThreadLoadedListParams"], "result": ["ThreadLoadedListResponse"] },
   { "method": "thread/memoryMode/set", "surface": "client-request", "params": ["ThreadMemoryModeSetParams"], "result": ["ThreadMemoryModeSetResponse"] },
-  { "method": "thread/metadata/update", "surface": "client-request", "params": ["ThreadMetadataUpdateParams"], "result": ["ThreadMetadataUpdateResponse"] },
+  { "method": "thread/metadata/update", "surface": "client-request", "params": ["ThreadMetadataUpdateParams"], "result": ["ThreadMetadataUpdateResult"] },
   { "method": "thread/name/set", "surface": "client-request", "params": ["ThreadSetNameParams"], "result": ["ThreadSetNameResponse"] },
   { "method": "thread/name/updated", "surface": "server-notification", "params": ["ThreadNameUpdatedNotification"] },
-  { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResponse"] },
+  { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResult"] },
   { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotification"] },
-  { "method": "thread/unarchive", "surface": "client-request", "params": ["ThreadUnarchiveParams"], "result": ["ThreadUnarchiveResponse"] },
+  { "method": "thread/unarchive", "surface": "client-request", "params": ["ThreadUnarchiveParams"], "result": ["ThreadUnarchiveResult"] },
   { "method": "thread/unarchived", "surface": "server-notification", "params": ["ThreadUnarchivedNotification"] },
   { "method": "thread/unsubscribe", "surface": "client-request", "params": ["ThreadUnsubscribeParams"], "result": ["ThreadUnsubscribeResponse"] },
   { "method": "turn/diff/updated", "surface": "server-notification", "params": ["TurnDiffUpdatedNotification"] },
@@ -2585,13 +2603,13 @@ export interface MethodResultsByName {
   "thread/goal/clear": ThreadGoalClearResponse;
   "thread/goal/get": ThreadGoalGetResponse;
   "thread/goal/set": ThreadGoalSetResponse;
-  "thread/list": ThreadListResponse;
+  "thread/list": ThreadListResult;
   "thread/loaded/list": ThreadLoadedListResponse;
   "thread/memoryMode/set": ThreadMemoryModeSetResponse;
-  "thread/metadata/update": ThreadMetadataUpdateResponse;
+  "thread/metadata/update": ThreadMetadataUpdateResult;
   "thread/name/set": ThreadSetNameResponse;
-  "thread/read": ThreadReadResponse;
-  "thread/unarchive": ThreadUnarchiveResponse;
+  "thread/read": ThreadReadResult;
+  "thread/unarchive": ThreadUnarchiveResult;
   "thread/unsubscribe": ThreadUnsubscribeResponse;
 }
 

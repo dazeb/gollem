@@ -10,9 +10,9 @@ import (
 	"github.com/fugue-labs/gollem/appserver/store"
 )
 
-func listThreadRecords(ctx context.Context, st store.Store, params protocol.ThreadListParams) (protocol.ThreadListResponse, *protocol.Error) {
+func listThreadRecords(ctx context.Context, st store.Store, params protocol.ThreadListParams) (protocol.ThreadListResult, *protocol.Error) {
 	if rpcErr := validateThreadListParams(params); rpcErr != nil {
-		return protocol.ThreadListResponse{}, rpcErr
+		return protocol.ThreadListResult{}, rpcErr
 	}
 	cursor := ""
 	if params.Cursor != nil {
@@ -20,7 +20,7 @@ func listThreadRecords(ctx context.Context, st store.Store, params protocol.Thre
 	}
 	offset, rpcErr := parseCursor(cursor, "thread/list")
 	if rpcErr != nil {
-		return protocol.ThreadListResponse{}, rpcErr
+		return protocol.ThreadListResult{}, rpcErr
 	}
 	statuses, includeDeleted := threadListStatuses(params)
 	threads, err := st.ListThreads(ctx, store.ThreadFilter{
@@ -28,7 +28,7 @@ func listThreadRecords(ctx context.Context, st store.Store, params protocol.Thre
 		IncludeDeleted: includeDeleted,
 	})
 	if err != nil {
-		return protocol.ThreadListResponse{}, mapError("thread/list", err)
+		return protocol.ThreadListResult{}, mapError("thread/list", err)
 	}
 	threads = filterThreadListRecords(threads, params)
 	sortKey := ""
@@ -52,7 +52,7 @@ func listThreadRecords(ctx context.Context, st store.Store, params protocol.Thre
 		backwardsCursor = &value
 	}
 	data := protocolThreadRecords(page)
-	return protocol.ThreadListResponse{
+	return protocol.ThreadListResult{
 		Data:            data,
 		NextCursor:      nextCursor,
 		BackwardsCursor: backwardsCursor,

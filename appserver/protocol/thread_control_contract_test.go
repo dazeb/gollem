@@ -20,6 +20,7 @@ func TestThreadControlSchemaAndBindings(t *testing.T) {
 		"ThreadSetNameResponse",
 		"ThreadUnarchiveParams",
 		"ThreadUnarchiveResponse",
+		"ThreadUnarchiveResult",
 		"ThreadUnsubscribeParams",
 		"ThreadUnsubscribeResponse",
 		"ThreadUnsubscribeStatus",
@@ -60,7 +61,7 @@ func TestThreadControlSchemaAndBindings(t *testing.T) {
 		{method: "thread/delete", params: "ThreadDeleteParams", result: "ThreadDeleteResponse"},
 		{method: "thread/loaded/list", params: "ThreadLoadedListParams", result: "ThreadLoadedListResponse"},
 		{method: "thread/name/set", params: "ThreadSetNameParams", result: "ThreadSetNameResponse"},
-		{method: "thread/unarchive", params: "ThreadUnarchiveParams", result: "ThreadUnarchiveResponse"},
+		{method: "thread/unarchive", params: "ThreadUnarchiveParams", result: "ThreadUnarchiveResult"},
 		{method: "thread/unsubscribe", params: "ThreadUnsubscribeParams", result: "ThreadUnsubscribeResponse"},
 	} {
 		assertBinding(t, bindings, test.method, SurfaceClientRequest, test.params)

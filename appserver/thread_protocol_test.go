@@ -53,7 +53,7 @@ func TestThreadListUsesExportedDiscoveryContract(t *testing.T) {
 	if defaultResponse.Error != nil {
 		t.Fatalf("thread/list default error: %v", defaultResponse.Error)
 	}
-	var defaultList protocol.ThreadListResponse
+	var defaultList protocol.ThreadListResult
 	decodeResult(t, defaultResponse, &defaultList)
 	if len(defaultList.Data) != 2 || len(defaultList.Threads) != 2 || containsThreadRecord(defaultList.Data, archived.ID) {
 		t.Fatalf("thread/list default = %#v", defaultList)
@@ -65,7 +65,7 @@ func TestThreadListUsesExportedDiscoveryContract(t *testing.T) {
 	if emptyFiltersResponse.Error != nil {
 		t.Fatalf("thread/list empty filters error: %v", emptyFiltersResponse.Error)
 	}
-	var emptyFilters protocol.ThreadListResponse
+	var emptyFilters protocol.ThreadListResult
 	decodeResult(t, emptyFiltersResponse, &emptyFilters)
 	if len(emptyFilters.Data) != 2 {
 		t.Fatalf("thread/list empty filters = %#v", emptyFilters)
@@ -83,7 +83,7 @@ func TestThreadListUsesExportedDiscoveryContract(t *testing.T) {
 	if filteredResponse.Error != nil {
 		t.Fatalf("thread/list filtered error: %v", filteredResponse.Error)
 	}
-	var filtered protocol.ThreadListResponse
+	var filtered protocol.ThreadListResult
 	decodeResult(t, filteredResponse, &filtered)
 	if len(filtered.Data) != 1 || filtered.Data[0].ID != alpha.ID || filtered.Data[0].Status != protocol.ThreadLifecycleActive {
 		t.Fatalf("thread/list filtered = %#v", filtered)
@@ -93,7 +93,7 @@ func TestThreadListUsesExportedDiscoveryContract(t *testing.T) {
 	if archivedResponse.Error != nil {
 		t.Fatalf("thread/list archived error: %v", archivedResponse.Error)
 	}
-	var archivedList protocol.ThreadListResponse
+	var archivedList protocol.ThreadListResult
 	decodeResult(t, archivedResponse, &archivedList)
 	if len(archivedList.Data) != 1 || archivedList.Data[0].ID != archived.ID {
 		t.Fatalf("thread/list archived = %#v", archivedList)
@@ -103,7 +103,7 @@ func TestThreadListUsesExportedDiscoveryContract(t *testing.T) {
 	if firstResponse.Error != nil {
 		t.Fatalf("thread/list first page error: %v", firstResponse.Error)
 	}
-	var first protocol.ThreadListResponse
+	var first protocol.ThreadListResult
 	decodeResult(t, firstResponse, &first)
 	if len(first.Data) != 1 || first.NextCursor == nil || first.BackwardsCursor == nil {
 		t.Fatalf("thread/list first page = %#v", first)
@@ -115,7 +115,7 @@ func TestThreadListUsesExportedDiscoveryContract(t *testing.T) {
 	if secondResponse.Error != nil {
 		t.Fatalf("thread/list second page error: %v", secondResponse.Error)
 	}
-	var second protocol.ThreadListResponse
+	var second protocol.ThreadListResult
 	decodeResult(t, secondResponse, &second)
 	if len(second.Data) != 1 || second.Data[0].ID == first.Data[0].ID || !containsThreadRecord(append(first.Data, second.Data...), beta.ID) {
 		t.Fatalf("thread/list pages = first %#v second %#v", first, second)
@@ -154,7 +154,7 @@ func TestThreadReadUsesExportedRecordContract(t *testing.T) {
 	if response.Error != nil {
 		t.Fatalf("thread/read error: %v", response.Error)
 	}
-	var read protocol.ThreadReadResponse
+	var read protocol.ThreadReadResult
 	decodeResult(t, response, &read)
 	if read.Thread.ID != thread.ID || len(read.Turns) != 1 || len(read.Items) != 1 || len(read.Thread.Turns) != 1 {
 		t.Fatalf("thread/read = %#v", read)

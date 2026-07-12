@@ -32,7 +32,7 @@ func (p ThreadUnarchiveParams) EffectiveThreadID() string {
 	return firstThreadControlID(p.ThreadID, p.ID)
 }
 
-type ThreadUnarchiveResponse struct {
+type ThreadUnarchiveResult struct {
 	Thread ThreadRecord `json:"thread"`
 }
 

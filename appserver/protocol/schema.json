@@ -7509,6 +7509,43 @@
         },
         "data": {
           "items": {
+            "$ref": "#/$defs/Thread"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor",
+        "backwardsCursor"
+      ],
+      "type": "object"
+    },
+    "ThreadListResult": {
+      "additionalProperties": false,
+      "properties": {
+        "backwardsCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data": {
+          "items": {
             "$ref": "#/$defs/ThreadRecord"
           },
           "type": "array"
@@ -7828,6 +7865,18 @@
     "ThreadMetadataUpdateResponse": {
       "additionalProperties": false,
       "properties": {
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
+    "ThreadMetadataUpdateResult": {
+      "additionalProperties": false,
+      "properties": {
         "metadata": {
           "anyOf": [
             {
@@ -7922,6 +7971,18 @@
       "type": "object"
     },
     "ThreadReadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
+    "ThreadReadResult": {
       "additionalProperties": false,
       "properties": {
         "items": {
@@ -8251,6 +8312,18 @@
       "type": "object"
     },
     "ThreadUnarchiveResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
+    "ThreadUnarchiveResult": {
       "additionalProperties": false,
       "properties": {
         "thread": {
@@ -10927,7 +11000,7 @@
         "ThreadListParams"
       ],
       "result": [
-        "ThreadListResponse"
+        "ThreadListResult"
       ]
     },
     {
@@ -10957,7 +11030,7 @@
         "ThreadMetadataUpdateParams"
       ],
       "result": [
-        "ThreadMetadataUpdateResponse"
+        "ThreadMetadataUpdateResult"
       ]
     },
     {
@@ -10984,7 +11057,7 @@
         "ThreadReadParams"
       ],
       "result": [
-        "ThreadReadResponse"
+        "ThreadReadResult"
       ]
     },
     {
@@ -11001,7 +11074,7 @@
         "ThreadUnarchiveParams"
       ],
       "result": [
-        "ThreadUnarchiveResponse"
+        "ThreadUnarchiveResult"
       ]
     },
     {

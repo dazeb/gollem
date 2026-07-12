@@ -160,9 +160,9 @@ type TurnRecord struct {
 	Items       []TimelineItem      `json:"items,omitempty" jsonschema:"nonnullable=true"`
 }
 
-// ThreadListResponse adds Codex-compatible data/cursor fields while retaining
+// ThreadListResult adds Codex-compatible data/cursor fields while retaining
 // the legacy Gollem threads field for protocol-v1 compatibility.
-type ThreadListResponse struct {
+type ThreadListResult struct {
 	Data            []ThreadRecord `json:"data" jsonschema:"nonnullable=true"`
 	NextCursor      *string        `json:"nextCursor,omitempty"`
 	BackwardsCursor *string        `json:"backwardsCursor,omitempty"`
@@ -187,9 +187,9 @@ func (p ThreadReadParams) EffectiveThreadID() string {
 	return p.ID
 }
 
-// ThreadReadResponse retains protocol-v1 top-level turns/items while also
+// ThreadReadResult retains protocol-v1 top-level turns/items while also
 // nesting loaded turns/items in Thread for forward client consumption.
-type ThreadReadResponse struct {
+type ThreadReadResult struct {
 	Thread ThreadRecord   `json:"thread"`
 	Turns  []TurnRecord   `json:"turns,omitempty" jsonschema:"nonnullable=true"`
 	Items  []TimelineItem `json:"items,omitempty" jsonschema:"nonnullable=true"`
