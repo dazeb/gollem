@@ -4803,6 +4803,14 @@
       ],
       "type": "object"
     },
+    "Personality": {
+      "enum": [
+        "none",
+        "friendly",
+        "pragmatic"
+      ],
+      "type": "string"
+    },
     "RawResponseItemCompletedNotification": {
       "additionalProperties": false,
       "properties": {
@@ -5713,6 +5721,14 @@
           "type": "object"
         }
       ]
+    },
+    "SandboxMode": {
+      "enum": [
+        "read-only",
+        "workspace-write",
+        "danger-full-access"
+      ],
+      "type": "string"
     },
     "SandboxPolicy": {
       "oneOf": [
@@ -8506,6 +8522,13 @@
         "reasoningEffort"
       ],
       "type": "object"
+    },
+    "ThreadStartSource": {
+      "enum": [
+        "startup",
+        "clear"
+      ],
+      "type": "string"
     },
     "ThreadStartedNotification": {
       "additionalProperties": false,

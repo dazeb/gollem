@@ -234,6 +234,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "NetworkPolicyRuleAction", Type: reflect.TypeFor[NetworkPolicyRuleAction]()},
 		{Name: "PatchApplyStatus", Type: reflect.TypeFor[PatchApplyStatus]()},
 		{Name: "PatchChangeKind", Type: reflect.TypeFor[PatchChangeKind]()},
+		{Name: "Personality", Type: reflect.TypeFor[Personality]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -245,6 +246,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "RawResponseItemCompletedNotification", Type: reflect.TypeFor[RawResponseItemCompletedNotification]()},
 		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
+		{Name: "SandboxMode", Type: reflect.TypeFor[SandboxMode]()},
 		{Name: "SandboxPolicy", Type: reflect.TypeFor[SandboxPolicy]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
@@ -303,6 +305,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadSource", Type: reflect.TypeFor[ThreadSource]()},
 		{Name: "ThreadSourceKind", Type: reflect.TypeFor[ThreadSourceKind]()},
 		{Name: "ThreadStartResponse", Type: reflect.TypeFor[ThreadStartResponse]()},
+		{Name: "ThreadStartSource", Type: reflect.TypeFor[ThreadStartSource]()},
 		{Name: "ThreadStartedNotification", Type: reflect.TypeFor[ThreadStartedNotification]()},
 		{Name: "ThreadStatus", Type: reflect.TypeFor[ThreadStatus]()},
 		{Name: "ThreadStatusChangedNotification", Type: reflect.TypeFor[ThreadStatusChangedNotification]()},
@@ -454,6 +457,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["FileSystemPath"] = fileSystemPathSchema()
 	schemas["FileSystemSpecialPath"] = fileSystemSpecialPathSchema()
 	schemas["LegacyAppPathString"] = Schema{"type": "string"}
+	schemas["Personality"] = stringEnumSchema(
+		string(PersonalityNone), string(PersonalityFriendly), string(PersonalityPragmatic),
+	)
 	schemas["PermissionGrantScope"] = stringEnumSchema(
 		string(PermissionGrantTurn), string(PermissionGrantSession),
 	)
@@ -471,6 +477,12 @@ func wireSchemaDefinitions() Schema {
 		schemas[alias] = Schema{"$ref": "#/$defs/" + canonical}
 	}
 	schemas["RequestId"] = Schema{"$ref": "#/$defs/RequestID"}
+	schemas["SandboxMode"] = stringEnumSchema(
+		string(SandboxModeReadOnly), string(SandboxModeWorkspaceWrite), string(SandboxModeDangerFullAccess),
+	)
+	schemas["ThreadStartSource"] = stringEnumSchema(
+		string(ThreadStartSourceStartup), string(ThreadStartSourceClear),
+	)
 	schemas["CommandExecutionStatus"] = stringEnumSchema(
 		string(CommandExecutionStatusInProgress), string(CommandExecutionStatusCompleted),
 		string(CommandExecutionStatusFailed), string(CommandExecutionStatusDeclined),

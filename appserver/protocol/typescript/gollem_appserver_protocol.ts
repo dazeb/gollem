@@ -1588,6 +1588,8 @@ export type PermissionsRequestApprovalResponse = {
   "strictAutoReview"?: boolean;
 };
 
+export type Personality = "none" | "friendly" | "pragmatic";
+
 export type RawResponseItemCompletedNotification = {
   "item": ResponseItem;
   "threadId": string;
@@ -1747,6 +1749,8 @@ export type ResponsesApiWebSearchAction = {
 } | {
   "type": "other";
 };
+
+export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export type SandboxPolicy = {
   "type": "dangerFullAccess";
@@ -2276,6 +2280,8 @@ export type ThreadStartResponse = {
   "serviceTier": string | null;
   "thread": Thread;
 };
+
+export type ThreadStartSource = "startup" | "clear";
 
 export type ThreadStartedNotification = {
   "thread": Thread;
