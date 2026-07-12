@@ -136,6 +136,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "DynamicToolCallItem", Type: reflect.TypeFor[DynamicToolCallItem]()},
 		{Name: "DynamicToolCallItemCompletedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemCompletedNotificationParams]()},
 		{Name: "DynamicToolCallItemStartedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemStartedNotificationParams]()},
+		{Name: "ErrorNotification", Type: reflect.TypeFor[ErrorNotification]()},
 		{Name: "ExecPolicyAmendment", Type: reflect.TypeFor[ExecPolicyAmendment]()},
 		{Name: "FileChangeApprovalRequestParams", Type: reflect.TypeFor[FileChangeApprovalRequestParams]()},
 		{Name: "FileChangeApprovalDecision", Type: reflect.TypeFor[FileChangeApprovalDecision]()},
@@ -175,6 +176,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FunctionCallOutputContentItem", Type: reflect.TypeFor[FunctionCallOutputContentItem]()},
 		{Name: "GitInfo", Type: reflect.TypeFor[GitInfo]()},
 		{Name: "GrantedPermissionProfile", Type: reflect.TypeFor[GrantedPermissionProfile]()},
+		{Name: "GuardianWarningNotification", Type: reflect.TypeFor[GuardianWarningNotification]()},
 		{Name: "HookPromptFragment", Type: reflect.TypeFor[HookPromptFragment]()},
 		{Name: "ImageDetail", Type: reflect.TypeFor[ImageDetail]()},
 		{Name: "ImageGenerationItem", Type: reflect.TypeFor[ImageGenerationItem]()},
@@ -360,6 +362,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
 		{Name: "WebSearchAction", Type: reflect.TypeFor[WebSearchAction]()},
 		{Name: "WebSearchItem", Type: reflect.TypeFor[WebSearchItem]()},
+		{Name: "WarningNotification", Type: reflect.TypeFor[WarningNotification]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
