@@ -6353,6 +6353,71 @@
       ],
       "type": "object"
     },
+    "ThreadForkResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalPolicy": {
+          "$ref": "#/$defs/AskForApproval"
+        },
+        "approvalsReviewer": {
+          "$ref": "#/$defs/ApprovalsReviewer"
+        },
+        "cwd": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "instructionSources": {
+          "items": {
+            "$ref": "#/$defs/LegacyAppPathString"
+          },
+          "type": "array"
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelProvider": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox": {
+          "$ref": "#/$defs/SandboxPolicy"
+        },
+        "serviceTier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "thread",
+        "model",
+        "modelProvider",
+        "serviceTier",
+        "cwd",
+        "instructionSources",
+        "approvalPolicy",
+        "approvalsReviewer",
+        "sandbox",
+        "reasoningEffort"
+      ],
+      "type": "object"
+    },
     "ThreadGoal": {
       "additionalProperties": false,
       "properties": {
@@ -8242,6 +8307,71 @@
       ],
       "type": "object"
     },
+    "ThreadResumeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalPolicy": {
+          "$ref": "#/$defs/AskForApproval"
+        },
+        "approvalsReviewer": {
+          "$ref": "#/$defs/ApprovalsReviewer"
+        },
+        "cwd": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "instructionSources": {
+          "items": {
+            "$ref": "#/$defs/LegacyAppPathString"
+          },
+          "type": "array"
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelProvider": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox": {
+          "$ref": "#/$defs/SandboxPolicy"
+        },
+        "serviceTier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "thread",
+        "model",
+        "modelProvider",
+        "serviceTier",
+        "cwd",
+        "instructionSources",
+        "approvalPolicy",
+        "approvalsReviewer",
+        "sandbox",
+        "reasoningEffort"
+      ],
+      "type": "object"
+    },
     "ThreadSetNameParams": {
       "additionalProperties": false,
       "properties": {
@@ -8311,6 +8441,71 @@
         "unknown"
       ],
       "type": "string"
+    },
+    "ThreadStartResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalPolicy": {
+          "$ref": "#/$defs/AskForApproval"
+        },
+        "approvalsReviewer": {
+          "$ref": "#/$defs/ApprovalsReviewer"
+        },
+        "cwd": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "instructionSources": {
+          "items": {
+            "$ref": "#/$defs/LegacyAppPathString"
+          },
+          "type": "array"
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelProvider": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandbox": {
+          "$ref": "#/$defs/SandboxPolicy"
+        },
+        "serviceTier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "thread",
+        "model",
+        "modelProvider",
+        "serviceTier",
+        "cwd",
+        "instructionSources",
+        "approvalPolicy",
+        "approvalsReviewer",
+        "sandbox",
+        "reasoningEffort"
+      ],
+      "type": "object"
     },
     "ThreadStartedNotification": {
       "additionalProperties": false,

@@ -1877,6 +1877,19 @@ export type ThreadDeletedNotification = {
   "threadId": string;
 };
 
+export type ThreadForkResponse = {
+  "approvalPolicy": AskForApproval;
+  "approvalsReviewer": ApprovalsReviewer;
+  "cwd": AbsolutePathBuf;
+  "instructionSources": Array<LegacyAppPathString>;
+  "model": string;
+  "modelProvider": string;
+  "reasoningEffort": ReasoningEffort | null;
+  "sandbox": SandboxPolicy;
+  "serviceTier": string | null;
+  "thread": Thread;
+};
+
 export type ThreadGoal = {
   "createdAt": number;
   "objective": string;
@@ -2219,6 +2232,19 @@ export type ThreadRecord = {
   "workspace"?: string;
 };
 
+export type ThreadResumeResponse = {
+  "approvalPolicy": AskForApproval;
+  "approvalsReviewer": ApprovalsReviewer;
+  "cwd": AbsolutePathBuf;
+  "instructionSources": Array<LegacyAppPathString>;
+  "model": string;
+  "modelProvider": string;
+  "reasoningEffort": ReasoningEffort | null;
+  "sandbox": SandboxPolicy;
+  "serviceTier": string | null;
+  "thread": Thread;
+};
+
 export type ThreadSetNameParams = {
   "id"?: string;
   "name": string;
@@ -2237,6 +2263,19 @@ export type ThreadSortKey = "created_at" | "updated_at" | "recency_at";
 export type ThreadSource = string;
 
 export type ThreadSourceKind = "cli" | "vscode" | "exec" | "appServer" | "subAgent" | "subAgentReview" | "subAgentCompact" | "subAgentThreadSpawn" | "subAgentOther" | "unknown";
+
+export type ThreadStartResponse = {
+  "approvalPolicy": AskForApproval;
+  "approvalsReviewer": ApprovalsReviewer;
+  "cwd": AbsolutePathBuf;
+  "instructionSources": Array<LegacyAppPathString>;
+  "model": string;
+  "modelProvider": string;
+  "reasoningEffort": ReasoningEffort | null;
+  "sandbox": SandboxPolicy;
+  "serviceTier": string | null;
+  "thread": Thread;
+};
 
 export type ThreadStartedNotification = {
   "thread": Thread;
