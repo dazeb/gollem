@@ -515,6 +515,13 @@ export type AdditionalPermissionProfile = {
   "network": AdditionalNetworkPermissions | null;
 };
 
+export type AgentMessageDeltaNotification = {
+  "delta": string;
+  "itemId": string;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type AgentMessageInputContent = {
   "text": string;
   "type": "input_text";
@@ -1590,6 +1597,13 @@ export type PermissionsRequestApprovalResponse = {
 
 export type Personality = "none" | "friendly" | "pragmatic";
 
+export type PlanDeltaNotification = {
+  "delta": string;
+  "itemId": string;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type RawResponseItemCompletedNotification = {
   "item": ResponseItem;
   "threadId": string;
@@ -1612,6 +1626,29 @@ export type ReasoningItemReasoningSummary = {
 };
 
 export type ReasoningSummary = "auto" | "concise" | "detailed" | "none";
+
+export type ReasoningSummaryPartAddedNotification = {
+  "itemId": string;
+  "summaryIndex": number;
+  "threadId": string;
+  "turnId": string;
+};
+
+export type ReasoningSummaryTextDeltaNotification = {
+  "delta": string;
+  "itemId": string;
+  "summaryIndex": number;
+  "threadId": string;
+  "turnId": string;
+};
+
+export type ReasoningTextDeltaNotification = {
+  "contentIndex": number;
+  "delta": string;
+  "itemId": string;
+  "threadId": string;
+  "turnId": string;
+};
 
 export type Request = {
   "id": RequestID;
