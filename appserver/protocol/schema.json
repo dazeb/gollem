@@ -8471,6 +8471,43 @@
       ],
       "type": "object"
     },
+    "ThreadResumeInitialTurnsPageParams": {
+      "additionalProperties": false,
+      "properties": {
+        "itemsView": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnItemsView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sortDirection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SortDirection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ThreadResumeParams": {
       "additionalProperties": false,
       "properties": {
@@ -10009,6 +10046,43 @@
       },
       "required": [
         "turnId"
+      ],
+      "type": "object"
+    },
+    "TurnsPage": {
+      "additionalProperties": false,
+      "properties": {
+        "backwardsCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data": {
+          "items": {
+            "$ref": "#/$defs/Turn"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor",
+        "backwardsCursor"
       ],
       "type": "object"
     },

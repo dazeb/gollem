@@ -301,6 +301,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadReadResult", Type: reflect.TypeFor[ThreadReadResult]()},
 		{Name: "ThreadRecord", Type: reflect.TypeFor[ThreadRecord]()},
 		{Name: "ThreadResumeParams", Type: reflect.TypeFor[ThreadResumeParams]()},
+		{Name: "ThreadResumeInitialTurnsPageParams", Type: reflect.TypeFor[ThreadResumeInitialTurnsPageParams]()},
 		{Name: "ThreadResumeResponse", Type: reflect.TypeFor[ThreadResumeResponse]()},
 		{Name: "ThreadSetNameParams", Type: reflect.TypeFor[ThreadSetNameParams]()},
 		{Name: "ThreadSetNameResponse", Type: reflect.TypeFor[ThreadSetNameResponse]()},
@@ -350,6 +351,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnSteerParams", Type: reflect.TypeFor[TurnSteerParams]()},
 		{Name: "TurnSteerResponse", Type: reflect.TypeFor[TurnSteerResponse]()},
 		{Name: "TurnStartedNotification", Type: reflect.TypeFor[TurnStartedNotification]()},
+		{Name: "TurnsPage", Type: reflect.TypeFor[TurnsPage]()},
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
 		{Name: "WebSearchAction", Type: reflect.TypeFor[WebSearchAction]()},
 		{Name: "WebSearchItem", Type: reflect.TypeFor[WebSearchItem]()},
@@ -434,6 +436,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["ThreadItem"] = threadItemSchema()
 	schemas["ThreadStartParams"] = threadStartParamsSchema()
 	schemas["ThreadResumeParams"] = threadResumeParamsSchema()
+	schemas["ThreadResumeInitialTurnsPageParams"] = threadResumeInitialTurnsPageParamsSchema()
 	schemas["ThreadForkParams"] = threadForkParamsSchema()
 	schemas["TurnStartParams"] = turnStartParamsSchema()
 	schemas["TurnStartResponse"] = turnStartResponseSchema()
@@ -1388,6 +1391,16 @@ func threadResumeParamsSchema() Schema {
 	properties["threadId"] = Schema{"type": "string"}
 	properties["personality"] = nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/Personality"})
 	return closedThreadSessionParamSchema(properties, []string{"threadId"})
+}
+
+func threadResumeInitialTurnsPageParamsSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"limit": nullableThreadSessionParamSchema(Schema{"type": "integer", "minimum": 0}),
+		"sortDirection": nullableThreadSessionParamSchema(
+			Schema{"$ref": "#/$defs/SortDirection"},
+		),
+		"itemsView": nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/TurnItemsView"}),
+	}, nil)
 }
 
 func threadForkParamsSchema() Schema {

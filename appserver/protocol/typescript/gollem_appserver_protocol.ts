@@ -2255,6 +2255,12 @@ export type ThreadRecord = {
   "workspace"?: string;
 };
 
+export type ThreadResumeInitialTurnsPageParams = {
+  "itemsView"?: TurnItemsView | null;
+  "limit"?: number | null;
+  "sortDirection"?: SortDirection | null;
+};
+
 export type ThreadResumeParams = {
   "approvalPolicy"?: AskForApproval | null;
   "approvalsReviewer"?: ApprovalsReviewer | null;
@@ -2575,6 +2581,12 @@ export type TurnSteerParams = {
 
 export type TurnSteerResponse = {
   "turnId": string;
+};
+
+export type TurnsPage = {
+  "backwardsCursor": string | null;
+  "data": Array<Turn>;
+  "nextCursor": string | null;
 };
 
 export type UserInput = {
