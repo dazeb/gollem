@@ -539,6 +539,8 @@ export type AgentMessageInputContent = {
 
 export type AgentPath = string;
 
+export type AmazonBedrockCredentialSource = "codexManaged" | "awsManaged";
+
 export type AnalyticsConfig = ({
   "enabled": boolean | null;
 } & { [key in string]?: JsonValue });
