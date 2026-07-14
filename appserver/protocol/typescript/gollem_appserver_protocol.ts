@@ -1695,12 +1695,32 @@ export type ModelsRequirements = {
 
 export type NetworkAccess = "restricted" | "enabled";
 
+export type NetworkDomainPermission = "allow" | "deny";
+
 export type NetworkPolicyAmendment = {
   "action": NetworkPolicyRuleAction;
   "host": string;
 };
 
 export type NetworkPolicyRuleAction = "allow" | "deny";
+
+export type NetworkRequirements = {
+  "allowLocalBinding": boolean | null;
+  "allowUnixSockets": Array<string> | null;
+  "allowUpstreamProxy": boolean | null;
+  "allowedDomains": Array<string> | null;
+  "dangerouslyAllowAllUnixSockets": boolean | null;
+  "dangerouslyAllowNonLoopbackProxy": boolean | null;
+  "deniedDomains": Array<string> | null;
+  "domains": { [key in string]?: NetworkDomainPermission } | null;
+  "enabled": boolean | null;
+  "httpPort": number | null;
+  "managedAllowedDomainsOnly": boolean | null;
+  "socksPort": number | null;
+  "unixSockets": { [key in string]?: NetworkUnixSocketPermission } | null;
+};
+
+export type NetworkUnixSocketPermission = "allow" | "deny";
 
 export type NewThreadModelDefaults = {
   "model": string | null;

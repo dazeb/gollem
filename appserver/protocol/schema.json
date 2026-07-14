@@ -5360,6 +5360,13 @@
       ],
       "type": "string"
     },
+    "NetworkDomainPermission": {
+      "enum": [
+        "allow",
+        "deny"
+      ],
+      "type": "string"
+    },
     "NetworkPolicyAmendment": {
       "additionalProperties": false,
       "properties": {
@@ -5377,6 +5384,185 @@
       "type": "object"
     },
     "NetworkPolicyRuleAction": {
+      "enum": [
+        "allow",
+        "deny"
+      ],
+      "type": "string"
+    },
+    "NetworkRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "allowLocalBinding": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowUnixSockets": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowUpstreamProxy": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedDomains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dangerouslyAllowAllUnixSockets": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dangerouslyAllowNonLoopbackProxy": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deniedDomains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "domains": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/NetworkDomainPermission"
+              },
+              "type": "object",
+              "x-gollem-typescript-optional-map": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "httpPort": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "managedAllowedDomainsOnly": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "socksPort": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unixSockets": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/NetworkUnixSocketPermission"
+              },
+              "type": "object",
+              "x-gollem-typescript-optional-map": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled",
+        "httpPort",
+        "socksPort",
+        "allowUpstreamProxy",
+        "dangerouslyAllowNonLoopbackProxy",
+        "dangerouslyAllowAllUnixSockets",
+        "domains",
+        "managedAllowedDomainsOnly",
+        "allowedDomains",
+        "deniedDomains",
+        "unixSockets",
+        "allowUnixSockets",
+        "allowLocalBinding"
+      ],
+      "type": "object"
+    },
+    "NetworkUnixSocketPermission": {
       "enum": [
         "allow",
         "deny"
