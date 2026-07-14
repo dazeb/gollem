@@ -70,8 +70,8 @@ func TestLogoutAccountResponseRemainsStandalone(t *testing.T) {
 	if !ok || info.State != MethodDeferredStub {
 		t.Fatalf("account/logout = %#v, %v; want deferred stub", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 381 {
-		t.Fatalf("definition count = %d, want 381", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 382 {
+		t.Fatalf("definition count = %d, want 382", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
