@@ -1988,6 +1988,41 @@
       },
       "type": "object"
     },
+    "ConfigReadResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/Config"
+        },
+        "layers": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConfigLayer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origins": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ConfigLayerMetadata"
+          },
+          "type": "object",
+          "x-gollem-typescript-optional-map": true
+        }
+      },
+      "required": [
+        "config",
+        "origins",
+        "layers"
+      ],
+      "type": "object",
+      "x-gollem-typescript-ignore-additional-properties": true
+    },
     "ConfigRequirements": {
       "additionalProperties": false,
       "properties": {

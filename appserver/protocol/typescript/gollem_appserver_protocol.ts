@@ -875,6 +875,12 @@ export type ConfigReadParams = {
   "includeLayers"?: boolean;
 };
 
+export type ConfigReadResponse = {
+  "config": Config;
+  "layers": Array<ConfigLayer> | null;
+  "origins": { [key in string]?: ConfigLayerMetadata };
+};
+
 export type ConfigRequirements = {
   "allowAppshots": boolean | null;
   "allowManagedHooksOnly": boolean | null;
