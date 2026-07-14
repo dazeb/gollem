@@ -89,11 +89,13 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AdditionalFileSystemPermissions", Type: reflect.TypeFor[AdditionalFileSystemPermissions]()},
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
+		{Name: "AnalyticsConfig", Type: reflect.TypeFor[AnalyticsConfig]()},
 		{Name: "ApprovalRequestBase", Type: reflect.TypeFor[ApprovalRequestBase]()},
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
+		{Name: "AutoCompactTokenLimitScope", Type: reflect.TypeFor[AutoCompactTokenLimitScope]()},
 		{Name: "ByteRange", Type: reflect.TypeFor[ByteRange]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
 		{Name: "CodexErrorInfo", Type: reflect.TypeFor[CodexErrorInfo]()},
@@ -166,6 +168,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FileSystemSandboxEntry", Type: reflect.TypeFor[FileSystemSandboxEntry]()},
 		{Name: "FileSystemSpecialPath", Type: reflect.TypeFor[FileSystemSpecialPath]()},
 		{Name: "FileChangedNotification", Type: reflect.TypeFor[FileChangedNotification]()},
+		{Name: "ForcedChatgptWorkspaceIds", Type: reflect.TypeFor[ForcedChatgptWorkspaceIds]()},
+		{Name: "ForcedLoginMethod", Type: reflect.TypeFor[ForcedLoginMethod]()},
 		{Name: "FsChangedNotification", Type: reflect.TypeFor[FsChangedNotification]()},
 		{Name: "FsCopyParams", Type: reflect.TypeFor[FsCopyParams]()},
 		{Name: "FsCopyResponse", Type: reflect.TypeFor[FsCopyResponse]()},
@@ -294,6 +298,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
 		{Name: "SandboxMode", Type: reflect.TypeFor[SandboxMode]()},
 		{Name: "SandboxPolicy", Type: reflect.TypeFor[SandboxPolicy]()},
+		{Name: "SandboxWorkspaceWrite", Type: reflect.TypeFor[SandboxWorkspaceWrite]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "SessionSource", Type: reflect.TypeFor[SessionSource]()},
@@ -380,6 +385,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ToolRequestUserInputParams", Type: reflect.TypeFor[ToolRequestUserInputParams]()},
 		{Name: "ToolRequestUserInputQuestion", Type: reflect.TypeFor[ToolRequestUserInputQuestion]()},
 		{Name: "ToolRequestUserInputResponse", Type: reflect.TypeFor[ToolRequestUserInputResponse]()},
+		{Name: "ToolsV2", Type: reflect.TypeFor[ToolsV2]()},
 		{Name: "Turn", Type: reflect.TypeFor[Turn]()},
 		{Name: "TurnCompletedNotification", Type: reflect.TypeFor[TurnCompletedNotification]()},
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
@@ -401,9 +407,13 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnStartedNotification", Type: reflect.TypeFor[TurnStartedNotification]()},
 		{Name: "TurnsPage", Type: reflect.TypeFor[TurnsPage]()},
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
+		{Name: "Verbosity", Type: reflect.TypeFor[Verbosity]()},
 		{Name: "WebSearchAction", Type: reflect.TypeFor[WebSearchAction]()},
+		{Name: "WebSearchContextSize", Type: reflect.TypeFor[WebSearchContextSize]()},
 		{Name: "WebSearchItem", Type: reflect.TypeFor[WebSearchItem]()},
+		{Name: "WebSearchLocation", Type: reflect.TypeFor[WebSearchLocation]()},
 		{Name: "WebSearchMode", Type: reflect.TypeFor[WebSearchMode]()},
+		{Name: "WebSearchToolConfig", Type: reflect.TypeFor[WebSearchToolConfig]()},
 		{Name: "WarningNotification", Type: reflect.TypeFor[WarningNotification]()},
 		{Name: "WindowsSandboxSetupMode", Type: reflect.TypeFor[WindowsSandboxSetupMode]()},
 		{Name: "WriteStatus", Type: reflect.TypeFor[WriteStatus]()},
@@ -469,6 +479,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["WriteStatus"] = stringEnumSchema(
 		string(WriteStatusOK), string(WriteStatusOKOverridden),
 	)
+	for name, schema := range configPrerequisiteSchemas() {
+		schemas[name] = schema
+	}
 	schemas["ConfigLayerSource"] = configLayerSourceSchema()
 	configReadProperties := schemas["ConfigReadParams"].(Schema)["properties"].(Schema)
 	configReadProperties["cwd"].(Schema)["description"] = configReadCWDDescription
@@ -1380,6 +1393,100 @@ func configuredHookHandlerSchema() Schema {
 		configuredHookHandlerVariantSchema("prompt", nil, nil),
 		configuredHookHandlerVariantSchema("agent", nil, nil),
 	}}
+}
+
+func configPrerequisiteSchemas() map[string]Schema {
+	nullable := func(value Schema) Schema {
+		return Schema{"anyOf": []any{value, Schema{"type": "null"}}}
+	}
+	return map[string]Schema{
+		"AnalyticsConfig": {
+			"type": "object",
+			"properties": Schema{
+				"enabled": nullable(Schema{"type": "boolean"}),
+			},
+			"required":                         []string{"enabled"},
+			"additionalProperties":             Schema{"$ref": "#/$defs/JsonValue"},
+			"x-gollem-typescript-optional-map": true,
+		},
+		"AutoCompactTokenLimitScope": {
+			"description": "Selects which part of the active context is charged against `model_auto_compact_token_limit`.",
+			"oneOf": []any{
+				Schema{
+					"type":        "string",
+					"enum":        []any{"total"},
+					"description": "Count the full active context against the limit.",
+				},
+				Schema{
+					"type":        "string",
+					"enum":        []any{"body_after_prefix"},
+					"description": "Count sampled output and later growth after the carried window prefix.",
+				},
+			},
+		},
+		"ForcedChatgptWorkspaceIds": {
+			"anyOf": []any{
+				Schema{"type": "string"},
+				Schema{"type": "array", "items": Schema{"type": "string"}},
+			},
+			"description": "Backward-compatible API shape for ChatGPT workspace login restrictions.",
+		},
+		"ForcedLoginMethod": stringEnumSchema("chatgpt", "api"),
+		"SandboxWorkspaceWrite": {
+			"type": "object",
+			"properties": Schema{
+				"writable_roots": Schema{
+					"type": "array", "items": Schema{"type": "string"}, "default": []any{},
+				},
+				"network_access":         Schema{"type": "boolean", "default": false},
+				"exclude_tmpdir_env_var": Schema{"type": "boolean", "default": false},
+				"exclude_slash_tmp":      Schema{"type": "boolean", "default": false},
+			},
+			"required": []string{
+				"writable_roots", "network_access", "exclude_tmpdir_env_var", "exclude_slash_tmp",
+			},
+			"additionalProperties":                             true,
+			"x-gollem-typescript-ignore-additional-properties": true,
+		},
+		"ToolsV2": {
+			"type": "object",
+			"properties": Schema{
+				"web_search": nullable(Schema{"$ref": "#/$defs/WebSearchToolConfig"}),
+			},
+			"required":             []string{"web_search"},
+			"additionalProperties": true,
+			"x-gollem-typescript-ignore-additional-properties": true,
+		},
+		"Verbosity": {
+			"type":        "string",
+			"enum":        []any{"low", "medium", "high"},
+			"description": "Controls output length/detail on GPT-5 models via the Responses API. Serialized with lowercase values to match the OpenAI API.",
+		},
+		"WebSearchContextSize": stringEnumSchema("low", "medium", "high"),
+		"WebSearchLocation": {
+			"type": "object",
+			"properties": Schema{
+				"country":  nullable(Schema{"type": "string"}),
+				"region":   nullable(Schema{"type": "string"}),
+				"city":     nullable(Schema{"type": "string"}),
+				"timezone": nullable(Schema{"type": "string"}),
+			},
+			"required":             []string{"country", "region", "city", "timezone"},
+			"additionalProperties": false,
+		},
+		"WebSearchToolConfig": {
+			"type": "object",
+			"properties": Schema{
+				"context_size": nullable(Schema{"$ref": "#/$defs/WebSearchContextSize"}),
+				"allowed_domains": nullable(Schema{
+					"type": "array", "items": Schema{"type": "string"},
+				}),
+				"location": nullable(Schema{"$ref": "#/$defs/WebSearchLocation"}),
+			},
+			"required":             []string{"context_size", "allowed_domains", "location"},
+			"additionalProperties": false,
+		},
+	}
 }
 
 func configLayerSourceSchema() Schema {

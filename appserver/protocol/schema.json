@@ -193,6 +193,28 @@
     "AgentPath": {
       "type": "string"
     },
+    "AnalyticsConfig": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object",
+      "x-gollem-typescript-optional-map": true
+    },
     "ApprovalRequestBase": {
       "additionalProperties": false,
       "properties": {
@@ -324,6 +346,25 @@
         {
           "enum": [
             "never"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "AutoCompactTokenLimitScope": {
+      "description": "Selects which part of the active context is charged against `model_auto_compact_token_limit`.",
+      "oneOf": [
+        {
+          "description": "Count the full active context against the limit.",
+          "enum": [
+            "total"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Count sampled output and later growth after the carried window prefix.",
+          "enum": [
+            "body_after_prefix"
           ],
           "type": "string"
         }
@@ -3186,6 +3227,27 @@
         "diff"
       ],
       "type": "object"
+    },
+    "ForcedChatgptWorkspaceIds": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      ],
+      "description": "Backward-compatible API shape for ChatGPT workspace login restrictions."
+    },
+    "ForcedLoginMethod": {
+      "enum": [
+        "chatgpt",
+        "api"
+      ],
+      "type": "string"
     },
     "FsChangedNotification": {
       "additionalProperties": false,
@@ -7517,6 +7579,38 @@
         }
       ]
     },
+    "SandboxWorkspaceWrite": {
+      "additionalProperties": true,
+      "properties": {
+        "exclude_slash_tmp": {
+          "default": false,
+          "type": "boolean"
+        },
+        "exclude_tmpdir_env_var": {
+          "default": false,
+          "type": "boolean"
+        },
+        "network_access": {
+          "default": false,
+          "type": "boolean"
+        },
+        "writable_roots": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "writable_roots",
+        "network_access",
+        "exclude_tmpdir_env_var",
+        "exclude_slash_tmp"
+      ],
+      "type": "object",
+      "x-gollem-typescript-ignore-additional-properties": true
+    },
     "ServerCapabilities": {
       "additionalProperties": false,
       "properties": {
@@ -11248,6 +11342,26 @@
       ],
       "type": "object"
     },
+    "ToolsV2": {
+      "additionalProperties": true,
+      "properties": {
+        "web_search": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebSearchToolConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "web_search"
+      ],
+      "type": "object",
+      "x-gollem-typescript-ignore-additional-properties": true
+    },
     "Turn": {
       "additionalProperties": false,
       "properties": {
@@ -11947,6 +12061,15 @@
         }
       ]
     },
+    "Verbosity": {
+      "description": "Controls output length/detail on GPT-5 models via the Responses API. Serialized with lowercase values to match the OpenAI API.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
     "WarningNotification": {
       "additionalProperties": false,
       "properties": {
@@ -12092,6 +12215,14 @@
         }
       ]
     },
+    "WebSearchContextSize": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
     "WebSearchItem": {
       "additionalProperties": false,
       "properties": {
@@ -12119,6 +12250,58 @@
       ],
       "type": "object"
     },
+    "WebSearchLocation": {
+      "additionalProperties": false,
+      "properties": {
+        "city": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "country": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timezone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "country",
+        "region",
+        "city",
+        "timezone"
+      ],
+      "type": "object"
+    },
     "WebSearchMode": {
       "enum": [
         "disabled",
@@ -12127,6 +12310,50 @@
         "live"
       ],
       "type": "string"
+    },
+    "WebSearchToolConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_domains": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context_size": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebSearchContextSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WebSearchLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "context_size",
+        "allowed_domains",
+        "location"
+      ],
+      "type": "object"
     },
     "WindowsSandboxSetupMode": {
       "enum": [
