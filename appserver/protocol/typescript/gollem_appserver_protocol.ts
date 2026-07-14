@@ -578,6 +578,8 @@ export type AskForApproval = "untrusted" | "on-request" | {
   };
 } | "never";
 
+export type AuthMode = "apikey" | "chatgpt" | "chatgptAuthTokens" | "headers" | "agentIdentity" | "personalAccessToken" | "bedrockApiKey";
+
 export type AutoCompactTokenLimitScope = "total" | "body_after_prefix";
 
 export type ByteRange = {
