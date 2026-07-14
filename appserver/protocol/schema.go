@@ -226,6 +226,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ModelVerification", Type: reflect.TypeFor[ModelVerification]()},
 		{Name: "ModelVerificationNotification", Type: reflect.TypeFor[ModelVerificationNotification]()},
 		{Name: "ModelsRequirements", Type: reflect.TypeFor[ModelsRequirements]()},
+		{Name: "NetworkDomainPermission", Type: reflect.TypeFor[NetworkDomainPermission]()},
+		{Name: "NetworkRequirements", Type: reflect.TypeFor[NetworkRequirements]()},
+		{Name: "NetworkUnixSocketPermission", Type: reflect.TypeFor[NetworkUnixSocketPermission]()},
 		{Name: "NewThreadModelDefaults", Type: reflect.TypeFor[NewThreadModelDefaults]()},
 		{Name: "NonSteerableTurnKind", Type: reflect.TypeFor[NonSteerableTurnKind]()},
 		{Name: "McpElicitationArrayType", Type: reflect.TypeFor[McpElicitationArrayType]()},
@@ -443,10 +446,26 @@ func wireSchemaDefinitions() Schema {
 	schemas["WindowsSandboxSetupMode"] = stringEnumSchema(
 		string(WindowsSandboxSetupModeElevated), string(WindowsSandboxSetupModeUnelevated),
 	)
+	schemas["NetworkDomainPermission"] = stringEnumSchema(
+		string(NetworkDomainPermissionAllow), string(NetworkDomainPermissionDeny),
+	)
+	schemas["NetworkUnixSocketPermission"] = stringEnumSchema(
+		string(NetworkUnixSocketPermissionAllow), string(NetworkUnixSocketPermissionDeny),
+	)
 	schemas["ConfiguredHookHandler"] = configuredHookHandlerSchema()
 	configRequirementsProperties := schemas["ConfigRequirements"].(Schema)["properties"].(Schema)
 	for _, name := range []string{"allowedPermissionProfiles", "featureRequirements"} {
 		variants := configRequirementsProperties[name].(Schema)["anyOf"].([]any)
+		variants[0].(Schema)["x-gollem-typescript-optional-map"] = true
+	}
+	networkRequirementsProperties := schemas["NetworkRequirements"].(Schema)["properties"].(Schema)
+	for _, name := range []string{"httpPort", "socksPort"} {
+		variants := networkRequirementsProperties[name].(Schema)["anyOf"].([]any)
+		variants[0].(Schema)["minimum"] = 0
+		variants[0].(Schema)["maximum"] = 65535
+	}
+	for _, name := range []string{"domains", "unixSockets"} {
+		variants := networkRequirementsProperties[name].(Schema)["anyOf"].([]any)
 		variants[0].(Schema)["x-gollem-typescript-optional-map"] = true
 	}
 	schemas["ModelListParams"] = modelListParamsSchema()
