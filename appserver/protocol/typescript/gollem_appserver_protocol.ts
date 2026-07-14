@@ -1753,6 +1753,15 @@ export type McpServerElicitationRequestResponse = {
   "content": unknown;
 };
 
+export type McpServerInfo = {
+  "description": string | null;
+  "icons": Array<JsonValue> | null;
+  "name": string;
+  "title": string | null;
+  "version": string;
+  "websiteUrl": string | null;
+};
+
 export type McpServerRefreshResponse = Record<string, never>;
 
 export type McpServerStartupFailureReason = "reauthenticationRequired";
