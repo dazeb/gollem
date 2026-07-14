@@ -792,6 +792,32 @@ export type ComputerUseRequirements = {
   "allowLockedComputerUse": boolean | null;
 };
 
+export type Config = ({
+  "analytics": AnalyticsConfig | null;
+  "approval_policy": AskForApproval | null;
+  "approvals_reviewer": ApprovalsReviewer | null;
+  "compact_prompt": string | null;
+  "desktop": { [key in string]?: JsonValue } | null;
+  "developer_instructions": string | null;
+  "forced_chatgpt_workspace_id": ForcedChatgptWorkspaceIds | null;
+  "forced_login_method": ForcedLoginMethod | null;
+  "instructions": string | null;
+  "model": string | null;
+  "model_auto_compact_token_limit": number | null;
+  "model_auto_compact_token_limit_scope": AutoCompactTokenLimitScope | null;
+  "model_context_window": number | null;
+  "model_provider": string | null;
+  "model_reasoning_effort": ReasoningEffort | null;
+  "model_reasoning_summary": ReasoningSummary | null;
+  "model_verbosity": Verbosity | null;
+  "review_model": string | null;
+  "sandbox_mode": SandboxMode | null;
+  "sandbox_workspace_write": SandboxWorkspaceWrite | null;
+  "service_tier": string | null;
+  "tools": ToolsV2 | null;
+  "web_search": WebSearchMode | null;
+} & { [key in string]?: JsonValue });
+
 export type ConfigBatchWriteParams = {
   "edits": Array<ConfigEdit>;
   "expectedVersion"?: string | null;
