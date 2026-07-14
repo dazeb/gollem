@@ -238,6 +238,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpResourceReadParams", Type: reflect.TypeFor[McpResourceReadParams]()},
 		{Name: "McpResourceReadResponse", Type: reflect.TypeFor[McpResourceReadResponse]()},
 		{Name: "McpServerInfo", Type: reflect.TypeFor[McpServerInfo]()},
+		{Name: "McpServerMigration", Type: reflect.TypeFor[McpServerMigration]()},
 		{Name: "McpServerRefreshResponse", Type: reflect.TypeFor[McpServerRefreshResponse]()},
 		{Name: "McpServerToolCallParams", Type: reflect.TypeFor[McpServerToolCallParams]()},
 		{Name: "McpServerToolCallResponse", Type: reflect.TypeFor[McpServerToolCallResponse]()},
@@ -533,6 +534,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["McpResourceReadParams"] = mcpResourceReadParamsSchema()
 	schemas["McpResourceReadResponse"] = mcpResourceReadResponseSchema()
 	schemas["McpServerInfo"] = mcpServerInfoSchema()
+	schemas["McpServerMigration"] = mcpServerMigrationSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
@@ -2069,6 +2071,12 @@ func mcpServerInfoSchema() Schema {
 	}, []string{"name", "title", "version", "description", "icons", "websiteUrl"})
 	schema["description"] = "Presentation metadata advertised by an initialized MCP server."
 	return schema
+}
+
+func mcpServerMigrationSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"name": Schema{"type": "string"},
+	}, []string{"name"})
 }
 
 func mcpServerToolCallParamsSchema() Schema {

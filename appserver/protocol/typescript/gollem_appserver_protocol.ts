@@ -1762,6 +1762,10 @@ export type McpServerInfo = {
   "websiteUrl": string | null;
 };
 
+export type McpServerMigration = {
+  "name": string;
+};
+
 export type McpServerRefreshResponse = Record<string, never>;
 
 export type McpServerStartupFailureReason = "reauthenticationRequired";
