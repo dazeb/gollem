@@ -1687,6 +1687,12 @@ export type McpElicitationUntitledSingleSelectEnumSchema = {
   "type": McpElicitationStringType;
 };
 
+export type McpResourceReadParams = {
+  "server": string;
+  "threadId"?: string | null;
+  "uri": string;
+};
+
 export type McpServerElicitationAction = "accept" | "decline" | "cancel";
 
 export type McpServerElicitationRequestParams = {
