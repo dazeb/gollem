@@ -321,8 +321,8 @@ func TestConfigPrerequisitesRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 358 {
-		t.Fatalf("definition count = %d, want 358", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 359 {
+		t.Fatalf("definition count = %d, want 359", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

@@ -91,6 +91,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AdditionalFileSystemPermissions", Type: reflect.TypeFor[AdditionalFileSystemPermissions]()},
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
+		{Name: "AmazonBedrockCredentialSource", Type: reflect.TypeFor[AmazonBedrockCredentialSource]()},
 		{Name: "AnalyticsConfig", Type: reflect.TypeFor[AnalyticsConfig]()},
 		{Name: "ApprovalRequestBase", Type: reflect.TypeFor[ApprovalRequestBase]()},
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
@@ -466,6 +467,10 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["AdditionalContextEntry"] = additionalContextEntrySchema()
 	schemas["AgentPath"] = Schema{"type": "string"}
+	schemas["AmazonBedrockCredentialSource"] = stringEnumSchema(
+		string(AmazonBedrockCredentialSourceCodexManaged),
+		string(AmazonBedrockCredentialSourceAWSManaged),
+	)
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
 	schemas["WebSearchMode"] = stringEnumSchema(

@@ -217,6 +217,13 @@
     "AgentPath": {
       "type": "string"
     },
+    "AmazonBedrockCredentialSource": {
+      "enum": [
+        "codexManaged",
+        "awsManaged"
+      ],
+      "type": "string"
+    },
     "AnalyticsConfig": {
       "additionalProperties": {
         "$ref": "#/$defs/JsonValue"
