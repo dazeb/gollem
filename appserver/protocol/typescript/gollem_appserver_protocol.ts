@@ -1740,6 +1740,8 @@ export type McpServerStartupFailureReason = "reauthenticationRequired";
 
 export type McpServerStartupState = "starting" | "ready" | "failed" | "cancelled";
 
+export type McpServerStatusDetail = "full" | "toolsAndAuthOnly";
+
 export type McpServerStatusUpdatedNotification = {
   "error": string | null;
   "failureReason": McpServerStartupFailureReason | null;

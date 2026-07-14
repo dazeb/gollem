@@ -163,8 +163,8 @@ func TestWarningErrorNotificationContractsRemainStandalone(t *testing.T) {
 			t.Errorf("%s = %#v, %v; want blocked", method, info, ok)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 372 {
-		t.Fatalf("definition count = %d, want 372", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 373 {
+		t.Fatalf("definition count = %d, want 373", got)
 	}
 	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))
