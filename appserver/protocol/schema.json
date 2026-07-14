@@ -5917,6 +5917,32 @@
       ],
       "type": "object"
     },
+    "McpServerToolCallParams": {
+      "additionalProperties": false,
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "arguments": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "server": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "threadId",
+        "tool"
+      ],
+      "type": "object"
+    },
     "McpToolCallAppContext": {
       "additionalProperties": false,
       "properties": {
