@@ -5078,6 +5078,15 @@
       ],
       "type": "object"
     },
+    "McpAuthStatus": {
+      "enum": [
+        "unsupported",
+        "notLoggedIn",
+        "bearerToken",
+        "oAuth"
+      ],
+      "type": "string"
+    },
     "McpElicitationArrayType": {
       "enum": [
         "array"

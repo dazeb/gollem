@@ -1566,6 +1566,8 @@ export type ManagedHooksRequirements = {
   "windowsManagedDir": string | null;
 };
 
+export type McpAuthStatus = "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";
+
 export type McpElicitationArrayType = "array";
 
 export type McpElicitationBooleanSchema = {
