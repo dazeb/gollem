@@ -4513,6 +4513,120 @@
       ],
       "type": "string"
     },
+    "Model": {
+      "additionalProperties": false,
+      "properties": {
+        "additionalSpeedTiers": {
+          "description": "Deprecated: use `serviceTiers` instead.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "availabilityNux": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelAvailabilityNux"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defaultReasoningEffort": {
+          "$ref": "#/$defs/ReasoningEffort"
+        },
+        "defaultServiceTier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Catalog default service tier id for this model, when one is configured."
+        },
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputModalities": {
+          "items": {
+            "$ref": "#/$defs/InputModality"
+          },
+          "type": "array"
+        },
+        "isDefault": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "serviceTiers": {
+          "items": {
+            "$ref": "#/$defs/ModelServiceTier"
+          },
+          "type": "array"
+        },
+        "supportedReasoningEfforts": {
+          "items": {
+            "$ref": "#/$defs/ReasoningEffortOption"
+          },
+          "type": "array"
+        },
+        "supportsPersonality": {
+          "type": "boolean"
+        },
+        "upgrade": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upgradeInfo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelUpgradeInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "model",
+        "upgrade",
+        "upgradeInfo",
+        "availabilityNux",
+        "displayName",
+        "description",
+        "hidden",
+        "supportedReasoningEfforts",
+        "defaultReasoningEffort",
+        "inputModalities",
+        "supportsPersonality",
+        "additionalSpeedTiers",
+        "serviceTiers",
+        "defaultServiceTier",
+        "isDefault"
+      ],
+      "type": "object"
+    },
     "ModelAvailabilityNux": {
       "additionalProperties": false,
       "properties": {

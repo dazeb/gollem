@@ -1549,6 +1549,25 @@ export type MethodInfo = {
 
 export type MethodState = "implemented" | "blocked" | "deferred-stub" | "renamed-equivalent" | "not-applicable";
 
+export type Model = {
+  "additionalSpeedTiers": Array<string>;
+  "availabilityNux": ModelAvailabilityNux | null;
+  "defaultReasoningEffort": ReasoningEffort;
+  "defaultServiceTier": string | null;
+  "description": string;
+  "displayName": string;
+  "hidden": boolean;
+  "id": string;
+  "inputModalities": Array<InputModality>;
+  "isDefault": boolean;
+  "model": string;
+  "serviceTiers": Array<ModelServiceTier>;
+  "supportedReasoningEfforts": Array<ReasoningEffortOption>;
+  "supportsPersonality": boolean;
+  "upgrade": string | null;
+  "upgradeInfo": ModelUpgradeInfo | null;
+};
+
 export type ModelAvailabilityNux = {
   "message": string;
 };
