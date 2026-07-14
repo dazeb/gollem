@@ -1583,6 +1583,14 @@ export type ModelListResponse = {
   "nextCursor": string | null;
 };
 
+export type ModelProviderCapabilitiesReadParams = Record<string, never>;
+
+export type ModelProviderCapabilitiesReadResponse = {
+  "imageGeneration": boolean;
+  "namespaceTools": boolean;
+  "webSearch": boolean;
+};
+
 export type ModelRerouteReason = "highRiskCyberActivity";
 
 export type ModelReroutedNotification = {

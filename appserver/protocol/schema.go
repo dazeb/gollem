@@ -210,6 +210,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ModelAvailabilityNux", Type: reflect.TypeFor[ModelAvailabilityNux]()},
 		{Name: "ModelListParams", Type: reflect.TypeFor[ModelListParams]()},
 		{Name: "ModelListResponse", Type: reflect.TypeFor[ModelListResponse]()},
+		{Name: "ModelProviderCapabilitiesReadParams", Type: reflect.TypeFor[ModelProviderCapabilitiesReadParams]()},
+		{Name: "ModelProviderCapabilitiesReadResponse", Type: reflect.TypeFor[ModelProviderCapabilitiesReadResponse]()},
 		{Name: "ModelRerouteReason", Type: reflect.TypeFor[ModelRerouteReason]()},
 		{Name: "ModelReroutedNotification", Type: reflect.TypeFor[ModelReroutedNotification]()},
 		{Name: "ModelSafetyBufferingUpdatedNotification", Type: reflect.TypeFor[ModelSafetyBufferingUpdatedNotification]()},
