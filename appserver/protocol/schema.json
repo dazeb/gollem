@@ -4550,6 +4550,239 @@
       ],
       "type": "string"
     },
+    "LoginAccountParams": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "apiKey": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "apiKey"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "apiKey",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "appBrand": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LoginAppBrand"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "codexStreamlinedLogin": {
+              "type": "boolean"
+            },
+            "type": {
+              "enum": [
+                "chatgpt"
+              ],
+              "type": "string"
+            },
+            "useHostedLoginSuccessPage": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "chatgptDeviceCode"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "[UNSTABLE] FOR OPENAI INTERNAL USE ONLY - DO NOT USE. The access token must contain the same scopes that Codex-managed ChatGPT auth tokens have.",
+          "properties": {
+            "accessToken": {
+              "description": "Access token (JWT) supplied by the client. This token is used for backend API requests and email extraction.",
+              "type": "string"
+            },
+            "chatgptAccountId": {
+              "description": "Workspace/account identifier supplied by the client.",
+              "type": "string"
+            },
+            "chatgptPlanType": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional plan type supplied by the client.\n\nWhen `null`, Codex attempts to derive the plan type from access-token claims. If unavailable, the plan defaults to `unknown`."
+            },
+            "type": {
+              "enum": [
+                "chatgptAuthTokens"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "accessToken",
+            "chatgptAccountId",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "[UNSTABLE] Managed Amazon Bedrock login is experimental.",
+          "properties": {
+            "apiKey": {
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "amazonBedrock"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "apiKey",
+            "region",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LoginAccountResponse": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "apiKey"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "authUrl": {
+              "description": "URL the client should open in a browser to initiate the OAuth flow.",
+              "type": "string"
+            },
+            "loginId": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "chatgpt"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "authUrl",
+            "loginId",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "loginId": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "chatgptDeviceCode"
+              ],
+              "type": "string"
+            },
+            "userCode": {
+              "description": "One-time code the user must enter after signing in.",
+              "type": "string"
+            },
+            "verificationUrl": {
+              "description": "URL the client should open in a browser to complete device code authorization.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "loginId",
+            "type",
+            "userCode",
+            "verificationUrl"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "chatgptAuthTokens"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "amazonBedrock"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "LoginAppBrand": {
       "enum": [
         "codex",
