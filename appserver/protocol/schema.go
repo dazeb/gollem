@@ -102,6 +102,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AutoCompactTokenLimitScope", Type: reflect.TypeFor[AutoCompactTokenLimitScope]()},
 		{Name: "AutoReviewDecisionSource", Type: reflect.TypeFor[AutoReviewDecisionSource]()},
 		{Name: "ByteRange", Type: reflect.TypeFor[ByteRange]()},
+		{Name: "CancelLoginAccountParams", Type: reflect.TypeFor[CancelLoginAccountParams]()},
+		{Name: "CancelLoginAccountResponse", Type: reflect.TypeFor[CancelLoginAccountResponse]()},
+		{Name: "CancelLoginAccountStatus", Type: reflect.TypeFor[CancelLoginAccountStatus]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
 		{Name: "CodexErrorInfo", Type: reflect.TypeFor[CodexErrorInfo]()},
 		{Name: "CollabAgentState", Type: reflect.TypeFor[CollabAgentState]()},
@@ -484,6 +487,10 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["AutoReviewDecisionSource"] = stringEnumSchema(
 		string(AutoReviewDecisionSourceAgent),
+	)
+	schemas["CancelLoginAccountStatus"] = stringEnumSchema(
+		string(CancelLoginAccountStatusCanceled),
+		string(CancelLoginAccountStatusNotFound),
 	)
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))

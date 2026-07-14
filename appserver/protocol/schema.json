@@ -437,6 +437,37 @@
       ],
       "type": "object"
     },
+    "CancelLoginAccountParams": {
+      "additionalProperties": false,
+      "properties": {
+        "loginId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "loginId"
+      ],
+      "type": "object"
+    },
+    "CancelLoginAccountResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/CancelLoginAccountStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "CancelLoginAccountStatus": {
+      "enum": [
+        "canceled",
+        "notFound"
+      ],
+      "type": "string"
+    },
     "ClientInfo": {
       "additionalProperties": false,
       "properties": {
