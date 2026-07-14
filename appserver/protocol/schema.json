@@ -4908,6 +4908,25 @@
       ],
       "type": "object"
     },
+    "ModelsRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "newThread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NewThreadModelDefaults"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "newThread"
+      ],
+      "type": "object"
+    },
     "NetworkAccess": {
       "enum": [
         "restricted",
@@ -4937,6 +4956,47 @@
         "deny"
       ],
       "type": "string"
+    },
+    "NewThreadModelDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "modelReasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "serviceTier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model",
+        "modelReasoningEffort",
+        "serviceTier"
+      ],
+      "type": "object"
     },
     "NonSteerableTurnKind": {
       "enum": [

@@ -546,6 +546,13 @@ binding the live capability endpoint. Gollem's handler accepts provider
 selectors and returns a broader provider capability record, so generated
 method inference remains `unknown` pending an explicit compatibility adapter.
 
+Exact standalone `NewThreadModelDefaults` and `ModelsRequirements` expose the
+fixed nullable new-thread model, reasoning-effort, and service-tier defaults.
+They remain separate from Gollem's provider/environment requirement rows and
+the incomplete public configuration-requirement graph, so
+`configRequirements/read` inference remains `unknown` pending an explicit
+projection adapter.
+
 ## Generation
 
 Run:

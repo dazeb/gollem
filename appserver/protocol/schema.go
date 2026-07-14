@@ -219,6 +219,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ModelUpgradeInfo", Type: reflect.TypeFor[ModelUpgradeInfo]()},
 		{Name: "ModelVerification", Type: reflect.TypeFor[ModelVerification]()},
 		{Name: "ModelVerificationNotification", Type: reflect.TypeFor[ModelVerificationNotification]()},
+		{Name: "ModelsRequirements", Type: reflect.TypeFor[ModelsRequirements]()},
+		{Name: "NewThreadModelDefaults", Type: reflect.TypeFor[NewThreadModelDefaults]()},
 		{Name: "NonSteerableTurnKind", Type: reflect.TypeFor[NonSteerableTurnKind]()},
 		{Name: "McpElicitationArrayType", Type: reflect.TypeFor[McpElicitationArrayType]()},
 		{Name: "McpElicitationBooleanSchema", Type: reflect.TypeFor[McpElicitationBooleanSchema]()},
