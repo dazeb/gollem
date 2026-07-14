@@ -1209,6 +1209,17 @@ func TestServerCatalogHandlers(t *testing.T) {
 		t.Fatalf("codex capabilities = %#v", codexCaps)
 	}
 
+	aggregateCapsResp := server.HandleRequest(ctx, request("modelProvider/capabilities/read", map[string]any{}))
+	if aggregateCapsResp.Error != nil {
+		t.Fatalf("aggregate modelProvider/capabilities/read error: %v", aggregateCapsResp.Error)
+	}
+	var aggregateCaps catalog.ProviderCapabilities
+	decodeResult(t, aggregateCapsResp, &aggregateCaps)
+	if aggregateCaps.ProviderID != "" || !aggregateCaps.NamespaceTools ||
+		!aggregateCaps.ToolCalls || !aggregateCaps.Configured || len(aggregateCaps.ReasoningEfforts) == 0 {
+		t.Fatalf("aggregate capabilities = %#v", aggregateCaps)
+	}
+
 	aliasResp := server.HandleRequest(ctx, request("provider/capabilities/read", map[string]any{
 		"provider": catalog.ProviderAnthropic,
 	}))

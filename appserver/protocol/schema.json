@@ -4707,6 +4707,30 @@
       ],
       "type": "object"
     },
+    "ModelProviderCapabilitiesReadParams": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ModelProviderCapabilitiesReadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "imageGeneration": {
+          "type": "boolean"
+        },
+        "namespaceTools": {
+          "type": "boolean"
+        },
+        "webSearch": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "namespaceTools",
+        "imageGeneration",
+        "webSearch"
+      ],
+      "type": "object"
+    },
     "ModelRerouteReason": {
       "enum": [
         "highRiskCyberActivity"

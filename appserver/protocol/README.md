@@ -539,6 +539,13 @@ cursor input. The live request and response remain provider-extended, so an
 explicit projection is still required before generated method inference can
 replace `unknown`.
 
+Exact standalone `ModelProviderCapabilitiesReadParams` and
+`ModelProviderCapabilitiesReadResponse` expose the fixed empty request and
+required namespace-tools, image-generation, and web-search booleans without
+binding the live capability endpoint. Gollem's handler accepts provider
+selectors and returns a broader provider capability record, so generated
+method inference remains `unknown` pending an explicit compatibility adapter.
+
 ## Generation
 
 Run:
