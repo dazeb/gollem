@@ -382,6 +382,18 @@
         }
       ]
     },
+    "AuthMode": {
+      "enum": [
+        "apikey",
+        "chatgpt",
+        "chatgptAuthTokens",
+        "headers",
+        "agentIdentity",
+        "personalAccessToken",
+        "bedrockApiKey"
+      ],
+      "type": "string"
+    },
     "AutoCompactTokenLimitScope": {
       "description": "Selects which part of the active context is charged against `model_auto_compact_token_limit`.",
       "oneOf": [
