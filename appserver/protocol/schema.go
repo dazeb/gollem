@@ -237,6 +237,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpAuthStatus", Type: reflect.TypeFor[McpAuthStatus]()},
 		{Name: "McpResourceReadParams", Type: reflect.TypeFor[McpResourceReadParams]()},
 		{Name: "McpResourceReadResponse", Type: reflect.TypeFor[McpResourceReadResponse]()},
+		{Name: "McpServerInfo", Type: reflect.TypeFor[McpServerInfo]()},
 		{Name: "McpServerRefreshResponse", Type: reflect.TypeFor[McpServerRefreshResponse]()},
 		{Name: "McpServerToolCallParams", Type: reflect.TypeFor[McpServerToolCallParams]()},
 		{Name: "McpServerToolCallResponse", Type: reflect.TypeFor[McpServerToolCallResponse]()},
@@ -531,6 +532,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["ListMcpServerStatusParams"] = listMcpServerStatusParamsSchema()
 	schemas["McpResourceReadParams"] = mcpResourceReadParamsSchema()
 	schemas["McpResourceReadResponse"] = mcpResourceReadResponseSchema()
+	schemas["McpServerInfo"] = mcpServerInfoSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
@@ -2043,6 +2045,30 @@ func mcpResourceReadResponseSchema() Schema {
 			"type": "array", "items": Schema{"$ref": "#/$defs/ResourceContent"},
 		},
 	}, []string{"contents"})
+}
+
+func mcpServerInfoSchema() Schema {
+	schema := closedThreadSessionParamSchema(Schema{
+		"name": Schema{"type": "string"},
+		"title": Schema{
+			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+		},
+		"version": Schema{"type": "string"},
+		"description": Schema{
+			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+		},
+		"icons": Schema{
+			"anyOf": []any{
+				Schema{"type": "array", "items": Schema{"$ref": "#/$defs/JsonValue"}},
+				Schema{"type": "null"},
+			},
+		},
+		"websiteUrl": Schema{
+			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+		},
+	}, []string{"name", "title", "version", "description", "icons", "websiteUrl"})
+	schema["description"] = "Presentation metadata advertised by an initialized MCP server."
+	return schema
 }
 
 func mcpServerToolCallParamsSchema() Schema {

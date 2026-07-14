@@ -5861,6 +5861,70 @@
       ],
       "type": "object"
     },
+    "McpServerInfo": {
+      "additionalProperties": false,
+      "description": "Presentation metadata advertised by an initialized MCP server.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "icons": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "websiteUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "title",
+        "version",
+        "description",
+        "icons",
+        "websiteUrl"
+      ],
+      "type": "object"
+    },
     "McpServerRefreshResponse": {
       "additionalProperties": false,
       "type": "object"
