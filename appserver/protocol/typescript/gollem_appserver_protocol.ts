@@ -1632,6 +1632,10 @@ export type ModelVerificationNotification = {
   "verifications": Array<ModelVerification>;
 };
 
+export type ModelsRequirements = {
+  "newThread": NewThreadModelDefaults | null;
+};
+
 export type NetworkAccess = "restricted" | "enabled";
 
 export type NetworkPolicyAmendment = {
@@ -1640,6 +1644,12 @@ export type NetworkPolicyAmendment = {
 };
 
 export type NetworkPolicyRuleAction = "allow" | "deny";
+
+export type NewThreadModelDefaults = {
+  "model": string | null;
+  "modelReasoningEffort": ReasoningEffort | null;
+  "serviceTier": string | null;
+};
 
 export type NonSteerableTurnKind = "review" | "compact";
 
