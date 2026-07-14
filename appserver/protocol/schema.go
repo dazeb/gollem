@@ -236,6 +236,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpAuthStatus", Type: reflect.TypeFor[McpAuthStatus]()},
 		{Name: "McpServerStartupFailureReason", Type: reflect.TypeFor[McpServerStartupFailureReason]()},
 		{Name: "McpServerStartupState", Type: reflect.TypeFor[McpServerStartupState]()},
+		{Name: "McpServerStatusUpdatedNotification", Type: reflect.TypeFor[McpServerStatusUpdatedNotification]()},
 		{Name: "McpToolCallAppContext", Type: reflect.TypeFor[McpToolCallAppContext]()},
 		{Name: "McpToolCallResult", Type: reflect.TypeFor[McpToolCallResult]()},
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
