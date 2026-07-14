@@ -2096,6 +2096,18 @@ export type RequestPermissionProfile = {
 
 export type ResidencyRequirement = "us";
 
+export type ResourceContent = {
+  "_meta"?: JsonValue;
+  "mimeType"?: string;
+  "text": string;
+  "uri": string;
+} | {
+  "_meta"?: JsonValue;
+  "blob": string;
+  "mimeType"?: string;
+  "uri": string;
+};
+
 export type Response = {
   "error"?: Error;
   "id": RequestID;

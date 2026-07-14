@@ -318,6 +318,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ReasoningItemReasoningSummary", Type: reflect.TypeFor[ReasoningItemReasoningSummary]()},
 		{Name: "ResidencyRequirement", Type: reflect.TypeFor[ResidencyRequirement]()},
 		{Name: "RawResponseItemCompletedNotification", Type: reflect.TypeFor[RawResponseItemCompletedNotification]()},
+		{Name: "ResourceContent", Type: reflect.TypeFor[ResourceContent]()},
 		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
 		{Name: "SandboxMode", Type: reflect.TypeFor[SandboxMode]()},
@@ -530,6 +531,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["McpResourceReadParams"] = mcpResourceReadParamsSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
+	schemas["ResourceContent"] = resourceContentSchema()
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
 	schemas["WebSearchMode"] = stringEnumSchema(
@@ -2055,6 +2057,26 @@ func mcpServerToolCallResponseSchema() Schema {
 		},
 		"_meta": Schema{"$ref": "#/$defs/JsonValue"},
 	}, []string{"content"})
+}
+
+func resourceContentSchema() Schema {
+	return Schema{"oneOf": []any{
+		resourceContentVariantSchema("text"),
+		resourceContentVariantSchema("blob"),
+	}}
+}
+
+func resourceContentVariantSchema(contentField string) Schema {
+	properties := Schema{
+		"uri": Schema{"type": "string"},
+		"mimeType": Schema{
+			"anyOf":                          []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			typeScriptOptionalNonNullKeyword: true,
+		},
+		"_meta": Schema{"$ref": "#/$defs/JsonValue"},
+	}
+	properties[contentField] = Schema{"type": "string"}
+	return closedThreadSessionParamSchema(properties, []string{contentField, "uri"})
 }
 
 func threadForkParamsSchema() Schema {

@@ -7709,6 +7709,70 @@
       ],
       "type": "string"
     },
+    "ResourceContent": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "_meta": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "mimeType": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "x-gollem-typescript-optional-nonnull": true
+            },
+            "text": {
+              "type": "string"
+            },
+            "uri": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text",
+            "uri"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "_meta": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "blob": {
+              "type": "string"
+            },
+            "mimeType": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "x-gollem-typescript-optional-nonnull": true
+            },
+            "uri": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "blob",
+            "uri"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Response": {
       "additionalProperties": false,
       "properties": {
