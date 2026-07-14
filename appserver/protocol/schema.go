@@ -234,6 +234,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallProgressNotificationParams", Type: reflect.TypeFor[MCPToolCallProgressNotificationParams]()},
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
 		{Name: "McpAuthStatus", Type: reflect.TypeFor[McpAuthStatus]()},
+		{Name: "McpServerStartupFailureReason", Type: reflect.TypeFor[McpServerStartupFailureReason]()},
+		{Name: "McpServerStartupState", Type: reflect.TypeFor[McpServerStartupState]()},
 		{Name: "McpToolCallAppContext", Type: reflect.TypeFor[McpToolCallAppContext]()},
 		{Name: "McpToolCallResult", Type: reflect.TypeFor[McpToolCallResult]()},
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
@@ -506,6 +508,13 @@ func wireSchemaDefinitions() Schema {
 	schemas["McpAuthStatus"] = stringEnumSchema(
 		string(McpAuthStatusUnsupported), string(McpAuthStatusNotLoggedIn),
 		string(McpAuthStatusBearerToken), string(McpAuthStatusOAuth),
+	)
+	schemas["McpServerStartupFailureReason"] = stringEnumSchema(
+		string(McpServerStartupFailureReasonReauthenticationRequired),
+	)
+	schemas["McpServerStartupState"] = stringEnumSchema(
+		string(McpServerStartupStateStarting), string(McpServerStartupStateReady),
+		string(McpServerStartupStateFailed), string(McpServerStartupStateCancelled),
 	)
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
