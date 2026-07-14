@@ -1749,6 +1749,8 @@ export type McpServerElicitationRequestResponse = {
   "content": unknown;
 };
 
+export type McpServerRefreshResponse = Record<string, never>;
+
 export type McpServerStartupFailureReason = "reauthenticationRequired";
 
 export type McpServerStartupState = "starting" | "ready" | "failed" | "cancelled";

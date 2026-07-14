@@ -8,29 +8,29 @@ import (
 	"testing"
 )
 
-func TestLogoutAccountResponseSchemaIsExact(t *testing.T) {
+func TestMcpServerRefreshResponseSchemaIsExact(t *testing.T) {
 	defs := JSONSchema()["$defs"].(Schema)
-	got, ok := defs["LogoutAccountResponse"].(Schema)
+	got, ok := defs["McpServerRefreshResponse"].(Schema)
 	if !ok {
-		t.Fatal("$defs missing LogoutAccountResponse")
+		t.Fatal("$defs missing McpServerRefreshResponse")
 	}
 	want := Schema{
 		"type":                 "object",
 		"additionalProperties": false,
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("LogoutAccountResponse = %#v, want %#v", got, want)
+		t.Fatalf("McpServerRefreshResponse = %#v, want %#v", got, want)
 	}
 }
 
-func TestLogoutAccountResponseAcceptsAndCanonicalizesObjects(t *testing.T) {
+func TestMcpServerRefreshResponseAcceptsAndCanonicalizesObjects(t *testing.T) {
 	for _, input := range []string{
 		`{}`,
 		`{"future":true}`,
 		`{"nested":{"value":[1,null,"two"]}}`,
 		`{"future":1,"future":2}`,
 	} {
-		var response LogoutAccountResponse
+		var response McpServerRefreshResponse
 		if err := json.Unmarshal([]byte(input), &response); err != nil {
 			t.Errorf("Unmarshal(%s): %v", input, err)
 			continue
@@ -46,29 +46,29 @@ func TestLogoutAccountResponseAcceptsAndCanonicalizesObjects(t *testing.T) {
 	}
 }
 
-func TestLogoutAccountResponseRejectsMalformedWireForms(t *testing.T) {
+func TestMcpServerRefreshResponseRejectsMalformedWireForms(t *testing.T) {
 	for _, input := range []string{
 		`null`, `[]`, `"value"`, `1`, `true`, `{`, `{} {}`,
 	} {
-		assertJSONRejects[LogoutAccountResponse](t, input)
+		assertJSONRejects[McpServerRefreshResponse](t, input)
 	}
 
-	var response *LogoutAccountResponse
+	var response *McpServerRefreshResponse
 	if err := response.UnmarshalJSON([]byte(`{}`)); err == nil {
-		t.Fatal("nil LogoutAccountResponse receiver succeeded")
+		t.Fatal("nil McpServerRefreshResponse receiver succeeded")
 	}
 }
 
-func TestLogoutAccountResponseRemainsStandalone(t *testing.T) {
+func TestMcpServerRefreshResponseRemainsStandalone(t *testing.T) {
 	for _, binding := range WireTypeBindings() {
-		if slices.Contains(binding.Params, "LogoutAccountResponse") ||
-			slices.Contains(binding.Result, "LogoutAccountResponse") {
-			t.Fatalf("LogoutAccountResponse unexpectedly bound to %s", binding.Method)
+		if slices.Contains(binding.Params, "McpServerRefreshResponse") ||
+			slices.Contains(binding.Result, "McpServerRefreshResponse") {
+			t.Fatalf("McpServerRefreshResponse unexpectedly bound to %s", binding.Method)
 		}
 	}
-	info, ok := LookupMethod("account/logout")
-	if !ok || info.State != MethodDeferredStub {
-		t.Fatalf("account/logout = %#v, %v; want deferred stub", info, ok)
+	info, ok := LookupMethod("config/mcpServer/reload")
+	if !ok || info.State != MethodImplemented {
+		t.Fatalf("config/mcpServer/reload = %#v, %v; want implemented", info, ok)
 	}
 	if got := len(JSONSchema()["$defs"].(Schema)); got != 378 {
 		t.Fatalf("definition count = %d, want 378", got)
@@ -81,15 +81,15 @@ func TestLogoutAccountResponseRemainsStandalone(t *testing.T) {
 	}
 }
 
-func TestLogoutAccountResponseTypeScriptIsExact(t *testing.T) {
+func TestMcpServerRefreshResponseTypeScriptIsExact(t *testing.T) {
 	generated, err := MarshalTypeScript()
 	if err != nil {
 		t.Fatalf("MarshalTypeScript: %v", err)
 	}
-	want := `export type LogoutAccountResponse = Record<string, never>;`
+	want := `export type McpServerRefreshResponse = Record<string, never>;`
 	if !strings.Contains(string(generated), want) {
 		t.Fatalf("generated TypeScript missing %q", want)
 	}
 }
 
-var _ json.Unmarshaler = (*LogoutAccountResponse)(nil)
+var _ json.Unmarshaler = (*McpServerRefreshResponse)(nil)

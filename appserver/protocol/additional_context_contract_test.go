@@ -148,8 +148,8 @@ func TestAdditionalContextContractsRemainStandalone(t *testing.T) {
 			t.Fatalf("%s unexpectedly exports additionalContext", paramsName)
 		}
 	}
-	if got := len(defs); got != 377 {
-		t.Fatalf("definition count = %d, want 377", got)
+	if got := len(defs); got != 378 {
+		t.Fatalf("definition count = %d, want 378", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

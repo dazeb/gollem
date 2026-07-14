@@ -5846,6 +5846,10 @@
       ],
       "type": "object"
     },
+    "McpServerRefreshResponse": {
+      "additionalProperties": false,
+      "type": "object"
+    },
     "McpServerStartupFailureReason": {
       "enum": [
         "reauthenticationRequired"
