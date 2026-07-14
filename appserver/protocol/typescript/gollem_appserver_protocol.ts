@@ -1736,6 +1736,10 @@ export type McpServerElicitationRequestResponse = {
   "content": unknown;
 };
 
+export type McpServerStartupFailureReason = "reauthenticationRequired";
+
+export type McpServerStartupState = "starting" | "ready" | "failed" | "cancelled";
+
 export type McpToolCallAppContext = {
   "actionName": string | null;
   "appName": string | null;

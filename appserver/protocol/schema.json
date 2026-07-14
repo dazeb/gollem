@@ -5769,6 +5769,21 @@
       ],
       "type": "object"
     },
+    "McpServerStartupFailureReason": {
+      "enum": [
+        "reauthenticationRequired"
+      ],
+      "type": "string"
+    },
+    "McpServerStartupState": {
+      "enum": [
+        "starting",
+        "ready",
+        "failed",
+        "cancelled"
+      ],
+      "type": "string"
+    },
     "McpToolCallAppContext": {
       "additionalProperties": false,
       "properties": {
