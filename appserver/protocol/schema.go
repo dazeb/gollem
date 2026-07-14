@@ -1446,7 +1446,10 @@ func modelListParamsSchema() Schema {
 		},
 		"limit": Schema{
 			"description": "Optional page size; defaults to a reasonable server-side value.",
-			"anyOf":       []any{Schema{"type": "integer", "minimum": 0}, Schema{"type": "null"}},
+			"anyOf": []any{
+				Schema{"type": "integer", "minimum": 0, "maximum": 4294967295},
+				Schema{"type": "null"},
+			},
 		},
 		"includeHidden": Schema{
 			"description": "When true, include models that are hidden from the default picker list.",
