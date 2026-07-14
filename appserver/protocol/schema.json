@@ -27,6 +27,30 @@
       ],
       "type": "object"
     },
+    "AdditionalContextEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/AdditionalContextKind"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "type": "object",
+      "x-gollem-typescript-ignore-additional-properties": true
+    },
+    "AdditionalContextKind": {
+      "enum": [
+        "untrusted",
+        "application"
+      ],
+      "type": "string"
+    },
     "AdditionalFileSystemPermissions": {
       "additionalProperties": false,
       "properties": {

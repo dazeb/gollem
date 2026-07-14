@@ -499,6 +499,13 @@ export type ActivePermissionProfile = {
   "id": string;
 };
 
+export type AdditionalContextEntry = {
+  "kind": AdditionalContextKind;
+  "value": string;
+};
+
+export type AdditionalContextKind = "untrusted" | "application";
+
 export type AdditionalFileSystemPermissions = {
   "entries"?: Array<FileSystemSandboxEntry>;
   "globScanMaxDepth"?: number;
