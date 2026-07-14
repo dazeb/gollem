@@ -208,6 +208,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},
 		{Name: "Model", Type: reflect.TypeFor[Model]()},
 		{Name: "ModelAvailabilityNux", Type: reflect.TypeFor[ModelAvailabilityNux]()},
+		{Name: "ModelListParams", Type: reflect.TypeFor[ModelListParams]()},
+		{Name: "ModelListResponse", Type: reflect.TypeFor[ModelListResponse]()},
 		{Name: "ModelRerouteReason", Type: reflect.TypeFor[ModelRerouteReason]()},
 		{Name: "ModelReroutedNotification", Type: reflect.TypeFor[ModelReroutedNotification]()},
 		{Name: "ModelSafetyBufferingUpdatedNotification", Type: reflect.TypeFor[ModelSafetyBufferingUpdatedNotification]()},
@@ -420,9 +422,12 @@ func wireSchemaDefinitions() Schema {
 	schemas["InputModality"] = stringEnumSchema(string(InputModalityText), string(InputModalityImage))
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
+	schemas["ModelListParams"] = modelListParamsSchema()
 	modelProperties := schemas["Model"].(Schema)["properties"].(Schema)
 	modelProperties["additionalSpeedTiers"].(Schema)["description"] = "Deprecated: use `serviceTiers` instead."
 	modelProperties["defaultServiceTier"].(Schema)["description"] = "Catalog default service tier id for this model, when one is configured."
+	modelListResponseProperties := schemas["ModelListResponse"].(Schema)["properties"].(Schema)
+	modelListResponseProperties["nextCursor"].(Schema)["description"] = "Opaque cursor to pass to the next call to continue after the last item. If None, there are no more items to return."
 	schemas["ReasoningSummary"] = stringEnumSchema(
 		string(ReasoningSummaryAuto), string(ReasoningSummaryConcise),
 		string(ReasoningSummaryDetailed), string(ReasoningSummaryNone),
@@ -1430,6 +1435,23 @@ func threadResumeInitialTurnsPageParamsSchema() Schema {
 			Schema{"$ref": "#/$defs/SortDirection"},
 		),
 		"itemsView": nullableThreadSessionParamSchema(Schema{"$ref": "#/$defs/TurnItemsView"}),
+	}, nil)
+}
+
+func modelListParamsSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"cursor": Schema{
+			"description": "Opaque pagination cursor returned by a previous call.",
+			"anyOf":       []any{Schema{"type": "string"}, Schema{"type": "null"}},
+		},
+		"limit": Schema{
+			"description": "Optional page size; defaults to a reasonable server-side value.",
+			"anyOf":       []any{Schema{"type": "integer", "minimum": 0}, Schema{"type": "null"}},
+		},
+		"includeHidden": Schema{
+			"description": "When true, include models that are hidden from the default picker list.",
+			"anyOf":       []any{Schema{"type": "boolean"}, Schema{"type": "null"}},
+		},
 	}, nil)
 }
 

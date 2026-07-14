@@ -1572,6 +1572,17 @@ export type ModelAvailabilityNux = {
   "message": string;
 };
 
+export type ModelListParams = {
+  "cursor"?: string | null;
+  "includeHidden"?: boolean | null;
+  "limit"?: number | null;
+};
+
+export type ModelListResponse = {
+  "data": Array<Model>;
+  "nextCursor": string | null;
+};
+
 export type ModelRerouteReason = "highRiskCyberActivity";
 
 export type ModelReroutedNotification = {
