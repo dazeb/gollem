@@ -121,12 +121,16 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecutionOutputDeltaNotificationParams", Type: reflect.TypeFor[CommandExecutionOutputDeltaNotificationParams]()},
 		{Name: "CommandExecutionSource", Type: reflect.TypeFor[CommandExecutionSource]()},
 		{Name: "ComputerUseRequirements", Type: reflect.TypeFor[ComputerUseRequirements]()},
+		{Name: "ConfigBatchWriteParams", Type: reflect.TypeFor[ConfigBatchWriteParams]()},
+		{Name: "ConfigEdit", Type: reflect.TypeFor[ConfigEdit]()},
 		{Name: "ConfigLayer", Type: reflect.TypeFor[ConfigLayer]()},
 		{Name: "ConfigLayerMetadata", Type: reflect.TypeFor[ConfigLayerMetadata]()},
 		{Name: "ConfigLayerSource", Type: reflect.TypeFor[ConfigLayerSource]()},
 		{Name: "ConfigRequirements", Type: reflect.TypeFor[ConfigRequirements]()},
 		{Name: "ConfigRequirementsReadResponse", Type: reflect.TypeFor[ConfigRequirementsReadResponse]()},
+		{Name: "ConfigValueWriteParams", Type: reflect.TypeFor[ConfigValueWriteParams]()},
 		{Name: "ConfigWarningNotification", Type: reflect.TypeFor[ConfigWarningNotification]()},
+		{Name: "ConfigWriteResponse", Type: reflect.TypeFor[ConfigWriteResponse]()},
 		{Name: "ConfiguredHookHandler", Type: reflect.TypeFor[ConfiguredHookHandler]()},
 		{Name: "ConfiguredHookMatcherGroup", Type: reflect.TypeFor[ConfiguredHookMatcherGroup]()},
 		{Name: "ContentItem", Type: reflect.TypeFor[ContentItem]()},
@@ -214,6 +218,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpToolCallResult", Type: reflect.TypeFor[McpToolCallResult]()},
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
 		{Name: "MemoryCitationEntry", Type: reflect.TypeFor[MemoryCitationEntry]()},
+		{Name: "MergeStrategy", Type: reflect.TypeFor[MergeStrategy]()},
 		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},
 		{Name: "Model", Type: reflect.TypeFor[Model]()},
 		{Name: "ModelAvailabilityNux", Type: reflect.TypeFor[ModelAvailabilityNux]()},
@@ -400,6 +405,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "WebSearchMode", Type: reflect.TypeFor[WebSearchMode]()},
 		{Name: "WarningNotification", Type: reflect.TypeFor[WarningNotification]()},
 		{Name: "WindowsSandboxSetupMode", Type: reflect.TypeFor[WindowsSandboxSetupMode]()},
+		{Name: "WriteStatus", Type: reflect.TypeFor[WriteStatus]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
@@ -456,7 +462,24 @@ func wireSchemaDefinitions() Schema {
 	schemas["NetworkUnixSocketPermission"] = stringEnumSchema(
 		string(NetworkUnixSocketPermissionAllow), string(NetworkUnixSocketPermissionDeny),
 	)
+	schemas["MergeStrategy"] = stringEnumSchema(
+		string(MergeStrategyReplace), string(MergeStrategyUpsert),
+	)
+	schemas["WriteStatus"] = stringEnumSchema(
+		string(WriteStatusOK), string(WriteStatusOKOverridden),
+	)
 	schemas["ConfigLayerSource"] = configLayerSourceSchema()
+	const configFilePathDescription = "Path to the config file to write; defaults to the user's `config.toml` when omitted."
+	for _, definition := range []string{"ConfigValueWriteParams", "ConfigBatchWriteParams"} {
+		properties := schemas[definition].(Schema)["properties"].(Schema)
+		properties["filePath"].(Schema)["description"] = configFilePathDescription
+	}
+	configBatchProperties := schemas["ConfigBatchWriteParams"].(Schema)["properties"].(Schema)
+	configBatchProperties["reloadUserConfig"].(Schema)["description"] =
+		"When true, hot-reload the updated user config into all loaded threads after writing."
+	configWriteResponseProperties := schemas["ConfigWriteResponse"].(Schema)["properties"].(Schema)
+	configWriteResponseProperties["filePath"].(Schema)["description"] =
+		"Canonical path to the config file that was written."
 	schemas["ConfiguredHookHandler"] = configuredHookHandlerSchema()
 	configRequirementsProperties := schemas["ConfigRequirements"].(Schema)["properties"].(Schema)
 	for _, name := range []string{"allowedPermissionProfiles", "featureRequirements"} {

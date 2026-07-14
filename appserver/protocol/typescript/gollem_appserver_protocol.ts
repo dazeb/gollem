@@ -786,6 +786,19 @@ export type ComputerUseRequirements = {
   "allowLockedComputerUse": boolean | null;
 };
 
+export type ConfigBatchWriteParams = {
+  "edits": Array<ConfigEdit>;
+  "expectedVersion"?: string | null;
+  "filePath"?: string | null;
+  "reloadUserConfig"?: boolean;
+};
+
+export type ConfigEdit = {
+  "keyPath": string;
+  "mergeStrategy": MergeStrategy;
+  "value": JsonValue;
+};
+
 export type ConfigLayer = {
   "config": JsonValue;
   "disabledReason": string | null;
@@ -845,11 +858,26 @@ export type ConfigRequirementsReadResponse = {
   "requirements": ConfigRequirements | null;
 };
 
+export type ConfigValueWriteParams = {
+  "expectedVersion"?: string | null;
+  "filePath"?: string | null;
+  "keyPath": string;
+  "mergeStrategy": MergeStrategy;
+  "value": JsonValue;
+};
+
 export type ConfigWarningNotification = {
   "details": string | null;
   "path"?: string;
   "range"?: TextRange;
   "summary": string;
+};
+
+export type ConfigWriteResponse = {
+  "filePath": AbsolutePathBuf;
+  "overriddenMetadata": OverriddenMetadata | null;
+  "status": WriteStatus;
+  "version": string;
 };
 
 export type ConfiguredHookHandler = {
@@ -1633,6 +1661,8 @@ export type MemoryCitationEntry = {
   "note": string;
   "path": string;
 };
+
+export type MergeStrategy = "replace" | "upsert";
 
 export type MessagePhase = "commentary" | "final_answer";
 
@@ -2936,6 +2966,8 @@ export type WebSearchItem = {
 export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
 
 export type WindowsSandboxSetupMode = "elevated" | "unelevated";
+
+export type WriteStatus = "ok" | "okOverridden";
 
 export type WireTypeBinding = {
   "method": KnownMethod;
