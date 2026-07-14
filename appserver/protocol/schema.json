@@ -1384,6 +1384,53 @@
       ],
       "type": "object"
     },
+    "ConfigLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "disabledReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/ConfigLayerSource"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "config",
+        "disabledReason"
+      ],
+      "type": "object"
+    },
+    "ConfigLayerMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/ConfigLayerSource"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
     "ConfigLayerSource": {
       "oneOf": [
         {
@@ -5867,6 +5914,26 @@
       },
       "required": [
         "method"
+      ],
+      "type": "object"
+    },
+    "OverriddenMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "effectiveValue": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "message": {
+          "type": "string"
+        },
+        "overridingLayer": {
+          "$ref": "#/$defs/ConfigLayerMetadata"
+        }
+      },
+      "required": [
+        "message",
+        "overridingLayer",
+        "effectiveValue"
       ],
       "type": "object"
     },
