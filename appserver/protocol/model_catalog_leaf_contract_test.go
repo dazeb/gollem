@@ -184,8 +184,8 @@ func TestModelCatalogLeafContractsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 343 {
-		t.Fatalf("definition count = %d, want 343", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 344 {
+		t.Fatalf("definition count = %d, want 344", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

@@ -128,11 +128,11 @@ func (p *ConfigValueWriteParams) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	filePath, err := decodeOptionalNullableConfigWriteValue[string](payload, objectName, "filePath")
+	filePath, err := decodeOptionalNullableConfigValue[string](payload, objectName, "filePath")
 	if err != nil {
 		return err
 	}
-	expectedVersion, err := decodeOptionalNullableConfigWriteValue[string](payload, objectName, "expectedVersion")
+	expectedVersion, err := decodeOptionalNullableConfigValue[string](payload, objectName, "expectedVersion")
 	if err != nil {
 		return err
 	}
@@ -187,15 +187,15 @@ func (p *ConfigBatchWriteParams) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	filePath, err := decodeOptionalNullableConfigWriteValue[string](payload, objectName, "filePath")
+	filePath, err := decodeOptionalNullableConfigValue[string](payload, objectName, "filePath")
 	if err != nil {
 		return err
 	}
-	expectedVersion, err := decodeOptionalNullableConfigWriteValue[string](payload, objectName, "expectedVersion")
+	expectedVersion, err := decodeOptionalNullableConfigValue[string](payload, objectName, "expectedVersion")
 	if err != nil {
 		return err
 	}
-	reloadUserConfig, err := decodeOptionalConfigWriteBool(payload, objectName, "reloadUserConfig")
+	reloadUserConfig, err := decodeOptionalConfigBool(payload, objectName, "reloadUserConfig")
 	if err != nil {
 		return err
 	}
@@ -245,7 +245,7 @@ func (r *ConfigWriteResponse) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	overriddenMetadata, err := decodeOptionalNullableConfigWriteValue[OverriddenMetadata](
+	overriddenMetadata, err := decodeOptionalNullableConfigValue[OverriddenMetadata](
 		payload,
 		objectName,
 		"overriddenMetadata",
@@ -262,7 +262,7 @@ func (r *ConfigWriteResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func decodeOptionalNullableConfigWriteValue[T any](
+func decodeOptionalNullableConfigValue[T any](
 	payload map[string]json.RawMessage,
 	objectName string,
 	fieldName string,
@@ -278,7 +278,7 @@ func decodeOptionalNullableConfigWriteValue[T any](
 	return &value, nil
 }
 
-func decodeOptionalConfigWriteBool(
+func decodeOptionalConfigBool(
 	payload map[string]json.RawMessage,
 	objectName string,
 	fieldName string,
