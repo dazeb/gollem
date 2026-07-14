@@ -130,6 +130,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ConfigLayerMetadata", Type: reflect.TypeFor[ConfigLayerMetadata]()},
 		{Name: "ConfigLayerSource", Type: reflect.TypeFor[ConfigLayerSource]()},
 		{Name: "ConfigReadParams", Type: reflect.TypeFor[ConfigReadParams]()},
+		{Name: "ConfigReadResponse", Type: reflect.TypeFor[ConfigReadResponse]()},
 		{Name: "ConfigRequirements", Type: reflect.TypeFor[ConfigRequirements]()},
 		{Name: "ConfigRequirementsReadResponse", Type: reflect.TypeFor[ConfigRequirementsReadResponse]()},
 		{Name: "ConfigValueWriteParams", Type: reflect.TypeFor[ConfigValueWriteParams]()},
@@ -484,6 +485,7 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	schemas["Config"] = publicConfigSchema()
+	schemas["ConfigReadResponse"] = configReadResponseSchema()
 	schemas["ConfigLayerSource"] = configLayerSourceSchema()
 	configReadProperties := schemas["ConfigReadParams"].(Schema)["properties"].(Schema)
 	configReadProperties["cwd"].(Schema)["description"] = configReadCWDDescription
@@ -1532,6 +1534,30 @@ func publicConfigSchema() Schema {
 		"required":                         append([]string(nil), publicConfigKnownFields...),
 		"additionalProperties":             Schema{"$ref": "#/$defs/JsonValue"},
 		"x-gollem-typescript-optional-map": true,
+	}
+}
+
+func configReadResponseSchema() Schema {
+	nullable := func(value Schema) Schema {
+		return Schema{"anyOf": []any{value, Schema{"type": "null"}}}
+	}
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"config": Schema{"$ref": "#/$defs/Config"},
+			"origins": Schema{
+				"type":                             "object",
+				"additionalProperties":             Schema{"$ref": "#/$defs/ConfigLayerMetadata"},
+				"x-gollem-typescript-optional-map": true,
+			},
+			"layers": nullable(Schema{
+				"type":  "array",
+				"items": Schema{"$ref": "#/$defs/ConfigLayer"},
+			}),
+		},
+		"required":             []string{"config", "origins", "layers"},
+		"additionalProperties": true,
+		"x-gollem-typescript-ignore-additional-properties": true,
 	}
 }
 
