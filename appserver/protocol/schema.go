@@ -206,6 +206,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
 		{Name: "MemoryCitationEntry", Type: reflect.TypeFor[MemoryCitationEntry]()},
 		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},
+		{Name: "Model", Type: reflect.TypeFor[Model]()},
 		{Name: "ModelAvailabilityNux", Type: reflect.TypeFor[ModelAvailabilityNux]()},
 		{Name: "ModelRerouteReason", Type: reflect.TypeFor[ModelRerouteReason]()},
 		{Name: "ModelReroutedNotification", Type: reflect.TypeFor[ModelReroutedNotification]()},
@@ -419,6 +420,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["InputModality"] = stringEnumSchema(string(InputModalityText), string(InputModalityImage))
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
+	modelProperties := schemas["Model"].(Schema)["properties"].(Schema)
+	modelProperties["additionalSpeedTiers"].(Schema)["description"] = "Deprecated: use `serviceTiers` instead."
+	modelProperties["defaultServiceTier"].(Schema)["description"] = "Catalog default service tier id for this model, when one is configured."
 	schemas["ReasoningSummary"] = stringEnumSchema(
 		string(ReasoningSummaryAuto), string(ReasoningSummaryConcise),
 		string(ReasoningSummaryDetailed), string(ReasoningSummaryNone),
