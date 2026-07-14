@@ -219,6 +219,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ItemLifecycleNotificationParams", Type: reflect.TypeFor[ItemLifecycleNotificationParams]()},
 		{Name: "ItemStartedNotification", Type: reflect.TypeFor[ItemStartedNotification]()},
 		{Name: "LegacyAppPathString", Type: reflect.TypeFor[LegacyAppPathString]()},
+		{Name: "LoginAppBrand", Type: reflect.TypeFor[LoginAppBrand]()},
 		{Name: "LocalShellAction", Type: reflect.TypeFor[LocalShellAction]()},
 		{Name: "LocalShellStatus", Type: reflect.TypeFor[LocalShellStatus]()},
 		{Name: "ManagedHooksRequirements", Type: reflect.TypeFor[ManagedHooksRequirements]()},
@@ -491,6 +492,10 @@ func wireSchemaDefinitions() Schema {
 	schemas["CancelLoginAccountStatus"] = stringEnumSchema(
 		string(CancelLoginAccountStatusCanceled),
 		string(CancelLoginAccountStatusNotFound),
+	)
+	schemas["LoginAppBrand"] = stringEnumSchema(
+		string(LoginAppBrandCodex),
+		string(LoginAppBrandChatGPT),
 	)
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))

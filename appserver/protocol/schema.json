@@ -4550,6 +4550,13 @@
       ],
       "type": "string"
     },
+    "LoginAppBrand": {
+      "enum": [
+        "codex",
+        "chatgpt"
+      ],
+      "type": "string"
+    },
     "MCPContent": {
       "additionalProperties": false,
       "properties": {
