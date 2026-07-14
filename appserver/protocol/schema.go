@@ -236,6 +236,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
 		{Name: "McpAuthStatus", Type: reflect.TypeFor[McpAuthStatus]()},
 		{Name: "McpResourceReadParams", Type: reflect.TypeFor[McpResourceReadParams]()},
+		{Name: "McpResourceReadResponse", Type: reflect.TypeFor[McpResourceReadResponse]()},
 		{Name: "McpServerRefreshResponse", Type: reflect.TypeFor[McpServerRefreshResponse]()},
 		{Name: "McpServerToolCallParams", Type: reflect.TypeFor[McpServerToolCallParams]()},
 		{Name: "McpServerToolCallResponse", Type: reflect.TypeFor[McpServerToolCallResponse]()},
@@ -529,6 +530,7 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["ListMcpServerStatusParams"] = listMcpServerStatusParamsSchema()
 	schemas["McpResourceReadParams"] = mcpResourceReadParamsSchema()
+	schemas["McpResourceReadResponse"] = mcpResourceReadResponseSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
@@ -2033,6 +2035,14 @@ func mcpResourceReadParamsSchema() Schema {
 		"server": Schema{"type": "string"},
 		"uri":    Schema{"type": "string"},
 	}, []string{"server", "uri"})
+}
+
+func mcpResourceReadResponseSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"contents": Schema{
+			"type": "array", "items": Schema{"$ref": "#/$defs/ResourceContent"},
+		},
+	}, []string{"contents"})
 }
 
 func mcpServerToolCallParamsSchema() Schema {

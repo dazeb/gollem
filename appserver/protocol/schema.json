@@ -5573,6 +5573,21 @@
       ],
       "type": "object"
     },
+    "McpResourceReadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "contents": {
+          "items": {
+            "$ref": "#/$defs/ResourceContent"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contents"
+      ],
+      "type": "object"
+    },
     "McpServerElicitationAction": {
       "enum": [
         "accept",
