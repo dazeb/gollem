@@ -5547,6 +5547,32 @@
       ],
       "type": "object"
     },
+    "McpResourceReadParams": {
+      "additionalProperties": false,
+      "properties": {
+        "server": {
+          "type": "string"
+        },
+        "threadId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "uri"
+      ],
+      "type": "object"
+    },
     "McpServerElicitationAction": {
       "enum": [
         "accept",

@@ -235,6 +235,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallProgressNotificationParams", Type: reflect.TypeFor[MCPToolCallProgressNotificationParams]()},
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
 		{Name: "McpAuthStatus", Type: reflect.TypeFor[McpAuthStatus]()},
+		{Name: "McpResourceReadParams", Type: reflect.TypeFor[McpResourceReadParams]()},
 		{Name: "McpServerStartupFailureReason", Type: reflect.TypeFor[McpServerStartupFailureReason]()},
 		{Name: "McpServerStartupState", Type: reflect.TypeFor[McpServerStartupState]()},
 		{Name: "McpServerStatusDetail", Type: reflect.TypeFor[McpServerStatusDetail]()},
@@ -523,6 +524,7 @@ func wireSchemaDefinitions() Schema {
 		string(McpServerStatusDetailFull), string(McpServerStatusDetailToolsAndAuthOnly),
 	)
 	schemas["ListMcpServerStatusParams"] = listMcpServerStatusParamsSchema()
+	schemas["McpResourceReadParams"] = mcpResourceReadParamsSchema()
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
 	schemas["WebSearchMode"] = stringEnumSchema(
@@ -2014,6 +2016,16 @@ func listMcpServerStatusParamsSchema() Schema {
 			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
 		},
 	}, nil)
+}
+
+func mcpResourceReadParamsSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"threadId": Schema{
+			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+		},
+		"server": Schema{"type": "string"},
+		"uri":    Schema{"type": "string"},
+	}, []string{"server", "uri"})
 }
 
 func threadForkParamsSchema() Schema {
