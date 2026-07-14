@@ -3200,6 +3200,13 @@
       ],
       "type": "object"
     },
+    "InputModality": {
+      "enum": [
+        "text",
+        "image"
+      ],
+      "type": "string"
+    },
     "InternalChatMessageMetadataPassthrough": {
       "additionalProperties": false,
       "properties": {
@@ -4506,6 +4513,18 @@
       ],
       "type": "string"
     },
+    "ModelAvailabilityNux": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
     "ModelRerouteReason": {
       "enum": [
         "highRiskCyberActivity"
@@ -4586,6 +4605,71 @@
         "reasons",
         "showBufferingUi",
         "fasterModel"
+      ],
+      "type": "object"
+    },
+    "ModelServiceTier": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description"
+      ],
+      "type": "object"
+    },
+    "ModelUpgradeInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "migrationMarkdown": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelLink": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upgradeCopy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model",
+        "upgradeCopy",
+        "modelLink",
+        "migrationMarkdown"
       ],
       "type": "object"
     },
@@ -5063,6 +5147,22 @@
     "ReasoningEffort": {
       "minLength": 1,
       "type": "string"
+    },
+    "ReasoningEffortOption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "$ref": "#/$defs/ReasoningEffort"
+        }
+      },
+      "required": [
+        "reasoningEffort",
+        "description"
+      ],
+      "type": "object"
     },
     "ReasoningItemContent": {
       "oneOf": [
