@@ -74,8 +74,8 @@ func TestAuthModeRemainsStandalone(t *testing.T) {
 			t.Fatalf("AuthMode unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 376 {
-		t.Fatalf("definition count = %d, want 376", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 377 {
+		t.Fatalf("definition count = %d, want 377", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

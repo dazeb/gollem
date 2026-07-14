@@ -237,6 +237,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpAuthStatus", Type: reflect.TypeFor[McpAuthStatus]()},
 		{Name: "McpResourceReadParams", Type: reflect.TypeFor[McpResourceReadParams]()},
 		{Name: "McpServerToolCallParams", Type: reflect.TypeFor[McpServerToolCallParams]()},
+		{Name: "McpServerToolCallResponse", Type: reflect.TypeFor[McpServerToolCallResponse]()},
 		{Name: "McpServerStartupFailureReason", Type: reflect.TypeFor[McpServerStartupFailureReason]()},
 		{Name: "McpServerStartupState", Type: reflect.TypeFor[McpServerStartupState]()},
 		{Name: "McpServerStatusDetail", Type: reflect.TypeFor[McpServerStatusDetail]()},
@@ -527,6 +528,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["ListMcpServerStatusParams"] = listMcpServerStatusParamsSchema()
 	schemas["McpResourceReadParams"] = mcpResourceReadParamsSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
+	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
 	schemas["WebSearchMode"] = stringEnumSchema(
@@ -2038,6 +2040,20 @@ func mcpServerToolCallParamsSchema() Schema {
 		"arguments": Schema{"$ref": "#/$defs/JsonValue"},
 		"_meta":     Schema{"$ref": "#/$defs/JsonValue"},
 	}, []string{"server", "threadId", "tool"})
+}
+
+func mcpServerToolCallResponseSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"content": Schema{
+			"type": "array", "items": Schema{"$ref": "#/$defs/JsonValue"},
+		},
+		"structuredContent": Schema{"$ref": "#/$defs/JsonValue"},
+		"isError": Schema{
+			"anyOf":                          []any{Schema{"type": "boolean"}, Schema{"type": "null"}},
+			typeScriptOptionalNonNullKeyword: true,
+		},
+		"_meta": Schema{"$ref": "#/$defs/JsonValue"},
+	}, []string{"content"})
 }
 
 func threadForkParamsSchema() Schema {
