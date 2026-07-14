@@ -233,6 +233,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MCPToolCallItemStartedNotificationParams", Type: reflect.TypeFor[MCPToolCallItemStartedNotificationParams]()},
 		{Name: "MCPToolCallProgressNotificationParams", Type: reflect.TypeFor[MCPToolCallProgressNotificationParams]()},
 		{Name: "MCPToolCallResult", Type: reflect.TypeFor[MCPToolCallResult]()},
+		{Name: "McpAuthStatus", Type: reflect.TypeFor[McpAuthStatus]()},
 		{Name: "McpToolCallAppContext", Type: reflect.TypeFor[McpToolCallAppContext]()},
 		{Name: "McpToolCallResult", Type: reflect.TypeFor[McpToolCallResult]()},
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
@@ -502,6 +503,10 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["LoginAccountParams"] = loginAccountParamsSchema()
 	schemas["LoginAccountResponse"] = loginAccountResponseSchema()
+	schemas["McpAuthStatus"] = stringEnumSchema(
+		string(McpAuthStatusUnsupported), string(McpAuthStatusNotLoggedIn),
+		string(McpAuthStatusBearerToken), string(McpAuthStatusOAuth),
+	)
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
 	schemas["WebSearchMode"] = stringEnumSchema(
