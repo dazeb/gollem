@@ -532,6 +532,10 @@ export type AgentMessageInputContent = {
 
 export type AgentPath = string;
 
+export type AnalyticsConfig = ({
+  "enabled": boolean | null;
+} & { [key in string]?: JsonValue });
+
 export type ApprovalRequestBase = {
   "itemId": string;
   "reason"?: string;
@@ -564,6 +568,8 @@ export type AskForApproval = "untrusted" | "on-request" | {
     "skill_approval": boolean;
   };
 } | "never";
+
+export type AutoCompactTokenLimitScope = "total" | "body_after_prefix";
 
 export type ByteRange = {
   "end": number;
@@ -1166,6 +1172,10 @@ export type FileUpdateChange = {
   "kind": PatchChangeKind;
   "path": string;
 };
+
+export type ForcedChatgptWorkspaceIds = string | Array<string>;
+
+export type ForcedLoginMethod = "chatgpt" | "api";
 
 export type FsChangedNotification = {
   "changedPaths": Array<AbsolutePathBuf>;
@@ -2085,6 +2095,13 @@ export type SandboxPolicy = {
   "writableRoots": Array<AbsolutePathBuf>;
 };
 
+export type SandboxWorkspaceWrite = {
+  "exclude_slash_tmp": boolean;
+  "exclude_tmpdir_env_var": boolean;
+  "network_access": boolean;
+  "writable_roots": Array<string>;
+};
+
 export type ServerCapabilities = {
   "experimental"?: Array<string> | null;
   "protocolSchema": boolean;
@@ -2799,6 +2816,10 @@ export type ToolRequestUserInputResponse = {
   "answers": Record<string, ToolRequestUserInputAnswer>;
 };
 
+export type ToolsV2 = {
+  "web_search": WebSearchToolConfig | null;
+};
+
 export type Turn = {
   "completedAt": number | null;
   "durationMs": number | null;
@@ -2942,6 +2963,8 @@ export type UserInput = {
   "type": "mention";
 };
 
+export type Verbosity = "low" | "medium" | "high";
+
 export type WarningNotification = {
   "message": string;
   "threadId": string | null;
@@ -2962,13 +2985,28 @@ export type WebSearchAction = {
   "type": "other";
 };
 
+export type WebSearchContextSize = "low" | "medium" | "high";
+
 export type WebSearchItem = {
   "action": WebSearchAction | null;
   "id": string;
   "query": string;
 };
 
+export type WebSearchLocation = {
+  "city": string | null;
+  "country": string | null;
+  "region": string | null;
+  "timezone": string | null;
+};
+
 export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
+
+export type WebSearchToolConfig = {
+  "allowed_domains": Array<string> | null;
+  "context_size": WebSearchContextSize | null;
+  "location": WebSearchLocation | null;
+};
 
 export type WindowsSandboxSetupMode = "elevated" | "unelevated";
 

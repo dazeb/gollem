@@ -319,9 +319,14 @@ func typeScriptObjectType(schema Schema, indent int) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return "(" + objectType + " & Record<string, " + valueType + ">)", nil
+		additionalType := "Record<string, " + valueType + ">"
+		if optional, _ := schema["x-gollem-typescript-optional-map"].(bool); optional {
+			additionalType = "{ [key in string]?: " + valueType + " }"
+		}
+		return "(" + objectType + " & " + additionalType + ")", nil
 	}
-	if additionalAllowed {
+	ignoreAdditional, _ := schema["x-gollem-typescript-ignore-additional-properties"].(bool)
+	if additionalAllowed && !ignoreAdditional {
 		return "(" + objectType + " & Record<string, unknown>)", nil
 	}
 	return objectType, nil
