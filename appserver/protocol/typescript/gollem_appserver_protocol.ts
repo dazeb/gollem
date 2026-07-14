@@ -1763,6 +1763,14 @@ export type McpServerStatusUpdatedNotification = {
   "threadId": string | null;
 };
 
+export type McpServerToolCallParams = {
+  "_meta"?: JsonValue;
+  "arguments"?: JsonValue;
+  "server": string;
+  "threadId": string;
+  "tool": string;
+};
+
 export type McpToolCallAppContext = {
   "actionName": string | null;
   "appName": string | null;
