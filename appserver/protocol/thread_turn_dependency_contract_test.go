@@ -311,8 +311,8 @@ func TestThreadTurnDependenciesRemainStandalone(t *testing.T) {
 			t.Fatalf("%s unexpectedly bound by %#v", binding.Type, binding)
 		}
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 356 {
-		t.Fatalf("definition count = %d, want 356", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 358 {
+		t.Fatalf("definition count = %d, want 358", len(JSONSchema()["$defs"].(Schema)))
 	}
 	if len(WireTypeBindings()) != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", len(WireTypeBindings()), len(ItemPayloadBindings()))

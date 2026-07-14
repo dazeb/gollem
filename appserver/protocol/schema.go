@@ -86,6 +86,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AgentMessageDeltaNotification", Type: reflect.TypeFor[AgentMessageDeltaNotification]()},
 		{Name: "AgentMessageInputContent", Type: reflect.TypeFor[AgentMessageInputContent]()},
 		{Name: "AgentPath", Type: reflect.TypeFor[AgentPath]()},
+		{Name: "AdditionalContextEntry", Type: reflect.TypeFor[AdditionalContextEntry]()},
+		{Name: "AdditionalContextKind", Type: reflect.TypeFor[AdditionalContextKind]()},
 		{Name: "AdditionalFileSystemPermissions", Type: reflect.TypeFor[AdditionalFileSystemPermissions]()},
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
@@ -459,6 +461,10 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["SortDirection"] = stringEnumSchema(string(SortDirectionAsc), string(SortDirectionDesc))
 	schemas["InputModality"] = stringEnumSchema(string(InputModalityText), string(InputModalityImage))
+	schemas["AdditionalContextKind"] = stringEnumSchema(
+		string(AdditionalContextKindUntrusted), string(AdditionalContextKindApplication),
+	)
+	schemas["AdditionalContextEntry"] = additionalContextEntrySchema()
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
@@ -1556,6 +1562,19 @@ func configReadResponseSchema() Schema {
 			}),
 		},
 		"required":             []string{"config", "origins", "layers"},
+		"additionalProperties": true,
+		"x-gollem-typescript-ignore-additional-properties": true,
+	}
+}
+
+func additionalContextEntrySchema() Schema {
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"value": Schema{"type": "string"},
+			"kind":  Schema{"$ref": "#/$defs/AdditionalContextKind"},
+		},
+		"required":             []string{"kind", "value"},
 		"additionalProperties": true,
 		"x-gollem-typescript-ignore-additional-properties": true,
 	}
