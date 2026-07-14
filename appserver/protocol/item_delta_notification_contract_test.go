@@ -223,8 +223,8 @@ func TestItemDeltaNotificationContractsRemainStandalone(t *testing.T) {
 			t.Errorf("%s = %#v, %v; want %s", method, info, ok, want)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 327 {
-		t.Fatalf("definition count = %d, want 327", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 330 {
+		t.Fatalf("definition count = %d, want 330", got)
 	}
 	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))

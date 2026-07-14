@@ -556,6 +556,14 @@ separate from Gollem's provider/environment requirement rows and `data` alias,
 so `configRequirements/read` inference remains `unknown` pending an explicit
 projection adapter.
 
+Exact standalone `ConfiguredHookHandler`, `ConfiguredHookMatcherGroup`, and
+`ManagedHooksRequirements` expose the strict managed-hook configuration value
+graph. Command handlers canonicalize nullable Windows-command, timeout, and
+status fields; matcher groups and all ten case-sensitive event arrays are
+non-null. These values do not register or execute hooks, bind into the live
+config endpoint, or claim managed-hook enforcement; those runtime and policy
+decisions remain separate.
+
 ## Generation
 
 Run:
