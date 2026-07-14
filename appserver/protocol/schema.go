@@ -100,6 +100,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
 		{Name: "AutoCompactTokenLimitScope", Type: reflect.TypeFor[AutoCompactTokenLimitScope]()},
+		{Name: "AutoReviewDecisionSource", Type: reflect.TypeFor[AutoReviewDecisionSource]()},
 		{Name: "ByteRange", Type: reflect.TypeFor[ByteRange]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
 		{Name: "CodexErrorInfo", Type: reflect.TypeFor[CodexErrorInfo]()},
@@ -480,6 +481,9 @@ func wireSchemaDefinitions() Schema {
 		string(AuthModeAgentIdentity),
 		string(AuthModePersonalAccessToken),
 		string(AuthModeBedrockAPIKey),
+	)
+	schemas["AutoReviewDecisionSource"] = stringEnumSchema(
+		string(AutoReviewDecisionSourceAgent),
 	)
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
