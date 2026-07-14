@@ -530,6 +530,15 @@ models remain distinct until an explicit list adapter can preserve those live
 features without claiming that the extended response is the exact public
 contract.
 
+Exact standalone `ModelListParams` and `ModelListResponse` complete the public
+list-envelope value layer without binding `model/list`. Params accept optional
+nullable cursor, uint32 limit, and hidden-model selection while canonical
+output emits all three fields. Responses require a non-null exact `Model`
+array and canonical nullable next cursor while accepting omitted Rust `Option`
+cursor input. The live request and response remain provider-extended, so an
+explicit projection is still required before generated method inference can
+replace `unknown`.
+
 ## Generation
 
 Run:
