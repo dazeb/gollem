@@ -1465,6 +1465,44 @@ export type LocalShellAction = {
 
 export type LocalShellStatus = "completed" | "in_progress" | "incomplete";
 
+export type LoginAccountParams = {
+  "apiKey": string;
+  "type": "apiKey";
+} | {
+  "appBrand"?: LoginAppBrand | null;
+  "codexStreamlinedLogin"?: boolean;
+  "type": "chatgpt";
+  "useHostedLoginSuccessPage"?: boolean;
+} | {
+  "type": "chatgptDeviceCode";
+} | {
+  "accessToken": string;
+  "chatgptAccountId": string;
+  "chatgptPlanType"?: string | null;
+  "type": "chatgptAuthTokens";
+} | {
+  "apiKey": string;
+  "region": string;
+  "type": "amazonBedrock";
+};
+
+export type LoginAccountResponse = {
+  "type": "apiKey";
+} | {
+  "authUrl": string;
+  "loginId": string;
+  "type": "chatgpt";
+} | {
+  "loginId": string;
+  "type": "chatgptDeviceCode";
+  "userCode": string;
+  "verificationUrl": string;
+} | {
+  "type": "chatgptAuthTokens";
+} | {
+  "type": "amazonBedrock";
+};
+
 export type LoginAppBrand = "codex" | "chatgpt";
 
 export type MCPContent = {

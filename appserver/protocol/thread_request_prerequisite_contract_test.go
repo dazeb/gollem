@@ -94,8 +94,8 @@ func TestThreadRequestPrerequisitesRemainDistinctAndStandalone(t *testing.T) {
 			t.Fatalf("%s unexpectedly bound by %#v", binding.Type, binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 365 {
-		t.Fatalf("definition count = %d, want 365", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 367 {
+		t.Fatalf("definition count = %d, want 367", got)
 	}
 	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))

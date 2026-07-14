@@ -219,6 +219,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ItemLifecycleNotificationParams", Type: reflect.TypeFor[ItemLifecycleNotificationParams]()},
 		{Name: "ItemStartedNotification", Type: reflect.TypeFor[ItemStartedNotification]()},
 		{Name: "LegacyAppPathString", Type: reflect.TypeFor[LegacyAppPathString]()},
+		{Name: "LoginAccountParams", Type: reflect.TypeFor[LoginAccountParams]()},
+		{Name: "LoginAccountResponse", Type: reflect.TypeFor[LoginAccountResponse]()},
 		{Name: "LoginAppBrand", Type: reflect.TypeFor[LoginAppBrand]()},
 		{Name: "LocalShellAction", Type: reflect.TypeFor[LocalShellAction]()},
 		{Name: "LocalShellStatus", Type: reflect.TypeFor[LocalShellStatus]()},
@@ -497,6 +499,8 @@ func wireSchemaDefinitions() Schema {
 		string(LoginAppBrandCodex),
 		string(LoginAppBrandChatGPT),
 	)
+	schemas["LoginAccountParams"] = loginAccountParamsSchema()
+	schemas["LoginAccountResponse"] = loginAccountResponseSchema()
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
 	schemas["WebSearchMode"] = stringEnumSchema(
@@ -827,6 +831,123 @@ func wireSchemaDefinitions() Schema {
 		string(TurnLifecycleFailed), string(TurnLifecycleInterrupted),
 	)
 	return schemas
+}
+
+func loginAccountParamsSchema() Schema {
+	return Schema{"oneOf": []any{
+		loginAccountVariantSchema(
+			"apiKey",
+			[]string{"apiKey", "type"},
+			Schema{"apiKey": Schema{"type": "string"}},
+		),
+		loginAccountVariantSchema(
+			"chatgpt",
+			[]string{"type"},
+			Schema{
+				"codexStreamlinedLogin":     Schema{"type": "boolean"},
+				"useHostedLoginSuccessPage": Schema{"type": "boolean"},
+				"appBrand": Schema{
+					"anyOf": []any{
+						Schema{"$ref": "#/$defs/LoginAppBrand"},
+						Schema{"type": "null"},
+					},
+					"default": nil,
+				},
+			},
+		),
+		loginAccountVariantSchema("chatgptDeviceCode", []string{"type"}, nil),
+		loginAccountVariantSchema(
+			"chatgptAuthTokens",
+			[]string{"accessToken", "chatgptAccountId", "type"},
+			Schema{
+				"accessToken": Schema{
+					"type": "string",
+					"description": "Access token (JWT) supplied by the client. " +
+						"This token is used for backend API requests and email extraction.",
+				},
+				"chatgptAccountId": Schema{
+					"type":        "string",
+					"description": "Workspace/account identifier supplied by the client.",
+				},
+				"chatgptPlanType": Schema{
+					"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+					"description": "Optional plan type supplied by the client.\n\n" +
+						"When `null`, Codex attempts to derive the plan type from access-token " +
+						"claims. If unavailable, the plan defaults to `unknown`.",
+				},
+			},
+			"[UNSTABLE] FOR OPENAI INTERNAL USE ONLY - DO NOT USE. "+
+				"The access token must contain the same scopes that Codex-managed ChatGPT auth tokens have.",
+		),
+		loginAccountVariantSchema(
+			"amazonBedrock",
+			[]string{"apiKey", "region", "type"},
+			Schema{
+				"apiKey": Schema{"type": "string"},
+				"region": Schema{"type": "string"},
+			},
+			"[UNSTABLE] Managed Amazon Bedrock login is experimental.",
+		),
+	}}
+}
+
+func loginAccountResponseSchema() Schema {
+	return Schema{"oneOf": []any{
+		loginAccountVariantSchema("apiKey", []string{"type"}, nil),
+		loginAccountVariantSchema(
+			"chatgpt",
+			[]string{"authUrl", "loginId", "type"},
+			Schema{
+				"loginId": Schema{"type": "string"},
+				"authUrl": Schema{
+					"type":        "string",
+					"description": "URL the client should open in a browser to initiate the OAuth flow.",
+				},
+			},
+		),
+		loginAccountVariantSchema(
+			"chatgptDeviceCode",
+			[]string{"loginId", "type", "userCode", "verificationUrl"},
+			Schema{
+				"loginId": Schema{"type": "string"},
+				"verificationUrl": Schema{
+					"type": "string",
+					"description": "URL the client should open in a browser to complete " +
+						"device code authorization.",
+				},
+				"userCode": Schema{
+					"type":        "string",
+					"description": "One-time code the user must enter after signing in.",
+				},
+			},
+		),
+		loginAccountVariantSchema("chatgptAuthTokens", []string{"type"}, nil),
+		loginAccountVariantSchema("amazonBedrock", []string{"type"}, nil),
+	}}
+}
+
+func loginAccountVariantSchema(
+	typeName string,
+	required []string,
+	fields Schema,
+	description ...string,
+) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{typeName}},
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	variant := Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+	if len(description) > 0 {
+		variant["description"] = description[0]
+	}
+	return variant
 }
 
 func codexErrorInfoSchema() Schema {
