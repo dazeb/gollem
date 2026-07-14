@@ -146,8 +146,8 @@ func TestConfigLayerSourceRemainsStandalone(t *testing.T) {
 			t.Fatalf("ConfigLayerSource unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 360 {
-		t.Fatalf("definition count = %d, want 360", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 361 {
+		t.Fatalf("definition count = %d, want 361", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

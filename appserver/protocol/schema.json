@@ -413,6 +413,12 @@
         }
       ]
     },
+    "AutoReviewDecisionSource": {
+      "enum": [
+        "agent"
+      ],
+      "type": "string"
+    },
     "ByteRange": {
       "additionalProperties": false,
       "properties": {

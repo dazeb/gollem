@@ -582,6 +582,8 @@ export type AuthMode = "apikey" | "chatgpt" | "chatgptAuthTokens" | "headers" | 
 
 export type AutoCompactTokenLimitScope = "total" | "body_after_prefix";
 
+export type AutoReviewDecisionSource = "agent";
+
 export type ByteRange = {
   "end": number;
   "start": number;
