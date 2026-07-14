@@ -5943,6 +5943,38 @@
       ],
       "type": "object"
     },
+    "McpServerToolCallResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "_meta": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "content": {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "array"
+        },
+        "isError": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "x-gollem-typescript-optional-nonnull": true
+        },
+        "structuredContent": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
     "McpToolCallAppContext": {
       "additionalProperties": false,
       "properties": {

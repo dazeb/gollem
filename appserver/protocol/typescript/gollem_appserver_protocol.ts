@@ -1771,6 +1771,13 @@ export type McpServerToolCallParams = {
   "tool": string;
 };
 
+export type McpServerToolCallResponse = {
+  "_meta"?: JsonValue;
+  "content": Array<JsonValue>;
+  "isError"?: boolean;
+  "structuredContent"?: JsonValue;
+};
+
 export type McpToolCallAppContext = {
   "actionName": string | null;
   "appName": string | null;
