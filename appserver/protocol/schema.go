@@ -123,6 +123,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecutionOutputDeltaNotificationParams", Type: reflect.TypeFor[CommandExecutionOutputDeltaNotificationParams]()},
 		{Name: "CommandExecutionSource", Type: reflect.TypeFor[CommandExecutionSource]()},
 		{Name: "ComputerUseRequirements", Type: reflect.TypeFor[ComputerUseRequirements]()},
+		{Name: "Config", Type: reflect.TypeFor[Config]()},
 		{Name: "ConfigBatchWriteParams", Type: reflect.TypeFor[ConfigBatchWriteParams]()},
 		{Name: "ConfigEdit", Type: reflect.TypeFor[ConfigEdit]()},
 		{Name: "ConfigLayer", Type: reflect.TypeFor[ConfigLayer]()},
@@ -482,6 +483,7 @@ func wireSchemaDefinitions() Schema {
 	for name, schema := range configPrerequisiteSchemas() {
 		schemas[name] = schema
 	}
+	schemas["Config"] = publicConfigSchema()
 	schemas["ConfigLayerSource"] = configLayerSourceSchema()
 	configReadProperties := schemas["ConfigReadParams"].(Schema)["properties"].(Schema)
 	configReadProperties["cwd"].(Schema)["description"] = configReadCWDDescription
@@ -1486,6 +1488,50 @@ func configPrerequisiteSchemas() map[string]Schema {
 			"required":             []string{"context_size", "allowed_domains", "location"},
 			"additionalProperties": false,
 		},
+	}
+}
+
+func publicConfigSchema() Schema {
+	nullable := func(value Schema) Schema {
+		return Schema{"anyOf": []any{value, Schema{"type": "null"}}}
+	}
+	approvalsReviewer := nullable(Schema{"$ref": "#/$defs/ApprovalsReviewer"})
+	approvalsReviewer["description"] =
+		"[UNSTABLE] Optional default for where approval requests are routed for review."
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"model":                                nullable(Schema{"type": "string"}),
+			"review_model":                         nullable(Schema{"type": "string"}),
+			"model_context_window":                 nullable(Schema{"type": "integer"}),
+			"model_auto_compact_token_limit":       nullable(Schema{"type": "integer"}),
+			"model_auto_compact_token_limit_scope": nullable(Schema{"$ref": "#/$defs/AutoCompactTokenLimitScope"}),
+			"model_provider":                       nullable(Schema{"type": "string"}),
+			"approval_policy":                      nullable(Schema{"$ref": "#/$defs/AskForApproval"}),
+			"approvals_reviewer":                   approvalsReviewer,
+			"sandbox_mode":                         nullable(Schema{"$ref": "#/$defs/SandboxMode"}),
+			"sandbox_workspace_write":              nullable(Schema{"$ref": "#/$defs/SandboxWorkspaceWrite"}),
+			"forced_chatgpt_workspace_id":          nullable(Schema{"$ref": "#/$defs/ForcedChatgptWorkspaceIds"}),
+			"forced_login_method":                  nullable(Schema{"$ref": "#/$defs/ForcedLoginMethod"}),
+			"web_search":                           nullable(Schema{"$ref": "#/$defs/WebSearchMode"}),
+			"tools":                                nullable(Schema{"$ref": "#/$defs/ToolsV2"}),
+			"instructions":                         nullable(Schema{"type": "string"}),
+			"developer_instructions":               nullable(Schema{"type": "string"}),
+			"compact_prompt":                       nullable(Schema{"type": "string"}),
+			"model_reasoning_effort":               nullable(Schema{"$ref": "#/$defs/ReasoningEffort"}),
+			"model_reasoning_summary":              nullable(Schema{"$ref": "#/$defs/ReasoningSummary"}),
+			"model_verbosity":                      nullable(Schema{"$ref": "#/$defs/Verbosity"}),
+			"service_tier":                         nullable(Schema{"type": "string"}),
+			"analytics":                            nullable(Schema{"$ref": "#/$defs/AnalyticsConfig"}),
+			"desktop": nullable(Schema{
+				"type":                             "object",
+				"additionalProperties":             Schema{"$ref": "#/$defs/JsonValue"},
+				"x-gollem-typescript-optional-map": true,
+			}),
+		},
+		"required":                         append([]string(nil), publicConfigKnownFields...),
+		"additionalProperties":             Schema{"$ref": "#/$defs/JsonValue"},
+		"x-gollem-typescript-optional-map": true,
 	}
 }
 
