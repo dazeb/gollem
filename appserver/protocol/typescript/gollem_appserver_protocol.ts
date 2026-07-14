@@ -589,6 +589,16 @@ export type ByteRange = {
   "start": number;
 };
 
+export type CancelLoginAccountParams = {
+  "loginId": string;
+};
+
+export type CancelLoginAccountResponse = {
+  "status": CancelLoginAccountStatus;
+};
+
+export type CancelLoginAccountStatus = "canceled" | "notFound";
+
 export type ClientInfo = {
   "name": string;
   "title"?: string | null;
