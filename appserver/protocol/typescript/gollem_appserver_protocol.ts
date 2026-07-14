@@ -1243,6 +1243,8 @@ export type InitializeResponse = {
   "userAgent": string;
 };
 
+export type InputModality = "text" | "image";
+
 export type InternalChatMessageMetadataPassthrough = {
   "turn_id"?: string;
 };
@@ -1547,6 +1549,10 @@ export type MethodInfo = {
 
 export type MethodState = "implemented" | "blocked" | "deferred-stub" | "renamed-equivalent" | "not-applicable";
 
+export type ModelAvailabilityNux = {
+  "message": string;
+};
+
 export type ModelRerouteReason = "highRiskCyberActivity";
 
 export type ModelReroutedNotification = {
@@ -1565,6 +1571,19 @@ export type ModelSafetyBufferingUpdatedNotification = {
   "threadId": string;
   "turnId": string;
   "useCases": Array<string>;
+};
+
+export type ModelServiceTier = {
+  "description": string;
+  "id": string;
+  "name": string;
+};
+
+export type ModelUpgradeInfo = {
+  "migrationMarkdown": string | null;
+  "model": string;
+  "modelLink": string | null;
+  "upgradeCopy": string | null;
 };
 
 export type ModelVerification = "trustedAccessForCyber";
@@ -1658,6 +1677,11 @@ export type RawResponseItemCompletedNotification = {
 };
 
 export type ReasoningEffort = string;
+
+export type ReasoningEffortOption = {
+  "description": string;
+  "reasoningEffort": ReasoningEffort;
+};
 
 export type ReasoningItemContent = {
   "text": string;

@@ -185,6 +185,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "InitializeCapabilities", Type: reflect.TypeFor[InitializeCapabilities]()},
 		{Name: "InitializeParams", Type: reflect.TypeFor[InitializeParams]()},
 		{Name: "InitializeResponse", Type: reflect.TypeFor[InitializeResponse]()},
+		{Name: "InputModality", Type: reflect.TypeFor[InputModality]()},
 		{Name: "InternalChatMessageMetadataPassthrough", Type: reflect.TypeFor[InternalChatMessageMetadataPassthrough]()},
 		{Name: "ItemCompletedNotification", Type: reflect.TypeFor[ItemCompletedNotification]()},
 		{Name: "JsonValue", Type: reflect.TypeFor[JsonValue]()},
@@ -205,9 +206,12 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MemoryCitation", Type: reflect.TypeFor[MemoryCitation]()},
 		{Name: "MemoryCitationEntry", Type: reflect.TypeFor[MemoryCitationEntry]()},
 		{Name: "MessagePhase", Type: reflect.TypeFor[MessagePhase]()},
+		{Name: "ModelAvailabilityNux", Type: reflect.TypeFor[ModelAvailabilityNux]()},
 		{Name: "ModelRerouteReason", Type: reflect.TypeFor[ModelRerouteReason]()},
 		{Name: "ModelReroutedNotification", Type: reflect.TypeFor[ModelReroutedNotification]()},
 		{Name: "ModelSafetyBufferingUpdatedNotification", Type: reflect.TypeFor[ModelSafetyBufferingUpdatedNotification]()},
+		{Name: "ModelServiceTier", Type: reflect.TypeFor[ModelServiceTier]()},
+		{Name: "ModelUpgradeInfo", Type: reflect.TypeFor[ModelUpgradeInfo]()},
 		{Name: "ModelVerification", Type: reflect.TypeFor[ModelVerification]()},
 		{Name: "ModelVerificationNotification", Type: reflect.TypeFor[ModelVerificationNotification]()},
 		{Name: "NonSteerableTurnKind", Type: reflect.TypeFor[NonSteerableTurnKind]()},
@@ -251,6 +255,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PermissionsRequestApprovalResponse", Type: reflect.TypeFor[PermissionsRequestApprovalResponse]()},
 		{Name: "RequestPermissionProfile", Type: reflect.TypeFor[RequestPermissionProfile]()},
 		{Name: "ReasoningEffort", Type: reflect.TypeFor[ReasoningEffort]()},
+		{Name: "ReasoningEffortOption", Type: reflect.TypeFor[ReasoningEffortOption]()},
 		{Name: "ReasoningSummary", Type: reflect.TypeFor[ReasoningSummary]()},
 		{Name: "ReasoningSummaryPartAddedNotification", Type: reflect.TypeFor[ReasoningSummaryPartAddedNotification]()},
 		{Name: "ReasoningSummaryTextDeltaNotification", Type: reflect.TypeFor[ReasoningSummaryTextDeltaNotification]()},
@@ -411,6 +416,7 @@ func wireSchemaDefinitions() Schema {
 		string(SurfaceGollemExtension),
 	)
 	schemas["SortDirection"] = stringEnumSchema(string(SortDirectionAsc), string(SortDirectionDesc))
+	schemas["InputModality"] = stringEnumSchema(string(InputModalityText), string(InputModalityImage))
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ReasoningSummary"] = stringEnumSchema(
