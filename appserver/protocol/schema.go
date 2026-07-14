@@ -219,6 +219,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ItemLifecycleNotificationParams", Type: reflect.TypeFor[ItemLifecycleNotificationParams]()},
 		{Name: "ItemStartedNotification", Type: reflect.TypeFor[ItemStartedNotification]()},
 		{Name: "LegacyAppPathString", Type: reflect.TypeFor[LegacyAppPathString]()},
+		{Name: "ListMcpServerStatusParams", Type: reflect.TypeFor[ListMcpServerStatusParams]()},
 		{Name: "LoginAccountParams", Type: reflect.TypeFor[LoginAccountParams]()},
 		{Name: "LoginAccountResponse", Type: reflect.TypeFor[LoginAccountResponse]()},
 		{Name: "LoginAppBrand", Type: reflect.TypeFor[LoginAppBrand]()},
@@ -521,6 +522,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["McpServerStatusDetail"] = stringEnumSchema(
 		string(McpServerStatusDetailFull), string(McpServerStatusDetailToolsAndAuthOnly),
 	)
+	schemas["ListMcpServerStatusParams"] = listMcpServerStatusParamsSchema()
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
 	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
 	schemas["WebSearchMode"] = stringEnumSchema(
@@ -1984,6 +1986,32 @@ func modelListParamsSchema() Schema {
 		"includeHidden": Schema{
 			"description": "When true, include models that are hidden from the default picker list.",
 			"anyOf":       []any{Schema{"type": "boolean"}, Schema{"type": "null"}},
+		},
+	}, nil)
+}
+
+func listMcpServerStatusParamsSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"cursor": Schema{
+			"description": "Opaque pagination cursor returned by a previous call.",
+			"anyOf":       []any{Schema{"type": "string"}, Schema{"type": "null"}},
+		},
+		"limit": Schema{
+			"description": "Optional page size; defaults to a server-defined value.",
+			"anyOf": []any{
+				Schema{"type": "integer", "minimum": 0, "maximum": 4294967295},
+				Schema{"type": "null"},
+			},
+		},
+		"detail": Schema{
+			"description": "Controls how much MCP inventory data to fetch for each server. Defaults to `Full` when omitted.",
+			"anyOf": []any{
+				Schema{"$ref": "#/$defs/McpServerStatusDetail"},
+				Schema{"type": "null"},
+			},
+		},
+		"threadId": Schema{
+			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
 		},
 	}, nil)
 }

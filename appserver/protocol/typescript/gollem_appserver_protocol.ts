@@ -1454,6 +1454,13 @@ export type JsonValue = number | string | boolean | Array<JsonValue> | { [key: s
 
 export type LegacyAppPathString = string;
 
+export type ListMcpServerStatusParams = {
+  "cursor"?: string | null;
+  "detail"?: McpServerStatusDetail | null;
+  "limit"?: number | null;
+  "threadId"?: string | null;
+};
+
 export type LocalShellAction = {
   "command": Array<string>;
   "env": Record<string, string> | null;

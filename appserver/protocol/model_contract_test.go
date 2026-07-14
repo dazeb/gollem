@@ -235,8 +235,8 @@ func TestModelNilReceiverAndStandaloneContract(t *testing.T) {
 			t.Fatalf("Model unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 373 {
-		t.Fatalf("definition count = %d, want 373", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 374 {
+		t.Fatalf("definition count = %d, want 374", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
