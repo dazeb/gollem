@@ -5784,6 +5784,55 @@
       ],
       "type": "string"
     },
+    "McpServerStatusUpdatedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "failureReason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpServerStartupFailureReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/McpServerStartupState"
+        },
+        "threadId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "threadId",
+        "name",
+        "status",
+        "error",
+        "failureReason"
+      ],
+      "type": "object"
+    },
     "McpToolCallAppContext": {
       "additionalProperties": false,
       "properties": {
