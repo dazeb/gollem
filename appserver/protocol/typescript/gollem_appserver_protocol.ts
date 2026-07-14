@@ -1465,6 +1465,8 @@ export type LocalShellAction = {
 
 export type LocalShellStatus = "completed" | "in_progress" | "incomplete";
 
+export type LoginAppBrand = "codex" | "chatgpt";
+
 export type MCPContent = {
   "text"?: string;
   "type": string;
