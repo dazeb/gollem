@@ -813,6 +813,24 @@ export type ConfigWarningNotification = {
   "summary": string;
 };
 
+export type ConfiguredHookHandler = {
+  "async": boolean;
+  "command": string;
+  "commandWindows": string | null;
+  "statusMessage": string | null;
+  "timeoutSec": number | null;
+  "type": "command";
+} | {
+  "type": "prompt";
+} | {
+  "type": "agent";
+};
+
+export type ConfiguredHookMatcherGroup = {
+  "hooks": Array<ConfiguredHookHandler>;
+  "matcher": string | null;
+};
+
 export type ContentItem = {
   "text": string;
   "type": "input_text";
@@ -1352,6 +1370,21 @@ export type MCPToolCallResult = {
   "_meta": unknown;
   "content": Array<MCPContent> | null;
   "structuredContent": unknown;
+};
+
+export type ManagedHooksRequirements = {
+  "PermissionRequest": Array<ConfiguredHookMatcherGroup>;
+  "PostCompact": Array<ConfiguredHookMatcherGroup>;
+  "PostToolUse": Array<ConfiguredHookMatcherGroup>;
+  "PreCompact": Array<ConfiguredHookMatcherGroup>;
+  "PreToolUse": Array<ConfiguredHookMatcherGroup>;
+  "SessionStart": Array<ConfiguredHookMatcherGroup>;
+  "Stop": Array<ConfiguredHookMatcherGroup>;
+  "SubagentStart": Array<ConfiguredHookMatcherGroup>;
+  "SubagentStop": Array<ConfiguredHookMatcherGroup>;
+  "UserPromptSubmit": Array<ConfiguredHookMatcherGroup>;
+  "managedDir": string | null;
+  "windowsManagedDir": string | null;
 };
 
 export type McpElicitationArrayType = "array";

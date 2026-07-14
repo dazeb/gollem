@@ -124,6 +124,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ConfigRequirements", Type: reflect.TypeFor[ConfigRequirements]()},
 		{Name: "ConfigRequirementsReadResponse", Type: reflect.TypeFor[ConfigRequirementsReadResponse]()},
 		{Name: "ConfigWarningNotification", Type: reflect.TypeFor[ConfigWarningNotification]()},
+		{Name: "ConfiguredHookHandler", Type: reflect.TypeFor[ConfiguredHookHandler]()},
+		{Name: "ConfiguredHookMatcherGroup", Type: reflect.TypeFor[ConfiguredHookMatcherGroup]()},
 		{Name: "ContentItem", Type: reflect.TypeFor[ContentItem]()},
 		{Name: "ContextCompactionItem", Type: reflect.TypeFor[ContextCompactionItem]()},
 		{Name: "DaemonShutdownParams", Type: reflect.TypeFor[DaemonShutdownParams]()},
@@ -197,6 +199,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "LegacyAppPathString", Type: reflect.TypeFor[LegacyAppPathString]()},
 		{Name: "LocalShellAction", Type: reflect.TypeFor[LocalShellAction]()},
 		{Name: "LocalShellStatus", Type: reflect.TypeFor[LocalShellStatus]()},
+		{Name: "ManagedHooksRequirements", Type: reflect.TypeFor[ManagedHooksRequirements]()},
 		{Name: "MCPContent", Type: reflect.TypeFor[MCPContent]()},
 		{Name: "MCPToolCallError", Type: reflect.TypeFor[MCPToolCallError]()},
 		{Name: "MCPToolCallItem", Type: reflect.TypeFor[MCPToolCallItem]()},
@@ -440,6 +443,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["WindowsSandboxSetupMode"] = stringEnumSchema(
 		string(WindowsSandboxSetupModeElevated), string(WindowsSandboxSetupModeUnelevated),
 	)
+	schemas["ConfiguredHookHandler"] = configuredHookHandlerSchema()
 	configRequirementsProperties := schemas["ConfigRequirements"].(Schema)["properties"].(Schema)
 	for _, name := range []string{"allowedPermissionProfiles", "featureRequirements"} {
 		variants := configRequirementsProperties[name].(Schema)["anyOf"].([]any)
@@ -1295,6 +1299,42 @@ func webSearchActionSchema() Schema {
 func webSearchActionVariantSchema(actionType string, requiredFields []string, fields Schema) Schema {
 	properties := Schema{
 		"type": Schema{"type": "string", "enum": []any{actionType}},
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	required := []string{"type"}
+	required = append(required, requiredFields...)
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
+}
+
+func configuredHookHandlerSchema() Schema {
+	return Schema{"oneOf": []any{
+		configuredHookHandlerVariantSchema("command", []string{
+			"command", "commandWindows", "timeoutSec", "async", "statusMessage",
+		}, Schema{
+			"command":        Schema{"type": "string"},
+			"commandWindows": nullableStringSchema(),
+			"timeoutSec": Schema{"anyOf": []any{
+				Schema{"type": "integer", "minimum": 0},
+				Schema{"type": "null"},
+			}},
+			"async":         Schema{"type": "boolean"},
+			"statusMessage": nullableStringSchema(),
+		}),
+		configuredHookHandlerVariantSchema("prompt", nil, nil),
+		configuredHookHandlerVariantSchema("agent", nil, nil),
+	}}
+}
+
+func configuredHookHandlerVariantSchema(hookType string, requiredFields []string, fields Schema) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{hookType}},
 	}
 	for name, schema := range fields {
 		properties[name] = schema

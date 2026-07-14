@@ -1603,6 +1603,123 @@
       ],
       "type": "object"
     },
+    "ConfiguredHookHandler": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "async": {
+              "type": "boolean"
+            },
+            "command": {
+              "type": "string"
+            },
+            "commandWindows": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "statusMessage": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "timeoutSec": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "enum": [
+                "command"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "command",
+            "commandWindows",
+            "timeoutSec",
+            "async",
+            "statusMessage"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "prompt"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "agent"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ConfiguredHookMatcherGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "hooks": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookHandler"
+          },
+          "type": "array"
+        },
+        "matcher": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "matcher",
+        "hooks"
+      ],
+      "type": "object"
+    },
     "ContentItem": {
       "oneOf": [
         {
@@ -3801,6 +3918,106 @@
         "content",
         "structuredContent",
         "_meta"
+      ],
+      "type": "object"
+    },
+    "ManagedHooksRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "PermissionRequest": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "PostCompact": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "PostToolUse": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "PreCompact": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "PreToolUse": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "SessionStart": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "Stop": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "SubagentStart": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "SubagentStop": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "UserPromptSubmit": {
+          "items": {
+            "$ref": "#/$defs/ConfiguredHookMatcherGroup"
+          },
+          "type": "array"
+        },
+        "managedDir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "windowsManagedDir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "managedDir",
+        "windowsManagedDir",
+        "PreToolUse",
+        "PermissionRequest",
+        "PostToolUse",
+        "PreCompact",
+        "PostCompact",
+        "SessionStart",
+        "UserPromptSubmit",
+        "SubagentStart",
+        "SubagentStop",
+        "Stop"
       ],
       "type": "object"
     },
