@@ -4790,6 +4790,10 @@
       ],
       "type": "string"
     },
+    "LogoutAccountResponse": {
+      "additionalProperties": false,
+      "type": "object"
+    },
     "MCPContent": {
       "additionalProperties": false,
       "properties": {
