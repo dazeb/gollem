@@ -1365,6 +1365,215 @@
       ],
       "type": "string"
     },
+    "ComputerUseRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "allowLockedComputerUse": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "allowLockedComputerUse"
+      ],
+      "type": "object"
+    },
+    "ConfigRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "allowAppshots": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowManagedHooksOnly": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowRemoteControl": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedApprovalPolicies": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AskForApproval"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedPermissionProfiles": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object",
+              "x-gollem-typescript-optional-map": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedSandboxModes": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/SandboxMode"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedWebSearchModes": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/WebSearchMode"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowedWindowsSandboxImplementations": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/WindowsSandboxSetupMode"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computerUse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerUseRequirements"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "defaultPermissions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enforceResidency": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResidencyRequirement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "featureRequirements": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object",
+              "x-gollem-typescript-optional-map": true
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "models": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelsRequirements"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "allowedApprovalPolicies",
+        "allowedSandboxModes",
+        "allowedWindowsSandboxImplementations",
+        "allowedPermissionProfiles",
+        "defaultPermissions",
+        "allowedWebSearchModes",
+        "allowManagedHooksOnly",
+        "allowAppshots",
+        "allowRemoteControl",
+        "computerUse",
+        "featureRequirements",
+        "enforceResidency",
+        "models"
+      ],
+      "type": "object"
+    },
+    "ConfigRequirementsReadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "requirements": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigRequirements"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "requirements"
+      ],
+      "type": "object"
+    },
     "ConfigWarningNotification": {
       "additionalProperties": false,
       "properties": {
@@ -5787,6 +5996,12 @@
         "fileSystem"
       ],
       "type": "object"
+    },
+    "ResidencyRequirement": {
+      "enum": [
+        "us"
+      ],
+      "type": "string"
     },
     "Response": {
       "additionalProperties": false,
@@ -11106,6 +11321,22 @@
         "action"
       ],
       "type": "object"
+    },
+    "WebSearchMode": {
+      "enum": [
+        "disabled",
+        "cached",
+        "indexed",
+        "live"
+      ],
+      "type": "string"
+    },
+    "WindowsSandboxSetupMode": {
+      "enum": [
+        "elevated",
+        "unelevated"
+      ],
+      "type": "string"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

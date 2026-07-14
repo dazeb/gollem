@@ -548,9 +548,12 @@ method inference remains `unknown` pending an explicit compatibility adapter.
 
 Exact standalone `NewThreadModelDefaults` and `ModelsRequirements` expose the
 fixed nullable new-thread model, reasoning-effort, and service-tier defaults.
-They remain separate from Gollem's provider/environment requirement rows and
-the incomplete public configuration-requirement graph, so
-`configRequirements/read` inference remains `unknown` pending an explicit
+`ComputerUseRequirements`, `ResidencyRequirement`, `WebSearchMode`,
+`WindowsSandboxSetupMode`, `ConfigRequirements`, and
+`ConfigRequirementsReadResponse` complete the fixed public configuration-
+requirement graph with canonical required-nullable output. These values remain
+separate from Gollem's provider/environment requirement rows and `data` alias,
+so `configRequirements/read` inference remains `unknown` pending an explicit
 projection adapter.
 
 ## Generation

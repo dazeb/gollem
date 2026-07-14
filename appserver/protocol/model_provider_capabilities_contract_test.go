@@ -140,8 +140,8 @@ func TestModelProviderCapabilitiesContractsRemainStandalone(t *testing.T) {
 	if !ok || info.State != MethodImplemented {
 		t.Fatalf("modelProvider/capabilities/read = %#v, %v; want implemented", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 321 {
-		t.Fatalf("definition count = %d, want 321", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 327 {
+		t.Fatalf("definition count = %d, want 327", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

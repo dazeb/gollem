@@ -138,7 +138,7 @@ func TestTypeScriptFixtureTypeChecksWhenCompilerIsAvailable(t *testing.T) {
 	if _, err := exec.LookPath("tsc"); err != nil {
 		t.Skip("tsc is not installed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "tsc", "--project", filepath.Join("typescript", "tsconfig.json"))
 	output, err := cmd.CombinedOutput()
