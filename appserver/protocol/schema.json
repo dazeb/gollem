@@ -4468,6 +4468,57 @@
     "LegacyAppPathString": {
       "type": "string"
     },
+    "ListMcpServerStatusParams": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Opaque pagination cursor returned by a previous call."
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpServerStatusDetail"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Controls how much MCP inventory data to fetch for each server. Defaults to `Full` when omitted."
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional page size; defaults to a server-defined value."
+        },
+        "threadId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
     "LocalShellAction": {
       "oneOf": [
         {
