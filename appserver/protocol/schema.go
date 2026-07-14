@@ -222,6 +222,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "LoginAccountParams", Type: reflect.TypeFor[LoginAccountParams]()},
 		{Name: "LoginAccountResponse", Type: reflect.TypeFor[LoginAccountResponse]()},
 		{Name: "LoginAppBrand", Type: reflect.TypeFor[LoginAppBrand]()},
+		{Name: "LogoutAccountResponse", Type: reflect.TypeFor[LogoutAccountResponse]()},
 		{Name: "LocalShellAction", Type: reflect.TypeFor[LocalShellAction]()},
 		{Name: "LocalShellStatus", Type: reflect.TypeFor[LocalShellStatus]()},
 		{Name: "ManagedHooksRequirements", Type: reflect.TypeFor[ManagedHooksRequirements]()},

@@ -1505,6 +1505,8 @@ export type LoginAccountResponse = {
 
 export type LoginAppBrand = "codex" | "chatgpt";
 
+export type LogoutAccountResponse = Record<string, never>;
+
 export type MCPContent = {
   "text"?: string;
   "type": string;
