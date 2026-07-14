@@ -1384,6 +1384,66 @@
       ],
       "type": "object"
     },
+    "ConfigBatchWriteParams": {
+      "additionalProperties": false,
+      "properties": {
+        "edits": {
+          "items": {
+            "$ref": "#/$defs/ConfigEdit"
+          },
+          "type": "array"
+        },
+        "expectedVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "filePath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Path to the config file to write; defaults to the user's `config.toml` when omitted."
+        },
+        "reloadUserConfig": {
+          "description": "When true, hot-reload the updated user config into all loaded threads after writing.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "type": "object"
+    },
+    "ConfigEdit": {
+      "additionalProperties": false,
+      "properties": {
+        "keyPath": {
+          "type": "string"
+        },
+        "mergeStrategy": {
+          "$ref": "#/$defs/MergeStrategy"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "keyPath",
+        "value",
+        "mergeStrategy"
+      ],
+      "type": "object"
+    },
     "ConfigLayer": {
       "additionalProperties": false,
       "properties": {
@@ -1788,6 +1848,47 @@
       ],
       "type": "object"
     },
+    "ConfigValueWriteParams": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedVersion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "filePath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Path to the config file to write; defaults to the user's `config.toml` when omitted."
+        },
+        "keyPath": {
+          "type": "string"
+        },
+        "mergeStrategy": {
+          "$ref": "#/$defs/MergeStrategy"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "keyPath",
+        "value",
+        "mergeStrategy"
+      ],
+      "type": "object"
+    },
     "ConfigWarningNotification": {
       "additionalProperties": false,
       "properties": {
@@ -1814,6 +1915,38 @@
       "required": [
         "summary",
         "details"
+      ],
+      "type": "object"
+    },
+    "ConfigWriteResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "filePath": {
+          "$ref": "#/$defs/AbsolutePathBuf",
+          "description": "Canonical path to the config file that was written."
+        },
+        "overriddenMetadata": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OverriddenMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/WriteStatus"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "version",
+        "filePath",
+        "overriddenMetadata"
       ],
       "type": "object"
     },
@@ -5112,6 +5245,13 @@
         "note"
       ],
       "type": "object"
+    },
+    "MergeStrategy": {
+      "enum": [
+        "replace",
+        "upsert"
+      ],
+      "type": "string"
     },
     "MessagePhase": {
       "enum": [
@@ -11972,6 +12112,13 @@
       "enum": [
         "elevated",
         "unelevated"
+      ],
+      "type": "string"
+    },
+    "WriteStatus": {
+      "enum": [
+        "ok",
+        "okOverridden"
       ],
       "type": "string"
     }
