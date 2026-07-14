@@ -5784,6 +5784,13 @@
       ],
       "type": "string"
     },
+    "McpServerStatusDetail": {
+      "enum": [
+        "full",
+        "toolsAndAuthOnly"
+      ],
+      "type": "string"
+    },
     "McpServerStatusUpdatedNotification": {
       "additionalProperties": false,
       "properties": {
