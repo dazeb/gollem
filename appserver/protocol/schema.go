@@ -121,6 +121,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecutionOutputDeltaNotificationParams", Type: reflect.TypeFor[CommandExecutionOutputDeltaNotificationParams]()},
 		{Name: "CommandExecutionSource", Type: reflect.TypeFor[CommandExecutionSource]()},
 		{Name: "ComputerUseRequirements", Type: reflect.TypeFor[ComputerUseRequirements]()},
+		{Name: "ConfigLayerSource", Type: reflect.TypeFor[ConfigLayerSource]()},
 		{Name: "ConfigRequirements", Type: reflect.TypeFor[ConfigRequirements]()},
 		{Name: "ConfigRequirementsReadResponse", Type: reflect.TypeFor[ConfigRequirementsReadResponse]()},
 		{Name: "ConfigWarningNotification", Type: reflect.TypeFor[ConfigWarningNotification]()},
@@ -452,6 +453,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["NetworkUnixSocketPermission"] = stringEnumSchema(
 		string(NetworkUnixSocketPermissionAllow), string(NetworkUnixSocketPermissionDeny),
 	)
+	schemas["ConfigLayerSource"] = configLayerSourceSchema()
 	schemas["ConfiguredHookHandler"] = configuredHookHandlerSchema()
 	configRequirementsProperties := schemas["ConfigRequirements"].(Schema)["properties"].(Schema)
 	for _, name := range []string{"allowedPermissionProfiles", "featureRequirements"} {
@@ -1349,6 +1351,53 @@ func configuredHookHandlerSchema() Schema {
 		configuredHookHandlerVariantSchema("prompt", nil, nil),
 		configuredHookHandlerVariantSchema("agent", nil, nil),
 	}}
+}
+
+func configLayerSourceSchema() Schema {
+	absolutePath := Schema{"$ref": "#/$defs/AbsolutePathBuf"}
+	return Schema{"oneOf": []any{
+		configLayerSourceVariant("mdm", []string{"domain", "key"}, Schema{
+			"domain": Schema{"type": "string"},
+			"key":    Schema{"type": "string"},
+		}),
+		configLayerSourceVariant("system", []string{"file"}, Schema{
+			"file": absolutePath,
+		}),
+		configLayerSourceVariant("enterpriseManaged", []string{"id", "name"}, Schema{
+			"id":   Schema{"type": "string"},
+			"name": Schema{"type": "string"},
+		}),
+		configLayerSourceVariant("user", []string{"file", "profile"}, Schema{
+			"file": absolutePath,
+			"profile": Schema{"anyOf": []any{
+				Schema{"type": "string"},
+				Schema{"type": "null"},
+			}},
+		}),
+		configLayerSourceVariant("project", []string{"dotCodexFolder"}, Schema{
+			"dotCodexFolder": absolutePath,
+		}),
+		configLayerSourceVariant("sessionFlags", nil, nil),
+		configLayerSourceVariant("legacyManagedConfigTomlFromFile", []string{"file"}, Schema{
+			"file": absolutePath,
+		}),
+		configLayerSourceVariant("legacyManagedConfigTomlFromMdm", nil, nil),
+	}}
+}
+
+func configLayerSourceVariant(typeName string, requiredFields []string, fields Schema) Schema {
+	properties := Schema{"type": stringEnumSchema(typeName)}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	required := []string{"type"}
+	required = append(required, requiredFields...)
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
 }
 
 func configuredHookHandlerVariantSchema(hookType string, requiredFields []string, fields Schema) Schema {

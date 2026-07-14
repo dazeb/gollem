@@ -1384,6 +1384,173 @@
       ],
       "type": "object"
     },
+    "ConfigLayerSource": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "domain": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "mdm"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "domain",
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            "type": {
+              "enum": [
+                "system"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "enterpriseManaged"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            "profile": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "enum": [
+                "user"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "file",
+            "profile"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "dotCodexFolder": {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            "type": {
+              "enum": [
+                "project"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "dotCodexFolder"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "sessionFlags"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            "type": {
+              "enum": [
+                "legacyManagedConfigTomlFromFile"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "file"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "legacyManagedConfigTomlFromMdm"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ConfigRequirements": {
       "additionalProperties": false,
       "properties": {

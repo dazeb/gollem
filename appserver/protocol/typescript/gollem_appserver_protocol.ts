@@ -786,6 +786,33 @@ export type ComputerUseRequirements = {
   "allowLockedComputerUse": boolean | null;
 };
 
+export type ConfigLayerSource = {
+  "domain": string;
+  "key": string;
+  "type": "mdm";
+} | {
+  "file": AbsolutePathBuf;
+  "type": "system";
+} | {
+  "id": string;
+  "name": string;
+  "type": "enterpriseManaged";
+} | {
+  "file": AbsolutePathBuf;
+  "profile": string | null;
+  "type": "user";
+} | {
+  "dotCodexFolder": AbsolutePathBuf;
+  "type": "project";
+} | {
+  "type": "sessionFlags";
+} | {
+  "file": AbsolutePathBuf;
+  "type": "legacyManagedConfigTomlFromFile";
+} | {
+  "type": "legacyManagedConfigTomlFromMdm";
+};
+
 export type ConfigRequirements = {
   "allowAppshots": boolean | null;
   "allowManagedHooksOnly": boolean | null;
