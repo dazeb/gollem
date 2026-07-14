@@ -838,6 +838,11 @@ export type ConfigLayerSource = {
   "type": "legacyManagedConfigTomlFromMdm";
 };
 
+export type ConfigReadParams = {
+  "cwd"?: string | null;
+  "includeLayers"?: boolean;
+};
+
 export type ConfigRequirements = {
   "allowAppshots": boolean | null;
   "allowManagedHooksOnly": boolean | null;

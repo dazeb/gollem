@@ -126,6 +126,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ConfigLayer", Type: reflect.TypeFor[ConfigLayer]()},
 		{Name: "ConfigLayerMetadata", Type: reflect.TypeFor[ConfigLayerMetadata]()},
 		{Name: "ConfigLayerSource", Type: reflect.TypeFor[ConfigLayerSource]()},
+		{Name: "ConfigReadParams", Type: reflect.TypeFor[ConfigReadParams]()},
 		{Name: "ConfigRequirements", Type: reflect.TypeFor[ConfigRequirements]()},
 		{Name: "ConfigRequirementsReadResponse", Type: reflect.TypeFor[ConfigRequirementsReadResponse]()},
 		{Name: "ConfigValueWriteParams", Type: reflect.TypeFor[ConfigValueWriteParams]()},
@@ -469,6 +470,8 @@ func wireSchemaDefinitions() Schema {
 		string(WriteStatusOK), string(WriteStatusOKOverridden),
 	)
 	schemas["ConfigLayerSource"] = configLayerSourceSchema()
+	configReadProperties := schemas["ConfigReadParams"].(Schema)["properties"].(Schema)
+	configReadProperties["cwd"].(Schema)["description"] = configReadCWDDescription
 	const configFilePathDescription = "Path to the config file to write; defaults to the user's `config.toml` when omitted."
 	for _, definition := range []string{"ConfigValueWriteParams", "ConfigBatchWriteParams"} {
 		properties := schemas[definition].(Schema)["properties"].(Schema)
