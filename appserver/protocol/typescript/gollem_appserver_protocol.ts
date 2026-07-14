@@ -782,6 +782,30 @@ export type CommandExecutionSource = "agent" | "userShell" | "unifiedExecStartup
 
 export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
 
+export type ComputerUseRequirements = {
+  "allowLockedComputerUse": boolean | null;
+};
+
+export type ConfigRequirements = {
+  "allowAppshots": boolean | null;
+  "allowManagedHooksOnly": boolean | null;
+  "allowRemoteControl": boolean | null;
+  "allowedApprovalPolicies": Array<AskForApproval> | null;
+  "allowedPermissionProfiles": { [key in string]?: boolean } | null;
+  "allowedSandboxModes": Array<SandboxMode> | null;
+  "allowedWebSearchModes": Array<WebSearchMode> | null;
+  "allowedWindowsSandboxImplementations": Array<WindowsSandboxSetupMode> | null;
+  "computerUse": ComputerUseRequirements | null;
+  "defaultPermissions": string | null;
+  "enforceResidency": ResidencyRequirement | null;
+  "featureRequirements": { [key in string]?: boolean } | null;
+  "models": ModelsRequirements | null;
+};
+
+export type ConfigRequirementsReadResponse = {
+  "requirements": ConfigRequirements | null;
+};
+
 export type ConfigWarningNotification = {
   "details": string | null;
   "path"?: string;
@@ -1783,6 +1807,8 @@ export type RequestPermissionProfile = {
   "fileSystem": AdditionalFileSystemPermissions | null;
   "network": AdditionalNetworkPermissions | null;
 };
+
+export type ResidencyRequirement = "us";
 
 export type Response = {
   "error"?: Error;
@@ -2808,6 +2834,10 @@ export type WebSearchItem = {
   "id": string;
   "query": string;
 };
+
+export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
+
+export type WindowsSandboxSetupMode = "elevated" | "unelevated";
 
 export type WireTypeBinding = {
   "method": KnownMethod;

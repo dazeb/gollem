@@ -120,6 +120,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecutionItemStartedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemStartedNotificationParams]()},
 		{Name: "CommandExecutionOutputDeltaNotificationParams", Type: reflect.TypeFor[CommandExecutionOutputDeltaNotificationParams]()},
 		{Name: "CommandExecutionSource", Type: reflect.TypeFor[CommandExecutionSource]()},
+		{Name: "ComputerUseRequirements", Type: reflect.TypeFor[ComputerUseRequirements]()},
+		{Name: "ConfigRequirements", Type: reflect.TypeFor[ConfigRequirements]()},
+		{Name: "ConfigRequirementsReadResponse", Type: reflect.TypeFor[ConfigRequirementsReadResponse]()},
 		{Name: "ConfigWarningNotification", Type: reflect.TypeFor[ConfigWarningNotification]()},
 		{Name: "ContentItem", Type: reflect.TypeFor[ContentItem]()},
 		{Name: "ContextCompactionItem", Type: reflect.TypeFor[ContextCompactionItem]()},
@@ -269,6 +272,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ReasoningTextDeltaNotification", Type: reflect.TypeFor[ReasoningTextDeltaNotification]()},
 		{Name: "ReasoningItemContent", Type: reflect.TypeFor[ReasoningItemContent]()},
 		{Name: "ReasoningItemReasoningSummary", Type: reflect.TypeFor[ReasoningItemReasoningSummary]()},
+		{Name: "ResidencyRequirement", Type: reflect.TypeFor[ResidencyRequirement]()},
 		{Name: "RawResponseItemCompletedNotification", Type: reflect.TypeFor[RawResponseItemCompletedNotification]()},
 		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
@@ -383,7 +387,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "UserInput", Type: reflect.TypeFor[UserInput]()},
 		{Name: "WebSearchAction", Type: reflect.TypeFor[WebSearchAction]()},
 		{Name: "WebSearchItem", Type: reflect.TypeFor[WebSearchItem]()},
+		{Name: "WebSearchMode", Type: reflect.TypeFor[WebSearchMode]()},
 		{Name: "WarningNotification", Type: reflect.TypeFor[WarningNotification]()},
+		{Name: "WindowsSandboxSetupMode", Type: reflect.TypeFor[WindowsSandboxSetupMode]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
@@ -426,6 +432,19 @@ func wireSchemaDefinitions() Schema {
 	schemas["InputModality"] = stringEnumSchema(string(InputModalityText), string(InputModalityImage))
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["ReasoningEffort"] = Schema{"type": "string", "minLength": 1}
+	schemas["ResidencyRequirement"] = stringEnumSchema(string(ResidencyRequirementUS))
+	schemas["WebSearchMode"] = stringEnumSchema(
+		string(WebSearchModeDisabled), string(WebSearchModeCached),
+		string(WebSearchModeIndexed), string(WebSearchModeLive),
+	)
+	schemas["WindowsSandboxSetupMode"] = stringEnumSchema(
+		string(WindowsSandboxSetupModeElevated), string(WindowsSandboxSetupModeUnelevated),
+	)
+	configRequirementsProperties := schemas["ConfigRequirements"].(Schema)["properties"].(Schema)
+	for _, name := range []string{"allowedPermissionProfiles", "featureRequirements"} {
+		variants := configRequirementsProperties[name].(Schema)["anyOf"].([]any)
+		variants[0].(Schema)["x-gollem-typescript-optional-map"] = true
+	}
 	schemas["ModelListParams"] = modelListParamsSchema()
 	modelProperties := schemas["Model"].(Schema)["properties"].(Schema)
 	modelProperties["additionalSpeedTiers"].(Schema)["description"] = "Deprecated: use `serviceTiers` instead."
