@@ -1693,6 +1693,10 @@ export type McpResourceReadParams = {
   "uri": string;
 };
 
+export type McpResourceReadResponse = {
+  "contents": Array<ResourceContent>;
+};
+
 export type McpServerElicitationAction = "accept" | "decline" | "cancel";
 
 export type McpServerElicitationRequestParams = {
