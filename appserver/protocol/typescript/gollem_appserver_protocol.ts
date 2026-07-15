@@ -1483,14 +1483,35 @@ export type GuardianWarningNotification = {
   "threadId": string;
 };
 
+export type HookEventName = "preToolUse" | "permissionRequest" | "postToolUse" | "preCompact" | "postCompact" | "sessionStart" | "userPromptSubmit" | "subagentStart" | "subagentStop" | "stop";
+
+export type HookExecutionMode = "sync" | "async";
+
+export type HookHandlerType = "command" | "prompt" | "agent";
+
 export type HookMigration = {
   "name": string;
 };
+
+export type HookOutputEntry = {
+  "kind": HookOutputEntryKind;
+  "text": string;
+};
+
+export type HookOutputEntryKind = "warning" | "stop" | "feedback" | "context" | "error";
 
 export type HookPromptFragment = {
   "hookRunId": string;
   "text": string;
 };
+
+export type HookRunStatus = "running" | "completed" | "failed" | "blocked" | "stopped";
+
+export type HookScope = "thread" | "turn";
+
+export type HookSource = "system" | "user" | "project" | "mdm" | "sessionFlags" | "plugin" | "cloudRequirements" | "cloudManagedConfig" | "legacyManagedConfigFile" | "legacyManagedConfigMdm" | "unknown";
+
+export type HookTrustStatus = "managed" | "untrusted" | "trusted" | "modified";
 
 export type ImageDetail = "auto" | "low" | "high" | "original";
 

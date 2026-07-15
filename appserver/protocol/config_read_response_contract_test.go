@@ -200,8 +200,8 @@ func TestConfigReadResponseRemainsStandalone(t *testing.T) {
 			t.Fatalf("ConfigReadResponse unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 408 {
-		t.Fatalf("definition count = %d, want 408", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 417 {
+		t.Fatalf("definition count = %d, want 417", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
