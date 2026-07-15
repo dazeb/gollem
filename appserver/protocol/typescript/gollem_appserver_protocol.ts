@@ -1436,6 +1436,37 @@ export type FunctionCallOutputContentItem = {
   "type": "encrypted_content";
 };
 
+export type FuzzyFileSearchMatchType = "file" | "directory";
+
+export type FuzzyFileSearchParams = {
+  "cancellationToken": string | null;
+  "query": string;
+  "roots": Array<string>;
+};
+
+export type FuzzyFileSearchResponse = {
+  "files": Array<FuzzyFileSearchResult>;
+};
+
+export type FuzzyFileSearchResult = {
+  "file_name": string;
+  "indices": Array<number> | null;
+  "match_type": FuzzyFileSearchMatchType;
+  "path": string;
+  "root": string;
+  "score": number;
+};
+
+export type FuzzyFileSearchSessionCompletedNotification = {
+  "sessionId": string;
+};
+
+export type FuzzyFileSearchSessionUpdatedNotification = {
+  "files": Array<FuzzyFileSearchResult>;
+  "query": string;
+  "sessionId": string;
+};
+
 export type GitInfo = {
   "branch": string | null;
   "originUrl": string | null;

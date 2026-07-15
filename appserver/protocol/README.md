@@ -490,6 +490,15 @@ in Go and JSON Schema but generates as TypeScript `bigint` to match the pinned
 ts-rs contract. The history record and its read-response wrapper remain unbound
 and do not add import execution, persistence, or history-read behavior.
 
+Exact standalone fuzzy-file-search params, result kind, result, response, and
+session notification records preserve the pinned camel-case envelopes and the
+intentional snake-case `match_type`/`file_name` result fields. Scores and match
+indices retain strict uint32 bounds, optional values canonicalize to explicit
+null, and non-null arrays canonicalize nil to `[]`. The request and notification
+methods remain deferred and unbound; these values add no filesystem access,
+search, ranking, cancellation, session, or notification behavior. Their strict
+compile contract is `typescript/testdata/fuzzy_file_search_contract.ts`.
+
 Exact standalone warning, guardian-warning, and error notification records
 establish the fixed public warning/error value layer. Canonical warning output
 requires explicit nullable thread id, while decoding also accepts omission to
