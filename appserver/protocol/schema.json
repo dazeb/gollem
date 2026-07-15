@@ -3195,6 +3195,52 @@
       ],
       "type": "object"
     },
+    "ExternalAgentConfigImportHistoriesReadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportHistory"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "type": "object"
+    },
+    "ExternalAgentConfigImportHistory": {
+      "additionalProperties": false,
+      "properties": {
+        "completedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "failures": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportItemTypeFailure"
+          },
+          "type": "array"
+        },
+        "importId": {
+          "type": "string"
+        },
+        "successes": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportItemTypeSuccess"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "importId",
+        "completedAtMs",
+        "successes",
+        "failures"
+      ],
+      "type": "object"
+    },
     "ExternalAgentConfigImportItemTypeFailure": {
       "additionalProperties": false,
       "properties": {
