@@ -102,8 +102,8 @@ func TestMcpServerMigrationRemainsStandalone(t *testing.T) {
 			t.Errorf("%s = %#v, %v; want deferred stub", method, info, ok)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 382 {
-		t.Fatalf("definition count = %d, want 382", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 383 {
+		t.Fatalf("definition count = %d, want 383", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
