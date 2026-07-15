@@ -811,6 +811,10 @@ export type CommandExecutionSource = "agent" | "userShell" | "unifiedExecStartup
 
 export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
 
+export type CommandMigration = {
+  "name": string;
+};
+
 export type ComputerUseRequirements = {
   "allowLockedComputerUse": boolean | null;
 };

@@ -8,34 +8,34 @@ import (
 	"testing"
 )
 
-func TestSubagentMigrationSchemaIsExact(t *testing.T) {
+func TestCommandMigrationSchemaIsExact(t *testing.T) {
 	defs := JSONSchema()["$defs"].(Schema)
-	got, ok := defs["SubagentMigration"].(Schema)
+	got, ok := defs["CommandMigration"].(Schema)
 	if !ok {
-		t.Fatal("$defs missing SubagentMigration")
+		t.Fatal("$defs missing CommandMigration")
 	}
 	want := closedThreadSessionParamSchema(Schema{
 		"name": Schema{"type": "string"},
 	}, []string{"name"})
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("SubagentMigration = %#v, want %#v", got, want)
+		t.Fatalf("CommandMigration = %#v, want %#v", got, want)
 	}
 }
 
-func TestSubagentMigrationAcceptsRustWireForms(t *testing.T) {
+func TestCommandMigrationAcceptsRustWireForms(t *testing.T) {
 	cases := []struct {
 		input string
 		want  string
 	}{
 		{input: `{"name":""}`, want: `{"name":""}`},
-		{input: `{"name":"subagent"}`, want: `{"name":"subagent"}`},
+		{input: `{"name":"command"}`, want: `{"name":"command"}`},
 		{
-			input: `{"name":"subagent","agent_name":"ignored","future":{"nested":true}}`,
-			want:  `{"name":"subagent"}`,
+			input: `{"name":"command","command_name":"ignored","future":{"nested":true}}`,
+			want:  `{"name":"command"}`,
 		},
 	}
 	for _, tc := range cases {
-		var migration SubagentMigration
+		var migration CommandMigration
 		if err := json.Unmarshal([]byte(tc.input), &migration); err != nil {
 			t.Errorf("Unmarshal(%s): %v", tc.input, err)
 			continue
@@ -47,7 +47,7 @@ func TestSubagentMigrationAcceptsRustWireForms(t *testing.T) {
 	}
 }
 
-func TestSubagentMigrationRejectsMalformedWireForms(t *testing.T) {
+func TestCommandMigrationRejectsMalformedWireForms(t *testing.T) {
 	invalid := []string{
 		``, `null`, `[]`, `"value"`, `1`, `true`, `{}`,
 		`{"future":true}`,
@@ -57,43 +57,43 @@ func TestSubagentMigrationRejectsMalformedWireForms(t *testing.T) {
 		`{"name":{}}`,
 		`{"name":[]}`,
 		`{"name":"first","name":"second"}`,
-		`{"name":"subagent"`,
-		`{"name":"subagent"} {}`,
+		`{"name":"command"`,
+		`{"name":"command"} {}`,
 	}
 	for _, input := range invalid {
-		var migration SubagentMigration
+		var migration CommandMigration
 		if err := json.Unmarshal([]byte(input), &migration); err == nil {
 			t.Errorf("Unmarshal(%s) succeeded", input)
 		}
 	}
 
-	var migration *SubagentMigration
-	if err := migration.UnmarshalJSON([]byte(`{"name":"subagent"}`)); err == nil {
-		t.Fatal("nil SubagentMigration receiver succeeded")
+	var migration *CommandMigration
+	if err := migration.UnmarshalJSON([]byte(`{"name":"command"}`)); err == nil {
+		t.Fatal("nil CommandMigration receiver succeeded")
 	}
 }
 
-func TestDecodeSubagentMigrationObjectRejectsMalformedJSON(t *testing.T) {
+func TestDecodeCommandMigrationObjectRejectsMalformedJSON(t *testing.T) {
 	invalid := []string{
 		``,
 		`{"unterminated`,
 		`{"name":`,
-		`{"name":"subagent"`,
+		`{"name":"command"`,
 		`{} {}`,
 		`{} trailing`,
 	}
 	for _, input := range invalid {
-		if _, err := decodeSubagentMigrationObject([]byte(input)); err == nil {
-			t.Errorf("decodeSubagentMigrationObject(%q) succeeded", input)
+		if _, err := decodeCommandMigrationObject([]byte(input)); err == nil {
+			t.Errorf("decodeCommandMigrationObject(%q) succeeded", input)
 		}
 	}
 }
 
-func TestSubagentMigrationRemainsStandalone(t *testing.T) {
+func TestCommandMigrationRemainsStandalone(t *testing.T) {
 	for _, binding := range WireTypeBindings() {
-		if slices.Contains(binding.Params, "SubagentMigration") ||
-			slices.Contains(binding.Result, "SubagentMigration") {
-			t.Fatalf("SubagentMigration unexpectedly bound: %#v", binding)
+		if slices.Contains(binding.Params, "CommandMigration") ||
+			slices.Contains(binding.Result, "CommandMigration") {
+			t.Fatalf("CommandMigration unexpectedly bound: %#v", binding)
 		}
 	}
 	for _, method := range []string{"externalAgentConfig/detect", "externalAgentConfig/import"} {
@@ -113,16 +113,16 @@ func TestSubagentMigrationRemainsStandalone(t *testing.T) {
 	}
 }
 
-func TestSubagentMigrationTypeScriptIsExact(t *testing.T) {
+func TestCommandMigrationTypeScriptIsExact(t *testing.T) {
 	generated, err := MarshalTypeScript()
 	if err != nil {
 		t.Fatalf("MarshalTypeScript: %v", err)
 	}
 	source := string(generated)
-	want := "export type SubagentMigration = {\n  \"name\": string;\n};"
+	want := "export type CommandMigration = {\n  \"name\": string;\n};"
 	if !strings.Contains(source, want) {
 		t.Errorf("generated TypeScript missing %q", want)
 	}
 }
 
-var _ json.Unmarshaler = (*SubagentMigration)(nil)
+var _ json.Unmarshaler = (*CommandMigration)(nil)
