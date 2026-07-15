@@ -315,6 +315,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "MigrationDetails", Type: reflect.TypeFor[MigrationDetails]()},
 		{Name: "ExternalAgentConfigMigrationItemType", Type: reflect.TypeFor[ExternalAgentConfigMigrationItemType]()},
 		{Name: "ExternalAgentConfigMigrationItem", Type: reflect.TypeFor[ExternalAgentConfigMigrationItem]()},
+		{Name: "ExternalAgentConfigDetectParams", Type: reflect.TypeFor[ExternalAgentConfigDetectParams]()},
+		{Name: "ExternalAgentConfigDetectResponse", Type: reflect.TypeFor[ExternalAgentConfigDetectResponse]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -563,6 +565,8 @@ func wireSchemaDefinitions() Schema {
 		string(ExternalAgentConfigMigrationItemTypeSessions),
 	)
 	schemas["ExternalAgentConfigMigrationItem"] = externalAgentConfigMigrationItemSchema()
+	schemas["ExternalAgentConfigDetectParams"] = externalAgentConfigDetectParamsSchema()
+	schemas["ExternalAgentConfigDetectResponse"] = externalAgentConfigDetectResponseSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
