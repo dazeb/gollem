@@ -326,6 +326,12 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ExternalAgentConfigImportHistoriesReadResponse", Type: reflect.TypeFor[ExternalAgentConfigImportHistoriesReadResponse]()},
 		{Name: "ExternalAgentConfigImportProgressNotification", Type: reflect.TypeFor[ExternalAgentConfigImportProgressNotification]()},
 		{Name: "ExternalAgentConfigImportCompletedNotification", Type: reflect.TypeFor[ExternalAgentConfigImportCompletedNotification]()},
+		{Name: "FuzzyFileSearchMatchType", Type: reflect.TypeFor[FuzzyFileSearchMatchType]()},
+		{Name: "FuzzyFileSearchParams", Type: reflect.TypeFor[FuzzyFileSearchParams]()},
+		{Name: "FuzzyFileSearchResult", Type: reflect.TypeFor[FuzzyFileSearchResult]()},
+		{Name: "FuzzyFileSearchResponse", Type: reflect.TypeFor[FuzzyFileSearchResponse]()},
+		{Name: "FuzzyFileSearchSessionUpdatedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionUpdatedNotification]()},
+		{Name: "FuzzyFileSearchSessionCompletedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionCompletedNotification]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -585,6 +591,14 @@ func wireSchemaDefinitions() Schema {
 	schemas["ExternalAgentConfigImportHistoriesReadResponse"] = externalAgentConfigImportHistoriesReadResponseSchema()
 	schemas["ExternalAgentConfigImportProgressNotification"] = externalAgentConfigImportNotificationSchema()
 	schemas["ExternalAgentConfigImportCompletedNotification"] = externalAgentConfigImportNotificationSchema()
+	schemas["FuzzyFileSearchMatchType"] = stringEnumSchema(
+		string(FuzzyFileSearchMatchTypeFile), string(FuzzyFileSearchMatchTypeDirectory),
+	)
+	schemas["FuzzyFileSearchParams"] = fuzzyFileSearchParamsSchema()
+	schemas["FuzzyFileSearchResult"] = fuzzyFileSearchResultSchema()
+	schemas["FuzzyFileSearchResponse"] = fuzzyFileSearchResponseSchema()
+	schemas["FuzzyFileSearchSessionUpdatedNotification"] = fuzzyFileSearchSessionUpdatedNotificationSchema()
+	schemas["FuzzyFileSearchSessionCompletedNotification"] = fuzzyFileSearchSessionCompletedNotificationSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()

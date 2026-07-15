@@ -40,7 +40,8 @@ func MarshalTypeScript() ([]byte, error) {
 		definition := defs[name]
 		if name == "MigrationDetails" || name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
-			name == "ExternalAgentConfigImportItemTypeSuccess" {
+			name == "ExternalAgentConfigImportItemTypeSuccess" ||
+			name == "FuzzyFileSearchParams" || name == "FuzzyFileSearchResult" {
 			// Rust accepts omitted serde default/Option fields while generated
 			// TypeScript requires callers to provide their canonical values.
 			schema, _ := typeScriptSchema(definition)
@@ -62,6 +63,12 @@ func MarshalTypeScript() ([]byte, error) {
 				}
 			case "ExternalAgentConfigImportItemTypeSuccess":
 				schema["required"] = []string{"itemType", "cwd", "source", "target"}
+			case "FuzzyFileSearchParams":
+				schema["required"] = []string{"query", "roots", "cancellationToken"}
+			case "FuzzyFileSearchResult":
+				schema["required"] = []string{
+					"root", "path", "match_type", "file_name", "score", "indices",
+				}
 			}
 			definition = schema
 		}
