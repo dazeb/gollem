@@ -194,13 +194,13 @@ func TestExternalAgentConfigDetectResponseRejectsMalformedWireForms(t *testing.T
 	}
 }
 
-func TestDecodeExternalAgentConfigDetectObjectRejectsMalformedEnvelopes(t *testing.T) {
+func TestDecodeExternalAgentConfigObjectRejectsMalformedEnvelopes(t *testing.T) {
 	invalid := []string{``, `null`, `{"`, `{"includeHome":}`, `{"unknown":1`, `{} {}`, `{} {`}
 	for _, input := range invalid {
-		if _, err := decodeExternalAgentConfigDetectObject(
+		if _, err := decodeExternalAgentConfigObject(
 			[]byte(input), "external-agent config detect params", "includeHome", "cwds",
 		); err == nil {
-			t.Errorf("decodeExternalAgentConfigDetectObject(%q) succeeded", input)
+			t.Errorf("decodeExternalAgentConfigObject(%q) succeeded", input)
 		}
 	}
 }
@@ -217,8 +217,8 @@ func TestExternalAgentConfigDetectRecordsRemainStandalone(t *testing.T) {
 	if !ok || info.State != MethodDeferredStub {
 		t.Fatalf("externalAgentConfig/detect = %#v, %v; want deferred stub", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 393 {
-		t.Fatalf("definition count = %d, want 393", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 395 {
+		t.Fatalf("definition count = %d, want 395", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

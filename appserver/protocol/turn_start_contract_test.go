@@ -233,8 +233,8 @@ func TestTurnStartContractsRemainStandalone(t *testing.T) {
 			t.Fatalf("turn/start unexpectedly bound: %#v", binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 393 {
-		t.Fatalf("definition count = %d, want 393", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 395 {
+		t.Fatalf("definition count = %d, want 395", got)
 	}
 	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))

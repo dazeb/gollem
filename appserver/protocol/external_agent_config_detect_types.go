@@ -32,7 +32,7 @@ func (p *ExternalAgentConfigDetectParams) UnmarshalJSON(data []byte) error {
 		return errors.New("decode external-agent config detect params into nil receiver")
 	}
 	const objectName = "external-agent config detect params"
-	payload, err := decodeExternalAgentConfigDetectObject(data, objectName, "includeHome", "cwds")
+	payload, err := decodeExternalAgentConfigObject(data, objectName, "includeHome", "cwds")
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (r *ExternalAgentConfigDetectResponse) UnmarshalJSON(data []byte) error {
 		return errors.New("decode external-agent config detect response into nil receiver")
 	}
 	const objectName = "external-agent config detect response"
-	payload, err := decodeExternalAgentConfigDetectObject(data, objectName, "items")
+	payload, err := decodeExternalAgentConfigObject(data, objectName, "items")
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (r *ExternalAgentConfigDetectResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func decodeExternalAgentConfigDetectObject(
+func decodeExternalAgentConfigObject(
 	data []byte,
 	objectName string,
 	knownFields ...string,

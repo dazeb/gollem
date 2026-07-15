@@ -1130,6 +1130,15 @@ export type ExternalAgentConfigDetectResponse = {
   "items": Array<ExternalAgentConfigMigrationItem>;
 };
 
+export type ExternalAgentConfigImportParams = {
+  "migrationItems": Array<ExternalAgentConfigMigrationItem>;
+  "source"?: string | null;
+};
+
+export type ExternalAgentConfigImportResponse = {
+  "importId": string;
+};
+
 export type ExternalAgentConfigMigrationItem = {
   "cwd": string | null;
   "description": string;
