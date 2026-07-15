@@ -130,8 +130,8 @@ func TestMcpResourceReadResponseRemainsStandalone(t *testing.T) {
 	if !ok || info.State != MethodImplemented {
 		t.Fatalf("mcpServer/resource/read = %#v, %v; want implemented", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 386 {
-		t.Fatalf("definition count = %d, want 386", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 387 {
+		t.Fatalf("definition count = %d, want 387", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

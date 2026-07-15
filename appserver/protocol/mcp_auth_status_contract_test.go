@@ -74,8 +74,8 @@ func TestMcpAuthStatusRemainsStandalone(t *testing.T) {
 			t.Fatalf("McpAuthStatus unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 386 {
-		t.Fatalf("definition count = %d, want 386", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 387 {
+		t.Fatalf("definition count = %d, want 387", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
