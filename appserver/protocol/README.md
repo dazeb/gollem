@@ -484,6 +484,12 @@ reasoning-text producers remain unbound because they omit required `itemId` and
 emit incompatible `index`/`at` extensions. Plan and reasoning-summary methods
 remain blocked until exact producers exist.
 
+The standalone external-agent import-history record is the narrow exception to
+the default integer mapping: its required `completedAtMs` remains signed int64
+in Go and JSON Schema but generates as TypeScript `bigint` to match the pinned
+ts-rs contract. The history record and its read-response wrapper remain unbound
+and do not add import execution, persistence, or history-read behavior.
+
 Exact standalone warning, guardian-warning, and error notification records
 establish the fixed public warning/error value layer. Canonical warning output
 requires explicit nullable thread id, while decoding also accepts omission to

@@ -1135,6 +1135,17 @@ export type ExternalAgentConfigImportCompletedNotification = {
   "itemTypeResults": Array<ExternalAgentConfigImportTypeResult>;
 };
 
+export type ExternalAgentConfigImportHistoriesReadResponse = {
+  "data": Array<ExternalAgentConfigImportHistory>;
+};
+
+export type ExternalAgentConfigImportHistory = {
+  "completedAtMs": bigint;
+  "failures": Array<ExternalAgentConfigImportItemTypeFailure>;
+  "importId": string;
+  "successes": Array<ExternalAgentConfigImportItemTypeSuccess>;
+};
+
 export type ExternalAgentConfigImportItemTypeFailure = {
   "cwd": string | null;
   "errorType": string | null;
