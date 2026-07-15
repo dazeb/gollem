@@ -7396,6 +7396,25 @@
       ],
       "type": "object"
     },
+    "PluginsMigration": {
+      "additionalProperties": false,
+      "properties": {
+        "marketplaceName": {
+          "type": "string"
+        },
+        "pluginNames": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "marketplaceName",
+        "pluginNames"
+      ],
+      "type": "object"
+    },
     "RawResponseItemCompletedNotification": {
       "additionalProperties": false,
       "properties": {

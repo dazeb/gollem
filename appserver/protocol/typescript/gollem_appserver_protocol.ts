@@ -2045,6 +2045,11 @@ export type PlanDeltaNotification = {
   "turnId": string;
 };
 
+export type PluginsMigration = {
+  "marketplaceName": string;
+  "pluginNames": Array<string>;
+};
+
 export type RawResponseItemCompletedNotification = {
   "item": ResponseItem;
   "threadId": string;
