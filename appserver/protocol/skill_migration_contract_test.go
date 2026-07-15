@@ -8,34 +8,34 @@ import (
 	"testing"
 )
 
-func TestMcpServerMigrationSchemaIsExact(t *testing.T) {
+func TestSkillMigrationSchemaIsExact(t *testing.T) {
 	defs := JSONSchema()["$defs"].(Schema)
-	got, ok := defs["McpServerMigration"].(Schema)
+	got, ok := defs["SkillMigration"].(Schema)
 	if !ok {
-		t.Fatal("$defs missing McpServerMigration")
+		t.Fatal("$defs missing SkillMigration")
 	}
 	want := closedThreadSessionParamSchema(Schema{
 		"name": Schema{"type": "string"},
 	}, []string{"name"})
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("McpServerMigration = %#v, want %#v", got, want)
+		t.Fatalf("SkillMigration = %#v, want %#v", got, want)
 	}
 }
 
-func TestMcpServerMigrationAcceptsRustWireForms(t *testing.T) {
+func TestSkillMigrationAcceptsRustWireForms(t *testing.T) {
 	cases := []struct {
 		input string
 		want  string
 	}{
 		{input: `{"name":""}`, want: `{"name":""}`},
-		{input: `{"name":"server"}`, want: `{"name":"server"}`},
+		{input: `{"name":"skill"}`, want: `{"name":"skill"}`},
 		{
-			input: `{"name":"server","server_name":"ignored","future":{"nested":true}}`,
-			want:  `{"name":"server"}`,
+			input: `{"name":"skill","skill_name":"ignored","future":{"nested":true}}`,
+			want:  `{"name":"skill"}`,
 		},
 	}
 	for _, tc := range cases {
-		var migration McpServerMigration
+		var migration SkillMigration
 		if err := json.Unmarshal([]byte(tc.input), &migration); err != nil {
 			t.Errorf("Unmarshal(%s): %v", tc.input, err)
 			continue
@@ -47,7 +47,7 @@ func TestMcpServerMigrationAcceptsRustWireForms(t *testing.T) {
 	}
 }
 
-func TestMcpServerMigrationRejectsMalformedWireForms(t *testing.T) {
+func TestSkillMigrationRejectsMalformedWireForms(t *testing.T) {
 	invalid := []string{
 		``, `null`, `[]`, `"value"`, `1`, `true`, `{}`,
 		`{"future":true}`,
@@ -57,43 +57,43 @@ func TestMcpServerMigrationRejectsMalformedWireForms(t *testing.T) {
 		`{"name":{}}`,
 		`{"name":[]}`,
 		`{"name":"first","name":"second"}`,
-		`{"name":"server"`,
-		`{"name":"server"} {}`,
+		`{"name":"skill"`,
+		`{"name":"skill"} {}`,
 	}
 	for _, input := range invalid {
-		var migration McpServerMigration
+		var migration SkillMigration
 		if err := json.Unmarshal([]byte(input), &migration); err == nil {
 			t.Errorf("Unmarshal(%s) succeeded", input)
 		}
 	}
 
-	var migration *McpServerMigration
-	if err := migration.UnmarshalJSON([]byte(`{"name":"server"}`)); err == nil {
-		t.Fatal("nil McpServerMigration receiver succeeded")
+	var migration *SkillMigration
+	if err := migration.UnmarshalJSON([]byte(`{"name":"skill"}`)); err == nil {
+		t.Fatal("nil SkillMigration receiver succeeded")
 	}
 }
 
-func TestDecodeMcpServerMigrationObjectRejectsMalformedJSON(t *testing.T) {
+func TestDecodeSkillMigrationObjectRejectsMalformedJSON(t *testing.T) {
 	invalid := []string{
 		``,
 		`{"unterminated`,
 		`{"name":`,
-		`{"name":"server"`,
+		`{"name":"skill"`,
 		`{} {}`,
 		`{} trailing`,
 	}
 	for _, input := range invalid {
-		if _, err := decodeMcpServerMigrationObject([]byte(input)); err == nil {
-			t.Errorf("decodeMcpServerMigrationObject(%q) succeeded", input)
+		if _, err := decodeSkillMigrationObject([]byte(input)); err == nil {
+			t.Errorf("decodeSkillMigrationObject(%q) succeeded", input)
 		}
 	}
 }
 
-func TestMcpServerMigrationRemainsStandalone(t *testing.T) {
+func TestSkillMigrationRemainsStandalone(t *testing.T) {
 	for _, binding := range WireTypeBindings() {
-		if slices.Contains(binding.Params, "McpServerMigration") ||
-			slices.Contains(binding.Result, "McpServerMigration") {
-			t.Fatalf("McpServerMigration unexpectedly bound: %#v", binding)
+		if slices.Contains(binding.Params, "SkillMigration") ||
+			slices.Contains(binding.Result, "SkillMigration") {
+			t.Fatalf("SkillMigration unexpectedly bound: %#v", binding)
 		}
 	}
 	for _, method := range []string{"externalAgentConfig/detect", "externalAgentConfig/import"} {
@@ -113,16 +113,16 @@ func TestMcpServerMigrationRemainsStandalone(t *testing.T) {
 	}
 }
 
-func TestMcpServerMigrationTypeScriptIsExact(t *testing.T) {
+func TestSkillMigrationTypeScriptIsExact(t *testing.T) {
 	generated, err := MarshalTypeScript()
 	if err != nil {
 		t.Fatalf("MarshalTypeScript: %v", err)
 	}
 	source := string(generated)
-	want := "export type McpServerMigration = {\n  \"name\": string;\n};"
+	want := "export type SkillMigration = {\n  \"name\": string;\n};"
 	if !strings.Contains(source, want) {
 		t.Errorf("generated TypeScript missing %q", want)
 	}
 }
 
-var _ json.Unmarshaler = (*McpServerMigration)(nil)
+var _ json.Unmarshaler = (*SkillMigration)(nil)

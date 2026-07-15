@@ -2298,6 +2298,10 @@ export type SessionSource = "cli" | "vscode" | "exec" | "appServer" | "unknown" 
   "subAgent": SubAgentSource;
 };
 
+export type SkillMigration = {
+  "name": string;
+};
+
 export type SortDirection = "asc" | "desc";
 
 export type SubAgentActivityKind = "started" | "interacted" | "interrupted";

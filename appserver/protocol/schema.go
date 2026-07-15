@@ -307,6 +307,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "Personality", Type: reflect.TypeFor[Personality]()},
 		{Name: "PlanDeltaNotification", Type: reflect.TypeFor[PlanDeltaNotification]()},
 		{Name: "PluginsMigration", Type: reflect.TypeFor[PluginsMigration]()},
+		{Name: "SkillMigration", Type: reflect.TypeFor[SkillMigration]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -537,6 +538,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["McpServerInfo"] = mcpServerInfoSchema()
 	schemas["McpServerMigration"] = mcpServerMigrationSchema()
 	schemas["PluginsMigration"] = pluginsMigrationSchema()
+	schemas["SkillMigration"] = skillMigrationSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
@@ -2088,6 +2090,12 @@ func pluginsMigrationSchema() Schema {
 			"type": "array", "items": Schema{"type": "string"},
 		},
 	}, []string{"marketplaceName", "pluginNames"})
+}
+
+func skillMigrationSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"name": Schema{"type": "string"},
+	}, []string{"name"})
 }
 
 func mcpServerToolCallParamsSchema() Schema {
