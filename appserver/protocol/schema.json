@@ -3176,6 +3176,25 @@
       ],
       "type": "object"
     },
+    "ExternalAgentConfigImportCompletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "importId": {
+          "type": "string"
+        },
+        "itemTypeResults": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportTypeResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "importId",
+        "itemTypeResults"
+      ],
+      "type": "object"
+    },
     "ExternalAgentConfigImportItemTypeFailure": {
       "additionalProperties": false,
       "properties": {
@@ -3291,6 +3310,25 @@
       },
       "required": [
         "migrationItems"
+      ],
+      "type": "object"
+    },
+    "ExternalAgentConfigImportProgressNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "importId": {
+          "type": "string"
+        },
+        "itemTypeResults": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportTypeResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "importId",
+        "itemTypeResults"
       ],
       "type": "object"
     },

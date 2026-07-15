@@ -1130,6 +1130,11 @@ export type ExternalAgentConfigDetectResponse = {
   "items": Array<ExternalAgentConfigMigrationItem>;
 };
 
+export type ExternalAgentConfigImportCompletedNotification = {
+  "importId": string;
+  "itemTypeResults": Array<ExternalAgentConfigImportTypeResult>;
+};
+
 export type ExternalAgentConfigImportItemTypeFailure = {
   "cwd": string | null;
   "errorType": string | null;
@@ -1149,6 +1154,11 @@ export type ExternalAgentConfigImportItemTypeSuccess = {
 export type ExternalAgentConfigImportParams = {
   "migrationItems": Array<ExternalAgentConfigMigrationItem>;
   "source"?: string | null;
+};
+
+export type ExternalAgentConfigImportProgressNotification = {
+  "importId": string;
+  "itemTypeResults": Array<ExternalAgentConfigImportTypeResult>;
 };
 
 export type ExternalAgentConfigImportResponse = {
