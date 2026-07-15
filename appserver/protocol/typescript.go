@@ -44,7 +44,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "ExternalAgentConfigImportItemTypeSuccess" ||
 			name == "FuzzyFileSearchParams" || name == "FuzzyFileSearchResult" ||
 			name == "HookRunSummary" || name == "HookStartedNotification" ||
-			name == "HookCompletedNotification" {
+			name == "HookCompletedNotification" || name == "HookMetadata" {
 			// Rust accepts omitted serde default/Option fields while generated
 			// TypeScript requires callers to provide their canonical values.
 			schema, _ := typeScriptSchema(definition)
@@ -80,6 +80,12 @@ func MarshalTypeScript() ([]byte, error) {
 				}
 			case "HookStartedNotification", "HookCompletedNotification":
 				schema["required"] = []string{"threadId", "turnId", "run"}
+			case "HookMetadata":
+				schema["required"] = []string{
+					"key", "eventName", "handlerType", "matcher", "command", "timeoutSec",
+					"statusMessage", "sourcePath", "source", "pluginId", "displayOrder",
+					"enabled", "isManaged", "currentHash", "trustStatus",
+				}
 			}
 			definition = schema
 		}
@@ -97,6 +103,20 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
 				"source":        Schema{"$ref": "#/$defs/HookSource"},
 				"statusMessage": Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}},
+			})
+		}
+		if name == "HookMetadata" {
+			// ts-rs maps Rust u64 and i64 fields to bigint. Keep the render hints
+			// out of the exact public JSON Schema.
+			definition = typeScriptDefinitionWithBigIntProperties(
+				definition, "timeoutSec", "displayOrder",
+			)
+			nullableString := Schema{
+				"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			}
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"matcher": nullableString, "command": nullableString,
+				"statusMessage": nullableString, "pluginId": nullableString,
 			})
 		}
 		if name == "HookStartedNotification" || name == "HookCompletedNotification" {

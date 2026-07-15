@@ -1489,11 +1489,34 @@ export type HookCompletedNotification = {
   "turnId": string | null;
 };
 
+export type HookErrorInfo = {
+  "message": string;
+  "path": string;
+};
+
 export type HookEventName = "preToolUse" | "permissionRequest" | "postToolUse" | "preCompact" | "postCompact" | "sessionStart" | "userPromptSubmit" | "subagentStart" | "subagentStop" | "stop";
 
 export type HookExecutionMode = "sync" | "async";
 
 export type HookHandlerType = "command" | "prompt" | "agent";
+
+export type HookMetadata = {
+  "command": string | null;
+  "currentHash": string;
+  "displayOrder": bigint;
+  "enabled": boolean;
+  "eventName": HookEventName;
+  "handlerType": HookHandlerType;
+  "isManaged": boolean;
+  "key": string;
+  "matcher": string | null;
+  "pluginId": string | null;
+  "source": HookSource;
+  "sourcePath": AbsolutePathBuf;
+  "statusMessage": string | null;
+  "timeoutSec": bigint;
+  "trustStatus": HookTrustStatus;
+};
 
 export type HookMigration = {
   "name": string;
@@ -1541,6 +1564,21 @@ export type HookStartedNotification = {
 };
 
 export type HookTrustStatus = "managed" | "untrusted" | "trusted" | "modified";
+
+export type HooksListEntry = {
+  "cwd": string;
+  "errors": Array<HookErrorInfo>;
+  "hooks": Array<HookMetadata>;
+  "warnings": Array<string>;
+};
+
+export type HooksListParams = {
+  "cwds"?: Array<string>;
+};
+
+export type HooksListResponse = {
+  "data": Array<HooksListEntry>;
+};
 
 export type ImageDetail = "auto" | "low" | "high" | "original";
 

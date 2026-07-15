@@ -344,6 +344,11 @@ func wireSchemaDefinitions() Schema {
 		{Name: "HookRunSummary", Type: reflect.TypeFor[HookRunSummary]()},
 		{Name: "HookStartedNotification", Type: reflect.TypeFor[HookStartedNotification]()},
 		{Name: "HookCompletedNotification", Type: reflect.TypeFor[HookCompletedNotification]()},
+		{Name: "HookErrorInfo", Type: reflect.TypeFor[HookErrorInfo]()},
+		{Name: "HookMetadata", Type: reflect.TypeFor[HookMetadata]()},
+		{Name: "HooksListEntry", Type: reflect.TypeFor[HooksListEntry]()},
+		{Name: "HooksListParams", Type: reflect.TypeFor[HooksListParams]()},
+		{Name: "HooksListResponse", Type: reflect.TypeFor[HooksListResponse]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -652,6 +657,11 @@ func wireSchemaDefinitions() Schema {
 	schemas["HookRunSummary"] = hookRunSummarySchema()
 	schemas["HookStartedNotification"] = hookRunNotificationSchema()
 	schemas["HookCompletedNotification"] = hookRunNotificationSchema()
+	schemas["HookErrorInfo"] = hookErrorInfoSchema()
+	schemas["HookMetadata"] = hookMetadataSchema()
+	schemas["HooksListEntry"] = hooksListEntrySchema()
+	schemas["HooksListParams"] = hooksListParamsSchema()
+	schemas["HooksListResponse"] = hooksListResponseSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
