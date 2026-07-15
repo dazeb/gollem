@@ -313,6 +313,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "SubagentMigration", Type: reflect.TypeFor[SubagentMigration]()},
 		{Name: "CommandMigration", Type: reflect.TypeFor[CommandMigration]()},
 		{Name: "MigrationDetails", Type: reflect.TypeFor[MigrationDetails]()},
+		{Name: "ExternalAgentConfigMigrationItemType", Type: reflect.TypeFor[ExternalAgentConfigMigrationItemType]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -549,6 +550,17 @@ func wireSchemaDefinitions() Schema {
 	schemas["SubagentMigration"] = subagentMigrationSchema()
 	schemas["CommandMigration"] = commandMigrationSchema()
 	schemas["MigrationDetails"] = migrationDetailsSchema()
+	schemas["ExternalAgentConfigMigrationItemType"] = stringEnumSchema(
+		string(ExternalAgentConfigMigrationItemTypeAgentsMD),
+		string(ExternalAgentConfigMigrationItemTypeConfig),
+		string(ExternalAgentConfigMigrationItemTypeSkills),
+		string(ExternalAgentConfigMigrationItemTypePlugins),
+		string(ExternalAgentConfigMigrationItemTypeMCPServerConfig),
+		string(ExternalAgentConfigMigrationItemTypeSubagents),
+		string(ExternalAgentConfigMigrationItemTypeHooks),
+		string(ExternalAgentConfigMigrationItemTypeCommands),
+		string(ExternalAgentConfigMigrationItemTypeSessions),
+	)
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
