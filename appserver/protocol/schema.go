@@ -312,6 +312,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "HookMigration", Type: reflect.TypeFor[HookMigration]()},
 		{Name: "SubagentMigration", Type: reflect.TypeFor[SubagentMigration]()},
 		{Name: "CommandMigration", Type: reflect.TypeFor[CommandMigration]()},
+		{Name: "MigrationDetails", Type: reflect.TypeFor[MigrationDetails]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -547,6 +548,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["HookMigration"] = hookMigrationSchema()
 	schemas["SubagentMigration"] = subagentMigrationSchema()
 	schemas["CommandMigration"] = commandMigrationSchema()
+	schemas["MigrationDetails"] = migrationDetailsSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
@@ -2122,6 +2124,26 @@ func commandMigrationSchema() Schema {
 	return closedThreadSessionParamSchema(Schema{
 		"name": Schema{"type": "string"},
 	}, []string{"name"})
+}
+
+func migrationDetailsSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"plugins":    migrationDetailsArraySchema("PluginsMigration"),
+		"skills":     migrationDetailsArraySchema("SkillMigration"),
+		"sessions":   migrationDetailsArraySchema("SessionMigration"),
+		"mcpServers": migrationDetailsArraySchema("McpServerMigration"),
+		"hooks":      migrationDetailsArraySchema("HookMigration"),
+		"subagents":  migrationDetailsArraySchema("SubagentMigration"),
+		"commands":   migrationDetailsArraySchema("CommandMigration"),
+	}, nil)
+}
+
+func migrationDetailsArraySchema(typeName string) Schema {
+	return Schema{
+		"type":    "array",
+		"items":   Schema{"$ref": "#/$defs/" + typeName},
+		"default": []any{},
+	}
 }
 
 func sessionMigrationSchema() Schema {

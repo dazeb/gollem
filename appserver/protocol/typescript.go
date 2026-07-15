@@ -36,7 +36,22 @@ func MarshalTypeScript() ([]byte, error) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		typeName, err := typeScriptType(defs[name], 0)
+		definition := defs[name]
+		if name == "MigrationDetails" {
+			// Rust accepts omitted serde-defaulted arrays while its generated
+			// TypeScript record requires callers to provide every field.
+			schema, _ := typeScriptSchema(definition)
+			renderSchema := make(Schema, len(schema)+1)
+			for key, value := range schema {
+				renderSchema[key] = value
+			}
+			schema = renderSchema
+			schema["required"] = []string{
+				"plugins", "skills", "sessions", "mcpServers", "hooks", "subagents", "commands",
+			}
+			definition = schema
+		}
+		typeName, err := typeScriptType(definition, 0)
 		if err != nil {
 			return nil, fmt.Errorf("generate TypeScript definition %s: %w", name, err)
 		}

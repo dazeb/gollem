@@ -1858,6 +1858,16 @@ export type MethodInfo = {
 
 export type MethodState = "implemented" | "blocked" | "deferred-stub" | "renamed-equivalent" | "not-applicable";
 
+export type MigrationDetails = {
+  "commands": Array<CommandMigration>;
+  "hooks": Array<HookMigration>;
+  "mcpServers": Array<McpServerMigration>;
+  "plugins": Array<PluginsMigration>;
+  "sessions": Array<SessionMigration>;
+  "skills": Array<SkillMigration>;
+  "subagents": Array<SubagentMigration>;
+};
+
 export type Model = {
   "additionalSpeedTiers": Array<string>;
   "availabilityNux": ModelAvailabilityNux | null;
