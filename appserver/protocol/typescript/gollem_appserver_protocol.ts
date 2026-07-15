@@ -1121,6 +1121,13 @@ export type ErrorNotification = {
 
 export type ExecPolicyAmendment = Array<string>;
 
+export type ExternalAgentConfigMigrationItem = {
+  "cwd": string | null;
+  "description": string;
+  "details": MigrationDetails | null;
+  "itemType": ExternalAgentConfigMigrationItemType;
+};
+
 export type ExternalAgentConfigMigrationItemType = "AGENTS_MD" | "CONFIG" | "SKILLS" | "PLUGINS" | "MCP_SERVER_CONFIG" | "SUBAGENTS" | "HOOKS" | "COMMANDS" | "SESSIONS";
 
 export type FileChangeApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";

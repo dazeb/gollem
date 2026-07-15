@@ -3137,6 +3137,42 @@
       },
       "type": "array"
     },
+    "ExternalAgentConfigMigrationItem": {
+      "additionalProperties": false,
+      "properties": {
+        "cwd": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MigrationDetails"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "itemType": {
+          "$ref": "#/$defs/ExternalAgentConfigMigrationItemType"
+        }
+      },
+      "required": [
+        "itemType",
+        "description"
+      ],
+      "type": "object"
+    },
     "ExternalAgentConfigMigrationItemType": {
       "enum": [
         "AGENTS_MD",

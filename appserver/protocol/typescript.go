@@ -37,17 +37,21 @@ func MarshalTypeScript() ([]byte, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		definition := defs[name]
-		if name == "MigrationDetails" {
-			// Rust accepts omitted serde-defaulted arrays while its generated
-			// TypeScript record requires callers to provide every field.
+		if name == "MigrationDetails" || name == "ExternalAgentConfigMigrationItem" {
+			// Rust accepts omitted serde default/Option fields while generated
+			// TypeScript requires callers to provide their canonical values.
 			schema, _ := typeScriptSchema(definition)
 			renderSchema := make(Schema, len(schema)+1)
 			for key, value := range schema {
 				renderSchema[key] = value
 			}
 			schema = renderSchema
-			schema["required"] = []string{
-				"plugins", "skills", "sessions", "mcpServers", "hooks", "subagents", "commands",
+			if name == "MigrationDetails" {
+				schema["required"] = []string{
+					"plugins", "skills", "sessions", "mcpServers", "hooks", "subagents", "commands",
+				}
+			} else {
+				schema["required"] = []string{"itemType", "description", "cwd", "details"}
 			}
 			definition = schema
 		}
