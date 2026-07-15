@@ -4648,6 +4648,196 @@
       ],
       "type": "object"
     },
+    "GuardianApprovalReviewAction": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            "source": {
+              "$ref": "#/$defs/GuardianCommandSource"
+            },
+            "type": {
+              "enum": [
+                "command"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "source",
+            "command",
+            "cwd"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "argv": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "cwd": {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            "program": {
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/$defs/GuardianCommandSource"
+            },
+            "type": {
+              "enum": [
+                "execve"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "source",
+            "program",
+            "argv",
+            "cwd"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "cwd": {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            "files": {
+              "items": {
+                "$ref": "#/$defs/AbsolutePathBuf"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "applyPatch"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "cwd",
+            "files"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "port": {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "protocol": {
+              "$ref": "#/$defs/NetworkApprovalProtocol"
+            },
+            "target": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "networkAccess"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "target",
+            "host",
+            "protocol",
+            "port"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "connectorId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "connectorName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "server": {
+              "type": "string"
+            },
+            "toolName": {
+              "type": "string"
+            },
+            "toolTitle": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "mcpToolCall"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "server",
+            "toolName"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "permissions": {
+              "$ref": "#/$defs/RequestPermissionProfile"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "requestPermissions"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "permissions"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "GuardianApprovalReviewStatus": {
       "enum": [
         "inProgress",

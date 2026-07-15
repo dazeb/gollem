@@ -134,6 +134,9 @@ func MarshalTypeScript() ([]byte, error) {
 				"rationale": Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}},
 			})
 		}
+		if name == "GuardianApprovalReviewAction" {
+			definition = guardianApprovalReviewActionTypeScriptSchema(definition)
+		}
 		typeName, err := typeScriptType(definition, 0)
 		if err != nil {
 			return nil, fmt.Errorf("generate TypeScript definition %s: %w", name, err)
@@ -345,6 +348,51 @@ func typeScriptDefinitionWithPropertySchemas(definition any, replacements Schema
 		renderProperties[name] = replacement
 	}
 	renderSchema["properties"] = renderProperties
+	return renderSchema
+}
+
+func guardianApprovalReviewActionTypeScriptSchema(definition any) Schema {
+	schema, _ := typeScriptSchema(definition)
+	renderSchema := make(Schema, len(schema))
+	for key, value := range schema {
+		renderSchema[key] = value
+	}
+	variants, _ := typeScriptAnySlice(schema["oneOf"])
+	renderVariants := make([]any, 0, len(variants))
+	for _, rawVariant := range variants {
+		variant, _ := typeScriptSchema(rawVariant)
+		renderVariant := make(Schema, len(variant))
+		for key, value := range variant {
+			renderVariant[key] = value
+		}
+		properties, _ := typeScriptSchema(variant["properties"])
+		renderProperties := make(Schema, len(properties))
+		for key, value := range properties {
+			renderProperties[key] = value
+		}
+		typeSchema, _ := typeScriptSchema(properties["type"])
+		tags, _ := typeScriptAnySlice(typeSchema["enum"])
+		required := append([]string(nil), variant["required"].([]string)...)
+		var nullableFields []string
+		if len(tags) == 1 {
+			switch tags[0] {
+			case "mcpToolCall":
+				nullableFields = []string{"connectorId", "connectorName", "toolTitle"}
+			case "requestPermissions":
+				nullableFields = []string{"reason"}
+			}
+		}
+		for _, field := range nullableFields {
+			required = append(required, field)
+			renderProperties[field] = Schema{"anyOf": []any{
+				Schema{"type": "string"}, Schema{"type": "null"},
+			}}
+		}
+		renderVariant["properties"] = renderProperties
+		renderVariant["required"] = required
+		renderVariants = append(renderVariants, renderVariant)
+	}
+	renderSchema["oneOf"] = renderVariants
 	return renderSchema
 }
 

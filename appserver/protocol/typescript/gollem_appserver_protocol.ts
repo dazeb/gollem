@@ -1485,6 +1485,40 @@ export type GuardianApprovalReview = {
   "userAuthorization": GuardianUserAuthorization | null;
 };
 
+export type GuardianApprovalReviewAction = {
+  "command": string;
+  "cwd": AbsolutePathBuf;
+  "source": GuardianCommandSource;
+  "type": "command";
+} | {
+  "argv": Array<string>;
+  "cwd": AbsolutePathBuf;
+  "program": string;
+  "source": GuardianCommandSource;
+  "type": "execve";
+} | {
+  "cwd": AbsolutePathBuf;
+  "files": Array<AbsolutePathBuf>;
+  "type": "applyPatch";
+} | {
+  "host": string;
+  "port": number;
+  "protocol": NetworkApprovalProtocol;
+  "target": string;
+  "type": "networkAccess";
+} | {
+  "connectorId": string | null;
+  "connectorName": string | null;
+  "server": string;
+  "toolName": string;
+  "toolTitle": string | null;
+  "type": "mcpToolCall";
+} | {
+  "permissions": RequestPermissionProfile;
+  "reason": string | null;
+  "type": "requestPermissions";
+};
+
 export type GuardianApprovalReviewStatus = "inProgress" | "approved" | "denied" | "timedOut" | "aborted";
 
 export type GuardianCommandSource = "shell" | "unifiedExec";
