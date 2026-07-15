@@ -499,6 +499,15 @@ methods remain deferred and unbound; these values add no filesystem access,
 search, ranking, cancellation, session, or notification behavior. Their strict
 compile contract is `typescript/testdata/fuzzy_file_search_contract.ts`.
 
+Exact standalone hook event, execution-mode, handler-type, output-kind,
+run-status, scope, source, and trust-status enums plus `HookOutputEntry`
+establish the dependency-free public hook value layer. All literals remain
+closed and case-sensitive; output entries require kind and text while serde
+input discards unknown fields. No hook summary, lifecycle/list parent, method
+binding, discovery, trust decision, execution, persistence, or notification
+producer is added. Their strict compile contract is
+`typescript/testdata/hook_value_foundation_contract.ts`.
+
 Exact standalone warning, guardian-warning, and error notification records
 establish the fixed public warning/error value layer. Canonical warning output
 requires explicit nullable thread id, while decoding also accepts omission to

@@ -332,6 +332,15 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FuzzyFileSearchResponse", Type: reflect.TypeFor[FuzzyFileSearchResponse]()},
 		{Name: "FuzzyFileSearchSessionUpdatedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionUpdatedNotification]()},
 		{Name: "FuzzyFileSearchSessionCompletedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionCompletedNotification]()},
+		{Name: "HookEventName", Type: reflect.TypeFor[HookEventName]()},
+		{Name: "HookExecutionMode", Type: reflect.TypeFor[HookExecutionMode]()},
+		{Name: "HookHandlerType", Type: reflect.TypeFor[HookHandlerType]()},
+		{Name: "HookOutputEntryKind", Type: reflect.TypeFor[HookOutputEntryKind]()},
+		{Name: "HookRunStatus", Type: reflect.TypeFor[HookRunStatus]()},
+		{Name: "HookScope", Type: reflect.TypeFor[HookScope]()},
+		{Name: "HookSource", Type: reflect.TypeFor[HookSource]()},
+		{Name: "HookTrustStatus", Type: reflect.TypeFor[HookTrustStatus]()},
+		{Name: "HookOutputEntry", Type: reflect.TypeFor[HookOutputEntry]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -599,6 +608,44 @@ func wireSchemaDefinitions() Schema {
 	schemas["FuzzyFileSearchResponse"] = fuzzyFileSearchResponseSchema()
 	schemas["FuzzyFileSearchSessionUpdatedNotification"] = fuzzyFileSearchSessionUpdatedNotificationSchema()
 	schemas["FuzzyFileSearchSessionCompletedNotification"] = fuzzyFileSearchSessionCompletedNotificationSchema()
+	schemas["HookEventName"] = stringEnumSchema(
+		string(HookEventNamePreToolUse), string(HookEventNamePermissionRequest),
+		string(HookEventNamePostToolUse), string(HookEventNamePreCompact),
+		string(HookEventNamePostCompact), string(HookEventNameSessionStart),
+		string(HookEventNameUserPromptSubmit), string(HookEventNameSubagentStart),
+		string(HookEventNameSubagentStop), string(HookEventNameStop),
+	)
+	schemas["HookExecutionMode"] = stringEnumSchema(
+		string(HookExecutionModeSync), string(HookExecutionModeAsync),
+	)
+	schemas["HookHandlerType"] = stringEnumSchema(
+		string(HookHandlerTypeCommand), string(HookHandlerTypePrompt), string(HookHandlerTypeAgent),
+	)
+	schemas["HookOutputEntryKind"] = stringEnumSchema(
+		string(HookOutputEntryKindWarning), string(HookOutputEntryKindStop),
+		string(HookOutputEntryKindFeedback), string(HookOutputEntryKindContext),
+		string(HookOutputEntryKindError),
+	)
+	schemas["HookRunStatus"] = stringEnumSchema(
+		string(HookRunStatusRunning), string(HookRunStatusCompleted),
+		string(HookRunStatusFailed), string(HookRunStatusBlocked), string(HookRunStatusStopped),
+	)
+	schemas["HookScope"] = stringEnumSchema(string(HookScopeThread), string(HookScopeTurn))
+	schemas["HookSource"] = stringEnumSchema(
+		string(HookSourceSystem), string(HookSourceUser), string(HookSourceProject),
+		string(HookSourceMDM), string(HookSourceSessionFlags), string(HookSourcePlugin),
+		string(HookSourceCloudRequirements), string(HookSourceCloudManagedConfig),
+		string(HookSourceLegacyManagedConfigFile), string(HookSourceLegacyManagedConfigMDM),
+		string(HookSourceUnknown),
+	)
+	schemas["HookTrustStatus"] = stringEnumSchema(
+		string(HookTrustStatusManaged), string(HookTrustStatusUntrusted),
+		string(HookTrustStatusTrusted), string(HookTrustStatusModified),
+	)
+	schemas["HookOutputEntry"] = closedThreadSessionParamSchema(Schema{
+		"kind": Schema{"$ref": "#/$defs/HookOutputEntryKind"},
+		"text": Schema{"type": "string"},
+	}, []string{"kind", "text"})
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
