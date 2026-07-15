@@ -3176,6 +3176,44 @@
       ],
       "type": "object"
     },
+    "ExternalAgentConfigImportParams": {
+      "additionalProperties": false,
+      "properties": {
+        "migrationItems": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigMigrationItem"
+          },
+          "type": "array"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Source product that produced the migration items. Missing means unspecified."
+        }
+      },
+      "required": [
+        "migrationItems"
+      ],
+      "type": "object"
+    },
+    "ExternalAgentConfigImportResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "importId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "importId"
+      ],
+      "type": "object"
+    },
     "ExternalAgentConfigMigrationItem": {
       "additionalProperties": false,
       "properties": {
