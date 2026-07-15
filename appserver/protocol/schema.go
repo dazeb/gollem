@@ -332,6 +332,10 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FuzzyFileSearchResponse", Type: reflect.TypeFor[FuzzyFileSearchResponse]()},
 		{Name: "FuzzyFileSearchSessionUpdatedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionUpdatedNotification]()},
 		{Name: "FuzzyFileSearchSessionCompletedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionCompletedNotification]()},
+		{Name: "GuardianApprovalReviewStatus", Type: reflect.TypeFor[GuardianApprovalReviewStatus]()},
+		{Name: "GuardianCommandSource", Type: reflect.TypeFor[GuardianCommandSource]()},
+		{Name: "GuardianRiskLevel", Type: reflect.TypeFor[GuardianRiskLevel]()},
+		{Name: "GuardianUserAuthorization", Type: reflect.TypeFor[GuardianUserAuthorization]()},
 		{Name: "HookEventName", Type: reflect.TypeFor[HookEventName]()},
 		{Name: "HookExecutionMode", Type: reflect.TypeFor[HookExecutionMode]()},
 		{Name: "HookHandlerType", Type: reflect.TypeFor[HookHandlerType]()},
@@ -349,6 +353,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "HooksListEntry", Type: reflect.TypeFor[HooksListEntry]()},
 		{Name: "HooksListParams", Type: reflect.TypeFor[HooksListParams]()},
 		{Name: "HooksListResponse", Type: reflect.TypeFor[HooksListResponse]()},
+		{Name: "NetworkApprovalProtocol", Type: reflect.TypeFor[NetworkApprovalProtocol]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -616,6 +621,22 @@ func wireSchemaDefinitions() Schema {
 	schemas["FuzzyFileSearchResponse"] = fuzzyFileSearchResponseSchema()
 	schemas["FuzzyFileSearchSessionUpdatedNotification"] = fuzzyFileSearchSessionUpdatedNotificationSchema()
 	schemas["FuzzyFileSearchSessionCompletedNotification"] = fuzzyFileSearchSessionCompletedNotificationSchema()
+	schemas["GuardianApprovalReviewStatus"] = stringEnumSchema(
+		string(GuardianApprovalReviewStatusInProgress), string(GuardianApprovalReviewStatusApproved),
+		string(GuardianApprovalReviewStatusDenied), string(GuardianApprovalReviewStatusTimedOut),
+		string(GuardianApprovalReviewStatusAborted),
+	)
+	schemas["GuardianCommandSource"] = stringEnumSchema(
+		string(GuardianCommandSourceShell), string(GuardianCommandSourceUnifiedExec),
+	)
+	schemas["GuardianRiskLevel"] = stringEnumSchema(
+		string(GuardianRiskLevelLow), string(GuardianRiskLevelMedium),
+		string(GuardianRiskLevelHigh), string(GuardianRiskLevelCritical),
+	)
+	schemas["GuardianUserAuthorization"] = stringEnumSchema(
+		string(GuardianUserAuthorizationUnknown), string(GuardianUserAuthorizationLow),
+		string(GuardianUserAuthorizationMedium), string(GuardianUserAuthorizationHigh),
+	)
 	schemas["HookEventName"] = stringEnumSchema(
 		string(HookEventNamePreToolUse), string(HookEventNamePermissionRequest),
 		string(HookEventNamePostToolUse), string(HookEventNamePreCompact),
@@ -662,6 +683,10 @@ func wireSchemaDefinitions() Schema {
 	schemas["HooksListEntry"] = hooksListEntrySchema()
 	schemas["HooksListParams"] = hooksListParamsSchema()
 	schemas["HooksListResponse"] = hooksListResponseSchema()
+	schemas["NetworkApprovalProtocol"] = stringEnumSchema(
+		string(NetworkApprovalProtocolHTTP), string(NetworkApprovalProtocolHTTPS),
+		string(NetworkApprovalProtocolSocks5TCP), string(NetworkApprovalProtocolSocks5UDP),
+	)
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
