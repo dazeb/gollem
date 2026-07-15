@@ -1483,6 +1483,12 @@ export type GuardianWarningNotification = {
   "threadId": string;
 };
 
+export type HookCompletedNotification = {
+  "run": HookRunSummary;
+  "threadId": string;
+  "turnId": string | null;
+};
+
 export type HookEventName = "preToolUse" | "permissionRequest" | "postToolUse" | "preCompact" | "postCompact" | "sessionStart" | "userPromptSubmit" | "subagentStart" | "subagentStop" | "stop";
 
 export type HookExecutionMode = "sync" | "async";
@@ -1507,9 +1513,32 @@ export type HookPromptFragment = {
 
 export type HookRunStatus = "running" | "completed" | "failed" | "blocked" | "stopped";
 
+export type HookRunSummary = {
+  "completedAt": bigint | null;
+  "displayOrder": bigint;
+  "durationMs": bigint | null;
+  "entries": Array<HookOutputEntry>;
+  "eventName": HookEventName;
+  "executionMode": HookExecutionMode;
+  "handlerType": HookHandlerType;
+  "id": string;
+  "scope": HookScope;
+  "source": HookSource;
+  "sourcePath": AbsolutePathBuf;
+  "startedAt": bigint;
+  "status": HookRunStatus;
+  "statusMessage": string | null;
+};
+
 export type HookScope = "thread" | "turn";
 
 export type HookSource = "system" | "user" | "project" | "mdm" | "sessionFlags" | "plugin" | "cloudRequirements" | "cloudManagedConfig" | "legacyManagedConfigFile" | "legacyManagedConfigMdm" | "unknown";
+
+export type HookStartedNotification = {
+  "run": HookRunSummary;
+  "threadId": string;
+  "turnId": string | null;
+};
 
 export type HookTrustStatus = "managed" | "untrusted" | "trusted" | "modified";
 

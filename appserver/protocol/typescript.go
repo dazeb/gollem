@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -41,7 +42,9 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "MigrationDetails" || name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
 			name == "ExternalAgentConfigImportItemTypeSuccess" ||
-			name == "FuzzyFileSearchParams" || name == "FuzzyFileSearchResult" {
+			name == "FuzzyFileSearchParams" || name == "FuzzyFileSearchResult" ||
+			name == "HookRunSummary" || name == "HookStartedNotification" ||
+			name == "HookCompletedNotification" {
 			// Rust accepts omitted serde default/Option fields while generated
 			// TypeScript requires callers to provide their canonical values.
 			schema, _ := typeScriptSchema(definition)
@@ -69,31 +72,37 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{
 					"root", "path", "match_type", "file_name", "score", "indices",
 				}
+			case "HookRunSummary":
+				schema["required"] = []string{
+					"id", "eventName", "handlerType", "executionMode", "scope", "sourcePath",
+					"source", "displayOrder", "status", "statusMessage", "startedAt",
+					"completedAt", "durationMs", "entries",
+				}
+			case "HookStartedNotification", "HookCompletedNotification":
+				schema["required"] = []string{"threadId", "turnId", "run"}
 			}
 			definition = schema
 		}
 		if name == "ExternalAgentConfigImportHistory" {
 			// ts-rs maps this Rust i64 to bigint. Apply the hint only to a
 			// render copy so the public JSON Schema remains exact.
-			schema, _ := typeScriptSchema(definition)
-			renderSchema := make(Schema, len(schema))
-			for key, value := range schema {
-				renderSchema[key] = value
-			}
-			properties, _ := typeScriptSchema(schema["properties"])
-			renderProperties := make(Schema, len(properties))
-			for key, value := range properties {
-				renderProperties[key] = value
-			}
-			completedAtMS, _ := typeScriptSchema(properties["completedAtMs"])
-			renderCompletedAtMS := make(Schema, len(completedAtMS)+1)
-			for key, value := range completedAtMS {
-				renderCompletedAtMS[key] = value
-			}
-			renderCompletedAtMS[typeScriptBigIntKeyword] = true
-			renderProperties["completedAtMs"] = renderCompletedAtMS
-			renderSchema["properties"] = renderProperties
-			definition = renderSchema
+			definition = typeScriptDefinitionWithBigIntProperties(definition, "completedAtMs")
+		}
+		if name == "HookRunSummary" {
+			// ts-rs maps each Rust i64 field to bigint, including nullable i64
+			// options. Keep these hints out of the public JSON Schema.
+			definition = typeScriptDefinitionWithBigIntProperties(
+				definition, "displayOrder", "startedAt", "completedAt", "durationMs",
+			)
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"source":        Schema{"$ref": "#/$defs/HookSource"},
+				"statusMessage": Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}},
+			})
+		}
+		if name == "HookStartedNotification" || name == "HookCompletedNotification" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"turnId": Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}},
+			})
 		}
 		typeName, err := typeScriptType(definition, 0)
 		if err != nil {
@@ -267,16 +276,76 @@ func writeTypeScriptItemBindings(out *bytes.Buffer) {
 	out.WriteString("}[KnownItemKind];\n")
 }
 
+func typeScriptDefinitionWithBigIntProperties(definition any, names ...string) Schema {
+	schema, _ := typeScriptSchema(definition)
+	renderSchema := make(Schema, len(schema))
+	for key, value := range schema {
+		renderSchema[key] = value
+	}
+	properties, _ := typeScriptSchema(schema["properties"])
+	renderProperties := make(Schema, len(properties))
+	for key, value := range properties {
+		renderProperties[key] = value
+	}
+	for _, name := range names {
+		property, _ := typeScriptSchema(properties[name])
+		renderProperty := make(Schema, len(property)+1)
+		for key, value := range property {
+			renderProperty[key] = value
+		}
+		renderProperty[typeScriptBigIntKeyword] = true
+		renderProperties[name] = renderProperty
+	}
+	renderSchema["properties"] = renderProperties
+	return renderSchema
+}
+
+func typeScriptDefinitionWithPropertySchemas(definition any, replacements Schema) Schema {
+	schema, _ := typeScriptSchema(definition)
+	renderSchema := make(Schema, len(schema))
+	for key, value := range schema {
+		renderSchema[key] = value
+	}
+	properties, _ := typeScriptSchema(schema["properties"])
+	renderProperties := make(Schema, len(properties))
+	for key, value := range properties {
+		renderProperties[key] = value
+	}
+	for name, replacement := range replacements {
+		renderProperties[name] = replacement
+	}
+	renderSchema["properties"] = renderProperties
+	return renderSchema
+}
+
 func typeScriptType(value any, indent int) (string, error) {
 	schema, ok := typeScriptSchema(value)
 	if !ok || len(schema) == 0 {
 		return "unknown", nil
 	}
 	if bigint, _ := schema[typeScriptBigIntKeyword].(bool); bigint {
-		if schema["type"] != "integer" {
+		if schema["type"] == "integer" {
+			return "bigint", nil
+		}
+		types, ok := typeScriptAnySlice(schema["type"])
+		if !ok {
 			return "", errors.New("TypeScript bigint schema must have integer type")
 		}
-		return "bigint", nil
+		parts := make([]string, 0, len(types))
+		for _, value := range types {
+			switch value {
+			case "integer":
+				parts = appendUniqueTypeScript(parts, "bigint")
+			case "null":
+				parts = appendUniqueTypeScript(parts, "null")
+			default:
+				return "", errors.New("TypeScript bigint schema type array must contain only integer and null")
+			}
+		}
+		if !slices.Contains(parts, "bigint") {
+			return "", errors.New("TypeScript bigint schema type array must contain integer")
+		}
+		return strings.Join(parts, " | "), nil
 	}
 	if ref, ok := schema["$ref"].(string); ok {
 		const prefix = "#/$defs/"

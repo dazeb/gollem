@@ -341,6 +341,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "HookSource", Type: reflect.TypeFor[HookSource]()},
 		{Name: "HookTrustStatus", Type: reflect.TypeFor[HookTrustStatus]()},
 		{Name: "HookOutputEntry", Type: reflect.TypeFor[HookOutputEntry]()},
+		{Name: "HookRunSummary", Type: reflect.TypeFor[HookRunSummary]()},
+		{Name: "HookStartedNotification", Type: reflect.TypeFor[HookStartedNotification]()},
+		{Name: "HookCompletedNotification", Type: reflect.TypeFor[HookCompletedNotification]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -646,6 +649,9 @@ func wireSchemaDefinitions() Schema {
 		"kind": Schema{"$ref": "#/$defs/HookOutputEntryKind"},
 		"text": Schema{"type": "string"},
 	}, []string{"kind", "text"})
+	schemas["HookRunSummary"] = hookRunSummarySchema()
+	schemas["HookStartedNotification"] = hookRunNotificationSchema()
+	schemas["HookCompletedNotification"] = hookRunNotificationSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
