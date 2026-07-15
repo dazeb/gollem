@@ -319,6 +319,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ExternalAgentConfigDetectResponse", Type: reflect.TypeFor[ExternalAgentConfigDetectResponse]()},
 		{Name: "ExternalAgentConfigImportParams", Type: reflect.TypeFor[ExternalAgentConfigImportParams]()},
 		{Name: "ExternalAgentConfigImportResponse", Type: reflect.TypeFor[ExternalAgentConfigImportResponse]()},
+		{Name: "ExternalAgentConfigImportItemTypeFailure", Type: reflect.TypeFor[ExternalAgentConfigImportItemTypeFailure]()},
+		{Name: "ExternalAgentConfigImportItemTypeSuccess", Type: reflect.TypeFor[ExternalAgentConfigImportItemTypeSuccess]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -571,6 +573,8 @@ func wireSchemaDefinitions() Schema {
 	schemas["ExternalAgentConfigDetectResponse"] = externalAgentConfigDetectResponseSchema()
 	schemas["ExternalAgentConfigImportParams"] = externalAgentConfigImportParamsSchema()
 	schemas["ExternalAgentConfigImportResponse"] = externalAgentConfigImportResponseSchema()
+	schemas["ExternalAgentConfigImportItemTypeFailure"] = externalAgentConfigImportItemTypeFailureSchema()
+	schemas["ExternalAgentConfigImportItemTypeSuccess"] = externalAgentConfigImportItemTypeSuccessSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()

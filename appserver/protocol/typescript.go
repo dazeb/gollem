@@ -37,7 +37,9 @@ func MarshalTypeScript() ([]byte, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		definition := defs[name]
-		if name == "MigrationDetails" || name == "ExternalAgentConfigMigrationItem" {
+		if name == "MigrationDetails" || name == "ExternalAgentConfigMigrationItem" ||
+			name == "ExternalAgentConfigImportItemTypeFailure" ||
+			name == "ExternalAgentConfigImportItemTypeSuccess" {
 			// Rust accepts omitted serde default/Option fields while generated
 			// TypeScript requires callers to provide their canonical values.
 			schema, _ := typeScriptSchema(definition)
@@ -46,12 +48,19 @@ func MarshalTypeScript() ([]byte, error) {
 				renderSchema[key] = value
 			}
 			schema = renderSchema
-			if name == "MigrationDetails" {
+			switch name {
+			case "MigrationDetails":
 				schema["required"] = []string{
 					"plugins", "skills", "sessions", "mcpServers", "hooks", "subagents", "commands",
 				}
-			} else {
+			case "ExternalAgentConfigMigrationItem":
 				schema["required"] = []string{"itemType", "description", "cwd", "details"}
+			case "ExternalAgentConfigImportItemTypeFailure":
+				schema["required"] = []string{
+					"itemType", "errorType", "failureStage", "message", "cwd", "source",
+				}
+			case "ExternalAgentConfigImportItemTypeSuccess":
+				schema["required"] = []string{"itemType", "cwd", "source", "target"}
 			}
 			definition = schema
 		}
