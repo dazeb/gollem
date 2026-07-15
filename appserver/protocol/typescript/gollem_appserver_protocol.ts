@@ -1478,6 +1478,14 @@ export type GrantedPermissionProfile = {
   "network"?: AdditionalNetworkPermissions;
 };
 
+export type GuardianApprovalReviewStatus = "inProgress" | "approved" | "denied" | "timedOut" | "aborted";
+
+export type GuardianCommandSource = "shell" | "unifiedExec";
+
+export type GuardianRiskLevel = "low" | "medium" | "high" | "critical";
+
+export type GuardianUserAuthorization = "unknown" | "low" | "medium" | "high";
+
 export type GuardianWarningNotification = {
   "message": string;
   "threadId": string;
@@ -2145,6 +2153,8 @@ export type ModelsRequirements = {
 };
 
 export type NetworkAccess = "restricted" | "enabled";
+
+export type NetworkApprovalProtocol = "http" | "https" | "socks5Tcp" | "socks5Udp";
 
 export type NetworkDomainPermission = "allow" | "deny";
 

@@ -517,6 +517,15 @@ and generate as TypeScript `bigint`. Both `hook/started` and `hook/completed`
 remain blocked and unbound. Their strict compile contract is
 `typescript/testdata/hook_run_notification_contract.ts`.
 
+Exact standalone Guardian approval review status, command source, risk level,
+user authorization, and network approval protocol enums establish the closed
+leaf layer needed by later Guardian review records. All literals are closed and
+case-sensitive, including camel-case `inProgress`, `timedOut`, `unifiedExec`,
+`socks5Tcp`, and `socks5Udp`. No Guardian review/action parent, notification,
+assessment, replay, approval, policy enforcement, method/item binding, or
+runtime behavior is added. Their strict compile contract is
+`typescript/testdata/guardian_enum_foundation_contract.ts`.
+
 Exact standalone warning, guardian-warning, and error notification records
 establish the fixed public warning/error value layer. Canonical warning output
 requires explicit nullable thread id, while decoding also accepts omission to
