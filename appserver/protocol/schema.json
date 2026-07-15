@@ -3137,6 +3137,45 @@
       },
       "type": "array"
     },
+    "ExternalAgentConfigDetectParams": {
+      "additionalProperties": false,
+      "properties": {
+        "cwds": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Zero or more working directories to include for repo-scoped detection."
+        },
+        "includeHome": {
+          "description": "If true, include detection under the user's home directory.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ExternalAgentConfigDetectResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigMigrationItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
     "ExternalAgentConfigMigrationItem": {
       "additionalProperties": false,
       "properties": {

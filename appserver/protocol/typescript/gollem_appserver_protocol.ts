@@ -1121,6 +1121,15 @@ export type ErrorNotification = {
 
 export type ExecPolicyAmendment = Array<string>;
 
+export type ExternalAgentConfigDetectParams = {
+  "cwds"?: Array<string> | null;
+  "includeHome"?: boolean;
+};
+
+export type ExternalAgentConfigDetectResponse = {
+  "items": Array<ExternalAgentConfigMigrationItem>;
+};
+
 export type ExternalAgentConfigMigrationItem = {
   "cwd": string | null;
   "description": string;
