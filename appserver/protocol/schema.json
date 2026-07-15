@@ -8680,6 +8680,33 @@
     "ServerRequestResolvedNotificationParams": {
       "$ref": "#/$defs/ServerRequestResolvedNotification"
     },
+    "SessionMigration": {
+      "additionalProperties": false,
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "cwd",
+        "title"
+      ],
+      "type": "object"
+    },
     "SessionSource": {
       "oneOf": [
         {
