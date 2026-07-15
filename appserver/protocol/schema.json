@@ -3306,6 +3306,32 @@
       ],
       "type": "object"
     },
+    "ExternalAgentConfigImportTypeResult": {
+      "additionalProperties": false,
+      "properties": {
+        "failures": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportItemTypeFailure"
+          },
+          "type": "array"
+        },
+        "itemType": {
+          "$ref": "#/$defs/ExternalAgentConfigMigrationItemType"
+        },
+        "successes": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportItemTypeSuccess"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "itemType",
+        "successes",
+        "failures"
+      ],
+      "type": "object"
+    },
     "ExternalAgentConfigMigrationItem": {
       "additionalProperties": false,
       "properties": {
