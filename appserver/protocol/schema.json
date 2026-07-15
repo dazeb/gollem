@@ -4626,6 +4626,28 @@
       ],
       "type": "object"
     },
+    "HookCompletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/HookRunSummary"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "run",
+        "threadId"
+      ],
+      "type": "object"
+    },
     "HookEventName": {
       "enum": [
         "preToolUse",
@@ -4720,6 +4742,87 @@
       ],
       "type": "string"
     },
+    "HookRunSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "completedAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "displayOrder": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "durationMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/HookOutputEntry"
+          },
+          "type": "array"
+        },
+        "eventName": {
+          "$ref": "#/$defs/HookEventName"
+        },
+        "executionMode": {
+          "$ref": "#/$defs/HookExecutionMode"
+        },
+        "handlerType": {
+          "$ref": "#/$defs/HookHandlerType"
+        },
+        "id": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/HookScope"
+        },
+        "source": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/HookSource"
+            }
+          ],
+          "default": "unknown"
+        },
+        "sourcePath": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "startedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/HookRunStatus"
+        },
+        "statusMessage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "displayOrder",
+        "entries",
+        "eventName",
+        "executionMode",
+        "handlerType",
+        "id",
+        "scope",
+        "sourcePath",
+        "startedAt",
+        "status"
+      ],
+      "type": "object"
+    },
     "HookScope": {
       "enum": [
         "thread",
@@ -4742,6 +4845,28 @@
         "unknown"
       ],
       "type": "string"
+    },
+    "HookStartedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/HookRunSummary"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "run",
+        "threadId"
+      ],
+      "type": "object"
     },
     "HookTrustStatus": {
       "enum": [

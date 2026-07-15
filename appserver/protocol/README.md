@@ -508,6 +508,15 @@ binding, discovery, trust decision, execution, persistence, or notification
 producer is added. Their strict compile contract is
 `typescript/testdata/hook_value_foundation_contract.ts`.
 
+Exact standalone `HookRunSummary`, `HookStartedNotification`, and
+`HookCompletedNotification` records extend that value layer without binding a
+producer. Summary input accepts omitted source as `unknown` and omitted option
+fields as null; canonical output includes every field and normalizes nil
+entries to `[]`. Signed int64 fields remain `integer`/`int64` in JSON Schema
+and generate as TypeScript `bigint`. Both `hook/started` and `hook/completed`
+remain blocked and unbound. Their strict compile contract is
+`typescript/testdata/hook_run_notification_contract.ts`.
+
 Exact standalone warning, guardian-warning, and error notification records
 establish the fixed public warning/error value layer. Canonical warning output
 requires explicit nullable thread id, while decoding also accepts omission to
