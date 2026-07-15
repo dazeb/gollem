@@ -1155,6 +1155,12 @@ export type ExternalAgentConfigImportResponse = {
   "importId": string;
 };
 
+export type ExternalAgentConfigImportTypeResult = {
+  "failures": Array<ExternalAgentConfigImportItemTypeFailure>;
+  "itemType": ExternalAgentConfigMigrationItemType;
+  "successes": Array<ExternalAgentConfigImportItemTypeSuccess>;
+};
+
 export type ExternalAgentConfigMigrationItem = {
   "cwd": string | null;
   "description": string;
