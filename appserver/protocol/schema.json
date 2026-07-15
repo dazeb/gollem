@@ -4153,6 +4153,18 @@
       ],
       "type": "object"
     },
+    "HookMigration": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "HookPromptFragment": {
       "additionalProperties": false,
       "properties": {

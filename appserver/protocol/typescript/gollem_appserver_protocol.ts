@@ -1378,6 +1378,10 @@ export type GuardianWarningNotification = {
   "threadId": string;
 };
 
+export type HookMigration = {
+  "name": string;
+};
+
 export type HookPromptFragment = {
   "hookRunId": string;
   "text": string;
