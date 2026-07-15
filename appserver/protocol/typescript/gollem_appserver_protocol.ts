@@ -2292,6 +2292,12 @@ export type ServerRequestResolvedNotification = {
 
 export type ServerRequestResolvedNotificationParams = ServerRequestResolvedNotification;
 
+export type SessionMigration = {
+  "cwd": string;
+  "path": string;
+  "title": string | null;
+};
+
 export type SessionSource = "cli" | "vscode" | "exec" | "appServer" | "unknown" | {
   "custom": string;
 } | {
