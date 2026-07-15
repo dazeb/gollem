@@ -1478,6 +1478,13 @@ export type GrantedPermissionProfile = {
   "network"?: AdditionalNetworkPermissions;
 };
 
+export type GuardianApprovalReview = {
+  "rationale": string | null;
+  "riskLevel": GuardianRiskLevel | null;
+  "status": GuardianApprovalReviewStatus;
+  "userAuthorization": GuardianUserAuthorization | null;
+};
+
 export type GuardianApprovalReviewStatus = "inProgress" | "approved" | "denied" | "timedOut" | "aborted";
 
 export type GuardianCommandSource = "shell" | "unifiedExec";

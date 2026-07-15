@@ -521,10 +521,13 @@ Exact standalone Guardian approval review status, command source, risk level,
 user authorization, and network approval protocol enums establish the closed
 leaf layer needed by later Guardian review records. All literals are closed and
 case-sensitive, including camel-case `inProgress`, `timedOut`, `unifiedExec`,
-`socks5Tcp`, and `socks5Udp`. No Guardian review/action parent, notification,
-assessment, replay, approval, policy enforcement, method/item binding, or
-runtime behavior is added. Their strict compile contract is
-`typescript/testdata/guardian_enum_foundation_contract.ts`.
+`socks5Tcp`, and `socks5Udp`. The standalone unstable
+`GuardianApprovalReview` record accepts omitted nullable options like serde but
+emits them explicitly like ts-rs. No Guardian action union, notification,
+assessment, replay, approval, policy enforcement, method/item binding,
+producer, persistence, or runtime behavior is added. Their strict compile
+contracts are `typescript/testdata/guardian_enum_foundation_contract.ts` and
+`typescript/testdata/guardian_approval_review_contract.ts`.
 
 Exact standalone warning, guardian-warning, and error notification records
 establish the fixed public warning/error value layer. Canonical warning output
