@@ -2328,6 +2328,10 @@ export type SubAgentSource = "review" | "compact" | "memory_consolidation" | {
   "other": string;
 };
 
+export type SubagentMigration = {
+  "name": string;
+};
+
 export type Surface = "client-request" | "server-notification" | "server-request" | "client-notification" | "gollem-extension";
 
 export type TextElement = {

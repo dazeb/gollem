@@ -8,34 +8,34 @@ import (
 	"testing"
 )
 
-func TestHookMigrationSchemaIsExact(t *testing.T) {
+func TestSubagentMigrationSchemaIsExact(t *testing.T) {
 	defs := JSONSchema()["$defs"].(Schema)
-	got, ok := defs["HookMigration"].(Schema)
+	got, ok := defs["SubagentMigration"].(Schema)
 	if !ok {
-		t.Fatal("$defs missing HookMigration")
+		t.Fatal("$defs missing SubagentMigration")
 	}
 	want := closedThreadSessionParamSchema(Schema{
 		"name": Schema{"type": "string"},
 	}, []string{"name"})
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("HookMigration = %#v, want %#v", got, want)
+		t.Fatalf("SubagentMigration = %#v, want %#v", got, want)
 	}
 }
 
-func TestHookMigrationAcceptsRustWireForms(t *testing.T) {
+func TestSubagentMigrationAcceptsRustWireForms(t *testing.T) {
 	cases := []struct {
 		input string
 		want  string
 	}{
 		{input: `{"name":""}`, want: `{"name":""}`},
-		{input: `{"name":"hook"}`, want: `{"name":"hook"}`},
+		{input: `{"name":"subagent"}`, want: `{"name":"subagent"}`},
 		{
-			input: `{"name":"hook","hook_name":"ignored","future":{"nested":true}}`,
-			want:  `{"name":"hook"}`,
+			input: `{"name":"subagent","agent_name":"ignored","future":{"nested":true}}`,
+			want:  `{"name":"subagent"}`,
 		},
 	}
 	for _, tc := range cases {
-		var migration HookMigration
+		var migration SubagentMigration
 		if err := json.Unmarshal([]byte(tc.input), &migration); err != nil {
 			t.Errorf("Unmarshal(%s): %v", tc.input, err)
 			continue
@@ -47,7 +47,7 @@ func TestHookMigrationAcceptsRustWireForms(t *testing.T) {
 	}
 }
 
-func TestHookMigrationRejectsMalformedWireForms(t *testing.T) {
+func TestSubagentMigrationRejectsMalformedWireForms(t *testing.T) {
 	invalid := []string{
 		``, `null`, `[]`, `"value"`, `1`, `true`, `{}`,
 		`{"future":true}`,
@@ -57,43 +57,43 @@ func TestHookMigrationRejectsMalformedWireForms(t *testing.T) {
 		`{"name":{}}`,
 		`{"name":[]}`,
 		`{"name":"first","name":"second"}`,
-		`{"name":"hook"`,
-		`{"name":"hook"} {}`,
+		`{"name":"subagent"`,
+		`{"name":"subagent"} {}`,
 	}
 	for _, input := range invalid {
-		var migration HookMigration
+		var migration SubagentMigration
 		if err := json.Unmarshal([]byte(input), &migration); err == nil {
 			t.Errorf("Unmarshal(%s) succeeded", input)
 		}
 	}
 
-	var migration *HookMigration
-	if err := migration.UnmarshalJSON([]byte(`{"name":"hook"}`)); err == nil {
-		t.Fatal("nil HookMigration receiver succeeded")
+	var migration *SubagentMigration
+	if err := migration.UnmarshalJSON([]byte(`{"name":"subagent"}`)); err == nil {
+		t.Fatal("nil SubagentMigration receiver succeeded")
 	}
 }
 
-func TestDecodeHookMigrationObjectRejectsMalformedJSON(t *testing.T) {
+func TestDecodeSubagentMigrationObjectRejectsMalformedJSON(t *testing.T) {
 	invalid := []string{
 		``,
 		`{"unterminated`,
 		`{"name":`,
-		`{"name":"hook"`,
+		`{"name":"subagent"`,
 		`{} {}`,
 		`{} trailing`,
 	}
 	for _, input := range invalid {
-		if _, err := decodeHookMigrationObject([]byte(input)); err == nil {
-			t.Errorf("decodeHookMigrationObject(%q) succeeded", input)
+		if _, err := decodeSubagentMigrationObject([]byte(input)); err == nil {
+			t.Errorf("decodeSubagentMigrationObject(%q) succeeded", input)
 		}
 	}
 }
 
-func TestHookMigrationRemainsStandalone(t *testing.T) {
+func TestSubagentMigrationRemainsStandalone(t *testing.T) {
 	for _, binding := range WireTypeBindings() {
-		if slices.Contains(binding.Params, "HookMigration") ||
-			slices.Contains(binding.Result, "HookMigration") {
-			t.Fatalf("HookMigration unexpectedly bound: %#v", binding)
+		if slices.Contains(binding.Params, "SubagentMigration") ||
+			slices.Contains(binding.Result, "SubagentMigration") {
+			t.Fatalf("SubagentMigration unexpectedly bound: %#v", binding)
 		}
 	}
 	for _, method := range []string{"externalAgentConfig/detect", "externalAgentConfig/import"} {
@@ -113,16 +113,16 @@ func TestHookMigrationRemainsStandalone(t *testing.T) {
 	}
 }
 
-func TestHookMigrationTypeScriptIsExact(t *testing.T) {
+func TestSubagentMigrationTypeScriptIsExact(t *testing.T) {
 	generated, err := MarshalTypeScript()
 	if err != nil {
 		t.Fatalf("MarshalTypeScript: %v", err)
 	}
 	source := string(generated)
-	want := "export type HookMigration = {\n  \"name\": string;\n};"
+	want := "export type SubagentMigration = {\n  \"name\": string;\n};"
 	if !strings.Contains(source, want) {
 		t.Errorf("generated TypeScript missing %q", want)
 	}
 }
 
-var _ json.Unmarshaler = (*HookMigration)(nil)
+var _ json.Unmarshaler = (*SubagentMigration)(nil)

@@ -8868,6 +8868,18 @@
         }
       ]
     },
+    "SubagentMigration": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "Surface": {
       "enum": [
         "client-request",
