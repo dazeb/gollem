@@ -1486,6 +1486,18 @@
       ],
       "type": "string"
     },
+    "CommandMigration": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "ComputerUseRequirements": {
       "additionalProperties": false,
       "properties": {

@@ -311,6 +311,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "SessionMigration", Type: reflect.TypeFor[SessionMigration]()},
 		{Name: "HookMigration", Type: reflect.TypeFor[HookMigration]()},
 		{Name: "SubagentMigration", Type: reflect.TypeFor[SubagentMigration]()},
+		{Name: "CommandMigration", Type: reflect.TypeFor[CommandMigration]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -545,6 +546,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["SessionMigration"] = sessionMigrationSchema()
 	schemas["HookMigration"] = hookMigrationSchema()
 	schemas["SubagentMigration"] = subagentMigrationSchema()
+	schemas["CommandMigration"] = commandMigrationSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
@@ -2111,6 +2113,12 @@ func hookMigrationSchema() Schema {
 }
 
 func subagentMigrationSchema() Schema {
+	return closedThreadSessionParamSchema(Schema{
+		"name": Schema{"type": "string"},
+	}, []string{"name"})
+}
+
+func commandMigrationSchema() Schema {
 	return closedThreadSessionParamSchema(Schema{
 		"name": Schema{"type": "string"},
 	}, []string{"name"})
