@@ -333,6 +333,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FuzzyFileSearchSessionUpdatedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionUpdatedNotification]()},
 		{Name: "FuzzyFileSearchSessionCompletedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionCompletedNotification]()},
 		{Name: "GuardianApprovalReview", Type: reflect.TypeFor[GuardianApprovalReview]()},
+		{Name: "GuardianApprovalReviewAction", Type: reflect.TypeFor[GuardianApprovalReviewAction]()},
 		{Name: "GuardianApprovalReviewStatus", Type: reflect.TypeFor[GuardianApprovalReviewStatus]()},
 		{Name: "GuardianCommandSource", Type: reflect.TypeFor[GuardianCommandSource]()},
 		{Name: "GuardianRiskLevel", Type: reflect.TypeFor[GuardianRiskLevel]()},
@@ -623,6 +624,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["FuzzyFileSearchSessionUpdatedNotification"] = fuzzyFileSearchSessionUpdatedNotificationSchema()
 	schemas["FuzzyFileSearchSessionCompletedNotification"] = fuzzyFileSearchSessionCompletedNotificationSchema()
 	schemas["GuardianApprovalReview"] = guardianApprovalReviewSchema()
+	schemas["GuardianApprovalReviewAction"] = guardianApprovalReviewActionSchema()
 	schemas["GuardianApprovalReviewStatus"] = stringEnumSchema(
 		string(GuardianApprovalReviewStatusInProgress), string(GuardianApprovalReviewStatusApproved),
 		string(GuardianApprovalReviewStatusDenied), string(GuardianApprovalReviewStatusTimedOut),
