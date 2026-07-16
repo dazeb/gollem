@@ -577,6 +577,21 @@ export type AppBranding = {
   "website": string | null;
 };
 
+export type AppMetadata = {
+  "categories": Array<string> | null;
+  "developer": string | null;
+  "firstPartyRequiresInstall": boolean | null;
+  "firstPartyType": string | null;
+  "review": AppReview | null;
+  "screenshots": Array<AppScreenshot> | null;
+  "seoDescription": string | null;
+  "showInComposerWhenUnlinked": boolean | null;
+  "subCategories": Array<string> | null;
+  "version": string | null;
+  "versionId": string | null;
+  "versionNotes": string | null;
+};
+
 export type AppReview = {
   "status": string;
 };
