@@ -114,6 +114,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AppSummary", Type: reflect.TypeFor[AppSummary]()},
 		{Name: "AppTemplateSummary", Type: reflect.TypeFor[AppTemplateSummary]()},
 		{Name: "AppTemplateUnavailableReason", Type: reflect.TypeFor[AppTemplateUnavailableReason]()},
+		{Name: "AppToolApproval", Type: reflect.TypeFor[AppToolApproval]()},
 		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
 		{Name: "ApplyPatchApprovalResponse", Type: reflect.TypeFor[ApplyPatchApprovalResponse]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
@@ -685,6 +686,12 @@ func wireSchemaDefinitions() Schema {
 	schemas["AppTemplateUnavailableReason"] = stringEnumSchema(
 		string(AppTemplateUnavailableReasonNotConfiguredForWorkspace),
 		string(AppTemplateUnavailableReasonNoActiveWorkspace),
+	)
+	schemas["AppToolApproval"] = stringEnumSchema(
+		string(AppToolApprovalAuto),
+		string(AppToolApprovalPrompt),
+		string(AppToolApprovalWrites),
+		string(AppToolApprovalApprove),
 	)
 	schemas["AddCreditsNudgeCreditType"] = stringEnumSchema(
 		string(AddCreditsNudgeCreditTypeCredits),

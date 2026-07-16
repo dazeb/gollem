@@ -646,6 +646,8 @@ export type AppTemplateSummary = {
 
 export type AppTemplateUnavailableReason = "NOT_CONFIGURED_FOR_WORKSPACE" | "NO_ACTIVE_WORKSPACE";
 
+export type AppToolApproval = "auto" | "prompt" | "writes" | "approve";
+
 export type ApplyPatchApprovalParams = {
   "callId": string;
   "conversationId": ThreadId;
