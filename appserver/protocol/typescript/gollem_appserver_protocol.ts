@@ -617,6 +617,19 @@ export type CancelLoginAccountResponse = {
 
 export type CancelLoginAccountStatus = "canceled" | "notFound";
 
+export type ChatgptAuthTokensRefreshParams = {
+  "previousAccountId"?: string | null;
+  "reason": ChatgptAuthTokensRefreshReason;
+};
+
+export type ChatgptAuthTokensRefreshReason = "unauthorized";
+
+export type ChatgptAuthTokensRefreshResponse = {
+  "accessToken": string;
+  "chatgptAccountId": string;
+  "chatgptPlanType": string | null;
+};
+
 export type ClientInfo = {
   "name": string;
   "title"?: string | null;
