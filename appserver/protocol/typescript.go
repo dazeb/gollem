@@ -45,7 +45,8 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "FuzzyFileSearchParams" || name == "FuzzyFileSearchResult" ||
 			name == "HookRunSummary" || name == "HookStartedNotification" ||
 			name == "HookCompletedNotification" || name == "HookMetadata" ||
-			name == "GuardianApprovalReview" {
+			name == "GuardianApprovalReview" ||
+			name == "ItemGuardianApprovalReviewStartedNotification" {
 			// Rust accepts omitted serde default/Option fields while generated
 			// TypeScript requires callers to provide their canonical values.
 			schema, _ := typeScriptSchema(definition)
@@ -90,6 +91,10 @@ func MarshalTypeScript() ([]byte, error) {
 			case "GuardianApprovalReview":
 				schema["required"] = []string{
 					"status", "riskLevel", "userAuthorization", "rationale",
+				}
+			case "ItemGuardianApprovalReviewStartedNotification":
+				schema["required"] = []string{
+					"threadId", "turnId", "startedAtMs", "reviewId", "targetItemId", "review", "action",
 				}
 			}
 			definition = schema
@@ -136,6 +141,13 @@ func MarshalTypeScript() ([]byte, error) {
 		}
 		if name == "GuardianApprovalReviewAction" {
 			definition = guardianApprovalReviewActionTypeScriptSchema(definition)
+		}
+		if name == "ItemGuardianApprovalReviewStartedNotification" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"targetItemId": Schema{
+					"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+				},
+			})
 		}
 		typeName, err := typeScriptType(definition, 0)
 		if err != nil {
