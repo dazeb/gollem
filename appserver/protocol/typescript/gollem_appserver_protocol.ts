@@ -568,6 +568,25 @@ export type AnalyticsConfig = ({
   "enabled": boolean | null;
 } & { [key in string]?: JsonValue });
 
+export type AppBranding = {
+  "category": string | null;
+  "developer": string | null;
+  "isDiscoverableApp": boolean;
+  "privacyPolicy": string | null;
+  "termsOfService": string | null;
+  "website": string | null;
+};
+
+export type AppReview = {
+  "status": string;
+};
+
+export type AppScreenshot = {
+  "fileId": string | null;
+  "url": string | null;
+  "userPrompt": string;
+};
+
 export type ApplyPatchApprovalParams = {
   "callId": string;
   "conversationId": ThreadId;

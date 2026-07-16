@@ -350,6 +350,112 @@
       "type": "object",
       "x-gollem-typescript-optional-map": true
     },
+    "AppBranding": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "developer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "isDiscoverableApp": {
+          "type": "boolean"
+        },
+        "privacyPolicy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "termsOfService": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "website": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "isDiscoverableApp"
+      ],
+      "type": "object"
+    },
+    "AppReview": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "AppScreenshot": {
+      "additionalProperties": false,
+      "properties": {
+        "fileId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "userPrompt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "userPrompt"
+      ],
+      "type": "object"
+    },
     "ApplyPatchApprovalParams": {
       "additionalProperties": false,
       "properties": {
