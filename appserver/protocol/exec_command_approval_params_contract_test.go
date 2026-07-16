@@ -125,8 +125,8 @@ func TestExecCommandApprovalParamsRemainsStandalone(t *testing.T) {
 		t.Fatal("legacy exec-command params alias live command-execution approval params")
 	}
 	defs := JSONSchema()["$defs"].(Schema)
-	if _, ok := defs["ExecCommandApprovalResponse"]; ok {
-		t.Fatal("blocked ExecCommandApprovalResponse unexpectedly exported")
+	if _, ok := defs["ExecCommandApprovalResponse"]; !ok {
+		t.Fatal("dependency-complete ExecCommandApprovalResponse missing")
 	}
 	if _, ok := defs["ReviewDecision"]; !ok {
 		t.Fatal("dependency-complete ReviewDecision missing")
@@ -137,8 +137,8 @@ func TestExecCommandApprovalParamsRemainsStandalone(t *testing.T) {
 			t.Fatalf("ExecCommandApprovalParams unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(defs); got != 442 {
-		t.Fatalf("definition count = %d, want 442", got)
+	if got := len(defs); got != 444 {
+		t.Fatalf("definition count = %d, want 444", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
