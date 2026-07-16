@@ -1111,6 +1111,59 @@
       ],
       "type": "string"
     },
+    "AppsConfig": {
+      "properties": {
+        "_default": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppsDefaultConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "AppsDefaultConfig": {
+      "properties": {
+        "approvals_reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalsReviewer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_tools_approval_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppToolApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "destructive_enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "open_world_enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "AskForApproval": {
       "oneOf": [
         {

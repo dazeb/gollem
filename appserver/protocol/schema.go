@@ -118,6 +118,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AppToolApproval", Type: reflect.TypeFor[AppToolApproval]()},
 		{Name: "AppToolConfig", Type: reflect.TypeFor[AppToolConfig]()},
 		{Name: "AppToolsConfig", Type: reflect.TypeFor[AppToolsConfig]()},
+		{Name: "AppsConfig", Type: reflect.TypeFor[AppsConfig]()},
+		{Name: "AppsDefaultConfig", Type: reflect.TypeFor[AppsDefaultConfig]()},
 		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
 		{Name: "ApplyPatchApprovalResponse", Type: reflect.TypeFor[ApplyPatchApprovalResponse]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
@@ -714,6 +716,25 @@ func wireSchemaDefinitions() Schema {
 			"enabled":                     Schema{"default": true, "type": "boolean"},
 			"open_world_enabled":          Schema{"type": []any{"boolean", "null"}},
 			"tools":                       nullableSchemaRef("AppToolsConfig"),
+		},
+	}
+	schemas["AppsDefaultConfig"] = Schema{
+		"type": "object",
+		"properties": Schema{
+			"approvals_reviewer":          nullableSchemaRef("ApprovalsReviewer"),
+			"default_tools_approval_mode": nullableSchemaRef("AppToolApproval"),
+			"destructive_enabled":         Schema{"default": true, "type": "boolean"},
+			"enabled":                     Schema{"default": true, "type": "boolean"},
+			"open_world_enabled":          Schema{"default": true, "type": "boolean"},
+		},
+	}
+	schemas["AppsConfig"] = Schema{
+		"type": "object",
+		"properties": Schema{
+			"_default": Schema{
+				"anyOf":   []any{Schema{"$ref": "#/$defs/AppsDefaultConfig"}, Schema{"type": "null"}},
+				"default": nil,
+			},
 		},
 	}
 	schemas["AddCreditsNudgeCreditType"] = stringEnumSchema(

@@ -703,6 +703,18 @@ export type ApprovalRespondResult = {
 
 export type ApprovalsReviewer = "user" | "auto_review" | "guardian_subagent";
 
+export type AppsConfig = ({
+  "_default": AppsDefaultConfig | null;
+} & { [key in string]?: AppConfig });
+
+export type AppsDefaultConfig = {
+  "approvals_reviewer": ApprovalsReviewer | null;
+  "default_tools_approval_mode": AppToolApproval | null;
+  "destructive_enabled": boolean;
+  "enabled": boolean;
+  "open_world_enabled": boolean;
+};
+
 export type AskForApproval = "untrusted" | "on-request" | {
   "granular": {
     "mcp_elicitations": boolean;

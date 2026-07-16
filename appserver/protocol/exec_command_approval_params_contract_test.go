@@ -137,8 +137,8 @@ func TestExecCommandApprovalParamsRemainsStandalone(t *testing.T) {
 			t.Fatalf("ExecCommandApprovalParams unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(defs); got != 466 {
-		t.Fatalf("definition count = %d, want 466", got)
+	if got := len(defs); got != 468 {
+		t.Fatalf("definition count = %d, want 468", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
