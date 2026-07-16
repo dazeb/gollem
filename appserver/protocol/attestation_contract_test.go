@@ -133,8 +133,8 @@ func TestAttestationContractsRemainStandalone(t *testing.T) {
 	if !ok || info.State != MethodBlocked {
 		t.Fatalf("attestation/generate = %#v, %v; want blocked", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 460 {
-		t.Fatalf("definition count = %d, want 460", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 461 {
+		t.Fatalf("definition count = %d, want 461", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

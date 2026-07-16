@@ -112,6 +112,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AppReview", Type: reflect.TypeFor[AppReview]()},
 		{Name: "AppScreenshot", Type: reflect.TypeFor[AppScreenshot]()},
 		{Name: "AppSummary", Type: reflect.TypeFor[AppSummary]()},
+		{Name: "AppTemplateUnavailableReason", Type: reflect.TypeFor[AppTemplateUnavailableReason]()},
 		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
 		{Name: "ApplyPatchApprovalResponse", Type: reflect.TypeFor[ApplyPatchApprovalResponse]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
@@ -669,6 +670,10 @@ func wireSchemaDefinitions() Schema {
 	}, []string{"id", "name"})
 	schemas["AppSummary"].(Schema)["description"] =
 		"EXPERIMENTAL - app metadata summary for plugin responses."
+	schemas["AppTemplateUnavailableReason"] = stringEnumSchema(
+		string(AppTemplateUnavailableReasonNotConfiguredForWorkspace),
+		string(AppTemplateUnavailableReasonNoActiveWorkspace),
+	)
 	schemas["AddCreditsNudgeCreditType"] = stringEnumSchema(
 		string(AddCreditsNudgeCreditTypeCredits),
 		string(AddCreditsNudgeCreditTypeUsageLimit),

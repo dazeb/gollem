@@ -796,6 +796,13 @@
       ],
       "type": "object"
     },
+    "AppTemplateUnavailableReason": {
+      "enum": [
+        "NOT_CONFIGURED_FOR_WORKSPACE",
+        "NO_ACTIVE_WORKSPACE"
+      ],
+      "type": "string"
+    },
     "ApplyPatchApprovalParams": {
       "additionalProperties": false,
       "properties": {
