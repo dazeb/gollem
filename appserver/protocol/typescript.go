@@ -42,6 +42,7 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
 			name == "AppBranding" || name == "AppConfig" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
 			name == "AppSummary" || name == "AppTemplateSummary" || name == "AppsDefaultConfig" ||
+			name == "AppsListParams" || name == "AppsListResponse" ||
 			name == "AppToolConfig" ||
 			name == "ApplyPatchApprovalParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
@@ -111,6 +112,11 @@ func MarshalTypeScript() ([]byte, error) {
 					"enabled", "approvals_reviewer", "destructive_enabled", "open_world_enabled",
 					"default_tools_approval_mode",
 				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "AppsListParams":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "AppsListResponse":
+				schema["required"] = []string{"data", "nextCursor"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ApplyPatchApprovalParams":
 				schema["required"] = []string{
@@ -242,6 +248,20 @@ func MarshalTypeScript() ([]byte, error) {
 				"additionalProperties":             Schema{"$ref": "#/$defs/AppConfig"},
 				"x-gollem-typescript-optional-map": true,
 			}
+		}
+		if name == "AppsListParams" {
+			// The pinned schema uses JSON Schema type arrays for nullable fields;
+			// normalize only the render copy into unions understood by this renderer.
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"cursor":   nullableStringSchema(),
+				"limit":    nullableIntegerSchema(),
+				"threadId": nullableStringSchema(),
+			})
+		}
+		if name == "AppsListResponse" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"nextCursor": nullableStringSchema(),
+			})
 		}
 		if name == "AppInfo" {
 			// ts-rs models HashMap values with optional mapped keys. Apply the

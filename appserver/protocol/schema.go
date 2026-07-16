@@ -120,6 +120,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AppToolsConfig", Type: reflect.TypeFor[AppToolsConfig]()},
 		{Name: "AppsConfig", Type: reflect.TypeFor[AppsConfig]()},
 		{Name: "AppsDefaultConfig", Type: reflect.TypeFor[AppsDefaultConfig]()},
+		{Name: "AppsListParams", Type: reflect.TypeFor[AppsListParams]()},
+		{Name: "AppsListResponse", Type: reflect.TypeFor[AppsListResponse]()},
 		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
 		{Name: "ApplyPatchApprovalResponse", Type: reflect.TypeFor[ApplyPatchApprovalResponse]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
@@ -736,6 +738,40 @@ func wireSchemaDefinitions() Schema {
 				"default": nil,
 			},
 		},
+	}
+	schemas["AppsListParams"] = Schema{
+		"type":        "object",
+		"description": "EXPERIMENTAL - list available apps/connectors.",
+		"properties": Schema{
+			"cursor": Schema{
+				"description": "Opaque pagination cursor returned by a previous call.",
+				"type":        []any{"string", "null"},
+			},
+			"forceRefetch": Schema{
+				"description": "When true, bypass app caches and fetch the latest data from sources.",
+				"type":        "boolean",
+			},
+			"limit": Schema{
+				"description": "Optional page size; defaults to a reasonable server-side value.",
+				"format":      "uint32", "minimum": float64(0), "type": []any{"integer", "null"},
+			},
+			"threadId": Schema{
+				"description": "Optional thread id used to evaluate app feature gating from that thread's config.",
+				"type":        []any{"string", "null"},
+			},
+		},
+	}
+	schemas["AppsListResponse"] = Schema{
+		"type":        "object",
+		"description": "EXPERIMENTAL - app list response.",
+		"properties": Schema{
+			"data": Schema{"type": "array", "items": Schema{"$ref": "#/$defs/AppInfo"}},
+			"nextCursor": Schema{
+				"description": "Opaque cursor to pass to the next call to continue after the last item. If None, there are no more items to return.",
+				"type":        []any{"string", "null"},
+			},
+		},
+		"required": []string{"data"},
 	}
 	schemas["AddCreditsNudgeCreditType"] = stringEnumSchema(
 		string(AddCreditsNudgeCreditTypeCredits),

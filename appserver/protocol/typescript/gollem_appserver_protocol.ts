@@ -715,6 +715,18 @@ export type AppsDefaultConfig = {
   "open_world_enabled": boolean;
 };
 
+export type AppsListParams = {
+  "cursor"?: string | null;
+  "forceRefetch"?: boolean;
+  "limit"?: number | null;
+  "threadId"?: string | null;
+};
+
+export type AppsListResponse = {
+  "data": Array<AppInfo>;
+  "nextCursor": string | null;
+};
+
 export type AskForApproval = "untrusted" | "on-request" | {
   "granular": {
     "mcp_elicitations": boolean;
