@@ -1681,6 +1681,18 @@ export type ItemCompletedNotification = {
   "turnId": string;
 };
 
+export type ItemGuardianApprovalReviewCompletedNotification = {
+  "action": GuardianApprovalReviewAction;
+  "completedAtMs": number;
+  "decisionSource": AutoReviewDecisionSource;
+  "review": GuardianApprovalReview;
+  "reviewId": string;
+  "startedAtMs": number;
+  "targetItemId": string | null;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type ItemGuardianApprovalReviewStartedNotification = {
   "action": GuardianApprovalReviewAction;
   "review": GuardianApprovalReview;

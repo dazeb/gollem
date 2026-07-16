@@ -46,6 +46,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "HookRunSummary" || name == "HookStartedNotification" ||
 			name == "HookCompletedNotification" || name == "HookMetadata" ||
 			name == "GuardianApprovalReview" ||
+			name == "ItemGuardianApprovalReviewCompletedNotification" ||
 			name == "ItemGuardianApprovalReviewStartedNotification" {
 			// Rust accepts omitted serde default/Option fields while generated
 			// TypeScript requires callers to provide their canonical values.
@@ -91,6 +92,11 @@ func MarshalTypeScript() ([]byte, error) {
 			case "GuardianApprovalReview":
 				schema["required"] = []string{
 					"status", "riskLevel", "userAuthorization", "rationale",
+				}
+			case "ItemGuardianApprovalReviewCompletedNotification":
+				schema["required"] = []string{
+					"threadId", "turnId", "startedAtMs", "completedAtMs", "reviewId",
+					"targetItemId", "decisionSource", "review", "action",
 				}
 			case "ItemGuardianApprovalReviewStartedNotification":
 				schema["required"] = []string{
@@ -142,7 +148,8 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "GuardianApprovalReviewAction" {
 			definition = guardianApprovalReviewActionTypeScriptSchema(definition)
 		}
-		if name == "ItemGuardianApprovalReviewStartedNotification" {
+		if name == "ItemGuardianApprovalReviewCompletedNotification" ||
+			name == "ItemGuardianApprovalReviewStartedNotification" {
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
 				"targetItemId": Schema{
 					"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
