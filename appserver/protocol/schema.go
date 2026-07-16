@@ -106,6 +106,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
 		{Name: "AppBranding", Type: reflect.TypeFor[AppBranding]()},
+		{Name: "AppMetadata", Type: reflect.TypeFor[AppMetadata]()},
 		{Name: "AppReview", Type: reflect.TypeFor[AppReview]()},
 		{Name: "AppScreenshot", Type: reflect.TypeFor[AppScreenshot]()},
 		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
@@ -587,6 +588,33 @@ func wireSchemaDefinitions() Schema {
 		"termsOfService":    nullableStringSchema(),
 		"isDiscoverableApp": Schema{"type": "boolean"},
 	}, []string{"isDiscoverableApp"})
+	schemas["AppMetadata"] = closedThreadSessionParamSchema(Schema{
+		"review": Schema{"anyOf": []any{
+			Schema{"$ref": "#/$defs/AppReview"}, Schema{"type": "null"},
+		}},
+		"categories": Schema{"anyOf": []any{
+			Schema{"type": "array", "items": Schema{"type": "string"}}, Schema{"type": "null"},
+		}},
+		"subCategories": Schema{"anyOf": []any{
+			Schema{"type": "array", "items": Schema{"type": "string"}}, Schema{"type": "null"},
+		}},
+		"seoDescription": nullableStringSchema(),
+		"screenshots": Schema{"anyOf": []any{
+			Schema{"type": "array", "items": Schema{"$ref": "#/$defs/AppScreenshot"}},
+			Schema{"type": "null"},
+		}},
+		"developer":      nullableStringSchema(),
+		"version":        nullableStringSchema(),
+		"versionId":      nullableStringSchema(),
+		"versionNotes":   nullableStringSchema(),
+		"firstPartyType": nullableStringSchema(),
+		"firstPartyRequiresInstall": Schema{"anyOf": []any{
+			Schema{"type": "boolean"}, Schema{"type": "null"},
+		}},
+		"showInComposerWhenUnlinked": Schema{"anyOf": []any{
+			Schema{"type": "boolean"}, Schema{"type": "null"},
+		}},
+	}, nil)
 	schemas["AppReview"] = closedThreadSessionParamSchema(Schema{
 		"status": Schema{"type": "string"},
 	}, []string{"status"})

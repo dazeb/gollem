@@ -40,7 +40,7 @@ func MarshalTypeScript() ([]byte, error) {
 	for _, name := range names {
 		definition := defs[name]
 		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
-			name == "AppBranding" || name == "AppScreenshot" ||
+			name == "AppBranding" || name == "AppMetadata" || name == "AppScreenshot" ||
 			name == "ApplyPatchApprovalParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
 			name == "MigrationDetails" ||
@@ -73,6 +73,12 @@ func MarshalTypeScript() ([]byte, error) {
 			case "AppBranding":
 				schema["required"] = []string{
 					"category", "developer", "website", "privacyPolicy", "termsOfService", "isDiscoverableApp",
+				}
+			case "AppMetadata":
+				schema["required"] = []string{
+					"review", "categories", "subCategories", "seoDescription", "screenshots", "developer",
+					"version", "versionId", "versionNotes", "firstPartyType",
+					"firstPartyRequiresInstall", "showInComposerWhenUnlinked",
 				}
 			case "AppScreenshot":
 				schema["required"] = []string{"url", "fileId", "userPrompt"}
