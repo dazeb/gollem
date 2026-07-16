@@ -648,6 +648,16 @@ export type AppTemplateUnavailableReason = "NOT_CONFIGURED_FOR_WORKSPACE" | "NO_
 
 export type AppToolApproval = "auto" | "prompt" | "writes" | "approve";
 
+export type AppToolConfig = {
+  "approval_mode": AppToolApproval | null;
+  "enabled": boolean | null;
+};
+
+export type AppToolsConfig = { [key in string]?: {
+  "approval_mode": AppToolApproval | null;
+  "enabled": boolean | null;
+} };
+
 export type ApplyPatchApprovalParams = {
   "callId": string;
   "conversationId": ThreadId;

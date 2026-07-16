@@ -42,6 +42,7 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
 			name == "AppBranding" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
 			name == "AppSummary" || name == "AppTemplateSummary" ||
+			name == "AppToolConfig" ||
 			name == "ApplyPatchApprovalParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
 			name == "MigrationDetails" ||
@@ -96,6 +97,9 @@ func MarshalTypeScript() ([]byte, error) {
 					"templateId", "name", "description", "category", "canonicalConnectorId",
 					"logoUrl", "logoUrlDark", "materializedAppIds", "reason",
 				}
+			case "AppToolConfig":
+				schema["required"] = []string{"enabled", "approval_mode"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ApplyPatchApprovalParams":
 				schema["required"] = []string{
 					"conversationId", "callId", "fileChanges", "reason", "grantRoot",
@@ -182,6 +186,29 @@ func MarshalTypeScript() ([]byte, error) {
 					"x-gollem-typescript-optional-map": true,
 				},
 			})
+		}
+		if name == "AppToolConfig" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"enabled": nullableBooleanSchema(),
+			})
+		}
+		if name == "AppToolsConfig" {
+			// ts-rs flattens this HashMap and inlines AppToolConfig in an
+			// optional mapped type. Keep the render-only shape out of the
+			// intentionally open upstream JSON Schema.
+			definition = Schema{
+				"type": "object",
+				"additionalProperties": Schema{
+					"type": "object",
+					"properties": Schema{
+						"approval_mode": nullableSchemaRef("AppToolApproval"),
+						"enabled":       nullableBooleanSchema(),
+					},
+					"required": []string{"enabled", "approval_mode"},
+					"x-gollem-typescript-ignore-additional-properties": true,
+				},
+				"x-gollem-typescript-optional-map": true,
+			}
 		}
 		if name == "AppInfo" {
 			// ts-rs models HashMap values with optional mapped keys. Apply the
