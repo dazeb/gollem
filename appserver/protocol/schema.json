@@ -117,6 +117,20 @@
       ],
       "type": "object"
     },
+    "AddCreditsNudgeCreditType": {
+      "enum": [
+        "credits",
+        "usage_limit"
+      ],
+      "type": "string"
+    },
+    "AddCreditsNudgeEmailStatus": {
+      "enum": [
+        "sent",
+        "cooldown_active"
+      ],
+      "type": "string"
+    },
     "AdditionalContextEntry": {
       "additionalProperties": true,
       "properties": {

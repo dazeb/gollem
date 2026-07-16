@@ -518,6 +518,10 @@ export type ActivePermissionProfile = {
   "id": string;
 };
 
+export type AddCreditsNudgeCreditType = "credits" | "usage_limit";
+
+export type AddCreditsNudgeEmailStatus = "sent" | "cooldown_active";
+
 export type AdditionalContextEntry = {
   "kind": AdditionalContextKind;
   "value": string;
