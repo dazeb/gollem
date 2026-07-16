@@ -166,6 +166,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "DynamicToolCallItemStartedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemStartedNotificationParams]()},
 		{Name: "ErrorNotification", Type: reflect.TypeFor[ErrorNotification]()},
 		{Name: "ExecPolicyAmendment", Type: reflect.TypeFor[ExecPolicyAmendment]()},
+		{Name: "FileChange", Type: reflect.TypeFor[FileChange]()},
 		{Name: "FileChangeApprovalRequestParams", Type: reflect.TypeFor[FileChangeApprovalRequestParams]()},
 		{Name: "FileChangeApprovalDecision", Type: reflect.TypeFor[FileChangeApprovalDecision]()},
 		{Name: "FileChangeRequestApprovalResponse", Type: reflect.TypeFor[FileChangeRequestApprovalResponse]()},
@@ -915,6 +916,7 @@ func wireSchemaDefinitions() Schema {
 		string(FileChangeApprovalDecline),
 		string(FileChangeApprovalCancel),
 	)
+	schemas["FileChange"] = fileChangeSchema()
 	schemas["PatchApplyStatus"] = stringEnumSchema(
 		string(PatchApplyStatusInProgress), string(PatchApplyStatusCompleted),
 		string(PatchApplyStatusFailed), string(PatchApplyStatusDeclined),
@@ -2099,6 +2101,34 @@ func patchChangeKindSchema() Schema {
 		patchChangeKindVariantSchema("update", "move_path"),
 		patchChangeKindVariantSchema("update", "movePath"),
 	}}
+}
+
+func fileChangeSchema() Schema {
+	return Schema{"oneOf": []any{
+		fileChangeVariantSchema("add", []string{"content", "type"}, Schema{
+			"content": Schema{"type": "string"},
+		}),
+		fileChangeVariantSchema("delete", []string{"content", "type"}, Schema{
+			"content": Schema{"type": "string"},
+		}),
+		fileChangeVariantSchema("update", []string{"type", "unified_diff"}, Schema{
+			"unified_diff": Schema{"type": "string"},
+			"move_path":    Schema{"type": []any{"string", "null"}},
+		}),
+	}}
+}
+
+func fileChangeVariantSchema(changeType string, requiredFields []string, fields Schema) Schema {
+	properties := Schema{"type": Schema{"type": "string", "enum": []any{changeType}}}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             append([]string(nil), requiredFields...),
+		"additionalProperties": false,
+	}
 }
 
 func dynamicToolCallOutputContentItemSchema() Schema {

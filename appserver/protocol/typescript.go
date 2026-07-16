@@ -148,6 +148,9 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "GuardianApprovalReviewAction" {
 			definition = guardianApprovalReviewActionTypeScriptSchema(definition)
 		}
+		if name == "FileChange" {
+			definition = fileChangeTypeScriptSchema(definition)
+		}
 		if name == "ItemGuardianApprovalReviewCompletedNotification" ||
 			name == "ItemGuardianApprovalReviewStartedNotification" {
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
@@ -409,6 +412,42 @@ func guardianApprovalReviewActionTypeScriptSchema(definition any) Schema {
 		}
 		renderVariant["properties"] = renderProperties
 		renderVariant["required"] = required
+		renderVariants = append(renderVariants, renderVariant)
+	}
+	renderSchema["oneOf"] = renderVariants
+	return renderSchema
+}
+
+func fileChangeTypeScriptSchema(definition any) Schema {
+	schema, _ := typeScriptSchema(definition)
+	renderSchema := make(Schema, len(schema))
+	for key, value := range schema {
+		renderSchema[key] = value
+	}
+	variants, _ := typeScriptAnySlice(schema["oneOf"])
+	renderVariants := make([]any, 0, len(variants))
+	for _, rawVariant := range variants {
+		variant, _ := typeScriptSchema(rawVariant)
+		renderVariant := make(Schema, len(variant))
+		for key, value := range variant {
+			renderVariant[key] = value
+		}
+		properties, _ := typeScriptSchema(variant["properties"])
+		typeSchema, _ := typeScriptSchema(properties["type"])
+		tags, _ := typeScriptAnySlice(typeSchema["enum"])
+		if len(tags) == 1 && tags[0] == "update" {
+			renderProperties := make(Schema, len(properties))
+			for key, value := range properties {
+				renderProperties[key] = value
+			}
+			renderProperties["move_path"] = Schema{"anyOf": []any{
+				Schema{"type": "string"}, Schema{"type": "null"},
+			}}
+			required := append([]string(nil), variant["required"].([]string)...)
+			required = append(required, "move_path")
+			renderVariant["properties"] = renderProperties
+			renderVariant["required"] = required
+		}
 		renderVariants = append(renderVariants, renderVariant)
 	}
 	renderSchema["oneOf"] = renderVariants
