@@ -246,6 +246,52 @@
       "type": "object",
       "x-gollem-typescript-optional-map": true
     },
+    "ApplyPatchApprovalParams": {
+      "additionalProperties": false,
+      "properties": {
+        "callId": {
+          "description": "Use to correlate this with [codex_protocol::protocol::PatchApplyBeginEvent] and [codex_protocol::protocol::PatchApplyEndEvent].",
+          "type": "string"
+        },
+        "conversationId": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "fileChanges": {
+          "additionalProperties": {
+            "$ref": "#/$defs/FileChange"
+          },
+          "type": "object"
+        },
+        "grantRoot": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today)."
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional explanatory reason (e.g. request for extra write access)."
+        }
+      },
+      "required": [
+        "callId",
+        "conversationId",
+        "fileChanges"
+      ],
+      "type": "object"
+    },
     "ApplyPatchApprovalResponse": {
       "additionalProperties": false,
       "properties": {

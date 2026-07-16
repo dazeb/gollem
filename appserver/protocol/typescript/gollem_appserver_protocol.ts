@@ -545,6 +545,14 @@ export type AnalyticsConfig = ({
   "enabled": boolean | null;
 } & { [key in string]?: JsonValue });
 
+export type ApplyPatchApprovalParams = {
+  "callId": string;
+  "conversationId": ThreadId;
+  "fileChanges": { [key in string]?: FileChange };
+  "grantRoot": string | null;
+  "reason": string | null;
+};
+
 export type ApplyPatchApprovalResponse = {
   "decision": ReviewDecision;
 };

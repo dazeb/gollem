@@ -39,7 +39,8 @@ func MarshalTypeScript() ([]byte, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		definition := defs[name]
-		if name == "MigrationDetails" || name == "ExternalAgentConfigMigrationItem" ||
+		if name == "ApplyPatchApprovalParams" || name == "MigrationDetails" ||
+			name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
 			name == "ExternalAgentConfigImportItemTypeSuccess" ||
 			name == "ExecCommandApprovalParams" ||
@@ -58,6 +59,10 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			schema = renderSchema
 			switch name {
+			case "ApplyPatchApprovalParams":
+				schema["required"] = []string{
+					"conversationId", "callId", "fileChanges", "reason", "grantRoot",
+				}
 			case "ExecCommandApprovalParams":
 				schema["required"] = []string{
 					"conversationId", "callId", "approvalId", "command", "cwd", "reason", "parsedCmd",
@@ -125,6 +130,17 @@ func MarshalTypeScript() ([]byte, error) {
 				}
 			}
 			definition = schema
+		}
+		if name == "ApplyPatchApprovalParams" {
+			// ts-rs models HashMap values with optional mapped keys. Keep this
+			// render-only hint out of the exact public JSON Schema.
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"fileChanges": Schema{
+					"type":                             "object",
+					"additionalProperties":             Schema{"$ref": "#/$defs/FileChange"},
+					"x-gollem-typescript-optional-map": true,
+				},
+			})
 		}
 		if name == "ExternalAgentConfigImportHistory" {
 			// ts-rs maps this Rust i64 to bigint. Apply the hint only to a
