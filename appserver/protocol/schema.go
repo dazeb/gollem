@@ -94,6 +94,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AccountLoginCompletedNotification", Type: reflect.TypeFor[AccountLoginCompletedNotification]()},
 		{Name: "AccountTokenUsageDailyBucket", Type: reflect.TypeFor[AccountTokenUsageDailyBucket]()},
 		{Name: "AccountTokenUsageSummary", Type: reflect.TypeFor[AccountTokenUsageSummary]()},
+		{Name: "AddCreditsNudgeCreditType", Type: reflect.TypeFor[AddCreditsNudgeCreditType]()},
+		{Name: "AddCreditsNudgeEmailStatus", Type: reflect.TypeFor[AddCreditsNudgeEmailStatus]()},
 		{Name: "AmazonBedrockCredentialSource", Type: reflect.TypeFor[AmazonBedrockCredentialSource]()},
 		{Name: "AnalyticsConfig", Type: reflect.TypeFor[AnalyticsConfig]()},
 		{Name: "AttestationGenerateParams", Type: reflect.TypeFor[AttestationGenerateParams]()},
@@ -574,6 +576,14 @@ func wireSchemaDefinitions() Schema {
 		"currentStreakDays":     Schema{"type": []any{"integer", "null"}, "format": "int64"},
 		"longestStreakDays":     Schema{"type": []any{"integer", "null"}, "format": "int64"},
 	}, nil)
+	schemas["AddCreditsNudgeCreditType"] = stringEnumSchema(
+		string(AddCreditsNudgeCreditTypeCredits),
+		string(AddCreditsNudgeCreditTypeUsageLimit),
+	)
+	schemas["AddCreditsNudgeEmailStatus"] = stringEnumSchema(
+		string(AddCreditsNudgeEmailStatusSent),
+		string(AddCreditsNudgeEmailStatusCooldownActive),
+	)
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["AmazonBedrockCredentialSource"] = stringEnumSchema(
 		string(AmazonBedrockCredentialSourceCodexManaged),
