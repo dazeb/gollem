@@ -128,8 +128,8 @@ func TestExecCommandApprovalParamsRemainsStandalone(t *testing.T) {
 	if _, ok := defs["ExecCommandApprovalResponse"]; ok {
 		t.Fatal("blocked ExecCommandApprovalResponse unexpectedly exported")
 	}
-	if _, ok := defs["ReviewDecision"]; ok {
-		t.Fatal("blocked ReviewDecision unexpectedly exported")
+	if _, ok := defs["ReviewDecision"]; !ok {
+		t.Fatal("dependency-complete ReviewDecision missing")
 	}
 	for _, binding := range WireTypeBindings() {
 		if slices.Contains(binding.Params, "ExecCommandApprovalParams") ||
@@ -137,8 +137,8 @@ func TestExecCommandApprovalParamsRemainsStandalone(t *testing.T) {
 			t.Fatalf("ExecCommandApprovalParams unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(defs); got != 441 {
-		t.Fatalf("definition count = %d, want 441", got)
+	if got := len(defs); got != 442 {
+		t.Fatalf("definition count = %d, want 442", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

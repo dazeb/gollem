@@ -382,6 +382,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "RawResponseItemCompletedNotification", Type: reflect.TypeFor[RawResponseItemCompletedNotification]()},
 		{Name: "ResourceContent", Type: reflect.TypeFor[ResourceContent]()},
 		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
+		{Name: "ReviewDecision", Type: reflect.TypeFor[ReviewDecision]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
 		{Name: "SandboxMode", Type: reflect.TypeFor[SandboxMode]()},
 		{Name: "SandboxPolicy", Type: reflect.TypeFor[SandboxPolicy]()},
@@ -818,6 +819,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["AgentMessageInputContent"] = rawResponseContentSchema(agentMessageInputContentVariants)
 	schemas["ReasoningItemContent"] = rawResponseContentSchema(reasoningItemContentVariants)
 	schemas["ReasoningItemReasoningSummary"] = rawResponseContentSchema(reasoningItemSummaryVariants)
+	schemas["ReviewDecision"] = reviewDecisionSchema()
 	schemas["ResponsesApiWebSearchAction"] = responsesAPIWebSearchActionSchema()
 	schemas["ContentItem"] = contentItemSchema(contentItemVariants)
 	schemas["FunctionCallOutputContentItem"] = contentItemSchema(functionCallOutputContentItemVariants)

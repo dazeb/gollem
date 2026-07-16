@@ -2593,6 +2593,16 @@ export type ResponsesApiWebSearchAction = {
   "type": "other";
 };
 
+export type ReviewDecision = "approved" | {
+  "approved_execpolicy_amendment": {
+    "proposed_execpolicy_amendment": ExecPolicyAmendment;
+  };
+} | "approved_for_session" | {
+  "network_policy_amendment": {
+    "network_policy_amendment": NetworkPolicyAmendment;
+  };
+} | "denied" | "timed_out" | "abort";
+
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export type SandboxPolicy = {
