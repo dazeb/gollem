@@ -114,8 +114,8 @@ func TestMcpResourceReadParamsRemainsStandalone(t *testing.T) {
 			t.Fatalf("McpResourceReadParams unexpectedly bound: %#v", binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 433 {
-		t.Fatalf("definition count = %d, want 433", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 434 {
+		t.Fatalf("definition count = %d, want 434", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

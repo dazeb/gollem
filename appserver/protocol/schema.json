@@ -5506,6 +5506,52 @@
       ],
       "type": "object"
     },
+    "ItemGuardianApprovalReviewCompletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/GuardianApprovalReviewAction"
+        },
+        "completedAtMs": {
+          "type": "integer"
+        },
+        "decisionSource": {
+          "$ref": "#/$defs/AutoReviewDecisionSource"
+        },
+        "review": {
+          "$ref": "#/$defs/GuardianApprovalReview"
+        },
+        "reviewId": {
+          "type": "string"
+        },
+        "startedAtMs": {
+          "type": "integer"
+        },
+        "targetItemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "startedAtMs",
+        "completedAtMs",
+        "reviewId",
+        "decisionSource",
+        "review",
+        "action"
+      ],
+      "type": "object"
+    },
     "ItemGuardianApprovalReviewStartedNotification": {
       "additionalProperties": false,
       "properties": {

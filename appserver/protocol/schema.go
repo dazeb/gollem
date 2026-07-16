@@ -355,6 +355,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "HooksListEntry", Type: reflect.TypeFor[HooksListEntry]()},
 		{Name: "HooksListParams", Type: reflect.TypeFor[HooksListParams]()},
 		{Name: "HooksListResponse", Type: reflect.TypeFor[HooksListResponse]()},
+		{Name: "ItemGuardianApprovalReviewCompletedNotification", Type: reflect.TypeFor[ItemGuardianApprovalReviewCompletedNotification]()},
 		{Name: "ItemGuardianApprovalReviewStartedNotification", Type: reflect.TypeFor[ItemGuardianApprovalReviewStartedNotification]()},
 		{Name: "NetworkApprovalProtocol", Type: reflect.TypeFor[NetworkApprovalProtocol]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
@@ -688,6 +689,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["HooksListEntry"] = hooksListEntrySchema()
 	schemas["HooksListParams"] = hooksListParamsSchema()
 	schemas["HooksListResponse"] = hooksListResponseSchema()
+	schemas["ItemGuardianApprovalReviewCompletedNotification"] = guardianApprovalReviewCompletedNotificationSchema()
 	schemas["ItemGuardianApprovalReviewStartedNotification"] = guardianApprovalReviewStartedNotificationSchema()
 	schemas["NetworkApprovalProtocol"] = stringEnumSchema(
 		string(NetworkApprovalProtocolHTTP), string(NetworkApprovalProtocolHTTPS),
