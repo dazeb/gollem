@@ -229,6 +229,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "GetAccountRateLimitsResponse", Type: reflect.TypeFor[GetAccountRateLimitsResponse]()},
 		{Name: "GetAccountResponse", Type: reflect.TypeFor[GetAccountResponse]()},
 		{Name: "GetAccountTokenUsageResponse", Type: reflect.TypeFor[GetAccountTokenUsageResponse]()},
+		{Name: "GetWorkspaceMessagesResponse", Type: reflect.TypeFor[GetWorkspaceMessagesResponse]()},
 		{Name: "FsReadDirectoryEntry", Type: reflect.TypeFor[FsReadDirectoryEntry]()},
 		{Name: "FsReadDirectoryParams", Type: reflect.TypeFor[FsReadDirectoryParams]()},
 		{Name: "FsReadDirectoryResponse", Type: reflect.TypeFor[FsReadDirectoryResponse]()},
@@ -558,6 +559,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "WebSearchToolConfig", Type: reflect.TypeFor[WebSearchToolConfig]()},
 		{Name: "WarningNotification", Type: reflect.TypeFor[WarningNotification]()},
 		{Name: "WindowsSandboxSetupMode", Type: reflect.TypeFor[WindowsSandboxSetupMode]()},
+		{Name: "WorkspaceMessage", Type: reflect.TypeFor[WorkspaceMessage]()},
+		{Name: "WorkspaceMessageType", Type: reflect.TypeFor[WorkspaceMessageType]()},
 		{Name: "WriteStatus", Type: reflect.TypeFor[WriteStatus]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
@@ -1033,6 +1036,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	for name, schema := range accountEnvelopeSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range workspaceMessageSchemas() {
 		schemas[name] = schema
 	}
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()

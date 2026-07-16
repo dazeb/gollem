@@ -51,7 +51,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "ConsumeAccountRateLimitResetCreditParams" ||
 			name == "ConsumeAccountRateLimitResetCreditResponse" || name == "CreditsSnapshot" ||
 			name == "GetAccountParams" || name == "GetAccountRateLimitsResponse" || name == "GetAccountResponse" ||
-			name == "GetAccountTokenUsageResponse" ||
+			name == "GetAccountTokenUsageResponse" || name == "GetWorkspaceMessagesResponse" ||
 			name == "MigrationDetails" ||
 			name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
@@ -67,6 +67,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "RateLimitSnapshot" || name == "RateLimitWindow" ||
 			name == "SendAddCreditsNudgeEmailParams" || name == "SendAddCreditsNudgeEmailResponse" ||
 			name == "SpendControlLimitSnapshot" ||
+			name == "WorkspaceMessage" ||
 			name == "ItemGuardianApprovalReviewCompletedNotification" ||
 			name == "ItemGuardianApprovalReviewStartedNotification" {
 			// Rust accepts omitted serde default/Option fields while generated
@@ -183,6 +184,8 @@ func MarshalTypeScript() ([]byte, error) {
 					Schema{"type": "array", "items": Schema{"$ref": "#/$defs/AccountTokenUsageDailyBucket"}},
 					Schema{"type": "null"},
 				}}
+			case "GetWorkspaceMessagesResponse":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ExecCommandApprovalParams":
 				schema["required"] = []string{
 					"conversationId", "callId", "approvalId", "command", "cwd", "reason", "parsedCmd",
@@ -263,6 +266,13 @@ func MarshalTypeScript() ([]byte, error) {
 			case "SpendControlLimitSnapshot":
 				schema["required"] = []string{"limit", "remainingPercent", "resetsAt", "used"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "WorkspaceMessage":
+				schema["required"] = []string{
+					"archivedAt", "createdAt", "messageBody", "messageId", "messageType",
+				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["archivedAt"] = nullableIntegerSchema()
+				schema["properties"].(Schema)["createdAt"] = nullableIntegerSchema()
 			case "ItemGuardianApprovalReviewCompletedNotification":
 				schema["required"] = []string{
 					"threadId", "turnId", "startedAtMs", "completedAtMs", "reviewId",

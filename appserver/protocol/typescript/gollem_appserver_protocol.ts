@@ -1735,6 +1735,11 @@ export type GetAccountTokenUsageResponse = {
   "summary": AccountTokenUsageSummary;
 };
 
+export type GetWorkspaceMessagesResponse = {
+  "featureEnabled": boolean;
+  "messages": Array<WorkspaceMessage>;
+};
+
 export type GitInfo = {
   "branch": string | null;
   "originUrl": string | null;
@@ -3860,6 +3865,16 @@ export type WebSearchToolConfig = {
 };
 
 export type WindowsSandboxSetupMode = "elevated" | "unelevated";
+
+export type WorkspaceMessage = {
+  "archivedAt": number | null;
+  "createdAt": number | null;
+  "messageBody": string;
+  "messageId": string;
+  "messageType": WorkspaceMessageType;
+};
+
+export type WorkspaceMessageType = "headline" | "announcement" | "unknown";
 
 export type WriteStatus = "ok" | "okOverridden";
 
