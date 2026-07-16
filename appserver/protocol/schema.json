@@ -3747,6 +3747,30 @@
       ],
       "type": "object"
     },
+    "FileChangeOutputDeltaNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "delta"
+      ],
+      "type": "object"
+    },
     "FileChangePatchUpdatedNotification": {
       "additionalProperties": false,
       "properties": {

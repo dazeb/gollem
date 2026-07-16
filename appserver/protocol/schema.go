@@ -167,6 +167,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ErrorNotification", Type: reflect.TypeFor[ErrorNotification]()},
 		{Name: "ExecPolicyAmendment", Type: reflect.TypeFor[ExecPolicyAmendment]()},
 		{Name: "FileChange", Type: reflect.TypeFor[FileChange]()},
+		{Name: "FileChangeOutputDeltaNotification", Type: reflect.TypeFor[FileChangeOutputDeltaNotification]()},
 		{Name: "FileChangeApprovalRequestParams", Type: reflect.TypeFor[FileChangeApprovalRequestParams]()},
 		{Name: "FileChangeApprovalDecision", Type: reflect.TypeFor[FileChangeApprovalDecision]()},
 		{Name: "FileChangeRequestApprovalResponse", Type: reflect.TypeFor[FileChangeRequestApprovalResponse]()},

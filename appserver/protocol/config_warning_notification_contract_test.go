@@ -169,8 +169,8 @@ func TestConfigWarningNotificationContractRemainsStandalone(t *testing.T) {
 	if !ok || info.State != MethodBlocked {
 		t.Fatalf("configWarning = %#v, %v; want blocked", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 437 {
-		t.Fatalf("definition count = %d, want 437", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 438 {
+		t.Fatalf("definition count = %d, want 438", got)
 	}
 	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))

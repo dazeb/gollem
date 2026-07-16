@@ -1259,6 +1259,13 @@ export type FileChangeItemStartedNotificationParams = {
   "turnId": string;
 };
 
+export type FileChangeOutputDeltaNotification = {
+  "delta": string;
+  "itemId": string;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type FileChangePatchUpdatedNotification = {
   "changes": Array<FileUpdateChange>;
   "itemId": string;
