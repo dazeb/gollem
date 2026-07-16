@@ -39,7 +39,8 @@ func MarshalTypeScript() ([]byte, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		definition := defs[name]
-		if name == "ApplyPatchApprovalParams" || name == "MigrationDetails" ||
+		if name == "ApplyPatchApprovalParams" || name == "ChatgptAuthTokensRefreshResponse" ||
+			name == "MigrationDetails" ||
 			name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
 			name == "ExternalAgentConfigImportItemTypeSuccess" ||
@@ -62,6 +63,10 @@ func MarshalTypeScript() ([]byte, error) {
 			case "ApplyPatchApprovalParams":
 				schema["required"] = []string{
 					"conversationId", "callId", "fileChanges", "reason", "grantRoot",
+				}
+			case "ChatgptAuthTokensRefreshResponse":
+				schema["required"] = []string{
+					"accessToken", "chatgptAccountId", "chatgptPlanType",
 				}
 			case "ExecCommandApprovalParams":
 				schema["required"] = []string{

@@ -109,6 +109,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CancelLoginAccountParams", Type: reflect.TypeFor[CancelLoginAccountParams]()},
 		{Name: "CancelLoginAccountResponse", Type: reflect.TypeFor[CancelLoginAccountResponse]()},
 		{Name: "CancelLoginAccountStatus", Type: reflect.TypeFor[CancelLoginAccountStatus]()},
+		{Name: "ChatgptAuthTokensRefreshParams", Type: reflect.TypeFor[ChatgptAuthTokensRefreshParams]()},
+		{Name: "ChatgptAuthTokensRefreshReason", Type: reflect.TypeFor[ChatgptAuthTokensRefreshReason]()},
+		{Name: "ChatgptAuthTokensRefreshResponse", Type: reflect.TypeFor[ChatgptAuthTokensRefreshResponse]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
 		{Name: "CodexErrorInfo", Type: reflect.TypeFor[CodexErrorInfo]()},
 		{Name: "CollabAgentState", Type: reflect.TypeFor[CollabAgentState]()},
@@ -573,6 +576,25 @@ func wireSchemaDefinitions() Schema {
 		string(CancelLoginAccountStatusCanceled),
 		string(CancelLoginAccountStatusNotFound),
 	)
+	schemas["ChatgptAuthTokensRefreshReason"] = stringEnumSchema(
+		string(ChatgptAuthTokensRefreshReasonUnauthorized),
+	)
+	schemas["ChatgptAuthTokensRefreshParams"] = closedThreadSessionParamSchema(Schema{
+		"reason": Schema{"$ref": "#/$defs/ChatgptAuthTokensRefreshReason"},
+		"previousAccountId": Schema{
+			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			"description": "Workspace/account identifier that Codex was previously using.\n\n" +
+				"Clients that manage multiple accounts/workspaces can use this as a hint to " +
+				"refresh the token for the correct workspace.\n\n" +
+				"This may be `null` when the prior auth state did not include a workspace " +
+				"identifier (`chatgpt_account_id`).",
+		},
+	}, []string{"reason"})
+	schemas["ChatgptAuthTokensRefreshResponse"] = closedThreadSessionParamSchema(Schema{
+		"accessToken":      Schema{"type": "string"},
+		"chatgptAccountId": Schema{"type": "string"},
+		"chatgptPlanType":  nullableStringSchema(),
+	}, []string{"accessToken", "chatgptAccountId"})
 	schemas["LoginAppBrand"] = stringEnumSchema(
 		string(LoginAppBrandCodex),
 		string(LoginAppBrandChatGPT),
