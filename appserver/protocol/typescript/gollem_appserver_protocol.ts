@@ -577,6 +577,24 @@ export type AppBranding = {
   "website": string | null;
 };
 
+export type AppInfo = {
+  "appMetadata": AppMetadata | null;
+  "branding": AppBranding | null;
+  "description": string | null;
+  "distributionChannel": string | null;
+  "iconAssets": { [key in string]?: string } | null;
+  "iconDarkAssets": { [key in string]?: string } | null;
+  "id": string;
+  "installUrl": string | null;
+  "isAccessible": boolean;
+  "isEnabled": boolean;
+  "labels": { [key in string]?: string } | null;
+  "logoUrl": string | null;
+  "logoUrlDark": string | null;
+  "name": string;
+  "pluginDisplayNames": Array<string>;
+};
+
 export type AppMetadata = {
   "categories": Array<string> | null;
   "developer": string | null;
