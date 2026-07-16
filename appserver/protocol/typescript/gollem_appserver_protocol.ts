@@ -494,6 +494,12 @@ export type KnownMethod =
 
 export type AbsolutePathBuf = string;
 
+export type AccountLoginCompletedNotification = {
+  "error": string | null;
+  "loginId": string | null;
+  "success": boolean;
+};
+
 export type ActivePermissionProfile = {
   "extends": string | null;
   "id": string;

@@ -4,6 +4,38 @@
       "description": "An absolute, lexically normalized local path.",
       "type": "string"
     },
+    "AccountLoginCompletedNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loginId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "success": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "success"
+      ],
+      "type": "object"
+    },
     "ActivePermissionProfile": {
       "additionalProperties": false,
       "properties": {
