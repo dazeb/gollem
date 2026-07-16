@@ -1197,6 +1197,18 @@ export type ExternalAgentConfigMigrationItem = {
 
 export type ExternalAgentConfigMigrationItemType = "AGENTS_MD" | "CONFIG" | "SKILLS" | "PLUGINS" | "MCP_SERVER_CONFIG" | "SUBAGENTS" | "HOOKS" | "COMMANDS" | "SESSIONS";
 
+export type FileChange = {
+  "content": string;
+  "type": "add";
+} | {
+  "content": string;
+  "type": "delete";
+} | {
+  "move_path": string | null;
+  "type": "update";
+  "unified_diff": string;
+};
+
 export type FileChangeApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
 export type FileChangeApprovalRequestParams = {
