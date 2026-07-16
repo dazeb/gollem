@@ -554,6 +554,22 @@
       ],
       "type": "object"
     },
+    "AppListUpdatedNotification": {
+      "additionalProperties": false,
+      "description": "EXPERIMENTAL - notification emitted when the app list changes.",
+      "properties": {
+        "data": {
+          "items": {
+            "$ref": "#/$defs/AppInfo"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "type": "object"
+    },
     "AppMetadata": {
       "additionalProperties": false,
       "properties": {
