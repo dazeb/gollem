@@ -500,6 +500,10 @@ export type AccountLoginCompletedNotification = {
   "success": boolean;
 };
 
+export type AccountRateLimitsUpdatedNotification = {
+  "rateLimits": RateLimitSnapshot;
+};
+
 export type AccountTokenUsageDailyBucket = {
   "startDate": string;
   "tokens": bigint;
@@ -1146,6 +1150,17 @@ export type ConfiguredHookMatcherGroup = {
   "matcher": string | null;
 };
 
+export type ConsumeAccountRateLimitResetCreditOutcome = "reset" | "nothingToReset" | "noCredit" | "alreadyRedeemed";
+
+export type ConsumeAccountRateLimitResetCreditParams = {
+  "creditId"?: string | null;
+  "idempotencyKey": string;
+};
+
+export type ConsumeAccountRateLimitResetCreditResponse = {
+  "outcome": ConsumeAccountRateLimitResetCreditOutcome;
+};
+
 export type ContentItem = {
   "text": string;
   "type": "input_text";
@@ -1167,6 +1182,12 @@ export type ContextCompactionItem = {
   "createdAt": string;
   "summary"?: string;
   "type": "contextCompaction";
+};
+
+export type CreditsSnapshot = {
+  "balance": string | null;
+  "hasCredits": boolean;
+  "unlimited": boolean;
 };
 
 export type DaemonShutdownParams = {
@@ -1676,6 +1697,12 @@ export type FuzzyFileSearchSessionUpdatedNotification = {
   "files": Array<FuzzyFileSearchResult>;
   "query": string;
   "sessionId": string;
+};
+
+export type GetAccountRateLimitsResponse = {
+  "rateLimitResetCredits": RateLimitResetCreditsSummary | null;
+  "rateLimits": RateLimitSnapshot;
+  "rateLimitsByLimitId": { [key in string]?: RateLimitSnapshot } | null;
 };
 
 export type GitInfo = {
@@ -2560,6 +2587,8 @@ export type PlanDeltaNotification = {
   "turnId": string;
 };
 
+export type PlanType = "free" | "go" | "plus" | "pro" | "prolite" | "team" | "self_serve_business_usage_based" | "business" | "enterprise_cbp_usage_based" | "enterprise" | "edu" | "unknown";
+
 export type PluginsMigration = {
   "marketplaceName": string;
   "pluginNames": Array<string>;
@@ -2586,6 +2615,44 @@ export type ProcessOutputStream = "stdout" | "stderr";
 export type ProcessTerminalSize = {
   "cols": number;
   "rows": number;
+};
+
+export type RateLimitReachedType = "rate_limit_reached" | "workspace_owner_credits_depleted" | "workspace_member_credits_depleted" | "workspace_owner_usage_limit_reached" | "workspace_member_usage_limit_reached";
+
+export type RateLimitResetCredit = {
+  "description": string | null;
+  "expiresAt": number | null;
+  "grantedAt": number;
+  "id": string;
+  "resetType": RateLimitResetType;
+  "status": RateLimitResetCreditStatus;
+  "title": string | null;
+};
+
+export type RateLimitResetCreditStatus = "available" | "redeeming" | "redeemed" | "unknown";
+
+export type RateLimitResetCreditsSummary = {
+  "availableCount": bigint;
+  "credits": Array<RateLimitResetCredit> | null;
+};
+
+export type RateLimitResetType = "codexRateLimits" | "unknown";
+
+export type RateLimitSnapshot = {
+  "credits": CreditsSnapshot | null;
+  "individualLimit": SpendControlLimitSnapshot | null;
+  "limitId": string | null;
+  "limitName": string | null;
+  "planType": PlanType | null;
+  "primary": RateLimitWindow | null;
+  "rateLimitReachedType": RateLimitReachedType | null;
+  "secondary": RateLimitWindow | null;
+};
+
+export type RateLimitWindow = {
+  "resetsAt": number | null;
+  "usedPercent": number;
+  "windowDurationMins": number | null;
 };
 
 export type RawResponseItemCompletedNotification = {
@@ -2857,6 +2924,13 @@ export type SkillMigration = {
 };
 
 export type SortDirection = "asc" | "desc";
+
+export type SpendControlLimitSnapshot = {
+  "limit": string;
+  "remainingPercent": number;
+  "resetsAt": number;
+  "used": string;
+};
 
 export type SubAgentActivityKind = "started" | "interacted" | "interrupted";
 

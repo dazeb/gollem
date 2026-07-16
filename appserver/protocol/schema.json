@@ -36,6 +36,18 @@
       ],
       "type": "object"
     },
+    "AccountRateLimitsUpdatedNotification": {
+      "description": "Sparse rolling rate-limit update.\n\nClients should merge available values into the most recent `account/rateLimits/read` response or refetch that snapshot. Nullable account metadata may be unavailable in a rolling update and does not clear a previously observed value.",
+      "properties": {
+        "rateLimits": {
+          "$ref": "#/$defs/RateLimitSnapshot"
+        }
+      },
+      "required": [
+        "rateLimits"
+      ],
+      "type": "object"
+    },
     "AccountTokenUsageDailyBucket": {
       "additionalProperties": false,
       "properties": {
@@ -3492,6 +3504,68 @@
       ],
       "type": "object"
     },
+    "ConsumeAccountRateLimitResetCreditOutcome": {
+      "oneOf": [
+        {
+          "description": "A reset credit was consumed and the eligible rate-limit windows were reset.",
+          "enum": [
+            "reset"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "No current rate-limit window is eligible for a reset.",
+          "enum": [
+            "nothingToReset"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The account has no earned reset credits available.",
+          "enum": [
+            "noCredit"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The same idempotency key already completed a reset successfully.",
+          "enum": [
+            "alreadyRedeemed"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ConsumeAccountRateLimitResetCreditParams": {
+      "properties": {
+        "creditId": {
+          "description": "Opaque reset-credit identifier to redeem. When omitted, the backend selects the next available credit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "idempotencyKey": {
+          "description": "Identifies one logical reset attempt. A UUID is recommended; reuse the same value when retrying that attempt.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "idempotencyKey"
+      ],
+      "type": "object"
+    },
+    "ConsumeAccountRateLimitResetCreditResponse": {
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/ConsumeAccountRateLimitResetCreditOutcome"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "type": "object"
+    },
     "ContentItem": {
       "oneOf": [
         {
@@ -3592,6 +3666,27 @@
       "required": [
         "type",
         "createdAt"
+      ],
+      "type": "object"
+    },
+    "CreditsSnapshot": {
+      "properties": {
+        "balance": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hasCredits": {
+          "type": "boolean"
+        },
+        "unlimited": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "hasCredits",
+        "unlimited"
       ],
       "type": "object"
     },
@@ -5681,6 +5776,42 @@
         "sessionId",
         "query",
         "files"
+      ],
+      "type": "object"
+    },
+    "GetAccountRateLimitsResponse": {
+      "properties": {
+        "rateLimitResetCredits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimitResetCreditsSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rateLimits": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/RateLimitSnapshot"
+            }
+          ],
+          "description": "Backward-compatible single-bucket view; mirrors the historical payload."
+        },
+        "rateLimitsByLimitId": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RateLimitSnapshot"
+          },
+          "description": "Multi-bucket view keyed by metered `limit_id` (for example, `codex`).",
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "rateLimits"
       ],
       "type": "object"
     },
@@ -9933,6 +10064,23 @@
       ],
       "type": "object"
     },
+    "PlanType": {
+      "enum": [
+        "free",
+        "go",
+        "plus",
+        "pro",
+        "prolite",
+        "team",
+        "self_serve_business_usage_based",
+        "business",
+        "enterprise_cbp_usage_based",
+        "enterprise",
+        "edu",
+        "unknown"
+      ],
+      "type": "string"
+    },
     "PluginsMigration": {
       "additionalProperties": false,
       "properties": {
@@ -10061,6 +10209,205 @@
       "required": [
         "cols",
         "rows"
+      ],
+      "type": "object"
+    },
+    "RateLimitReachedType": {
+      "enum": [
+        "rate_limit_reached",
+        "workspace_owner_credits_depleted",
+        "workspace_member_credits_depleted",
+        "workspace_owner_usage_limit_reached",
+        "workspace_member_usage_limit_reached"
+      ],
+      "type": "string"
+    },
+    "RateLimitResetCredit": {
+      "properties": {
+        "description": {
+          "description": "Backend-provided display description for this credit, or `null` when unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiresAt": {
+          "description": "Unix timestamp in seconds when the credit expires, or `null` if it does not expire.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grantedAt": {
+          "description": "Unix timestamp in seconds when the credit was granted.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "description": "Opaque backend identifier for this reset credit.",
+          "type": "string"
+        },
+        "resetType": {
+          "$ref": "#/$defs/RateLimitResetType"
+        },
+        "status": {
+          "$ref": "#/$defs/RateLimitResetCreditStatus"
+        },
+        "title": {
+          "description": "Backend-provided display title for this credit, or `null` when unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "grantedAt",
+        "id",
+        "resetType",
+        "status"
+      ],
+      "type": "object"
+    },
+    "RateLimitResetCreditStatus": {
+      "enum": [
+        "available",
+        "redeeming",
+        "redeemed",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "RateLimitResetCreditsSummary": {
+      "properties": {
+        "availableCount": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "credits": {
+          "description": "Detail rows for available reset credits, when the backend provides them.\n\n`null` means only `availableCount` is known, while an empty array means details were fetched and no available credits were returned. The backend may cap this list, so its length can be less than `availableCount`.",
+          "items": {
+            "$ref": "#/$defs/RateLimitResetCredit"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "availableCount"
+      ],
+      "type": "object"
+    },
+    "RateLimitResetType": {
+      "enum": [
+        "codexRateLimits",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "RateLimitSnapshot": {
+      "properties": {
+        "credits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CreditsSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "individualLimit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpendControlLimitSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limitId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limitName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "planType": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "primary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimitWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rateLimitReachedType": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimitReachedType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "secondary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimitWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RateLimitWindow": {
+      "properties": {
+        "resetsAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "usedPercent": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "windowDurationMins": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "usedPercent"
       ],
       "type": "object"
     },
@@ -11498,6 +11845,31 @@
         "desc"
       ],
       "type": "string"
+    },
+    "SpendControlLimitSnapshot": {
+      "properties": {
+        "limit": {
+          "type": "string"
+        },
+        "remainingPercent": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "resetsAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "used": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "limit",
+        "remainingPercent",
+        "resetsAt",
+        "used"
+      ],
+      "type": "object"
     },
     "SubAgentActivityKind": {
       "enum": [
