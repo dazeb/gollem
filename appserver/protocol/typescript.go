@@ -39,7 +39,8 @@ func MarshalTypeScript() ([]byte, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		definition := defs[name]
-		if name == "AccountLoginCompletedNotification" || name == "ApplyPatchApprovalParams" ||
+		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
+			name == "ApplyPatchApprovalParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
 			name == "MigrationDetails" ||
 			name == "ExternalAgentConfigMigrationItem" ||
@@ -63,6 +64,11 @@ func MarshalTypeScript() ([]byte, error) {
 			switch name {
 			case "AccountLoginCompletedNotification":
 				schema["required"] = []string{"loginId", "success", "error"}
+			case "AccountTokenUsageSummary":
+				schema["required"] = []string{
+					"lifetimeTokens", "peakDailyTokens", "longestRunningTurnSec",
+					"currentStreakDays", "longestStreakDays",
+				}
 			case "ApplyPatchApprovalParams":
 				schema["required"] = []string{
 					"conversationId", "callId", "fileChanges", "reason", "grantRoot",
@@ -154,6 +160,19 @@ func MarshalTypeScript() ([]byte, error) {
 			// ts-rs maps this Rust i64 to bigint. Apply the hint only to a
 			// render copy so the public JSON Schema remains exact.
 			definition = typeScriptDefinitionWithBigIntProperties(definition, "completedAtMs")
+		}
+		if name == "AccountTokenUsageDailyBucket" {
+			// ts-rs maps this Rust i64 to bigint. Keep the render hint out of
+			// the exact public JSON Schema.
+			definition = typeScriptDefinitionWithBigIntProperties(definition, "tokens")
+		}
+		if name == "AccountTokenUsageSummary" {
+			// ts-rs maps every optional Rust i64 to required nullable bigint.
+			// Keep the render hints out of the exact public JSON Schema.
+			definition = typeScriptDefinitionWithBigIntProperties(
+				definition, "lifetimeTokens", "peakDailyTokens", "longestRunningTurnSec",
+				"currentStreakDays", "longestStreakDays",
+			)
 		}
 		if name == "HookRunSummary" {
 			// ts-rs maps each Rust i64 field to bigint, including nullable i64
