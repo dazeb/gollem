@@ -412,6 +412,63 @@
       ],
       "type": "object"
     },
+    "AppConfig": {
+      "properties": {
+        "approvals_reviewer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalsReviewer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_tools_approval_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppToolApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default_tools_enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "destructive_enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "open_world_enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppToolsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
     "AppInfo": {
       "additionalProperties": false,
       "description": "EXPERIMENTAL - app metadata returned by app-list APIs.",
