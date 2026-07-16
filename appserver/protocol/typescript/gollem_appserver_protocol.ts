@@ -2242,6 +2242,11 @@ export type ModelsRequirements = {
 
 export type NetworkAccess = "restricted" | "enabled";
 
+export type NetworkApprovalContext = {
+  "host": string;
+  "protocol": NetworkApprovalProtocol;
+};
+
 export type NetworkApprovalProtocol = "http" | "https" | "socks5Tcp" | "socks5Udp";
 
 export type NetworkDomainPermission = "allow" | "deny";

@@ -361,6 +361,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "HooksListResponse", Type: reflect.TypeFor[HooksListResponse]()},
 		{Name: "ItemGuardianApprovalReviewCompletedNotification", Type: reflect.TypeFor[ItemGuardianApprovalReviewCompletedNotification]()},
 		{Name: "ItemGuardianApprovalReviewStartedNotification", Type: reflect.TypeFor[ItemGuardianApprovalReviewStartedNotification]()},
+		{Name: "NetworkApprovalContext", Type: reflect.TypeFor[NetworkApprovalContext]()},
 		{Name: "NetworkApprovalProtocol", Type: reflect.TypeFor[NetworkApprovalProtocol]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
@@ -695,6 +696,10 @@ func wireSchemaDefinitions() Schema {
 	schemas["HooksListResponse"] = hooksListResponseSchema()
 	schemas["ItemGuardianApprovalReviewCompletedNotification"] = guardianApprovalReviewCompletedNotificationSchema()
 	schemas["ItemGuardianApprovalReviewStartedNotification"] = guardianApprovalReviewStartedNotificationSchema()
+	schemas["NetworkApprovalContext"] = closedThreadSessionParamSchema(Schema{
+		"host":     Schema{"type": "string"},
+		"protocol": Schema{"$ref": "#/$defs/NetworkApprovalProtocol"},
+	}, []string{"host", "protocol"})
 	schemas["NetworkApprovalProtocol"] = stringEnumSchema(
 		string(NetworkApprovalProtocolHTTP), string(NetworkApprovalProtocolHTTPS),
 		string(NetworkApprovalProtocolSocks5TCP), string(NetworkApprovalProtocolSocks5UDP),

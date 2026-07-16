@@ -8108,6 +8108,22 @@
       ],
       "type": "string"
     },
+    "NetworkApprovalContext": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "protocol": {
+          "$ref": "#/$defs/NetworkApprovalProtocol"
+        }
+      },
+      "required": [
+        "host",
+        "protocol"
+      ],
+      "type": "object"
+    },
     "NetworkApprovalProtocol": {
       "enum": [
         "http",
