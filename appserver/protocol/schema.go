@@ -91,6 +91,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AdditionalFileSystemPermissions", Type: reflect.TypeFor[AdditionalFileSystemPermissions]()},
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
+		{Name: "AccountLoginCompletedNotification", Type: reflect.TypeFor[AccountLoginCompletedNotification]()},
 		{Name: "AmazonBedrockCredentialSource", Type: reflect.TypeFor[AmazonBedrockCredentialSource]()},
 		{Name: "AnalyticsConfig", Type: reflect.TypeFor[AnalyticsConfig]()},
 		{Name: "AttestationGenerateParams", Type: reflect.TypeFor[AttestationGenerateParams]()},
@@ -555,6 +556,11 @@ func wireSchemaDefinitions() Schema {
 		string(AdditionalContextKindUntrusted), string(AdditionalContextKindApplication),
 	)
 	schemas["AdditionalContextEntry"] = additionalContextEntrySchema()
+	schemas["AccountLoginCompletedNotification"] = closedThreadSessionParamSchema(Schema{
+		"loginId": nullableStringSchema(),
+		"success": Schema{"type": "boolean"},
+		"error":   nullableStringSchema(),
+	}, []string{"success"})
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["AmazonBedrockCredentialSource"] = stringEnumSchema(
 		string(AmazonBedrockCredentialSourceCodexManaged),
