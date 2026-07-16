@@ -100,6 +100,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
+		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
 		{Name: "ApplyPatchApprovalResponse", Type: reflect.TypeFor[ApplyPatchApprovalResponse]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
 		{Name: "AutoCompactTokenLimitScope", Type: reflect.TypeFor[AutoCompactTokenLimitScope]()},
@@ -701,6 +702,27 @@ func wireSchemaDefinitions() Schema {
 	schemas["HooksListResponse"] = hooksListResponseSchema()
 	schemas["ItemGuardianApprovalReviewCompletedNotification"] = guardianApprovalReviewCompletedNotificationSchema()
 	schemas["ItemGuardianApprovalReviewStartedNotification"] = guardianApprovalReviewStartedNotificationSchema()
+	schemas["ApplyPatchApprovalParams"] = closedThreadSessionParamSchema(Schema{
+		"conversationId": Schema{"$ref": "#/$defs/ThreadId"},
+		"callId": Schema{
+			"type": "string",
+			"description": "Use to correlate this with [codex_protocol::protocol::PatchApplyBeginEvent] " +
+				"and [codex_protocol::protocol::PatchApplyEndEvent].",
+		},
+		"fileChanges": Schema{
+			"type":                 "object",
+			"additionalProperties": Schema{"$ref": "#/$defs/FileChange"},
+		},
+		"reason": Schema{
+			"anyOf":       []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			"description": "Optional explanatory reason (e.g. request for extra write access).",
+		},
+		"grantRoot": Schema{
+			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			"description": "When set, the agent is asking the user to allow writes under this root " +
+				"for the remainder of the session (unclear if this is honored today).",
+		},
+	}, []string{"callId", "conversationId", "fileChanges"})
 	schemas["ExecCommandApprovalParams"] = closedThreadSessionParamSchema(Schema{
 		"conversationId": Schema{"$ref": "#/$defs/ThreadId"},
 		"callId": Schema{
