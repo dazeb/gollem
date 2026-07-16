@@ -156,8 +156,8 @@ func TestTurnSteerContractsRemainStandalone(t *testing.T) {
 			t.Fatalf("turn/steer unexpectedly bound: %#v", binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 457 {
-		t.Fatalf("definition count = %d, want 457", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 458 {
+		t.Fatalf("definition count = %d, want 458", got)
 	}
 	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))

@@ -40,7 +40,7 @@ func MarshalTypeScript() ([]byte, error) {
 	for _, name := range names {
 		definition := defs[name]
 		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
-			name == "AppBranding" || name == "AppMetadata" || name == "AppScreenshot" ||
+			name == "AppBranding" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
 			name == "ApplyPatchApprovalParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
 			name == "MigrationDetails" ||
@@ -73,6 +73,12 @@ func MarshalTypeScript() ([]byte, error) {
 			case "AppBranding":
 				schema["required"] = []string{
 					"category", "developer", "website", "privacyPolicy", "termsOfService", "isDiscoverableApp",
+				}
+			case "AppInfo":
+				schema["required"] = []string{
+					"id", "name", "description", "logoUrl", "logoUrlDark", "iconAssets",
+					"iconDarkAssets", "distributionChannel", "branding", "appMetadata", "labels",
+					"installUrl", "isAccessible", "isEnabled", "pluginDisplayNames",
 				}
 			case "AppMetadata":
 				schema["required"] = []string{
@@ -167,6 +173,21 @@ func MarshalTypeScript() ([]byte, error) {
 					"additionalProperties":             Schema{"$ref": "#/$defs/FileChange"},
 					"x-gollem-typescript-optional-map": true,
 				},
+			})
+		}
+		if name == "AppInfo" {
+			// ts-rs models HashMap values with optional mapped keys. Apply the
+			// hint only to TypeScript rendering, not the exact public schema.
+			nullableStringMap := Schema{"anyOf": []any{
+				Schema{
+					"type": "object", "additionalProperties": Schema{"type": "string"},
+					"x-gollem-typescript-optional-map": true,
+				},
+				Schema{"type": "null"},
+			}}
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"iconAssets": nullableStringMap, "iconDarkAssets": nullableStringMap,
+				"labels": nullableStringMap,
 			})
 		}
 		if name == "ExternalAgentConfigImportHistory" {

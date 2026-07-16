@@ -106,6 +106,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
 		{Name: "AppBranding", Type: reflect.TypeFor[AppBranding]()},
+		{Name: "AppInfo", Type: reflect.TypeFor[AppInfo]()},
 		{Name: "AppMetadata", Type: reflect.TypeFor[AppMetadata]()},
 		{Name: "AppReview", Type: reflect.TypeFor[AppReview]()},
 		{Name: "AppScreenshot", Type: reflect.TypeFor[AppScreenshot]()},
@@ -588,6 +589,35 @@ func wireSchemaDefinitions() Schema {
 		"termsOfService":    nullableStringSchema(),
 		"isDiscoverableApp": Schema{"type": "boolean"},
 	}, []string{"isDiscoverableApp"})
+	schemas["AppInfo"] = closedThreadSessionParamSchema(Schema{
+		"id":                  Schema{"type": "string"},
+		"name":                Schema{"type": "string"},
+		"description":         nullableStringSchema(),
+		"logoUrl":             nullableStringSchema(),
+		"logoUrlDark":         nullableStringSchema(),
+		"iconAssets":          nullableAppInfoStringMapSchema(),
+		"iconDarkAssets":      nullableAppInfoStringMapSchema(),
+		"distributionChannel": nullableStringSchema(),
+		"branding": Schema{"anyOf": []any{
+			Schema{"$ref": "#/$defs/AppBranding"}, Schema{"type": "null"},
+		}},
+		"appMetadata": Schema{"anyOf": []any{
+			Schema{"$ref": "#/$defs/AppMetadata"}, Schema{"type": "null"},
+		}},
+		"labels":     nullableAppInfoStringMapSchema(),
+		"installUrl": nullableStringSchema(),
+		"isAccessible": Schema{
+			"type": "boolean", "default": false,
+		},
+		"isEnabled": Schema{
+			"type": "boolean", "default": true,
+			"description": "Whether this app is enabled in config.toml. Example: ```toml [apps.bad_app] enabled = false ```",
+		},
+		"pluginDisplayNames": Schema{
+			"type": "array", "items": Schema{"type": "string"}, "default": []any{},
+		},
+	}, []string{"id", "name"})
+	schemas["AppInfo"].(Schema)["description"] = "EXPERIMENTAL - app metadata returned by app-list APIs."
 	schemas["AppMetadata"] = closedThreadSessionParamSchema(Schema{
 		"review": Schema{"anyOf": []any{
 			Schema{"$ref": "#/$defs/AppReview"}, Schema{"type": "null"},
@@ -2850,6 +2880,13 @@ func patchChangeKindVariantSchema(kind, requiredMovePath string) Schema {
 
 func nullableStringSchema() Schema {
 	return Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}}
+}
+
+func nullableAppInfoStringMapSchema() Schema {
+	return Schema{"anyOf": []any{
+		Schema{"type": "object", "additionalProperties": Schema{"type": "string"}},
+		Schema{"type": "null"},
+	}}
 }
 
 func schemaWithRequiredIDAlternative(base Schema) Schema {
