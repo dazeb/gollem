@@ -624,6 +624,14 @@ export type AppScreenshot = {
   "userPrompt": string;
 };
 
+export type AppSummary = {
+  "category": string | null;
+  "description": string | null;
+  "id": string;
+  "installUrl": string | null;
+  "name": string;
+};
+
 export type ApplyPatchApprovalParams = {
   "callId": string;
   "conversationId": ThreadId;

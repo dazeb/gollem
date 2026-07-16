@@ -217,8 +217,8 @@ func TestExternalAgentConfigDetectRecordsRemainStandalone(t *testing.T) {
 	if !ok || info.State != MethodDeferredStub {
 		t.Fatalf("externalAgentConfig/detect = %#v, %v; want deferred stub", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 459 {
-		t.Fatalf("definition count = %d, want 459", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 460 {
+		t.Fatalf("definition count = %d, want 460", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
