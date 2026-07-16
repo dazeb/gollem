@@ -632,6 +632,18 @@ export type AppSummary = {
   "name": string;
 };
 
+export type AppTemplateSummary = {
+  "canonicalConnectorId": string | null;
+  "category": string | null;
+  "description": string | null;
+  "logoUrl": string | null;
+  "logoUrlDark": string | null;
+  "materializedAppIds": Array<string>;
+  "name": string;
+  "reason": AppTemplateUnavailableReason | null;
+  "templateId": string;
+};
+
 export type AppTemplateUnavailableReason = "NOT_CONFIGURED_FOR_WORKSPACE" | "NO_ACTIVE_WORKSPACE";
 
 export type ApplyPatchApprovalParams = {

@@ -112,6 +112,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AppReview", Type: reflect.TypeFor[AppReview]()},
 		{Name: "AppScreenshot", Type: reflect.TypeFor[AppScreenshot]()},
 		{Name: "AppSummary", Type: reflect.TypeFor[AppSummary]()},
+		{Name: "AppTemplateSummary", Type: reflect.TypeFor[AppTemplateSummary]()},
 		{Name: "AppTemplateUnavailableReason", Type: reflect.TypeFor[AppTemplateUnavailableReason]()},
 		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
 		{Name: "ApplyPatchApprovalResponse", Type: reflect.TypeFor[ApplyPatchApprovalResponse]()},
@@ -670,6 +671,17 @@ func wireSchemaDefinitions() Schema {
 	}, []string{"id", "name"})
 	schemas["AppSummary"].(Schema)["description"] =
 		"EXPERIMENTAL - app metadata summary for plugin responses."
+	schemas["AppTemplateSummary"] = closedThreadSessionParamSchema(Schema{
+		"templateId":           Schema{"type": "string"},
+		"name":                 Schema{"type": "string"},
+		"description":          nullableStringSchema(),
+		"category":             nullableStringSchema(),
+		"canonicalConnectorId": nullableStringSchema(),
+		"logoUrl":              nullableStringSchema(),
+		"logoUrlDark":          nullableStringSchema(),
+		"materializedAppIds":   Schema{"type": "array", "items": Schema{"type": "string"}},
+		"reason":               nullableSchemaRef("AppTemplateUnavailableReason"),
+	}, []string{"templateId", "name", "materializedAppIds"})
 	schemas["AppTemplateUnavailableReason"] = stringEnumSchema(
 		string(AppTemplateUnavailableReasonNotConfiguredForWorkspace),
 		string(AppTemplateUnavailableReasonNoActiveWorkspace),
