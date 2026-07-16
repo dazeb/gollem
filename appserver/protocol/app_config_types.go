@@ -3,7 +3,6 @@ package protocol
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 )
 
 // AppConfig is exact standalone configuration data for one app.
@@ -97,18 +96,7 @@ func (c *AppConfig) UnmarshalJSON(data []byte) error {
 }
 
 func decodeDefaultEnabledAppConfigBool(payload map[string]json.RawMessage) (bool, error) {
-	raw, ok := payload["enabled"]
-	if !ok {
-		return true, nil
-	}
-	if isJSONNull(raw) {
-		return false, errors.New("decode app config enabled: value cannot be null")
-	}
-	var enabled bool
-	if err := json.Unmarshal(raw, &enabled); err != nil {
-		return false, fmt.Errorf("decode app config enabled: %w", err)
-	}
-	return enabled, nil
+	return decodeDefaultTrueConfigBool(payload, "app config", "enabled")
 }
 
 var (

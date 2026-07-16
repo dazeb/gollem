@@ -41,7 +41,7 @@ func MarshalTypeScript() ([]byte, error) {
 		definition := defs[name]
 		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
 			name == "AppBranding" || name == "AppConfig" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
-			name == "AppSummary" || name == "AppTemplateSummary" ||
+			name == "AppSummary" || name == "AppTemplateSummary" || name == "AppsDefaultConfig" ||
 			name == "AppToolConfig" ||
 			name == "ApplyPatchApprovalParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
@@ -105,6 +105,12 @@ func MarshalTypeScript() ([]byte, error) {
 				}
 			case "AppToolConfig":
 				schema["required"] = []string{"enabled", "approval_mode"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "AppsDefaultConfig":
+				schema["required"] = []string{
+					"enabled", "approvals_reviewer", "destructive_enabled", "open_world_enabled",
+					"default_tools_approval_mode",
+				}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ApplyPatchApprovalParams":
 				schema["required"] = []string{
@@ -220,6 +226,20 @@ func MarshalTypeScript() ([]byte, error) {
 					"required": []string{"enabled", "approval_mode"},
 					"x-gollem-typescript-ignore-additional-properties": true,
 				},
+				"x-gollem-typescript-optional-map": true,
+			}
+		}
+		if name == "AppsConfig" {
+			// ts-rs intersects the required reserved default with an optional
+			// flattened map of canonical app records. Keep this render-only
+			// structure out of the intentionally open upstream JSON Schema.
+			definition = Schema{
+				"type": "object",
+				"properties": Schema{
+					"_default": nullableSchemaRef("AppsDefaultConfig"),
+				},
+				"required":                         []string{"_default"},
+				"additionalProperties":             Schema{"$ref": "#/$defs/AppConfig"},
 				"x-gollem-typescript-optional-map": true,
 			}
 		}
