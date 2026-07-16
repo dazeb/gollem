@@ -2565,6 +2565,29 @@ export type PluginsMigration = {
   "pluginNames": Array<string>;
 };
 
+export type ProcessExitedNotification = {
+  "exitCode": number;
+  "processHandle": string;
+  "stderr": string;
+  "stderrCapReached": boolean;
+  "stdout": string;
+  "stdoutCapReached": boolean;
+};
+
+export type ProcessOutputDeltaNotification = {
+  "capReached": boolean;
+  "deltaBase64": string;
+  "processHandle": string;
+  "stream": ProcessOutputStream;
+};
+
+export type ProcessOutputStream = "stdout" | "stderr";
+
+export type ProcessTerminalSize = {
+  "cols": number;
+  "rows": number;
+};
+
 export type RawResponseItemCompletedNotification = {
   "item": ResponseItem;
   "threadId": string;
