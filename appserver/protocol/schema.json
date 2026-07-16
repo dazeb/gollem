@@ -895,6 +895,30 @@
       ],
       "type": "string"
     },
+    "AppToolConfig": {
+      "properties": {
+        "approval_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppToolApproval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enabled": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppToolsConfig": {
+      "type": "object"
+    },
     "ApplyPatchApprovalParams": {
       "additionalProperties": false,
       "properties": {

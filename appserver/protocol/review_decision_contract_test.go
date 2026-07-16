@@ -136,8 +136,8 @@ func TestReviewDecisionRemainsStandalone(t *testing.T) {
 			t.Fatalf("ReviewDecision unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(defs); got != 463 {
-		t.Fatalf("definition count = %d, want 463", got)
+	if got := len(defs); got != 465 {
+		t.Fatalf("definition count = %d, want 465", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
