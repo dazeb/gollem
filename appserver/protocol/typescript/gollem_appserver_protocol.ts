@@ -1681,6 +1681,16 @@ export type ItemCompletedNotification = {
   "turnId": string;
 };
 
+export type ItemGuardianApprovalReviewStartedNotification = {
+  "action": GuardianApprovalReviewAction;
+  "review": GuardianApprovalReview;
+  "reviewId": string;
+  "startedAtMs": number;
+  "targetItemId": string | null;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type ItemLifecycleNotificationParams = {
   "at": string;
   "item"?: TimelineItem | null;
