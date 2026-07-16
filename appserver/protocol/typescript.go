@@ -41,7 +41,7 @@ func MarshalTypeScript() ([]byte, error) {
 		definition := defs[name]
 		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
 			name == "AppBranding" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
-			name == "AppSummary" ||
+			name == "AppSummary" || name == "AppTemplateSummary" ||
 			name == "ApplyPatchApprovalParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
 			name == "MigrationDetails" ||
@@ -91,6 +91,11 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{"url", "fileId", "userPrompt"}
 			case "AppSummary":
 				schema["required"] = []string{"id", "name", "description", "installUrl", "category"}
+			case "AppTemplateSummary":
+				schema["required"] = []string{
+					"templateId", "name", "description", "category", "canonicalConnectorId",
+					"logoUrl", "logoUrlDark", "materializedAppIds", "reason",
+				}
 			case "ApplyPatchApprovalParams":
 				schema["required"] = []string{
 					"conversationId", "callId", "fileChanges", "reason", "grantRoot",
