@@ -123,8 +123,8 @@ func TestReviewDecisionRemainsStandalone(t *testing.T) {
 	}
 	defs := JSONSchema()["$defs"].(Schema)
 	for _, name := range []string{"ExecCommandApprovalResponse", "ApplyPatchApprovalResponse"} {
-		if _, ok := defs[name]; ok {
-			t.Fatalf("blocked %s unexpectedly exported", name)
+		if _, ok := defs[name]; !ok {
+			t.Fatalf("dependency-complete %s missing", name)
 		}
 	}
 	if reflect.DeepEqual(defs["ReviewDecision"], defs["CommandExecutionApprovalDecision"]) {
@@ -136,8 +136,8 @@ func TestReviewDecisionRemainsStandalone(t *testing.T) {
 			t.Fatalf("ReviewDecision unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(defs); got != 442 {
-		t.Fatalf("definition count = %d, want 442", got)
+	if got := len(defs); got != 444 {
+		t.Fatalf("definition count = %d, want 444", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

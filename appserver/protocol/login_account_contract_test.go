@@ -276,8 +276,8 @@ func TestLoginAccountContractsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 442 {
-		t.Fatalf("definition count = %d, want 442", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 444 {
+		t.Fatalf("definition count = %d, want 444", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)

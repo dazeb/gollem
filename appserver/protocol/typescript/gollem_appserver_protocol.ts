@@ -545,6 +545,10 @@ export type AnalyticsConfig = ({
   "enabled": boolean | null;
 } & { [key in string]?: JsonValue });
 
+export type ApplyPatchApprovalResponse = {
+  "decision": ReviewDecision;
+};
+
 export type ApprovalRequestBase = {
   "itemId": string;
   "reason"?: string;
@@ -1133,6 +1137,10 @@ export type ExecCommandApprovalParams = {
   "cwd": string;
   "parsedCmd": Array<ParsedCommand>;
   "reason": string | null;
+};
+
+export type ExecCommandApprovalResponse = {
+  "decision": ReviewDecision;
 };
 
 export type ExecPolicyAmendment = Array<string>;

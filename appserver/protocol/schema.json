@@ -246,6 +246,18 @@
       "type": "object",
       "x-gollem-typescript-optional-map": true
     },
+    "ApplyPatchApprovalResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ReviewDecision"
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "type": "object"
+    },
     "ApprovalRequestBase": {
       "additionalProperties": false,
       "properties": {
@@ -3201,6 +3213,18 @@
         "conversationId",
         "cwd",
         "parsedCmd"
+      ],
+      "type": "object"
+    },
+    "ExecCommandApprovalResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ReviewDecision"
+        }
+      },
+      "required": [
+        "decision"
       ],
       "type": "object"
     },
