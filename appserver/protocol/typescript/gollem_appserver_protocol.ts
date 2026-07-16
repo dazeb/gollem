@@ -595,6 +595,10 @@ export type AppInfo = {
   "pluginDisplayNames": Array<string>;
 };
 
+export type AppListUpdatedNotification = {
+  "data": Array<AppInfo>;
+};
+
 export type AppMetadata = {
   "categories": Array<string> | null;
   "developer": string | null;

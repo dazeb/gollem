@@ -107,6 +107,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
 		{Name: "AppBranding", Type: reflect.TypeFor[AppBranding]()},
 		{Name: "AppInfo", Type: reflect.TypeFor[AppInfo]()},
+		{Name: "AppListUpdatedNotification", Type: reflect.TypeFor[AppListUpdatedNotification]()},
 		{Name: "AppMetadata", Type: reflect.TypeFor[AppMetadata]()},
 		{Name: "AppReview", Type: reflect.TypeFor[AppReview]()},
 		{Name: "AppScreenshot", Type: reflect.TypeFor[AppScreenshot]()},
@@ -618,6 +619,11 @@ func wireSchemaDefinitions() Schema {
 		},
 	}, []string{"id", "name"})
 	schemas["AppInfo"].(Schema)["description"] = "EXPERIMENTAL - app metadata returned by app-list APIs."
+	schemas["AppListUpdatedNotification"] = closedThreadSessionParamSchema(Schema{
+		"data": Schema{"type": "array", "items": Schema{"$ref": "#/$defs/AppInfo"}},
+	}, []string{"data"})
+	schemas["AppListUpdatedNotification"].(Schema)["description"] =
+		"EXPERIMENTAL - notification emitted when the app list changes."
 	schemas["AppMetadata"] = closedThreadSessionParamSchema(Schema{
 		"review": Schema{"anyOf": []any{
 			Schema{"$ref": "#/$defs/AppReview"}, Schema{"type": "null"},

@@ -209,8 +209,8 @@ func TestTurnPlanContractsRemainStandalone(t *testing.T) {
 	if !ok || info.State != MethodBlocked {
 		t.Fatalf("turn/plan/updated method = %#v, %v; want blocked", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 458 {
-		t.Fatalf("definition count = %d, want 458", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 459 {
+		t.Fatalf("definition count = %d, want 459", got)
 	}
 	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))
