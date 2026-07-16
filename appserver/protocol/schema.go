@@ -338,6 +338,10 @@ func wireSchemaDefinitions() Schema {
 		{Name: "Personality", Type: reflect.TypeFor[Personality]()},
 		{Name: "PlanDeltaNotification", Type: reflect.TypeFor[PlanDeltaNotification]()},
 		{Name: "PluginsMigration", Type: reflect.TypeFor[PluginsMigration]()},
+		{Name: "ProcessExitedNotification", Type: reflect.TypeFor[ProcessExitedNotification]()},
+		{Name: "ProcessOutputDeltaNotification", Type: reflect.TypeFor[ProcessOutputDeltaNotification]()},
+		{Name: "ProcessOutputStream", Type: reflect.TypeFor[ProcessOutputStream]()},
+		{Name: "ProcessTerminalSize", Type: reflect.TypeFor[ProcessTerminalSize]()},
 		{Name: "SkillMigration", Type: reflect.TypeFor[SkillMigration]()},
 		{Name: "SessionMigration", Type: reflect.TypeFor[SessionMigration]()},
 		{Name: "HookMigration", Type: reflect.TypeFor[HookMigration]()},
@@ -999,6 +1003,10 @@ func wireSchemaDefinitions() Schema {
 		string(NetworkApprovalProtocolSocks5TCP), string(NetworkApprovalProtocolSocks5UDP),
 	)
 	schemas["ParsedCommand"] = parsedCommandSchema()
+	schemas["ProcessExitedNotification"] = processExitedNotificationSchema()
+	schemas["ProcessOutputDeltaNotification"] = processOutputDeltaNotificationSchema()
+	schemas["ProcessOutputStream"] = processOutputStreamSchema()
+	schemas["ProcessTerminalSize"] = processTerminalSizeSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()

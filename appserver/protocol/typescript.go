@@ -55,6 +55,8 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "HookRunSummary" || name == "HookStartedNotification" ||
 			name == "HookCompletedNotification" || name == "HookMetadata" ||
 			name == "GuardianApprovalReview" || name == "ParsedCommand" ||
+			name == "ProcessExitedNotification" || name == "ProcessOutputDeltaNotification" ||
+			name == "ProcessTerminalSize" ||
 			name == "ItemGuardianApprovalReviewCompletedNotification" ||
 			name == "ItemGuardianApprovalReviewStartedNotification" {
 			// Rust accepts omitted serde default/Option fields while generated
@@ -182,6 +184,8 @@ func MarshalTypeScript() ([]byte, error) {
 					copy["required"] = required
 					variants[index] = copy
 				}
+			case "ProcessExitedNotification", "ProcessOutputDeltaNotification", "ProcessTerminalSize":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ItemGuardianApprovalReviewCompletedNotification":
 				schema["required"] = []string{
 					"threadId", "turnId", "startedAtMs", "completedAtMs", "reviewId",
@@ -261,6 +265,13 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "AppsListResponse" {
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
 				"nextCursor": nullableStringSchema(),
+			})
+		}
+		if name == "ProcessOutputDeltaNotification" {
+			// The exact schema wraps the stream reference in allOf to attach its
+			// description. Render that property as the referenced Rust type.
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"stream": Schema{"$ref": "#/$defs/ProcessOutputStream"},
 			})
 		}
 		if name == "AppInfo" {
