@@ -500,6 +500,19 @@ export type AccountLoginCompletedNotification = {
   "success": boolean;
 };
 
+export type AccountTokenUsageDailyBucket = {
+  "startDate": string;
+  "tokens": bigint;
+};
+
+export type AccountTokenUsageSummary = {
+  "currentStreakDays": bigint | null;
+  "lifetimeTokens": bigint | null;
+  "longestRunningTurnSec": bigint | null;
+  "longestStreakDays": bigint | null;
+  "peakDailyTokens": bigint | null;
+};
+
 export type ActivePermissionProfile = {
   "extends": string | null;
   "id": string;

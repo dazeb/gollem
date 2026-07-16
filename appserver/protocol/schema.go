@@ -92,6 +92,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
 		{Name: "AccountLoginCompletedNotification", Type: reflect.TypeFor[AccountLoginCompletedNotification]()},
+		{Name: "AccountTokenUsageDailyBucket", Type: reflect.TypeFor[AccountTokenUsageDailyBucket]()},
+		{Name: "AccountTokenUsageSummary", Type: reflect.TypeFor[AccountTokenUsageSummary]()},
 		{Name: "AmazonBedrockCredentialSource", Type: reflect.TypeFor[AmazonBedrockCredentialSource]()},
 		{Name: "AnalyticsConfig", Type: reflect.TypeFor[AnalyticsConfig]()},
 		{Name: "AttestationGenerateParams", Type: reflect.TypeFor[AttestationGenerateParams]()},
@@ -561,6 +563,17 @@ func wireSchemaDefinitions() Schema {
 		"success": Schema{"type": "boolean"},
 		"error":   nullableStringSchema(),
 	}, []string{"success"})
+	schemas["AccountTokenUsageDailyBucket"] = closedThreadSessionParamSchema(Schema{
+		"startDate": Schema{"type": "string"},
+		"tokens":    Schema{"type": "integer", "format": "int64"},
+	}, []string{"startDate", "tokens"})
+	schemas["AccountTokenUsageSummary"] = closedThreadSessionParamSchema(Schema{
+		"lifetimeTokens":        Schema{"type": []any{"integer", "null"}, "format": "int64"},
+		"peakDailyTokens":       Schema{"type": []any{"integer", "null"}, "format": "int64"},
+		"longestRunningTurnSec": Schema{"type": []any{"integer", "null"}, "format": "int64"},
+		"currentStreakDays":     Schema{"type": []any{"integer", "null"}, "format": "int64"},
+		"longestStreakDays":     Schema{"type": []any{"integer", "null"}, "format": "int64"},
+	}, nil)
 	schemas["AgentPath"] = Schema{"type": "string"}
 	schemas["AmazonBedrockCredentialSource"] = stringEnumSchema(
 		string(AmazonBedrockCredentialSourceCodexManaged),
