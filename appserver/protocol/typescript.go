@@ -40,7 +40,7 @@ func MarshalTypeScript() ([]byte, error) {
 	for _, name := range names {
 		definition := defs[name]
 		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
-			name == "AppBranding" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
+			name == "AppBranding" || name == "AppConfig" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
 			name == "AppSummary" || name == "AppTemplateSummary" ||
 			name == "AppToolConfig" ||
 			name == "ApplyPatchApprovalParams" ||
@@ -76,6 +76,12 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{
 					"category", "developer", "website", "privacyPolicy", "termsOfService", "isDiscoverableApp",
 				}
+			case "AppConfig":
+				schema["required"] = []string{
+					"enabled", "approvals_reviewer", "destructive_enabled", "open_world_enabled",
+					"default_tools_approval_mode", "default_tools_enabled", "tools",
+				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "AppInfo":
 				schema["required"] = []string{
 					"id", "name", "description", "logoUrl", "logoUrlDark", "iconAssets",
@@ -190,6 +196,13 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "AppToolConfig" {
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
 				"enabled": nullableBooleanSchema(),
+			})
+		}
+		if name == "AppConfig" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"default_tools_enabled": nullableBooleanSchema(),
+				"destructive_enabled":   nullableBooleanSchema(),
+				"open_world_enabled":    nullableBooleanSchema(),
 			})
 		}
 		if name == "AppToolsConfig" {

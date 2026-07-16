@@ -577,6 +577,16 @@ export type AppBranding = {
   "website": string | null;
 };
 
+export type AppConfig = {
+  "approvals_reviewer": ApprovalsReviewer | null;
+  "default_tools_approval_mode": AppToolApproval | null;
+  "default_tools_enabled": boolean | null;
+  "destructive_enabled": boolean | null;
+  "enabled": boolean;
+  "open_world_enabled": boolean | null;
+  "tools": AppToolsConfig | null;
+};
+
 export type AppInfo = {
   "appMetadata": AppMetadata | null;
   "branding": AppBranding | null;

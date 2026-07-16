@@ -106,6 +106,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
 		{Name: "AppBranding", Type: reflect.TypeFor[AppBranding]()},
+		{Name: "AppConfig", Type: reflect.TypeFor[AppConfig]()},
 		{Name: "AppInfo", Type: reflect.TypeFor[AppInfo]()},
 		{Name: "AppListUpdatedNotification", Type: reflect.TypeFor[AppListUpdatedNotification]()},
 		{Name: "AppMetadata", Type: reflect.TypeFor[AppMetadata]()},
@@ -703,6 +704,18 @@ func wireSchemaDefinitions() Schema {
 		},
 	}
 	schemas["AppToolsConfig"] = Schema{"type": "object"}
+	schemas["AppConfig"] = Schema{
+		"type": "object",
+		"properties": Schema{
+			"approvals_reviewer":          nullableSchemaRef("ApprovalsReviewer"),
+			"default_tools_approval_mode": nullableSchemaRef("AppToolApproval"),
+			"default_tools_enabled":       Schema{"type": []any{"boolean", "null"}},
+			"destructive_enabled":         Schema{"type": []any{"boolean", "null"}},
+			"enabled":                     Schema{"default": true, "type": "boolean"},
+			"open_world_enabled":          Schema{"type": []any{"boolean", "null"}},
+			"tools":                       nullableSchemaRef("AppToolsConfig"),
+		},
+	}
 	schemas["AddCreditsNudgeCreditType"] = stringEnumSchema(
 		string(AddCreditsNudgeCreditTypeCredits),
 		string(AddCreditsNudgeCreditTypeUsageLimit),

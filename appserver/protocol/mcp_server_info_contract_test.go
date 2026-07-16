@@ -148,8 +148,8 @@ func TestMcpServerInfoRemainsStandalone(t *testing.T) {
 	if !ok || info.State != MethodImplemented {
 		t.Fatalf("mcpServerStatus/list = %#v, %v; want implemented", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 465 {
-		t.Fatalf("definition count = %d, want 465", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 466 {
+		t.Fatalf("definition count = %d, want 466", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
