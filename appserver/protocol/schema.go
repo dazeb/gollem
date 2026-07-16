@@ -111,6 +111,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AppMetadata", Type: reflect.TypeFor[AppMetadata]()},
 		{Name: "AppReview", Type: reflect.TypeFor[AppReview]()},
 		{Name: "AppScreenshot", Type: reflect.TypeFor[AppScreenshot]()},
+		{Name: "AppSummary", Type: reflect.TypeFor[AppSummary]()},
 		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
 		{Name: "ApplyPatchApprovalResponse", Type: reflect.TypeFor[ApplyPatchApprovalResponse]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
@@ -659,6 +660,15 @@ func wireSchemaDefinitions() Schema {
 		"fileId":     nullableStringSchema(),
 		"userPrompt": Schema{"type": "string"},
 	}, []string{"userPrompt"})
+	schemas["AppSummary"] = closedThreadSessionParamSchema(Schema{
+		"id":          Schema{"type": "string"},
+		"name":        Schema{"type": "string"},
+		"description": nullableStringSchema(),
+		"installUrl":  nullableStringSchema(),
+		"category":    nullableStringSchema(),
+	}, []string{"id", "name"})
+	schemas["AppSummary"].(Schema)["description"] =
+		"EXPERIMENTAL - app metadata summary for plugin responses."
 	schemas["AddCreditsNudgeCreditType"] = stringEnumSchema(
 		string(AddCreditsNudgeCreditTypeCredits),
 		string(AddCreditsNudgeCreditTypeUsageLimit),

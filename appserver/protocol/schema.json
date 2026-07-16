@@ -749,6 +749,53 @@
       ],
       "type": "object"
     },
+    "AppSummary": {
+      "additionalProperties": false,
+      "description": "EXPERIMENTAL - app metadata summary for plugin responses.",
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "installUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
     "ApplyPatchApprovalParams": {
       "additionalProperties": false,
       "properties": {

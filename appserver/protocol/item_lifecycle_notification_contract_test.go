@@ -159,8 +159,8 @@ func TestExactItemLifecycleNotificationBindingsPreserveCompatibility(t *testing.
 	if len(want) != 0 {
 		t.Fatalf("missing lifecycle bindings: %v", want)
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 459 {
-		t.Fatalf("definition count = %d, want 459", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 460 {
+		t.Fatalf("definition count = %d, want 460", len(JSONSchema()["$defs"].(Schema)))
 	}
 	if len(WireTypeBindings()) != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
