@@ -382,6 +382,23 @@
         }
       ]
     },
+    "AttestationGenerateParams": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "AttestationGenerateResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "description": "Opaque client attestation token.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "type": "object"
+    },
     "AuthMode": {
       "enum": [
         "apikey",

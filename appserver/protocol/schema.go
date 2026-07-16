@@ -93,6 +93,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
 		{Name: "AmazonBedrockCredentialSource", Type: reflect.TypeFor[AmazonBedrockCredentialSource]()},
 		{Name: "AnalyticsConfig", Type: reflect.TypeFor[AnalyticsConfig]()},
+		{Name: "AttestationGenerateParams", Type: reflect.TypeFor[AttestationGenerateParams]()},
+		{Name: "AttestationGenerateResponse", Type: reflect.TypeFor[AttestationGenerateResponse]()},
 		{Name: "AuthMode", Type: reflect.TypeFor[AuthMode]()},
 		{Name: "ApprovalRequestBase", Type: reflect.TypeFor[ApprovalRequestBase]()},
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
