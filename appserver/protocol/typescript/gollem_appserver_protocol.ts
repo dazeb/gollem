@@ -632,6 +632,8 @@ export type AppSummary = {
   "name": string;
 };
 
+export type AppTemplateUnavailableReason = "NOT_CONFIGURED_FOR_WORKSPACE" | "NO_ACTIVE_WORKSPACE";
+
 export type ApplyPatchApprovalParams = {
   "callId": string;
   "conversationId": ThreadId;
