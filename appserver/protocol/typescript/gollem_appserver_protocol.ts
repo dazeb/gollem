@@ -1125,6 +1125,16 @@ export type ErrorNotification = {
   "willRetry": boolean;
 };
 
+export type ExecCommandApprovalParams = {
+  "approvalId": string | null;
+  "callId": string;
+  "command": Array<string>;
+  "conversationId": ThreadId;
+  "cwd": string;
+  "parsedCmd": Array<ParsedCommand>;
+  "reason": string | null;
+};
+
 export type ExecPolicyAmendment = Array<string>;
 
 export type ExternalAgentConfigDetectParams = {

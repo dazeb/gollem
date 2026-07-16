@@ -42,6 +42,7 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "MigrationDetails" || name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
 			name == "ExternalAgentConfigImportItemTypeSuccess" ||
+			name == "ExecCommandApprovalParams" ||
 			name == "FuzzyFileSearchParams" || name == "FuzzyFileSearchResult" ||
 			name == "HookRunSummary" || name == "HookStartedNotification" ||
 			name == "HookCompletedNotification" || name == "HookMetadata" ||
@@ -57,6 +58,10 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			schema = renderSchema
 			switch name {
+			case "ExecCommandApprovalParams":
+				schema["required"] = []string{
+					"conversationId", "callId", "approvalId", "command", "cwd", "reason", "parsedCmd",
+				}
 			case "MigrationDetails":
 				schema["required"] = []string{
 					"plugins", "skills", "sessions", "mcpServers", "hooks", "subagents", "commands",
