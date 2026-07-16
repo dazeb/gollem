@@ -2295,6 +2295,25 @@ export type OverriddenMetadata = {
   "overridingLayer": ConfigLayerMetadata;
 };
 
+export type ParsedCommand = {
+  "cmd": string;
+  "name": string;
+  "path": string;
+  "type": "read";
+} | {
+  "cmd": string;
+  "path": string | null;
+  "type": "list_files";
+} | {
+  "cmd": string;
+  "path": string | null;
+  "query": string | null;
+  "type": "search";
+} | {
+  "cmd": string;
+  "type": "unknown";
+};
+
 export type PatchApplyStatus = "inProgress" | "completed" | "failed" | "declined";
 
 export type PatchChangeKind = {

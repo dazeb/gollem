@@ -45,7 +45,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "FuzzyFileSearchParams" || name == "FuzzyFileSearchResult" ||
 			name == "HookRunSummary" || name == "HookStartedNotification" ||
 			name == "HookCompletedNotification" || name == "HookMetadata" ||
-			name == "GuardianApprovalReview" ||
+			name == "GuardianApprovalReview" || name == "ParsedCommand" ||
 			name == "ItemGuardianApprovalReviewCompletedNotification" ||
 			name == "ItemGuardianApprovalReviewStartedNotification" {
 			// Rust accepts omitted serde default/Option fields while generated
@@ -92,6 +92,22 @@ func MarshalTypeScript() ([]byte, error) {
 			case "GuardianApprovalReview":
 				schema["required"] = []string{
 					"status", "riskLevel", "userAuthorization", "rationale",
+				}
+			case "ParsedCommand":
+				variants := schema["oneOf"].([]any)
+				for index, required := range [][]string{
+					{"type", "cmd", "name", "path"},
+					{"type", "cmd", "path"},
+					{"type", "cmd", "query", "path"},
+					{"type", "cmd"},
+				} {
+					variant := variants[index].(Schema)
+					copy := make(Schema, len(variant))
+					for key, value := range variant {
+						copy[key] = value
+					}
+					copy["required"] = required
+					variants[index] = copy
 				}
 			case "ItemGuardianApprovalReviewCompletedNotification":
 				schema["required"] = []string{

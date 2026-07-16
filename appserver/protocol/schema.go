@@ -363,6 +363,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ItemGuardianApprovalReviewStartedNotification", Type: reflect.TypeFor[ItemGuardianApprovalReviewStartedNotification]()},
 		{Name: "NetworkApprovalContext", Type: reflect.TypeFor[NetworkApprovalContext]()},
 		{Name: "NetworkApprovalProtocol", Type: reflect.TypeFor[NetworkApprovalProtocol]()},
+		{Name: "ParsedCommand", Type: reflect.TypeFor[ParsedCommand]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -704,6 +705,7 @@ func wireSchemaDefinitions() Schema {
 		string(NetworkApprovalProtocolHTTP), string(NetworkApprovalProtocolHTTPS),
 		string(NetworkApprovalProtocolSocks5TCP), string(NetworkApprovalProtocolSocks5UDP),
 	)
+	schemas["ParsedCommand"] = parsedCommandSchema()
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()
@@ -1270,6 +1272,48 @@ func commandActionSchema() Schema {
 			"command": Schema{"type": "string"},
 		}),
 	}}
+}
+
+func parsedCommandSchema() Schema {
+	return Schema{"oneOf": []any{
+		parsedCommandVariantSchema("read", []string{"cmd", "name", "path"}, Schema{
+			"cmd":  Schema{"type": "string"},
+			"name": Schema{"type": "string"},
+			"path": Schema{
+				"type": "string",
+				"description": "(Best effort) Path to the file being read by the command. When " +
+					"possible, this is an absolute path, though when relative, it should " +
+					"be resolved against the `cwd`` that will be used to run the command " +
+					"to derive the absolute path.",
+			},
+		}),
+		parsedCommandVariantSchema("list_files", []string{"cmd"}, Schema{
+			"cmd": Schema{"type": "string"}, "path": nullableStringSchema(),
+		}),
+		parsedCommandVariantSchema("search", []string{"cmd"}, Schema{
+			"cmd": Schema{"type": "string"}, "query": nullableStringSchema(), "path": nullableStringSchema(),
+		}),
+		parsedCommandVariantSchema("unknown", []string{"cmd"}, Schema{
+			"cmd": Schema{"type": "string"},
+		}),
+	}}
+}
+
+func parsedCommandVariantSchema(commandType string, requiredFields []string, fields Schema) Schema {
+	properties := Schema{
+		"type": Schema{"type": "string", "enum": []any{commandType}},
+	}
+	for name, schema := range fields {
+		properties[name] = schema
+	}
+	required := []string{"type"}
+	required = append(required, requiredFields...)
+	return Schema{
+		"type":                 "object",
+		"properties":           properties,
+		"required":             required,
+		"additionalProperties": false,
+	}
 }
 
 func collabAgentStateSchema() Schema {
