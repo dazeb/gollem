@@ -4,6 +4,77 @@
       "description": "An absolute, lexically normalized local path.",
       "type": "string"
     },
+    "Account": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "apiKey"
+              ],
+              "title": "ApiKeyAccountType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "ApiKeyAccount",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "planType": {
+              "$ref": "#/$defs/PlanType"
+            },
+            "type": {
+              "enum": [
+                "chatgpt"
+              ],
+              "title": "ChatgptAccountType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "email",
+            "planType",
+            "type"
+          ],
+          "title": "ChatgptAccount",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "credentialSource": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/AmazonBedrockCredentialSource"
+                }
+              ],
+              "default": "awsManaged"
+            },
+            "type": {
+              "enum": [
+                "amazonBedrock"
+              ],
+              "title": "AmazonBedrockAccountType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "AmazonBedrockAccount",
+          "type": "object"
+        }
+      ]
+    },
     "AccountLoginCompletedNotification": {
       "additionalProperties": false,
       "properties": {
@@ -101,6 +172,31 @@
           "type": [
             "integer",
             "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AccountUpdatedNotification": {
+      "properties": {
+        "authMode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuthMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "planType": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanType"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -5779,6 +5875,15 @@
       ],
       "type": "object"
     },
+    "GetAccountParams": {
+      "properties": {
+        "refreshToken": {
+          "description": "When `true`, requests a proactive token refresh before returning.\n\nIn managed auth mode this triggers the normal refresh-token flow. In external auth mode this flag is ignored. Clients should refresh tokens themselves and call `account/login/start` with `chatgptAuthTokens`.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "GetAccountRateLimitsResponse": {
       "properties": {
         "rateLimitResetCredits": {
@@ -5812,6 +5917,47 @@
       },
       "required": [
         "rateLimits"
+      ],
+      "type": "object"
+    },
+    "GetAccountResponse": {
+      "properties": {
+        "account": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Account"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requiresOpenaiAuth": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "requiresOpenaiAuth"
+      ],
+      "type": "object"
+    },
+    "GetAccountTokenUsageResponse": {
+      "properties": {
+        "dailyUsageBuckets": {
+          "items": {
+            "$ref": "#/$defs/AccountTokenUsageDailyBucket"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/AccountTokenUsageSummary"
+        }
+      },
+      "required": [
+        "summary"
       ],
       "type": "object"
     },
@@ -11713,6 +11859,28 @@
       ],
       "type": "object",
       "x-gollem-typescript-ignore-additional-properties": true
+    },
+    "SendAddCreditsNudgeEmailParams": {
+      "properties": {
+        "creditType": {
+          "$ref": "#/$defs/AddCreditsNudgeCreditType"
+        }
+      },
+      "required": [
+        "creditType"
+      ],
+      "type": "object"
+    },
+    "SendAddCreditsNudgeEmailResponse": {
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/AddCreditsNudgeEmailStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
     },
     "ServerCapabilities": {
       "additionalProperties": false,

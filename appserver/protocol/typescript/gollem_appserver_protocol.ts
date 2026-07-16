@@ -494,6 +494,17 @@ export type KnownMethod =
 
 export type AbsolutePathBuf = string;
 
+export type Account = {
+  "type": "apiKey";
+} | {
+  "email": string | null;
+  "planType": PlanType;
+  "type": "chatgpt";
+} | {
+  "credentialSource": AmazonBedrockCredentialSource;
+  "type": "amazonBedrock";
+};
+
 export type AccountLoginCompletedNotification = {
   "error": string | null;
   "loginId": string | null;
@@ -515,6 +526,11 @@ export type AccountTokenUsageSummary = {
   "longestRunningTurnSec": bigint | null;
   "longestStreakDays": bigint | null;
   "peakDailyTokens": bigint | null;
+};
+
+export type AccountUpdatedNotification = {
+  "authMode": AuthMode | null;
+  "planType": PlanType | null;
 };
 
 export type ActivePermissionProfile = {
@@ -1699,10 +1715,24 @@ export type FuzzyFileSearchSessionUpdatedNotification = {
   "sessionId": string;
 };
 
+export type GetAccountParams = {
+  "refreshToken"?: boolean;
+};
+
 export type GetAccountRateLimitsResponse = {
   "rateLimitResetCredits": RateLimitResetCreditsSummary | null;
   "rateLimits": RateLimitSnapshot;
   "rateLimitsByLimitId": { [key in string]?: RateLimitSnapshot } | null;
+};
+
+export type GetAccountResponse = {
+  "account": Account | null;
+  "requiresOpenaiAuth": boolean;
+};
+
+export type GetAccountTokenUsageResponse = {
+  "dailyUsageBuckets": Array<AccountTokenUsageDailyBucket> | null;
+  "summary": AccountTokenUsageSummary;
 };
 
 export type GitInfo = {
@@ -2892,6 +2922,14 @@ export type SandboxWorkspaceWrite = {
   "exclude_tmpdir_env_var": boolean;
   "network_access": boolean;
   "writable_roots": Array<string>;
+};
+
+export type SendAddCreditsNudgeEmailParams = {
+  "creditType": AddCreditsNudgeCreditType;
+};
+
+export type SendAddCreditsNudgeEmailResponse = {
+  "status": AddCreditsNudgeEmailStatus;
 };
 
 export type ServerCapabilities = {

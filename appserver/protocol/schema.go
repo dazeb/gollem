@@ -91,10 +91,12 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AdditionalFileSystemPermissions", Type: reflect.TypeFor[AdditionalFileSystemPermissions]()},
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
+		{Name: "Account", Type: reflect.TypeFor[Account]()},
 		{Name: "AccountLoginCompletedNotification", Type: reflect.TypeFor[AccountLoginCompletedNotification]()},
 		{Name: "AccountRateLimitsUpdatedNotification", Type: reflect.TypeFor[AccountRateLimitsUpdatedNotification]()},
 		{Name: "AccountTokenUsageDailyBucket", Type: reflect.TypeFor[AccountTokenUsageDailyBucket]()},
 		{Name: "AccountTokenUsageSummary", Type: reflect.TypeFor[AccountTokenUsageSummary]()},
+		{Name: "AccountUpdatedNotification", Type: reflect.TypeFor[AccountUpdatedNotification]()},
 		{Name: "AddCreditsNudgeCreditType", Type: reflect.TypeFor[AddCreditsNudgeCreditType]()},
 		{Name: "AddCreditsNudgeEmailStatus", Type: reflect.TypeFor[AddCreditsNudgeEmailStatus]()},
 		{Name: "AmazonBedrockCredentialSource", Type: reflect.TypeFor[AmazonBedrockCredentialSource]()},
@@ -223,7 +225,10 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FsCreateDirectoryResponse", Type: reflect.TypeFor[FsCreateDirectoryResponse]()},
 		{Name: "FsGetMetadataParams", Type: reflect.TypeFor[FsGetMetadataParams]()},
 		{Name: "FsGetMetadataResponse", Type: reflect.TypeFor[FsGetMetadataResponse]()},
+		{Name: "GetAccountParams", Type: reflect.TypeFor[GetAccountParams]()},
 		{Name: "GetAccountRateLimitsResponse", Type: reflect.TypeFor[GetAccountRateLimitsResponse]()},
+		{Name: "GetAccountResponse", Type: reflect.TypeFor[GetAccountResponse]()},
+		{Name: "GetAccountTokenUsageResponse", Type: reflect.TypeFor[GetAccountTokenUsageResponse]()},
 		{Name: "FsReadDirectoryEntry", Type: reflect.TypeFor[FsReadDirectoryEntry]()},
 		{Name: "FsReadDirectoryParams", Type: reflect.TypeFor[FsReadDirectoryParams]()},
 		{Name: "FsReadDirectoryResponse", Type: reflect.TypeFor[FsReadDirectoryResponse]()},
@@ -434,6 +439,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "SandboxMode", Type: reflect.TypeFor[SandboxMode]()},
 		{Name: "SandboxPolicy", Type: reflect.TypeFor[SandboxPolicy]()},
 		{Name: "SandboxWorkspaceWrite", Type: reflect.TypeFor[SandboxWorkspaceWrite]()},
+		{Name: "SendAddCreditsNudgeEmailParams", Type: reflect.TypeFor[SendAddCreditsNudgeEmailParams]()},
+		{Name: "SendAddCreditsNudgeEmailResponse", Type: reflect.TypeFor[SendAddCreditsNudgeEmailResponse]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "SessionSource", Type: reflect.TypeFor[SessionSource]()},
@@ -1023,6 +1030,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["ProcessOutputStream"] = processOutputStreamSchema()
 	schemas["ProcessTerminalSize"] = processTerminalSizeSchema()
 	for name, schema := range accountRateLimitSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range accountEnvelopeSchemas() {
 		schemas[name] = schema
 	}
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
