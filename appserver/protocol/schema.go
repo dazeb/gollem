@@ -330,6 +330,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ExternalAgentConfigImportHistoriesReadResponse", Type: reflect.TypeFor[ExternalAgentConfigImportHistoriesReadResponse]()},
 		{Name: "ExternalAgentConfigImportProgressNotification", Type: reflect.TypeFor[ExternalAgentConfigImportProgressNotification]()},
 		{Name: "ExternalAgentConfigImportCompletedNotification", Type: reflect.TypeFor[ExternalAgentConfigImportCompletedNotification]()},
+		{Name: "ExecCommandApprovalParams", Type: reflect.TypeFor[ExecCommandApprovalParams]()},
 		{Name: "FuzzyFileSearchMatchType", Type: reflect.TypeFor[FuzzyFileSearchMatchType]()},
 		{Name: "FuzzyFileSearchParams", Type: reflect.TypeFor[FuzzyFileSearchParams]()},
 		{Name: "FuzzyFileSearchResult", Type: reflect.TypeFor[FuzzyFileSearchResult]()},
@@ -697,6 +698,25 @@ func wireSchemaDefinitions() Schema {
 	schemas["HooksListResponse"] = hooksListResponseSchema()
 	schemas["ItemGuardianApprovalReviewCompletedNotification"] = guardianApprovalReviewCompletedNotificationSchema()
 	schemas["ItemGuardianApprovalReviewStartedNotification"] = guardianApprovalReviewStartedNotificationSchema()
+	schemas["ExecCommandApprovalParams"] = closedThreadSessionParamSchema(Schema{
+		"conversationId": Schema{"$ref": "#/$defs/ThreadId"},
+		"callId": Schema{
+			"type": "string",
+			"description": "Use to correlate this with [codex_protocol::protocol::ExecCommandBeginEvent] " +
+				"and [codex_protocol::protocol::ExecCommandEndEvent].",
+		},
+		"approvalId": Schema{
+			"anyOf":       []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			"description": "Identifier for this specific approval callback.",
+		},
+		"command": Schema{"type": "array", "items": Schema{"type": "string"}},
+		"cwd":     Schema{"type": "string"},
+		"reason":  nullableStringSchema(),
+		"parsedCmd": Schema{
+			"type":  "array",
+			"items": Schema{"$ref": "#/$defs/ParsedCommand"},
+		},
+	}, []string{"callId", "command", "conversationId", "cwd", "parsedCmd"})
 	schemas["NetworkApprovalContext"] = closedThreadSessionParamSchema(Schema{
 		"host":     Schema{"type": "string"},
 		"protocol": Schema{"$ref": "#/$defs/NetworkApprovalProtocol"},

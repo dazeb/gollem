@@ -3148,6 +3148,62 @@
       ],
       "type": "object"
     },
+    "ExecCommandApprovalParams": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Identifier for this specific approval callback."
+        },
+        "callId": {
+          "description": "Use to correlate this with [codex_protocol::protocol::ExecCommandBeginEvent] and [codex_protocol::protocol::ExecCommandEndEvent].",
+          "type": "string"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "conversationId": {
+          "$ref": "#/$defs/ThreadId"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "parsedCmd": {
+          "items": {
+            "$ref": "#/$defs/ParsedCommand"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "callId",
+        "command",
+        "conversationId",
+        "cwd",
+        "parsedCmd"
+      ],
+      "type": "object"
+    },
     "ExecPolicyAmendment": {
       "items": {
         "type": "string"

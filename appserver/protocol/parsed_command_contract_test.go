@@ -111,9 +111,6 @@ func TestParsedCommandRejectsMalformedWireForms(t *testing.T) {
 }
 
 func TestParsedCommandRemainsStandalone(t *testing.T) {
-	if _, ok := JSONSchema()["$defs"].(Schema)["ExecCommandApprovalParams"]; ok {
-		t.Fatal("blocked ExecCommandApprovalParams unexpectedly exported")
-	}
 	if reflect.TypeFor[ParsedCommand]() == reflect.TypeFor[CommandAction]() ||
 		reflect.TypeFor[ParsedCommand]() == reflect.TypeFor[CommandExecutionAction]() {
 		t.Fatal("ParsedCommand aliases a distinct live command-action type")
@@ -123,8 +120,8 @@ func TestParsedCommandRemainsStandalone(t *testing.T) {
 			t.Fatalf("ParsedCommand unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 440 {
-		t.Fatalf("definition count = %d, want 440", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 441 {
+		t.Fatalf("definition count = %d, want 441", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
