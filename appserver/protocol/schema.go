@@ -92,6 +92,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AdditionalNetworkPermissions", Type: reflect.TypeFor[AdditionalNetworkPermissions]()},
 		{Name: "AdditionalPermissionProfile", Type: reflect.TypeFor[AdditionalPermissionProfile]()},
 		{Name: "AccountLoginCompletedNotification", Type: reflect.TypeFor[AccountLoginCompletedNotification]()},
+		{Name: "AccountRateLimitsUpdatedNotification", Type: reflect.TypeFor[AccountRateLimitsUpdatedNotification]()},
 		{Name: "AccountTokenUsageDailyBucket", Type: reflect.TypeFor[AccountTokenUsageDailyBucket]()},
 		{Name: "AccountTokenUsageSummary", Type: reflect.TypeFor[AccountTokenUsageSummary]()},
 		{Name: "AddCreditsNudgeCreditType", Type: reflect.TypeFor[AddCreditsNudgeCreditType]()},
@@ -176,7 +177,11 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ConfiguredHookHandler", Type: reflect.TypeFor[ConfiguredHookHandler]()},
 		{Name: "ConfiguredHookMatcherGroup", Type: reflect.TypeFor[ConfiguredHookMatcherGroup]()},
 		{Name: "ContentItem", Type: reflect.TypeFor[ContentItem]()},
+		{Name: "ConsumeAccountRateLimitResetCreditOutcome", Type: reflect.TypeFor[ConsumeAccountRateLimitResetCreditOutcome]()},
+		{Name: "ConsumeAccountRateLimitResetCreditParams", Type: reflect.TypeFor[ConsumeAccountRateLimitResetCreditParams]()},
+		{Name: "ConsumeAccountRateLimitResetCreditResponse", Type: reflect.TypeFor[ConsumeAccountRateLimitResetCreditResponse]()},
 		{Name: "ContextCompactionItem", Type: reflect.TypeFor[ContextCompactionItem]()},
+		{Name: "CreditsSnapshot", Type: reflect.TypeFor[CreditsSnapshot]()},
 		{Name: "DaemonShutdownParams", Type: reflect.TypeFor[DaemonShutdownParams]()},
 		{Name: "DaemonShutdownState", Type: reflect.TypeFor[DaemonShutdownState]()},
 		{Name: "DaemonStartResult", Type: reflect.TypeFor[DaemonStartResult]()},
@@ -218,6 +223,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FsCreateDirectoryResponse", Type: reflect.TypeFor[FsCreateDirectoryResponse]()},
 		{Name: "FsGetMetadataParams", Type: reflect.TypeFor[FsGetMetadataParams]()},
 		{Name: "FsGetMetadataResponse", Type: reflect.TypeFor[FsGetMetadataResponse]()},
+		{Name: "GetAccountRateLimitsResponse", Type: reflect.TypeFor[GetAccountRateLimitsResponse]()},
 		{Name: "FsReadDirectoryEntry", Type: reflect.TypeFor[FsReadDirectoryEntry]()},
 		{Name: "FsReadDirectoryParams", Type: reflect.TypeFor[FsReadDirectoryParams]()},
 		{Name: "FsReadDirectoryResponse", Type: reflect.TypeFor[FsReadDirectoryResponse]()},
@@ -337,12 +343,21 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PatchChangeKind", Type: reflect.TypeFor[PatchChangeKind]()},
 		{Name: "Personality", Type: reflect.TypeFor[Personality]()},
 		{Name: "PlanDeltaNotification", Type: reflect.TypeFor[PlanDeltaNotification]()},
+		{Name: "PlanType", Type: reflect.TypeFor[PlanType]()},
 		{Name: "PluginsMigration", Type: reflect.TypeFor[PluginsMigration]()},
 		{Name: "ProcessExitedNotification", Type: reflect.TypeFor[ProcessExitedNotification]()},
 		{Name: "ProcessOutputDeltaNotification", Type: reflect.TypeFor[ProcessOutputDeltaNotification]()},
 		{Name: "ProcessOutputStream", Type: reflect.TypeFor[ProcessOutputStream]()},
 		{Name: "ProcessTerminalSize", Type: reflect.TypeFor[ProcessTerminalSize]()},
+		{Name: "RateLimitReachedType", Type: reflect.TypeFor[RateLimitReachedType]()},
+		{Name: "RateLimitResetCredit", Type: reflect.TypeFor[RateLimitResetCredit]()},
+		{Name: "RateLimitResetCreditsSummary", Type: reflect.TypeFor[RateLimitResetCreditsSummary]()},
+		{Name: "RateLimitResetCreditStatus", Type: reflect.TypeFor[RateLimitResetCreditStatus]()},
+		{Name: "RateLimitResetType", Type: reflect.TypeFor[RateLimitResetType]()},
+		{Name: "RateLimitSnapshot", Type: reflect.TypeFor[RateLimitSnapshot]()},
+		{Name: "RateLimitWindow", Type: reflect.TypeFor[RateLimitWindow]()},
 		{Name: "SkillMigration", Type: reflect.TypeFor[SkillMigration]()},
+		{Name: "SpendControlLimitSnapshot", Type: reflect.TypeFor[SpendControlLimitSnapshot]()},
 		{Name: "SessionMigration", Type: reflect.TypeFor[SessionMigration]()},
 		{Name: "HookMigration", Type: reflect.TypeFor[HookMigration]()},
 		{Name: "SubagentMigration", Type: reflect.TypeFor[SubagentMigration]()},
@@ -1007,6 +1022,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["ProcessOutputDeltaNotification"] = processOutputDeltaNotificationSchema()
 	schemas["ProcessOutputStream"] = processOutputStreamSchema()
 	schemas["ProcessTerminalSize"] = processTerminalSizeSchema()
+	for name, schema := range accountRateLimitSchemas() {
+		schemas[name] = schema
+	}
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()
 	schemas["McpServerToolCallResponse"] = mcpServerToolCallResponseSchema()
 	schemas["ResourceContent"] = resourceContentSchema()

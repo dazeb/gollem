@@ -39,13 +39,17 @@ func MarshalTypeScript() ([]byte, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		definition := defs[name]
-		if name == "AccountLoginCompletedNotification" || name == "AccountTokenUsageSummary" ||
+		if name == "AccountLoginCompletedNotification" || name == "AccountRateLimitsUpdatedNotification" ||
+			name == "AccountTokenUsageSummary" ||
 			name == "AppBranding" || name == "AppConfig" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
 			name == "AppSummary" || name == "AppTemplateSummary" || name == "AppsDefaultConfig" ||
 			name == "AppsListParams" || name == "AppsListResponse" ||
 			name == "AppToolConfig" ||
 			name == "ApplyPatchApprovalParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
+			name == "ConsumeAccountRateLimitResetCreditParams" ||
+			name == "ConsumeAccountRateLimitResetCreditResponse" || name == "CreditsSnapshot" ||
+			name == "GetAccountRateLimitsResponse" ||
 			name == "MigrationDetails" ||
 			name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
@@ -57,6 +61,9 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "GuardianApprovalReview" || name == "ParsedCommand" ||
 			name == "ProcessExitedNotification" || name == "ProcessOutputDeltaNotification" ||
 			name == "ProcessTerminalSize" ||
+			name == "RateLimitResetCredit" || name == "RateLimitResetCreditsSummary" ||
+			name == "RateLimitSnapshot" || name == "RateLimitWindow" ||
+			name == "SpendControlLimitSnapshot" ||
 			name == "ItemGuardianApprovalReviewCompletedNotification" ||
 			name == "ItemGuardianApprovalReviewStartedNotification" {
 			// Rust accepts omitted serde default/Option fields while generated
@@ -70,6 +77,9 @@ func MarshalTypeScript() ([]byte, error) {
 			switch name {
 			case "AccountLoginCompletedNotification":
 				schema["required"] = []string{"loginId", "success", "error"}
+			case "AccountRateLimitsUpdatedNotification":
+				schema["required"] = []string{"rateLimits"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "AccountTokenUsageSummary":
 				schema["required"] = []string{
 					"lifetimeTokens", "peakDailyTokens", "longestRunningTurnSec",
@@ -128,6 +138,20 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{
 					"accessToken", "chatgptAccountId", "chatgptPlanType",
 				}
+			case "ConsumeAccountRateLimitResetCreditParams":
+				schema["required"] = []string{"idempotencyKey"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "ConsumeAccountRateLimitResetCreditResponse":
+				schema["required"] = []string{"outcome"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "CreditsSnapshot":
+				schema["required"] = []string{"balance", "hasCredits", "unlimited"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "GetAccountRateLimitsResponse":
+				schema["required"] = []string{
+					"rateLimitResetCredits", "rateLimits", "rateLimitsByLimitId",
+				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ExecCommandApprovalParams":
 				schema["required"] = []string{
 					"conversationId", "callId", "approvalId", "command", "cwd", "reason", "parsedCmd",
@@ -185,6 +209,26 @@ func MarshalTypeScript() ([]byte, error) {
 					variants[index] = copy
 				}
 			case "ProcessExitedNotification", "ProcessOutputDeltaNotification", "ProcessTerminalSize":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "RateLimitResetCredit":
+				schema["required"] = []string{
+					"description", "expiresAt", "grantedAt", "id", "resetType", "status", "title",
+				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "RateLimitResetCreditsSummary":
+				schema["required"] = []string{"availableCount", "credits"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "RateLimitSnapshot":
+				schema["required"] = []string{
+					"credits", "individualLimit", "limitId", "limitName", "planType",
+					"primary", "rateLimitReachedType", "secondary",
+				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "RateLimitWindow":
+				schema["required"] = []string{"resetsAt", "usedPercent", "windowDurationMins"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "SpendControlLimitSnapshot":
+				schema["required"] = []string{"limit", "remainingPercent", "resetsAt", "used"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ItemGuardianApprovalReviewCompletedNotification":
 				schema["required"] = []string{
@@ -272,6 +316,54 @@ func MarshalTypeScript() ([]byte, error) {
 			// description. Render that property as the referenced Rust type.
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
 				"stream": Schema{"$ref": "#/$defs/ProcessOutputStream"},
+			})
+		}
+		if name == "RateLimitWindow" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"resetsAt": nullableIntegerSchema(), "windowDurationMins": nullableIntegerSchema(),
+			})
+		}
+		if name == "CreditsSnapshot" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"balance": nullableStringSchema(),
+			})
+		}
+		if name == "RateLimitSnapshot" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"limitId": nullableStringSchema(), "limitName": nullableStringSchema(),
+			})
+		}
+		if name == "RateLimitResetCredit" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"description": nullableStringSchema(),
+				"expiresAt":   nullableIntegerSchema(),
+				"title":       nullableStringSchema(),
+			})
+		}
+		if name == "RateLimitResetCreditsSummary" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"credits": Schema{"anyOf": []any{
+					Schema{"type": "array", "items": Schema{"$ref": "#/$defs/RateLimitResetCredit"}},
+					Schema{"type": "null"},
+				}},
+			})
+			definition = typeScriptDefinitionWithBigIntProperties(definition, "availableCount")
+		}
+		if name == "GetAccountRateLimitsResponse" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"rateLimits": Schema{"$ref": "#/$defs/RateLimitSnapshot"},
+				"rateLimitsByLimitId": Schema{"anyOf": []any{
+					Schema{
+						"type": "object", "additionalProperties": Schema{"$ref": "#/$defs/RateLimitSnapshot"},
+						"x-gollem-typescript-optional-map": true,
+					},
+					Schema{"type": "null"},
+				}},
+			})
+		}
+		if name == "ConsumeAccountRateLimitResetCreditParams" {
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"creditId": nullableStringSchema(),
 			})
 		}
 		if name == "AppInfo" {
