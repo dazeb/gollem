@@ -105,6 +105,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
+		{Name: "AppBranding", Type: reflect.TypeFor[AppBranding]()},
+		{Name: "AppReview", Type: reflect.TypeFor[AppReview]()},
+		{Name: "AppScreenshot", Type: reflect.TypeFor[AppScreenshot]()},
 		{Name: "ApplyPatchApprovalParams", Type: reflect.TypeFor[ApplyPatchApprovalParams]()},
 		{Name: "ApplyPatchApprovalResponse", Type: reflect.TypeFor[ApplyPatchApprovalResponse]()},
 		{Name: "AskForApproval", Type: reflect.TypeFor[AskForApproval]()},
@@ -576,6 +579,22 @@ func wireSchemaDefinitions() Schema {
 		"currentStreakDays":     Schema{"type": []any{"integer", "null"}, "format": "int64"},
 		"longestStreakDays":     Schema{"type": []any{"integer", "null"}, "format": "int64"},
 	}, nil)
+	schemas["AppBranding"] = closedThreadSessionParamSchema(Schema{
+		"category":          nullableStringSchema(),
+		"developer":         nullableStringSchema(),
+		"website":           nullableStringSchema(),
+		"privacyPolicy":     nullableStringSchema(),
+		"termsOfService":    nullableStringSchema(),
+		"isDiscoverableApp": Schema{"type": "boolean"},
+	}, []string{"isDiscoverableApp"})
+	schemas["AppReview"] = closedThreadSessionParamSchema(Schema{
+		"status": Schema{"type": "string"},
+	}, []string{"status"})
+	schemas["AppScreenshot"] = closedThreadSessionParamSchema(Schema{
+		"url":        nullableStringSchema(),
+		"fileId":     nullableStringSchema(),
+		"userPrompt": Schema{"type": "string"},
+	}, []string{"userPrompt"})
 	schemas["AddCreditsNudgeCreditType"] = stringEnumSchema(
 		string(AddCreditsNudgeCreditTypeCredits),
 		string(AddCreditsNudgeCreditTypeUsageLimit),
