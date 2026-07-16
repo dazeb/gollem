@@ -39,7 +39,8 @@ func MarshalTypeScript() ([]byte, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		definition := defs[name]
-		if name == "AccountLoginCompletedNotification" || name == "AccountRateLimitsUpdatedNotification" ||
+		if name == "Account" || name == "AccountLoginCompletedNotification" || name == "AccountRateLimitsUpdatedNotification" ||
+			name == "AccountUpdatedNotification" ||
 			name == "AccountTokenUsageSummary" ||
 			name == "AppBranding" || name == "AppConfig" || name == "AppInfo" || name == "AppMetadata" || name == "AppScreenshot" ||
 			name == "AppSummary" || name == "AppTemplateSummary" || name == "AppsDefaultConfig" ||
@@ -49,7 +50,8 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "ChatgptAuthTokensRefreshResponse" ||
 			name == "ConsumeAccountRateLimitResetCreditParams" ||
 			name == "ConsumeAccountRateLimitResetCreditResponse" || name == "CreditsSnapshot" ||
-			name == "GetAccountRateLimitsResponse" ||
+			name == "GetAccountParams" || name == "GetAccountRateLimitsResponse" || name == "GetAccountResponse" ||
+			name == "GetAccountTokenUsageResponse" ||
 			name == "MigrationDetails" ||
 			name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
@@ -63,6 +65,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "ProcessTerminalSize" ||
 			name == "RateLimitResetCredit" || name == "RateLimitResetCreditsSummary" ||
 			name == "RateLimitSnapshot" || name == "RateLimitWindow" ||
+			name == "SendAddCreditsNudgeEmailParams" || name == "SendAddCreditsNudgeEmailResponse" ||
 			name == "SpendControlLimitSnapshot" ||
 			name == "ItemGuardianApprovalReviewCompletedNotification" ||
 			name == "ItemGuardianApprovalReviewStartedNotification" {
@@ -75,6 +78,19 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			schema = renderSchema
 			switch name {
+			case "Account":
+				// ts-rs requires the defaulted Bedrock credential source even
+				// though serde accepts its omission.
+				variants := schema["oneOf"].([]any)
+				for _, rawVariant := range variants {
+					rawVariant.(Schema)["x-gollem-typescript-ignore-additional-properties"] = true
+				}
+				variants[1].(Schema)["properties"].(Schema)["email"] = nullableStringSchema()
+				bedrock := variants[2].(Schema)
+				bedrock["required"] = []string{"credentialSource", "type"}
+				bedrock["properties"].(Schema)["credentialSource"] = Schema{
+					"$ref": "#/$defs/AmazonBedrockCredentialSource",
+				}
 			case "AccountLoginCompletedNotification":
 				schema["required"] = []string{"loginId", "success", "error"}
 			case "AccountRateLimitsUpdatedNotification":
@@ -85,6 +101,9 @@ func MarshalTypeScript() ([]byte, error) {
 					"lifetimeTokens", "peakDailyTokens", "longestRunningTurnSec",
 					"currentStreakDays", "longestStreakDays",
 				}
+			case "AccountUpdatedNotification":
+				schema["required"] = []string{"authMode", "planType"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "AppBranding":
 				schema["required"] = []string{
 					"category", "developer", "website", "privacyPolicy", "termsOfService", "isDiscoverableApp",
@@ -152,6 +171,18 @@ func MarshalTypeScript() ([]byte, error) {
 					"rateLimitResetCredits", "rateLimits", "rateLimitsByLimitId",
 				}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "GetAccountParams":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "GetAccountResponse":
+				schema["required"] = []string{"account", "requiresOpenaiAuth"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "GetAccountTokenUsageResponse":
+				schema["required"] = []string{"dailyUsageBuckets", "summary"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["dailyUsageBuckets"] = Schema{"anyOf": []any{
+					Schema{"type": "array", "items": Schema{"$ref": "#/$defs/AccountTokenUsageDailyBucket"}},
+					Schema{"type": "null"},
+				}}
 			case "ExecCommandApprovalParams":
 				schema["required"] = []string{
 					"conversationId", "callId", "approvalId", "command", "cwd", "reason", "parsedCmd",
@@ -226,6 +257,8 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "RateLimitWindow":
 				schema["required"] = []string{"resetsAt", "usedPercent", "windowDurationMins"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "SendAddCreditsNudgeEmailParams", "SendAddCreditsNudgeEmailResponse":
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "SpendControlLimitSnapshot":
 				schema["required"] = []string{"limit", "remainingPercent", "resetsAt", "used"}
