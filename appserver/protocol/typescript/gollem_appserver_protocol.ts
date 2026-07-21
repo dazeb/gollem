@@ -1350,6 +1350,37 @@ export type ExecCommandApprovalResponse = {
 
 export type ExecPolicyAmendment = Array<string>;
 
+export type ExperimentalFeature = {
+  "announcement": string | null;
+  "defaultEnabled": boolean;
+  "description": string | null;
+  "displayName": string | null;
+  "enabled": boolean;
+  "name": string;
+  "stage": ExperimentalFeatureStage;
+};
+
+export type ExperimentalFeatureEnablementSetParams = {
+  "enablement": Record<string, boolean>;
+};
+
+export type ExperimentalFeatureEnablementSetResponse = {
+  "enablement": Record<string, boolean>;
+};
+
+export type ExperimentalFeatureListParams = {
+  "cursor"?: string | null;
+  "limit"?: number | null;
+  "threadId"?: string | null;
+};
+
+export type ExperimentalFeatureListResponse = {
+  "data": Array<ExperimentalFeature>;
+  "nextCursor": string | null;
+};
+
+export type ExperimentalFeatureStage = "beta" | "underDevelopment" | "stable" | "deprecated" | "removed";
+
 export type ExternalAgentConfigDetectParams = {
   "cwds"?: Array<string> | null;
   "includeHome"?: boolean;
