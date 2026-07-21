@@ -200,6 +200,12 @@ func wireSchemaDefinitions() Schema {
 		{Name: "DynamicToolCallItemStartedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemStartedNotificationParams]()},
 		{Name: "ErrorNotification", Type: reflect.TypeFor[ErrorNotification]()},
 		{Name: "ExecPolicyAmendment", Type: reflect.TypeFor[ExecPolicyAmendment]()},
+		{Name: "ExperimentalFeature", Type: reflect.TypeFor[ExperimentalFeature]()},
+		{Name: "ExperimentalFeatureEnablementSetParams", Type: reflect.TypeFor[ExperimentalFeatureEnablementSetParams]()},
+		{Name: "ExperimentalFeatureEnablementSetResponse", Type: reflect.TypeFor[ExperimentalFeatureEnablementSetResponse]()},
+		{Name: "ExperimentalFeatureListParams", Type: reflect.TypeFor[ExperimentalFeatureListParams]()},
+		{Name: "ExperimentalFeatureListResponse", Type: reflect.TypeFor[ExperimentalFeatureListResponse]()},
+		{Name: "ExperimentalFeatureStage", Type: reflect.TypeFor[ExperimentalFeatureStage]()},
 		{Name: "FileChange", Type: reflect.TypeFor[FileChange]()},
 		{Name: "FileChangeOutputDeltaNotification", Type: reflect.TypeFor[FileChangeOutputDeltaNotification]()},
 		{Name: "FileChangeApprovalRequestParams", Type: reflect.TypeFor[FileChangeApprovalRequestParams]()},
@@ -1039,6 +1045,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	for name, schema := range workspaceMessageSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range experimentalFeatureSchemas() {
 		schemas[name] = schema
 	}
 	schemas["McpServerToolCallParams"] = mcpServerToolCallParamsSchema()

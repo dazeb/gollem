@@ -57,6 +57,9 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
 			name == "ExternalAgentConfigImportItemTypeSuccess" ||
 			name == "ExecCommandApprovalParams" ||
+			name == "ExperimentalFeature" || name == "ExperimentalFeatureEnablementSetParams" ||
+			name == "ExperimentalFeatureEnablementSetResponse" || name == "ExperimentalFeatureListParams" ||
+			name == "ExperimentalFeatureListResponse" ||
 			name == "FuzzyFileSearchParams" || name == "FuzzyFileSearchResult" ||
 			name == "HookRunSummary" || name == "HookStartedNotification" ||
 			name == "HookCompletedNotification" || name == "HookMetadata" ||
@@ -190,6 +193,28 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{
 					"conversationId", "callId", "approvalId", "command", "cwd", "reason", "parsedCmd",
 				}
+			case "ExperimentalFeature":
+				schema["required"] = []string{
+					"announcement", "defaultEnabled", "description", "displayName", "enabled", "name", "stage",
+				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				properties := schema["properties"].(Schema)
+				properties["announcement"] = nullableStringSchema()
+				properties["description"] = nullableStringSchema()
+				properties["displayName"] = nullableStringSchema()
+				properties["stage"] = Schema{"$ref": "#/$defs/ExperimentalFeatureStage"}
+			case "ExperimentalFeatureListResponse":
+				schema["required"] = []string{"data", "nextCursor"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["nextCursor"] = nullableStringSchema()
+			case "ExperimentalFeatureListParams":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				properties := schema["properties"].(Schema)
+				properties["cursor"] = nullableStringSchema()
+				properties["limit"] = nullableIntegerSchema()
+				properties["threadId"] = nullableStringSchema()
+			case "ExperimentalFeatureEnablementSetParams", "ExperimentalFeatureEnablementSetResponse":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "MigrationDetails":
 				schema["required"] = []string{
 					"plugins", "skills", "sessions", "mcpServers", "hooks", "subagents", "commands",
