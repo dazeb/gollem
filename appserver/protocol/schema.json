@@ -8763,6 +8763,77 @@
       ],
       "type": "object"
     },
+    "McpServerOauthLoginCompletedNotification": {
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "success"
+      ],
+      "type": "object"
+    },
+    "McpServerOauthLoginParams": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeoutSecs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "McpServerOauthLoginResponse": {
+      "properties": {
+        "authorizationUrl": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "authorizationUrl"
+      ],
+      "type": "object"
+    },
     "McpServerRefreshResponse": {
       "additionalProperties": false,
       "type": "object"

@@ -140,8 +140,8 @@ func TestThreadSessionResponsesRemainStandalone(t *testing.T) {
 			t.Errorf("%s unexpectedly has a wire type binding: %#v", binding.Method, binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 510 {
-		t.Fatalf("definition count = %d, want 510", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 513 {
+		t.Fatalf("definition count = %d, want 513", got)
 	}
 	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))

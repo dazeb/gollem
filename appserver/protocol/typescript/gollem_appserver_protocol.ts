@@ -2343,6 +2343,24 @@ export type McpServerMigration = {
   "name": string;
 };
 
+export type McpServerOauthLoginCompletedNotification = {
+  "error"?: string;
+  "name": string;
+  "success": boolean;
+  "threadId": string | null;
+};
+
+export type McpServerOauthLoginParams = {
+  "name": string;
+  "scopes"?: Array<string> | null;
+  "threadId"?: string | null;
+  "timeoutSecs"?: bigint | null;
+};
+
+export type McpServerOauthLoginResponse = {
+  "authorizationUrl": string;
+};
+
 export type McpServerRefreshResponse = Record<string, never>;
 
 export type McpServerStartupFailureReason = "reauthenticationRequired";
