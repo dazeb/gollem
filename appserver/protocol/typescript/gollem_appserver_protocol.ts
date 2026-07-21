@@ -2033,6 +2033,11 @@ export type ListMcpServerStatusParams = {
   "threadId"?: string | null;
 };
 
+export type ListMcpServerStatusResponse = {
+  "data": Array<McpServerStatus>;
+  "nextCursor": string | null;
+};
+
 export type LocalShellAction = {
   "command": Array<string>;
   "env": Record<string, string> | null;
@@ -2343,6 +2348,15 @@ export type McpServerRefreshResponse = Record<string, never>;
 export type McpServerStartupFailureReason = "reauthenticationRequired";
 
 export type McpServerStartupState = "starting" | "ready" | "failed" | "cancelled";
+
+export type McpServerStatus = {
+  "authStatus": McpAuthStatus;
+  "name": string;
+  "resourceTemplates": Array<ResourceTemplate>;
+  "resources": Array<Resource>;
+  "serverInfo": McpServerInfo | null;
+  "tools": { [key in string]?: Tool };
+};
 
 export type McpServerStatusDetail = "full" | "toolsAndAuthOnly";
 
@@ -2789,6 +2803,18 @@ export type RequestPermissionProfile = {
 
 export type ResidencyRequirement = "us";
 
+export type Resource = {
+  "_meta"?: JsonValue;
+  "annotations"?: JsonValue;
+  "description"?: string;
+  "icons"?: Array<JsonValue>;
+  "mimeType"?: string;
+  "name": string;
+  "size"?: number;
+  "title"?: string;
+  "uri": string;
+};
+
 export type ResourceContent = {
   "_meta"?: JsonValue;
   "mimeType"?: string;
@@ -2799,6 +2825,15 @@ export type ResourceContent = {
   "blob": string;
   "mimeType"?: string;
   "uri": string;
+};
+
+export type ResourceTemplate = {
+  "annotations"?: JsonValue;
+  "description"?: string;
+  "mimeType"?: string;
+  "name": string;
+  "title"?: string;
+  "uriTemplate": string;
 };
 
 export type Response = {
@@ -3656,6 +3691,17 @@ export type TokenUsageBreakdown = {
   "outputTokens": number;
   "reasoningOutputTokens": number;
   "totalTokens": number;
+};
+
+export type Tool = {
+  "_meta"?: JsonValue;
+  "annotations"?: JsonValue;
+  "description"?: string;
+  "icons"?: Array<JsonValue>;
+  "inputSchema": JsonValue;
+  "name": string;
+  "outputSchema"?: JsonValue;
+  "title"?: string;
 };
 
 export type ToolPayloadSummary = {

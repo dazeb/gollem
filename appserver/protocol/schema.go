@@ -269,6 +269,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ItemStartedNotification", Type: reflect.TypeFor[ItemStartedNotification]()},
 		{Name: "LegacyAppPathString", Type: reflect.TypeFor[LegacyAppPathString]()},
 		{Name: "ListMcpServerStatusParams", Type: reflect.TypeFor[ListMcpServerStatusParams]()},
+		{Name: "ListMcpServerStatusResponse", Type: reflect.TypeFor[ListMcpServerStatusResponse]()},
 		{Name: "LoginAccountParams", Type: reflect.TypeFor[LoginAccountParams]()},
 		{Name: "LoginAccountResponse", Type: reflect.TypeFor[LoginAccountResponse]()},
 		{Name: "LoginAppBrand", Type: reflect.TypeFor[LoginAppBrand]()},
@@ -293,6 +294,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpServerToolCallResponse", Type: reflect.TypeFor[McpServerToolCallResponse]()},
 		{Name: "McpServerStartupFailureReason", Type: reflect.TypeFor[McpServerStartupFailureReason]()},
 		{Name: "McpServerStartupState", Type: reflect.TypeFor[McpServerStartupState]()},
+		{Name: "McpServerStatus", Type: reflect.TypeFor[McpServerStatus]()},
 		{Name: "McpServerStatusDetail", Type: reflect.TypeFor[McpServerStatusDetail]()},
 		{Name: "McpServerStatusUpdatedNotification", Type: reflect.TypeFor[McpServerStatusUpdatedNotification]()},
 		{Name: "McpToolCallAppContext", Type: reflect.TypeFor[McpToolCallAppContext]()},
@@ -439,7 +441,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ReasoningItemReasoningSummary", Type: reflect.TypeFor[ReasoningItemReasoningSummary]()},
 		{Name: "ResidencyRequirement", Type: reflect.TypeFor[ResidencyRequirement]()},
 		{Name: "RawResponseItemCompletedNotification", Type: reflect.TypeFor[RawResponseItemCompletedNotification]()},
+		{Name: "Resource", Type: reflect.TypeFor[Resource]()},
 		{Name: "ResourceContent", Type: reflect.TypeFor[ResourceContent]()},
+		{Name: "ResourceTemplate", Type: reflect.TypeFor[ResourceTemplate]()},
 		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
 		{Name: "ReviewDecision", Type: reflect.TypeFor[ReviewDecision]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
@@ -528,6 +532,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TimelineItem", Type: reflect.TypeFor[TimelineItem]()},
 		{Name: "TokenUsage", Type: reflect.TypeFor[TokenUsage]()},
 		{Name: "TokenUsageBreakdown", Type: reflect.TypeFor[TokenUsageBreakdown]()},
+		{Name: "Tool", Type: reflect.TypeFor[Tool]()},
 		{Name: "ToolPayloadSummary", Type: reflect.TypeFor[ToolPayloadSummary]()},
 		{Name: "ToolRequestUserInputAnswer", Type: reflect.TypeFor[ToolRequestUserInputAnswer]()},
 		{Name: "ToolRequestUserInputOption", Type: reflect.TypeFor[ToolRequestUserInputOption]()},
@@ -877,9 +882,14 @@ func wireSchemaDefinitions() Schema {
 		string(McpServerStatusDetailFull), string(McpServerStatusDetailToolsAndAuthOnly),
 	)
 	schemas["ListMcpServerStatusParams"] = listMcpServerStatusParamsSchema()
+	schemas["ListMcpServerStatusResponse"] = listMcpServerStatusResponseSchema()
 	schemas["McpResourceReadParams"] = mcpResourceReadParamsSchema()
 	schemas["McpResourceReadResponse"] = mcpResourceReadResponseSchema()
 	schemas["McpServerInfo"] = mcpServerInfoSchema()
+	schemas["McpServerStatus"] = mcpServerStatusSchema()
+	schemas["Resource"] = mcpResourceSchema()
+	schemas["ResourceTemplate"] = mcpResourceTemplateSchema()
+	schemas["Tool"] = mcpToolSchema()
 	schemas["McpServerMigration"] = mcpServerMigrationSchema()
 	schemas["PluginsMigration"] = pluginsMigrationSchema()
 	schemas["SkillMigration"] = skillMigrationSchema()
@@ -2737,6 +2747,96 @@ func mcpServerToolCallParamsSchema() Schema {
 		"arguments": Schema{"$ref": "#/$defs/JsonValue"},
 		"_meta":     Schema{"$ref": "#/$defs/JsonValue"},
 	}, []string{"server", "threadId", "tool"})
+}
+
+func mcpResourceSchema() Schema {
+	return Schema{
+		"type":        "object",
+		"description": "A known resource that the server is capable of reading.",
+		"properties": Schema{
+			"_meta":       Schema{"$ref": "#/$defs/JsonValue"},
+			"annotations": Schema{"$ref": "#/$defs/JsonValue"},
+			"description": Schema{"type": []any{"string", "null"}},
+			"icons": Schema{
+				"type": []any{"array", "null"}, "items": Schema{"$ref": "#/$defs/JsonValue"},
+			},
+			"mimeType": Schema{"type": []any{"string", "null"}},
+			"name":     Schema{"type": "string"},
+			"size":     Schema{"type": []any{"integer", "null"}, "format": "int64"},
+			"title":    Schema{"type": []any{"string", "null"}},
+			"uri":      Schema{"type": "string"},
+		},
+		"required": []string{"name", "uri"},
+	}
+}
+
+func mcpResourceTemplateSchema() Schema {
+	return Schema{
+		"type":        "object",
+		"description": "A template description for resources available on the server.",
+		"properties": Schema{
+			"annotations": Schema{"$ref": "#/$defs/JsonValue"},
+			"description": Schema{"type": []any{"string", "null"}},
+			"mimeType":    Schema{"type": []any{"string", "null"}},
+			"name":        Schema{"type": "string"},
+			"title":       Schema{"type": []any{"string", "null"}},
+			"uriTemplate": Schema{"type": "string"},
+		},
+		"required": []string{"name", "uriTemplate"},
+	}
+}
+
+func mcpToolSchema() Schema {
+	return Schema{
+		"type":        "object",
+		"description": "Definition for a tool the client can call.",
+		"properties": Schema{
+			"_meta":        Schema{"$ref": "#/$defs/JsonValue"},
+			"annotations":  Schema{"$ref": "#/$defs/JsonValue"},
+			"description":  Schema{"type": []any{"string", "null"}},
+			"icons":        Schema{"type": []any{"array", "null"}, "items": Schema{"$ref": "#/$defs/JsonValue"}},
+			"inputSchema":  Schema{"$ref": "#/$defs/JsonValue"},
+			"name":         Schema{"type": "string"},
+			"outputSchema": Schema{"$ref": "#/$defs/JsonValue"},
+			"title":        Schema{"type": []any{"string", "null"}},
+		},
+		"required": []string{"inputSchema", "name"},
+	}
+}
+
+func mcpServerStatusSchema() Schema {
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"authStatus": Schema{"$ref": "#/$defs/McpAuthStatus"},
+			"name":       Schema{"type": "string"},
+			"resourceTemplates": Schema{
+				"type": "array", "items": Schema{"$ref": "#/$defs/ResourceTemplate"},
+			},
+			"resources": Schema{"type": "array", "items": Schema{"$ref": "#/$defs/Resource"}},
+			"serverInfo": Schema{"anyOf": []any{
+				Schema{"$ref": "#/$defs/McpServerInfo"}, Schema{"type": "null"},
+			}},
+			"tools": Schema{
+				"type": "object", "additionalProperties": Schema{"$ref": "#/$defs/Tool"},
+			},
+		},
+		"required": []string{"authStatus", "name", "resourceTemplates", "resources", "tools"},
+	}
+}
+
+func listMcpServerStatusResponseSchema() Schema {
+	return Schema{
+		"type": "object",
+		"properties": Schema{
+			"data": Schema{"type": "array", "items": Schema{"$ref": "#/$defs/McpServerStatus"}},
+			"nextCursor": Schema{
+				"description": "Opaque cursor to pass to the next call to continue after the last item. If None, there are no more items to return.",
+				"type":        []any{"string", "null"},
+			},
+		},
+		"required": []string{"data"},
+	}
 }
 
 func mcpServerToolCallResponseSchema() Schema {
