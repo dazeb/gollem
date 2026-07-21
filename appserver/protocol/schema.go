@@ -289,6 +289,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "McpResourceReadResponse", Type: reflect.TypeFor[McpResourceReadResponse]()},
 		{Name: "McpServerInfo", Type: reflect.TypeFor[McpServerInfo]()},
 		{Name: "McpServerMigration", Type: reflect.TypeFor[McpServerMigration]()},
+		{Name: "McpServerOauthLoginCompletedNotification", Type: reflect.TypeFor[McpServerOauthLoginCompletedNotification]()},
+		{Name: "McpServerOauthLoginParams", Type: reflect.TypeFor[McpServerOauthLoginParams]()},
+		{Name: "McpServerOauthLoginResponse", Type: reflect.TypeFor[McpServerOauthLoginResponse]()},
 		{Name: "McpServerRefreshResponse", Type: reflect.TypeFor[McpServerRefreshResponse]()},
 		{Name: "McpServerToolCallParams", Type: reflect.TypeFor[McpServerToolCallParams]()},
 		{Name: "McpServerToolCallResponse", Type: reflect.TypeFor[McpServerToolCallResponse]()},
@@ -886,6 +889,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["McpResourceReadParams"] = mcpResourceReadParamsSchema()
 	schemas["McpResourceReadResponse"] = mcpResourceReadResponseSchema()
 	schemas["McpServerInfo"] = mcpServerInfoSchema()
+	for name, schema := range mcpServerOauthLoginSchemas() {
+		schemas[name] = schema
+	}
 	schemas["McpServerStatus"] = mcpServerStatusSchema()
 	schemas["Resource"] = mcpResourceSchema()
 	schemas["ResourceTemplate"] = mcpResourceTemplateSchema()

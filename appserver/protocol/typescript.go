@@ -471,6 +471,41 @@ func MarshalTypeScript() ([]byte, error) {
 				"currentStreakDays", "longestStreakDays",
 			)
 		}
+		if name == "McpServerOauthLoginParams" {
+			// ts-rs maps the optional Rust i64 timeout to nullable bigint.
+			// Keep the render hint out of the exact public JSON Schema.
+			definition = typeScriptDefinitionWithBigIntProperties(definition, "timeoutSecs")
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"scopes": Schema{"anyOf": []any{
+					Schema{"type": "array", "items": Schema{"type": "string"}},
+					Schema{"type": "null"},
+				}},
+				"threadId": Schema{"anyOf": []any{
+					Schema{"type": "string"}, Schema{"type": "null"},
+				}},
+			})
+		}
+		if name == "McpServerOauthLoginCompletedNotification" {
+			// ts-rs requires the nullable thread id while rendering the
+			// skip-serialized error as an optional non-null string.
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"error": optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+				"threadId": Schema{"anyOf": []any{
+					Schema{"type": "string"}, Schema{"type": "null"},
+				}},
+			})
+			schema, _ := typeScriptSchema(definition)
+			required, _ := schema["required"].([]string)
+			schema["required"] = append(append([]string(nil), required...), "threadId")
+			definition = schema
+		}
+		if name == "McpServerOauthLoginParams" ||
+			name == "McpServerOauthLoginResponse" ||
+			name == "McpServerOauthLoginCompletedNotification" {
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = schema
+		}
 		if name == "HookRunSummary" {
 			// ts-rs maps each Rust i64 field to bigint, including nullable i64
 			// options. Keep these hints out of the public JSON Schema.
