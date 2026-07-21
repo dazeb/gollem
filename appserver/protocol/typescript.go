@@ -321,6 +321,10 @@ func MarshalTypeScript() ([]byte, error) {
 				},
 			})
 		}
+		switch name {
+		case "Resource", "ResourceTemplate", "Tool", "McpServerStatus", "ListMcpServerStatusResponse":
+			definition = mcpServerStatusTypeScriptDefinition(name, definition)
+		}
 		if name == "AppToolConfig" {
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
 				"enabled": nullableBooleanSchema(),
@@ -526,6 +530,66 @@ func MarshalTypeScript() ([]byte, error) {
 	writeTypeScriptWireBindings(&out)
 	writeTypeScriptItemBindings(&out)
 	return out.Bytes(), nil
+}
+
+func mcpServerStatusTypeScriptDefinition(name string, definition any) Schema {
+	schema, _ := typeScriptSchema(definition)
+	replacements := Schema{}
+	switch name {
+	case "Resource":
+		replacements = Schema{
+			"description": optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+			"icons": optionalNonNullTypeScriptSchema(Schema{
+				"type": "array", "items": Schema{"$ref": "#/$defs/JsonValue"},
+			}),
+			"mimeType": optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+			"size": optionalNonNullTypeScriptSchema(Schema{
+				"type": "integer", "format": "int64",
+			}),
+			"title": optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+		}
+	case "ResourceTemplate":
+		replacements = Schema{
+			"description": optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+			"mimeType":    optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+			"title":       optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+		}
+	case "Tool":
+		replacements = Schema{
+			"description": optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+			"icons": optionalNonNullTypeScriptSchema(Schema{
+				"type": "array", "items": Schema{"$ref": "#/$defs/JsonValue"},
+			}),
+			"title": optionalNonNullTypeScriptSchema(Schema{"type": "string"}),
+		}
+	case "McpServerStatus":
+		replacements = Schema{
+			"tools": Schema{
+				"type": "object", "additionalProperties": Schema{"$ref": "#/$defs/Tool"},
+				"x-gollem-typescript-optional-map": true,
+			},
+		}
+	case "ListMcpServerStatusResponse":
+		replacements = Schema{"nextCursor": nullableStringSchema()}
+	}
+	renderSchema := typeScriptDefinitionWithPropertySchemas(schema, replacements)
+	renderSchema["x-gollem-typescript-ignore-additional-properties"] = true
+	if name == "McpServerStatus" {
+		renderSchema["required"] = []string{
+			"authStatus", "name", "resourceTemplates", "resources", "serverInfo", "tools",
+		}
+	}
+	if name == "ListMcpServerStatusResponse" {
+		renderSchema["required"] = []string{"data", "nextCursor"}
+	}
+	return renderSchema
+}
+
+func optionalNonNullTypeScriptSchema(value Schema) Schema {
+	return Schema{
+		"anyOf":                          []any{value, Schema{"type": "null"}},
+		typeScriptOptionalNonNullKeyword: true,
+	}
 }
 
 func writeTypeScriptProtocolMetadata(out *bytes.Buffer) {
