@@ -120,6 +120,7 @@ func TestTemporalAgent_RunWorkflow_QueryStatusWhileWaitingOnDeferred(t *testing.
 	}
 	if trace == nil {
 		t.Fatal("expected workflow status trace")
+		return
 	}
 	var hasReq, hasResp, hasToolCall, hasToolResult, hasDeferredRequested, hasWaitStarted bool
 	for _, step := range trace.Steps {

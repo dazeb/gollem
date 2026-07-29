@@ -163,6 +163,7 @@ func TestSnapshotPreservesRunContextMessagesWhenRichGetterIsUsed(t *testing.T) {
 	snap := Snapshot(rc)
 	if snap == nil {
 		t.Fatal("Snapshot() returned nil")
+		return
 	}
 	if snap.Retries != 3 {
 		t.Fatalf("rich state fields were not preserved: %+v", snap)

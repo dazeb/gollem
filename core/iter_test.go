@@ -25,6 +25,7 @@ func TestIterBasicText(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
+		return
 	}
 	if resp.TextContent() != "Hello" {
 		t.Errorf("expected 'Hello', got %q", resp.TextContent())
