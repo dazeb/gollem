@@ -214,6 +214,24 @@ deferred loading, namespace dispatch, persistence, or execution. Generated
 TypeScript preserves the exact public function/namespace intersections without
 changing Gollem's existing 59 method bindings or five item bindings.
 
+## Exported Collaboration And Capability Contracts
+
+The schema exports exact standalone `Settings`, `ModeKind`, `MultiAgentMode`,
+`CollaborationModeMask`, `CollaborationMode`, `CapabilityRootLocation`, and
+`SelectedCapabilityRoot` definitions. Canonical output keeps plan/default mode
+values, explicit nullable settings and mask fields, strict built-in/custom
+multi-agent modes, environment-owned capability locations, and canonical
+`file:` path URIs. Decoding also accepts the public legacy mode aliases,
+legacy `none` multi-agent input, absolute POSIX/Windows paths, and unknown
+record fields while rejecting duplicate known fields, malformed unions,
+relative paths, non-file URIs, and trailing JSON values.
+
+These definitions describe configuration and selected roots only. They do not
+start collaboration sessions, change delegation policy, spawn subagents,
+resolve environments, expose files, grant capabilities or permissions, bind
+methods/items, persist selections, or add runtime authority. Existing live
+collaboration, thread, and capability behavior remains unchanged.
+
 ## Version 1 File-Change Item Contracts
 
 `FileUpdateChange`, `PatchChangeKind`, and `PatchApplyStatus` now use the public

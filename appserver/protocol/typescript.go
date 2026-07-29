@@ -560,6 +560,34 @@ func MarshalTypeScript() ([]byte, error) {
 				typeScriptRawTypeKeyword: `{ "type": "function" } & DynamicToolFunctionSpec | { "type": "namespace" } & DynamicToolNamespaceSpec`,
 			}
 		}
+		switch name {
+		case "CapabilityRootLocation":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "type": "environment"; "environmentId": string; "path": string; }`,
+			}
+		case "CollaborationMode":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "mode": ModeKind; "settings": Settings; }`,
+			}
+		case "CollaborationModeMask":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "name": string; "mode": ModeKind | null; "model": string | null; "reasoning_effort": ReasoningEffort | null | null; }`,
+			}
+		case "ModeKind":
+			definition = Schema{typeScriptRawTypeKeyword: `"plan" | "default"`}
+		case "MultiAgentMode":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "custom": string } | "explicitRequestOnly" | "proactive"`,
+			}
+		case "SelectedCapabilityRoot":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "id": string; "location": CapabilityRootLocation; }`,
+			}
+		case "Settings":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "model": string; "reasoning_effort": ReasoningEffort | null; "developer_instructions": string | null; }`,
+			}
+		}
 		if name == "HookRunSummary" {
 			// ts-rs maps each Rust i64 field to bigint, including nullable i64
 			// options. Keep these hints out of the public JSON Schema.

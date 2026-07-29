@@ -784,6 +784,8 @@ export type CancelLoginAccountResponse = {
 
 export type CancelLoginAccountStatus = "canceled" | "notFound";
 
+export type CapabilityRootLocation = { "type": "environment"; "environmentId": string; "path": string; };
+
 export type ChatgptAuthTokensRefreshParams = {
   "previousAccountId"?: string | null;
   "reason": ChatgptAuthTokensRefreshReason;
@@ -835,6 +837,10 @@ export type CollabAgentStatus = "pendingInit" | "running" | "interrupted" | "com
 export type CollabAgentTool = "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
 
 export type CollabAgentToolCallStatus = "inProgress" | "completed" | "failed";
+
+export type CollaborationMode = { "mode": ModeKind; "settings": Settings; };
+
+export type CollaborationModeMask = { "name": string; "mode": ModeKind | null; "model": string | null; "reasoning_effort": ReasoningEffort | null | null; };
 
 export type CommandAction = {
   "command": string;
@@ -2481,6 +2487,8 @@ export type MigrationDetails = {
   "subagents": Array<SubagentMigration>;
 };
 
+export type ModeKind = "plan" | "default";
+
 export type Model = {
   "additionalSpeedTiers": Array<string>;
   "availabilityNux": ModelAvailabilityNux | null;
@@ -2567,6 +2575,8 @@ export type ModelVerificationNotification = {
 export type ModelsRequirements = {
   "newThread": NewThreadModelDefaults | null;
 };
+
+export type MultiAgentMode = { "custom": string } | "explicitRequestOnly" | "proactive";
 
 export type NetworkAccess = "restricted" | "enabled";
 
@@ -3047,6 +3057,8 @@ export type SandboxWorkspaceWrite = {
   "writable_roots": Array<string>;
 };
 
+export type SelectedCapabilityRoot = { "id": string; "location": CapabilityRootLocation; };
+
 export type SendAddCreditsNudgeEmailParams = {
   "creditType": AddCreditsNudgeCreditType;
 };
@@ -3079,6 +3091,8 @@ export type SessionSource = "cli" | "vscode" | "exec" | "appServer" | "unknown" 
 } | {
   "subAgent": SubAgentSource;
 };
+
+export type Settings = { "model": string; "reasoning_effort": ReasoningEffort | null; "developer_instructions": string | null; };
 
 export type SkillMigration = {
   "name": string;
