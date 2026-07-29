@@ -11,41 +11,35 @@ import (
 
 const threadRollbackDeprecationSummary = "thread/rollback is deprecated and will be removed soon"
 
-type threadRollbackParams struct {
-	ID       string `json:"id,omitempty"`
-	ThreadID string `json:"threadId,omitempty"`
-	NumTurns int    `json:"numTurns"`
-}
-
-func (p threadRollbackParams) threadID() string {
-	return firstNonEmpty(p.ThreadID, p.ID)
-}
-
-type threadRollbackResponse struct {
-	Thread threadRollbackThread `json:"thread"`
-}
-
-type threadRollbackThread struct {
-	*store.Thread
-	Name  *string       `json:"name"`
-	Turns []*store.Turn `json:"turns"`
-}
-
 func (s *Server) handleThreadRollback(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	st, rpcErr := s.requireStore("thread/rollback")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params threadRollbackParams
+	var params protocol.ThreadHistoryRollbackParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	threadID := params.threadID()
+	threadID := params.EffectiveThreadID()
 	if threadID == "" {
 		return nil, invalidParams("threadId is required", nil)
 	}
 	if params.NumTurns < 1 {
 		return nil, invalidParams("numTurns must be >= 1", nil)
+	}
+	activeTurns, err := st.ListTurns(ctx, store.TurnFilter{
+		ThreadID: threadID,
+		Statuses: []store.TurnStatus{store.TurnQueued, store.TurnRunning},
+	})
+	if err != nil {
+		return nil, mapError("thread/rollback", err)
+	}
+	if len(activeTurns) > 0 {
+		return nil, rpcError(
+			protocol.CodeInvalidRequest,
+			"cannot roll back thread history while a turn is active",
+			nil,
+		)
 	}
 	s.publishThreadRollbackDeprecationNotice()
 	result, err := st.RollbackThread(ctx, store.RollbackThreadRequest{
@@ -55,8 +49,17 @@ func (s *Server) handleThreadRollback(ctx context.Context, raw json.RawMessage) 
 	if err != nil {
 		return nil, mapError("thread/rollback", err)
 	}
+	marker := protocolTimelineItem(result.Marker)
+	if result.Thread == nil || marker == nil {
+		return nil, rpcError(protocol.CodeInternalError, "rollback result is incomplete", nil)
+	}
 	s.markThreadLoaded(result.Thread)
-	return threadRollbackResponse{Thread: rollbackThreadWithTurns(result.Thread, result.Turns)}, nil
+	return protocol.ThreadHistoryRollbackResult{
+		Thread:                   threadHistoryRollbackRecord(result.Thread, result.Turns),
+		RemovedTurnIDs:           rollbackTurnIDs(result.RemovedTurns),
+		Marker:                   *marker,
+		WorkspaceEffectsReverted: false,
+	}, nil
 }
 
 func (s *Server) publishThreadRollbackDeprecationNotice() {
@@ -75,15 +78,39 @@ func (s *Server) publishThreadRollbackDeprecationNotice() {
 	})
 }
 
-func rollbackThreadWithTurns(thread *store.Thread, turns []*store.Turn) threadRollbackThread {
+func threadHistoryRollbackRecord(
+	thread *store.Thread,
+	turns []*store.Turn,
+) protocol.ThreadHistoryRollbackRecord {
 	var name *string
 	if thread != nil && thread.Title != "" {
 		title := thread.Title
 		name = &title
 	}
-	return threadRollbackThread{
-		Thread: thread,
-		Name:   name,
-		Turns:  turns,
+	record := protocolThreadRecord(thread)
+	return protocol.ThreadHistoryRollbackRecord{
+		ID:                 record.ID,
+		Title:              record.Title,
+		Workspace:          record.Workspace,
+		Status:             record.Status,
+		ForkedFromThreadID: record.ForkedFromThreadID,
+		Settings:           record.Settings,
+		Metadata:           record.Metadata,
+		CreatedAt:          record.CreatedAt,
+		UpdatedAt:          record.UpdatedAt,
+		ArchivedAt:         record.ArchivedAt,
+		DeletedAt:          record.DeletedAt,
+		Name:               name,
+		Turns:              protocolTurnRecords(turns),
 	}
+}
+
+func rollbackTurnIDs(turns []*store.Turn) []string {
+	ids := make([]string, 0, len(turns))
+	for _, turn := range turns {
+		if turn != nil {
+			ids = append(ids, turn.ID)
+		}
+	}
+	return ids
 }

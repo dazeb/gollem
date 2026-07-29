@@ -14760,6 +14760,136 @@
       ],
       "type": "object"
     },
+    "ThreadHistoryRollbackParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "numTurns": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "numTurns"
+      ],
+      "type": "object"
+    },
+    "ThreadHistoryRollbackRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "archivedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "deletedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "forkedFromThreadId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settings": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadLifecycleStatus"
+        },
+        "title": {
+          "type": "string"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/TurnRecord"
+          },
+          "type": "array"
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "name",
+        "turns"
+      ],
+      "type": "object"
+    },
+    "ThreadHistoryRollbackResult": {
+      "additionalProperties": false,
+      "properties": {
+        "marker": {
+          "$ref": "#/$defs/TimelineItem"
+        },
+        "removedTurnIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "thread": {
+          "$ref": "#/$defs/ThreadHistoryRollbackRecord"
+        },
+        "workspaceEffectsReverted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "thread",
+        "removedTurnIds",
+        "marker",
+        "workspaceEffectsReverted"
+      ],
+      "type": "object"
+    },
     "ThreadId": {
       "type": "string"
     },
@@ -20783,6 +20913,16 @@
       ],
       "result": [
         "ThreadReadResult"
+      ]
+    },
+    {
+      "method": "thread/rollback",
+      "surface": "client-request",
+      "params": [
+        "ThreadHistoryRollbackParams"
+      ],
+      "result": [
+        "ThreadHistoryRollbackResult"
       ]
     },
     {

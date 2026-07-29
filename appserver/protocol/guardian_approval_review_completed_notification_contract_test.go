@@ -164,14 +164,14 @@ func TestGuardianApprovalReviewCompletedNotificationRemainsStandalone(t *testing
 			t.Fatalf("completed notification unexpectedly bound to item %s", binding.Kind)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 551 {
-		t.Fatalf("definition count = %d, want 551", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 554 {
+		t.Fatalf("definition count = %d, want 554", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
 	}
-	if got := len(WireTypeBindings()); got != 70 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 70/5", got, len(ItemPayloadBindings()))
+	if got := len(WireTypeBindings()); got != 71 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 71/5", got, len(ItemPayloadBindings()))
 	}
 	for _, method := range Methods() {
 		if (method.Method == "item/autoApprovalReview/started" ||
