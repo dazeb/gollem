@@ -3,6 +3,7 @@ package fs
 import (
 	"context"
 	"errors"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -366,6 +367,11 @@ func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testin
 }
 
 func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T) {
+	mode := iofs.FileMode(0o640) | iofs.ModeSetuid | iofs.ModeSetgid | iofs.ModeSticky | iofs.ModeDir
+	wantMode := iofs.FileMode(0o640) | iofs.ModeSetuid | iofs.ModeSetgid | iofs.ModeSticky
+	if got := exactFileMode(mode); got != wantMode {
+		t.Fatalf("exactFileMode(%v) = %v, want %v", mode, got, wantMode)
+	}
 	rootPath := t.TempDir()
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
@@ -404,6 +410,10 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 		Exists: true, SHA256: exactSHA256([]byte("stale")),
 	}); !errors.Is(err, ErrExactStateMismatch) {
 		t.Fatalf("stale atomic write error = %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(rootPath, "notes.txt"))
+	if err != nil || string(content) != "after" {
+		t.Fatalf("stale atomic write changed file to %q, error %v", content, err)
 	}
 	entries, err := os.ReadDir(rootPath)
 	if err != nil {

@@ -53,6 +53,9 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 	if err != nil {
 		return nil, mapError(fileChangeRevertMethod, err)
 	}
+	if thread.Status == store.ThreadDeleted {
+		return nil, mapError(fileChangeRevertMethod, store.ErrThreadDeleted)
+	}
 	if err := requireExactThreadWorkspace(thread, fsService.Root()); err != nil {
 		return nil, invalidParams("thread workspace does not match the configured filesystem root", err)
 	}

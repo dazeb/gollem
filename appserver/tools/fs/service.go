@@ -31,6 +31,8 @@ var (
 	ErrExactRevertUnsupported = errors.New("appserver/fs: exact revert supports regular files only")
 )
 
+const exactFileModeMask = iofs.ModePerm | iofs.ModeSetuid | iofs.ModeSetgid | iofs.ModeSticky
+
 type OperationKind string
 
 const (
@@ -521,11 +523,8 @@ func (s *Service) RevertFile(ctx context.Context, req RevertFileRequest) (*Rever
 		result.Restored = true
 		result.SHA256 = req.Before.SHA256
 	} else {
-		if err := verifyExactRootFileState(root, relative, req.After); err != nil {
+		if err := removeExactRootFile(root, relative, req.After); err != nil {
 			return fail(resolved, err)
-		}
-		if err := root.Remove(relative); err != nil {
-			return fail(resolved, fmt.Errorf("remove reverted file: %w", err))
 		}
 		result.Removed = true
 	}
@@ -563,7 +562,7 @@ func verifyExactFileState(path string, expected ExactFileState) error {
 	if exactSHA256(content) != expected.SHA256 {
 		return ErrExactStateMismatch
 	}
-	if expected.CheckMode && info.Mode().Perm() != expected.Mode.Perm() {
+	if expected.CheckMode && exactFileMode(info.Mode()) != exactFileMode(expected.Mode) {
 		return ErrExactStateMismatch
 	}
 	return nil
@@ -642,7 +641,7 @@ func verifyExactRootFileState(root *os.Root, path string, expected ExactFileStat
 	if exactSHA256(content) != expected.SHA256 {
 		return ErrExactStateMismatch
 	}
-	if expected.CheckMode && info.Mode().Perm() != expected.Mode.Perm() {
+	if expected.CheckMode && exactFileMode(info.Mode()) != exactFileMode(expected.Mode) {
 		return ErrExactStateMismatch
 	}
 	return nil
@@ -650,30 +649,17 @@ func verifyExactRootFileState(root *os.Root, path string, expected ExactFileStat
 
 func atomicWriteRootFile(root *os.Root, path string, content []byte, mode iofs.FileMode, expectedAfter ExactFileState) (err error) {
 	parent := filepath.Dir(path)
-	var temp *os.File
-	var tempPath string
-	for range 16 {
-		var suffix [12]byte
-		if _, err := rand.Read(suffix[:]); err != nil {
-			return fmt.Errorf("create revert temp name: %w", err)
-		}
-		tempPath = filepath.Join(parent, ".gollem-revert-"+hex.EncodeToString(suffix[:]))
-		temp, err = root.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("create rooted revert temp file: %w", err)
-		}
+	tempPath, err := unusedRootPath(root, parent, ".gollem-revert-")
+	if err != nil {
+		return err
 	}
-	if temp == nil {
-		return errors.New("appserver/fs: could not allocate revert temp file")
+	temp, err := root.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create rooted revert temp file: %w", err)
 	}
 	defer func() {
 		_ = temp.Close()
-		if err != nil {
-			_ = root.Remove(tempPath)
-		}
+		_ = root.Remove(tempPath)
 	}()
 	if _, err = temp.Write(content); err != nil {
 		return fmt.Errorf("write revert temp file: %w", err)
@@ -681,24 +667,90 @@ func atomicWriteRootFile(root *os.Root, path string, content []byte, mode iofs.F
 	if err = temp.Sync(); err != nil {
 		return fmt.Errorf("sync revert temp file: %w", err)
 	}
-	if err = temp.Chmod(mode.Perm()); err != nil {
+	if err = temp.Chmod(exactFileMode(mode)); err != nil {
 		return fmt.Errorf("set reverted file mode: %w", err)
 	}
 	if err = temp.Close(); err != nil {
 		return fmt.Errorf("close revert temp file: %w", err)
 	}
-	if err = verifyExactRootFileState(root, path, expectedAfter); err != nil {
+	if expectedAfter.Exists {
+		quarantine, quarantineErr := quarantineExactRootFile(root, path, expectedAfter)
+		if quarantineErr != nil {
+			return quarantineErr
+		}
+		defer func() {
+			_ = root.Remove(quarantine)
+		}()
+	} else if err = verifyExactRootFileState(root, path, expectedAfter); err != nil {
 		return err
 	}
-	if err = root.Rename(tempPath, path); err != nil {
-		return fmt.Errorf("replace reverted file: %w", err)
+	if err = root.Link(tempPath, path); err != nil {
+		return fmt.Errorf("install reverted file without replacement: %w", err)
 	}
 	return nil
+}
+
+func removeExactRootFile(root *os.Root, path string, expectedAfter ExactFileState) error {
+	quarantine, err := quarantineExactRootFile(root, path, expectedAfter)
+	if err != nil {
+		return err
+	}
+	if err := root.Remove(quarantine); err != nil {
+		return fmt.Errorf("remove quarantined reverted file: %w", err)
+	}
+	return nil
+}
+
+func quarantineExactRootFile(root *os.Root, path string, expected ExactFileState) (string, error) {
+	quarantine, err := unusedRootPath(root, filepath.Dir(path), ".gollem-revert-current-")
+	if err != nil {
+		return "", err
+	}
+	if err := root.Rename(path, quarantine); err != nil {
+		return "", fmt.Errorf("quarantine current file: %w", err)
+	}
+	if err := verifyExactRootFileState(root, quarantine, expected); err != nil {
+		if restoreErr := restoreQuarantinedRootFile(root, quarantine, path); restoreErr != nil {
+			return "", fmt.Errorf("%w; preserve concurrently changed file at %q: %w", err, quarantine, restoreErr)
+		}
+		return "", err
+	}
+	return quarantine, nil
+}
+
+func restoreQuarantinedRootFile(root *os.Root, quarantine, path string) error {
+	if err := root.Link(quarantine, path); err != nil {
+		return err
+	}
+	if err := root.Remove(quarantine); err != nil {
+		return fmt.Errorf("remove restored quarantine link: %w", err)
+	}
+	return nil
+}
+
+func unusedRootPath(root *os.Root, parent, prefix string) (string, error) {
+	for range 16 {
+		var suffix [12]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return "", fmt.Errorf("create revert temporary name: %w", err)
+		}
+		path := filepath.Join(parent, prefix+hex.EncodeToString(suffix[:]))
+		if _, err := root.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			return path, nil
+		} else if err != nil {
+			return "", fmt.Errorf("check revert temporary path: %w", err)
+		}
+	}
+	return "", errors.New("appserver/fs: could not allocate revert temporary path")
 }
 
 func exactSHA256(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func exactFileMode(mode iofs.FileMode) iofs.FileMode {
+	return mode & exactFileModeMask
 }
 
 func isSymlink(path string) bool {

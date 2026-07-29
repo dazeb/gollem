@@ -373,13 +373,23 @@ func (s *Server) cancelApprovalTurn(ctx context.Context, turnID string) error {
 	if turnID == "" || turnID == approvalTurnID {
 		return nil
 	}
-	if s.runtime == nil || s.store == nil {
+	if s.store == nil {
 		return errors.New("turn runtime is not configured for canceled approval")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	_, err := s.runtime.Interrupt(ctx, s.store, turnID)
+	turn, err := s.store.GetTurn(ctx, turnID)
+	if err != nil {
+		return err
+	}
+	if fileChangeRevertTerminalTurnStatus(turn.Status) {
+		return nil
+	}
+	if s.runtime == nil {
+		return errors.New("turn runtime is not configured for canceled approval")
+	}
+	_, err = s.runtime.Interrupt(ctx, s.store, turnID)
 	if errors.Is(err, ErrRuntimeTurnNotActive) {
 		return nil
 	}

@@ -536,6 +536,19 @@ func TestFileChangeRevertRejectsUnavailableAndMalformedRequests(t *testing.T) {
 			}
 		})
 	}
+	deleted, err := st.CreateThread(ctx, store.CreateThreadRequest{Workspace: root})
+	if err != nil {
+		t.Fatalf("CreateThread deleted fixture: %v", err)
+	}
+	if _, err := st.DeleteThread(ctx, deleted.ID); err != nil {
+		t.Fatalf("DeleteThread fixture: %v", err)
+	}
+	response := server.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
+		"threadId": deleted.ID, "itemId": "item", "idempotencyKey": "key",
+	}))
+	if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("deleted-thread response = %+v", response)
+	}
 }
 
 func TestFileChangeRevertEvidenceAndHelperGuards(t *testing.T) {
@@ -837,6 +850,33 @@ func TestFileChangeRevertRequiresExactCanonicalThreadWorkspace(t *testing.T) {
 	}
 	if err := requireExactThreadWorkspace(&store.Thread{Workspace: root}, filepath.Join(root, "missing")); err == nil {
 		t.Fatal("missing filesystem root was accepted")
+	}
+}
+
+func TestCancelApprovalTurnAllowsTerminalTurnWithoutRuntime(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Terminal approval"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{ID: turn.ID, Status: store.TurnCompleted}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	server := readyServer(WithStore(st))
+	if err := server.cancelApprovalTurn(ctx, turn.ID); err != nil {
+		t.Fatalf("cancel terminal approval turn: %v", err)
+	}
+	active, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn active: %v", err)
+	}
+	if err := server.cancelApprovalTurn(ctx, active.ID); err == nil {
+		t.Fatal("active approval turn cancellation succeeded without a runtime")
 	}
 }
 

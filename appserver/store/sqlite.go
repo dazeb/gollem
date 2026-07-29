@@ -1616,6 +1616,7 @@ func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkTh
 		oldParentID := item.ParentItemID
 		item.ID = itemMap[oldID]
 		item.Payload = remapForkedItemPayloadID(item.Payload, oldID, item.ID)
+		item.Payload = disableForkedFileChangeRevert(item.Payload)
 		item.ThreadID = forkThreadID
 		item.TurnID = turnMap[item.TurnID]
 		item.ParentItemID = itemMap[oldParentID]
@@ -1627,6 +1628,42 @@ func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkTh
 		}
 	}
 	return nil
+}
+
+func disableForkedFileChangeRevert(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return raw
+	}
+	var itemType string
+	if json.Unmarshal(payload["type"], &itemType) != nil || itemType != "fileChange" {
+		return raw
+	}
+	var evidence []map[string]json.RawMessage
+	if json.Unmarshal(payload["evidence"], &evidence) != nil {
+		return raw
+	}
+	reason, err := json.Marshal("file-change recovery does not transfer to forked threads")
+	if err != nil {
+		return raw
+	}
+	for _, entry := range evidence {
+		entry["revertSnapshotAvailable"] = json.RawMessage("false")
+		entry["revertUnavailableReason"] = reason
+	}
+	encodedEvidence, err := json.Marshal(evidence)
+	if err != nil {
+		return raw
+	}
+	payload["evidence"] = encodedEvidence
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }
 
 func remapForkedItemPayloadID(raw json.RawMessage, oldID, newID string) json.RawMessage {

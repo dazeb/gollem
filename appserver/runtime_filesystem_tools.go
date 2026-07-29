@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,8 @@ const (
 	runtimeFilesystemContentMaxBytes  = 64 * 1024
 	runtimeFileChangeRecoveryMaxBytes = 1024 * 1024
 )
+
+const runtimeExactFileModeMask = iofs.ModePerm | iofs.ModeSetuid | iofs.ModeSetgid | iofs.ModeSticky
 
 type runtimeFilesystemPathParams struct {
 	Path string `json:"path" jsonschema:"description=Workspace-relative or workspace-contained absolute path"`
@@ -310,7 +313,7 @@ func captureRuntimeArtifact(ctx context.Context, service *toolfs.Service, path s
 		IsDir:     metadata.IsDir,
 		IsSymlink: metadata.IsSymlink,
 		Size:      metadata.Size,
-		Mode:      uint32(metadata.Mode.Perm()),
+		Mode:      uint32(metadata.Mode & runtimeExactFileModeMask),
 	}
 	if metadata.IsDir {
 		return capture, nil

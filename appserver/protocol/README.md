@@ -184,16 +184,21 @@ before and after contents are each at most 1 MiB. Public
 `FileChangeArtifactEvidence` exposes the optional
 `revertSnapshotAvailable` capability and a bounded unavailable reason, but
 never the private before-content bytes. A call is rejected while any turn in
-the thread is active, when the original turn is not terminal, when the
-thread's canonical workspace differs from the configured filesystem root, or
-when current bytes or mode no longer match the recorded post-change state.
+the thread is active, when the original turn is not terminal, when the thread
+is deleted, when the thread's canonical workspace differs from the configured
+filesystem root, or when current bytes or mode no longer match the recorded
+post-change state. Turn starts and reverts share one serialized request scope,
+and forked history explicitly marks copied file-change items unavailable
+because private recovery evidence does not transfer to the fork.
 
 The filesystem mutation runs through the existing
 `item/fileChange/requestApproval` request unless the daemon was explicitly
 started with `--allow-mutations`, which deliberately bypasses mutation
 prompts. Rooted filesystem operations reject symlinks in every path component
-and restore only the selected file's bytes, existence, and permission mode;
-they do not claim to undo process, Git, provider, directory, or other
+and restore only the selected file's bytes, existence, and supported
+permission-mode bits. The final mutation quarantines and validates the current
+path, then installs restored content without replacing an unknown concurrent
+path. It does not claim to undo process, Git, provider, directory, or other
 workspace effects.
 
 The store binds the idempotency key before mutation and writes a
