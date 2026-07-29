@@ -459,6 +459,7 @@ func TestTemporalAgent_RunWorkflow_TraceCostAndExporterParity(t *testing.T) {
 	exported := exporter.Last()
 	if exported == nil {
 		t.Fatal("expected exported trace")
+		return
 	}
 	if exported.RunID != result.RunID {
 		t.Fatalf("expected exported trace run ID %q, got %q", result.RunID, exported.RunID)

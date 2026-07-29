@@ -263,7 +263,7 @@ func (p *Provider) getToken(ctx context.Context) (string, error) {
 // createTokenSource creates an OAuth2 token source based on configuration.
 func (p *Provider) createTokenSource(ctx context.Context) (oauth2.TokenSource, error) {
 	if p.credentialsJSON != nil {
-		creds, err := google.CredentialsFromJSON(ctx, p.credentialsJSON, cloudScope) //nolint:staticcheck // deprecated but still functional
+		creds, err := google.CredentialsFromJSON(ctx, p.credentialsJSON, cloudScope) //nolint:staticcheck,nolintlint // credentials are explicitly configured by the process owner
 		if err != nil {
 			return nil, err
 		}
@@ -274,7 +274,7 @@ func (p *Provider) createTokenSource(ctx context.Context) (oauth2.TokenSource, e
 		if err != nil {
 			return nil, fmt.Errorf("failed to read credentials file: %w", err)
 		}
-		creds, err := google.CredentialsFromJSON(ctx, data, cloudScope) //nolint:staticcheck // deprecated but still functional
+		creds, err := google.CredentialsFromJSON(ctx, data, cloudScope) //nolint:staticcheck,nolintlint // credentials are explicitly configured by the process owner
 		if err != nil {
 			return nil, err
 		}
