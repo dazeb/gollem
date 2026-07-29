@@ -1321,6 +1321,23 @@ export type DynamicToolCallResponse = {
 
 export type DynamicToolCallStatus = "inProgress" | "completed" | "failed";
 
+export type DynamicToolFunctionSpec = {
+  "deferLoading"?: boolean;
+  "description": string;
+  "inputSchema": JsonValue;
+  "name": string;
+};
+
+export type DynamicToolNamespaceSpec = {
+  "description": string;
+  "name": string;
+  "tools": Array<DynamicToolNamespaceTool>;
+};
+
+export type DynamicToolNamespaceTool = { "type": "function" } & DynamicToolFunctionSpec;
+
+export type DynamicToolSpec = { "type": "function" } & DynamicToolFunctionSpec | { "type": "namespace" } & DynamicToolNamespaceSpec;
+
 export type Error = ({
   "code": number;
   "data"?: unknown;

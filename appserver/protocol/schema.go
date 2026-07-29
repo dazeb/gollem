@@ -198,6 +198,10 @@ func wireSchemaDefinitions() Schema {
 		{Name: "DynamicToolCallItem", Type: reflect.TypeFor[DynamicToolCallItem]()},
 		{Name: "DynamicToolCallItemCompletedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemCompletedNotificationParams]()},
 		{Name: "DynamicToolCallItemStartedNotificationParams", Type: reflect.TypeFor[DynamicToolCallItemStartedNotificationParams]()},
+		{Name: "DynamicToolFunctionSpec", Type: reflect.TypeFor[DynamicToolFunctionSpec]()},
+		{Name: "DynamicToolNamespaceSpec", Type: reflect.TypeFor[DynamicToolNamespaceSpec]()},
+		{Name: "DynamicToolNamespaceTool", Type: reflect.TypeFor[DynamicToolNamespaceTool]()},
+		{Name: "DynamicToolSpec", Type: reflect.TypeFor[DynamicToolSpec]()},
 		{Name: "ErrorNotification", Type: reflect.TypeFor[ErrorNotification]()},
 		{Name: "ExecPolicyAmendment", Type: reflect.TypeFor[ExecPolicyAmendment]()},
 		{Name: "ExperimentalFeature", Type: reflect.TypeFor[ExperimentalFeature]()},
@@ -1054,6 +1058,9 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["ParsedCommand"] = parsedCommandSchema()
 	for name, schema := range permissionProfileListSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range dynamicToolSpecSchemas() {
 		schemas[name] = schema
 	}
 	schemas["ProcessExitedNotification"] = processExitedNotificationSchema()

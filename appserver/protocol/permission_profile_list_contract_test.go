@@ -255,8 +255,8 @@ func TestPermissionProfileListContractsRemainStandalone(t *testing.T) {
 	if !ok || method.Surface != SurfaceClientRequest || method.State != MethodImplemented {
 		t.Fatalf("permissionProfile/list = %#v, %v; want existing implemented client request", method, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 516 {
-		t.Fatalf("definition count = %d, want 516", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 520 {
+		t.Fatalf("definition count = %d, want 520", got)
 	}
 	if len(Methods()) != 224 || len(WireTypeBindings()) != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("counts = %d/%d/%d, want 224/59/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
