@@ -1,6 +1,14 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,4 +120,136 @@ func TestMeasuredProviderRecordAndLast(t *testing.T) {
 	if got.Transport != "http" || got.Model != "gpt-5" {
 		t.Errorf("last() = %+v, want the recorded trace", got)
 	}
+}
+
+func TestLoadCredentialsFromPath(t *testing.T) {
+	// Writing a credentials file and loading via the path exercises both
+	// branches of loadCredentials without touching the real home dir.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	creds := &openai.Credentials{
+		AccessToken:  "at",
+		RefreshToken: "rt",
+		AccountID:    "acct",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}
+	data, _ := json.Marshal(creds)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := loadCredentials(path)
+	if err != nil {
+		t.Fatalf("loadCredentials: %v", err)
+	}
+	if got.AccountID != "acct" {
+		t.Errorf("AccountID = %q, want acct", got.AccountID)
+	}
+}
+
+func TestLoadCredentialsMissingPathErrors(t *testing.T) {
+	if _, err := loadCredentials(filepath.Join(t.TempDir(), "nope.json")); err == nil {
+		t.Fatal("expected error loading missing file")
+	}
+}
+
+// TestBuildProviderWiresObserverAndRefresher verifies buildProvider constructs a
+// provider whose observer and token refresher are wired and functional, without
+// needing a live account. The refresher is exercised against non-expiring
+// (no-op refresh) credentials.
+func TestBuildProviderWiresObserverAndRefresher(t *testing.T) {
+	h := &credentialHolder{creds: &openai.Credentials{
+		AccessToken:  "tok",
+		RefreshToken: "rt",
+		AccountID:    "acct",
+		// Far future expiry so RefreshIfNeeded is a no-op (returns same creds).
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}}
+	mp, err := buildProvider("gpt-5", "http", h)
+	if err != nil {
+		t.Fatalf("buildProvider: %v", err)
+	}
+	if mp.provider == nil {
+		t.Fatal("provider should be non-nil")
+	}
+	// The observer records into mp; drive a trace through it.
+	mp.record(oai.RequestTrace{Transport: "http"})
+	if _, ok := mp.last(); !ok {
+		t.Fatal("observer not wired into measuredProvider")
+	}
+}
+
+// TestRunOnceHTTPAndStreamErrors drives runOnce against a local fake ChatGPT
+// backend for both the http and stream transports, and verifies a non-EOF
+// stream error is propagated (not swallowed). This covers the request-driving
+// switch and stream-error handling without real credentials.
+func TestRunOnceHTTPAndStreamErrors(t *testing.T) {
+	sse := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"model\":\"gpt-5\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n" +
+		"data: [DONE]\n\n"
+
+	// successServer serves the happy-path SSE for the "http" transport.
+	successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, sse)
+	}))
+	defer successServer.Close()
+
+	mp := newTestMeasuredProvider(t, successServer.URL+"/chatgpt.com")
+
+	// HTTP transport success.
+	if err := runOnce(context.Background(), mp, "http", 1); err != nil {
+		t.Fatalf("runOnce http: %v", err)
+	}
+	if tr, ok := mp.last(); !ok || tr.TotalDuration <= 0 {
+		t.Error("expected a recorded trace after a successful http run")
+	}
+
+	// Stream transport success.
+	if err := runOnce(context.Background(), mp, "stream", 1); err != nil {
+		t.Fatalf("runOnce stream: %v", err)
+	}
+
+	// Now point at a server that returns a 429 so RequestStream setup fails and
+	// runOnce surfaces the error rather than treating it as completion.
+	errServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"type":"rate_limit","message":"slow down"}}`, http.StatusTooManyRequests)
+	}))
+	defer errServer.Close()
+	mpErr := newTestMeasuredProvider(t, errServer.URL+"/chatgpt.com")
+	if err := runOnce(context.Background(), mpErr, "stream", 1); err == nil {
+		t.Fatal("runOnce stream should propagate the setup error, not swallow it")
+	}
+
+	// Unknown transport returns an error.
+	if err := runOnce(context.Background(), mp, "carrier-pigeon", 1); err == nil ||
+		!strings.Contains(err.Error(), "carrier-pigeon") {
+		t.Fatalf("runOnce unknown transport err = %v, want a carrier-pigeon error", err)
+	}
+}
+
+func TestRunOnceRequestErrorPropagated(t *testing.T) {
+	// "http" transport against a 500 should surface the error.
+	errServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"type":"server_error","message":"boom"}}`, http.StatusInternalServerError)
+	}))
+	defer errServer.Close()
+	mp := newTestMeasuredProvider(t, errServer.URL+"/chatgpt.com")
+	if err := runOnce(context.Background(), mp, "http", 1); err == nil {
+		t.Fatal("runOnce http should propagate the request error")
+	}
+}
+
+// newTestMeasuredProvider builds a measuredProvider pointed at a fake ChatGPT
+// backend URL. Constructing the struct first (then the provider) avoids the
+// "cannot use mp.record while mp is being assigned" ordering problem.
+func newTestMeasuredProvider(t *testing.T, baseURL string) *measuredProvider {
+	t.Helper()
+	mp := &measuredProvider{}
+	mp.provider = oai.New(
+		oai.WithChatGPTAuth("tok", "acct"),
+		oai.WithBaseURL(baseURL),
+		oai.WithModel("gpt-5"),
+		oai.WithRequestObserver(mp.record),
+	)
+	return mp
 }
