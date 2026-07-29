@@ -855,6 +855,9 @@ func TestFileChangeRevertRequiresExactCanonicalThreadWorkspace(t *testing.T) {
 
 func TestCancelApprovalTurnAllowsTerminalTurnWithoutRuntime(t *testing.T) {
 	ctx := context.Background()
+	if err := readyServer().cancelApprovalTurn(ctx, "turn"); err == nil {
+		t.Fatal("cancel approval turn succeeded without a store")
+	}
 	st := newRuntimeTestStore(t)
 	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Terminal approval"})
 	if err != nil {
@@ -868,6 +871,9 @@ func TestCancelApprovalTurnAllowsTerminalTurnWithoutRuntime(t *testing.T) {
 		t.Fatalf("CompleteTurn: %v", err)
 	}
 	server := readyServer(WithStore(st))
+	if err := server.cancelApprovalTurn(ctx, "missing"); !errors.Is(err, store.ErrTurnNotFound) {
+		t.Fatalf("cancel missing approval turn error = %v, want ErrTurnNotFound", err)
+	}
 	if err := server.cancelApprovalTurn(ctx, turn.ID); err != nil {
 		t.Fatalf("cancel terminal approval turn: %v", err)
 	}

@@ -281,6 +281,33 @@ func TestServiceRevertFileRechecksAfterApproval(t *testing.T) {
 	}
 }
 
+func TestServiceRevertFileHonorsCancellationAfterApproval(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	svc := newTestService(t, WithApproval(func(context.Context, Operation) error {
+		cancel()
+		return nil
+	}))
+	path := filepath.Join(svc.Root(), "notes.txt")
+	after := []byte("after\n")
+	if err := os.WriteFile(path, after, 0o644); err != nil {
+		t.Fatalf("WriteFile fixture: %v", err)
+	}
+	_, err := svc.RevertFile(ctx, RevertFileRequest{
+		Path: "notes.txt",
+		Before: ExactFileState{
+			Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o644,
+		},
+		After: ExactFileState{Exists: true, SHA256: exactSHA256(after)},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("post-approval cancellation error = %v, want context.Canceled", err)
+	}
+	content, _ := os.ReadFile(path)
+	if string(content) != string(after) {
+		t.Fatalf("post-approval cancellation changed file to %q", content)
+	}
+}
+
 func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)
@@ -393,6 +420,27 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 	if err := os.WriteFile(filepath.Join(rootPath, "notes.txt"), []byte("after"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
+	if err := verifyExactFileState(filepath.Join(rootPath, "missing.txt"), ExactFileState{Exists: true}); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("missing unrooted exact state error = %v", err)
+	}
+	if err := os.Symlink("notes.txt", filepath.Join(rootPath, "linked.txt")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	if err := verifyExactFileState(filepath.Join(rootPath, "linked.txt"), ExactFileState{Exists: true}); !errors.Is(err, ErrExactRevertSymlink) {
+		t.Fatalf("unrooted symlink exact state error = %v", err)
+	}
+	if err := rejectSymlinkComponents(rootPath, filepath.Join(rootPath, "missing", "file.txt")); err != nil {
+		t.Fatalf("missing unrooted path components: %v", err)
+	}
+	if err := rejectRootSymlinkComponents(root, "missing/file.txt"); err != nil {
+		t.Fatalf("missing rooted path components: %v", err)
+	}
+	if err := rejectRootSymlinkComponents(root, "linked.txt"); !errors.Is(err, ErrExactRevertSymlink) {
+		t.Fatalf("rooted symlink component error = %v", err)
+	}
+	if err := verifyExactRootFileState(root, "linked.txt", ExactFileState{Exists: true}); !errors.Is(err, ErrExactRevertSymlink) {
+		t.Fatalf("rooted symlink exact state error = %v", err)
+	}
 	if err := verifyExactRootFileState(root, "notes.txt", ExactFileState{}); !errors.Is(err, ErrExactStateMismatch) {
 		t.Fatalf("unexpected existing file error = %v", err)
 	}
@@ -415,14 +463,55 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 	if err != nil || string(content) != "after" {
 		t.Fatalf("stale atomic write changed file to %q, error %v", content, err)
 	}
+	if err := atomicWriteRootFile(root, "notes.txt", []byte("before"), 0o600, ExactFileState{}); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("unexpected-destination atomic write error = %v", err)
+	}
+	if err := atomicWriteRootFile(root, "missing/notes.txt", []byte("before"), 0o600, ExactFileState{}); err == nil {
+		t.Fatal("atomic write into missing parent succeeded")
+	}
+	if err := removeExactRootFile(root, "missing.txt", ExactFileState{Exists: true, SHA256: "missing"}); err == nil {
+		t.Fatal("exact remove of missing file succeeded")
+	}
+	if _, err := quarantineExactRootFile(root, "missing.txt", ExactFileState{Exists: true, SHA256: "missing"}); err == nil {
+		t.Fatal("quarantine of missing file succeeded")
+	}
+
+	if err := os.WriteFile(filepath.Join(rootPath, "quarantine.txt"), []byte("quarantine"), 0o600); err != nil {
+		t.Fatalf("WriteFile quarantine: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rootPath, "occupied.txt"), []byte("occupied"), 0o600); err != nil {
+		t.Fatalf("WriteFile occupied: %v", err)
+	}
+	if err := restoreQuarantinedRootFile(root, "quarantine.txt", "occupied.txt"); err == nil {
+		t.Fatal("quarantine restore overwrote occupied destination")
+	}
+	if got, _ := os.ReadFile(filepath.Join(rootPath, "occupied.txt")); string(got) != "occupied" {
+		t.Fatalf("occupied destination changed to %q", got)
+	}
+	if err := os.Mkdir(filepath.Join(rootPath, "concurrent-dir"), 0o755); err != nil {
+		t.Fatalf("Mkdir concurrent directory: %v", err)
+	}
+	if _, err := quarantineExactRootFile(root, "concurrent-dir", ExactFileState{
+		Exists: true, SHA256: exactSHA256([]byte("expected file")),
+	}); !errors.Is(err, ErrExactRevertUnsupported) {
+		t.Fatalf("concurrent-directory quarantine error = %v, want ErrExactRevertUnsupported", err)
+	}
 	entries, err := os.ReadDir(rootPath)
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
+	preservedConcurrentDirectories := 0
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".gollem-revert-") {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), ".gollem-revert-current-") {
+				preservedConcurrentDirectories++
+				continue
+			}
 			t.Fatalf("stale atomic write leaked temp file %q", entry.Name())
 		}
+	}
+	if preservedConcurrentDirectories != 1 {
+		t.Fatalf("preserved concurrent directories = %d, want 1", preservedConcurrentDirectories)
 	}
 }
 

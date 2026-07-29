@@ -980,6 +980,20 @@ func TestSQLiteStoreForkDisablesFileChangeRevertEvidence(t *testing.T) {
 	}
 }
 
+func TestDisableForkedFileChangeRevertLeavesUnsupportedPayloadsUntouched(t *testing.T) {
+	tests := []json.RawMessage{
+		nil,
+		json.RawMessage(`{"type":`),
+		json.RawMessage(`{"type":"message","content":"keep"}`),
+		json.RawMessage(`{"type":"fileChange","evidence":{}}`),
+	}
+	for _, input := range tests {
+		if got := disableForkedFileChangeRevert(input); string(got) != string(input) {
+			t.Fatalf("disableForkedFileChangeRevert(%s) = %s", input, got)
+		}
+	}
+}
+
 func TestSQLiteStoreUpdateThreadSettingsMergesAndReplaces(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
