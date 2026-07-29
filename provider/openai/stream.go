@@ -26,6 +26,12 @@ type streamedResponse struct {
 	done         bool
 	streamErr    error // non-nil if server sent an error mid-stream
 
+	// instrumentation receives per-request latency updates; nil = no-op. It is
+	// finalized exactly once (on Close/EOF). The Chat Completions path does not
+	// capture streaming phase granularity; it only finalizes the trace so the
+	// observer fires for every request.
+	instrumentation *requestInstrumentation
+
 	// State for tracking tool calls being built across deltas.
 	currentParts map[int]core.ModelResponsePart
 	argsBuffers  map[int]*strings.Builder
@@ -36,19 +42,21 @@ type streamedResponse struct {
 }
 
 func newStreamedResponse(body io.ReadCloser, model string) *streamedResponse {
-	return newBoundStreamedResponse(body, model, nil)
+	return newBoundStreamedResponse(body, model, nil, nil)
 }
 
 func newBoundStreamedResponse(
 	body io.ReadCloser,
 	model string,
 	resolveModel func(string) (string, error),
+	ri *requestInstrumentation,
 ) *streamedResponse {
 	return &streamedResponse{
 		reader:            bufio.NewReader(body),
 		body:              body,
 		model:             model,
 		resolveModel:      resolveModel,
+		instrumentation:   ri,
 		currentParts:      make(map[int]core.ModelResponsePart),
 		argsBuffers:       make(map[int]*strings.Builder),
 		toolCallPartIndex: make(map[int]int),
@@ -121,13 +129,18 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 					s.done = true
 					if modelErr := s.finalizeModelIdentity(); modelErr != nil {
 						s.streamErr = modelErr
+						s.instrumentation.recordError(modelErr)
+						s.instrumentation.finish()
 						return nil, modelErr
 					}
 					s.finalizeAll()
+					s.instrumentation.finish()
 					return nil, io.EOF
 				}
 				// Data received with EOF; process this line, finalize on next read.
 			} else {
+				s.instrumentation.recordError(err)
+				s.instrumentation.finish()
 				return nil, err
 			}
 		}
@@ -148,9 +161,12 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 			s.done = true
 			if err := s.finalizeModelIdentity(); err != nil {
 				s.streamErr = err
+				s.instrumentation.recordError(err)
+				s.instrumentation.finish()
 				return nil, err
 			}
 			s.finalizeAll()
+			s.instrumentation.finish()
 			return nil, io.EOF
 		}
 
@@ -165,6 +181,8 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 				if err != nil {
 					s.done = true
 					s.streamErr = err
+					s.instrumentation.recordError(err)
+					s.instrumentation.finish()
 					return nil, err
 				}
 			}
@@ -178,6 +196,9 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 			s.finalizeAll()
 			classification := classifyProviderError(chunk.Error.Type, chunk.Error.Message)
 			s.streamErr = fmt.Errorf("openai stream error (%s)", classification)
+			s.instrumentation.classifyHTTPResponse(0, classification)
+			s.instrumentation.recordError(s.streamErr)
+			s.instrumentation.finish()
 			return nil, s.streamErr
 		}
 
@@ -372,6 +393,7 @@ func (s *streamedResponse) Usage() core.Usage {
 
 // Close releases resources.
 func (s *streamedResponse) Close() error {
+	s.instrumentation.finish()
 	return s.body.Close()
 }
 

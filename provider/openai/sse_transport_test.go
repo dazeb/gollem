@@ -42,7 +42,7 @@ func TestParseSSEResponses_IgnoresTransportErrorAfterTerminalEvent(t *testing.T)
 	})
 
 	p := New(WithModel("gpt-5"))
-	got, err := p.parseSSEResponses(&http.Response{Body: body})
+	got, err := p.parseSSEResponses(&http.Response{Body: body}, nil)
 	if err != nil {
 		t.Fatalf("parseSSEResponses returned error despite terminal response: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestParseSSEResponses_StillFailsWithoutTerminalEvent(t *testing.T) {
 	})
 
 	p := New(WithModel("gpt-5"))
-	_, err := p.parseSSEResponses(&http.Response{Body: body})
+	_, err := p.parseSSEResponses(&http.Response{Body: body}, nil)
 	if err == nil {
 		t.Fatal("expected parseSSEResponses to fail without a terminal response event")
 	}

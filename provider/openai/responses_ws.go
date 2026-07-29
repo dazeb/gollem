@@ -82,11 +82,11 @@ const (
 	minBudgetForWSRetry = 60 * time.Second
 )
 
-func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *responsesRequest) (*core.ModelResponse, error) {
+func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *responsesRequest, ri *requestInstrumentation) (*core.ModelResponse, error) {
 	p.wsMu.Lock()
 	defer p.wsMu.Unlock()
 
-	conn, err := p.ensureResponsesWebSocketLocked(ctx)
+	conn, err := p.ensureResponsesWebSocketLocked(ctx, ri)
 	if err != nil {
 		return nil, err
 	}
@@ -108,10 +108,11 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 		if len(delta) > 0 {
 			sendReq.PreviousResponseID = p.wsPrevResponseID
 			sendReq.Input = delta
+			ri.markPreviousResponseIDReused(true)
 		}
 	}
 
-	apiResp, err := p.sendResponsesCreateLocked(ctx, conn, &sendReq)
+	apiResp, err := p.sendResponsesCreateLocked(ctx, conn, &sendReq, ri)
 	if err != nil {
 		// If continuation/cache state is lost, or socket lifetime is reached, or
 		// connection dropped, reconnect once and resend full context as a new chain.
@@ -120,13 +121,13 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 		if isPreviousResponseNotFound(err) || isWebSocketConnectionLimitReached(err) || isWebSocketConnectionError(err) {
 			if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) >= minBudgetForWSRetry {
 				p.resetResponsesWebSocketLocked()
-				conn, connErr := p.ensureResponsesWebSocketLocked(ctx)
+				conn, connErr := p.ensureResponsesWebSocketLocked(ctx, ri)
 				if connErr != nil {
 					return nil, connErr
 				}
 				fullReq := *req
 				fullReq.PreviousResponseID = ""
-				apiResp, err = p.sendResponsesCreateLocked(ctx, conn, &fullReq)
+				apiResp, err = p.sendResponsesCreateLocked(ctx, conn, &fullReq, ri)
 				if err == nil {
 					// New chain started; local previous-response cache is reset.
 					p.wsPrevResponseID = ""
@@ -153,12 +154,14 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 	return p.parseBoundResponsesResponse(apiResp)
 }
 
-func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context) (*responsesWebSocketConn, error) {
-	token, err := p.authorizationToken()
+func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context, ri *requestInstrumentation) (*responsesWebSocketConn, error) {
+	token, err := p.authorizationToken(ri)
 	if err != nil {
 		return nil, err
 	}
 	if p.wsConn != nil && token == p.wsAuthToken {
+		ri.markWebSocketReused(true)
+		ri.recordHeaders(0)
 		return p.wsConn, nil
 	}
 	if p.wsConn != nil {
@@ -200,10 +203,18 @@ func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context) (*respons
 			resp.Body.Close()
 		}
 		if statusCode != 0 {
-			return nil, sanitizedProviderHTTPError("openai websocket connect error", statusCode, body, p.model)
+			httpErr := sanitizedProviderHTTPError("openai websocket connect error", statusCode, body, p.model)
+			ri.classifyHTTPResponse(statusCode, body)
+			ri.recordError(httpErr)
+			return nil, httpErr
 		}
+		ri.recordError(err)
 		return nil, fmt.Errorf("openai websocket connect failed: %w", err)
 	}
+
+	// Dial + handshake completed; record time to "headers" for the WS path.
+	ri.markWebSocketReused(false)
+	ri.recordHeaders(0)
 
 	p.wsConn = &responsesWebSocketConn{conn: conn}
 	p.wsAuthToken = token
@@ -220,7 +231,7 @@ func (p *Provider) resetResponsesWebSocketLocked() {
 	p.wsLastInputSigs = nil
 }
 
-func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *responsesWebSocketConn, req *responsesRequest) (*responsesAPIResponse, error) {
+func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *responsesWebSocketConn, req *responsesRequest, ri *requestInstrumentation) (*responsesAPIResponse, error) {
 	event := responsesWSCreateEvent{
 		Type:             "response.create",
 		responsesRequest: *req,
@@ -243,6 +254,7 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 	}
 
 	if err := conn.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		ri.recordError(err)
 		return nil, fmt.Errorf("openai websocket write failed: %w", err)
 	}
 
@@ -257,12 +269,15 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 
 		_, data, err := conn.conn.ReadMessage()
 		if err != nil {
+			ri.recordError(err)
 			return nil, fmt.Errorf("openai websocket read failed: %w", err)
 		}
 		var event responsesWSEvent
 		if err := json.Unmarshal(data, &event); err != nil {
+			ri.recordError(err)
 			return nil, fmt.Errorf("openai websocket decode failed: %w", err)
 		}
+		ri.recordFirstEvent()
 		if wsDebugEnabled {
 			snippet := data
 			if len(snippet) > 400 {
@@ -276,10 +291,12 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 			// deltas. Forward each chunk so callers (vcr's progress
 			// printer, etc.) can surface the model's thinking live
 			// rather than only seeing a single blob at .done.
+			ri.recordFirstToken()
 			if p.reasoningSummaryHandler != nil && event.Delta != "" {
 				p.reasoningSummaryHandler(event.Delta)
 			}
 		case "response.reasoning_summary_text.done":
+			ri.recordFirstToken()
 			if p.reasoningSummaryHandler != nil && event.Text != "" {
 				p.reasoningSummaryHandler(event.Text)
 			}
@@ -288,11 +305,14 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 			// the terminal response.completed event may arrive with an
 			// empty Output slice. Accumulate completed items so we can
 			// reconstruct the response output.
+			ri.recordFirstToken()
 			if event.Item != nil {
 				streamedItems = append(streamedItems, *event.Item)
 			}
 		case "response.done", "response.completed":
+			ri.recordTerminal()
 			if event.Response == nil {
+				ri.recordError(errors.New("openai websocket: terminal response event missing response payload"))
 				return nil, errors.New("openai websocket: terminal response event missing response payload")
 			}
 			if len(event.Response.Output) == 0 && len(streamedItems) > 0 {
@@ -300,11 +320,17 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 			}
 			return event.Response, nil
 		case "response.incomplete":
-			return nil, responsesIncompleteError(event, p.model)
+			wsErr := responsesIncompleteError(event, p.model)
+			ri.recordError(wsErr)
+			return nil, wsErr
 		case "error":
-			return nil, responsesWebSocketError(event, p.model)
+			wsErr := responsesWebSocketError(event, p.model)
+			ri.recordError(wsErr)
+			return nil, wsErr
 		case "response.failed":
-			return nil, responsesFailedError(event, p.model)
+			wsErr := responsesFailedError(event, p.model)
+			ri.recordError(wsErr)
+			return nil, wsErr
 		default:
 			// Ignore progress/delta events and keep reading.
 		}

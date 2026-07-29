@@ -99,7 +99,7 @@ func TestChatGPTAuth_GPT56ResponsesLiteHeader(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			p.setHeaders(req)
+			p.setHeaders(req, nil)
 			if got := req.Header.Get(chatgptResponsesLiteHdr); got != tc.want {
 				t.Fatalf("%s = %q, want %q", chatgptResponsesLiteHdr, got, tc.want)
 			}
@@ -228,7 +228,7 @@ data: [DONE]
 `))}
 	p := New(WithModel("gpt-5"))
 
-	got, err := p.parseSSEResponses(resp)
+	got, err := p.parseSSEResponses(resp, nil)
 	if err != nil {
 		t.Fatalf("parseSSEResponses: %v", err)
 	}

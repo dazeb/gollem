@@ -41,4 +41,21 @@
 //	model := openai.NewLiteLLM("http://localhost:4000",
 //	    openai.WithModel("claude-3-sonnet"),
 //	)
+//
+// # Latency Instrumentation
+//
+// WithRequestObserver installs a callback that receives one secret-safe
+// RequestTrace per physical provider request, covering the HTTP and WebSocket
+// transports. The trace measures token refresh, request upload, time to
+// headers/first-event/first-token/terminal, sanitized error classification,
+// Retry-After, and continuation/cache-continuity signals.
+//
+// It is intended for diagnosing latency (for example comparing ChatGPT
+// OAuth-backed requests across transports). It deliberately carries no
+// credentials, request content, or raw provider error bodies — only sizes,
+// timings, and sanitized markers.
+//
+// Set OPENAI_REQUEST_TRACE=1 to install the default stderr observer when no
+// explicit observer is configured. When unset, the provider incurs no
+// instrumentation overhead.
 package openai

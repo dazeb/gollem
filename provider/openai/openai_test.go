@@ -3045,6 +3045,7 @@ func TestStrictModelBindingChatCompletionStreamTerminalPaths(t *testing.T) {
 				io.NopCloser(strings.NewReader(tt.sse)),
 				"gpt-4o",
 				p.resolveResponseModel,
+				nil,
 			)
 			defer stream.Close()
 			_, err := stream.Next()
@@ -3070,6 +3071,7 @@ func TestStrictModelBindingResponsesStreamBareTerminalPaths(t *testing.T) {
 				io.NopCloser(strings.NewReader(tt.sse)),
 				"gpt-5",
 				p.resolveResponseModel,
+				nil,
 			)
 			defer stream.Close()
 			_, err := stream.Next()

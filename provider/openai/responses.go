@@ -129,13 +129,13 @@ type responsesOutputTokensDetails struct {
 	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
-func (p *Provider) requestViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+func (p *Provider) requestViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, ri *requestInstrumentation) (*core.ModelResponse, error) {
 	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens, p.disableToolSearch)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
 	}
 	p.applyResponsesEndpointSettings(req)
-	return p.requestViaResponsesWithReq(ctx, req)
+	return p.requestViaResponsesWithReq(ctx, req, ri)
 }
 
 // applyResponsesEndpointSettings configures endpoint-specific fields on the
@@ -189,7 +189,7 @@ func (p *Provider) applyResponsesEndpointSettings(req *responsesRequest) {
 // internally. The non-streaming Request() path continues to use WebSocket
 // when configured; RequestStream() falls back to HTTP SSE which provides
 // true incremental event delivery.
-func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, ri *requestInstrumentation) (core.StreamedResponse, error) {
 	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens, p.disableToolSearch)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
@@ -205,8 +205,10 @@ func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []cor
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to marshal responses request: %w", err)
 	}
+	ri.setRequestShape(len(body), len(req.Input))
+	ri.markCacheKey(req.PromptCacheKey)
 
-	resp, err := p.doRequest(ctx, p.responsesEP(), body)
+	resp, err := p.doRequest(ctx, p.responsesEP(), body, ri)
 	if err != nil {
 		return nil, err
 	}
@@ -225,16 +227,21 @@ func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []cor
 		defer resp.Body.Close()
 		var apiResp responsesAPIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+			ri.recordError(err)
+			ri.finish()
 			return nil, fmt.Errorf("openai: failed to decode responses API response: %w", err)
 		}
 		bound, bindErr := p.parseBoundResponsesResponse(&apiResp)
 		if bindErr != nil {
+			ri.recordError(bindErr)
+			ri.finish()
 			return nil, bindErr
 		}
-		return newPrebuiltResponsesStream(bound), nil
+		ri.recordTerminal()
+		return &prebuiltResponsesStream{response: bound, instrumentation: ri}, nil
 	}
 
-	return newBoundResponsesStreamedResponse(resp.Body, p.model, p.resolveResponseModel), nil
+	return newBoundResponsesStreamedResponse(resp.Body, p.model, p.resolveResponseModel, ri), nil
 }
 
 // applyChatGPTRequirements modifies a request for the ChatGPT backend:
@@ -331,7 +338,7 @@ func extractTextContent(content any) string {
 	return ""
 }
 
-func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *responsesRequest) (*core.ModelResponse, error) {
+func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *responsesRequest, ri *requestInstrumentation) (*core.ModelResponse, error) {
 	if p.shouldUseResponsesWebSocket() {
 		// Keep websocket continuations strictly in-memory on the active socket,
 		// aligned with WebSocket mode guidance and ZDR/store=false compatibility.
@@ -340,11 +347,12 @@ func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *response
 			storeFalse := false
 			req.Store = &storeFalse
 		}
-		resp, wsErr := p.requestViaResponsesWebSocket(ctx, req)
+		resp, wsErr := p.requestViaResponsesWebSocket(ctx, req, ri)
 		if wsErr == nil {
 			return resp, nil
 		}
 		if !p.wsHTTPFallback {
+			ri.recordError(wsErr)
 			return nil, wsErr
 		}
 		// Restore caller intent for HTTP fallback; websocket-specific store=false
@@ -352,7 +360,7 @@ func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *response
 		req.Store = cloneBoolPtr(origStore)
 	}
 
-	return p.requestViaResponsesHTTP(ctx, req)
+	return p.requestViaResponsesHTTP(ctx, req, ri)
 }
 
 func cloneBoolPtr(v *bool) *bool {
@@ -363,13 +371,15 @@ func cloneBoolPtr(v *bool) *bool {
 	return &c
 }
 
-func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRequest) (*core.ModelResponse, error) {
+func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRequest, ri *requestInstrumentation) (*core.ModelResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to marshal responses request: %w", err)
 	}
+	ri.setRequestShape(len(body), len(req.Input))
+	ri.markCacheKey(req.PromptCacheKey)
 
-	resp, err := p.doRequest(ctx, p.responsesEP(), body)
+	resp, err := p.doRequest(ctx, p.responsesEP(), body, ri)
 	if err != nil {
 		return nil, err
 	}
@@ -378,14 +388,15 @@ func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRe
 	// ChatGPT backend requires stream=true and returns SSE events.
 	// Parse the stream and extract the final terminal response event.
 	if req.Stream != nil && *req.Stream {
-		return p.parseSSEResponses(resp)
+		return p.parseSSEResponses(resp, ri)
 	}
 
 	var apiResp responsesAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		ri.recordError(err)
 		return nil, fmt.Errorf("openai: failed to decode responses API response: %w", err)
 	}
-
+	ri.recordTerminal()
 	return p.parseBoundResponsesResponse(&apiResp)
 }
 
@@ -399,7 +410,7 @@ func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRe
 // output is empty (which it always is for codex). This is the bug fix
 // for sleepy meta-evolution: without this, every codex call returns
 // empty text and looks like a rate limit.
-func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, error) {
+func (p *Provider) parseSSEResponses(resp *http.Response, ri *requestInstrumentation) (*core.ModelResponse, error) {
 	scanner := bufio.NewScanner(resp.Body)
 	// Allow large lines (SSE events can be big).
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -423,14 +434,17 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		if json.Unmarshal([]byte(data), &event) != nil {
 			continue
 		}
+		ri.recordFirstEvent()
 		switch event.Type {
 		case "response.completed", "response.done":
 			finalResp = &event.Response
+			ri.recordTerminal()
 		case "response.output_item.done":
 			// Accumulate completed message items so we can recover
 			// the response text even when the terminal event has
 			// output:[] (codex backend behavior).
 			if event.Item.Type == "message" || event.Item.Type == "function_call" {
+				ri.recordFirstToken()
 				streamedItems = append(streamedItems, event.Item)
 			}
 		}
@@ -441,14 +455,16 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		// that case we already have the complete response payload, so prefer it
 		// over surfacing a transport error.
 		if finalResp == nil {
+			ri.recordError(err)
 			return nil, fmt.Errorf("openai: SSE read error: %w", err)
 		}
 	}
 	if finalResp == nil {
+		ri.recordError(errors.New("openai: no terminal response event in stream"))
 		return nil, errors.New("openai: no terminal response event in stream")
 	}
 	// Codex backend fix: if the terminal response has no output items
-	// but we accumulated streamed message items, use those instead.
+	// but we accumulated streamed message items, use these instead.
 	if len(finalResp.Output) == 0 && len(streamedItems) > 0 {
 		finalResp.Output = streamedItems
 	}

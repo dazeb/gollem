@@ -39,6 +39,10 @@ type responsesStreamedResponse struct {
 	done       bool
 	streamErr  error // non-nil if server sent an error mid-stream
 
+	// instrumentation receives per-request latency updates; nil = no-op. It is
+	// finalized exactly once on terminal/done/error.
+	instrumentation *requestInstrumentation
+
 	// Text part tracking.
 	textPartStarted bool
 	textPartIndex   int
@@ -63,13 +67,14 @@ type responsesStreamedResponse struct {
 }
 
 func newResponsesStreamedResponse(body io.ReadCloser, model string) *responsesStreamedResponse {
-	return newBoundResponsesStreamedResponse(body, model, nil)
+	return newBoundResponsesStreamedResponse(body, model, nil, nil)
 }
 
 func newBoundResponsesStreamedResponse(
 	body io.ReadCloser,
 	model string,
 	resolveModel func(string) (string, error),
+	ri *requestInstrumentation,
 ) *responsesStreamedResponse {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -79,6 +84,7 @@ func newBoundResponsesStreamedResponse(
 		model:                model,
 		resolveModel:         resolveModel,
 		stopReason:           core.FinishReasonStop,
+		instrumentation:      ri,
 		partsByIndex:         make(map[int]core.ModelResponsePart),
 		toolCallByOutputIdx:  make(map[int]int),
 		toolCallArgsBuffers:  make(map[int]*strings.Builder),
@@ -98,8 +104,11 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 
 		if s.done {
 			if s.streamErr != nil {
+				s.instrumentation.recordError(s.streamErr)
+				s.instrumentation.finish()
 				return nil, s.streamErr
 			}
+			s.instrumentation.finish()
 			return nil, io.EOF
 		}
 
@@ -109,6 +118,8 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 				// underlying HTTP/2 stream before sending [DONE]. Once we have the
 				// completed response payload, treat the stream as successfully done.
 				if !s.done {
+					s.instrumentation.recordError(err)
+					s.instrumentation.finish()
 					return nil, fmt.Errorf("openai: SSE read error: %w", err)
 				}
 			}
@@ -116,9 +127,12 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 			s.done = true
 			if err := s.finalizeModelIdentity(); err != nil {
 				s.streamErr = err
+				s.instrumentation.recordError(err)
+				s.instrumentation.finish()
 				return nil, err
 			}
 			s.finalize()
+			s.instrumentation.finish()
 			return nil, io.EOF
 		}
 
@@ -132,9 +146,12 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 			s.done = true
 			if err := s.finalizeModelIdentity(); err != nil {
 				s.streamErr = err
+				s.instrumentation.recordError(err)
+				s.instrumentation.finish()
 				return nil, err
 			}
 			s.finalize()
+			s.instrumentation.finish()
 			return nil, io.EOF
 		}
 
@@ -142,12 +159,14 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 		if json.Unmarshal([]byte(data), &event) != nil {
 			continue
 		}
+		s.instrumentation.recordFirstEvent()
 
 		events := s.processEvent(&event)
 		if len(events) > 0 {
 			if len(events) > 1 {
 				s.pendingEvents = append(s.pendingEvents, events[1:]...)
 			}
+			s.instrumentation.recordFirstToken()
 			return events[0], nil
 		}
 	}
@@ -188,12 +207,16 @@ func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []
 			if json.Unmarshal(event.Response, &failedResp) == nil {
 				classification := classifyProviderError("response.failed", failedResp.Error.Code, failedResp.Error.Message)
 				s.streamErr = fmt.Errorf("openai: response failed (%s)", classification)
+				s.instrumentation.classifyHTTPResponse(0, classification)
 			} else {
 				s.streamErr = errors.New("openai: response failed")
+				s.instrumentation.classifyHTTPResponse(0, "response_failed")
 			}
 		} else {
 			s.streamErr = errors.New("openai: response failed")
+			s.instrumentation.classifyHTTPResponse(0, "response_failed")
 		}
+		s.instrumentation.recordError(s.streamErr)
 		return nil
 
 	case "response.incomplete":
@@ -214,6 +237,8 @@ func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []
 			s.streamErr = err
 		}
 		s.finalize()
+		s.instrumentation.classifyHTTPResponse(0, "response_incomplete")
+		s.instrumentation.recordTerminal()
 		return nil
 	}
 	return nil
@@ -464,6 +489,7 @@ func (s *responsesStreamedResponse) handleCompleted(respJSON json.RawMessage) {
 	}
 	s.done = true
 	s.finalize()
+	s.instrumentation.recordTerminal()
 }
 
 func (s *responsesStreamedResponse) bindResponseModel(actual string) error {
@@ -542,6 +568,7 @@ func (s *responsesStreamedResponse) Usage() core.Usage {
 
 // Close releases resources.
 func (s *responsesStreamedResponse) Close() error {
+	s.instrumentation.finish()
 	return s.body.Close()
 }
 
@@ -552,18 +579,16 @@ var _ core.StreamedResponse = (*responsesStreamedResponse)(nil)
 // Used when the server returns JSON instead of SSE (e.g., streaming unsupported),
 // so callers always get a valid StreamedResponse regardless of server behavior.
 type prebuiltResponsesStream struct {
-	response *core.ModelResponse
-	idx      int
-	done     bool
-}
-
-func newPrebuiltResponsesStream(resp *core.ModelResponse) *prebuiltResponsesStream {
-	return &prebuiltResponsesStream{response: resp}
+	response        *core.ModelResponse
+	idx             int
+	done            bool
+	instrumentation *requestInstrumentation
 }
 
 func (s *prebuiltResponsesStream) Next() (core.ModelResponseStreamEvent, error) {
 	if s.done || s.idx >= len(s.response.Parts) {
 		s.done = true
+		s.instrumentation.finish()
 		return nil, io.EOF
 	}
 	event := core.PartStartEvent{
@@ -576,6 +601,6 @@ func (s *prebuiltResponsesStream) Next() (core.ModelResponseStreamEvent, error) 
 
 func (s *prebuiltResponsesStream) Response() *core.ModelResponse { return s.response }
 func (s *prebuiltResponsesStream) Usage() core.Usage             { return s.response.Usage }
-func (s *prebuiltResponsesStream) Close() error                  { return nil }
+func (s *prebuiltResponsesStream) Close() error                  { s.instrumentation.finish(); return nil }
 
 var _ core.StreamedResponse = (*prebuiltResponsesStream)(nil)
