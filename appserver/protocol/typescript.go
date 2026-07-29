@@ -506,6 +506,45 @@ func MarshalTypeScript() ([]byte, error) {
 			schema["x-gollem-typescript-ignore-additional-properties"] = true
 			definition = schema
 		}
+		switch name {
+		case "PermissionProfileListParams":
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"cursor": nullableStringSchema(),
+				"cwd":    nullableStringSchema(),
+				"limit": Schema{"anyOf": []any{
+					Schema{"type": "integer"}, Schema{"type": "null"},
+				}},
+			})
+		case "PermissionProfileSummary":
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"description": nullableStringSchema(),
+			})
+		case "PermissionProfileListResponse":
+			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
+				"nextCursor": nullableStringSchema(),
+			})
+		}
+		if name == "PermissionProfileSummary" || name == "PermissionProfileListResponse" {
+			// serde accepts omitted Option fields and emits them as null, while
+			// ts-rs exposes these two properties as required nullable values.
+			schema, _ := typeScriptSchema(definition)
+			required, _ := schema["required"].([]string)
+			required = append([]string(nil), required...)
+			if name == "PermissionProfileSummary" {
+				required = append(required, "description")
+			} else {
+				required = append(required, "nextCursor")
+			}
+			schema["required"] = required
+			definition = schema
+		}
+		if name == "PermissionProfileListParams" ||
+			name == "PermissionProfileSummary" ||
+			name == "PermissionProfileListResponse" {
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = schema
+		}
 		if name == "HookRunSummary" {
 			// ts-rs maps each Rust i64 field to bigint, including nullable i64
 			// options. Keep these hints out of the public JSON Schema.
