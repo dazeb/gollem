@@ -5254,6 +5254,12 @@
         },
         "path": {
           "type": "string"
+        },
+        "revertSnapshotAvailable": {
+          "type": "boolean"
+        },
+        "revertUnavailableReason": {
+          "type": "string"
         }
       },
       "required": [
@@ -5423,6 +5429,81 @@
       },
       "required": [
         "decision"
+      ],
+      "type": "object"
+    },
+    "FileChangeRevertParams": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "itemId",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    },
+    "FileChangeRevertResult": {
+      "additionalProperties": false,
+      "properties": {
+        "afterExists": {
+          "type": "boolean"
+        },
+        "afterSha256": {
+          "type": "string"
+        },
+        "beforeExists": {
+          "type": "boolean"
+        },
+        "beforeSha256": {
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "marker": {
+          "$ref": "#/$defs/TimelineItem"
+        },
+        "path": {
+          "type": "string"
+        },
+        "reused": {
+          "type": "boolean"
+        },
+        "revertedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "idempotencyKey",
+        "path",
+        "beforeExists",
+        "afterExists",
+        "revertedAt",
+        "marker",
+        "reused"
       ],
       "type": "object"
     },
@@ -12169,6 +12250,7 @@
             "git/status",
             "git/worktree/create",
             "git/worktree/list",
+            "item/fileChange/revert",
             "provider/capabilities/read",
             "provider/list",
             "tool/list",
@@ -20369,6 +20451,12 @@
       "source": "goal.txt"
     },
     {
+      "method": "item/fileChange/revert",
+      "surface": "gollem-extension",
+      "state": "implemented",
+      "source": "goal.txt"
+    },
+    {
       "method": "provider/capabilities/read",
       "surface": "gollem-extension",
       "state": "implemented",
@@ -20654,6 +20742,16 @@
       ],
       "result": [
         "FileChangeRequestApprovalResponse"
+      ]
+    },
+    {
+      "method": "item/fileChange/revert",
+      "surface": "gollem-extension",
+      "params": [
+        "FileChangeRevertParams"
+      ],
+      "result": [
+        "FileChangeRevertResult"
       ]
     },
     {

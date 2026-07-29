@@ -104,7 +104,7 @@ func RequestScheduleFor(method string, params json.RawMessage) RequestSchedule {
 		"thread/goal/get", "thread/goal/set", "thread/goal/clear", "thread/metadata/update", "thread/memoryMode/set",
 		"thread/name/set", "thread/turns/list", "thread/items/list", "thread/inject_items":
 		return RequestSchedule{Scope: "thread", Serial: true}
-	case "fs/readFile", "fs/writeFile", "fs/createDirectory", "fs/readDirectory", "fs/getMetadata", "fs/remove", "fs/copy", "fs/watch", "fs/unwatch":
+	case "fs/readFile", "fs/writeFile", "fs/createDirectory", "fs/readDirectory", "fs/getMetadata", "fs/remove", "fs/copy", "fs/watch", "fs/unwatch", "item/fileChange/revert":
 		return RequestSchedule{Scope: "fs", Serial: true}
 	case "command/exec", "command/exec/write", "command/exec/resize", "command/exec/terminate", "process/spawn", "process/writeStdin", "process/resizePty", "process/kill",
 		"thread/backgroundTerminals/list", "thread/backgroundTerminals/terminate", "thread/backgroundTerminals/clean":

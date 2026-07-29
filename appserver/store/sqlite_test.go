@@ -89,6 +89,134 @@ func TestSQLiteStoreThreadLifecyclePersists(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreFileChangeRecoverySurvivesRestartAndIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "appserver.db")
+	s := newTestSQLiteStore(t, path)
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Revert", Workspace: "/work"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	turn, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	item, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: thread.ID,
+		TurnID:   turn.ID,
+		Kind:     "fileChange",
+		Status:   "completed",
+		Payload:  json.RawMessage(`{"type":"fileChange","changes":[],"status":"completed"}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem: %v", err)
+	}
+	created := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	saved, err := s.SaveFileChangeRecovery(ctx, SaveFileChangeRecoveryRequest{Recovery: FileChangeRecovery{
+		ItemID:        item.ID,
+		ThreadID:      thread.ID,
+		TurnID:        turn.ID,
+		Path:          "notes.txt",
+		BeforeExists:  true,
+		AfterExists:   true,
+		BeforeSHA256:  "before",
+		AfterSHA256:   "after",
+		BeforeMode:    0o600,
+		AfterMode:     0o644,
+		BeforeContent: []byte("before\n"),
+		Status:        FileChangeRecoveryAvailable,
+		CreatedAt:     created,
+	}})
+	if err != nil {
+		t.Fatalf("SaveFileChangeRecovery: %v", err)
+	}
+	saved.BeforeContent[0] = 'X'
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s = newTestSQLiteStore(t, path)
+	loaded, err := s.GetFileChangeRecovery(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("GetFileChangeRecovery after restart: %v", err)
+	}
+	if string(loaded.BeforeContent) != "before\n" || loaded.Status != FileChangeRecoveryAvailable {
+		t.Fatalf("loaded recovery = %+v", loaded)
+	}
+	prepared, err := s.PrepareFileChangeRevert(ctx, PrepareFileChangeRevertRequest{
+		ItemID:         item.ID,
+		IdempotencyKey: "revert-1",
+		PreparedAt:     created.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("PrepareFileChangeRevert: %v", err)
+	}
+	if prepared.Reused || prepared.Recovery.Status != FileChangeRecoveryPending {
+		t.Fatalf("prepared = %+v", prepared)
+	}
+	reprepared, err := s.PrepareFileChangeRevert(ctx, PrepareFileChangeRevertRequest{
+		ItemID:         item.ID,
+		IdempotencyKey: "revert-1",
+	})
+	if err != nil {
+		t.Fatalf("PrepareFileChangeRevert duplicate: %v", err)
+	}
+	if !reprepared.Reused || reprepared.Recovery.Status != FileChangeRecoveryPending {
+		t.Fatalf("reprepared = %+v", reprepared)
+	}
+	if _, err := s.PrepareFileChangeRevert(ctx, PrepareFileChangeRevertRequest{
+		ItemID:         item.ID,
+		IdempotencyKey: "revert-2",
+	}); !errors.Is(err, ErrFileChangeRevertIdempotencyConflict) {
+		t.Fatalf("conflicting prepare error = %v", err)
+	}
+	aborted, err := s.AbortFileChangeRevert(ctx, AbortFileChangeRevertRequest{
+		ItemID:         item.ID,
+		IdempotencyKey: "revert-1",
+	})
+	if err != nil {
+		t.Fatalf("AbortFileChangeRevert: %v", err)
+	}
+	if aborted.Status != FileChangeRecoveryAvailable || aborted.IdempotencyKey != "" {
+		t.Fatalf("aborted = %+v", aborted)
+	}
+	if _, err := s.PrepareFileChangeRevert(ctx, PrepareFileChangeRevertRequest{
+		ItemID:         item.ID,
+		IdempotencyKey: "revert-2",
+	}); err != nil {
+		t.Fatalf("PrepareFileChangeRevert after abort: %v", err)
+	}
+
+	completed, err := s.CompleteFileChangeRevert(ctx, CompleteFileChangeRevertRequest{
+		ItemID:         item.ID,
+		IdempotencyKey: "revert-2",
+		RevertedAt:     created.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CompleteFileChangeRevert: %v", err)
+	}
+	if completed.Reused || completed.Marker == nil || completed.Marker.Kind != "fileChangeRevert" ||
+		completed.Recovery.Status != FileChangeRecoveryReverted {
+		t.Fatalf("completed = %+v", completed)
+	}
+	recompleted, err := s.CompleteFileChangeRevert(ctx, CompleteFileChangeRevertRequest{
+		ItemID:         item.ID,
+		IdempotencyKey: "revert-2",
+	})
+	if err != nil {
+		t.Fatalf("CompleteFileChangeRevert duplicate: %v", err)
+	}
+	if !recompleted.Reused || recompleted.Marker.ID != completed.Marker.ID {
+		t.Fatalf("recompleted = %+v", recompleted)
+	}
+	if _, err := s.RollbackThread(ctx, RollbackThreadRequest{ID: thread.ID, NumTurns: 1}); err != nil {
+		t.Fatalf("RollbackThread: %v", err)
+	}
+	if _, err := s.GetFileChangeRecovery(ctx, item.ID); !errors.Is(err, ErrFileChangeRecoveryNotFound) {
+		t.Fatalf("rolled-back recovery error = %v, want ErrFileChangeRecoveryNotFound", err)
+	}
+}
+
 func TestSQLiteStoreClosedOperationsReturnErrStoreClosed(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))

@@ -258,16 +258,18 @@ func decodeNullableMovePath(raw json.RawMessage, present bool, name string) (*st
 }
 
 type FileChangeArtifactEvidence struct {
-	Path                 string `json:"path"`
-	Operation            string `json:"operation"`
-	Bytes                int64  `json:"bytes"`
-	BeforeSHA256         string `json:"beforeSha256,omitempty"`
-	AfterSHA256          string `json:"afterSha256,omitempty"`
-	DiffTruncated        bool   `json:"diffTruncated,omitempty"`
-	DiffOmittedReason    string `json:"diffOmittedReason,omitempty"`
-	ContentEncoding      string `json:"contentEncoding,omitempty"`
-	ContentTruncated     bool   `json:"contentTruncated,omitempty"`
-	ContentOmittedReason string `json:"contentOmittedReason,omitempty"`
+	Path                    string `json:"path"`
+	Operation               string `json:"operation"`
+	Bytes                   int64  `json:"bytes"`
+	BeforeSHA256            string `json:"beforeSha256,omitempty"`
+	AfterSHA256             string `json:"afterSha256,omitempty"`
+	DiffTruncated           bool   `json:"diffTruncated,omitempty"`
+	DiffOmittedReason       string `json:"diffOmittedReason,omitempty"`
+	ContentEncoding         string `json:"contentEncoding,omitempty"`
+	ContentTruncated        bool   `json:"contentTruncated,omitempty"`
+	ContentOmittedReason    string `json:"contentOmittedReason,omitempty"`
+	RevertSnapshotAvailable bool   `json:"revertSnapshotAvailable,omitempty"`
+	RevertUnavailableReason string `json:"revertUnavailableReason,omitempty"`
 }
 
 type FileChangeItemStartedNotificationParams struct {

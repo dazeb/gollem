@@ -196,6 +196,29 @@ type ThreadHistoryRollbackResult struct {
 	WorkspaceEffectsReverted bool                        `json:"workspaceEffectsReverted"`
 }
 
+// FileChangeRevertParams identifies one Gollem-owned file-change item. The
+// caller never supplies a path, patch, digest, or replacement content.
+type FileChangeRevertParams struct {
+	ThreadID       string `json:"threadId"`
+	ItemID         string `json:"itemId"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+type FileChangeRevertResult struct {
+	ThreadID       string       `json:"threadId"`
+	TurnID         string       `json:"turnId"`
+	ItemID         string       `json:"itemId"`
+	IdempotencyKey string       `json:"idempotencyKey"`
+	Path           string       `json:"path"`
+	BeforeExists   bool         `json:"beforeExists"`
+	AfterExists    bool         `json:"afterExists"`
+	BeforeSHA256   string       `json:"beforeSha256,omitempty"`
+	AfterSHA256    string       `json:"afterSha256,omitempty"`
+	RevertedAt     time.Time    `json:"revertedAt"`
+	Marker         TimelineItem `json:"marker"`
+	Reused         bool         `json:"reused"`
+}
+
 type TurnRunStartParams struct {
 	ID       string         `json:"id,omitempty"`
 	ThreadID string         `json:"threadId,omitempty"`

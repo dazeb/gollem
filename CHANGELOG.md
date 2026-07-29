@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Restart-safe exact file-change reversal.** Runtime file-change items now
+  advertise whether Gollem persisted a private recovery snapshot. The
+  `item/fileChange/revert` extension accepts only thread/item identity and an
+  idempotency key, reuses the existing file-mutation approval flow, verifies
+  exact workspace, path, content digest, mode, and terminal-turn ownership,
+  and emits a durable receipt. Reversal is limited to regular files up to
+  1 MiB; directories, symlinks, stale files, mismatched workspaces, active
+  turns, and incomplete evidence fail closed. Pending operations reconcile
+  after restart when the file is provably in either the before or after state,
+  while denied operations release their key only after proving no mutation
+  occurred.
 - **Restart-safe app-server retry and daemon ownership.** File-backed app-server
   daemons now hold one process-lifetime store lock and reconcile queued or
   running turns to an inspectable interrupted state after owner loss. The

@@ -245,6 +245,7 @@ export const protocolMethods = [
   { "method": "git/status", "surface": "gollem-extension", "state": "implemented", "source": "goal.txt" },
   { "method": "git/worktree/create", "surface": "gollem-extension", "state": "implemented", "source": "goal.txt" },
   { "method": "git/worktree/list", "surface": "gollem-extension", "state": "implemented", "source": "goal.txt" },
+  { "method": "item/fileChange/revert", "surface": "gollem-extension", "state": "implemented", "source": "goal.txt" },
   { "method": "provider/capabilities/read", "surface": "gollem-extension", "state": "implemented", "source": "goal.txt" },
   { "method": "provider/list", "surface": "gollem-extension", "state": "implemented", "source": "goal.txt" },
   { "method": "tool/list", "surface": "gollem-extension", "state": "implemented", "source": "goal.txt" },
@@ -480,6 +481,7 @@ export type GollemExtensionMethod =
   | "git/status"
   | "git/worktree/create"
   | "git/worktree/list"
+  | "item/fileChange/revert"
   | "provider/capabilities/read"
   | "provider/list"
   | "tool/list"
@@ -1512,6 +1514,8 @@ export type FileChangeArtifactEvidence = {
   "diffTruncated"?: boolean;
   "operation": string;
   "path": string;
+  "revertSnapshotAvailable"?: boolean;
+  "revertUnavailableReason"?: string;
 };
 
 export type FileChangeItem = {
@@ -1554,6 +1558,27 @@ export type FileChangePatchUpdatedNotificationParams = FileChangePatchUpdatedNot
 
 export type FileChangeRequestApprovalResponse = {
   "decision": FileChangeApprovalDecision;
+};
+
+export type FileChangeRevertParams = {
+  "idempotencyKey": string;
+  "itemId": string;
+  "threadId": string;
+};
+
+export type FileChangeRevertResult = {
+  "afterExists": boolean;
+  "afterSha256"?: string;
+  "beforeExists": boolean;
+  "beforeSha256"?: string;
+  "idempotencyKey": string;
+  "itemId": string;
+  "marker": TimelineItem;
+  "path": string;
+  "reused": boolean;
+  "revertedAt": string;
+  "threadId": string;
+  "turnId": string;
 };
 
 export type FileChangedNotification = {
@@ -2963,7 +2988,7 @@ export type ReasoningTextDeltaNotification = {
 
 export type Request = {
   "id": RequestID;
-  "method": "account/login/cancel" | "account/login/start" | "account/logout" | "account/rateLimitResetCredit/consume" | "account/rateLimits/read" | "account/read" | "account/sendAddCreditsNudgeEmail" | "account/usage/read" | "account/workspaceMessages/read" | "app/list" | "collaborationMode/list" | "command/exec" | "command/exec/resize" | "command/exec/terminate" | "command/exec/write" | "config/batchWrite" | "config/mcpServer/reload" | "config/read" | "config/value/write" | "configRequirements/read" | "environment/add" | "environment/info" | "experimentalFeature/enablement/set" | "experimentalFeature/list" | "externalAgentConfig/detect" | "externalAgentConfig/import" | "externalAgentConfig/import/readHistories" | "feedback/upload" | "fs/copy" | "fs/createDirectory" | "fs/getMetadata" | "fs/readDirectory" | "fs/readFile" | "fs/remove" | "fs/unwatch" | "fs/watch" | "fs/writeFile" | "fuzzyFileSearch" | "fuzzyFileSearch/sessionStart" | "fuzzyFileSearch/sessionStop" | "fuzzyFileSearch/sessionUpdate" | "getAuthStatus" | "getConversationSummary" | "gitDiffToRemote" | "hooks/list" | "initialize" | "marketplace/add" | "marketplace/remove" | "marketplace/upgrade" | "mcpServer/oauth/login" | "mcpServer/resource/read" | "mcpServer/tool/call" | "mcpServerStatus/list" | "memory/reset" | "mock/experimentalMethod" | "model/list" | "modelProvider/capabilities/read" | "permissionProfile/list" | "plugin/install" | "plugin/installed" | "plugin/list" | "plugin/read" | "plugin/share/checkout" | "plugin/share/delete" | "plugin/share/list" | "plugin/share/save" | "plugin/share/updateTargets" | "plugin/skill/read" | "plugin/uninstall" | "process/kill" | "process/resizePty" | "process/spawn" | "process/writeStdin" | "remoteControl/client/list" | "remoteControl/client/revoke" | "remoteControl/disable" | "remoteControl/enable" | "remoteControl/pairing/start" | "remoteControl/pairing/status" | "remoteControl/status/read" | "review/start" | "skills/config/write" | "skills/extraRoots/set" | "skills/list" | "thread/approveGuardianDeniedAction" | "thread/archive" | "thread/backgroundTerminals/clean" | "thread/backgroundTerminals/list" | "thread/backgroundTerminals/terminate" | "thread/compact/start" | "thread/decrement_elicitation" | "thread/delete" | "thread/fork" | "thread/goal/clear" | "thread/goal/get" | "thread/goal/set" | "thread/increment_elicitation" | "thread/inject_items" | "thread/items/list" | "thread/list" | "thread/loaded/list" | "thread/memoryMode/set" | "thread/metadata/update" | "thread/name/set" | "thread/read" | "thread/realtime/appendAudio" | "thread/realtime/appendSpeech" | "thread/realtime/appendText" | "thread/realtime/listVoices" | "thread/realtime/start" | "thread/realtime/stop" | "thread/resume" | "thread/rollback" | "thread/search" | "thread/settings/update" | "thread/shellCommand" | "thread/start" | "thread/turns/list" | "thread/unarchive" | "thread/unsubscribe" | "turn/interrupt" | "turn/start" | "turn/steer" | "windowsSandbox/readiness" | "windowsSandbox/setupStart" | "approval/respond" | "cache/benchmark" | "cache/stats" | "daemon/restart" | "daemon/start" | "daemon/status" | "daemon/stop" | "daemon/version" | "git/commit" | "git/diff" | "git/status" | "git/worktree/create" | "git/worktree/list" | "provider/capabilities/read" | "provider/list" | "tool/list" | "turn/retry";
+  "method": "account/login/cancel" | "account/login/start" | "account/logout" | "account/rateLimitResetCredit/consume" | "account/rateLimits/read" | "account/read" | "account/sendAddCreditsNudgeEmail" | "account/usage/read" | "account/workspaceMessages/read" | "app/list" | "collaborationMode/list" | "command/exec" | "command/exec/resize" | "command/exec/terminate" | "command/exec/write" | "config/batchWrite" | "config/mcpServer/reload" | "config/read" | "config/value/write" | "configRequirements/read" | "environment/add" | "environment/info" | "experimentalFeature/enablement/set" | "experimentalFeature/list" | "externalAgentConfig/detect" | "externalAgentConfig/import" | "externalAgentConfig/import/readHistories" | "feedback/upload" | "fs/copy" | "fs/createDirectory" | "fs/getMetadata" | "fs/readDirectory" | "fs/readFile" | "fs/remove" | "fs/unwatch" | "fs/watch" | "fs/writeFile" | "fuzzyFileSearch" | "fuzzyFileSearch/sessionStart" | "fuzzyFileSearch/sessionStop" | "fuzzyFileSearch/sessionUpdate" | "getAuthStatus" | "getConversationSummary" | "gitDiffToRemote" | "hooks/list" | "initialize" | "marketplace/add" | "marketplace/remove" | "marketplace/upgrade" | "mcpServer/oauth/login" | "mcpServer/resource/read" | "mcpServer/tool/call" | "mcpServerStatus/list" | "memory/reset" | "mock/experimentalMethod" | "model/list" | "modelProvider/capabilities/read" | "permissionProfile/list" | "plugin/install" | "plugin/installed" | "plugin/list" | "plugin/read" | "plugin/share/checkout" | "plugin/share/delete" | "plugin/share/list" | "plugin/share/save" | "plugin/share/updateTargets" | "plugin/skill/read" | "plugin/uninstall" | "process/kill" | "process/resizePty" | "process/spawn" | "process/writeStdin" | "remoteControl/client/list" | "remoteControl/client/revoke" | "remoteControl/disable" | "remoteControl/enable" | "remoteControl/pairing/start" | "remoteControl/pairing/status" | "remoteControl/status/read" | "review/start" | "skills/config/write" | "skills/extraRoots/set" | "skills/list" | "thread/approveGuardianDeniedAction" | "thread/archive" | "thread/backgroundTerminals/clean" | "thread/backgroundTerminals/list" | "thread/backgroundTerminals/terminate" | "thread/compact/start" | "thread/decrement_elicitation" | "thread/delete" | "thread/fork" | "thread/goal/clear" | "thread/goal/get" | "thread/goal/set" | "thread/increment_elicitation" | "thread/inject_items" | "thread/items/list" | "thread/list" | "thread/loaded/list" | "thread/memoryMode/set" | "thread/metadata/update" | "thread/name/set" | "thread/read" | "thread/realtime/appendAudio" | "thread/realtime/appendSpeech" | "thread/realtime/appendText" | "thread/realtime/listVoices" | "thread/realtime/start" | "thread/realtime/stop" | "thread/resume" | "thread/rollback" | "thread/search" | "thread/settings/update" | "thread/shellCommand" | "thread/start" | "thread/turns/list" | "thread/unarchive" | "thread/unsubscribe" | "turn/interrupt" | "turn/start" | "turn/steer" | "windowsSandbox/readiness" | "windowsSandbox/setupStart" | "approval/respond" | "cache/benchmark" | "cache/stats" | "daemon/restart" | "daemon/start" | "daemon/status" | "daemon/stop" | "daemon/version" | "git/commit" | "git/diff" | "git/status" | "git/worktree/create" | "git/worktree/list" | "item/fileChange/revert" | "provider/capabilities/read" | "provider/list" | "tool/list" | "turn/retry";
   "params"?: unknown;
 };
 
@@ -4330,6 +4355,7 @@ export const wireTypeBindings = [
   { "method": "item/completed", "surface": "server-notification", "params": ["ItemCompletedNotification", "ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"] },
   { "method": "item/fileChange/patchUpdated", "surface": "server-notification", "params": ["FileChangePatchUpdatedNotification"] },
   { "method": "item/fileChange/requestApproval", "surface": "server-request", "params": ["FileChangeApprovalRequestParams"], "result": ["FileChangeRequestApprovalResponse"] },
+  { "method": "item/fileChange/revert", "surface": "gollem-extension", "params": ["FileChangeRevertParams"], "result": ["FileChangeRevertResult"] },
   { "method": "item/mcpToolCall/progress", "surface": "server-notification", "params": ["McpToolCallProgressNotification"] },
   { "method": "item/permissions/requestApproval", "surface": "server-request", "params": ["PermissionsApprovalRequestParams"] },
   { "method": "item/reasoning/textDelta", "surface": "server-notification", "params": ["RuntimeDeltaNotification"] },
@@ -4404,6 +4430,7 @@ export interface MethodParamsByName {
   "item/completed": ItemCompletedNotification | ItemLifecycleNotificationParams | DynamicToolCallItemCompletedNotificationParams | CommandExecutionItemCompletedNotificationParams | FileChangeItemCompletedNotificationParams | MCPToolCallItemCompletedNotificationParams;
   "item/fileChange/patchUpdated": FileChangePatchUpdatedNotification;
   "item/fileChange/requestApproval": FileChangeApprovalRequestParams;
+  "item/fileChange/revert": FileChangeRevertParams;
   "item/mcpToolCall/progress": McpToolCallProgressNotification;
   "item/permissions/requestApproval": PermissionsApprovalRequestParams;
   "item/reasoning/textDelta": RuntimeDeltaNotification;
@@ -4470,6 +4497,7 @@ export interface MethodResultsByName {
   "initialize": InitializeResponse;
   "item/commandExecution/requestApproval": CommandExecutionRequestApprovalResponse;
   "item/fileChange/requestApproval": FileChangeRequestApprovalResponse;
+  "item/fileChange/revert": FileChangeRevertResult;
   "item/tool/call": DynamicToolCallResponse;
   "item/tool/requestUserInput": ToolRequestUserInputResponse;
   "mcpServer/elicitation/request": McpServerElicitationRequestResponse;

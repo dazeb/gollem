@@ -99,6 +99,132 @@ func TestServiceApprovalAndAuditForMutations(t *testing.T) {
 	}
 }
 
+func TestServiceRevertFileRestoresExactStateAndMode(t *testing.T) {
+	ctx := context.Background()
+	var events []AuditEvent
+	svc := newTestService(t, WithAuditSink(func(event AuditEvent) {
+		events = append(events, event)
+	}))
+	path := filepath.Join(svc.Root(), "notes.txt")
+	if err := os.WriteFile(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile fixture: %v", err)
+	}
+	result, err := svc.RevertFile(ctx, RevertFileRequest{
+		Path: "notes.txt",
+		Before: ExactFileState{
+			Exists:  true,
+			SHA256:  exactSHA256([]byte("before\n")),
+			Content: []byte("before\n"),
+			Mode:    0o600,
+		},
+		After: ExactFileState{
+			Exists: true,
+			SHA256: exactSHA256([]byte("after\n")),
+		},
+	})
+	if err != nil {
+		t.Fatalf("RevertFile: %v", err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile reverted: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat reverted: %v", err)
+	}
+	if string(content) != "before\n" || info.Mode().Perm() != 0o600 || !result.Restored || result.Removed {
+		t.Fatalf("reverted content/mode/result = %q/%o/%+v", content, info.Mode().Perm(), result)
+	}
+	if len(events) != 1 || events[0].Operation.Kind != OperationRevertFileChange || !events[0].Allowed {
+		t.Fatalf("revert audit events = %+v", events)
+	}
+}
+
+func TestServiceRevertFileRejectsStaleAndSymlinkStates(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	path := filepath.Join(svc.Root(), "notes.txt")
+	if err := os.WriteFile(path, []byte("user edit\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile stale fixture: %v", err)
+	}
+	req := RevertFileRequest{
+		Path:   "notes.txt",
+		Before: ExactFileState{Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o644},
+		After:  ExactFileState{Exists: true, SHA256: exactSHA256([]byte("after\n"))},
+	}
+	if _, err := svc.RevertFile(ctx, req); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("stale RevertFile error = %v, want ErrExactStateMismatch", err)
+	}
+	content, _ := os.ReadFile(path)
+	if string(content) != "user edit\n" {
+		t.Fatalf("stale file changed to %q", content)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("Remove stale fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(svc.Root(), "target.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile target: %v", err)
+	}
+	if err := os.Symlink("target.txt", path); err != nil {
+		t.Fatalf("Symlink fixture: %v", err)
+	}
+	if _, err := svc.RevertFile(ctx, req); !errors.Is(err, ErrExactRevertSymlink) {
+		t.Fatalf("symlink RevertFile error = %v, want ErrExactRevertSymlink", err)
+	}
+	target, _ := os.ReadFile(filepath.Join(svc.Root(), "target.txt"))
+	if string(target) != "after\n" {
+		t.Fatalf("symlink target changed to %q", target)
+	}
+
+	if err := os.Mkdir(filepath.Join(svc.Root(), "real"), 0o755); err != nil {
+		t.Fatalf("Mkdir real: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(svc.Root(), "real", "nested.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile nested target: %v", err)
+	}
+	if err := os.Symlink("real", filepath.Join(svc.Root(), "linked")); err != nil {
+		t.Fatalf("Symlink parent: %v", err)
+	}
+	req.Path = "linked/nested.txt"
+	if _, err := svc.RevertFile(ctx, req); !errors.Is(err, ErrExactRevertSymlink) {
+		t.Fatalf("parent-symlink RevertFile error = %v, want ErrExactRevertSymlink", err)
+	}
+	nested, _ := os.ReadFile(filepath.Join(svc.Root(), "real", "nested.txt"))
+	if string(nested) != "after\n" {
+		t.Fatalf("parent-symlink target changed to %q", nested)
+	}
+}
+
+func TestServiceRevertFileRechecksAfterApproval(t *testing.T) {
+	ctx := context.Background()
+	var root string
+	svc := newTestService(t, WithApproval(func(_ context.Context, operation Operation) error {
+		if operation.Kind == OperationRevertFileChange {
+			return os.WriteFile(filepath.Join(root, "notes.txt"), []byte("concurrent\n"), 0o644)
+		}
+		return nil
+	}))
+	root = svc.Root()
+	path := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile fixture: %v", err)
+	}
+	_, err := svc.RevertFile(ctx, RevertFileRequest{
+		Path:   "notes.txt",
+		Before: ExactFileState{Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o644},
+		After:  ExactFileState{Exists: true, SHA256: exactSHA256([]byte("after\n"))},
+	})
+	if !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("RevertFile concurrent error = %v, want ErrExactStateMismatch", err)
+	}
+	content, _ := os.ReadFile(path)
+	if string(content) != "concurrent\n" {
+		t.Fatalf("concurrent file changed to %q", content)
+	}
+}
+
 func TestServiceCopyFileAndDirectory(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)

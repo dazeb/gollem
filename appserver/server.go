@@ -550,6 +550,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadApproveGuardianDeniedAction(ctx, params)
 	case "thread/rollback":
 		return s.handleThreadRollback(ctx, params)
+	case "item/fileChange/revert":
+		return s.handleFileChangeRevert(ctx, params)
 	case "thread/archive":
 		return s.handleThreadStatus(ctx, params, method, store.ThreadArchived)
 	case "thread/unarchive":
@@ -2226,6 +2228,9 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, toolfs.ErrInvalidCopyDestination),
 		errors.Is(err, toolfs.ErrRecursiveRequired),
 		errors.Is(err, toolfs.ErrRefusingRoot),
+		errors.Is(err, toolfs.ErrExactStateMismatch),
+		errors.Is(err, toolfs.ErrExactRevertSymlink),
+		errors.Is(err, toolfs.ErrExactRevertUnsupported),
 		errors.Is(err, toolfs.ErrWatchPathNotAbsolute),
 		errors.Is(err, toolfs.ErrWatchIDRequired),
 		errors.Is(err, toolfs.ErrWatchAlreadyExists),
@@ -2241,9 +2246,11 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, store.ErrThreadNotFound),
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
+		errors.Is(err, store.ErrFileChangeRecoveryNotFound),
 		errors.Is(err, store.ErrThreadDeleted),
 		errors.Is(err, store.ErrTurnNotTerminal),
 		errors.Is(err, store.ErrRetryIdempotencyConflict),
+		errors.Is(err, store.ErrFileChangeRevertIdempotencyConflict),
 		errors.Is(err, ErrMemoryRootRequired),
 		errors.Is(err, ErrMemoryRootUnsafe),
 		errors.Is(err, ErrRuntimePromptEmpty):

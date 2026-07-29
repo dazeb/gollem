@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	runtimeFilesystemToolNamespace   = "workspace"
-	runtimeFilesystemContentMaxBytes = 64 * 1024
+	runtimeFilesystemToolNamespace    = "workspace"
+	runtimeFilesystemContentMaxBytes  = 64 * 1024
+	runtimeFileChangeRecoveryMaxBytes = 1024 * 1024
 )
 
 type runtimeFilesystemPathParams struct {
@@ -285,12 +286,14 @@ func newRuntimeFilesystemReadResult(content *toolfs.FileContent) runtimeFilesyst
 }
 
 type runtimeArtifactCapture struct {
-	Path    string
-	Exists  bool
-	IsDir   bool
-	Size    int64
-	Content []byte
-	SHA256  string
+	Path      string
+	Exists    bool
+	IsDir     bool
+	IsSymlink bool
+	Size      int64
+	Mode      uint32
+	Content   []byte
+	SHA256    string
 }
 
 func captureRuntimeArtifact(ctx context.Context, service *toolfs.Service, path string) (runtimeArtifactCapture, error) {
@@ -302,10 +305,12 @@ func captureRuntimeArtifact(ctx context.Context, service *toolfs.Service, path s
 		return runtimeArtifactCapture{}, err
 	}
 	capture := runtimeArtifactCapture{
-		Path:   filepath.ToSlash(metadata.Path),
-		Exists: true,
-		IsDir:  metadata.IsDir,
-		Size:   metadata.Size,
+		Path:      filepath.ToSlash(metadata.Path),
+		Exists:    true,
+		IsDir:     metadata.IsDir,
+		IsSymlink: metadata.IsSymlink,
+		Size:      metadata.Size,
+		Mode:      uint32(metadata.Mode.Perm()),
 	}
 	if metadata.IsDir {
 		return capture, nil
@@ -341,8 +346,20 @@ func publishRuntimeArtifactChange(ctx context.Context, rc *core.RunContext, befo
 		Path:                 filepath.ToSlash(path),
 		Operation:            operation,
 		Bytes:                bytesChanged,
+		BeforeExists:         before.Exists,
+		AfterExists:          after.Exists,
+		BeforeIsDir:          before.IsDir,
+		AfterIsDir:           after.IsDir,
+		BeforeIsSymlink:      before.IsSymlink,
+		AfterIsSymlink:       after.IsSymlink,
+		BeforeMode:           before.Mode,
+		AfterMode:            after.Mode,
+		BeforeSize:           before.Size,
+		AfterSize:            after.Size,
 		BeforeSHA256:         before.SHA256,
 		AfterSHA256:          after.SHA256,
+		BeforeContentBytes:   runtimeRecoveryContentBytes(before.Content),
+		AfterContentBytes:    runtimeRecoveryContentBytes(after.Content),
 		Diff:                 diff,
 		DiffTruncated:        diffTruncated,
 		DiffOmittedReason:    diffOmitted,
@@ -354,6 +371,13 @@ func publishRuntimeArtifactChange(ctx context.Context, rc *core.RunContext, befo
 		ChangedAt:            time.Now().UTC(),
 	})
 	return true
+}
+
+func runtimeRecoveryContentBytes(content []byte) []byte {
+	if len(content) > runtimeFileChangeRecoveryMaxBytes {
+		return nil
+	}
+	return append([]byte(nil), content...)
 }
 
 func runtimeArtifactCapturesEqual(before, after runtimeArtifactCapture) bool {

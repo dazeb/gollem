@@ -170,6 +170,41 @@ only for the same normalized mutation target; cancel interrupts an active
 runtime turn. The `approval/respond` extension remains available for legacy
 clients.
 
+## Version 1 Exact File-Change Reversal
+
+`item/fileChange/revert` is a Gollem extension for reversing one durable
+`fileChange` timeline item. Requests contain only `threadId`, `itemId`, and an
+`idempotencyKey`; clients cannot supply a path, patch, digest, mode, or
+replacement content. The handler resolves those values from private SQLite
+recovery evidence and cross-checks them against the public item before any
+mutation.
+
+Gollem captures recovery snapshots only for regular, non-symlink files whose
+before and after contents are each at most 1 MiB. Public
+`FileChangeArtifactEvidence` exposes the optional
+`revertSnapshotAvailable` capability and a bounded unavailable reason, but
+never the private before-content bytes. A call is rejected while any turn in
+the thread is active, when the original turn is not terminal, when the
+thread's canonical workspace differs from the configured filesystem root, or
+when current bytes or mode no longer match the recorded post-change state.
+
+The filesystem mutation runs through the existing
+`item/fileChange/requestApproval` request unless the daemon was explicitly
+started with `--allow-mutations`, which deliberately bypasses mutation
+prompts. Rooted filesystem operations reject symlinks in every path component
+and restore only the selected file's bytes, existence, and permission mode;
+they do not claim to undo process, Git, provider, directory, or other
+workspace effects.
+
+The store binds the idempotency key before mutation and writes a
+`fileChangeRevert` receipt atomically with terminal recovery state. Repeating
+the same key returns that receipt. After owner loss, a pending request is
+completed without another mutation only when the file exactly matches the
+recorded before state; it is retried only when the file exactly matches the
+recorded after state. Approval denials and pre-mutation failures release the
+key only after Gollem proves the after state is unchanged. Ambiguous outcomes
+remain pending for same-key recovery.
+
 ## Version 1 Command-Execution Approval Responses
 
 `item/commandExecution/requestApproval` binds the exact public six-variant

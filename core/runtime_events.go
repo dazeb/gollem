@@ -365,8 +365,20 @@ type ArtifactChangedEvent struct {
 	Path                 string
 	Operation            string
 	Bytes                int64
+	BeforeExists         bool
+	AfterExists          bool
+	BeforeIsDir          bool
+	AfterIsDir           bool
+	BeforeIsSymlink      bool
+	AfterIsSymlink       bool
+	BeforeMode           uint32
+	AfterMode            uint32
+	BeforeSize           int64
+	AfterSize            int64
 	BeforeSHA256         string
 	AfterSHA256          string
+	BeforeContentBytes   []byte
+	AfterContentBytes    []byte
 	Diff                 string
 	DiffTruncated        bool
 	DiffOmittedReason    string

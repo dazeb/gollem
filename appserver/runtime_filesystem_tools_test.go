@@ -248,6 +248,17 @@ func TestServerRuntimeApprovedFilesystemWritePersistsFileChange(t *testing.T) {
 	if len(fileItem.Payload.Evidence) != 1 || fileItem.Payload.Evidence[0].AfterSHA256 == "" {
 		t.Fatalf("file item evidence = %#v", fileItem.Payload.Evidence)
 	}
+	if !fileItem.Payload.Evidence[0].RevertSnapshotAvailable || fileItem.Payload.Evidence[0].RevertUnavailableReason != "" {
+		t.Fatalf("file item revert evidence = %#v", fileItem.Payload.Evidence[0])
+	}
+	recovery, err := st.GetFileChangeRecovery(ctx, fileItem.Item.ID)
+	if err != nil {
+		t.Fatalf("GetFileChangeRecovery: %v", err)
+	}
+	if recovery.Path != "notes/result.txt" || recovery.BeforeExists || !recovery.AfterExists ||
+		len(recovery.BeforeContent) != 0 || recovery.AfterSHA256 != fileItem.Payload.Evidence[0].AfterSHA256 {
+		t.Fatalf("file item recovery = %+v", recovery)
+	}
 
 	patch := decodeRuntimeFileChangePatch(t, events)
 	if patch.ThreadID != started.Thread.ID || patch.TurnID != started.Turn.ID || patch.ItemID != fileItem.Item.ID {
