@@ -567,6 +567,29 @@ func TestFileChangeApprovalCancelInterruptsActiveTurn(t *testing.T) {
 	}
 }
 
+func TestRuntimeArtifactCapturesEqualIncludesModeAndSymlinkState(t *testing.T) {
+	base := runtimeArtifactCapture{
+		Path:   "notes.txt",
+		Exists: true,
+		Size:   5,
+		Mode:   0o644,
+		SHA256: runtimeSHA256([]byte("notes")),
+	}
+	if !runtimeArtifactCapturesEqual(base, base) {
+		t.Fatal("identical artifact captures differ")
+	}
+	modeChanged := base
+	modeChanged.Mode = 0o600
+	if runtimeArtifactCapturesEqual(base, modeChanged) {
+		t.Fatal("permission-only artifact change was ignored")
+	}
+	symlinkChanged := base
+	symlinkChanged.IsSymlink = true
+	if runtimeArtifactCapturesEqual(base, symlinkChanged) {
+		t.Fatal("symlink-state artifact change was ignored")
+	}
+}
+
 func findRuntimeToolByName(t *testing.T, tools []core.Tool, name string) core.Tool {
 	t.Helper()
 	for _, tool := range tools {

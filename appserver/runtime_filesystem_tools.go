@@ -384,7 +384,11 @@ func runtimeRecoveryContentBytes(content []byte) []byte {
 }
 
 func runtimeArtifactCapturesEqual(before, after runtimeArtifactCapture) bool {
-	if before.Exists != after.Exists || before.IsDir != after.IsDir || before.Size != after.Size {
+	if before.Exists != after.Exists ||
+		before.IsDir != after.IsDir ||
+		before.IsSymlink != after.IsSymlink ||
+		before.Size != after.Size ||
+		before.Mode != after.Mode {
 		return false
 	}
 	if !before.Exists {
