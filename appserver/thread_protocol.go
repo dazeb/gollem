@@ -271,22 +271,29 @@ func protocolTurnRecords(turns []*store.Turn) []protocol.TurnRecord {
 		if turn == nil {
 			continue
 		}
-		out = append(out, protocol.TurnRecord{
-			ID:          turn.ID,
-			ThreadID:    turn.ThreadID,
-			Status:      protocol.TurnLifecycleStatus(turn.Status),
-			Input:       append(json.RawMessage(nil), turn.Input...),
-			Result:      append(json.RawMessage(nil), turn.Result...),
-			Error:       turn.Error,
-			Usage:       cloneSettings(turn.Usage),
-			Metadata:    cloneSettings(turn.Metadata),
-			CreatedAt:   turn.CreatedAt,
-			UpdatedAt:   turn.UpdatedAt,
-			StartedAt:   turn.StartedAt,
-			CompletedAt: turn.CompletedAt,
-		})
+		out = append(out, protocolTurnRecord(turn))
 	}
 	return out
+}
+
+func protocolTurnRecord(turn *store.Turn) protocol.TurnRecord {
+	if turn == nil {
+		return protocol.TurnRecord{}
+	}
+	return protocol.TurnRecord{
+		ID:          turn.ID,
+		ThreadID:    turn.ThreadID,
+		Status:      protocol.TurnLifecycleStatus(turn.Status),
+		Input:       append(json.RawMessage(nil), turn.Input...),
+		Result:      append(json.RawMessage(nil), turn.Result...),
+		Error:       turn.Error,
+		Usage:       cloneSettings(turn.Usage),
+		Metadata:    cloneSettings(turn.Metadata),
+		CreatedAt:   turn.CreatedAt,
+		UpdatedAt:   turn.UpdatedAt,
+		StartedAt:   turn.StartedAt,
+		CompletedAt: turn.CompletedAt,
+	}
 }
 
 func protocolTimelineItems(items []*store.Item) []protocol.TimelineItem {

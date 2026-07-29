@@ -73,8 +73,8 @@ func (s *Server) publishThreadNotification(method string, thread *store.Thread) 
 	}
 	s.PublishNotification(method, threadNotificationParams{
 		ThreadID: thread.ID,
-		Status:   thread.Status,
-		Thread:   thread,
+		Status:   protocol.ThreadLifecycleStatus(thread.Status),
+		Thread:   &record,
 		At:       now,
 	})
 }

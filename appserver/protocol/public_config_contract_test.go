@@ -258,14 +258,14 @@ func TestPublicConfigRemainsStandalone(t *testing.T) {
 			t.Fatalf("Config unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 527 {
-		t.Fatalf("definition count = %d, want 527", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 549 {
+		t.Fatalf("definition count = %d, want 549", got)
 	}
 	if got := len(Methods()); got != 224 {
 		t.Fatalf("methods = %d, want 224", got)
 	}
-	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))
+	if got := len(WireTypeBindings()); got != 69 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 69/5", got, len(ItemPayloadBindings()))
 	}
 }
 

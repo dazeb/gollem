@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/fugue-labs/gollem/appserver/protocol"
-	"github.com/fugue-labs/gollem/appserver/store"
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
 )
 
@@ -193,12 +192,7 @@ type processExitedParams struct {
 	At        time.Time          `json:"at"`
 }
 
-type threadNotificationParams struct {
-	ThreadID string             `json:"threadId"`
-	Status   store.ThreadStatus `json:"status,omitempty"`
-	Thread   *store.Thread      `json:"thread,omitempty"`
-	At       time.Time          `json:"at"`
-}
+type threadNotificationParams = protocol.RuntimeThreadNotification
 
 type threadNotLoadedStatusNotificationParams struct {
 	ThreadID string            `json:"threadId"`

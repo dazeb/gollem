@@ -2512,6 +2512,74 @@ export type ModelAvailabilityNux = {
   "message": string;
 };
 
+export type ModelCatalogAvailabilityNux = {
+  "message": string;
+};
+
+export type ModelCatalogCapabilities = {
+  "promptCache": boolean;
+  "reasoning": boolean;
+  "streaming": boolean;
+  "structuredOutput": boolean;
+  "toolCalls": boolean;
+  "toolSearch": boolean;
+  "vision": boolean;
+};
+
+export type ModelCatalogEntry = {
+  "additionalSpeedTiers": Array<string> | null;
+  "availabilityNux": ModelCatalogAvailabilityNux | null;
+  "capabilities": ModelCatalogCapabilities;
+  "defaultReasoningEffort": string;
+  "defaultServiceTier": string | null;
+  "description": string;
+  "displayName": string;
+  "hidden": boolean;
+  "id": string;
+  "inputModalities": Array<string> | null;
+  "isDefault": boolean;
+  "maxContextTokens"?: number;
+  "maxOutputTokens"?: number;
+  "model": string;
+  "providerId": string;
+  "serviceTiers": Array<ModelCatalogServiceTier> | null;
+  "supportedReasoningEfforts": Array<ModelCatalogReasoningEffortOption> | null;
+  "supportsPersonality": boolean;
+  "upgrade": string | null;
+  "upgradeInfo": ModelCatalogUpgradeInfo | null;
+};
+
+export type ModelCatalogListParams = {
+  "cursor"?: string | null;
+  "includeHidden"?: boolean | null;
+  "limit"?: number | null;
+  "providerId"?: string;
+  "providerIds"?: Array<string> | null;
+};
+
+export type ModelCatalogListResponse = {
+  "data": Array<ModelCatalogEntry> | null;
+  "nextCursor": string | null;
+};
+
+export type ModelCatalogReasoningEffortOption = {
+  "description": string;
+  "reasoningEffort": string;
+};
+
+export type ModelCatalogServiceTier = {
+  "description": string;
+  "id": string;
+  "name": string;
+};
+
+export type ModelCatalogUpgradeInfo = {
+  "migrationMarkdown": string | null;
+  "model": string;
+  "modelLink": string | null;
+  "upgradeCopy": string | null;
+};
+
 export type ModelListParams = {
   "cursor"?: string | null;
   "includeHidden"?: boolean | null;
@@ -2757,6 +2825,51 @@ export type ProcessOutputStream = "stdout" | "stderr";
 export type ProcessTerminalSize = {
   "cols": number;
   "rows": number;
+};
+
+export type ProviderCatalogCapabilities = {
+  "adaptiveThinking"?: boolean;
+  "configured": boolean;
+  "imageGeneration": boolean;
+  "manualThinking"?: boolean;
+  "namespaceTools": boolean;
+  "promptCache": boolean;
+  "providerId"?: string;
+  "reasoning": boolean;
+  "reasoningEfforts"?: Array<string> | null;
+  "reasoningSummaries"?: boolean;
+  "requiresConfigurationEnv"?: Array<string> | null;
+  "streaming": boolean;
+  "structuredOutput": boolean;
+  "toolCalls": boolean;
+  "toolSearch": boolean;
+  "vision": boolean;
+  "webSearch": boolean;
+};
+
+export type ProviderCatalogEntry = {
+  "authModes"?: Array<string> | null;
+  "capabilities": ProviderCatalogCapabilities;
+  "configured": boolean;
+  "defaultModelId": string;
+  "description": string;
+  "hidden": boolean;
+  "id": string;
+  "models"?: Array<ModelCatalogEntry> | null;
+  "name": string;
+  "optionalEnvVars"?: Array<string> | null;
+  "package": string;
+  "requiredEnvVars"?: Array<string> | null;
+};
+
+export type ProviderListParams = {
+  "configuredOnly"?: boolean;
+  "includeHidden"?: boolean | null;
+};
+
+export type ProviderListResponse = {
+  "data": Array<ProviderCatalogEntry> | null;
+  "providers": Array<ProviderCatalogEntry> | null;
 };
 
 export type RateLimitReachedType = "rate_limit_reached" | "workspace_owner_credits_depleted" | "workspace_member_credits_depleted" | "workspace_owner_usage_limit_reached" | "workspace_member_usage_limit_reached";
@@ -3031,6 +3144,44 @@ export type ReviewDecision = "approved" | {
     "network_policy_amendment": NetworkPolicyAmendment;
   };
 } | "denied" | "timed_out" | "abort";
+
+export type RuntimeDeltaNotification = {
+  "at": string;
+  "delta": string;
+  "index"?: number;
+  "threadId": string;
+  "turnId": string;
+};
+
+export type RuntimeModelParams = {
+  "adaptiveThinking"?: boolean | null;
+  "input"?: unknown;
+  "maxTokens"?: number | null;
+  "model"?: string;
+  "provider"?: string;
+  "providerId"?: string;
+  "reasoningEffort"?: string | null;
+  "settings"?: Record<string, unknown> | null;
+  "stopSequences"?: Array<string> | null;
+  "temperature"?: number | null;
+  "thinkingBudget"?: number | null;
+  "topP"?: number | null;
+};
+
+export type RuntimeThreadNotification = {
+  "at": string;
+  "status"?: ThreadLifecycleStatus;
+  "thread"?: ThreadRecord | null;
+  "threadId": string;
+};
+
+export type RuntimeTurnNotification = {
+  "at": string;
+  "status"?: TurnLifecycleStatus;
+  "threadId": string;
+  "turn"?: TurnRecord | null;
+  "turnId": string;
+};
 
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
@@ -3619,6 +3770,32 @@ export type ThreadResumeResponse = {
   "thread": Thread;
 };
 
+export type ThreadRunStartParams = {
+  "adaptiveThinking"?: boolean | null;
+  "input"?: unknown;
+  "maxTokens"?: number | null;
+  "message"?: string;
+  "metadata"?: Record<string, unknown> | null;
+  "model"?: string;
+  "prompt"?: string;
+  "provider"?: string;
+  "providerId"?: string;
+  "reasoningEffort"?: string | null;
+  "settings"?: Record<string, unknown> | null;
+  "stopSequences"?: Array<string> | null;
+  "temperature"?: number | null;
+  "text"?: string;
+  "thinkingBudget"?: number | null;
+  "title"?: string;
+  "topP"?: number | null;
+  "workspace"?: string;
+};
+
+export type ThreadRunStartResult = {
+  "thread": ThreadRecord;
+  "turn": TurnRecord;
+};
+
 export type ThreadSetNameParams = {
   "id"?: string;
   "name": string;
@@ -3896,6 +4073,44 @@ export type TurnRecord = {
   "usage"?: Record<string, unknown> | null;
 };
 
+export type TurnRunInterruptParams = {
+  "id"?: string;
+  "threadId"?: string;
+  "turnId"?: string;
+};
+
+export type TurnRunInterruptResult = {
+  "ok": boolean;
+  "turn"?: TurnRecord | null;
+  "turnId": string;
+};
+
+export type TurnRunStartParams = {
+  "adaptiveThinking"?: boolean | null;
+  "id"?: string;
+  "input"?: unknown;
+  "maxTokens"?: number | null;
+  "message"?: string;
+  "metadata"?: Record<string, unknown> | null;
+  "model"?: string;
+  "prompt"?: string;
+  "provider"?: string;
+  "providerId"?: string;
+  "reasoningEffort"?: string | null;
+  "settings"?: Record<string, unknown> | null;
+  "stopSequences"?: Array<string> | null;
+  "temperature"?: number | null;
+  "text"?: string;
+  "thinkingBudget"?: number | null;
+  "threadId"?: string;
+  "topP"?: number | null;
+};
+
+export type TurnRunStartResult = {
+  "thread": ThreadRecord;
+  "turn": TurnRecord;
+};
+
 export type TurnStartParams = {
   "approvalPolicy"?: AskForApproval | null;
   "approvalsReviewer"?: ApprovalsReviewer | null;
@@ -4052,6 +4267,7 @@ export const wireTypeBindings = [
   { "method": "fs/writeFile", "surface": "client-request", "params": ["FsWriteFileParams"], "result": ["FsWriteFileResponse"] },
   { "method": "initialize", "surface": "client-request", "params": ["InitializeParams"], "result": ["InitializeResponse"] },
   { "method": "initialized", "surface": "client-notification" },
+  { "method": "item/agentMessage/delta", "surface": "server-notification", "params": ["RuntimeDeltaNotification"] },
   { "method": "item/commandExecution/outputDelta", "surface": "server-notification", "params": ["CommandExecutionOutputDeltaNotification"] },
   { "method": "item/commandExecution/requestApproval", "surface": "server-request", "params": ["CommandExecutionApprovalRequestParams"], "result": ["CommandExecutionRequestApprovalResponse"] },
   { "method": "item/completed", "surface": "server-notification", "params": ["ItemCompletedNotification", "ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"] },
@@ -4059,10 +4275,13 @@ export const wireTypeBindings = [
   { "method": "item/fileChange/requestApproval", "surface": "server-request", "params": ["FileChangeApprovalRequestParams"], "result": ["FileChangeRequestApprovalResponse"] },
   { "method": "item/mcpToolCall/progress", "surface": "server-notification", "params": ["McpToolCallProgressNotification"] },
   { "method": "item/permissions/requestApproval", "surface": "server-request", "params": ["PermissionsApprovalRequestParams"] },
+  { "method": "item/reasoning/textDelta", "surface": "server-notification", "params": ["RuntimeDeltaNotification"] },
   { "method": "item/started", "surface": "server-notification", "params": ["ItemStartedNotification", "ItemLifecycleNotificationParams", "DynamicToolCallItemStartedNotificationParams", "CommandExecutionItemStartedNotificationParams", "FileChangeItemStartedNotificationParams", "MCPToolCallItemStartedNotificationParams"] },
   { "method": "item/tool/call", "surface": "server-request", "params": ["DynamicToolCallParams"], "result": ["DynamicToolCallResponse"] },
   { "method": "item/tool/requestUserInput", "surface": "server-request", "params": ["ToolRequestUserInputParams"], "result": ["ToolRequestUserInputResponse"] },
   { "method": "mcpServer/elicitation/request", "surface": "server-request", "params": ["McpServerElicitationRequestParams"], "result": ["McpServerElicitationRequestResponse"] },
+  { "method": "model/list", "surface": "client-request", "params": ["ModelCatalogListParams"], "result": ["ModelCatalogListResponse"] },
+  { "method": "provider/list", "surface": "gollem-extension", "params": ["ProviderListParams"], "result": ["ProviderListResponse"] },
   { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotification"] },
   { "method": "thread/archive", "surface": "client-request", "params": ["ThreadArchiveParams"], "result": ["ThreadArchiveResponse"] },
   { "method": "thread/archived", "surface": "server-notification", "params": ["ThreadArchivedNotification"] },
@@ -4083,11 +4302,17 @@ export const wireTypeBindings = [
   { "method": "thread/name/set", "surface": "client-request", "params": ["ThreadSetNameParams"], "result": ["ThreadSetNameResponse"] },
   { "method": "thread/name/updated", "surface": "server-notification", "params": ["ThreadNameUpdatedNotification"] },
   { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResult"] },
+  { "method": "thread/start", "surface": "client-request", "params": ["ThreadRunStartParams"], "result": ["ThreadRunStartResult"] },
+  { "method": "thread/started", "surface": "server-notification", "params": ["RuntimeThreadNotification"] },
   { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotification"] },
   { "method": "thread/unarchive", "surface": "client-request", "params": ["ThreadUnarchiveParams"], "result": ["ThreadUnarchiveResult"] },
   { "method": "thread/unarchived", "surface": "server-notification", "params": ["ThreadUnarchivedNotification"] },
   { "method": "thread/unsubscribe", "surface": "client-request", "params": ["ThreadUnsubscribeParams"], "result": ["ThreadUnsubscribeResponse"] },
+  { "method": "turn/completed", "surface": "server-notification", "params": ["RuntimeTurnNotification"] },
   { "method": "turn/diff/updated", "surface": "server-notification", "params": ["TurnDiffUpdatedNotification"] },
+  { "method": "turn/interrupt", "surface": "client-request", "params": ["TurnRunInterruptParams"], "result": ["TurnRunInterruptResult"] },
+  { "method": "turn/start", "surface": "client-request", "params": ["TurnRunStartParams"], "result": ["TurnRunStartResult"] },
+  { "method": "turn/started", "surface": "server-notification", "params": ["RuntimeTurnNotification"] },
 ] as const satisfies readonly WireTypeBinding[];
 
 export interface MethodParamsByName {
@@ -4114,6 +4339,7 @@ export interface MethodParamsByName {
   "fs/writeFile": FsWriteFileParams;
   "initialize": InitializeParams;
   "initialized": undefined;
+  "item/agentMessage/delta": RuntimeDeltaNotification;
   "item/commandExecution/outputDelta": CommandExecutionOutputDeltaNotification;
   "item/commandExecution/requestApproval": CommandExecutionApprovalRequestParams;
   "item/completed": ItemCompletedNotification | ItemLifecycleNotificationParams | DynamicToolCallItemCompletedNotificationParams | CommandExecutionItemCompletedNotificationParams | FileChangeItemCompletedNotificationParams | MCPToolCallItemCompletedNotificationParams;
@@ -4121,10 +4347,13 @@ export interface MethodParamsByName {
   "item/fileChange/requestApproval": FileChangeApprovalRequestParams;
   "item/mcpToolCall/progress": McpToolCallProgressNotification;
   "item/permissions/requestApproval": PermissionsApprovalRequestParams;
+  "item/reasoning/textDelta": RuntimeDeltaNotification;
   "item/started": ItemStartedNotification | ItemLifecycleNotificationParams | DynamicToolCallItemStartedNotificationParams | CommandExecutionItemStartedNotificationParams | FileChangeItemStartedNotificationParams | MCPToolCallItemStartedNotificationParams;
   "item/tool/call": DynamicToolCallParams;
   "item/tool/requestUserInput": ToolRequestUserInputParams;
   "mcpServer/elicitation/request": McpServerElicitationRequestParams;
+  "model/list": ModelCatalogListParams;
+  "provider/list": ProviderListParams;
   "serverRequest/resolved": ServerRequestResolvedNotification;
   "thread/archive": ThreadArchiveParams;
   "thread/archived": ThreadArchivedNotification;
@@ -4145,11 +4374,17 @@ export interface MethodParamsByName {
   "thread/name/set": ThreadSetNameParams;
   "thread/name/updated": ThreadNameUpdatedNotification;
   "thread/read": ThreadReadParams;
+  "thread/start": ThreadRunStartParams;
+  "thread/started": RuntimeThreadNotification;
   "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotification;
   "thread/unarchive": ThreadUnarchiveParams;
   "thread/unarchived": ThreadUnarchivedNotification;
   "thread/unsubscribe": ThreadUnsubscribeParams;
+  "turn/completed": RuntimeTurnNotification;
   "turn/diff/updated": TurnDiffUpdatedNotification;
+  "turn/interrupt": TurnRunInterruptParams;
+  "turn/start": TurnRunStartParams;
+  "turn/started": RuntimeTurnNotification;
 }
 
 export interface MethodResultsByName {
@@ -4177,6 +4412,8 @@ export interface MethodResultsByName {
   "item/tool/call": DynamicToolCallResponse;
   "item/tool/requestUserInput": ToolRequestUserInputResponse;
   "mcpServer/elicitation/request": McpServerElicitationRequestResponse;
+  "model/list": ModelCatalogListResponse;
+  "provider/list": ProviderListResponse;
   "thread/archive": ThreadArchiveResponse;
   "thread/compact/start": ThreadCompactStartResponse;
   "thread/delete": ThreadDeleteResponse;
@@ -4189,8 +4426,11 @@ export interface MethodResultsByName {
   "thread/metadata/update": ThreadMetadataUpdateResult;
   "thread/name/set": ThreadSetNameResponse;
   "thread/read": ThreadReadResult;
+  "thread/start": ThreadRunStartResult;
   "thread/unarchive": ThreadUnarchiveResult;
   "thread/unsubscribe": ThreadUnsubscribeResponse;
+  "turn/interrupt": TurnRunInterruptResult;
+  "turn/start": TurnRunStartResult;
 }
 
 export type BoundRequestMethod = Extract<

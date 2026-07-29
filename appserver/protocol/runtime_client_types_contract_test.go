@@ -1,0 +1,137 @@
+package protocol
+
+import (
+	"reflect"
+	"slices"
+	"testing"
+)
+
+func TestRuntimeClientBindingsAreExact(t *testing.T) {
+	want := map[string]WireTypeBinding{
+		"item/agentMessage/delta": {
+			Method: "item/agentMessage/delta", Surface: SurfaceServerNotification,
+			Params: []string{"RuntimeDeltaNotification"},
+		},
+		"item/reasoning/textDelta": {
+			Method: "item/reasoning/textDelta", Surface: SurfaceServerNotification,
+			Params: []string{"RuntimeDeltaNotification"},
+		},
+		"model/list": {
+			Method: "model/list", Surface: SurfaceClientRequest,
+			Params: []string{"ModelCatalogListParams"}, Result: []string{"ModelCatalogListResponse"},
+		},
+		"provider/list": {
+			Method: "provider/list", Surface: SurfaceGollemExtension,
+			Params: []string{"ProviderListParams"}, Result: []string{"ProviderListResponse"},
+		},
+		"thread/start": {
+			Method: "thread/start", Surface: SurfaceClientRequest,
+			Params: []string{"ThreadRunStartParams"}, Result: []string{"ThreadRunStartResult"},
+		},
+		"thread/started": {
+			Method: "thread/started", Surface: SurfaceServerNotification,
+			Params: []string{"RuntimeThreadNotification"},
+		},
+		"turn/completed": {
+			Method: "turn/completed", Surface: SurfaceServerNotification,
+			Params: []string{"RuntimeTurnNotification"},
+		},
+		"turn/interrupt": {
+			Method: "turn/interrupt", Surface: SurfaceClientRequest,
+			Params: []string{"TurnRunInterruptParams"}, Result: []string{"TurnRunInterruptResult"},
+		},
+		"turn/start": {
+			Method: "turn/start", Surface: SurfaceClientRequest,
+			Params: []string{"TurnRunStartParams"}, Result: []string{"TurnRunStartResult"},
+		},
+		"turn/started": {
+			Method: "turn/started", Surface: SurfaceServerNotification,
+			Params: []string{"RuntimeTurnNotification"},
+		},
+	}
+
+	got := make(map[string]WireTypeBinding)
+	for _, binding := range WireTypeBindings() {
+		if _, ok := want[binding.Method]; ok {
+			got[binding.Method] = binding
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("runtime client bindings = %#v, want %#v", got, want)
+	}
+}
+
+func TestRuntimeClientSchemasAreClosedAndCredentialFree(t *testing.T) {
+	defs := JSONSchema()["$defs"].(Schema)
+	names := []string{
+		"ModelCatalogAvailabilityNux",
+		"ModelCatalogCapabilities",
+		"ModelCatalogEntry",
+		"ModelCatalogListParams",
+		"ModelCatalogListResponse",
+		"ModelCatalogReasoningEffortOption",
+		"ModelCatalogServiceTier",
+		"ModelCatalogUpgradeInfo",
+		"ProviderCatalogCapabilities",
+		"ProviderCatalogEntry",
+		"ProviderListParams",
+		"ProviderListResponse",
+		"RuntimeDeltaNotification",
+		"RuntimeModelParams",
+		"RuntimeThreadNotification",
+		"RuntimeTurnNotification",
+		"ThreadRunStartParams",
+		"ThreadRunStartResult",
+		"TurnRunInterruptParams",
+		"TurnRunInterruptResult",
+		"TurnRunStartParams",
+		"TurnRunStartResult",
+	}
+	for _, name := range names {
+		definition, ok := defs[name].(Schema)
+		if !ok {
+			t.Errorf("schema missing %s", name)
+			continue
+		}
+		if definition["type"] != "object" || definition["additionalProperties"] != false {
+			t.Errorf("%s is not a closed object: %#v", name, definition)
+		}
+	}
+
+	required := map[string][]string{
+		"ModelCatalogListResponse":  {"data", "nextCursor"},
+		"ProviderListResponse":      {"data", "providers"},
+		"ThreadRunStartResult":      {"thread", "turn"},
+		"TurnRunStartResult":        {"thread", "turn"},
+		"TurnRunInterruptResult":    {"ok", "turnId"},
+		"RuntimeThreadNotification": {"threadId", "at"},
+		"RuntimeTurnNotification":   {"threadId", "turnId", "at"},
+		"RuntimeDeltaNotification":  {"threadId", "turnId", "delta", "at"},
+	}
+	for name, fields := range required {
+		definition := defs[name].(Schema)
+		got := schemaRequiredNames(definition)
+		if !slices.Equal(got, fields) {
+			t.Errorf("%s required = %v, want %v", name, got, fields)
+		}
+	}
+
+	for _, name := range []string{
+		"ModelCatalogListParams",
+		"ProviderListParams",
+		"RuntimeModelParams",
+		"ThreadRunStartParams",
+		"TurnRunInterruptParams",
+		"TurnRunStartParams",
+	} {
+		properties := defs[name].(Schema)["properties"].(Schema)
+		for _, forbidden := range []string{
+			"apiKey", "accessToken", "refreshToken", "authorization",
+			"credential", "credentials", "password", "secret",
+		} {
+			if _, ok := properties[forbidden]; ok {
+				t.Errorf("%s exposes credential field %s", name, forbidden)
+			}
+		}
+	}
+}

@@ -228,16 +228,24 @@ func TestTurnStartResponseWireContract(t *testing.T) {
 }
 
 func TestTurnStartContractsRemainStandalone(t *testing.T) {
+	foundRuntimeBinding := false
 	for _, binding := range WireTypeBindings() {
 		if binding.Method == "turn/start" {
-			t.Fatalf("turn/start unexpectedly bound: %#v", binding)
+			foundRuntimeBinding = true
+			if !slices.Equal(binding.Params, []string{"TurnRunStartParams"}) ||
+				!slices.Equal(binding.Result, []string{"TurnRunStartResult"}) {
+				t.Errorf("turn/start binding = %#v", binding)
+			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 527 {
-		t.Fatalf("definition count = %d, want 527", got)
+	if !foundRuntimeBinding {
+		t.Error("turn/start runtime binding missing")
 	}
-	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 549 {
+		t.Fatalf("definition count = %d, want 549", got)
+	}
+	if got := len(WireTypeBindings()); got != 69 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 69/5", got, len(ItemPayloadBindings()))
 	}
 }
 

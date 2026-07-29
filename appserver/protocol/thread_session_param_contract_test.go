@@ -231,17 +231,27 @@ func TestThreadSessionParamMarshalAndNilReceiversFailClosed(t *testing.T) {
 }
 
 func TestThreadSessionParamsRemainStandalone(t *testing.T) {
-	methods := []string{"thread/start", "thread/resume", "thread/fork"}
+	foundRuntimeStart := false
 	for _, binding := range WireTypeBindings() {
-		if slices.Contains(methods, binding.Method) {
+		switch binding.Method {
+		case "thread/start":
+			foundRuntimeStart = true
+			if !slices.Equal(binding.Params, []string{"ThreadRunStartParams"}) ||
+				!slices.Equal(binding.Result, []string{"ThreadRunStartResult"}) {
+				t.Errorf("thread/start binding = %#v", binding)
+			}
+		case "thread/resume", "thread/fork":
 			t.Errorf("%s unexpectedly has a wire type binding: %#v", binding.Method, binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 527 {
-		t.Fatalf("definition count = %d, want 527", got)
+	if !foundRuntimeStart {
+		t.Error("thread/start runtime binding missing")
 	}
-	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 549 {
+		t.Fatalf("definition count = %d, want 549", got)
+	}
+	if got := len(WireTypeBindings()); got != 69 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 69/5", got, len(ItemPayloadBindings()))
 	}
 }
 

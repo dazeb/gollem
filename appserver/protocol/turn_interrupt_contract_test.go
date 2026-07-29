@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -105,16 +106,24 @@ func TestTurnInterruptResponseWireContract(t *testing.T) {
 }
 
 func TestTurnInterruptContractsRemainStandalone(t *testing.T) {
+	foundRuntimeBinding := false
 	for _, binding := range WireTypeBindings() {
 		if binding.Method == "turn/interrupt" {
-			t.Fatalf("turn/interrupt unexpectedly bound: %#v", binding)
+			foundRuntimeBinding = true
+			if !slices.Equal(binding.Params, []string{"TurnRunInterruptParams"}) ||
+				!slices.Equal(binding.Result, []string{"TurnRunInterruptResult"}) {
+				t.Errorf("turn/interrupt binding = %#v", binding)
+			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 527 {
-		t.Fatalf("definition count = %d, want 527", got)
+	if !foundRuntimeBinding {
+		t.Error("turn/interrupt runtime binding missing")
 	}
-	if got := len(WireTypeBindings()); got != 59 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 59/5", got, len(ItemPayloadBindings()))
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 549 {
+		t.Fatalf("definition count = %d, want 549", got)
+	}
+	if got := len(WireTypeBindings()); got != 69 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 69/5", got, len(ItemPayloadBindings()))
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	anthropicprovider "github.com/fugue-labs/gollem/provider/anthropic"
 	openaiprovider "github.com/fugue-labs/gollem/provider/openai"
 	vertexprovider "github.com/fugue-labs/gollem/provider/vertexai"
@@ -51,118 +52,18 @@ func NewDefault(opts ...Option) *Catalog {
 	return c
 }
 
-type Provider struct {
-	ID              string               `json:"id"`
-	Name            string               `json:"name"`
-	Package         string               `json:"package"`
-	Description     string               `json:"description"`
-	Configured      bool                 `json:"configured"`
-	Hidden          bool                 `json:"hidden"`
-	DefaultModelID  string               `json:"defaultModelId"`
-	RequiredEnvVars []string             `json:"requiredEnvVars,omitempty"`
-	OptionalEnvVars []string             `json:"optionalEnvVars,omitempty"`
-	AuthModes       []string             `json:"authModes,omitempty"`
-	Capabilities    ProviderCapabilities `json:"capabilities"`
-	Models          []Model              `json:"models,omitempty"`
-}
-
-type ProviderCapabilities struct {
-	ProviderID               string   `json:"providerId,omitempty"`
-	Configured               bool     `json:"configured"`
-	NamespaceTools           bool     `json:"namespaceTools"`
-	ImageGeneration          bool     `json:"imageGeneration"`
-	WebSearch                bool     `json:"webSearch"`
-	ToolCalls                bool     `json:"toolCalls"`
-	StructuredOutput         bool     `json:"structuredOutput"`
-	Vision                   bool     `json:"vision"`
-	Streaming                bool     `json:"streaming"`
-	PromptCache              bool     `json:"promptCache"`
-	ToolSearch               bool     `json:"toolSearch"`
-	Reasoning                bool     `json:"reasoning"`
-	ReasoningEfforts         []string `json:"reasoningEfforts,omitempty"`
-	ReasoningSummaries       bool     `json:"reasoningSummaries,omitempty"`
-	AdaptiveThinking         bool     `json:"adaptiveThinking,omitempty"`
-	ManualThinking           bool     `json:"manualThinking,omitempty"`
-	RequiresConfigurationEnv []string `json:"requiresConfigurationEnv,omitempty"`
-}
-
-type ModelCapabilities struct {
-	ToolCalls        bool `json:"toolCalls"`
-	StructuredOutput bool `json:"structuredOutput"`
-	Vision           bool `json:"vision"`
-	Streaming        bool `json:"streaming"`
-	PromptCache      bool `json:"promptCache"`
-	ToolSearch       bool `json:"toolSearch"`
-	Reasoning        bool `json:"reasoning"`
-}
-
-type ReasoningEffortOption struct {
-	ReasoningEffort string `json:"reasoningEffort"`
-	Description     string `json:"description"`
-}
-
-type ModelServiceTier struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-}
-
-type ModelUpgradeInfo struct {
-	Model             string  `json:"model"`
-	UpgradeCopy       *string `json:"upgradeCopy"`
-	ModelLink         *string `json:"modelLink"`
-	MigrationMarkdown *string `json:"migrationMarkdown"`
-}
-
-type ModelAvailabilityNux struct {
-	Message string `json:"message"`
-}
-
-type Model struct {
-	ID                        string                  `json:"id"`
-	ProviderID                string                  `json:"providerId"`
-	Model                     string                  `json:"model"`
-	Upgrade                   *string                 `json:"upgrade"`
-	UpgradeInfo               *ModelUpgradeInfo       `json:"upgradeInfo"`
-	AvailabilityNux           *ModelAvailabilityNux   `json:"availabilityNux"`
-	DisplayName               string                  `json:"displayName"`
-	Description               string                  `json:"description"`
-	Hidden                    bool                    `json:"hidden"`
-	SupportedReasoningEfforts []ReasoningEffortOption `json:"supportedReasoningEfforts"`
-	DefaultReasoningEffort    string                  `json:"defaultReasoningEffort"`
-	InputModalities           []string                `json:"inputModalities"`
-	SupportsPersonality       bool                    `json:"supportsPersonality"`
-	AdditionalSpeedTiers      []string                `json:"additionalSpeedTiers"`
-	ServiceTiers              []ModelServiceTier      `json:"serviceTiers"`
-	DefaultServiceTier        *string                 `json:"defaultServiceTier"`
-	IsDefault                 bool                    `json:"isDefault"`
-	Capabilities              ModelCapabilities       `json:"capabilities"`
-	MaxContextTokens          int                     `json:"maxContextTokens,omitempty"`
-	MaxOutputTokens           int                     `json:"maxOutputTokens,omitempty"`
-}
-
-type ModelListParams struct {
-	Cursor        *string  `json:"cursor,omitempty"`
-	Limit         *uint32  `json:"limit,omitempty"`
-	IncludeHidden *bool    `json:"includeHidden,omitempty"`
-	ProviderID    string   `json:"providerId,omitempty"`
-	ProviderIDs   []string `json:"providerIds,omitempty"`
-}
-
-type ModelListResponse struct {
-	Data       []Model `json:"data"`
-	NextCursor *string `json:"nextCursor"`
-}
-
-type ProviderListParams struct {
-	IncludeHidden  *bool `json:"includeHidden,omitempty"`
-	ConfiguredOnly bool  `json:"configuredOnly,omitempty"`
-}
-
-type ProviderListResponse struct {
-	Data      []Provider `json:"data"`
-	Providers []Provider `json:"providers"`
-}
+type Provider = protocol.ProviderCatalogEntry
+type ProviderCapabilities = protocol.ProviderCatalogCapabilities
+type ModelCapabilities = protocol.ModelCatalogCapabilities
+type ReasoningEffortOption = protocol.ModelCatalogReasoningEffortOption
+type ModelServiceTier = protocol.ModelCatalogServiceTier
+type ModelUpgradeInfo = protocol.ModelCatalogUpgradeInfo
+type ModelAvailabilityNux = protocol.ModelCatalogAvailabilityNux
+type Model = protocol.ModelCatalogEntry
+type ModelListParams = protocol.ModelCatalogListParams
+type ModelListResponse = protocol.ModelCatalogListResponse
+type ProviderListParams = protocol.ProviderListParams
+type ProviderListResponse = protocol.ProviderListResponse
 
 type CapabilitiesReadParams struct {
 	ProviderID    string `json:"providerId,omitempty"`

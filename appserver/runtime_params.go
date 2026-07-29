@@ -4,33 +4,12 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/core"
 )
 
-type RuntimeModelParams struct {
-	ProviderID       string          `json:"providerId,omitempty"`
-	Provider         string          `json:"provider,omitempty"`
-	Model            string          `json:"model,omitempty"`
-	MaxTokens        *int            `json:"maxTokens,omitempty"`
-	Temperature      *float64        `json:"temperature,omitempty"`
-	TopP             *float64        `json:"topP,omitempty"`
-	ThinkingBudget   *int            `json:"thinkingBudget,omitempty"`
-	AdaptiveThinking *bool           `json:"adaptiveThinking,omitempty"`
-	ReasoningEffort  *string         `json:"reasoningEffort,omitempty"`
-	StopSequences    []string        `json:"stopSequences,omitempty"`
-	Settings         map[string]any  `json:"settings,omitempty"`
-	Input            json.RawMessage `json:"input,omitempty"`
-}
-
-type threadStartParams struct {
-	Title     string         `json:"title,omitempty"`
-	Workspace string         `json:"workspace,omitempty"`
-	Prompt    string         `json:"prompt,omitempty"`
-	Message   string         `json:"message,omitempty"`
-	Text      string         `json:"text,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
-	RuntimeModelParams
-}
+type RuntimeModelParams = protocol.RuntimeModelParams
+type threadStartParams = protocol.ThreadRunStartParams
 
 type threadResumeParams struct {
 	ID       string         `json:"id,omitempty"`
@@ -59,25 +38,8 @@ const (
 	threadMemoryModeSettingKey = "memoryMode"
 )
 
-type turnStartParams struct {
-	ID       string         `json:"id,omitempty"`
-	ThreadID string         `json:"threadId,omitempty"`
-	Prompt   string         `json:"prompt,omitempty"`
-	Message  string         `json:"message,omitempty"`
-	Text     string         `json:"text,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-	RuntimeModelParams
-}
-
-type turnIDParams struct {
-	ID       string `json:"id,omitempty"`
-	TurnID   string `json:"turnId,omitempty"`
-	ThreadID string `json:"threadId,omitempty"`
-}
-
-func (p turnIDParams) turnID() string {
-	return firstNonEmpty(p.TurnID, p.ID)
-}
+type turnStartParams = protocol.TurnRunStartParams
+type turnIDParams = protocol.TurnRunInterruptParams
 
 type turnSteerParams struct {
 	ID      string `json:"id,omitempty"`
