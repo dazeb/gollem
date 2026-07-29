@@ -26,8 +26,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -61,69 +63,131 @@ func main() {
 	fmt.Println("# transport | turns | refresh | ttfb | first_event | first_token | terminal | total | ws_reused | prev_reused | cache | status | err")
 	fmt.Println("# --------- | ----- | ------- | ---- | ----------- | ----------- | -------- | ----- | --------- | ----------- | ----- | ------ | ---")
 
+	// credsHolder carries the live OAuth credentials across every run so that a
+	// token rotation performed by one transport's refresher persists to the next
+	// run (and the next transport). Without this each run would start from the
+	// original credentials and re-pay refresh latency (or fail on a rotated
+	// refresh token).
+	credsHolder := &credentialHolder{creds: creds}
+
 	for _, transport := range transports {
+		// Build ONE provider per transport and reuse it across all history
+		// sizes. This is essential to the experiment: only a reused provider
+		// keeps its prompt-cache key, websocket connection, and continuation
+		// state, so ws_reused / prev_reused / cache-continuity are measurable.
+		mp, err := buildProvider(model, transport, credsHolder)
+		if err != nil {
+			fmt.Printf("# %s ERROR building provider: %v\n", transport, err)
+			continue
+		}
 		for _, n := range turns {
-			if err := runOnce(ctx, creds, model, transport, n); err != nil {
+			if err := runOnce(ctx, mp, transport, n); err != nil {
 				fmt.Printf("# %s turns=%d ERROR: %v\n", transport, n, err)
 			}
 		}
+		_ = mp.provider.Close()
 	}
 }
 
-func runOnce(ctx context.Context, creds *openai.Credentials, model, transport string, historyTurns int) error {
-	var (
-		mu    sync.Mutex
-		trace oai.RequestTrace
-	)
-	obs := func(t oai.RequestTrace) {
-		mu.Lock()
-		trace = t
-		mu.Unlock()
-	}
+// credentialHolder is a tiny concurrency-safe holder for the live OAuth
+// credentials shared across all transport runs.
+type credentialHolder struct {
+	mu    sync.Mutex
+	creds *openai.Credentials
+}
+
+func (h *credentialHolder) get() *openai.Credentials {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.creds
+}
+
+func (h *credentialHolder) set(c *openai.Credentials) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.creds = c
+}
+
+// measuredProvider pairs a provider with a slot capturing its most recent trace
+// so runOnce can print a row per request without a package global.
+type measuredProvider struct {
+	provider *oai.Provider
+	mu       sync.Mutex
+	trace    oai.RequestTrace
+	hasTrace bool
+}
+
+func (m *measuredProvider) record(t oai.RequestTrace) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.trace = t
+	m.hasTrace = true
+}
+
+func (m *measuredProvider) last() (oai.RequestTrace, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.trace, m.hasTrace
+}
+
+func buildProvider(model, transport string, h *credentialHolder) (*measuredProvider, error) {
+	creds := h.get()
+	mp := &measuredProvider{}
 
 	// tokenRefresher mirrors how a downstream ChatGPT-auth consumer wires the
 	// OAuth credential lifecycle into the provider: refresh if near expiry, then
-	// persist the rotated credentials atomically.
+	// persist the rotated credentials back into the shared holder so every
+	// subsequent run (any transport) sees them.
 	tokenRefresher := func() (string, error) {
-		refreshed, err := openai.RefreshIfNeeded(creds)
+		current := h.get()
+		refreshed, err := openai.RefreshIfNeeded(current)
 		if err != nil {
 			return "", err
 		}
-		if refreshed != creds {
-			creds = refreshed
+		if refreshed != current {
+			h.set(refreshed)
 		}
-		return creds.AccessToken, nil
+		return refreshed.AccessToken, nil
 	}
 
 	opts := []oai.Option{
 		oai.WithChatGPTAuth(creds.AccessToken, creds.AccountID),
 		oai.WithModel(model),
 		oai.WithTokenRefresher(tokenRefresher),
-		oai.WithRequestObserver(obs),
+		oai.WithRequestObserver(mp.record),
 	}
 	if transport == "websocket" {
 		opts = append(opts, oai.WithTransport("websocket"))
 	}
 
-	provider := oai.New(opts...)
-	defer provider.Close()
+	mp.provider = oai.New(opts...)
+	return mp, nil
+}
 
+func runOnce(ctx context.Context, mp *measuredProvider, transport string, historyTurns int) error {
 	msgs := buildHistory(historyTurns)
 
+	var runErr error
 	switch transport {
 	case "http", "websocket":
-		resp, err := provider.Request(ctx, msgs, nil, nil)
+		resp, err := mp.provider.Request(ctx, msgs, nil, nil)
 		if err != nil {
-			return err
+			runErr = err
 		}
 		_ = resp
 	case "stream":
-		stream, err := provider.RequestStream(ctx, msgs, nil, nil)
+		stream, err := mp.provider.RequestStream(ctx, msgs, nil, nil)
 		if err != nil {
-			return err
+			runErr = err
+			break
 		}
+		// io.EOF is the normal terminal sentinel; any other error is a real
+		// transport/provider failure and must be surfaced, not swallowed.
 		for {
 			if _, err := stream.Next(); err != nil {
+				if !errors.Is(err, io.EOF) {
+					runErr = err
+				}
 				break
 			}
 		}
@@ -132,8 +196,7 @@ func runOnce(ctx context.Context, creds *openai.Credentials, model, transport st
 		return fmt.Errorf("unknown transport %q", transport)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
+	trace, _ := mp.last()
 	fmt.Printf("%-9s | %5d | %7s | %4s | %11s | %11s | %8s | %5s | %9t | %11t | %5s | %6d | %s\n",
 		transport, historyTurns,
 		trace.TokenRefreshDuration.Round(time.Millisecond),
@@ -148,7 +211,7 @@ func runOnce(ctx context.Context, creds *openai.Credentials, model, transport st
 		trace.HTTPStatus,
 		trace.ErrorClassification,
 	)
-	return nil
+	return runErr
 }
 
 // buildHistory constructs a synthetic append-only conversation of the given

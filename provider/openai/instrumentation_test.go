@@ -561,3 +561,342 @@ func TestDefaultStderrRequestObserverDoesNotPanic(t *testing.T) {
 	obs := DefaultStderrRequestObserver()
 	obs(RequestTrace{Transport: transportHTTP, Model: "gpt-5"})
 }
+
+// TestRequestObserver_SSEDeltaFirstToken verifies first-token is timestamped
+// on response.output_text.delta, not only at output_item.done (Codex review).
+func TestRequestObserver_SSEDeltaFirstToken(t *testing.T) {
+	sse := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n" +
+		"data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"model\":\"gpt-5\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n" +
+		"data: [DONE]\n\n"
+	server, _ := chatgptSSEHandler(t, sse, []time.Duration{20 * time.Millisecond, 0, 20 * time.Millisecond, 20 * time.Millisecond})
+	defer server.Close()
+
+	obs, snapshot := captureObserver()
+	p := New(
+		WithChatGPTAuth("tok", "acct"),
+		WithBaseURL(server.URL+"/chatgpt.com"),
+		WithModel("gpt-5"),
+		WithRequestObserver(obs),
+	)
+	if _, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	tr, _ := snapshot()
+	if tr.TimeToFirstToken <= 0 {
+		t.Fatal("TimeToFirstToken should be > 0 from the delta event")
+	}
+	if tr.TimeToFirstToken >= tr.TimeToTerminal {
+		t.Errorf("first_token (%v) should precede terminal (%v)", tr.TimeToFirstToken, tr.TimeToTerminal)
+	}
+}
+
+// TestRequestObserver_SSEResponseFailed verifies in-band response.failed is
+// classified and recorded as terminal in the non-stream SSE path.
+func TestRequestObserver_SSEResponseFailed(t *testing.T) {
+	sse := "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"model\":\"gpt-5\",\"incomplete_details\":{\"reason\":\"content_filter\"}}}\n\n" +
+		"data: [DONE]\n\n"
+	server, _ := chatgptSSEHandler(t, sse, nil)
+	defer server.Close()
+
+	obs, snapshot := captureObserver()
+	p := New(
+		WithChatGPTAuth("tok", "acct"),
+		WithBaseURL(server.URL+"/chatgpt.com"),
+		WithModel("gpt-5"),
+		WithRequestObserver(obs),
+	)
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error from response.failed")
+	}
+	tr, _ := snapshot()
+	if tr.TimeToTerminal <= 0 {
+		t.Error("TimeToTerminal should be recorded for response.failed")
+	}
+	if tr.ErrorClassification == "" {
+		t.Error("ErrorClassification should be populated for response.failed")
+	}
+}
+
+// TestRequestObserver_WebSocketShapeAndCache verifies the WS path records
+// request bytes/items and the cache fingerprint (Codex review: WS branch
+// previously reported zero/empty).
+func TestRequestObserver_WebSocketShapeAndCache(t *testing.T) {
+	server := wsFakeServer(t, []responsesWSEvent{
+		{Type: "response.completed", Response: &responsesAPIResponse{
+			ID: "r", Model: "gpt-5.3-codex",
+			Output: []responsesOutputItem{{
+				Type: "message", Role: "assistant",
+				Content: []responsesContentItem{{Type: "output_text", Text: "ok"}},
+			}},
+		}},
+	}, nil)
+	defer server.Close()
+
+	obs, snapshot := captureObserver()
+	p := New(
+		WithAPIKey("test-key"),
+		WithModel("gpt-5.3-codex"),
+		WithBaseURL(server.URL),
+		WithTransport("websocket"),
+		WithPromptCacheKey("my-cache-key"),
+		WithRequestObserver(obs),
+	)
+	defer p.Close()
+
+	if _, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	tr, _ := snapshot()
+	if tr.RequestBytes == 0 {
+		t.Error("RequestBytes should be > 0 on the WS path")
+	}
+	if tr.InputItems == 0 {
+		t.Error("InputItems should be > 0 on the WS path")
+	}
+	if !tr.PromptCacheKeyActive || tr.PromptCacheKeyFingerprint == "" {
+		t.Error("cache key should be active with a fingerprint on the WS path")
+	}
+	if tr.PromptCacheKeyFingerprint != cacheKeyFingerprint("my-cache-key") {
+		t.Errorf("fingerprint mismatch: got %q", tr.PromptCacheKeyFingerprint)
+	}
+}
+
+// TestRequestObserver_WebSocketReusedLeavesHeadersUnset verifies that a reused
+// websocket connection does not record a synthetic TimeToHeaders.
+func TestRequestObserver_WebSocketReusedLeavesHeadersUnset(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+			_ = conn.WriteJSON(responsesWSEvent{
+				Type: "response.completed",
+				Response: &responsesAPIResponse{
+					ID: "r", Model: "gpt-5.3-codex",
+					Output: []responsesOutputItem{{
+						Type: "message", Role: "assistant",
+						Content: []responsesContentItem{{Type: "output_text", Text: "ok"}},
+					}},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	obs, snapshot := captureObserver()
+	p := New(
+		WithAPIKey("test-key"),
+		WithModel("gpt-5.3-codex"),
+		WithBaseURL(server.URL),
+		WithTransport("websocket"),
+		WithRequestObserver(obs),
+	)
+	defer p.Close()
+
+	// First request dials and records TimeToHeaders.
+	if _, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "one"}}},
+	}, nil, nil); err != nil {
+		t.Fatalf("first Request: %v", err)
+	}
+	first, _ := snapshot()
+	if first.TimeToHeaders <= 0 {
+		t.Fatal("first request should record TimeToHeaders (dial/handshake)")
+	}
+
+	// Second request reuses the connection; TimeToHeaders must stay zero.
+	if _, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "two"}}},
+	}, nil, nil); err != nil {
+		t.Fatalf("second Request: %v", err)
+	}
+	second, _ := snapshot()
+	if !second.WebSocketConnectionReused {
+		t.Error("second request should report a reused connection")
+	}
+	if second.TimeToHeaders != 0 {
+		t.Errorf("reused connection should leave TimeToHeaders zero, got %v", second.TimeToHeaders)
+	}
+}
+
+// TestRequestObserver_ResponsesStreamLabeledHTTP verifies that when a provider
+// is configured for websocket, RequestStream still labels the trace transport
+// as http (it always uses HTTP SSE).
+func TestRequestObserver_ResponsesStreamLabeledHTTP(t *testing.T) {
+	sse := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"model\":\"gpt-5.3-codex\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n" +
+		"data: [DONE]\n\n"
+	server, _ := chatgptSSEHandler(t, sse, nil)
+	defer server.Close()
+
+	obs, snapshot := captureObserver()
+	p := New(
+		WithChatGPTAuth("tok", "acct"),
+		WithBaseURL(server.URL+"/chatgpt.com"),
+		WithModel("gpt-5.3-codex"),
+		WithTransport("websocket"), // configured for WS, but streaming uses HTTP
+		WithRequestObserver(obs),
+	)
+	stream, err := p.RequestStream(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("RequestStream: %v", err)
+	}
+	for {
+		if _, err := stream.Next(); err != nil {
+			break
+		}
+	}
+	_ = stream.Close()
+
+	tr, _ := snapshot()
+	if tr.Transport != transportHTTP {
+		t.Errorf("streaming transport = %q, want %q (HTTP SSE even when WS configured)", tr.Transport, transportHTTP)
+	}
+}
+
+// TestRequestObserver_ResponsesStreamFinishesOnSetupError verifies the observer
+// fires (and classifies) when RequestStream setup fails, e.g. a 429.
+func TestRequestObserver_ResponsesStreamFinishesOnSetupError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		http.Error(w, `{"error":{"type":"rate_limit","message":"too many requests"}}`, http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	obs, snapshot := captureObserver()
+	p := New(
+		WithChatGPTAuth("tok", "acct"),
+		WithBaseURL(server.URL+"/chatgpt.com"),
+		WithModel("gpt-5.3-codex"),
+		WithRequestObserver(obs),
+	)
+	_, err := p.RequestStream(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error from 429")
+	}
+	tr, ok := snapshot()
+	if !ok {
+		t.Fatal("observer should fire even when stream setup fails")
+	}
+	if tr.HTTPStatus != http.StatusTooManyRequests {
+		t.Errorf("HTTPStatus = %d, want 429", tr.HTTPStatus)
+	}
+	if tr.ErrorClassification == "" {
+		t.Error("ErrorClassification should be populated")
+	}
+}
+
+// TestRequestObserver_ChatCompletionsCountsBuiltMessages verifies InputItems
+// reflects the number of built API messages, not the input slice length.
+func TestRequestObserver_ChatCompletionsCountsBuiltMessages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(apiResponse{
+			ID:    "r",
+			Model: "gpt-4o",
+			Choices: []apiChoice{{
+				Message: apiChatMsg{Role: "assistant", Content: "ok"},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	obs, snapshot := captureObserver()
+	p := New(
+		WithAPIKey("key"),
+		WithBaseURL(server.URL),
+		WithModel("gpt-4o"),
+		WithRequestObserver(obs),
+	)
+	// A single ModelRequest carrying system + user parts expands into multiple
+	// chat-completions messages.
+	_, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.SystemPromptPart{Content: "be brief"},
+			core.UserPromptPart{Content: "hi"},
+		}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	tr, _ := snapshot()
+	if tr.InputItems < 2 {
+		t.Errorf("InputItems = %d, want >= 2 (built messages), not 1 (input slice)", tr.InputItems)
+	}
+}
+
+// TestRequestInstrumentationResetForRetry verifies retry reset clears transient
+// phases so a retried request's trace reflects only the retry attempt.
+func TestRequestInstrumentationResetForRetry(t *testing.T) {
+	ri := &requestInstrumentation{
+		start: time.Now(),
+		trace: RequestTrace{Transport: transportWebSocket, Model: "gpt-5"},
+	}
+	ri.recordHeaders(500)
+	ri.recordFirstEvent()
+	ri.recordFirstToken()
+	ri.recordTerminalFailure("previous_response_not_found")
+	ri.recordError(&core.ModelHTTPError{StatusCode: 400, Body: "previous_response_not_found"})
+	ri.markWebSocketReused(true)
+
+	ri.resetForRetry()
+
+	if ri.trace.TimeToHeaders != 0 || ri.trace.TimeToFirstEvent != 0 || ri.trace.TimeToFirstToken != 0 || ri.trace.TimeToTerminal != 0 {
+		t.Error("reset should zero all phase timings")
+	}
+	if ri.trace.HTTPStatus != 0 || ri.trace.ErrorClassification != "" || ri.trace.ErrorClass != "" {
+		t.Error("reset should clear error fields")
+	}
+	if ri.trace.WebSocketConnectionReused {
+		t.Error("reset should clear the reuse flag (retry dials fresh)")
+	}
+	// Guards must allow re-recording after reset.
+	ri.recordHeaders(200)
+	if ri.trace.TimeToHeaders <= 0 || ri.trace.HTTPStatus != 200 {
+		t.Error("recordHeaders should work again after reset")
+	}
+}
+
+// TestRequestInstrumentationRecordTerminalFailure verifies terminal-failure
+// records both timing and classification.
+func TestRequestInstrumentationRecordTerminalFailure(t *testing.T) {
+	ri := &requestInstrumentation{start: time.Now(), trace: RequestTrace{}}
+	ri.recordTerminalFailure("response_failed")
+	if ri.trace.TimeToTerminal <= 0 {
+		t.Error("terminal timing should be recorded")
+	}
+	if ri.trace.ErrorClassification != "response_failed" {
+		t.Errorf("classification = %q, want response_failed", ri.trace.ErrorClassification)
+	}
+}
+
+// TestEstimateResponsesRequestBytes is a small direct test of the helper used
+// to give the WS trace a request size.
+func TestEstimateResponsesRequestBytes(t *testing.T) {
+	if estimateResponsesRequestBytes(nil) != 0 {
+		t.Error("nil request should be 0 bytes")
+	}
+	req := &responsesRequest{Model: "gpt-5", Input: []map[string]any{responsesMessage("user", "hi")}}
+	if n := estimateResponsesRequestBytes(req); n == 0 {
+		t.Error("non-empty request should estimate > 0 bytes")
+	}
+}

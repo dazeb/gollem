@@ -196,6 +196,10 @@ func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []
 	case "response.failed":
 		s.done = true
 		s.finalize()
+		// response.failed is a terminal outcome; record terminal timing so a
+		// failed request that reached a definitive provider event is
+		// distinguishable from one that disconnected before any terminal event.
+		s.instrumentation.recordTerminal()
 		// Extract error message from the response object.
 		if event.Response != nil {
 			var failedResp struct {

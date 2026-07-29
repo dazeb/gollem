@@ -120,6 +120,10 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 		// model would need to re-reason from scratch and won't finish in time.
 		if isPreviousResponseNotFound(err) || isWebSocketConnectionLimitReached(err) || isWebSocketConnectionError(err) {
 			if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) >= minBudgetForWSRetry {
+				// The failed attempt's phase markers and error must not pollute
+				// the retry's trace. Clear them so the trace reflects the
+				// retrying physical request (which dials a fresh connection).
+				ri.resetForRetry()
 				p.resetResponsesWebSocketLocked()
 				conn, connErr := p.ensureResponsesWebSocketLocked(ctx, ri)
 				if connErr != nil {
@@ -160,8 +164,11 @@ func (p *Provider) ensureResponsesWebSocketLocked(ctx context.Context, ri *reque
 		return nil, err
 	}
 	if p.wsConn != nil && token == p.wsAuthToken {
+		// Reused connection: no dial or handshake occurs, so leave
+		// TimeToHeaders unset (zero) rather than timestamping local token
+		// lookup as if it were a handshake. The reuse flag carries that
+		// information for consumers.
 		ri.markWebSocketReused(true)
-		ri.recordHeaders(0)
 		return p.wsConn, nil
 	}
 	if p.wsConn != nil {
@@ -300,6 +307,14 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 			if p.reasoningSummaryHandler != nil && event.Text != "" {
 				p.reasoningSummaryHandler(event.Text)
 			}
+		case "response.output_text.delta", "response.function_call_arguments.delta":
+			// Deltas arrive before the output item is complete; timestamp the
+			// first token as soon as the model produces content, so websocket
+			// first-token latency is comparable to the HTTP/SSE paths and is
+			// not inflated to time-to-completed-item.
+			if event.Delta != "" {
+				ri.recordFirstToken()
+			}
 		case "response.output_item.done":
 			// Codex-style websocket streams output items incrementally and
 			// the terminal response.completed event may arrive with an
@@ -321,6 +336,7 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 			return event.Response, nil
 		case "response.incomplete":
 			wsErr := responsesIncompleteError(event, p.model)
+			ri.recordTerminalFailure("")
 			ri.recordError(wsErr)
 			return nil, wsErr
 		case "error":
@@ -329,6 +345,7 @@ func (p *Provider) sendResponsesCreateLocked(ctx context.Context, conn *response
 			return nil, wsErr
 		case "response.failed":
 			wsErr := responsesFailedError(event, p.model)
+			ri.recordTerminalFailure("")
 			ri.recordError(wsErr)
 			return nil, wsErr
 		default:

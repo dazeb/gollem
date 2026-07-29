@@ -219,6 +219,17 @@ func (ri *requestInstrumentation) setRequestShape(bytes int, items int) {
 	ri.trace.InputItems = items
 }
 
+// setTransport overrides the recorded physical transport. Used by
+// requestStreamViaResponses, which always uses HTTP SSE even when the provider
+// is configured for websocket (the websocket transport exposes no streaming
+// interface), so such traces are correctly labeled "http".
+func (ri *requestInstrumentation) setTransport(transport string) {
+	if ri == nil {
+		return
+	}
+	ri.trace.Transport = transport
+}
+
 func (ri *requestInstrumentation) beginTokenRefresh() {
 	if ri == nil {
 		return
@@ -265,6 +276,49 @@ func (ri *requestInstrumentation) recordTerminal() {
 	}
 	ri.terminalRecorded = true
 	ri.trace.TimeToTerminal = time.Since(ri.start)
+}
+
+// recordTerminalFailure records the terminal timing for an in-band Responses
+// failure/incomplete outcome together with its sanitized classification. The
+// model argument carries the sanitized provider marker. It is the terminal
+// counterpart of recordError for outcomes that the backend signals as a
+// definitive event rather than a transport error.
+func (ri *requestInstrumentation) recordTerminalFailure(classification string) {
+	if ri == nil {
+		return
+	}
+	ri.recordTerminal()
+	if classification != "" {
+		ri.trace.ErrorClassification = classification
+	}
+	if ri.trace.ErrorClass == "" {
+		ri.trace.ErrorClass = "transport"
+	}
+}
+
+// resetForRetry clears the transient phase markers and any error from a failed
+// attempt so a reconnect-retry produces a trace that reflects the retrying
+// physical request (whose outcome may succeed). TotalDuration and StartedAt
+// are preserved so the trace still spans the full caller-visible request,
+// including the retry gap; the WebSocketConnectionReused flag is cleared
+// because the retry dials a fresh connection.
+func (ri *requestInstrumentation) resetForRetry() {
+	if ri == nil {
+		return
+	}
+	ri.headersRecorded = false
+	ri.firstEventRecorded = false
+	ri.firstTokenRecorded = false
+	ri.terminalRecorded = false
+	ri.trace.TimeToHeaders = 0
+	ri.trace.TimeToFirstEvent = 0
+	ri.trace.TimeToFirstToken = 0
+	ri.trace.TimeToTerminal = 0
+	ri.trace.HTTPStatus = 0
+	ri.trace.ErrorClassification = ""
+	ri.trace.ErrorClass = ""
+	ri.trace.RetryAfter = 0
+	ri.trace.WebSocketConnectionReused = false
 }
 
 func (ri *requestInstrumentation) markWebSocketReused(reused bool) {

@@ -483,7 +483,9 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
-	ri.setRequestShape(len(body), len(messages))
+	// Count the built API messages, not the input slice: one ModelMessage can
+	// expand into multiple API messages (multi-part system/user/tool content).
+	ri.setRequestShape(len(body), len(req.Messages))
 	ri.markCacheKey(p.promptCacheKey)
 
 	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body, ri)
@@ -534,7 +536,9 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 		ri.finish()
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
-	ri.setRequestShape(len(body), len(messages))
+	// Count the built API messages, not the input slice: one ModelMessage can
+	// expand into multiple API messages (multi-part system/user/tool content).
+	ri.setRequestShape(len(body), len(req.Messages))
 	ri.markCacheKey(p.promptCacheKey)
 
 	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body, ri) //nolint:bodyclose // Response body ownership transfers to streamedResponse.
