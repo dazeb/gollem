@@ -134,6 +134,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CancelLoginAccountParams", Type: reflect.TypeFor[CancelLoginAccountParams]()},
 		{Name: "CancelLoginAccountResponse", Type: reflect.TypeFor[CancelLoginAccountResponse]()},
 		{Name: "CancelLoginAccountStatus", Type: reflect.TypeFor[CancelLoginAccountStatus]()},
+		{Name: "CapabilityRootLocation", Type: reflect.TypeFor[CapabilityRootLocation]()},
 		{Name: "ChatgptAuthTokensRefreshParams", Type: reflect.TypeFor[ChatgptAuthTokensRefreshParams]()},
 		{Name: "ChatgptAuthTokensRefreshReason", Type: reflect.TypeFor[ChatgptAuthTokensRefreshReason]()},
 		{Name: "ChatgptAuthTokensRefreshResponse", Type: reflect.TypeFor[ChatgptAuthTokensRefreshResponse]()},
@@ -143,6 +144,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CollabAgentStatus", Type: reflect.TypeFor[CollabAgentStatus]()},
 		{Name: "CollabAgentTool", Type: reflect.TypeFor[CollabAgentTool]()},
 		{Name: "CollabAgentToolCallStatus", Type: reflect.TypeFor[CollabAgentToolCallStatus]()},
+		{Name: "CollaborationMode", Type: reflect.TypeFor[CollaborationMode]()},
+		{Name: "CollaborationModeMask", Type: reflect.TypeFor[CollaborationModeMask]()},
 		{Name: "CommandAction", Type: reflect.TypeFor[CommandAction]()},
 		{Name: "CommandExecOutputDeltaNotification", Type: reflect.TypeFor[CommandExecOutputDeltaNotification]()},
 		{Name: "CommandExecOutputStream", Type: reflect.TypeFor[CommandExecOutputStream]()},
@@ -324,6 +327,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ModelVerification", Type: reflect.TypeFor[ModelVerification]()},
 		{Name: "ModelVerificationNotification", Type: reflect.TypeFor[ModelVerificationNotification]()},
 		{Name: "ModelsRequirements", Type: reflect.TypeFor[ModelsRequirements]()},
+		{Name: "ModeKind", Type: reflect.TypeFor[ModeKind]()},
+		{Name: "MultiAgentMode", Type: reflect.TypeFor[MultiAgentMode]()},
 		{Name: "NetworkDomainPermission", Type: reflect.TypeFor[NetworkDomainPermission]()},
 		{Name: "NetworkRequirements", Type: reflect.TypeFor[NetworkRequirements]()},
 		{Name: "NetworkUnixSocketPermission", Type: reflect.TypeFor[NetworkUnixSocketPermission]()},
@@ -460,11 +465,13 @@ func wireSchemaDefinitions() Schema {
 		{Name: "SandboxMode", Type: reflect.TypeFor[SandboxMode]()},
 		{Name: "SandboxPolicy", Type: reflect.TypeFor[SandboxPolicy]()},
 		{Name: "SandboxWorkspaceWrite", Type: reflect.TypeFor[SandboxWorkspaceWrite]()},
+		{Name: "SelectedCapabilityRoot", Type: reflect.TypeFor[SelectedCapabilityRoot]()},
 		{Name: "SendAddCreditsNudgeEmailParams", Type: reflect.TypeFor[SendAddCreditsNudgeEmailParams]()},
 		{Name: "SendAddCreditsNudgeEmailResponse", Type: reflect.TypeFor[SendAddCreditsNudgeEmailResponse]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "SessionSource", Type: reflect.TypeFor[SessionSource]()},
+		{Name: "Settings", Type: reflect.TypeFor[Settings]()},
 		{Name: "Surface", Type: reflect.TypeFor[Surface]()},
 		{Name: "SortDirection", Type: reflect.TypeFor[SortDirection]()},
 		{Name: "SubAgentActivityKind", Type: reflect.TypeFor[SubAgentActivityKind]()},
@@ -1061,6 +1068,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	for name, schema := range dynamicToolSpecSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range collaborationCapabilitySchemas() {
 		schemas[name] = schema
 	}
 	schemas["ProcessExitedNotification"] = processExitedNotificationSchema()

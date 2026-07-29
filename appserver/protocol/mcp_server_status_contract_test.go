@@ -277,8 +277,8 @@ func TestMcpServerStatusContractsRemainStandalone(t *testing.T) {
 	if !ok || method.State != MethodImplemented {
 		t.Fatalf("mcpServerStatus/list = %#v, %v; want implemented", method, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 520 {
-		t.Fatalf("definition count = %d, want 520", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 527 {
+		t.Fatalf("definition count = %d, want 527", got)
 	}
 	if len(Methods()) != 224 || len(WireTypeBindings()) != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("counts = %d/%d/%d, want 224/59/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))

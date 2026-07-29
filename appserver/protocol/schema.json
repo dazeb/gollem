@@ -1489,6 +1489,37 @@
       ],
       "type": "string"
     },
+    "CapabilityRootLocation": {
+      "description": "Location used to resolve a selected capability root.",
+      "oneOf": [
+        {
+          "description": "A path owned by an execution environment.",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "path": {
+              "description": "Absolute path for the root in the selected environment.",
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "environment"
+              ],
+              "title": "EnvironmentCapabilityRootLocationType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "environmentId",
+            "path",
+            "type"
+          ],
+          "title": "EnvironmentCapabilityRootLocation",
+          "type": "object"
+        }
+      ]
+    },
     "ChatgptAuthTokensRefreshParams": {
       "additionalProperties": false,
       "properties": {
@@ -1783,6 +1814,67 @@
         "failed"
       ],
       "type": "string"
+    },
+    "CollaborationMode": {
+      "description": "Collaboration mode for a Codex session.",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ModeKind"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "required": [
+        "mode",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "CollaborationModeMask": {
+      "description": "EXPERIMENTAL - collaboration mode preset metadata for clients.",
+      "properties": {
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModeKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReasoningEffort"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     },
     "CommandAction": {
       "oneOf": [
@@ -9452,6 +9544,14 @@
       },
       "type": "object"
     },
+    "ModeKind": {
+      "description": "Initial collaboration mode to use when the TUI starts.",
+      "enum": [
+        "plan",
+        "default"
+      ],
+      "type": "string"
+    },
     "Model": {
       "additionalProperties": false,
       "properties": {
@@ -9865,6 +9965,31 @@
         "newThread"
       ],
       "type": "object"
+    },
+    "MultiAgentMode": {
+      "description": "Controls the effective multi-agent delegation instructions for a turn. `custom` means the configured mode hint defines the policy instead of a built-in policy.",
+      "oneOf": [
+        {
+          "enum": [
+            "explicitRequestOnly",
+            "proactive"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "custom": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "custom"
+          ],
+          "title": "CustomMultiAgentMode",
+          "type": "object"
+        }
+      ]
     },
     "NetworkAccess": {
       "enum": [
@@ -12495,6 +12620,28 @@
       "type": "object",
       "x-gollem-typescript-ignore-additional-properties": true
     },
+    "SelectedCapabilityRoot": {
+      "description": "A user-selected root that can expose one or more runtime capabilities.",
+      "properties": {
+        "id": {
+          "description": "Stable identifier supplied by the capability selection platform.",
+          "type": "string"
+        },
+        "location": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/CapabilityRootLocation"
+            }
+          ],
+          "description": "Where the selected root can be resolved."
+        }
+      },
+      "required": [
+        "id",
+        "location"
+      ],
+      "type": "object"
+    },
     "SendAddCreditsNudgeEmailParams": {
       "properties": {
         "creditType": {
@@ -12629,6 +12776,34 @@
           "type": "object"
         }
       ]
+    },
+    "Settings": {
+      "description": "Settings for a collaboration mode.",
+      "properties": {
+        "developer_instructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
     },
     "SkillMigration": {
       "additionalProperties": false,
