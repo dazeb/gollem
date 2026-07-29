@@ -915,6 +915,44 @@ func TestSQLiteStoreRollbackThreadPrunesTrailingItemsWhenTurnHasNoItems(t *testi
 	}
 }
 
+func TestSQLiteStoreRollbackPrunesEmptyTurnWithoutSequenceCutoff(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Empty cutoff rollback"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	retained, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn retained: %v", err)
+	}
+	if _, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: thread.ID,
+		TurnID:   retained.ID,
+		Kind:     "message",
+		Payload:  json.RawMessage(`{"text":"keep"}`),
+	}); err != nil {
+		t.Fatalf("AppendItem retained: %v", err)
+	}
+	removed, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn removed: %v", err)
+	}
+	if _, err := s.RollbackThread(ctx, RollbackThreadRequest{ID: thread.ID, NumTurns: 1}); err != nil {
+		t.Fatalf("RollbackThread: %v", err)
+	}
+	if _, err := s.GetTurn(ctx, removed.ID); !errors.Is(err, ErrTurnNotFound) {
+		t.Fatalf("removed turn lookup error = %v, want ErrTurnNotFound", err)
+	}
+	items, err := s.ListItems(ctx, ItemFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 2 || items[0].TurnID != retained.ID || items[1].Kind != "thread_rollback" {
+		t.Fatalf("remaining items = %+v", items)
+	}
+}
+
 func TestSQLiteStoreForkCopiesThreadHistory(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))

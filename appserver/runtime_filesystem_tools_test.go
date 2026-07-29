@@ -56,6 +56,54 @@ func TestFilesystemRuntimeToolsExposeScopedOperations(t *testing.T) {
 	}
 }
 
+func TestFilesystemRuntimeToolsExecuteAllScopedOperations(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "source.txt"), []byte("source\n"), 0o640); err != nil {
+		t.Fatalf("WriteFile source: %v", err)
+	}
+	fsSvc, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	tools := FilesystemRuntimeTools(fsSvc)
+	bus := core.NewEventBus()
+	defer bus.Close()
+	runContext := &core.RunContext{EventBus: bus, RunID: "run-all-fs"}
+	call := func(name, arguments string) any {
+		t.Helper()
+		tool := findRuntimeToolByName(t, tools, name)
+		runContext.ToolName = name
+		result, err := tool.Handler(context.Background(), runContext, arguments)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return result
+	}
+
+	if result, ok := call("workspace_read_file", `{"path":"source.txt"}`).(runtimeFilesystemReadResult); !ok || result.Content != "source\n" {
+		t.Fatalf("read result = %#v", result)
+	}
+	if result, ok := call("workspace_list_directory", `{"path":"."}`).(runtimeFilesystemListResult); !ok || len(result.Entries) != 1 {
+		t.Fatalf("list result = %#v", result)
+	}
+	if result, ok := call("workspace_file_metadata", `{"path":"source.txt"}`).(runtimeFilesystemMetadataResult); !ok || result.IsDir || result.Size != int64(len("source\n")) {
+		t.Fatalf("metadata result = %#v", result)
+	}
+	if result, ok := call("workspace_create_directory", `{"path":"nested"}`).(runtimeFilesystemMutationResult); !ok || !result.Changed || result.Operation != "createDirectory" {
+		t.Fatalf("create directory result = %#v", result)
+	}
+	if result, ok := call("workspace_copy_path", `{"source":"source.txt","destination":"nested/copied.txt"}`).(runtimeFilesystemMutationResult); !ok || !result.Changed || result.Destination != "nested/copied.txt" {
+		t.Fatalf("copy result = %#v", result)
+	}
+	if result, ok := call("workspace_write_file", `{"path":"nested/written.txt","content":"written\n"}`).(runtimeFilesystemMutationResult); !ok || !result.Changed || result.Operation != "create" {
+		t.Fatalf("write result = %#v", result)
+	}
+	if result, ok := call("workspace_remove_path", `{"path":"nested/copied.txt"}`).(runtimeFilesystemMutationResult); !ok || !result.Changed || result.Operation != "remove" {
+		t.Fatalf("remove result = %#v", result)
+	}
+}
+
 func TestFilesystemRuntimeReadToolRejectsWorkspaceEscape(t *testing.T) {
 	root := t.TempDir()
 	fsSvc, err := toolfs.NewService(root)

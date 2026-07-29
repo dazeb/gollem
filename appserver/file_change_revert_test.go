@@ -13,6 +13,7 @@ import (
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	toolfs "github.com/fugue-labs/gollem/appserver/tools/fs"
+	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
 	"github.com/fugue-labs/gollem/core"
 )
 
@@ -573,6 +574,118 @@ func TestFileChangeRevertRejectsUnavailableAndMalformedRequests(t *testing.T) {
 	}
 }
 
+func TestFileChangeRevertRejectsWorkspaceItemTurnAndRecoveryMismatches(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	fsService, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsService.Close()
+
+	call := func(t *testing.T, st *store.SQLiteStore, threadID, itemID string) {
+		t.Helper()
+		response := readyServer(WithStore(st), WithFilesystem(fsService)).HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
+			"threadId":       threadID,
+			"itemId":         itemID,
+			"idempotencyKey": "safety-refusal",
+		}))
+		if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams {
+			t.Fatalf("file-change revert mismatch response = %+v", response)
+		}
+	}
+
+	t.Run("workspace", func(t *testing.T) {
+		st := newRuntimeTestStore(t)
+		thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Workspace: t.TempDir()})
+		if err != nil {
+			t.Fatalf("CreateThread: %v", err)
+		}
+		call(t, st, thread.ID, "missing")
+	})
+
+	t.Run("missing item", func(t *testing.T) {
+		st := newRuntimeTestStore(t)
+		thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Workspace: root})
+		if err != nil {
+			t.Fatalf("CreateThread: %v", err)
+		}
+		call(t, st, thread.ID, "missing")
+	})
+
+	t.Run("wrong item kind", func(t *testing.T) {
+		st := newRuntimeTestStore(t)
+		thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Workspace: root})
+		if err != nil {
+			t.Fatalf("CreateThread: %v", err)
+		}
+		turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID})
+		if err != nil {
+			t.Fatalf("CreateTurn: %v", err)
+		}
+		item, err := st.AppendItem(ctx, store.AppendItemRequest{
+			ThreadID: thread.ID,
+			TurnID:   turn.ID,
+			Kind:     "message",
+			Status:   runtimeFileChangeStatusCompleted,
+			Payload:  json.RawMessage(`{}`),
+		})
+		if err != nil {
+			t.Fatalf("AppendItem: %v", err)
+		}
+		call(t, st, thread.ID, item.ID)
+	})
+
+	t.Run("nonterminal turn", func(t *testing.T) {
+		st := newRuntimeTestStore(t)
+		thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Workspace: root})
+		if err != nil {
+			t.Fatalf("CreateThread: %v", err)
+		}
+		turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID})
+		if err != nil {
+			t.Fatalf("CreateTurn: %v", err)
+		}
+		item, err := st.AppendItem(ctx, store.AppendItemRequest{
+			ThreadID: thread.ID,
+			TurnID:   turn.ID,
+			Kind:     runtimeFileChangeItemKind,
+			Status:   runtimeFileChangeStatusCompleted,
+			Payload:  json.RawMessage(`{}`),
+		})
+		if err != nil {
+			t.Fatalf("AppendItem: %v", err)
+		}
+		call(t, st, thread.ID, item.ID)
+	})
+
+	t.Run("missing recovery", func(t *testing.T) {
+		st := newRuntimeTestStore(t)
+		thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Workspace: root})
+		if err != nil {
+			t.Fatalf("CreateThread: %v", err)
+		}
+		turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID})
+		if err != nil {
+			t.Fatalf("CreateTurn: %v", err)
+		}
+		if _, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{ID: turn.ID, Status: store.TurnCompleted}); err != nil {
+			t.Fatalf("CompleteTurn: %v", err)
+		}
+		item, err := st.AppendItem(ctx, store.AppendItemRequest{
+			ThreadID: thread.ID,
+			TurnID:   turn.ID,
+			Kind:     runtimeFileChangeItemKind,
+			Status:   runtimeFileChangeStatusCompleted,
+			Payload:  json.RawMessage(`{}`),
+		})
+		if err != nil {
+			t.Fatalf("AppendItem: %v", err)
+		}
+		call(t, st, thread.ID, item.ID)
+	})
+}
+
 func TestFileChangeRevertEvidenceAndHelperGuards(t *testing.T) {
 	newEvidence := func() (*store.Item, *store.FileChangeRecovery, protocol.FileChangeItem) {
 		payload := protocol.FileChangeItem{
@@ -895,6 +1008,83 @@ func TestFileChangeRevertRequiresExactCanonicalThreadWorkspace(t *testing.T) {
 	}
 	if err := requireExactThreadWorkspace(&store.Thread{Workspace: root}, filepath.Join(root, "missing")); err == nil {
 		t.Fatal("missing filesystem root was accepted")
+	}
+}
+
+func TestWorkspaceRevertReservationLifecycleAndFailures(t *testing.T) {
+	ctx := context.Background()
+	var nilServer *Server
+	if _, err := nilServer.acquireTurnStartLease(); err == nil {
+		t.Fatal("nil server acquired turn-start lease")
+	}
+	server := readyServer()
+	if _, err := server.reserveWorkspaceRevert(ctx, nil, t.TempDir()); err == nil {
+		t.Fatal("workspace revert reservation accepted nil store")
+	}
+	if _, err := server.reserveWorkspaceRevert(ctx, newRuntimeTestStore(t), filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("workspace revert reservation accepted missing root")
+	}
+
+	root := t.TempDir()
+	st := newRuntimeTestStore(t)
+	release, err := server.reserveWorkspaceRevert(ctx, st, root)
+	if err != nil {
+		t.Fatalf("reserveWorkspaceRevert: %v", err)
+	}
+	if _, err := server.acquireTurnStartLease(); !errors.Is(err, ErrWorkspaceRevertInProgress) {
+		t.Fatalf("turn-start lease during revert error = %v, want ErrWorkspaceRevertInProgress", err)
+	}
+	if _, err := server.reserveWorkspaceRevert(ctx, st, root); !errors.Is(err, ErrWorkspaceRevertInProgress) {
+		t.Fatalf("second workspace reservation error = %v, want ErrWorkspaceRevertInProgress", err)
+	}
+	release()
+	release()
+	startRelease, err := server.acquireTurnStartLease()
+	if err != nil {
+		t.Fatalf("turn-start lease after release: %v", err)
+	}
+	startRelease()
+	startRelease()
+
+	closed := newRuntimeTestStore(t)
+	if err := closed.Close(); err != nil {
+		t.Fatalf("Close store: %v", err)
+	}
+	if _, err := server.reserveWorkspaceRevert(ctx, closed, root); !errors.Is(err, store.ErrStoreClosed) {
+		t.Fatalf("closed-store reservation error = %v, want ErrStoreClosed", err)
+	}
+
+	releaseUncoordinated, err := acquireRuntimeTurnStartLease(&runtimeErrorCaptureNotifier{})
+	if err != nil {
+		t.Fatalf("uncoordinated runtime lease: %v", err)
+	}
+	releaseUncoordinated()
+
+	entryStore := newRuntimeTestStore(t)
+	entryThread, err := entryStore.CreateThread(ctx, store.CreateThreadRequest{Workspace: root})
+	if err != nil {
+		t.Fatalf("CreateThread entry-point fixture: %v", err)
+	}
+	processService, err := toolprocess.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService process fixture: %v", err)
+	}
+	entryServer := readyServer(WithStore(entryStore), WithProcess(processService))
+	releaseEntryPoints, err := entryServer.reserveWorkspaceRevert(ctx, entryStore, root)
+	if err != nil {
+		t.Fatalf("reserve entry-point workspace: %v", err)
+	}
+	defer releaseEntryPoints()
+	compact := entryServer.HandleRequest(ctx, request("thread/compact/start", map[string]any{"threadId": entryThread.ID}))
+	if compact.Error == nil || compact.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("compact during revert response = %+v", compact)
+	}
+	shell := entryServer.HandleRequest(ctx, request("thread/shellCommand", map[string]any{
+		"threadId": entryThread.ID,
+		"command":  "printf blocked",
+	}))
+	if shell.Error == nil || shell.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("shell command during revert response = %+v", shell)
 	}
 }
 

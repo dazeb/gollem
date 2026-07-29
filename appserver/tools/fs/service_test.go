@@ -101,6 +101,195 @@ func TestServiceApprovalAndAuditForMutations(t *testing.T) {
 	}
 }
 
+func TestServiceApprovalDenialCoversEveryMutationKind(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t, WithApproval(func(context.Context, Operation) error {
+		return errors.New("denied")
+	}))
+	if err := os.WriteFile(filepath.Join(svc.Root(), "source.txt"), []byte("source"), 0o644); err != nil {
+		t.Fatalf("WriteFile source: %v", err)
+	}
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{"write", func() error { return svc.WriteFile(ctx, "written.txt", []byte("written"), 0o644) }},
+		{"create directory", func() error { return svc.CreateDirectory(ctx, "created") }},
+		{"copy", func() error { return svc.Copy(ctx, "source.txt", "copied.txt") }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.run(); !errors.Is(err, ErrApprovalDenied) {
+				t.Fatalf("denied mutation error = %v, want ErrApprovalDenied", err)
+			}
+		})
+	}
+}
+
+func TestServiceRunApprovedMutationScopesExactOperations(t *testing.T) {
+	ctx := context.Background()
+	var approvals []Operation
+	svc := newTestService(t, WithApproval(func(_ context.Context, op Operation) error {
+		approvals = append(approvals, op)
+		return nil
+	}))
+	if err := os.WriteFile(filepath.Join(svc.Root(), "remove.txt"), []byte("remove"), 0o644); err != nil {
+		t.Fatalf("WriteFile remove fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(svc.Root(), "source.txt"), []byte("copy"), 0o640); err != nil {
+		t.Fatalf("WriteFile copy fixture: %v", err)
+	}
+	tests := []struct {
+		name string
+		op   Operation
+		run  func(context.Context) error
+	}{
+		{
+			name: "write",
+			op:   Operation{Kind: OperationWriteFile, Path: "written.txt"},
+			run: func(mutationCtx context.Context) error {
+				return svc.WriteFile(mutationCtx, "written.txt", []byte("written"), 0o600)
+			},
+		},
+		{
+			name: "create directory",
+			op:   Operation{Kind: OperationCreateDirectory, Path: "created"},
+			run: func(mutationCtx context.Context) error {
+				return svc.CreateDirectory(mutationCtx, "created")
+			},
+		},
+		{
+			name: "copy",
+			op:   Operation{Kind: OperationCopy, Path: "source.txt", Destination: "copied.txt"},
+			run: func(mutationCtx context.Context) error {
+				return svc.Copy(mutationCtx, "source.txt", "copied.txt")
+			},
+		},
+		{
+			name: "remove",
+			op:   Operation{Kind: OperationRemove, Path: "remove.txt", Destructive: true},
+			run: func(mutationCtx context.Context) error {
+				return svc.Remove(mutationCtx, "remove.txt")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			approvedBefore := len(approvals)
+			if err := svc.RunApprovedMutation(ctx, test.op, func(mutationCtx context.Context) error {
+				if len(approvals) != approvedBefore+1 || approvals[len(approvals)-1] != test.op {
+					t.Fatalf("approval did not precede mutation: %+v", approvals)
+				}
+				return test.run(mutationCtx)
+			}); err != nil {
+				t.Fatalf("RunApprovedMutation: %v", err)
+			}
+		})
+	}
+	if data, err := os.ReadFile(filepath.Join(svc.Root(), "written.txt")); err != nil || string(data) != "written" {
+		t.Fatalf("written file = %q, error %v", data, err)
+	}
+	if info, err := os.Stat(filepath.Join(svc.Root(), "created")); err != nil || !info.IsDir() {
+		t.Fatalf("created directory = %+v, error %v", info, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(svc.Root(), "copied.txt")); err != nil || string(data) != "copy" {
+		t.Fatalf("copied file = %q, error %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(svc.Root(), "remove.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed file stat error = %v", err)
+	}
+}
+
+func TestServiceRunApprovedMutationFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	var nilService *Service
+	if err := nilService.RunApprovedMutation(ctx, Operation{}, func(context.Context) error { return nil }); err == nil {
+		t.Fatal("nil service accepted approved mutation")
+	}
+	svc := newTestService(t)
+	if err := svc.RunApprovedMutation(ctx, Operation{Kind: OperationWriteFile, Path: "notes.txt"}, nil); err == nil {
+		t.Fatal("nil callback was accepted")
+	}
+	if err := svc.RunApprovedMutation(ctx, Operation{Kind: OperationReadFile, Path: "notes.txt"}, func(context.Context) error { return nil }); !errors.Is(err, ErrInvalidMutationScope) {
+		t.Fatalf("read operation scope error = %v, want ErrInvalidMutationScope", err)
+	}
+	if err := svc.RunApprovedMutation(ctx, Operation{Kind: OperationCopy, Path: "source.txt"}, func(context.Context) error { return nil }); err == nil {
+		t.Fatal("copy scope without destination was accepted")
+	}
+	if err := svc.RunApprovedMutation(ctx, Operation{Kind: OperationCopy, Path: "source.txt", Destination: "../outside.txt"}, func(context.Context) error { return nil }); !errors.Is(err, ErrPathOutsideRoot) {
+		t.Fatalf("outside copy destination error = %v, want ErrPathOutsideRoot", err)
+	}
+	if err := svc.RunApprovedMutation(ctx, Operation{Kind: OperationWriteFile, Path: "../outside.txt"}, func(context.Context) error { return nil }); !errors.Is(err, ErrPathOutsideRoot) {
+		t.Fatalf("outside scope error = %v, want ErrPathOutsideRoot", err)
+	}
+
+	denied := newTestService(t, WithApproval(func(context.Context, Operation) error {
+		return errors.New("denied")
+	}))
+	if err := denied.RunApprovedMutation(ctx, Operation{Kind: OperationWriteFile, Path: "notes.txt"}, func(context.Context) error {
+		return errors.New("callback must not run")
+	}); !errors.Is(err, ErrApprovalDenied) {
+		t.Fatalf("denied scope error = %v, want ErrApprovalDenied", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := svc.RunApprovedMutation(canceled, Operation{Kind: OperationWriteFile, Path: "notes.txt"}, func(context.Context) error {
+		return nil
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled scope error = %v, want context.Canceled", err)
+	}
+	approvalCtx, approvalCancel := context.WithCancel(ctx)
+	cancelDuringApproval := newTestService(t, WithApproval(func(context.Context, Operation) error {
+		approvalCancel()
+		return nil
+	}))
+	if err := cancelDuringApproval.RunApprovedMutation(approvalCtx, Operation{Kind: OperationWriteFile, Path: "notes.txt"}, func(context.Context) error {
+		return nil
+	}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("post-approval cancellation error = %v, want context.Canceled", err)
+	}
+	callbackErr := errors.New("callback failed")
+	if err := svc.RunApprovedMutation(ctx, Operation{Kind: OperationWriteFile, Path: "notes.txt"}, func(context.Context) error {
+		return callbackErr
+	}); !errors.Is(err, callbackErr) {
+		t.Fatalf("callback error = %v, want %v", err, callbackErr)
+	}
+}
+
+func TestServiceApprovedMutationScopeIsOneShot(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	op := Operation{Kind: OperationWriteFile, Path: "notes.txt"}
+	var retained context.Context
+	if err := svc.RunApprovedMutation(ctx, op, func(mutationCtx context.Context) error {
+		retained = mutationCtx
+		if err := svc.Remove(mutationCtx, "notes.txt"); !errors.Is(err, ErrInvalidMutationScope) {
+			t.Fatalf("mismatched operation error = %v, want ErrInvalidMutationScope", err)
+		}
+		if err := svc.CreateDirectory(mutationCtx, "created"); !errors.Is(err, ErrInvalidMutationScope) {
+			t.Fatalf("mismatched directory error = %v, want ErrInvalidMutationScope", err)
+		}
+		if err := svc.Copy(mutationCtx, "source.txt", "copied.txt"); !errors.Is(err, ErrInvalidMutationScope) {
+			t.Fatalf("mismatched copy error = %v, want ErrInvalidMutationScope", err)
+		}
+		if err := svc.WriteFile(mutationCtx, "notes.txt", []byte("first"), 0o644); err != nil {
+			return err
+		}
+		if err := svc.WriteFile(mutationCtx, "notes.txt", []byte("second"), 0o644); !errors.Is(err, ErrInvalidMutationScope) {
+			t.Fatalf("reused operation error = %v, want ErrInvalidMutationScope", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("RunApprovedMutation: %v", err)
+	}
+	if err := svc.WriteFile(retained, "notes.txt", []byte("late"), 0o644); !errors.Is(err, ErrInvalidMutationScope) {
+		t.Fatalf("retained scope error = %v, want ErrInvalidMutationScope", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(svc.Root(), "notes.txt")); err != nil || string(data) != "first" {
+		t.Fatalf("one-shot content = %q, error %v", data, err)
+	}
+}
+
 func TestServiceRevertFileRestoresExactStateAndMode(t *testing.T) {
 	ctx := context.Background()
 	var events []AuditEvent
@@ -423,6 +612,9 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 	if err := verifyExactFileState(filepath.Join(rootPath, "missing.txt"), ExactFileState{Exists: true}); !errors.Is(err, ErrExactStateMismatch) {
 		t.Fatalf("missing unrooted exact state error = %v", err)
 	}
+	if err := verifyExactFileState(filepath.Join(rootPath, "notes.txt"), ExactFileState{}); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("unexpected existing unrooted file error = %v", err)
+	}
 	if err := os.Symlink("notes.txt", filepath.Join(rootPath, "linked.txt")); err != nil {
 		t.Fatalf("Symlink: %v", err)
 	}
@@ -432,8 +624,14 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 	if err := rejectSymlinkComponents(rootPath, filepath.Join(rootPath, "missing", "file.txt")); err != nil {
 		t.Fatalf("missing unrooted path components: %v", err)
 	}
+	if err := rejectSymlinkComponents(rootPath, rootPath); err != nil {
+		t.Fatalf("root unrooted path component: %v", err)
+	}
 	if err := rejectRootSymlinkComponents(root, "missing/file.txt"); err != nil {
 		t.Fatalf("missing rooted path components: %v", err)
+	}
+	if err := rejectRootSymlinkComponents(root, "."); err != nil {
+		t.Fatalf("root rooted path component: %v", err)
 	}
 	if err := rejectRootSymlinkComponents(root, "linked.txt"); !errors.Is(err, ErrExactRevertSymlink) {
 		t.Fatalf("rooted symlink component error = %v", err)
@@ -487,6 +685,12 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 	}
 	if got, _ := os.ReadFile(filepath.Join(rootPath, "occupied.txt")); string(got) != "occupied" {
 		t.Fatalf("occupied destination changed to %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(rootPath, "not-a-directory"), []byte("file"), 0o600); err != nil {
+		t.Fatalf("WriteFile regular parent: %v", err)
+	}
+	if _, err := unusedRootPath(root, "not-a-directory", ".gollem-revert-"); err == nil {
+		t.Fatal("temporary path below regular file was allocated")
 	}
 	if err := os.Mkdir(filepath.Join(rootPath, "concurrent-dir"), 0o755); err != nil {
 		t.Fatalf("Mkdir concurrent directory: %v", err)
@@ -815,6 +1019,16 @@ func TestServiceWatchRejectsUnsafeRequests(t *testing.T) {
 }
 
 func TestExactRootReplacementRestoresQuarantineOnFailure(t *testing.T) {
+	t.Run("successful install removes quarantine", func(t *testing.T) {
+		ops := &scriptedExactRootOps{}
+		if err := installRootReplacement(ops, "temp", "notes.txt", "quarantine"); err != nil {
+			t.Fatalf("install replacement: %v", err)
+		}
+		if got := strings.Join(ops.calls, ","); got != "link temp notes.txt,remove quarantine" {
+			t.Fatalf("successful replacement calls = %q", got)
+		}
+	})
+
 	t.Run("failed install restores original", func(t *testing.T) {
 		ops := &scriptedExactRootOps{
 			linkErrors: []error{errors.New("install failed"), nil},
@@ -840,6 +1054,48 @@ func TestExactRootReplacementRestoresQuarantineOnFailure(t *testing.T) {
 		}
 	})
 
+	t.Run("failed cleanup rolls back installed file", func(t *testing.T) {
+		ops := &scriptedExactRootOps{
+			removeErrors: []error{errors.New("cleanup failed"), nil, nil},
+		}
+		if err := installRootReplacement(ops, "temp", "notes.txt", "quarantine"); err == nil {
+			t.Fatal("failed cleanup returned nil")
+		}
+		want := "link temp notes.txt,remove quarantine,remove notes.txt,link quarantine notes.txt,remove quarantine"
+		if got := strings.Join(ops.calls, ","); got != want {
+			t.Fatalf("cleanup rollback calls = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("failed cleanup preserves prior quarantine when installed file cannot be removed", func(t *testing.T) {
+		ops := &scriptedExactRootOps{
+			removeErrors: []error{errors.New("cleanup failed"), errors.New("installed file busy")},
+		}
+		if err := installRootReplacement(ops, "temp", "notes.txt", "quarantine"); err == nil ||
+			!strings.Contains(err.Error(), `preserved prior file at "quarantine"`) {
+			t.Fatalf("cleanup preservation error = %v", err)
+		}
+		want := "link temp notes.txt,remove quarantine,remove notes.txt"
+		if got := strings.Join(ops.calls, ","); got != want {
+			t.Fatalf("cleanup preservation calls = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("failed cleanup reports failed restoration", func(t *testing.T) {
+		ops := &scriptedExactRootOps{
+			linkErrors:   []error{nil, errors.New("restore failed")},
+			removeErrors: []error{errors.New("cleanup failed"), nil},
+		}
+		if err := installRootReplacement(ops, "temp", "notes.txt", "quarantine"); err == nil ||
+			!strings.Contains(err.Error(), `preserved at "quarantine"`) {
+			t.Fatalf("cleanup restore error = %v", err)
+		}
+		want := "link temp notes.txt,remove quarantine,remove notes.txt,link quarantine notes.txt"
+		if got := strings.Join(ops.calls, ","); got != want {
+			t.Fatalf("cleanup restore calls = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("failed quarantine removal restores original", func(t *testing.T) {
 		ops := &scriptedExactRootOps{
 			removeErrors: []error{errors.New("remove failed"), nil},
@@ -849,6 +1105,34 @@ func TestExactRootReplacementRestoresQuarantineOnFailure(t *testing.T) {
 		}
 		if got := strings.Join(ops.calls, ","); got != "remove quarantine,link quarantine notes.txt,remove quarantine" {
 			t.Fatalf("removal recovery calls = %q", got)
+		}
+	})
+
+	t.Run("failed quarantine removal preserves bytes when restoration fails", func(t *testing.T) {
+		ops := &scriptedExactRootOps{
+			linkErrors:   []error{errors.New("restore occupied")},
+			removeErrors: []error{errors.New("remove failed")},
+		}
+		if err := removeQuarantinedRootFile(ops, "quarantine", "notes.txt"); err == nil ||
+			!strings.Contains(err.Error(), `preserved at "quarantine"`) {
+			t.Fatalf("failed removal restoration error = %v", err)
+		}
+		want := "remove quarantine,link quarantine notes.txt"
+		if got := strings.Join(ops.calls, ","); got != want {
+			t.Fatalf("failed removal restoration calls = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("failed restored-link cleanup reports the preserved link", func(t *testing.T) {
+		ops := &scriptedExactRootOps{
+			removeErrors: []error{errors.New("cleanup failed")},
+		}
+		if err := restoreQuarantinedRootFile(ops, "quarantine", "notes.txt"); err == nil ||
+			!strings.Contains(err.Error(), "remove restored quarantine link") {
+			t.Fatalf("restored-link cleanup error = %v", err)
+		}
+		if got := strings.Join(ops.calls, ","); got != "link quarantine notes.txt,remove quarantine" {
+			t.Fatalf("restored-link cleanup calls = %q", got)
 		}
 	})
 }
