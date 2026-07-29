@@ -516,6 +516,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadGoalSetResponse", Type: reflect.TypeFor[ThreadGoalSetResponse]()},
 		{Name: "ThreadGoalStatus", Type: reflect.TypeFor[ThreadGoalStatus]()},
 		{Name: "ThreadGoalUpdatedNotification", Type: reflect.TypeFor[ThreadGoalUpdatedNotification]()},
+		{Name: "ThreadHistoryRollbackParams", Type: reflect.TypeFor[ThreadHistoryRollbackParams]()},
+		{Name: "ThreadHistoryRollbackRecord", Type: reflect.TypeFor[ThreadHistoryRollbackRecord]()},
+		{Name: "ThreadHistoryRollbackResult", Type: reflect.TypeFor[ThreadHistoryRollbackResult]()},
 		{Name: "ThreadId", Type: reflect.TypeFor[ThreadId]()},
 		{Name: "ThreadLifecycleStatus", Type: reflect.TypeFor[ThreadLifecycleStatus]()},
 		{Name: "ThreadListCwdFilter", Type: reflect.TypeFor[ThreadListCwdFilter]()},
@@ -1239,6 +1242,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["ThreadLifecycleStatus"] = stringEnumSchema(
 		string(ThreadLifecycleActive), string(ThreadLifecycleArchived), string(ThreadLifecycleDeleted),
 	)
+	setSchemaIntegerMinimum(schemas["ThreadHistoryRollbackParams"].(Schema), 1, "numTurns")
 	schemas["ThreadGoalStatus"] = stringEnumSchema(
 		string(ThreadGoalActive), string(ThreadGoalPaused), string(ThreadGoalBlocked),
 		string(ThreadGoalUsageLimited), string(ThreadGoalBudgetLimited), string(ThreadGoalComplete),

@@ -75,6 +75,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "thread/name/set", Surface: SurfaceClientRequest, Params: []string{"ThreadSetNameParams"}, Result: []string{"ThreadSetNameResponse"}},
 	{Method: "thread/name/updated", Surface: SurfaceServerNotification, Params: []string{"ThreadNameUpdatedNotification"}},
 	{Method: "thread/read", Surface: SurfaceClientRequest, Params: []string{"ThreadReadParams"}, Result: []string{"ThreadReadResult"}},
+	{Method: "thread/rollback", Surface: SurfaceClientRequest, Params: []string{"ThreadHistoryRollbackParams"}, Result: []string{"ThreadHistoryRollbackResult"}},
 	{Method: "thread/start", Surface: SurfaceClientRequest, Params: []string{"ThreadRunStartParams"}, Result: []string{"ThreadRunStartResult"}},
 	{Method: "thread/started", Surface: SurfaceServerNotification, Params: []string{"RuntimeThreadNotification"}},
 	{Method: "thread/tokenUsage/updated", Surface: SurfaceServerNotification, Params: []string{"ThreadTokenUsageUpdatedNotification"}},

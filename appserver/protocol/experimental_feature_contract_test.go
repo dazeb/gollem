@@ -41,11 +41,11 @@ func TestExperimentalFeatureContractsRemainStandalone(t *testing.T) {
 			t.Fatalf("%s = %#v, %v; want implemented client request", methodName, method, ok)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 551 {
-		t.Fatalf("definition count = %d, want 551", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 554 {
+		t.Fatalf("definition count = %d, want 554", got)
 	}
-	if len(Methods()) != 224 || len(WireTypeBindings()) != 70 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("counts = %d/%d/%d, want 224/70/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
+	if len(Methods()) != 224 || len(WireTypeBindings()) != 71 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("counts = %d/%d/%d, want 224/71/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
 	}
 }
 

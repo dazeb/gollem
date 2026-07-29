@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -577,12 +578,24 @@ func TestServerThreadRollbackHandler(t *testing.T) {
 	if _, err := st.AppendItem(ctx, store.AppendItemRequest{ThreadID: thread.ID, TurnID: firstTurn.ID, Kind: "message", Payload: json.RawMessage(`{"role":"user","text":"first"}`)}); err != nil {
 		t.Fatalf("AppendItem first: %v", err)
 	}
+	if _, err := st.StartTurn(ctx, firstTurn.ID); err != nil {
+		t.Fatalf("StartTurn first: %v", err)
+	}
+	if _, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{ID: firstTurn.ID, Status: store.TurnCompleted}); err != nil {
+		t.Fatalf("CompleteTurn first: %v", err)
+	}
 	secondTurn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID, Input: json.RawMessage(`{"prompt":"second"}`)})
 	if err != nil {
 		t.Fatalf("CreateTurn second: %v", err)
 	}
 	if _, err := st.AppendItem(ctx, store.AppendItemRequest{ThreadID: thread.ID, TurnID: secondTurn.ID, Kind: "message", Payload: json.RawMessage(`{"role":"user","text":"second"}`)}); err != nil {
 		t.Fatalf("AppendItem second: %v", err)
+	}
+	if _, err := st.StartTurn(ctx, secondTurn.ID); err != nil {
+		t.Fatalf("StartTurn second: %v", err)
+	}
+	if _, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{ID: secondTurn.ID, Status: store.TurnCompleted}); err != nil {
+		t.Fatalf("CompleteTurn second: %v", err)
 	}
 
 	server := readyServer(WithStore(st))
@@ -602,19 +615,22 @@ func TestServerThreadRollbackHandler(t *testing.T) {
 	if notice.Summary != threadRollbackDeprecationSummary || notice.Details != nil {
 		t.Fatalf("deprecation notice = %#v", notice)
 	}
-	var rollback struct {
-		Thread struct {
-			ID    string        `json:"id"`
-			Name  *string       `json:"name"`
-			Turns []*store.Turn `json:"turns"`
-		} `json:"thread"`
-	}
+	var rollback protocol.ThreadHistoryRollbackResult
 	decodeResult(t, rollbackResp, &rollback)
 	if rollback.Thread.ID != thread.ID || rollback.Thread.Name == nil || *rollback.Thread.Name != "Rollback Title" {
 		t.Fatalf("rollback thread identity = %#v", rollback.Thread)
 	}
 	if len(rollback.Thread.Turns) != 1 || rollback.Thread.Turns[0].ID != firstTurn.ID {
 		t.Fatalf("rollback turns = %#v", rollback.Thread.Turns)
+	}
+	if !reflect.DeepEqual(rollback.RemovedTurnIDs, []string{secondTurn.ID}) {
+		t.Fatalf("removed turn ids = %#v", rollback.RemovedTurnIDs)
+	}
+	if rollback.Marker.Kind != "thread_rollback" || rollback.Marker.ThreadID != thread.ID {
+		t.Fatalf("rollback marker = %#v", rollback.Marker)
+	}
+	if rollback.WorkspaceEffectsReverted {
+		t.Fatal("history rollback claimed to revert workspace effects")
 	}
 	remainingTurns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: thread.ID})
 	if err != nil {
@@ -648,12 +664,46 @@ func TestServerThreadRollbackHandler(t *testing.T) {
 		t.Fatalf("invalid rollback error = %#v", invalidResp.Error)
 	}
 
+	activeThread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Active"})
+	if err != nil {
+		t.Fatalf("CreateThread active: %v", err)
+	}
+	activeTurn, err := st.CreateTurn(ctx, store.CreateTurnRequest{
+		ThreadID: activeThread.ID,
+		Input:    json.RawMessage(`{"prompt":"active"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateTurn active: %v", err)
+	}
+	activeResp := server.HandleRequest(ctx, request("thread/rollback", map[string]any{
+		"threadId": activeThread.ID,
+		"numTurns": 1,
+	}))
+	if activeResp.Error == nil ||
+		activeResp.Error.Code != protocol.CodeInvalidRequest ||
+		activeResp.Error.Message != "cannot roll back thread history while a turn is active" {
+		t.Fatalf("active rollback error = %#v", activeResp.Error)
+	}
+	if events := server.DrainNotifications(); len(events) != 0 {
+		t.Fatalf("rejected active rollback emitted notifications: %#v", events)
+	}
+	if loaded, err := st.GetTurn(ctx, activeTurn.ID); err != nil || loaded.ID != activeTurn.ID {
+		t.Fatalf("active turn was pruned: turn=%#v err=%v", loaded, err)
+	}
+
 	tuiThread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "TUI"})
 	if err != nil {
 		t.Fatalf("CreateThread tui: %v", err)
 	}
-	if _, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: tuiThread.ID, Input: json.RawMessage(`{"prompt":"tui"}`)}); err != nil {
+	tuiTurn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: tuiThread.ID, Input: json.RawMessage(`{"prompt":"tui"}`)})
+	if err != nil {
 		t.Fatalf("CreateTurn tui: %v", err)
+	}
+	if _, err := st.StartTurn(ctx, tuiTurn.ID); err != nil {
+		t.Fatalf("StartTurn tui: %v", err)
+	}
+	if _, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{ID: tuiTurn.ID, Status: store.TurnCompleted}); err != nil {
+		t.Fatalf("CompleteTurn tui: %v", err)
 	}
 	tuiServer := NewServer(WithStore(st))
 	_ = tuiServer.HandleRequest(ctx, request("initialize", protocol.InitializeParams{ClientInfo: protocol.ClientInfo{Name: "codex-tui", Version: "1.0.0"}}))

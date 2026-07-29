@@ -32,6 +32,10 @@ func TestRuntimeClientBindingsAreExact(t *testing.T) {
 			Method: "thread/started", Surface: SurfaceServerNotification,
 			Params: []string{"RuntimeThreadNotification"},
 		},
+		"thread/rollback": {
+			Method: "thread/rollback", Surface: SurfaceClientRequest,
+			Params: []string{"ThreadHistoryRollbackParams"}, Result: []string{"ThreadHistoryRollbackResult"},
+		},
 		"turn/completed": {
 			Method: "turn/completed", Surface: SurfaceServerNotification,
 			Params: []string{"RuntimeTurnNotification"},
@@ -80,6 +84,9 @@ func TestRuntimeClientSchemasAreClosedAndCredentialFree(t *testing.T) {
 		"RuntimeModelParams",
 		"RuntimeThreadNotification",
 		"RuntimeTurnNotification",
+		"ThreadHistoryRollbackParams",
+		"ThreadHistoryRollbackRecord",
+		"ThreadHistoryRollbackResult",
 		"ThreadRunStartParams",
 		"ThreadRunStartResult",
 		"TurnRunInterruptParams",
@@ -99,9 +106,12 @@ func TestRuntimeClientSchemasAreClosedAndCredentialFree(t *testing.T) {
 	}
 
 	required := map[string][]string{
-		"ModelCatalogListResponse":  {"data", "nextCursor"},
-		"ProviderListResponse":      {"data", "providers"},
-		"ThreadRunStartResult":      {"thread", "turn"},
+		"ModelCatalogListResponse": {"data", "nextCursor"},
+		"ProviderListResponse":     {"data", "providers"},
+		"ThreadRunStartResult":     {"thread", "turn"},
+		"ThreadHistoryRollbackResult": {
+			"thread", "removedTurnIds", "marker", "workspaceEffectsReverted",
+		},
 		"TurnRunStartResult":        {"thread", "turn"},
 		"TurnRunInterruptResult":    {"ok", "turnId"},
 		"RuntimeThreadNotification": {"threadId", "at"},
@@ -120,6 +130,7 @@ func TestRuntimeClientSchemasAreClosedAndCredentialFree(t *testing.T) {
 		"ModelCatalogListParams",
 		"ProviderListParams",
 		"RuntimeModelParams",
+		"ThreadHistoryRollbackParams",
 		"ThreadRunStartParams",
 		"TurnRunInterruptParams",
 		"TurnRunStartParams",

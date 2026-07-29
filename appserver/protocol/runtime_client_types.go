@@ -152,6 +152,50 @@ type ThreadRunStartResult struct {
 	Turn   TurnRecord   `json:"turn"`
 }
 
+// ThreadHistoryRollbackParams is Gollem's typed history-only rollback request.
+// The legacy id alias remains available for protocol-v1 clients, while typed
+// clients use the required threadId field.
+type ThreadHistoryRollbackParams struct {
+	ThreadID string `json:"threadId"`
+	NumTurns int    `json:"numTurns"`
+	ID       string `json:"id,omitempty"`
+}
+
+func (p ThreadHistoryRollbackParams) EffectiveThreadID() string {
+	if p.ThreadID != "" {
+		return p.ThreadID
+	}
+	return p.ID
+}
+
+// ThreadHistoryRollbackRecord preserves the existing rollback response shape,
+// including the legacy nullable name alias and fully loaded remaining turns.
+type ThreadHistoryRollbackRecord struct {
+	ID                 string                `json:"id"`
+	Title              string                `json:"title,omitempty"`
+	Workspace          string                `json:"workspace,omitempty"`
+	Status             ThreadLifecycleStatus `json:"status"`
+	ForkedFromThreadID string                `json:"forkedFromThreadId,omitempty"`
+	Settings           map[string]any        `json:"settings,omitempty"`
+	Metadata           map[string]any        `json:"metadata,omitempty"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	UpdatedAt          time.Time             `json:"updatedAt"`
+	ArchivedAt         time.Time             `json:"archivedAt,omitempty"`
+	DeletedAt          time.Time             `json:"deletedAt,omitempty"`
+	Name               *string               `json:"name"`
+	Turns              []TurnRecord          `json:"turns" jsonschema:"nonnullable=true"`
+}
+
+// ThreadHistoryRollbackResult is explicit that this operation prunes durable
+// history only. It never claims to undo workspace, process, Git, or provider
+// side effects.
+type ThreadHistoryRollbackResult struct {
+	Thread                   ThreadHistoryRollbackRecord `json:"thread"`
+	RemovedTurnIDs           []string                    `json:"removedTurnIds" jsonschema:"nonnullable=true"`
+	Marker                   TimelineItem                `json:"marker"`
+	WorkspaceEffectsReverted bool                        `json:"workspaceEffectsReverted"`
+}
+
 type TurnRunStartParams struct {
 	ID       string         `json:"id,omitempty"`
 	ThreadID string         `json:"threadId,omitempty"`

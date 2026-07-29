@@ -3477,6 +3477,35 @@ export type ThreadGoalUpdatedNotification = {
   "turnId": string | null;
 };
 
+export type ThreadHistoryRollbackParams = {
+  "id"?: string;
+  "numTurns": number;
+  "threadId": string;
+};
+
+export type ThreadHistoryRollbackRecord = {
+  "archivedAt"?: string;
+  "createdAt": string;
+  "deletedAt"?: string;
+  "forkedFromThreadId"?: string;
+  "id": string;
+  "metadata"?: Record<string, unknown> | null;
+  "name": string | null;
+  "settings"?: Record<string, unknown> | null;
+  "status": ThreadLifecycleStatus;
+  "title"?: string;
+  "turns": Array<TurnRecord>;
+  "updatedAt": string;
+  "workspace"?: string;
+};
+
+export type ThreadHistoryRollbackResult = {
+  "marker": TimelineItem;
+  "removedTurnIds": Array<string>;
+  "thread": ThreadHistoryRollbackRecord;
+  "workspaceEffectsReverted": boolean;
+};
+
 export type ThreadId = string;
 
 export type ThreadItem = {
@@ -4330,6 +4359,7 @@ export const wireTypeBindings = [
   { "method": "thread/name/set", "surface": "client-request", "params": ["ThreadSetNameParams"], "result": ["ThreadSetNameResponse"] },
   { "method": "thread/name/updated", "surface": "server-notification", "params": ["ThreadNameUpdatedNotification"] },
   { "method": "thread/read", "surface": "client-request", "params": ["ThreadReadParams"], "result": ["ThreadReadResult"] },
+  { "method": "thread/rollback", "surface": "client-request", "params": ["ThreadHistoryRollbackParams"], "result": ["ThreadHistoryRollbackResult"] },
   { "method": "thread/start", "surface": "client-request", "params": ["ThreadRunStartParams"], "result": ["ThreadRunStartResult"] },
   { "method": "thread/started", "surface": "server-notification", "params": ["RuntimeThreadNotification"] },
   { "method": "thread/tokenUsage/updated", "surface": "server-notification", "params": ["ThreadTokenUsageUpdatedNotification"] },
@@ -4403,6 +4433,7 @@ export interface MethodParamsByName {
   "thread/name/set": ThreadSetNameParams;
   "thread/name/updated": ThreadNameUpdatedNotification;
   "thread/read": ThreadReadParams;
+  "thread/rollback": ThreadHistoryRollbackParams;
   "thread/start": ThreadRunStartParams;
   "thread/started": RuntimeThreadNotification;
   "thread/tokenUsage/updated": ThreadTokenUsageUpdatedNotification;
@@ -4456,6 +4487,7 @@ export interface MethodResultsByName {
   "thread/metadata/update": ThreadMetadataUpdateResult;
   "thread/name/set": ThreadSetNameResponse;
   "thread/read": ThreadReadResult;
+  "thread/rollback": ThreadHistoryRollbackResult;
   "thread/start": ThreadRunStartResult;
   "thread/unarchive": ThreadUnarchiveResult;
   "thread/unsubscribe": ThreadUnsubscribeResponse;
