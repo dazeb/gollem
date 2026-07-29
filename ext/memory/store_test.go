@@ -25,6 +25,7 @@ func TestMemoryStore_PutGet(t *testing.T) {
 	}
 	if doc == nil {
 		t.Fatal("expected document, got nil")
+		return
 	}
 	if doc.Key != "user1" {
 		t.Errorf("expected key 'user1', got %q", doc.Key)
@@ -194,6 +195,7 @@ func TestMemoryStore_NamespaceIsolation(t *testing.T) {
 	doc1, _ := store.Get(ctx, ns1, "key1")
 	if doc1 == nil {
 		t.Fatal("expected document in ns1")
+		return
 	}
 	if doc1.Value["scope"] != "users" {
 		t.Errorf("expected 'users', got %v", doc1.Value["scope"])
@@ -203,6 +205,7 @@ func TestMemoryStore_NamespaceIsolation(t *testing.T) {
 	doc2, _ := store.Get(ctx, ns2, "key1")
 	if doc2 == nil {
 		t.Fatal("expected document in ns2")
+		return
 	}
 	if doc2.Value["scope"] != "settings" {
 		t.Errorf("expected 'settings', got %v", doc2.Value["scope"])
@@ -536,6 +539,7 @@ func TestSQLiteStore_Persistence(t *testing.T) {
 	}
 	if doc == nil {
 		t.Fatal("expected document to survive close and reopen")
+		return
 	}
 	if doc.Value["data"] != "survives restart" {
 		t.Errorf("expected 'survives restart', got %v", doc.Value["data"])

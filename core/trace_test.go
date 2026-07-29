@@ -79,6 +79,7 @@ func TestTrace_WithToolCalls(t *testing.T) {
 	trace := result.Trace
 	if trace == nil {
 		t.Fatal("expected non-nil trace")
+		return
 	}
 
 	hasToolCall := false

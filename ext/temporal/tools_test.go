@@ -133,6 +133,7 @@ func TestTemporalizeTool_RunStateSnapshotParity(t *testing.T) {
 			snap := rc.RunStateSnapshot()
 			if snap == nil {
 				t.Fatal("expected run state snapshot in temporal tool context")
+				return "", nil
 			}
 			if snap.Prompt != "snapshot prompt" {
 				t.Fatalf("unexpected prompt %q", snap.Prompt)

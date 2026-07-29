@@ -1063,6 +1063,7 @@ func TestRunStream_IncludesToolsetTools(t *testing.T) {
 	params := calls[0].Parameters
 	if params == nil {
 		t.Fatal("expected parameters")
+		return
 	}
 	found := false
 	for _, td := range params.FunctionTools {
@@ -1163,6 +1164,7 @@ func TestRunStream_AppliesToolChoice(t *testing.T) {
 	settings := calls[0].Settings
 	if settings == nil {
 		t.Fatal("expected settings to be non-nil")
+		return
 	}
 	if settings.ToolChoice == nil {
 		t.Error("expected tool choice to be set in RunStream settings")

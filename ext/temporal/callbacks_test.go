@@ -50,6 +50,7 @@ func TestTemporalAgent_BuildCallbackRunContext_PreservesRunStateSnapshot(t *test
 	snap := rc.RunStateSnapshot()
 	if snap == nil {
 		t.Fatal("expected callback run context snapshot")
+		return
 	}
 	if snap.Prompt != "inspect snapshot" {
 		t.Fatalf("unexpected prompt %q", snap.Prompt)
