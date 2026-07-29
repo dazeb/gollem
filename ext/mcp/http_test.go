@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,8 +20,6 @@ type mockHTTPServer struct {
 	resourceResults   map[string]*ReadResourceResult
 	prompts           []Prompt
 	promptResults     map[string]*PromptResult
-	eventCh           chan string
-	ready             chan struct{}
 }
 
 func newMockHTTPServer() *mockHTTPServer {
@@ -30,8 +27,6 @@ func newMockHTTPServer() *mockHTTPServer {
 		toolResults:     make(map[string]*ToolResult),
 		resourceResults: make(map[string]*ReadResourceResult),
 		promptResults:   make(map[string]*PromptResult),
-		eventCh:         make(chan string, 100),
-		ready:           make(chan struct{}),
 	}
 }
 
@@ -43,43 +38,10 @@ func (m *mockHTTPServer) handler() http.Handler {
 
 func (m *mockHTTPServer) handle(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet:
-		m.handleStream(w, r)
 	case http.MethodPost:
 		m.handlePost(w, r)
-	case http.MethodDelete:
-		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (m *mockHTTPServer) handleStream(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Mcp-Session-Id", "session-123")
-
-	select {
-	case <-m.ready:
-	default:
-		close(m.ready)
-	}
-
-	for {
-		select {
-		case payload := <-m.eventCh:
-			fmt.Fprintf(w, "event: message\ndata: %s\n\n", payload)
-			flusher.Flush()
-		case <-r.Context().Done():
-			return
-		}
 	}
 }
 
@@ -90,15 +52,13 @@ func (m *mockHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Mcp-Session-Id", "session-123")
+	var result any
+	var rpcErr *jsonRPCError
 
 	switch req.Method {
-	case "notifications/initialized":
-		w.WriteHeader(http.StatusAccepted)
-		return
-	case "initialize":
-		m.writeJSONResponse(w, req.ID, map[string]any{
-			"protocolVersion": ProtocolVersion,
+	case "server/discover":
+		result = map[string]any{
+			"protocolVersions": []string{ProtocolVersion},
 			"capabilities": map[string]any{
 				"tools":     map[string]any{"listChanged": true},
 				"resources": map[string]any{"listChanged": true},
@@ -108,14 +68,12 @@ func (m *mockHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 				"name":    "mock-http-server",
 				"version": "1.0.0",
 			},
-		})
-		return
+		}
 	case "tools/list":
 		m.mu.Lock()
 		tools := m.tools
 		m.mu.Unlock()
-		m.writeJSONResponse(w, req.ID, map[string]any{"tools": tools})
-		return
+		result = map[string]any{"tools": tools}
 	case "tools/call":
 		params, _ := json.Marshal(req.Params)
 		var callParams struct {
@@ -124,30 +82,18 @@ func (m *mockHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(params, &callParams)
 
 		m.mu.Lock()
-		result, ok := m.toolResults[callParams.Name]
+		res, ok := m.toolResults[callParams.Name]
 		m.mu.Unlock()
 		if !ok {
-			m.writeJSONError(w, req.ID, &jsonRPCError{Code: -32601, Message: "tool not found"})
-			return
+			rpcErr = &jsonRPCError{Code: -32601, Message: "tool not found"}
+		} else {
+			result = res
 		}
-		if callParams.Name == "delayed_tool" {
-			payload, _ := json.Marshal(jsonRPCMessage{
-				JSONRPC: "2.0",
-				ID:      rawJSONID(req.ID),
-				Result:  mustRawJSON(tMarshal(result)),
-			})
-			m.eventCh <- string(payload)
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		m.writeJSONResponse(w, req.ID, result)
-		return
 	case "resources/list":
 		m.mu.Lock()
 		resources := m.resources
 		m.mu.Unlock()
-		m.writeJSONResponse(w, req.ID, map[string]any{"resources": resources})
-		return
+		result = map[string]any{"resources": resources}
 	case "resources/read":
 		params, _ := json.Marshal(req.Params)
 		var readParams struct {
@@ -155,26 +101,23 @@ func (m *mockHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 		json.Unmarshal(params, &readParams)
 		m.mu.Lock()
-		result, ok := m.resourceResults[readParams.URI]
+		res, ok := m.resourceResults[readParams.URI]
 		m.mu.Unlock()
 		if !ok {
-			m.writeJSONError(w, req.ID, &jsonRPCError{Code: -32602, Message: "resource not found"})
-			return
+			rpcErr = &jsonRPCError{Code: -32602, Message: "resource not found"}
+		} else {
+			result = res
 		}
-		m.writeJSONResponse(w, req.ID, result)
-		return
 	case "resources/templates/list":
 		m.mu.Lock()
 		templates := m.resourceTemplates
 		m.mu.Unlock()
-		m.writeJSONResponse(w, req.ID, map[string]any{"resourceTemplates": templates})
-		return
+		result = map[string]any{"resourceTemplates": templates}
 	case "prompts/list":
 		m.mu.Lock()
 		prompts := m.prompts
 		m.mu.Unlock()
-		m.writeJSONResponse(w, req.ID, map[string]any{"prompts": prompts})
-		return
+		result = map[string]any{"prompts": prompts}
 	case "prompts/get":
 		params, _ := json.Marshal(req.Params)
 		var getParams struct {
@@ -182,37 +125,31 @@ func (m *mockHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 		json.Unmarshal(params, &getParams)
 		m.mu.Lock()
-		result, ok := m.promptResults[getParams.Name]
+		res, ok := m.promptResults[getParams.Name]
 		m.mu.Unlock()
 		if !ok {
-			m.writeJSONError(w, req.ID, &jsonRPCError{Code: -32602, Message: "prompt not found"})
-			return
+			rpcErr = &jsonRPCError{Code: -32602, Message: "prompt not found"}
+		} else {
+			result = res
 		}
-		m.writeJSONResponse(w, req.ID, result)
-		return
 	default:
-		m.writeJSONError(w, req.ID, &jsonRPCError{Code: -32601, Message: "method not found"})
+		rpcErr = &jsonRPCError{Code: -32601, Message: "method not found"}
 	}
-}
 
-func (m *mockHTTPServer) writeJSONResponse(w http.ResponseWriter, id int64, result any) {
-	w.Header().Set("Content-Type", "application/json")
-	payload, _ := json.Marshal(jsonRPCMessage{
+	resp := jsonRPCMessage{
 		JSONRPC: "2.0",
-		ID:      rawJSONID(id),
-		Result:  mustRawJSON(tMarshal(result)),
-	})
-	_, _ = w.Write(payload)
-}
+		ID:      rawJSONID(req.ID),
+	}
+	if rpcErr != nil {
+		resp.Error = rpcErr
+	} else {
+		data, _ := json.Marshal(result)
+		resp.Result = data
+	}
 
-func (m *mockHTTPServer) writeJSONError(w http.ResponseWriter, id int64, rpcErr *jsonRPCError) {
 	w.Header().Set("Content-Type", "application/json")
-	payload, _ := json.Marshal(jsonRPCMessage{
-		JSONRPC: "2.0",
-		ID:      rawJSONID(id),
-		Error:   rpcErr,
-	})
-	_, _ = w.Write(payload)
+	respData, _ := json.Marshal(resp)
+	_, _ = w.Write(respData)
 }
 
 func tMarshal(v any) []byte {
@@ -220,21 +157,17 @@ func tMarshal(v any) []byte {
 	return data
 }
 
-func mustRawJSON(data []byte) json.RawMessage {
-	return json.RawMessage(data)
-}
-
-func TestHTTPClientResourcesPromptsAndAsyncToolCall(t *testing.T) {
+func TestHTTPClientResourcesPromptsAndToolCall(t *testing.T) {
 	mock := newMockHTTPServer()
 	mock.tools = []Tool{
 		{
-			Name:        "delayed_tool",
-			Description: "Resolves asynchronously",
+			Name:        "echo_tool",
+			Description: "Echoes back",
 			InputSchema: json.RawMessage(`{"type":"object"}`),
 		},
 	}
-	mock.toolResults["delayed_tool"] = &ToolResult{
-		Content: []Content{{Type: "text", Text: "async done"}},
+	mock.toolResults["echo_tool"] = &ToolResult{
+		Content: []Content{{Type: "text", Text: "echo done"}},
 	}
 	mock.resources = []Resource{{
 		URI:         "file:///workspace/README.md",
@@ -269,10 +202,8 @@ func TestHTTPClientResourcesPromptsAndAsyncToolCall(t *testing.T) {
 	}
 	defer client.Close()
 
-	select {
-	case <-mock.ready:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for HTTP notification stream")
+	if _, err := client.Discover(ctx); err != nil {
+		t.Fatalf("Discover failed: %v", err)
 	}
 
 	resources, err := client.ListResources(ctx)
@@ -315,11 +246,11 @@ func TestHTTPClientResourcesPromptsAndAsyncToolCall(t *testing.T) {
 		t.Fatalf("unexpected prompt content: %q", promptResult.TextContent())
 	}
 
-	toolResult, err := client.CallTool(ctx, "delayed_tool", nil)
+	toolResult, err := client.CallTool(ctx, "echo_tool", nil)
 	if err != nil {
 		t.Fatalf("CallTool failed: %v", err)
 	}
-	if toolResult.TextContent() != "async done" {
+	if toolResult.TextContent() != "echo done" {
 		t.Fatalf("unexpected tool result: %q", toolResult.TextContent())
 	}
 
@@ -331,7 +262,7 @@ func TestHTTPClientResourcesPromptsAndAsyncToolCall(t *testing.T) {
 	}
 }
 
-func TestHTTPClientNotificationHandler(t *testing.T) {
+func TestHTTPClientCallToolError(t *testing.T) {
 	mock := newMockHTTPServer()
 	server := httptest.NewServer(mock.handler())
 	defer server.Close()
@@ -345,135 +276,101 @@ func TestHTTPClientNotificationHandler(t *testing.T) {
 	}
 	defer client.Close()
 
-	select {
-	case <-mock.ready:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for HTTP notification stream")
+	_, err = client.CallTool(ctx, "nonexistent", nil)
+	if err == nil {
+		t.Fatal("expected error for nonexistent tool")
 	}
-
-	received := make(chan string, 1)
-	unregister := client.OnNotification("notifications/prompts/list_changed", func(note Notification) {
-		received <- note.Method
-	})
-	defer unregister()
-
-	payload, _ := json.Marshal(jsonRPCMessage{
-		JSONRPC: "2.0",
-		Method:  "notifications/prompts/list_changed",
-		Params:  json.RawMessage(`{"reason":"refresh"}`),
-	})
-	mock.eventCh <- string(payload)
-
-	select {
-	case method := <-received:
-		if method != "notifications/prompts/list_changed" {
-			t.Fatalf("unexpected method: %s", method)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for notification")
+	if !strings.Contains(err.Error(), "tool not found") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestHTTPClientCallFailsWhenPOSTStreamClosesWithoutResponse(t *testing.T) {
-	streamReady := make(chan struct{})
-	holdStream := make(chan struct{})
+func TestHTTPClientSendsStatelessMetaAndHeaders(t *testing.T) {
+	var seenHeaders http.Header
+	var seenParams map[string]any
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			flusher, ok := w.(http.Flusher)
-			if !ok {
-				http.Error(w, "streaming not supported", http.StatusInternalServerError)
-				return
-			}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenHeaders = r.Header.Clone()
+		var req jsonRPCRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.Unmarshal(req.Params, &seenParams)
 
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			w.Header().Set("Mcp-Session-Id", "session-123")
-			flusher.Flush()
-
-			select {
-			case <-streamReady:
-			default:
-				close(streamReady)
-			}
-
-			select {
-			case <-holdStream:
-			case <-r.Context().Done():
-			}
-		case http.MethodPost:
-			var req jsonRPCRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "invalid JSON", http.StatusBadRequest)
-				return
-			}
-
-			w.Header().Set("Mcp-Session-Id", "session-123")
-
-			switch req.Method {
-			case "initialize":
-				w.Header().Set("Content-Type", "application/json")
-				payload, _ := json.Marshal(jsonRPCMessage{
-					JSONRPC: "2.0",
-					ID:      rawJSONID(req.ID),
-					Result: mustRawJSON(tMarshal(map[string]any{
-						"protocolVersion": ProtocolVersion,
-						"capabilities": map[string]any{
-							"tools": map[string]any{},
-						},
-						"serverInfo": map[string]any{
-							"name":    "broken-stream-server",
-							"version": "1.0.0",
-						},
-					})),
-				})
-				_, _ = w.Write(payload)
-			case "notifications/initialized":
-				w.WriteHeader(http.StatusAccepted)
-			case "tools/call":
-				w.Header().Set("Content-Type", "text/event-stream")
-				if flusher, ok := w.(http.Flusher); ok {
-					flusher.Flush()
-				}
-			default:
-				http.Error(w, "method not found", http.StatusNotFound)
-			}
-		case http.MethodDelete:
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
+		w.Header().Set("Content-Type", "application/json")
+		resp, _ := json.Marshal(jsonRPCMessage{
+			JSONRPC: "2.0",
+			ID:      rawJSONID(req.ID),
+			Result:  mustRawJSON(tMarshal(map[string]any{"tools": []Tool{}})),
+		})
+		_, _ = w.Write(resp)
 	}))
-	defer func() {
-		close(holdStream)
-		server.Close()
-	}()
+	defer srv.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, err := NewHTTPClient(ctx, server.URL)
+	client, err := NewHTTPClient(ctx, srv.URL)
 	if err != nil {
 		t.Fatalf("failed to create HTTP client: %v", err)
 	}
 	defer client.Close()
 
-	select {
-	case <-streamReady:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for HTTP notification stream")
+	if _, err := client.ListTools(ctx); err != nil {
+		t.Fatalf("ListTools failed: %v", err)
 	}
 
-	callCtx, cancelCall := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancelCall()
-
-	_, err = client.CallTool(callCtx, "broken_stream_tool", nil)
-	if err == nil {
-		t.Fatal("expected CallTool to fail when POST SSE stream closes without a response")
+	if got := seenHeaders.Get("Mcp-Method"); got != "tools/list" {
+		t.Fatalf("Mcp-Method header = %q, want tools/list", got)
 	}
-	if !strings.Contains(err.Error(), "connection closed while waiting for response") {
-		t.Fatalf("unexpected error: %v", err)
+	if got := seenHeaders.Get("MCP-Protocol-Version"); got != ProtocolVersion {
+		t.Fatalf("MCP-Protocol-Version header = %q, want %s", got, ProtocolVersion)
+	}
+
+	meta, ok := seenParams["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("request params missing _meta: %+v", seenParams)
+	}
+	if pv, _ := meta[MetaProtocolVersion].(string); pv != ProtocolVersion {
+		t.Fatalf("_meta.protocolVersion = %v, want %s", meta[MetaProtocolVersion], ProtocolVersion)
+	}
+	if _, ok := meta[MetaClientCapabilities].(map[string]any); !ok {
+		t.Fatalf("_meta.clientCapabilities missing or wrong type: %+v", meta[MetaClientCapabilities])
+	}
+}
+
+func TestHTTPClientCallToolSendsMcpNameHeader(t *testing.T) {
+	var seenHeaders http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenHeaders = r.Header.Clone()
+		var req jsonRPCRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
+		w.Header().Set("Content-Type", "application/json")
+		resp, _ := json.Marshal(jsonRPCMessage{
+			JSONRPC: "2.0",
+			ID:      rawJSONID(req.ID),
+			Result:  mustRawJSON(tMarshal(&ToolResult{Content: []Content{{Type: "text", Text: "ok"}}})),
+		})
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := NewHTTPClient(ctx, srv.URL)
+	if err != nil {
+		t.Fatalf("failed to create HTTP client: %v", err)
+	}
+	defer client.Close()
+
+	if _, err := client.CallTool(ctx, "greet", map[string]any{"name": "world"}); err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+
+	if got := seenHeaders.Get("Mcp-Method"); got != "tools/call" {
+		t.Fatalf("Mcp-Method header = %q, want tools/call", got)
+	}
+	if got := seenHeaders.Get("Mcp-Name"); got != "greet" {
+		t.Fatalf("Mcp-Name header = %q, want greet", got)
 	}
 }

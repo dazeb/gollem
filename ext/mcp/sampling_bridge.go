@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -14,11 +15,24 @@ import (
 const defaultSamplingMaxTokens = 4096
 
 // SamplingRequester can issue MCP sampling requests.
+//
+// Deprecated: In the 2026-07-28 protocol sampling is delivered via MRTR, not
+// server-initiated JSON-RPC. Server-side code should build a sampling
+// InputRequest via BuildSamplingInputRequest, return it through
+// RequestContext.NeedInput, and parse the client's answer via
+// ParseCreateMessageResult. SamplingRequester is retained for test fakes and
+// for MCPModel, which higher layers may still drive with a custom requester.
 type SamplingRequester interface {
 	CreateMessage(context.Context, *CreateMessageParams) (*CreateMessageResult, error)
 }
 
 // MCPModel exposes MCP sampling as a gollem core.Model.
+//
+// Deprecated: The server-initiated sampling pattern this model was built for is
+// removed in the 2026-07-28 protocol. Server handlers that need the client's
+// model should use MRTR via BuildSamplingInputRequest and
+// ParseCreateMessageResult. MCPModel is retained because it composes cleanly
+// with a SamplingRequester (e.g. a test fake or a higher-layer MRTR driver).
 type MCPModel struct {
 	requester SamplingRequester
 	config    mcpModelConfig
@@ -67,6 +81,9 @@ func WithMCPMetadata(metadata map[string]any) MCPModelOption {
 }
 
 // NewMCPModel constructs a core.Model backed by MCP sampling/createMessage.
+//
+// Deprecated: See MCPModel. Prefer the MRTR helpers (BuildSamplingInputRequest,
+// ParseCreateMessageResult) for new server-side code.
 func NewMCPModel(requester SamplingRequester, opts ...MCPModelOption) *MCPModel {
 	cfg := mcpModelConfig{
 		modelName: "mcp-sampling",
@@ -703,4 +720,77 @@ func marshalSamplingBlocks(blocks []Content) json.RawMessage {
 	default:
 		return MarshalSamplingContentArray(blocks)
 	}
+}
+
+// samplingInputCounter generates stable identifiers for MRTR input requests.
+var samplingInputCounter uint64
+
+// BuildSamplingInputRequest wraps a CreateMessageParams into an MRTR
+// InputRequest with a unique identifier, so a server handler can return it via
+// RequestContext.NeedInput and let the higher layer (e.g. sleepy) drive the
+// round trip. The client fulfills it using its registered SamplingHandler and
+// the answer is parsed with ParseCreateMessageResult.
+func BuildSamplingInputRequest(params *CreateMessageParams) (string, InputRequest) {
+	id := fmt.Sprintf("sampling-%d", atomic.AddUint64(&samplingInputCounter, 1))
+	raw, err := json.Marshal(params)
+	if err != nil {
+		raw = json.RawMessage(`{}`)
+	}
+	return id, InputRequest{Method: "sampling/createMessage", Params: raw}
+}
+
+// ParseCreateMessageResult unmarshals an MRTR input response (the client's
+// answer to a sampling input request) into a CreateMessageResult.
+func ParseCreateMessageResult(raw json.RawMessage) (*CreateMessageResult, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("mcp: empty sampling input response")
+	}
+	var result CreateMessageResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("mcp: failed to parse sampling input response: %w", err)
+	}
+	return &result, nil
+}
+
+// BuildElicitationInputRequest wraps an ElicitationParams into an MRTR
+// InputRequest. The client fulfills it using its registered ElicitationHandler.
+func BuildElicitationInputRequest(params *ElicitationParams) (string, InputRequest) {
+	id := fmt.Sprintf("elicitation-%d", atomic.AddUint64(&samplingInputCounter, 1))
+	raw, err := json.Marshal(params)
+	if err != nil {
+		raw = json.RawMessage(`{}`)
+	}
+	return id, InputRequest{Method: "elicitation/create", Params: raw}
+}
+
+// ParseElicitationResult unmarshals an MRTR input response for elicitation into
+// an ElicitationResult.
+func ParseElicitationResult(raw json.RawMessage) (*ElicitationResult, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("mcp: empty elicitation input response")
+	}
+	var result ElicitationResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("mcp: failed to parse elicitation input response: %w", err)
+	}
+	return &result, nil
+}
+
+// BuildRootsInputRequest builds an MRTR InputRequest for roots/list. The client
+// fulfills it using its registered RootsProvider.
+func BuildRootsInputRequest() (string, InputRequest) {
+	id := fmt.Sprintf("roots-%d", atomic.AddUint64(&samplingInputCounter, 1))
+	return id, InputRequest{Method: "roots/list"}
+}
+
+// ParseListRootsResult unmarshals an MRTR input response for roots/list.
+func ParseListRootsResult(raw json.RawMessage) (*ListRootsResult, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("mcp: empty roots input response")
+	}
+	var result ListRootsResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("mcp: failed to parse roots input response: %w", err)
+	}
+	return &result, nil
 }

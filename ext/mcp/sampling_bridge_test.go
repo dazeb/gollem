@@ -312,22 +312,37 @@ func TestNestedSamplingRoundTripOverStdio(t *testing.T) {
 	server := NewServer(WithServerInfo(ServerInfo{Name: "test-server", Version: "1.0.0"}))
 	server.AddTool(Tool{
 		Name:        "ask_client",
-		Description: "Ask the connected client model a question",
+		Description: "Ask the connected client model a question via MRTR sampling",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"prompt":{"type":"string"}},"required":["prompt"]}`),
 	}, func(ctx context.Context, rc *RequestContext, args map[string]any) (*ToolResult, error) {
-		prompt, _ := args["prompt"].(string)
-		model := NewMCPModel(rc)
-		resp, err := model.Request(ctx, []core.ModelMessage{
-			core.ModelRequest{
-				Parts: []core.ModelRequestPart{
-					core.UserPromptPart{Content: prompt},
-				},
-			},
-		}, &core.ModelSettings{MaxTokens: intPtr(32)}, nil)
-		if err != nil {
-			return nil, err
+		responses := rc.InputResponses()
+		if len(responses) == 0 {
+			prompt, _ := args["prompt"].(string)
+			id, req := BuildSamplingInputRequest(&CreateMessageParams{
+				Messages: []SamplingMessage{{
+					Role:    "user",
+					Content: MarshalSamplingContent(Content{Type: "text", Text: prompt}),
+				}},
+				MaxTokens: 32,
+			})
+			rc.NeedInput(InputRequests{id: req}, "sampling-state-1")
+			return nil, nil
 		}
-		return textToolResult(resp.TextContent()), nil
+		// Retry: parse the sampling answer.
+		for _, raw := range responses {
+			result, err := ParseCreateMessageResult(raw)
+			if err != nil {
+				return nil, err
+			}
+			blocks, err := ParseSamplingContent(result.Content)
+			if err != nil {
+				return nil, err
+			}
+			if len(blocks) > 0 {
+				return textToolResult(blocks[0].Text), nil
+			}
+		}
+		return textToolResult(""), nil
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -373,12 +388,6 @@ func TestNestedSamplingRoundTripOverStdio(t *testing.T) {
 		_ = serverToClientReader.Close()
 	})
 
-	initCtx, initCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer initCancel()
-	if err := client.initialize(initCtx); err != nil {
-		t.Fatalf("client initialize failed: %v", err)
-	}
-
 	callCtx, callCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer callCancel()
 	result, err := client.CallTool(callCtx, "ask_client", map[string]any{"prompt": "hello from tool"})
@@ -399,5 +408,3 @@ func textToolResult(text string) *ToolResult {
 		Content: []Content{{Type: "text", Text: text}},
 	}
 }
-
-func intPtr(v int) *int { return &v }

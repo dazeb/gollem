@@ -57,20 +57,19 @@ func (m *mockStdioServer) serve() {
 			continue
 		}
 
-		// Notifications have ID 0 (our implementation uses int64, starting at 1).
-		// The initialized notification uses no ID in the spec, but our struct
-		// will deserialize it as 0.
-		if req.Method == "notifications/initialized" {
-			continue // notification, no response
+		// Notifications have no id (our request struct leaves ID 0). The
+		// 2026-07-28 protocol no longer uses notifications/initialized.
+		if req.ID == 0 && req.Method != "" {
+			continue
 		}
 
 		var result any
 		var rpcErr *jsonRPCError
 
 		switch req.Method {
-		case "initialize":
+		case "server/discover":
 			result = map[string]any{
-				"protocolVersion": ProtocolVersion,
+				"supportedVersions": []string{ProtocolVersion},
 				"capabilities": map[string]any{
 					"tools":     map[string]any{"listChanged": true},
 					"resources": map[string]any{"listChanged": true},
@@ -169,8 +168,9 @@ func (m *mockStdioServer) serve() {
 
 // newMockStdioClient creates a Client connected to a mock server via pipes.
 // It wires up stdin/stdout pipes with a mock server goroutine, starts
-// readLoop, and performs the initialization handshake — just like
-// NewStdioClient does, but without spawning a subprocess.
+// readLoop, and leaves the client in a stateless (post-2026-07-28) state — no
+// initialize handshake is performed. Tests that need server identity or
+// capabilities call Discover explicitly.
 //
 // The returned Client has no exec.Cmd, so don't call Close() on it directly;
 // the cleanup function handles shutting down pipes instead.
@@ -201,16 +201,6 @@ func newMockStdioClient(t *testing.T, tools []Tool, results map[string]*ToolResu
 	// Start the read loop (same as NewStdioClient).
 	go c.readLoop()
 
-	// Perform initialization handshake.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := c.initialize(ctx); err != nil {
-		serverWriter.Close()
-		serverReader.Close()
-		t.Fatalf("initialization failed: %v", err)
-	}
-
 	// Clean up: close stdin pipe (kills readLoop), then close server pipes.
 	// We don't call c.Close() because it dereferences c.cmd which is nil.
 	t.Cleanup(func() {
@@ -225,10 +215,27 @@ func newMockStdioClient(t *testing.T, tools []Tool, results map[string]*ToolResu
 	return c
 }
 
-func TestStdioClientInitialize(t *testing.T) {
+func TestStdioClientDiscover(t *testing.T) {
 	c := newMockStdioClient(t, nil, nil)
 	if c.closed {
-		t.Error("client should not be closed after initialization")
+		t.Error("client should not be closed after construction")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := c.Discover(ctx)
+	if err != nil {
+		t.Fatalf("Discover failed: %v", err)
+	}
+	if len(result.SupportedVersions) != 1 || result.SupportedVersions[0] != ProtocolVersion {
+		t.Fatalf("unexpected protocol versions: %+v", result.SupportedVersions)
+	}
+	if result.ServerInfo == nil || result.ServerInfo.Name != "mock-stdio-server" {
+		t.Fatalf("unexpected server info: %+v", result.ServerInfo)
+	}
+	if c.ServerInfo() == nil || c.ServerInfo().Name != "mock-stdio-server" {
+		t.Fatalf("Discover did not cache server info: %+v", c.ServerInfo())
 	}
 }
 
@@ -779,8 +786,8 @@ func TestStdioClientResourcesAndPrompts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := c.initialize(ctx); err != nil {
-		t.Fatalf("initialization failed: %v", err)
+	if _, err := c.Discover(ctx); err != nil {
+		t.Fatalf("Discover failed: %v", err)
 	}
 
 	t.Cleanup(func() {
