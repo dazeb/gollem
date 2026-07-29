@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -483,6 +484,195 @@ func TestFileChangeRevertHandlesCreateAndDeleteExactly(t *testing.T) {
 	}
 }
 
+func TestFileChangeRevertRejectsUnavailableAndMalformedRequests(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	fsService, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsService.Close()
+	st := newRuntimeTestStore(t)
+	legacy := struct{ store.Store }{Store: st}
+
+	unavailable := []struct {
+		name   string
+		server *Server
+	}{
+		{"store", readyServer(WithFilesystem(fsService))},
+		{"filesystem", readyServer(WithStore(st))},
+		{"recovery capability", readyServer(WithStore(legacy), WithFilesystem(fsService))},
+	}
+	for _, test := range unavailable {
+		t.Run(test.name, func(t *testing.T) {
+			response := test.server.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
+				"threadId":       "thread",
+				"itemId":         "item",
+				"idempotencyKey": "key",
+			}))
+			if response.Error == nil || response.Error.Code != protocol.CodeMethodUnavailable {
+				t.Fatalf("unavailable response = %+v", response)
+			}
+		})
+	}
+
+	server := readyServer(WithStore(st), WithFilesystem(fsService))
+	invalid := []struct {
+		name   string
+		params any
+	}{
+		{"empty payload", nil},
+		{"required fields", map[string]any{"threadId": " ", "itemId": "item", "idempotencyKey": "key"}},
+		{"long key", map[string]any{
+			"threadId": "thread", "itemId": "item", "idempotencyKey": strings.Repeat("x", fileChangeRevertIdempotencyMaxLen+1),
+		}},
+		{"missing thread", map[string]any{"threadId": "missing", "itemId": "item", "idempotencyKey": "key"}},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			response := server.HandleRequest(ctx, request(fileChangeRevertMethod, test.params))
+			if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams {
+				t.Fatalf("invalid response = %+v", response)
+			}
+		})
+	}
+}
+
+func TestFileChangeRevertEvidenceAndHelperGuards(t *testing.T) {
+	newEvidence := func() (*store.Item, *store.FileChangeRecovery, protocol.FileChangeItem) {
+		payload := protocol.FileChangeItem{
+			Type:   runtimeFileChangeItemKind,
+			ID:     "item-1",
+			Status: protocol.PatchApplyStatusCompleted,
+			Changes: []protocol.FileUpdateChange{{
+				Path: "notes.txt",
+				Kind: protocol.PatchChangeKind{Type: runtimePatchChangeUpdate},
+			}},
+			Evidence: []protocol.FileChangeArtifactEvidence{{
+				Path:                    "notes.txt",
+				Operation:               "update",
+				BeforeSHA256:            "before",
+				AfterSHA256:             "after",
+				RevertSnapshotAvailable: true,
+			}},
+		}
+		item := &store.Item{
+			ID:       "item-1",
+			ThreadID: "thread-1",
+			TurnID:   "turn-1",
+			Kind:     runtimeFileChangeItemKind,
+			Status:   runtimeFileChangeStatusCompleted,
+			Payload:  mustRuntimeJSON(payload),
+		}
+		recovery := &store.FileChangeRecovery{
+			ItemID:       item.ID,
+			ThreadID:     item.ThreadID,
+			TurnID:       item.TurnID,
+			Path:         "notes.txt",
+			BeforeExists: true,
+			AfterExists:  true,
+			BeforeSHA256: "before",
+			AfterSHA256:  "after",
+			Status:       store.FileChangeRecoveryAvailable,
+		}
+		return item, recovery, payload
+	}
+	item, recovery, _ := newEvidence()
+	if err := validateFileChangeRevertEvidence(item, recovery); err != nil {
+		t.Fatalf("valid evidence: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*store.Item, *store.FileChangeRecovery, *protocol.FileChangeItem)
+	}{
+		{"malformed payload", func(item *store.Item, _ *store.FileChangeRecovery, _ *protocol.FileChangeItem) {
+			item.Payload = json.RawMessage(`{"type":`)
+		}},
+		{"identity mismatch", func(_ *store.Item, recovery *store.FileChangeRecovery, _ *protocol.FileChangeItem) {
+			recovery.ThreadID = "other-thread"
+		}},
+		{"inexact shape", func(item *store.Item, _ *store.FileChangeRecovery, payload *protocol.FileChangeItem) {
+			payload.Changes = nil
+			item.Payload = mustRuntimeJSON(*payload)
+		}},
+		{"empty existence", func(item *store.Item, recovery *store.FileChangeRecovery, payload *protocol.FileChangeItem) {
+			recovery.BeforeExists = false
+			recovery.AfterExists = false
+			item.Payload = mustRuntimeJSON(*payload)
+		}},
+		{"unsupported operation", func(item *store.Item, _ *store.FileChangeRecovery, payload *protocol.FileChangeItem) {
+			payload.Evidence[0].Operation = "move"
+			item.Payload = mustRuntimeJSON(*payload)
+		}},
+		{"public mismatch", func(item *store.Item, _ *store.FileChangeRecovery, payload *protocol.FileChangeItem) {
+			payload.Evidence[0].RevertSnapshotAvailable = false
+			item.Payload = mustRuntimeJSON(*payload)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			item, recovery, payload := newEvidence()
+			test.mutate(item, recovery, &payload)
+			if err := validateFileChangeRevertEvidence(item, recovery); err == nil {
+				t.Fatal("inconsistent evidence was accepted")
+			}
+		})
+	}
+	item, _, _ = newEvidence()
+	if err := validateFileChangeRevertEvidence(item, nil); err == nil {
+		t.Fatal("missing recovery evidence was accepted")
+	}
+
+	for _, status := range []store.TurnStatus{store.TurnCompleted, store.TurnFailed, store.TurnInterrupted} {
+		if !fileChangeRevertTerminalTurnStatus(status) {
+			t.Fatalf("terminal status %q rejected", status)
+		}
+	}
+	for _, status := range []store.TurnStatus{store.TurnQueued, store.TurnRunning, "unknown"} {
+		if fileChangeRevertTerminalTurnStatus(status) {
+			t.Fatalf("non-terminal status %q accepted", status)
+		}
+	}
+
+	if _, rpcErr := fileChangeRevertProtocolResult(nil, nil, false); rpcErr == nil || rpcErr.Code != protocol.CodeInternalError {
+		t.Fatalf("incomplete receipt error = %+v", rpcErr)
+	}
+	var decoded struct {
+		Value bool `json:"value"`
+	}
+	if err := decodeStrictJSON(json.RawMessage(`{"value":true} {}`), &decoded); err == nil {
+		t.Fatal("multiple JSON values were accepted")
+	}
+	if err := decodeStrictJSON(json.RawMessage(`{"value":true} trailing`), &decoded); err == nil {
+		t.Fatal("trailing invalid JSON was accepted")
+	}
+
+	root := t.TempDir()
+	fsService, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsService.Close()
+	st := newRuntimeTestStore(t)
+	abortFileChangeRevertIfUnchanged(context.Background(), nil, nil, nil, "")
+	abortFileChangeRevertIfUnchanged(context.Background(), st, fsService, nil, "")
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("user edit"), 0o644); err != nil {
+		t.Fatalf("WriteFile stale fixture: %v", err)
+	}
+	stale := &store.FileChangeRecovery{
+		ItemID:      "item",
+		Path:        "notes.txt",
+		AfterExists: true,
+		AfterSHA256: runtimeSHA256([]byte("expected")),
+		AfterMode:   0o644,
+	}
+	abortFileChangeRevertIfUnchanged(context.Background(), st, fsService, stale, "key")
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	abortFileChangeRevertIfUnchanged(canceled, st, fsService, stale, "key")
+}
+
 func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 	turn := &store.Turn{ID: "turn-1", ThreadID: "thread-1"}
 	valid := core.ArtifactChangedEvent{
@@ -505,12 +695,24 @@ func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 		name   string
 		mutate func(*core.ArtifactChangedEvent)
 	}{
+		{"empty path", func(event *core.ArtifactChangedEvent) { event.Path = "" }},
+		{"absolute path", func(event *core.ArtifactChangedEvent) { event.Path = filepath.Join(t.TempDir(), "outside.txt") }},
 		{"directory", func(event *core.ArtifactChangedEvent) { event.AfterIsDir = true }},
 		{"symlink", func(event *core.ArtifactChangedEvent) { event.AfterIsSymlink = true }},
+		{"no existence evidence", func(event *core.ArtifactChangedEvent) {
+			event.BeforeExists = false
+			event.AfterExists = false
+		}},
+		{"create mismatch", func(event *core.ArtifactChangedEvent) { event.Operation = "create" }},
+		{"delete mismatch", func(event *core.ArtifactChangedEvent) { event.Operation = "delete" }},
+		{"update mismatch", func(event *core.ArtifactChangedEvent) { event.BeforeExists = false }},
 		{"oversized", func(event *core.ArtifactChangedEvent) {
 			event.AfterSize = runtimeFileChangeRecoveryMaxBytes + 1
 		}},
-		{"digest mismatch", func(event *core.ArtifactChangedEvent) { event.AfterSHA256 = "wrong" }},
+		{"before size mismatch", func(event *core.ArtifactChangedEvent) { event.BeforeSize++ }},
+		{"after size mismatch", func(event *core.ArtifactChangedEvent) { event.AfterSize++ }},
+		{"before digest mismatch", func(event *core.ArtifactChangedEvent) { event.BeforeSHA256 = "wrong" }},
+		{"after digest mismatch", func(event *core.ArtifactChangedEvent) { event.AfterSHA256 = "wrong" }},
 		{"path escape", func(event *core.ArtifactChangedEvent) { event.Path = "../outside.txt" }},
 	}
 	for _, test := range tests {
@@ -521,6 +723,94 @@ func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 				t.Fatal("unsupported snapshot unexpectedly became recoverable")
 			}
 		})
+	}
+
+	content := []byte("recovery")
+	bounded := runtimeRecoveryContentBytes(content)
+	content[0] = 'X'
+	if string(bounded) != "recovery" {
+		t.Fatalf("bounded recovery content aliased input: %q", bounded)
+	}
+	if oversized := runtimeRecoveryContentBytes(make([]byte, runtimeFileChangeRecoveryMaxBytes+1)); oversized != nil {
+		t.Fatalf("oversized recovery content length = %d, want nil", len(oversized))
+	}
+}
+
+func TestRuntimeFileChangeTrackerRecoveryCapabilityAndErrors(t *testing.T) {
+	event := core.ArtifactChangedEvent{
+		Path:               "notes.txt",
+		Operation:          "update",
+		BeforeExists:       true,
+		AfterExists:        true,
+		BeforeMode:         0o644,
+		AfterMode:          0o644,
+		BeforeSize:         int64(len("before")),
+		AfterSize:          int64(len("after")),
+		BeforeSHA256:       runtimeSHA256([]byte("before")),
+		AfterSHA256:        runtimeSHA256([]byte("after")),
+		BeforeContentBytes: []byte("before"),
+		AfterContentBytes:  []byte("after"),
+		ChangedAt:          time.Now().UTC(),
+	}
+	newTurn := func(t *testing.T) (*store.SQLiteStore, *store.Turn) {
+		t.Helper()
+		st := newRuntimeTestStore(t)
+		thread, err := st.CreateThread(context.Background(), store.CreateThreadRequest{Title: "File changes"})
+		if err != nil {
+			t.Fatalf("CreateThread: %v", err)
+		}
+		turn, err := st.CreateTurn(context.Background(), store.CreateTurnRequest{ThreadID: thread.ID})
+		if err != nil {
+			t.Fatalf("CreateTurn: %v", err)
+		}
+		return st, turn
+	}
+
+	t.Run("legacy store exposes public unavailability", func(t *testing.T) {
+		st, turn := newTurn(t)
+		legacy := struct{ store.Store }{Store: st}
+		notifier := &runtimeErrorCaptureNotifier{}
+		tracker := newRuntimeFileChangeTracker(legacy, notifier, turn, nil)
+		tracker.artifactChanged(event)
+		if err := tracker.Err(); err != nil {
+			t.Fatalf("artifactChanged: %v", err)
+		}
+		items, err := st.ListItems(context.Background(), store.ItemFilter{ThreadID: turn.ThreadID, TurnID: turn.ID})
+		if err != nil {
+			t.Fatalf("ListItems: %v", err)
+		}
+		fileItem := findRuntimeFileChangeItem(t, items, event.Path)
+		evidence := fileItem.Payload.Evidence[0]
+		if evidence.RevertSnapshotAvailable || evidence.RevertUnavailableReason != "durable recovery storage is unavailable" {
+			t.Fatalf("legacy recovery evidence = %+v", evidence)
+		}
+		if notifier.method != "item/completed" {
+			t.Fatalf("last notification = %q, want item/completed", notifier.method)
+		}
+	})
+
+	t.Run("snapshot persistence failure is sticky", func(t *testing.T) {
+		st, turn := newTurn(t)
+		notifier := &runtimeErrorCaptureNotifier{}
+		persistErr := errors.New("snapshot unavailable")
+		failing := failingFileChangeRecoveryStore{Store: st, err: persistErr}
+		tracker := newRuntimeFileChangeTracker(failing, notifier, turn, nil)
+		tracker.artifactChanged(event)
+		first := tracker.Err()
+		if first == nil || !errors.Is(first, persistErr) || notifier.method != "error" {
+			t.Fatalf("tracker error = %v, notification = %q", first, notifier.method)
+		}
+		tracker.recordErrorLocked("ignored", errors.New("second"))
+		tracker.recordErrorLocked("ignored nil", nil)
+		if tracker.Err() != first {
+			t.Fatalf("sticky tracker error changed from %v to %v", first, tracker.Err())
+		}
+	})
+
+	var nilTracker *runtimeFileChangeTracker
+	nilTracker.artifactChanged(event)
+	if err := nilTracker.Err(); err != nil {
+		t.Fatalf("nil tracker error = %v", err)
 	}
 }
 
@@ -539,6 +829,40 @@ func TestFileChangeRevertRequiresExactCanonicalThreadWorkspace(t *testing.T) {
 	if err := requireExactThreadWorkspace(&store.Thread{}, root); err == nil {
 		t.Fatal("empty workspace was accepted")
 	}
+	if err := requireExactThreadWorkspace(nil, root); err == nil {
+		t.Fatal("nil thread was accepted")
+	}
+	if err := requireExactThreadWorkspace(&store.Thread{Workspace: filepath.Join(root, "missing")}, root); err == nil {
+		t.Fatal("missing thread workspace was accepted")
+	}
+	if err := requireExactThreadWorkspace(&store.Thread{Workspace: root}, filepath.Join(root, "missing")); err == nil {
+		t.Fatal("missing filesystem root was accepted")
+	}
+}
+
+type failingFileChangeRecoveryStore struct {
+	store.Store
+	err error
+}
+
+func (s failingFileChangeRecoveryStore) SaveFileChangeRecovery(context.Context, store.SaveFileChangeRecoveryRequest) (*store.FileChangeRecovery, error) {
+	return nil, s.err
+}
+
+func (s failingFileChangeRecoveryStore) GetFileChangeRecovery(context.Context, string) (*store.FileChangeRecovery, error) {
+	return nil, s.err
+}
+
+func (s failingFileChangeRecoveryStore) PrepareFileChangeRevert(context.Context, store.PrepareFileChangeRevertRequest) (*store.PrepareFileChangeRevertResult, error) {
+	return nil, s.err
+}
+
+func (s failingFileChangeRecoveryStore) AbortFileChangeRevert(context.Context, store.AbortFileChangeRevertRequest) (*store.FileChangeRecovery, error) {
+	return nil, s.err
+}
+
+func (s failingFileChangeRecoveryStore) CompleteFileChangeRevert(context.Context, store.CompleteFileChangeRevertRequest) (*store.CompleteFileChangeRevertResult, error) {
+	return nil, s.err
 }
 
 func approveServerRequest(

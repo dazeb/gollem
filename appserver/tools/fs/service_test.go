@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,6 +142,60 @@ func TestServiceRevertFileRestoresExactStateAndMode(t *testing.T) {
 	}
 }
 
+func TestServiceRevertFileReversesCreateAndDelete(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		svc := newTestService(t)
+		path := filepath.Join(svc.Root(), "created.txt")
+		content := []byte("created\n")
+		if err := os.WriteFile(path, content, 0o640); err != nil {
+			t.Fatalf("WriteFile fixture: %v", err)
+		}
+		result, err := svc.RevertFile(context.Background(), RevertFileRequest{
+			Path:   "created.txt",
+			Before: ExactFileState{},
+			After: ExactFileState{
+				Exists: true, SHA256: exactSHA256(content), Mode: 0o640, CheckMode: true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("RevertFile create: %v", err)
+		}
+		if !result.Removed || result.Restored || result.SHA256 != "" {
+			t.Fatalf("create revert result = %+v", result)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("created file stat after revert = %v, want not-exist", err)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		svc := newTestService(t)
+		content := []byte("deleted\n")
+		result, err := svc.RevertFile(context.Background(), RevertFileRequest{
+			Path: "deleted.txt",
+			Before: ExactFileState{
+				Exists: true, SHA256: exactSHA256(content), Content: content, Mode: 0o600, CheckMode: true,
+			},
+			After: ExactFileState{},
+		})
+		if err != nil {
+			t.Fatalf("RevertFile delete: %v", err)
+		}
+		if !result.Restored || result.Removed || result.SHA256 != exactSHA256(content) {
+			t.Fatalf("delete revert result = %+v", result)
+		}
+		path := filepath.Join(svc.Root(), "deleted.txt")
+		restored, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile restored: %v", err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || string(restored) != string(content) || info.Mode().Perm() != 0o600 {
+			t.Fatalf("restored file = %q mode=%o error=%v", restored, info.Mode().Perm(), err)
+		}
+	})
+}
+
 func TestServiceRevertFileRejectsStaleAndSymlinkStates(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)
@@ -222,6 +277,142 @@ func TestServiceRevertFileRechecksAfterApproval(t *testing.T) {
 	content, _ := os.ReadFile(path)
 	if string(content) != "concurrent\n" {
 		t.Fatalf("concurrent file changed to %q", content)
+	}
+}
+
+func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	path := filepath.Join(svc.Root(), "notes.txt")
+	after := []byte("after\n")
+	before := []byte("before\n")
+	if err := os.WriteFile(path, after, 0o644); err != nil {
+		t.Fatalf("WriteFile fixture: %v", err)
+	}
+	valid := RevertFileRequest{
+		Path: "notes.txt",
+		Before: ExactFileState{
+			Exists: true, SHA256: exactSHA256(before), Content: before, Mode: 0o600, CheckMode: true,
+		},
+		After: ExactFileState{
+			Exists: true, SHA256: exactSHA256(after), Mode: 0o644, CheckMode: true,
+		},
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := svc.RevertFile(canceled, valid); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled revert error = %v", err)
+	}
+	invalid := valid
+	invalid.Path = ""
+	if _, err := svc.RevertFile(ctx, invalid); err == nil {
+		t.Fatal("blank revert path was accepted")
+	}
+	invalid = valid
+	invalid.Before.SHA256 = "wrong"
+	if _, err := svc.RevertFile(ctx, invalid); err == nil {
+		t.Fatal("inconsistent before digest was accepted")
+	}
+	invalid = valid
+	invalid.Before = ExactFileState{Content: []byte("unexpected")}
+	if _, err := svc.RevertFile(ctx, invalid); err == nil {
+		t.Fatal("absent before state with content was accepted")
+	}
+	invalid = valid
+	invalid.After.SHA256 = ""
+	if _, err := svc.RevertFile(ctx, invalid); err == nil {
+		t.Fatal("after state without digest was accepted")
+	}
+	invalid = valid
+	invalid.Path = "."
+	if _, err := svc.RevertFile(ctx, invalid); !errors.Is(err, ErrRefusingRoot) {
+		t.Fatalf("root revert error = %v, want ErrRefusingRoot", err)
+	}
+	invalid = valid
+	invalid.After.Mode = 0o600
+	if _, err := svc.RevertFile(ctx, invalid); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("mode-mismatch revert error = %v, want ErrExactStateMismatch", err)
+	}
+	if err := os.Mkdir(filepath.Join(svc.Root(), "directory"), 0o755); err != nil {
+		t.Fatalf("Mkdir directory: %v", err)
+	}
+	invalid = valid
+	invalid.Path = "directory"
+	if _, err := svc.RevertFile(ctx, invalid); !errors.Is(err, ErrExactRevertUnsupported) {
+		t.Fatalf("directory revert error = %v, want ErrExactRevertUnsupported", err)
+	}
+	invalid = valid
+	invalid.Path = "missing/notes.txt"
+	invalid.After = ExactFileState{}
+	if _, err := svc.RevertFile(ctx, invalid); err == nil {
+		t.Fatal("restore into missing parent was accepted")
+	}
+
+	denied := newTestService(t, WithApproval(func(context.Context, Operation) error {
+		return errors.New("denied")
+	}))
+	deniedPath := filepath.Join(denied.Root(), "notes.txt")
+	if err := os.WriteFile(deniedPath, after, 0o644); err != nil {
+		t.Fatalf("WriteFile denied fixture: %v", err)
+	}
+	if _, err := denied.RevertFile(ctx, valid); !errors.Is(err, ErrApprovalDenied) {
+		t.Fatalf("denied revert error = %v, want ErrApprovalDenied", err)
+	}
+	content, _ := os.ReadFile(deniedPath)
+	if string(content) != string(after) {
+		t.Fatalf("denied revert changed content to %q", content)
+	}
+}
+
+func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T) {
+	rootPath := t.TempDir()
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatalf("OpenRoot: %v", err)
+	}
+	defer root.Close()
+	if err := verifyExactRootFileState(root, "missing.txt", ExactFileState{}); err != nil {
+		t.Fatalf("absent exact state: %v", err)
+	}
+	if err := verifyExactRootFileState(root, "missing.txt", ExactFileState{Exists: true}); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("missing expected file error = %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(rootPath, "dir"), 0o755); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if err := verifyExactRootFileState(root, "dir", ExactFileState{Exists: true}); !errors.Is(err, ErrExactRevertUnsupported) {
+		t.Fatalf("directory exact state error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rootPath, "notes.txt"), []byte("after"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := verifyExactRootFileState(root, "notes.txt", ExactFileState{}); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("unexpected existing file error = %v", err)
+	}
+	if err := verifyExactRootFileState(root, "notes.txt", ExactFileState{
+		Exists: true, SHA256: exactSHA256([]byte("wrong")),
+	}); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("digest mismatch error = %v", err)
+	}
+	if err := verifyExactRootFileState(root, "notes.txt", ExactFileState{
+		Exists: true, SHA256: exactSHA256([]byte("after")), Mode: 0o600, CheckMode: true,
+	}); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("mode mismatch error = %v", err)
+	}
+	if err := atomicWriteRootFile(root, "notes.txt", []byte("before"), 0o600, ExactFileState{
+		Exists: true, SHA256: exactSHA256([]byte("stale")),
+	}); !errors.Is(err, ErrExactStateMismatch) {
+		t.Fatalf("stale atomic write error = %v", err)
+	}
+	entries, err := os.ReadDir(rootPath)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".gollem-revert-") {
+			t.Fatalf("stale atomic write leaked temp file %q", entry.Name())
+		}
 	}
 }
 
