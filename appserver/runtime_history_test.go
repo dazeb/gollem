@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,66 @@ import (
 	"github.com/fugue-labs/gollem/appserver/store"
 	"github.com/fugue-labs/gollem/core"
 )
+
+func TestBoundedRuntimeReplayItemsKeepsLatestCompactionAndTail(t *testing.T) {
+	now := time.Now().UTC()
+	items := []*store.Item{
+		runtimeHistoryMessageItem("older", "user", "excluded before compaction", now),
+		{
+			ID:      "compaction",
+			Kind:    threadCompactionItemKind,
+			Payload: json.RawMessage(`{"type":"contextCompaction","summary":"bounded summary"}`),
+		},
+	}
+	for i := range runtimeReplayMaxItems + 20 {
+		items = append(items, runtimeHistoryMessageItem(
+			fmt.Sprintf("message-%03d", i),
+			"user",
+			"bounded replay",
+			now.Add(time.Duration(i+1)*time.Second),
+		))
+	}
+
+	got := boundedRuntimeReplayItems(items)
+	if len(got) != runtimeReplayMaxItems {
+		t.Fatalf("bounded replay item count = %d, want %d", len(got), runtimeReplayMaxItems)
+	}
+	if got[0].ID != "compaction" {
+		t.Fatalf("bounded replay first item = %#v, want latest compaction", got[0])
+	}
+	if got[len(got)-1].ID != fmt.Sprintf("message-%03d", runtimeReplayMaxItems+19) {
+		t.Fatalf("bounded replay last item = %#v", got[len(got)-1])
+	}
+	for _, item := range got {
+		if item.ID == "older" {
+			t.Fatal("bounded replay retained an item before the latest compaction")
+		}
+	}
+	payloadBytes := 0
+	for _, item := range got {
+		if item != nil {
+			payloadBytes += len(item.Payload)
+		}
+	}
+	if payloadBytes > runtimeReplayMaxPayloadBytes {
+		t.Fatalf("bounded replay payload bytes = %d, max %d", payloadBytes, runtimeReplayMaxPayloadBytes)
+	}
+}
+
+func TestBoundedRuntimeReplayItemsDropsOversizedCompaction(t *testing.T) {
+	now := time.Now().UTC()
+	compaction := &store.Item{
+		ID:      "oversized-compaction",
+		Kind:    threadCompactionItemKind,
+		Payload: json.RawMessage(strings.Repeat("x", runtimeReplayMaxPayloadBytes+1)),
+	}
+	tail := runtimeHistoryMessageItem("tail", "user", "bounded tail", now)
+
+	got := boundedRuntimeReplayItems([]*store.Item{compaction, tail})
+	if len(got) != 1 || got[0].ID != tail.ID {
+		t.Fatalf("bounded replay = %#v, want only tail", got)
+	}
+}
 
 func TestRuntimeMessagesFromItemsReconstructsMixedToolHistory(t *testing.T) {
 	now := time.Now().UTC()

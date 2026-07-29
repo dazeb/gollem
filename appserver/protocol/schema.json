@@ -17800,6 +17800,12 @@
           ]
         },
         "result": {},
+        "retryIdempotencyKey": {
+          "type": "string"
+        },
+        "retryOfTurnId": {
+          "type": "string"
+        },
         "startedAt": {
           "format": "date-time",
           "type": "string"
@@ -17873,6 +17879,154 @@
       "required": [
         "ok",
         "turnId"
+      ],
+      "type": "object"
+    },
+    "TurnRunRetryParams": {
+      "additionalProperties": false,
+      "properties": {
+        "adaptiveThinking": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "input": {},
+        "maxTokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settings": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stopSequences": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thinkingBudget": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topP": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turnId",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    },
+    "TurnRunRetryResult": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "reused": {
+          "type": "boolean"
+        },
+        "sourceTurnId": {
+          "type": "string"
+        },
+        "turn": {
+          "$ref": "#/$defs/TurnRecord"
+        }
+      },
+      "required": [
+        "turn",
+        "sourceTurnId",
+        "idempotencyKey",
+        "reused"
       ],
       "type": "object"
     },
@@ -20704,6 +20858,16 @@
       ],
       "result": [
         "TurnRunInterruptResult"
+      ]
+    },
+    {
+      "method": "turn/retry",
+      "surface": "gollem-extension",
+      "params": [
+        "TurnRunRetryParams"
+      ],
+      "result": [
+        "TurnRunRetryResult"
       ]
     },
     {

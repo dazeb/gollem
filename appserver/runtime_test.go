@@ -624,6 +624,164 @@ func TestServerRuntimeTurnRetryBranchesBeforeSourceTurn(t *testing.T) {
 	assertRuntimeUserPrompt(t, calls[1].Messages[0], "original prompt")
 }
 
+func TestServerRuntimeTurnRetryIsIdempotentAcrossDuplicateRequests(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	model := core.NewTestModel(core.TextResponse("first answer"), core.TextResponse("retry answer"))
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}))),
+	)
+
+	startResp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "original prompt"}))
+	if startResp.Error != nil {
+		t.Fatalf("thread/start error: %v", startResp.Error)
+	}
+	var started struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, startResp, &started)
+	waitForNotificationSet(t, server, "turn/completed")
+
+	params := map[string]any{
+		"turnId":         started.Turn.ID,
+		"idempotencyKey": "desktop-retry-1",
+	}
+	firstResp := server.HandleRequest(ctx, request("turn/retry", params))
+	if firstResp.Error != nil {
+		t.Fatalf("first turn/retry error: %v", firstResp.Error)
+	}
+	var first protocol.TurnRunRetryResult
+	decodeResult(t, firstResp, &first)
+	if first.Reused || first.SourceTurnID != started.Turn.ID || first.Turn.ID == "" {
+		t.Fatalf("first retry = %#v", first)
+	}
+
+	duplicateResp := server.HandleRequest(ctx, request("turn/retry", params))
+	if duplicateResp.Error != nil {
+		t.Fatalf("duplicate turn/retry error: %v", duplicateResp.Error)
+	}
+	var duplicate protocol.TurnRunRetryResult
+	decodeResult(t, duplicateResp, &duplicate)
+	if !duplicate.Reused || duplicate.Turn.ID != first.Turn.ID ||
+		duplicate.IdempotencyKey != "desktop-retry-1" {
+		t.Fatalf("duplicate retry = %#v, first = %#v", duplicate, first)
+	}
+
+	waitForNotificationSet(t, server, "turn/completed")
+	if got := len(model.Calls()); got != 2 {
+		t.Fatalf("model calls = %d, want 2", got)
+	}
+	turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: started.Turn.ThreadID})
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %#v, want source plus one retry", turns)
+	}
+}
+
+func TestServerRuntimeTurnRetryCanBeCancelledAndRemainsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "retry cancellation"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	source, err := st.CreateTurn(ctx, store.CreateTurnRequest{
+		ThreadID: thread.ID,
+		Input:    json.RawMessage(`{"prompt":"retry me"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{
+		ID:     source.ID,
+		Status: store.TurnInterrupted,
+		Error:  store.RuntimeOwnerLostReason,
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	model := &blockingRuntimeModel{started: make(chan struct{})}
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "blocking"}))),
+	)
+
+	params := map[string]any{
+		"turnId":         source.ID,
+		"idempotencyKey": "cancelled-retry-1",
+	}
+	retryResp := server.HandleRequest(ctx, request("turn/retry", params))
+	if retryResp.Error != nil {
+		t.Fatalf("turn/retry error: %v", retryResp.Error)
+	}
+	var retried protocol.TurnRunRetryResult
+	decodeResult(t, retryResp, &retried)
+	waitForBlockingModel(t, model)
+
+	interruptResp := server.HandleRequest(ctx, request("turn/interrupt", map[string]any{"turnId": retried.Turn.ID}))
+	if interruptResp.Error != nil {
+		t.Fatalf("turn/interrupt error: %v", interruptResp.Error)
+	}
+	waitForNotificationSet(t, server, "turn/completed")
+	cancelled, err := st.GetTurn(ctx, retried.Turn.ID)
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	if cancelled.Status != store.TurnInterrupted {
+		t.Fatalf("cancelled retry = %#v", cancelled)
+	}
+
+	duplicateResp := server.HandleRequest(ctx, request("turn/retry", params))
+	if duplicateResp.Error != nil {
+		t.Fatalf("duplicate turn/retry error: %v", duplicateResp.Error)
+	}
+	var duplicate protocol.TurnRunRetryResult
+	decodeResult(t, duplicateResp, &duplicate)
+	if !duplicate.Reused || duplicate.Turn.ID != retried.Turn.ID ||
+		duplicate.Turn.Status != protocol.TurnLifecycleInterrupted {
+		t.Fatalf("duplicate cancelled retry = %#v, first = %#v", duplicate, retried)
+	}
+}
+
+func TestServerRuntimeTurnRetryIsTypedUnavailableWithoutRecoveryStore(t *testing.T) {
+	ctx := context.Background()
+	sqlite := newRuntimeTestStore(t)
+	thread, err := sqlite.CreateThread(ctx, store.CreateThreadRequest{Title: "legacy store"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	source, err := sqlite.CreateTurn(ctx, store.CreateTurnRequest{
+		ThreadID: thread.ID,
+		Input:    json.RawMessage(`{"prompt":"retry me"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := sqlite.CompleteTurn(ctx, store.CompleteTurnRequest{ID: source.ID}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	legacy := struct{ store.Store }{Store: sqlite}
+	server := readyServer(
+		WithStore(legacy),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(
+			core.NewTestModel(core.TextResponse("must not run")),
+			RuntimeModelInfo{ProviderID: "test", Model: "test-model"},
+		))),
+	)
+
+	resp := server.HandleRequest(ctx, request("turn/retry", map[string]any{
+		"turnId":         source.ID,
+		"idempotencyKey": "legacy-store-retry",
+	}))
+	if resp.Error == nil || resp.Error.Code != protocol.CodeMethodUnavailable ||
+		resp.Error.Message != "method unavailable" ||
+		!strings.Contains(string(resp.Error.Data), "restart-safe retry") {
+		t.Fatalf("turn/retry unavailable error = %#v", resp.Error)
+	}
+}
+
 func TestServerRuntimeTurnInterruptCancelsActiveRun(t *testing.T) {
 	ctx := context.Background()
 	st := newRuntimeTestStore(t)

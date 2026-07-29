@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 const timeFormat = time.RFC3339Nano
 
 var _ Store = (*SQLiteStore)(nil)
+var _ RuntimeRecoveryStore = (*SQLiteStore)(nil)
 
 // SQLiteStore persists app-server state in SQLite.
 type SQLiteStore struct {
@@ -28,7 +30,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	if dbPath == "" {
 		return nil, errors.New("appserver/store: db path must not be empty")
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
@@ -40,6 +42,17 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func sqliteDSN(dbPath string) string {
+	if dbPath == ":memory:" {
+		return dbPath
+	}
+	separator := "?"
+	if strings.Contains(dbPath, "?") {
+		separator = "&"
+	}
+	return dbPath + separator + "_txlock=immediate"
 }
 
 // Close closes the database handle.
@@ -536,6 +549,173 @@ func (s *SQLiteStore) ListTurns(ctx context.Context, filter TurnFilter) ([]*Turn
 	return out, nil
 }
 
+// PrepareTurnRetry atomically creates or reuses one retry turn for an
+// idempotency key. The source must already be terminal.
+func (s *SQLiteStore) PrepareTurnRetry(ctx context.Context, req PrepareTurnRetryRequest) (*PrepareTurnRetryResult, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	req.SourceTurnID = strings.TrimSpace(req.SourceTurnID)
+	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
+	if req.SourceTurnID == "" {
+		return nil, ErrTurnNotFound
+	}
+	if req.IdempotencyKey == "" || len(req.IdempotencyKey) > 256 {
+		return nil, errors.New("appserver/store: retry idempotency key must contain 1 to 256 bytes")
+	}
+
+	var result *PrepareTurnRetryResult
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		source, err := loadTurnTx(ctx, tx, req.SourceTurnID)
+		if err != nil {
+			return err
+		}
+		if !terminalTurnStatus(source.Status) {
+			return ErrTurnNotTerminal
+		}
+		thread, err := loadThreadTx(ctx, tx, source.ThreadID)
+		if err != nil {
+			return err
+		}
+		if thread.Status == ThreadDeleted {
+			return ErrThreadDeleted
+		}
+
+		turns, err := loadAllTurnsTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, candidate := range turns {
+			if candidate.RetryIdempotencyKey != req.IdempotencyKey {
+				continue
+			}
+			if candidate.RetryOfTurnID != source.ID {
+				return ErrRetryIdempotencyConflict
+			}
+			result = &PrepareTurnRetryResult{
+				Source:  cloneTurn(source),
+				Turn:    cloneTurn(candidate),
+				Created: false,
+			}
+			return nil
+		}
+
+		now := time.Now().UTC()
+		input := cloneRaw(req.Input)
+		if len(input) == 0 {
+			input = cloneRaw(source.Input)
+		}
+		retry := &Turn{
+			ID:                  newID("turn"),
+			ThreadID:            source.ThreadID,
+			Status:              TurnQueued,
+			Input:               input,
+			Metadata:            cloneMap(req.Metadata),
+			CreatedAt:           now,
+			UpdatedAt:           now,
+			RetryOfTurnID:       source.ID,
+			RetryIdempotencyKey: req.IdempotencyKey,
+		}
+		if err := saveTurnTx(ctx, tx, retry); err != nil {
+			return err
+		}
+		result = &PrepareTurnRetryResult{
+			Source:  cloneTurn(source),
+			Turn:    cloneTurn(retry),
+			Created: true,
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// RecoverOrphanedTurns terminalizes work whose in-memory execution owner did
+// not survive. It is idempotent: only queued/running turns are changed.
+func (s *SQLiteStore) RecoverOrphanedTurns(ctx context.Context, req RecoverOrphanedTurnsRequest) (*RecoverOrphanedTurnsResult, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	recoveredAt := req.RecoveredAt.UTC()
+	if recoveredAt.IsZero() {
+		recoveredAt = time.Now().UTC()
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = RuntimeOwnerLostReason
+	}
+	result := &RecoverOrphanedTurnsResult{}
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		turns, err := loadTurnsByStatusesTx(ctx, tx, TurnQueued, TurnRunning)
+		if err != nil {
+			return err
+		}
+		for _, turn := range turns {
+			previousStatus := turn.Status
+			items, err := loadItemsForTurnTx(ctx, tx, turn.ID)
+			if err != nil {
+				return err
+			}
+			var recoveredItemIDs []string
+			for _, item := range items {
+				if !orphanedItemStatus(item.Status) {
+					continue
+				}
+				item.Status = "failed"
+				item.Payload = recoveredItemPayload(item.Payload)
+				item.UpdatedAt = recoveredAt
+				if err := saveItemTx(ctx, tx, item); err != nil {
+					return err
+				}
+				recoveredItemIDs = append(recoveredItemIDs, item.ID)
+				result.Items = append(result.Items, cloneItem(item))
+			}
+
+			turn.Status = TurnInterrupted
+			turn.Error = reason
+			turn.CompletedAt = recoveredAt
+			turn.UpdatedAt = recoveredAt
+			if err := saveTurnTx(ctx, tx, turn); err != nil {
+				return err
+			}
+			result.Turns = append(result.Turns, cloneTurn(turn))
+
+			markerPayload, err := json.Marshal(map[string]any{
+				"turnId":           turn.ID,
+				"previousStatus":   previousStatus,
+				"status":           turn.Status,
+				"reason":           reason,
+				"recoveredItemIds": recoveredItemIDs,
+				"recoveredAt":      recoveredAt,
+			})
+			if err != nil {
+				return fmt.Errorf("marshal runtime recovery marker: %w", err)
+			}
+			marker := &Item{
+				ID:        newID("item"),
+				ThreadID:  turn.ThreadID,
+				TurnID:    turn.ID,
+				Kind:      "runtimeRecovery",
+				Status:    "completed",
+				Payload:   markerPayload,
+				CreatedAt: recoveredAt,
+				UpdatedAt: recoveredAt,
+			}
+			if err := saveItemTx(ctx, tx, marker); err != nil {
+				return err
+			}
+			result.Markers = append(result.Markers, cloneItem(marker))
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // RollbackThread implements Store.
 func (s *SQLiteStore) RollbackThread(ctx context.Context, req RollbackThreadRequest) (*RollbackThreadResult, error) {
 	ctx = normalizeContext(ctx)
@@ -844,6 +1024,96 @@ func loadTurnsForThreadTx(ctx context.Context, tx *sql.Tx, threadID string) ([]*
 		return nil, fmt.Errorf("iterate thread turns: %w", err)
 	}
 	return turns, nil
+}
+
+func loadAllTurnsTx(ctx context.Context, tx *sql.Tx) ([]*Turn, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM app_turns ORDER BY created_at ASC, id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("load turns: %w", err)
+	}
+	defer rows.Close()
+	var turns []*Turn
+	for rows.Next() {
+		turn, err := scanTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		turns = append(turns, turn)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate turns: %w", err)
+	}
+	return turns, nil
+}
+
+func loadTurnsByStatusesTx(ctx context.Context, tx *sql.Tx, statuses ...TurnStatus) ([]*Turn, error) {
+	turns, err := loadAllTurnsTx(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	var out []*Turn
+	for _, turn := range turns {
+		for _, status := range statuses {
+			if turn.Status == status {
+				out = append(out, turn)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func loadItemsForTurnTx(ctx context.Context, tx *sql.Tx, turnID string) ([]*Item, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM app_items WHERE turn_id = ? ORDER BY seq ASC`, turnID)
+	if err != nil {
+		return nil, fmt.Errorf("load turn items: %w", err)
+	}
+	defer rows.Close()
+	var items []*Item
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate turn items: %w", err)
+	}
+	return items, nil
+}
+
+func terminalTurnStatus(status TurnStatus) bool {
+	switch status {
+	case TurnCompleted, TurnFailed, TurnInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+func orphanedItemStatus(status string) bool {
+	switch status {
+	case "inProgress", "in_progress", "pending", "queued", "running", "started":
+		return true
+	default:
+		return false
+	}
+}
+
+func recoveredItemPayload(payload json.RawMessage) json.RawMessage {
+	var object map[string]any
+	if len(payload) == 0 || json.Unmarshal(payload, &object) != nil || object == nil {
+		return cloneRaw(payload)
+	}
+	if status, ok := object["status"].(string); ok && orphanedItemStatus(status) {
+		object["status"] = "failed"
+	}
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		return cloneRaw(payload)
+	}
+	return encoded
 }
 
 func loadLastTurnsTx(ctx context.Context, tx *sql.Tx, threadID string, limit int) ([]*Turn, error) {

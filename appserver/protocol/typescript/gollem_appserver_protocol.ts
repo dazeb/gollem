@@ -4066,6 +4066,8 @@ export type TurnRecord = {
   "items"?: Array<TimelineItem>;
   "metadata"?: Record<string, unknown> | null;
   "result"?: unknown;
+  "retryIdempotencyKey"?: string;
+  "retryOfTurnId"?: string;
   "startedAt"?: string;
   "status": TurnLifecycleStatus;
   "threadId": string;
@@ -4083,6 +4085,32 @@ export type TurnRunInterruptResult = {
   "ok": boolean;
   "turn"?: TurnRecord | null;
   "turnId": string;
+};
+
+export type TurnRunRetryParams = {
+  "adaptiveThinking"?: boolean | null;
+  "idempotencyKey": string;
+  "input"?: unknown;
+  "maxTokens"?: number | null;
+  "metadata"?: Record<string, unknown> | null;
+  "model"?: string;
+  "prompt"?: string;
+  "provider"?: string;
+  "providerId"?: string;
+  "reasoningEffort"?: string | null;
+  "settings"?: Record<string, unknown> | null;
+  "stopSequences"?: Array<string> | null;
+  "temperature"?: number | null;
+  "thinkingBudget"?: number | null;
+  "topP"?: number | null;
+  "turnId": string;
+};
+
+export type TurnRunRetryResult = {
+  "idempotencyKey": string;
+  "reused": boolean;
+  "sourceTurnId": string;
+  "turn": TurnRecord;
 };
 
 export type TurnRunStartParams = {
@@ -4311,6 +4339,7 @@ export const wireTypeBindings = [
   { "method": "turn/completed", "surface": "server-notification", "params": ["RuntimeTurnNotification"] },
   { "method": "turn/diff/updated", "surface": "server-notification", "params": ["TurnDiffUpdatedNotification"] },
   { "method": "turn/interrupt", "surface": "client-request", "params": ["TurnRunInterruptParams"], "result": ["TurnRunInterruptResult"] },
+  { "method": "turn/retry", "surface": "gollem-extension", "params": ["TurnRunRetryParams"], "result": ["TurnRunRetryResult"] },
   { "method": "turn/start", "surface": "client-request", "params": ["TurnRunStartParams"], "result": ["TurnRunStartResult"] },
   { "method": "turn/started", "surface": "server-notification", "params": ["RuntimeTurnNotification"] },
 ] as const satisfies readonly WireTypeBinding[];
@@ -4383,6 +4412,7 @@ export interface MethodParamsByName {
   "turn/completed": RuntimeTurnNotification;
   "turn/diff/updated": TurnDiffUpdatedNotification;
   "turn/interrupt": TurnRunInterruptParams;
+  "turn/retry": TurnRunRetryParams;
   "turn/start": TurnRunStartParams;
   "turn/started": RuntimeTurnNotification;
 }
@@ -4430,6 +4460,7 @@ export interface MethodResultsByName {
   "thread/unarchive": ThreadUnarchiveResult;
   "thread/unsubscribe": ThreadUnsubscribeResponse;
   "turn/interrupt": TurnRunInterruptResult;
+  "turn/retry": TurnRunRetryResult;
   "turn/start": TurnRunStartResult;
 }
 

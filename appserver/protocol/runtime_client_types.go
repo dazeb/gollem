@@ -167,6 +167,24 @@ type TurnRunStartResult struct {
 	Turn   TurnRecord   `json:"turn"`
 }
 
+// TurnRunRetryParams is Gollem's exact idempotent retry request. Legacy
+// untyped clients may omit idempotencyKey at the handler boundary, but typed
+// clients must supply one so a lost response cannot duplicate model work.
+type TurnRunRetryParams struct {
+	TurnID         string         `json:"turnId"`
+	IdempotencyKey string         `json:"idempotencyKey"`
+	Prompt         string         `json:"prompt,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	RuntimeModelParams
+}
+
+type TurnRunRetryResult struct {
+	Turn           TurnRecord `json:"turn"`
+	SourceTurnID   string     `json:"sourceTurnId"`
+	IdempotencyKey string     `json:"idempotencyKey"`
+	Reused         bool       `json:"reused"`
+}
+
 type TurnRunInterruptParams struct {
 	ID       string `json:"id,omitempty"`
 	TurnID   string `json:"turnId,omitempty"`

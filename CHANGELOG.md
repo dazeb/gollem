@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Restart-safe app-server retry and daemon ownership.** File-backed app-server
+  daemons now hold one process-lifetime store lock and reconcile queued or
+  running turns to an inspectable interrupted state after owner loss. The
+  generated `turn/retry` extension requires an idempotency key, atomically
+  creates or reuses one retry turn, preserves the recorded source prompt and
+  model selection, and bounds model-visible replay after the latest
+  compaction. Recovery never recreates pending approval authority or silently
+  treats prior tool side effects as resumed.
 - **Typed app-server catalog and run-lifecycle bindings.** Generated clients
   can now infer provider/model discovery, thread and turn start, turn
   interruption, thread/turn lifecycle notifications, and live text/reasoning

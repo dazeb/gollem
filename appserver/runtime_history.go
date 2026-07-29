@@ -10,7 +10,11 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
-const runtimeReplayIdentifierMaxBytes = 64
+const (
+	runtimeReplayIdentifierMaxBytes = 64
+	runtimeReplayMaxItems           = 512
+	runtimeReplayMaxPayloadBytes    = 4 << 20
+)
 
 type runtimeReplayToolRecord struct {
 	tool      string
@@ -24,6 +28,51 @@ type runtimeHistoryBuilder struct {
 	dynamicParents map[string]struct{}
 	callIDCounts   map[string]int
 	generatedIDs   int
+}
+
+func boundedRuntimeReplayItems(items []*store.Item) []*store.Item {
+	window := compactionWindowItems(items)
+	if len(window) == 0 {
+		return nil
+	}
+
+	firstTail := 0
+	usedItems := 0
+	usedBytes := 0
+	var compaction *store.Item
+	if window[0] != nil && window[0].Kind == threadCompactionItemKind {
+		firstTail = 1
+		if len(window[0].Payload) <= runtimeReplayMaxPayloadBytes {
+			compaction = window[0]
+			usedItems = 1
+			usedBytes = len(compaction.Payload)
+		}
+	}
+
+	start := len(window)
+	for i := len(window) - 1; i >= firstTail; i-- {
+		item := window[i]
+		payloadBytes := 0
+		if item != nil {
+			payloadBytes = len(item.Payload)
+		}
+		if usedItems+1 > runtimeReplayMaxItems ||
+			usedBytes+payloadBytes > runtimeReplayMaxPayloadBytes {
+			break
+		}
+		start = i
+		usedItems++
+		usedBytes += payloadBytes
+	}
+
+	out := make([]*store.Item, 0, usedItems)
+	if compaction != nil {
+		out = append(out, compaction)
+	}
+	if start < len(window) {
+		out = append(out, window[start:]...)
+	}
+	return out
 }
 
 func runtimeMessagesFromItems(items []*store.Item) []core.ModelMessage {

@@ -281,18 +281,20 @@ func protocolTurnRecord(turn *store.Turn) protocol.TurnRecord {
 		return protocol.TurnRecord{}
 	}
 	return protocol.TurnRecord{
-		ID:          turn.ID,
-		ThreadID:    turn.ThreadID,
-		Status:      protocol.TurnLifecycleStatus(turn.Status),
-		Input:       append(json.RawMessage(nil), turn.Input...),
-		Result:      append(json.RawMessage(nil), turn.Result...),
-		Error:       turn.Error,
-		Usage:       cloneSettings(turn.Usage),
-		Metadata:    cloneSettings(turn.Metadata),
-		CreatedAt:   turn.CreatedAt,
-		UpdatedAt:   turn.UpdatedAt,
-		StartedAt:   turn.StartedAt,
-		CompletedAt: turn.CompletedAt,
+		ID:                  turn.ID,
+		ThreadID:            turn.ThreadID,
+		Status:              protocol.TurnLifecycleStatus(turn.Status),
+		Input:               append(json.RawMessage(nil), turn.Input...),
+		Result:              append(json.RawMessage(nil), turn.Result...),
+		Error:               turn.Error,
+		Usage:               cloneSettings(turn.Usage),
+		Metadata:            cloneSettings(turn.Metadata),
+		CreatedAt:           turn.CreatedAt,
+		UpdatedAt:           turn.UpdatedAt,
+		StartedAt:           turn.StartedAt,
+		CompletedAt:         turn.CompletedAt,
+		RetryOfTurnID:       turn.RetryOfTurnID,
+		RetryIdempotencyKey: turn.RetryIdempotencyKey,
 	}
 }
 

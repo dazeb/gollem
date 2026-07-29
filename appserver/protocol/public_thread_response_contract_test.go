@@ -197,11 +197,11 @@ func TestPublicThreadResponsesRemainSeparateFromLiveResults(t *testing.T) {
 			}
 		}
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 549 {
-		t.Fatalf("definition count = %d, want 549", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 551 {
+		t.Fatalf("definition count = %d, want 551", len(JSONSchema()["$defs"].(Schema)))
 	}
-	if len(bindings) != 69 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 69/5", len(bindings), len(ItemPayloadBindings()))
+	if len(bindings) != 70 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 70/5", len(bindings), len(ItemPayloadBindings()))
 	}
 }
 

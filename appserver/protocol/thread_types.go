@@ -145,19 +145,21 @@ type ThreadRecord struct {
 }
 
 type TurnRecord struct {
-	ID          string              `json:"id"`
-	ThreadID    string              `json:"threadId"`
-	Status      TurnLifecycleStatus `json:"status"`
-	Input       json.RawMessage     `json:"input,omitempty"`
-	Result      json.RawMessage     `json:"result,omitempty"`
-	Error       string              `json:"error,omitempty"`
-	Usage       map[string]any      `json:"usage,omitempty"`
-	Metadata    map[string]any      `json:"metadata,omitempty"`
-	CreatedAt   time.Time           `json:"createdAt"`
-	UpdatedAt   time.Time           `json:"updatedAt"`
-	StartedAt   time.Time           `json:"startedAt,omitempty"`
-	CompletedAt time.Time           `json:"completedAt,omitempty"`
-	Items       []TimelineItem      `json:"items,omitempty" jsonschema:"nonnullable=true"`
+	ID                  string              `json:"id"`
+	ThreadID            string              `json:"threadId"`
+	Status              TurnLifecycleStatus `json:"status"`
+	Input               json.RawMessage     `json:"input,omitempty"`
+	Result              json.RawMessage     `json:"result,omitempty"`
+	Error               string              `json:"error,omitempty"`
+	Usage               map[string]any      `json:"usage,omitempty"`
+	Metadata            map[string]any      `json:"metadata,omitempty"`
+	CreatedAt           time.Time           `json:"createdAt"`
+	UpdatedAt           time.Time           `json:"updatedAt"`
+	StartedAt           time.Time           `json:"startedAt,omitempty"`
+	CompletedAt         time.Time           `json:"completedAt,omitempty"`
+	RetryOfTurnID       string              `json:"retryOfTurnId,omitempty"`
+	RetryIdempotencyKey string              `json:"retryIdempotencyKey,omitempty"`
+	Items               []TimelineItem      `json:"items,omitempty" jsonschema:"nonnullable=true"`
 }
 
 // ThreadListResult adds Codex-compatible data/cursor fields while retaining
