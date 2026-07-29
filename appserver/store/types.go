@@ -26,12 +26,16 @@ const (
 )
 
 var (
-	ErrThreadNotFound = errors.New("appserver/store: thread not found")
-	ErrTurnNotFound   = errors.New("appserver/store: turn not found")
-	ErrItemNotFound   = errors.New("appserver/store: item not found")
-	ErrThreadDeleted  = errors.New("appserver/store: thread is deleted")
-	ErrStoreClosed    = errors.New("appserver/store: store is closed")
+	ErrThreadNotFound           = errors.New("appserver/store: thread not found")
+	ErrTurnNotFound             = errors.New("appserver/store: turn not found")
+	ErrItemNotFound             = errors.New("appserver/store: item not found")
+	ErrThreadDeleted            = errors.New("appserver/store: thread is deleted")
+	ErrStoreClosed              = errors.New("appserver/store: store is closed")
+	ErrTurnNotTerminal          = errors.New("appserver/store: turn is not terminal")
+	ErrRetryIdempotencyConflict = errors.New("appserver/store: retry idempotency key is already bound to another turn")
 )
+
+const RuntimeOwnerLostReason = "appserver/runtime: execution owner exited before terminal state"
 
 // Thread is a durable conversation container.
 type Thread struct {
@@ -50,18 +54,20 @@ type Thread struct {
 
 // Turn is one model run attempt within a thread.
 type Turn struct {
-	ID          string          `json:"id"`
-	ThreadID    string          `json:"threadId"`
-	Status      TurnStatus      `json:"status"`
-	Input       json.RawMessage `json:"input,omitempty"`
-	Result      json.RawMessage `json:"result,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	Usage       map[string]any  `json:"usage,omitempty"`
-	Metadata    map[string]any  `json:"metadata,omitempty"`
-	CreatedAt   time.Time       `json:"createdAt"`
-	UpdatedAt   time.Time       `json:"updatedAt"`
-	StartedAt   time.Time       `json:"startedAt,omitempty"`
-	CompletedAt time.Time       `json:"completedAt,omitempty"`
+	ID                  string          `json:"id"`
+	ThreadID            string          `json:"threadId"`
+	Status              TurnStatus      `json:"status"`
+	Input               json.RawMessage `json:"input,omitempty"`
+	Result              json.RawMessage `json:"result,omitempty"`
+	Error               string          `json:"error,omitempty"`
+	Usage               map[string]any  `json:"usage,omitempty"`
+	Metadata            map[string]any  `json:"metadata,omitempty"`
+	CreatedAt           time.Time       `json:"createdAt"`
+	UpdatedAt           time.Time       `json:"updatedAt"`
+	StartedAt           time.Time       `json:"startedAt,omitempty"`
+	CompletedAt         time.Time       `json:"completedAt,omitempty"`
+	RetryOfTurnID       string          `json:"retryOfTurnId,omitempty"`
+	RetryIdempotencyKey string          `json:"retryIdempotencyKey,omitempty"`
 }
 
 // Item is an ordered timeline entry for messages, reasoning, tools, commands,
@@ -126,6 +132,30 @@ type TurnFilter struct {
 	Limit    int
 }
 
+type PrepareTurnRetryRequest struct {
+	SourceTurnID   string
+	IdempotencyKey string
+	Input          json.RawMessage
+	Metadata       map[string]any
+}
+
+type PrepareTurnRetryResult struct {
+	Source  *Turn
+	Turn    *Turn
+	Created bool
+}
+
+type RecoverOrphanedTurnsRequest struct {
+	RecoveredAt time.Time
+	Reason      string
+}
+
+type RecoverOrphanedTurnsResult struct {
+	Turns   []*Turn
+	Items   []*Item
+	Markers []*Item
+}
+
 type RollbackThreadRequest struct {
 	ID       string
 	NumTurns int
@@ -183,4 +213,11 @@ type Store interface {
 	UpdateItem(context.Context, UpdateItemRequest) (*Item, error)
 	GetItem(context.Context, string) (*Item, error)
 	ListItems(context.Context, ItemFilter) ([]*Item, error)
+}
+
+// RuntimeRecoveryStore is the optional persistence capability required for
+// restart reconciliation and exactly-once retry creation.
+type RuntimeRecoveryStore interface {
+	PrepareTurnRetry(context.Context, PrepareTurnRetryRequest) (*PrepareTurnRetryResult, error)
+	RecoverOrphanedTurns(context.Context, RecoverOrphanedTurnsRequest) (*RecoverOrphanedTurnsResult, error)
 }

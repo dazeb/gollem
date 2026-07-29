@@ -2,10 +2,12 @@ package appserver
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/core"
+	"github.com/google/uuid"
 )
 
 type RuntimeModelParams = protocol.RuntimeModelParams
@@ -50,13 +52,25 @@ type turnSteerParams struct {
 }
 
 type turnRetryParams struct {
-	ID       string         `json:"id,omitempty"`
-	TurnID   string         `json:"turnId,omitempty"`
-	Prompt   string         `json:"prompt,omitempty"`
-	Message  string         `json:"message,omitempty"`
-	Text     string         `json:"text,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	ID             string         `json:"id,omitempty"`
+	TurnID         string         `json:"turnId,omitempty"`
+	IdempotencyKey *string        `json:"idempotencyKey,omitempty"`
+	Prompt         string         `json:"prompt,omitempty"`
+	Message        string         `json:"message,omitempty"`
+	Text           string         `json:"text,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 	RuntimeModelParams
+}
+
+func (p turnRetryParams) retryIdempotencyKey() (string, error) {
+	if p.IdempotencyKey == nil {
+		return uuid.NewString(), nil
+	}
+	key := strings.TrimSpace(*p.IdempotencyKey)
+	if key == "" || len(key) > 256 {
+		return "", errors.New("idempotencyKey must contain 1 to 256 bytes")
+	}
+	return key, nil
 }
 
 func runtimePromptFromStartParams(prompt, message, text string, input json.RawMessage) string {
@@ -69,6 +83,31 @@ func runtimeSelectionFromParams(providerID, provider, model string) RuntimeModel
 		Provider:   strings.TrimSpace(provider),
 		Model:      strings.TrimSpace(model),
 	}
+}
+
+func runtimeSelectionFromInput(input json.RawMessage) RuntimeModelSelection {
+	var stored runtimeTurnInput
+	if len(input) == 0 || json.Unmarshal(input, &stored) != nil {
+		return RuntimeModelSelection{}
+	}
+	return RuntimeModelSelection{
+		ProviderID: strings.TrimSpace(stored.ProviderID),
+		Provider:   strings.TrimSpace(stored.Provider),
+		Model:      strings.TrimSpace(stored.Model),
+	}
+}
+
+func mergeRuntimeSelection(primary, fallback RuntimeModelSelection) RuntimeModelSelection {
+	if primary.ProviderID == "" {
+		primary.ProviderID = fallback.ProviderID
+	}
+	if primary.Provider == "" {
+		primary.Provider = fallback.Provider
+	}
+	if primary.Model == "" {
+		primary.Model = fallback.Model
+	}
+	return primary
 }
 
 func runtimeSelectionWithThreadDefaults(selection RuntimeModelSelection, settings map[string]any) RuntimeModelSelection {

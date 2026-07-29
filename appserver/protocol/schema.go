@@ -590,6 +590,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TurnRecord", Type: reflect.TypeFor[TurnRecord]()},
 		{Name: "TurnRunInterruptParams", Type: reflect.TypeFor[TurnRunInterruptParams]()},
 		{Name: "TurnRunInterruptResult", Type: reflect.TypeFor[TurnRunInterruptResult]()},
+		{Name: "TurnRunRetryParams", Type: reflect.TypeFor[TurnRunRetryParams]()},
+		{Name: "TurnRunRetryResult", Type: reflect.TypeFor[TurnRunRetryResult]()},
 		{Name: "TurnRunStartParams", Type: reflect.TypeFor[TurnRunStartParams]()},
 		{Name: "TurnRunStartResult", Type: reflect.TypeFor[TurnRunStartResult]()},
 		{Name: "TurnStartParams", Type: reflect.TypeFor[TurnStartParams]()},

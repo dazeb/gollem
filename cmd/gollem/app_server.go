@@ -369,6 +369,18 @@ func shutdownCLIAppServerRuntime(runtimeSvc *appserver.RuntimeService) {
 }
 
 func serveCLIAppServerTransports(ctx context.Context, flags appServerFlags) error {
+	if !flags.stdio && flags.socketPath == "" && flags.websocketAddr == "" {
+		return errors.New("no app-server transports enabled")
+	}
+	storeLock, err := acquireAppServerStoreLock(flags)
+	if err != nil {
+		return err
+	}
+	defer storeLock.Close()
+	if err := recoverCLIAppServerState(flags); err != nil {
+		return fmt.Errorf("recover app-server state: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 3)
@@ -400,12 +412,35 @@ func serveCLIAppServerTransports(ctx context.Context, flags appServerFlags) erro
 	if started == 0 {
 		return errors.New("no app-server transports enabled")
 	}
-	err := <-errCh
+	err = <-errCh
 	cancel()
 	if errors.Is(err, errAppServerDaemonStopped) {
 		return nil
 	}
 	return err
+}
+
+func recoverCLIAppServerState(flags appServerFlags) error {
+	workDir, err := filepath.Abs(flags.workDir)
+	if err != nil {
+		return fmt.Errorf("resolve workdir: %w", err)
+	}
+	storePath, err := resolveAppServerStorePath(workDir, flags.storePath)
+	if err != nil {
+		return err
+	}
+	if storePath == ":memory:" {
+		return nil
+	}
+
+	st, err := store.NewSQLiteStore(storePath)
+	if err != nil {
+		return err
+	}
+	_, recoverErr := st.RecoverOrphanedTurns(context.Background(), store.RecoverOrphanedTurnsRequest{
+		Reason: store.RuntimeOwnerLostReason,
+	})
+	return errors.Join(recoverErr, st.Close())
 }
 
 func appServerTransportName(flags appServerFlags) string {
@@ -650,7 +685,9 @@ func resolveAppServerStorePath(workDir, configured string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve store path: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	// The store path is an explicit CLI configuration value. It is normalized
+	// above so the daemon and its owner lock use one canonical location.
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil { // #nosec G703
 		return "", fmt.Errorf("create store directory: %w", err)
 	}
 	return abs, nil

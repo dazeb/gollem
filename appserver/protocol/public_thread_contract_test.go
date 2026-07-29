@@ -204,11 +204,11 @@ func TestPublicThreadTypeScriptAndBindingsRemainStandalone(t *testing.T) {
 	if !strings.Contains(string(generated), want) {
 		t.Fatalf("generated TypeScript missing exact Thread:\n%s", generated)
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 549 {
-		t.Fatalf("definition count = %d, want 549", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 551 {
+		t.Fatalf("definition count = %d, want 551", len(JSONSchema()["$defs"].(Schema)))
 	}
-	if len(WireTypeBindings()) != 69 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 69/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
+	if len(WireTypeBindings()) != 70 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 70/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
 	}
 	for _, binding := range WireTypeBindings() {
 		if slices.Contains(binding.Params, "Thread") || slices.Contains(binding.Result, "Thread") {

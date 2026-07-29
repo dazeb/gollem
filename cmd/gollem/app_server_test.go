@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -77,6 +78,422 @@ func TestParseAppServerFlags(t *testing.T) {
 	}
 	if _, err := parseAppServerFlags([]string{"--websocket", "127.0.0.1:0", "--websocket-path", "rpc"}); err == nil || !strings.Contains(err.Error(), "must start with /") {
 		t.Fatalf("invalid websocket path error = %v", err)
+	}
+}
+
+func TestRecoverCLIAppServerStateTerminalizesStaleRuntimeBeforeServing(t *testing.T) {
+	ctx := context.Background()
+	workDir := t.TempDir()
+	storePath := filepath.Join(workDir, "app.db")
+	st, err := store.NewSQLiteStore(storePath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "recovery"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := st.StartTurn(ctx, turn.ID); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	activeItem, err := st.AppendItem(ctx, store.AppendItemRequest{
+		ThreadID: thread.ID,
+		TurnID:   turn.ID,
+		Kind:     "commandExecution",
+		Status:   "inProgress",
+		Payload:  json.RawMessage(`{"status":"inProgress","command":"sleep"}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if err := recoverCLIAppServerState(appServerFlags{
+		workDir:   workDir,
+		storePath: storePath,
+	}); err != nil {
+		t.Fatalf("recoverCLIAppServerState: %v", err)
+	}
+
+	reopened, err := store.NewSQLiteStore(storePath)
+	if err != nil {
+		t.Fatalf("reopen NewSQLiteStore: %v", err)
+	}
+	defer reopened.Close()
+	recoveredTurn, err := reopened.GetTurn(ctx, turn.ID)
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	if recoveredTurn.Status != store.TurnInterrupted || recoveredTurn.Error != store.RuntimeOwnerLostReason {
+		t.Fatalf("recovered turn = %#v", recoveredTurn)
+	}
+	recoveredItem, err := reopened.GetItem(ctx, activeItem.ID)
+	if err != nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	if recoveredItem.Status != "failed" || !strings.Contains(string(recoveredItem.Payload), `"status":"failed"`) {
+		t.Fatalf("recovered item = %#v", recoveredItem)
+	}
+	items, err := reopened.ListItems(ctx, store.ItemFilter{ThreadID: thread.ID, TurnID: turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	recoveryMarkers := 0
+	for _, item := range items {
+		if item.Kind == "runtimeRecovery" {
+			recoveryMarkers++
+		}
+	}
+	if recoveryMarkers != 1 {
+		t.Fatalf("runtime recovery markers = %d, want 1", recoveryMarkers)
+	}
+}
+
+func TestCLIAppServerRecoversAfterHardKillAndRetriesExactlyOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hard process kill semantics differ on Windows")
+	}
+	workDir := t.TempDir()
+	storePath := filepath.Join(workDir, "app.db")
+
+	first := startHardKillCLIProcess(t, workDir, storePath, "30s")
+	first.initialize(t)
+	assertHardKillCLIStoreRejectsContender(t, workDir, storePath)
+	startResp := first.request(t, "start", "thread/start", map[string]any{
+		"prompt": "survive a hard kill",
+	})
+	if startResp.Error != nil {
+		first.kill(t)
+		t.Fatalf("thread/start error: %v", startResp.Error)
+	}
+	var started protocol.ThreadRunStartResult
+	if err := json.Unmarshal(startResp.Result, &started); err != nil {
+		first.kill(t)
+		t.Fatalf("decode thread/start result: %v", err)
+	}
+	if started.Turn.ID == "" || started.Turn.Status != protocol.TurnLifecycleRunning {
+		first.kill(t)
+		t.Fatalf("started turn = %#v", started.Turn)
+	}
+	first.kill(t)
+
+	second := startHardKillCLIProcess(t, workDir, storePath, "0s")
+	defer second.killIfRunning()
+	second.initialize(t)
+	recovered := second.readThread(t, started.Thread.ID)
+	if len(recovered.Turns) != 1 {
+		t.Fatalf("recovered turns = %#v", recovered.Turns)
+	}
+	recoveredTurn := recovered.Turns[0]
+	if recoveredTurn.ID != started.Turn.ID ||
+		recoveredTurn.Status != protocol.TurnLifecycleInterrupted ||
+		recoveredTurn.Error != store.RuntimeOwnerLostReason {
+		t.Fatalf("recovered turn = %#v", recoveredTurn)
+	}
+	recoveryMarkers := 0
+	for _, item := range recovered.Items {
+		if item.Kind == "runtimeRecovery" && item.TurnID == started.Turn.ID {
+			recoveryMarkers++
+		}
+	}
+	if recoveryMarkers != 1 {
+		t.Fatalf("runtime recovery markers = %d, items = %#v", recoveryMarkers, recovered.Items)
+	}
+
+	retryParams := map[string]any{
+		"turnId":         started.Turn.ID,
+		"idempotencyKey": "hard-kill-retry-1",
+	}
+	retryResp := second.request(t, "retry", "turn/retry", retryParams)
+	if retryResp.Error != nil {
+		t.Fatalf("turn/retry error: %v", retryResp.Error)
+	}
+	var retried protocol.TurnRunRetryResult
+	if err := json.Unmarshal(retryResp.Result, &retried); err != nil {
+		t.Fatalf("decode turn/retry result: %v", err)
+	}
+	if retried.Reused || retried.SourceTurnID != started.Turn.ID || retried.Turn.ID == "" {
+		t.Fatalf("first retry = %#v", retried)
+	}
+	completed := second.waitForTurnStatus(t, started.Thread.ID, retried.Turn.ID, protocol.TurnLifecycleCompleted)
+	if completed.Error != "" {
+		t.Fatalf("completed retry = %#v", completed)
+	}
+
+	duplicateResp := second.request(t, "retry-duplicate", "turn/retry", retryParams)
+	if duplicateResp.Error != nil {
+		t.Fatalf("duplicate turn/retry error: %v", duplicateResp.Error)
+	}
+	var duplicate protocol.TurnRunRetryResult
+	if err := json.Unmarshal(duplicateResp.Result, &duplicate); err != nil {
+		t.Fatalf("decode duplicate turn/retry result: %v", err)
+	}
+	if !duplicate.Reused || duplicate.Turn.ID != retried.Turn.ID ||
+		duplicate.IdempotencyKey != "hard-kill-retry-1" {
+		t.Fatalf("duplicate retry = %#v, first = %#v", duplicate, retried)
+	}
+	final := second.readThread(t, started.Thread.ID)
+	if len(final.Turns) != 2 {
+		t.Fatalf("final turns = %#v, want interrupted source plus one retry", final.Turns)
+	}
+	if final.Turns[1].RetryOfTurnID != started.Turn.ID ||
+		final.Turns[1].RetryIdempotencyKey != "hard-kill-retry-1" {
+		t.Fatalf("durable retry lineage = %#v", final.Turns[1])
+	}
+	second.close(t)
+}
+
+func assertHardKillCLIStoreRejectsContender(t *testing.T, workDir, storePath string) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestCLIAppServerHardKillHelper$")
+	cmd.Env = append(os.Environ(),
+		"GOLLEM_HARD_KILL_HELPER=1",
+		"GOLLEM_HARD_KILL_WORKDIR="+workDir,
+		"GOLLEM_HARD_KILL_STORE="+storePath,
+		"GOLLEM_TEST_MODEL_DELAY=0s",
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("contending app-server unexpectedly acquired the live store: %s", output)
+	}
+	if !strings.Contains(string(output), errAppServerStoreOwned.Error()) {
+		t.Fatalf("contending app-server error = %v output=%s", err, output)
+	}
+}
+
+func TestCLIAppServerHardKillHelper(t *testing.T) {
+	if os.Getenv("GOLLEM_HARD_KILL_HELPER") != "1" {
+		t.Skip("subprocess helper")
+	}
+	err := serveCLIAppServerTransports(context.Background(), appServerFlags{
+		workDir:        os.Getenv("GOLLEM_HARD_KILL_WORKDIR"),
+		storePath:      os.Getenv("GOLLEM_HARD_KILL_STORE"),
+		provider:       "test",
+		stdio:          true,
+		allowMutations: true,
+	})
+	if err != nil {
+		t.Fatalf("serveCLIAppServerTransports: %v", err)
+	}
+}
+
+type hardKillCLIProcess struct {
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	lines   <-chan string
+	scanErr <-chan error
+	stderr  *bytes.Buffer
+	running bool
+	nextID  int
+}
+
+func startHardKillCLIProcess(t *testing.T, workDir, storePath, delay string) *hardKillCLIProcess {
+	t.Helper()
+	stderr := &bytes.Buffer{}
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestCLIAppServerHardKillHelper$")
+	cmd.Env = append(os.Environ(),
+		"GOLLEM_HARD_KILL_HELPER=1",
+		"GOLLEM_HARD_KILL_WORKDIR="+workDir,
+		"GOLLEM_HARD_KILL_STORE="+storePath,
+		"GOLLEM_TEST_MODEL_DELAY="+delay,
+	)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("hard-kill helper stdin: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("hard-kill helper stdout: %v", err)
+	}
+	cmd.Stderr = stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start hard-kill helper: %v", err)
+	}
+	lines := make(chan string, 256)
+	scanErr := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		scanErr <- scanner.Err()
+		close(lines)
+	}()
+	return &hardKillCLIProcess{
+		cmd:     cmd,
+		stdin:   stdin,
+		lines:   lines,
+		scanErr: scanErr,
+		stderr:  stderr,
+		running: true,
+	}
+}
+
+func (p *hardKillCLIProcess) initialize(t *testing.T) {
+	t.Helper()
+	resp := p.request(t, "init", "initialize", map[string]any{
+		"clientInfo": map[string]any{"name": "hard-kill-test", "version": "1.0.0"},
+	})
+	if resp.Error != nil {
+		t.Fatalf("initialize error: %v", resp.Error)
+	}
+	p.notify(t, "initialized", nil)
+}
+
+func (p *hardKillCLIProcess) request(t *testing.T, id, method string, params any) protocol.Response {
+	t.Helper()
+	line, err := json.Marshal(map[string]any{
+		"id":     id,
+		"method": method,
+		"params": params,
+	})
+	if err != nil {
+		t.Fatalf("marshal %s request: %v", method, err)
+	}
+	writeCLIInputLine(t, p.stdin, string(line))
+	return p.waitResponse(t, id)
+}
+
+func (p *hardKillCLIProcess) notify(t *testing.T, method string, params any) {
+	t.Helper()
+	line, err := json.Marshal(map[string]any{
+		"method": method,
+		"params": params,
+	})
+	if err != nil {
+		t.Fatalf("marshal %s notification: %v", method, err)
+	}
+	writeCLIInputLine(t, p.stdin, string(line))
+}
+
+func (p *hardKillCLIProcess) waitResponse(t *testing.T, id string) protocol.Response {
+	t.Helper()
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case line, ok := <-p.lines:
+			if !ok {
+				var scanErr error
+				select {
+				case scanErr = <-p.scanErr:
+				default:
+				}
+				t.Fatalf("hard-kill helper output closed waiting for %q: scan=%v stderr=%s", id, scanErr, p.stderr)
+			}
+			var envelope struct {
+				ID json.RawMessage `json:"id"`
+			}
+			if err := json.Unmarshal([]byte(line), &envelope); err != nil || len(envelope.ID) == 0 {
+				continue
+			}
+			var resp protocol.Response
+			if err := json.Unmarshal([]byte(line), &resp); err != nil {
+				t.Fatalf("decode hard-kill helper response %s: %v", line, err)
+			}
+			if got, _ := resp.ID.Value().(string); got == id {
+				return resp
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for response %q: stderr=%s", id, p.stderr)
+		}
+	}
+}
+
+func (p *hardKillCLIProcess) readThread(t *testing.T, threadID string) protocol.ThreadReadResult {
+	t.Helper()
+	p.nextID++
+	resp := p.request(t, fmt.Sprintf("read-%d", p.nextID), "thread/read", map[string]any{
+		"threadId":     threadID,
+		"includeTurns": true,
+		"includeItems": true,
+	})
+	if resp.Error != nil {
+		t.Fatalf("thread/read error: %v", resp.Error)
+	}
+	var read protocol.ThreadReadResult
+	if err := json.Unmarshal(resp.Result, &read); err != nil {
+		t.Fatalf("decode thread/read result: %v", err)
+	}
+	return read
+}
+
+func (p *hardKillCLIProcess) waitForTurnStatus(
+	t *testing.T,
+	threadID string,
+	turnID string,
+	status protocol.TurnLifecycleStatus,
+) protocol.TurnRecord {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		read := p.readThread(t, threadID)
+		for _, turn := range read.Turns {
+			if turn.ID == turnID && turn.Status == status {
+				return turn
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("turn %s did not reach %s", turnID, status)
+	return protocol.TurnRecord{}
+}
+
+func (p *hardKillCLIProcess) kill(t *testing.T) {
+	t.Helper()
+	if !p.running {
+		return
+	}
+	if err := p.cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill hard-kill helper: %v", err)
+	}
+	_ = p.stdin.Close()
+	if err := p.cmd.Wait(); err == nil {
+		t.Fatal("hard-kill helper exited successfully after Process.Kill")
+	}
+	p.running = false
+}
+
+func (p *hardKillCLIProcess) killIfRunning() {
+	if p == nil || !p.running {
+		return
+	}
+	_ = p.cmd.Process.Kill()
+	_ = p.stdin.Close()
+	_ = p.cmd.Wait()
+	p.running = false
+}
+
+func (p *hardKillCLIProcess) close(t *testing.T) {
+	t.Helper()
+	if !p.running {
+		return
+	}
+	if err := p.stdin.Close(); err != nil {
+		t.Fatalf("close hard-kill helper stdin: %v", err)
+	}
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- p.cmd.Wait()
+	}()
+	select {
+	case err := <-waitCh:
+		if err != nil {
+			t.Fatalf("hard-kill helper shutdown: %v stderr=%s", err, p.stderr)
+		}
+		p.running = false
+	case <-time.After(10 * time.Second):
+		_ = p.cmd.Process.Kill()
+		_ = p.stdin.Close()
+		<-waitCh
+		p.running = false
+		t.Fatal("timed out shutting down hard-kill helper")
 	}
 }
 

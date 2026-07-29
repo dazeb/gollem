@@ -293,11 +293,11 @@ result after process exit.
 Generated clients can discover providers and models, start and interrupt live
 runs, and consume the current streaming lifecycle without an untyped JSON
 escape hatch. `provider/list` and `model/list` bind the provider-aware catalog
-records; `thread/start`, `turn/start`, and `turn/interrupt` bind durable
-thread/turn results; and `thread/started`, `turn/started`, `turn/completed`,
-`item/agentMessage/delta`, and `item/reasoning/textDelta` bind the live
-notification records. The registry now contains 69 method bindings and five
-durable item bindings.
+records; `thread/start`, `turn/start`, `turn/retry`, and `turn/interrupt` bind
+durable thread/turn results; and `thread/started`, `turn/started`,
+`turn/completed`, `item/agentMessage/delta`, and
+`item/reasoning/textDelta` bind the live notification records. The registry
+now contains 70 method bindings and five durable item bindings.
 
 The live names are intentionally explicit: `ModelCatalog*`, `ThreadRun*`,
 `TurnRun*`, and `Runtime*`. Exact standalone public `ModelList*`,
@@ -513,6 +513,20 @@ response requires turn id. The current live handler instead accepts turn-id and
 prompt aliases, does not enforce the public active-turn precondition, persists
 a durable steer item, and returns richer status fields, so these definitions
 remain outside method bindings pending a separate compatibility migration.
+
+`TurnRunRetryParams` and `TurnRunRetryResult` define Gollem's restart-safe
+retry extension. Typed clients must persist a non-empty idempotency key before
+calling `turn/retry`; replaying the same source-turn/key pair returns the same
+durable retry turn without another model invocation. A key already bound to a
+different source fails closed. Retry requires a terminal source and creates a
+new turn whose `retryOfTurnId` and `retryIdempotencyKey` remain visible through
+durable thread reads; it does not claim same-turn execution resume, recreate
+pending approval authority, or silently treat prior tool side effects as
+resumed. A new model attempt can independently request the same mutation again,
+so clients must present that consequence before retrying a turn with incomplete
+tool work. On daemon startup, the process-lifetime store owner terminalizes
+stale queued or running turns with a stable owner-loss reason and one durable
+`runtimeRecovery` marker before accepting a transport.
 
 Exact standalone `TurnPlanStepStatus`, `TurnPlanStep`, and
 `TurnPlanUpdatedNotification` establish the fixed turn-level plan snapshot.

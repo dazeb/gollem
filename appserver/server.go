@@ -1351,6 +1351,10 @@ func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any,
 	if prompt == "" {
 		return nil, invalidParams("retry prompt is unavailable", nil)
 	}
+	idempotencyKey, err := params.retryIdempotencyKey()
+	if err != nil {
+		return nil, invalidParams(err.Error(), err)
+	}
 	beforeSeq, err := firstTurnItemSeq(ctx, st, source.ThreadID, source.ID)
 	if err != nil {
 		return nil, mapError("turn/retry", err)
@@ -1359,20 +1363,28 @@ func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any,
 	if err != nil {
 		return nil, mapError("turn/retry", err)
 	}
-	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
-		ThreadID:      source.ThreadID,
-		Prompt:        prompt,
-		Input:         firstRaw(params.Input, source.Input),
-		Metadata:      params.Metadata,
-		Selection:     runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model),
-		ModelSettings: runtimeModelSettingsFromParams(params.RuntimeModelParams),
-		History:       history,
+	selection := runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model)
+	selection = mergeRuntimeSelection(selection, runtimeSelectionFromInput(source.Input))
+	retry, err := runtimeSvc.Retry(ctx, st, s, RuntimeRetryRequest{
+		SourceTurnID:   source.ID,
+		IdempotencyKey: idempotencyKey,
+		Prompt:         prompt,
+		Input:          firstRaw(params.Input, source.Input),
+		Metadata:       params.Metadata,
+		Selection:      selection,
+		ModelSettings:  runtimeModelSettingsFromParams(params.RuntimeModelParams),
+		History:        history,
 	})
 	if err != nil {
 		return nil, mapError("turn/retry", err)
 	}
 	s.markThreadLoadedID(source.ThreadID)
-	return map[string]any{"turn": turn.Turn, "sourceTurnId": source.ID}, nil
+	return protocol.TurnRunRetryResult{
+		Turn:           protocolTurnRecord(retry.Turn),
+		SourceTurnID:   retry.SourceTurnID,
+		IdempotencyKey: retry.IdempotencyKey,
+		Reused:         retry.Reused,
+	}, nil
 }
 
 func (s *Server) startTurnWithParams(ctx context.Context, method string, params turnStartParams) (any, *protocol.Error) {
@@ -1429,7 +1441,7 @@ func (s *Server) loadThreadHistory(ctx context.Context, st store.Store, threadID
 		}
 		filtered = append(filtered, item)
 	}
-	return runtimeMessagesFromItems(compactionWindowItems(filtered)), nil
+	return runtimeMessagesFromItems(boundedRuntimeReplayItems(filtered)), nil
 }
 
 func firstTurnItemSeq(ctx context.Context, st store.Store, threadID, turnID string) (int64, error) {
@@ -2230,6 +2242,8 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
 		errors.Is(err, store.ErrThreadDeleted),
+		errors.Is(err, store.ErrTurnNotTerminal),
+		errors.Is(err, store.ErrRetryIdempotencyConflict),
 		errors.Is(err, ErrMemoryRootRequired),
 		errors.Is(err, ErrMemoryRootUnsafe),
 		errors.Is(err, ErrRuntimePromptEmpty):
@@ -2240,6 +2254,8 @@ func mapError(method string, err error) *protocol.Error {
 		return rpcError(protocol.CodeInvalidRequest, "operation denied by approval policy", err)
 	case errors.Is(err, ErrRuntimeNotConfigured):
 		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime model factory is not configured")
+	case errors.Is(err, ErrRuntimeRecoveryUnavailable):
+		return protocol.MethodUnavailableErrorWithReason(method, "configured store does not support restart-safe retry")
 	case errors.Is(err, ErrRuntimeShuttingDown):
 		return protocol.MethodUnavailableErrorWithReason(method, "turn runtime is shutting down")
 	default:

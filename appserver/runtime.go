@@ -15,11 +15,12 @@ import (
 )
 
 var (
-	ErrRuntimeNotConfigured = errors.New("appserver/runtime: model factory is not configured")
-	ErrRuntimeTurnActive    = errors.New("appserver/runtime: turn is already running")
-	ErrRuntimeTurnNotActive = errors.New("appserver/runtime: turn is not running")
-	ErrRuntimePromptEmpty   = errors.New("appserver/runtime: prompt is required")
-	ErrRuntimeShuttingDown  = errors.New("appserver/runtime: runtime is shutting down")
+	ErrRuntimeNotConfigured       = errors.New("appserver/runtime: model factory is not configured")
+	ErrRuntimeTurnActive          = errors.New("appserver/runtime: turn is already running")
+	ErrRuntimeTurnNotActive       = errors.New("appserver/runtime: turn is not running")
+	ErrRuntimePromptEmpty         = errors.New("appserver/runtime: prompt is required")
+	ErrRuntimeShuttingDown        = errors.New("appserver/runtime: runtime is shutting down")
+	ErrRuntimeRecoveryUnavailable = errors.New("appserver/runtime: store does not support restart recovery")
 )
 
 type RuntimeModelSelection struct {
@@ -103,6 +104,24 @@ type RuntimeInterruptResult struct {
 	OK     bool        `json:"ok"`
 	TurnID string      `json:"turnId"`
 	Turn   *store.Turn `json:"turn,omitempty"`
+}
+
+type RuntimeRetryRequest struct {
+	SourceTurnID   string
+	IdempotencyKey string
+	Prompt         string
+	Input          json.RawMessage
+	Metadata       map[string]any
+	Selection      RuntimeModelSelection
+	ModelSettings  core.ModelSettings
+	History        []core.ModelMessage
+}
+
+type RuntimeRetryResult struct {
+	Turn           *store.Turn
+	SourceTurnID   string
+	IdempotencyKey string
+	Reused         bool
 }
 
 type runtimeNotifier interface {
@@ -208,6 +227,104 @@ func (s *RuntimeService) Interrupt(ctx context.Context, st store.Store, turnID s
 	active.cancel()
 	turn, _ := st.GetTurn(ctx, turnID)
 	return &RuntimeInterruptResult{OK: true, TurnID: turnID, Turn: turn}, nil
+}
+
+// Retry starts at most one retry turn for an idempotency key. Replayed
+// requests return the durable turn without launching the model again.
+func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier runtimeNotifier, req RuntimeRetryRequest) (*RuntimeRetryResult, error) {
+	if s == nil || s.modelFactory == nil || st == nil {
+		return nil, ErrRuntimeNotConfigured
+	}
+	req.Prompt = strings.TrimSpace(req.Prompt)
+	if req.Prompt == "" {
+		return nil, ErrRuntimePromptEmpty
+	}
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
+	s.mu.Lock()
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return nil, ErrRuntimeShuttingDown
+	}
+	s.mu.Unlock()
+
+	recoveryStore, ok := st.(store.RuntimeRecoveryStore)
+	if !ok {
+		return nil, ErrRuntimeRecoveryUnavailable
+	}
+	prepared, err := recoveryStore.PrepareTurnRetry(ctx, store.PrepareTurnRetryRequest{
+		SourceTurnID:   req.SourceTurnID,
+		IdempotencyKey: req.IdempotencyKey,
+		Input:          cloneRuntimeRaw(req.Input),
+		Metadata:       cloneRuntimeMap(req.Metadata),
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := &RuntimeRetryResult{
+		Turn:           prepared.Turn,
+		SourceTurnID:   prepared.Source.ID,
+		IdempotencyKey: prepared.Turn.RetryIdempotencyKey,
+		Reused:         !prepared.Created,
+	}
+	if !prepared.Created {
+		return result, nil
+	}
+	if _, err := st.AppendItem(ctx, store.AppendItemRequest{
+		ThreadID: prepared.Turn.ThreadID,
+		TurnID:   prepared.Turn.ID,
+		Kind:     "message",
+		Status:   "completed",
+		Payload:  mustRuntimeJSON(runtimeMessagePayload{Role: "user", Text: req.Prompt, CreatedAt: time.Now().UTC()}),
+	}); err != nil {
+		s.failPreparedRetry(st, prepared.Turn, err)
+		return nil, err
+	}
+	started, err := st.StartTurn(ctx, prepared.Turn.ID)
+	if err != nil {
+		s.failPreparedRetry(st, prepared.Turn, err)
+		return nil, err
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	if _, exists := s.active[started.ID]; exists {
+		s.mu.Unlock()
+		cancel()
+		s.failPreparedRetry(st, started, ErrRuntimeTurnActive)
+		return nil, ErrRuntimeTurnActive
+	}
+	s.active[started.ID] = &activeRuntimeTurn{cancel: cancel}
+	s.wg.Add(1)
+	s.mu.Unlock()
+
+	publishTurnStarted(notifier, started)
+	result.Turn = started
+	startReq := RuntimeStartRequest{
+		ThreadID:      started.ThreadID,
+		Prompt:        req.Prompt,
+		Input:         cloneRuntimeRaw(started.Input),
+		Metadata:      cloneRuntimeMap(started.Metadata),
+		Selection:     req.Selection,
+		ModelSettings: req.ModelSettings,
+		History:       append([]core.ModelMessage(nil), req.History...),
+	}
+	go func() {
+		defer s.wg.Done()
+		s.run(runCtx, st, notifier, started, startReq)
+	}()
+	return result, nil
+}
+
+func (s *RuntimeService) failPreparedRetry(st store.Store, turn *store.Turn, cause error) {
+	if st == nil || turn == nil || cause == nil {
+		return
+	}
+	_, _ = st.CompleteTurn(context.Background(), store.CompleteTurnRequest{
+		ID:     turn.ID,
+		Status: store.TurnFailed,
+		Error:  cause.Error(),
+	})
 }
 
 func (s *RuntimeService) IsActive(turnID string) bool {

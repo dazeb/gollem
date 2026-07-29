@@ -94,11 +94,11 @@ func TestRawResponseItemCompletedNotificationRemainsStandalone(t *testing.T) {
 			t.Fatalf("raw response notification unexpectedly bound: %#v", binding)
 		}
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 549 {
-		t.Fatalf("definition count = %d, want 549", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 551 {
+		t.Fatalf("definition count = %d, want 551", len(JSONSchema()["$defs"].(Schema)))
 	}
-	if len(WireTypeBindings()) != 69 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 69/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
+	if len(WireTypeBindings()) != 70 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 70/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
 	}
 
 	generated, err := MarshalTypeScript()

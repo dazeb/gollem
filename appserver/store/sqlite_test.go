@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSQLiteStoreThreadLifecyclePersists(t *testing.T) {
@@ -107,6 +108,268 @@ func TestSQLiteStoreClosedOperationsReturnErrStoreClosed(t *testing.T) {
 	}
 	if _, err := s.ListThreads(ctx, ThreadFilter{}); !errors.Is(err, ErrStoreClosed) {
 		t.Fatalf("ListThreads after close error = %v, want ErrStoreClosed", err)
+	}
+}
+
+func TestSQLiteStoreRecoverOrphanedRuntimeStateIsAtomicAndIdempotent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "appserver.db")
+	s := newTestSQLiteStore(t, path)
+
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Recovery"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	queued, err := s.CreateTurn(ctx, CreateTurnRequest{
+		ThreadID: thread.ID,
+		Input:    json.RawMessage(`{"prompt":"queued"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateTurn queued: %v", err)
+	}
+	running, err := s.CreateTurn(ctx, CreateTurnRequest{
+		ThreadID: thread.ID,
+		Input:    json.RawMessage(`{"prompt":"running"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateTurn running: %v", err)
+	}
+	running, err = s.StartTurn(ctx, running.ID)
+	if err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	completed, err := s.CreateTurn(ctx, CreateTurnRequest{
+		ThreadID: thread.ID,
+		Input:    json.RawMessage(`{"prompt":"completed"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateTurn completed: %v", err)
+	}
+	if _, err := s.CompleteTurn(ctx, CompleteTurnRequest{
+		ID:     completed.ID,
+		Status: TurnCompleted,
+		Result: json.RawMessage(`{"text":"done"}`),
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	inProgress, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: running.ThreadID,
+		TurnID:   running.ID,
+		Kind:     "commandExecution",
+		Status:   "inProgress",
+		Payload:  json.RawMessage(`{"type":"commandExecution","id":"command","status":"inProgress"}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem in progress: %v", err)
+	}
+	malformed, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: running.ThreadID,
+		TurnID:   running.ID,
+		Kind:     "mcpToolCall",
+		Status:   "running",
+		Payload:  json.RawMessage(`"not-an-object"`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem malformed: %v", err)
+	}
+	stable, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: running.ThreadID,
+		TurnID:   running.ID,
+		Kind:     "message",
+		Status:   "completed",
+		Payload:  json.RawMessage(`{"role":"user","text":"keep"}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem stable: %v", err)
+	}
+
+	recoveredAt := time.Date(2026, 7, 29, 11, 30, 0, 0, time.UTC)
+	result, err := s.RecoverOrphanedTurns(ctx, RecoverOrphanedTurnsRequest{
+		RecoveredAt: recoveredAt,
+		Reason:      RuntimeOwnerLostReason,
+	})
+	if err != nil {
+		t.Fatalf("RecoverOrphanedTurns: %v", err)
+	}
+	if len(result.Turns) != 2 || len(result.Items) != 2 || len(result.Markers) != 2 {
+		t.Fatalf("recovery result = %#v", result)
+	}
+	for _, turnID := range []string{queued.ID, running.ID} {
+		turn, err := s.GetTurn(ctx, turnID)
+		if err != nil {
+			t.Fatalf("GetTurn %s: %v", turnID, err)
+		}
+		if turn.Status != TurnInterrupted || turn.Error != RuntimeOwnerLostReason {
+			t.Fatalf("recovered turn = %#v", turn)
+		}
+		if !turn.CompletedAt.Equal(recoveredAt) || !turn.UpdatedAt.Equal(recoveredAt) {
+			t.Fatalf("recovered turn timestamps = %#v", turn)
+		}
+	}
+	gotCompleted, err := s.GetTurn(ctx, completed.ID)
+	if err != nil {
+		t.Fatalf("GetTurn completed: %v", err)
+	}
+	if gotCompleted.Status != TurnCompleted || string(gotCompleted.Result) != `{"text":"done"}` {
+		t.Fatalf("completed turn changed = %#v", gotCompleted)
+	}
+	gotInProgress, err := s.GetItem(ctx, inProgress.ID)
+	if err != nil {
+		t.Fatalf("GetItem in progress: %v", err)
+	}
+	if gotInProgress.Status != "failed" {
+		t.Fatalf("recovered item status = %q", gotInProgress.Status)
+	}
+	var recoveredPayload map[string]any
+	if err := json.Unmarshal(gotInProgress.Payload, &recoveredPayload); err != nil {
+		t.Fatalf("decode recovered payload: %v", err)
+	}
+	if recoveredPayload["status"] != "failed" {
+		t.Fatalf("recovered payload = %#v", recoveredPayload)
+	}
+	gotMalformed, err := s.GetItem(ctx, malformed.ID)
+	if err != nil {
+		t.Fatalf("GetItem malformed: %v", err)
+	}
+	if gotMalformed.Status != "failed" || string(gotMalformed.Payload) != `"not-an-object"` {
+		t.Fatalf("recovered malformed item = %#v", gotMalformed)
+	}
+	gotStable, err := s.GetItem(ctx, stable.ID)
+	if err != nil {
+		t.Fatalf("GetItem stable: %v", err)
+	}
+	if gotStable.Status != "completed" || string(gotStable.Payload) != `{"role":"user","text":"keep"}` {
+		t.Fatalf("stable item changed = %#v", gotStable)
+	}
+
+	again, err := s.RecoverOrphanedTurns(ctx, RecoverOrphanedTurnsRequest{
+		RecoveredAt: recoveredAt.Add(time.Minute),
+		Reason:      RuntimeOwnerLostReason,
+	})
+	if err != nil {
+		t.Fatalf("RecoverOrphanedTurns again: %v", err)
+	}
+	if len(again.Turns) != 0 || len(again.Items) != 0 || len(again.Markers) != 0 {
+		t.Fatalf("second recovery result = %#v", again)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	s = newTestSQLiteStore(t, path)
+	persisted, err := s.GetTurn(ctx, running.ID)
+	if err != nil {
+		t.Fatalf("GetTurn after reopen: %v", err)
+	}
+	if persisted.Status != TurnInterrupted || persisted.Error != RuntimeOwnerLostReason {
+		t.Fatalf("persisted recovered turn = %#v", persisted)
+	}
+}
+
+func TestSQLiteStorePrepareTurnRetryIsAtomicAcrossHandlesAndDurable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "appserver.db")
+	first := newTestSQLiteStore(t, path)
+
+	thread, err := first.CreateThread(ctx, CreateThreadRequest{Title: "Retry"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	source, err := first.CreateTurn(ctx, CreateTurnRequest{
+		ThreadID: thread.ID,
+		Input:    json.RawMessage(`{"prompt":"source"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateTurn source: %v", err)
+	}
+	if _, err := first.CompleteTurn(ctx, CompleteTurnRequest{ID: source.ID, Status: TurnCompleted}); err != nil {
+		t.Fatalf("CompleteTurn source: %v", err)
+	}
+	active, err := first.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn active: %v", err)
+	}
+	if _, err := first.PrepareTurnRetry(ctx, PrepareTurnRetryRequest{
+		SourceTurnID:   active.ID,
+		IdempotencyKey: "active-source",
+	}); !errors.Is(err, ErrTurnNotTerminal) {
+		t.Fatalf("PrepareTurnRetry active source error = %v, want ErrTurnNotTerminal", err)
+	}
+
+	second := newTestSQLiteStore(t, path)
+	request := PrepareTurnRetryRequest{
+		SourceTurnID:   source.ID,
+		IdempotencyKey: "desktop-retry-1",
+		Metadata:       map[string]any{"origin": "desktop"},
+	}
+	start := make(chan struct{})
+	results := make(chan *PrepareTurnRetryResult, 2)
+	errs := make(chan error, 2)
+	for _, st := range []*SQLiteStore{first, second} {
+		go func(st *SQLiteStore) {
+			<-start
+			result, err := st.PrepareTurnRetry(ctx, request)
+			results <- result
+			errs <- err
+		}(st)
+	}
+	close(start)
+
+	var got []*PrepareTurnRetryResult
+	created := 0
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent PrepareTurnRetry: %v", err)
+		}
+		result := <-results
+		if result == nil || result.Turn == nil {
+			t.Fatalf("concurrent result = %#v", result)
+		}
+		got = append(got, result)
+		if result.Created {
+			created++
+		}
+	}
+	if created != 1 || got[0].Turn.ID != got[1].Turn.ID {
+		t.Fatalf("concurrent retry results = %#v", got)
+	}
+	retryID := got[0].Turn.ID
+	if got[0].Turn.RetryOfTurnID != source.ID ||
+		got[0].Turn.RetryIdempotencyKey != request.IdempotencyKey {
+		t.Fatalf("retry lineage = %#v", got[0].Turn)
+	}
+
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first: %v", err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatalf("close second: %v", err)
+	}
+	reopened := newTestSQLiteStore(t, path)
+	reused, err := reopened.PrepareTurnRetry(ctx, request)
+	if err != nil {
+		t.Fatalf("PrepareTurnRetry after reopen: %v", err)
+	}
+	if reused.Created || reused.Turn.ID != retryID {
+		t.Fatalf("reused retry = %#v, want %s", reused, retryID)
+	}
+
+	otherSource, err := reopened.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn other source: %v", err)
+	}
+	if _, err := reopened.CompleteTurn(ctx, CompleteTurnRequest{
+		ID:     otherSource.ID,
+		Status: TurnFailed,
+		Error:  "expected",
+	}); err != nil {
+		t.Fatalf("CompleteTurn other source: %v", err)
+	}
+	if _, err := reopened.PrepareTurnRetry(ctx, PrepareTurnRetryRequest{
+		SourceTurnID:   otherSource.ID,
+		IdempotencyKey: request.IdempotencyKey,
+	}); !errors.Is(err, ErrRetryIdempotencyConflict) {
+		t.Fatalf("PrepareTurnRetry conflicting source error = %v, want ErrRetryIdempotencyConflict", err)
 	}
 }
 
