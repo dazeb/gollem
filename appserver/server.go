@@ -747,7 +747,10 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	if err != nil {
 		return nil, mapError("thread/start", err)
 	}
-	return map[string]any{"thread": thread, "turn": turn.Turn}, nil
+	return protocol.ThreadRunStartResult{
+		Thread: protocolThreadRecord(thread),
+		Turn:   protocolTurnRecord(turn.Turn),
+	}, nil
 }
 
 func (s *Server) handleThreadResume(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1262,7 +1265,7 @@ func (s *Server) handleTurnInterrupt(ctx context.Context, raw json.RawMessage) (
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	turnID := params.turnID()
+	turnID := firstNonEmpty(params.TurnID, params.ID)
 	if turnID == "" {
 		return nil, invalidParams("turnId is required", nil)
 	}
@@ -1270,7 +1273,15 @@ func (s *Server) handleTurnInterrupt(ctx context.Context, raw json.RawMessage) (
 	if err != nil && !errors.Is(err, ErrRuntimeTurnNotActive) {
 		return nil, mapError("turn/interrupt", err)
 	}
-	return result, nil
+	response := protocol.TurnRunInterruptResult{
+		OK:     result.OK,
+		TurnID: result.TurnID,
+	}
+	if result.Turn != nil {
+		turn := protocolTurnRecord(result.Turn)
+		response.Turn = &turn
+	}
+	return response, nil
 }
 
 func (s *Server) handleTurnSteer(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -1400,7 +1411,10 @@ func (s *Server) startTurnWithParams(ctx context.Context, method string, params 
 		return nil, mapError(method, err)
 	}
 	s.markThreadLoaded(thread)
-	return map[string]any{"thread": thread, "turn": turn.Turn}, nil
+	return protocol.TurnRunStartResult{
+		Thread: protocolThreadRecord(thread),
+		Turn:   protocolTurnRecord(turn.Turn),
+	}, nil
 }
 
 func (s *Server) loadThreadHistory(ctx context.Context, st store.Store, threadID string, beforeSeq int64) ([]core.ModelMessage, error) {

@@ -446,23 +446,11 @@ type runtimeMessagePayload struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-type turnNotificationParams struct {
-	ThreadID string           `json:"threadId"`
-	TurnID   string           `json:"turnId"`
-	Status   store.TurnStatus `json:"status,omitempty"`
-	Turn     *store.Turn      `json:"turn,omitempty"`
-	At       time.Time        `json:"at"`
-}
+type turnNotificationParams = protocol.RuntimeTurnNotification
 
 type runtimeItemNotificationParams = protocol.ItemLifecycleNotificationParams
 
-type runtimeDeltaNotificationParams struct {
-	ThreadID string    `json:"threadId"`
-	TurnID   string    `json:"turnId"`
-	Delta    string    `json:"delta"`
-	Index    int       `json:"index,omitempty"`
-	At       time.Time `json:"at"`
-}
+type runtimeDeltaNotificationParams = protocol.RuntimeDeltaNotification
 
 type runtimeErrorNotificationParams struct {
 	ThreadID string    `json:"threadId,omitempty"`
@@ -479,11 +467,12 @@ func publishTurnStarted(notifier runtimeNotifier, turn *store.Turn) {
 	if notifier == nil || turn == nil {
 		return
 	}
+	record := protocolTurnRecord(turn)
 	notifier.PublishNotification("turn/started", turnNotificationParams{
 		ThreadID: turn.ThreadID,
 		TurnID:   turn.ID,
-		Status:   turn.Status,
-		Turn:     turn,
+		Status:   protocol.TurnLifecycleStatus(turn.Status),
+		Turn:     &record,
 		At:       time.Now().UTC(),
 	})
 }
@@ -492,11 +481,12 @@ func publishTurnCompleted(notifier runtimeNotifier, turn *store.Turn) {
 	if notifier == nil || turn == nil {
 		return
 	}
+	record := protocolTurnRecord(turn)
 	notifier.PublishNotification("turn/completed", turnNotificationParams{
 		ThreadID: turn.ThreadID,
 		TurnID:   turn.ID,
-		Status:   turn.Status,
-		Turn:     turn,
+		Status:   protocol.TurnLifecycleStatus(turn.Status),
+		Turn:     &record,
 		At:       time.Now().UTC(),
 	})
 }

@@ -9678,6 +9678,374 @@
       ],
       "type": "object"
     },
+    "ModelCatalogAvailabilityNux": {
+      "additionalProperties": false,
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
+    "ModelCatalogCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "promptCache": {
+          "type": "boolean"
+        },
+        "reasoning": {
+          "type": "boolean"
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "structuredOutput": {
+          "type": "boolean"
+        },
+        "toolCalls": {
+          "type": "boolean"
+        },
+        "toolSearch": {
+          "type": "boolean"
+        },
+        "vision": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "toolCalls",
+        "structuredOutput",
+        "vision",
+        "streaming",
+        "promptCache",
+        "toolSearch",
+        "reasoning"
+      ],
+      "type": "object"
+    },
+    "ModelCatalogEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "additionalSpeedTiers": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "availabilityNux": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelCatalogAvailabilityNux"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ModelCatalogCapabilities"
+        },
+        "defaultReasoningEffort": {
+          "type": "string"
+        },
+        "defaultServiceTier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputModalities": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "isDefault": {
+          "type": "boolean"
+        },
+        "maxContextTokens": {
+          "type": "integer"
+        },
+        "maxOutputTokens": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "serviceTiers": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ModelCatalogServiceTier"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supportedReasoningEfforts": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ModelCatalogReasoningEffortOption"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supportsPersonality": {
+          "type": "boolean"
+        },
+        "upgrade": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upgradeInfo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelCatalogUpgradeInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "providerId",
+        "model",
+        "upgrade",
+        "upgradeInfo",
+        "availabilityNux",
+        "displayName",
+        "description",
+        "hidden",
+        "supportedReasoningEfforts",
+        "defaultReasoningEffort",
+        "inputModalities",
+        "supportsPersonality",
+        "additionalSpeedTiers",
+        "serviceTiers",
+        "defaultServiceTier",
+        "isDefault",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "ModelCatalogListParams": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "includeHidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "providerIds": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ModelCatalogListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ModelCatalogEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor"
+      ],
+      "type": "object"
+    },
+    "ModelCatalogReasoningEffortOption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reasoningEffort",
+        "description"
+      ],
+      "type": "object"
+    },
+    "ModelCatalogServiceTier": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description"
+      ],
+      "type": "object"
+    },
+    "ModelCatalogUpgradeInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "migrationMarkdown": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelLink": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upgradeCopy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "model",
+        "upgradeCopy",
+        "modelLink",
+        "migrationMarkdown"
+      ],
+      "type": "object"
+    },
     "ModelListParams": {
       "additionalProperties": false,
       "properties": {
@@ -11022,6 +11390,243 @@
       "required": [
         "cols",
         "rows"
+      ],
+      "type": "object"
+    },
+    "ProviderCatalogCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "adaptiveThinking": {
+          "type": "boolean"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "imageGeneration": {
+          "type": "boolean"
+        },
+        "manualThinking": {
+          "type": "boolean"
+        },
+        "namespaceTools": {
+          "type": "boolean"
+        },
+        "promptCache": {
+          "type": "boolean"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "reasoning": {
+          "type": "boolean"
+        },
+        "reasoningEfforts": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasoningSummaries": {
+          "type": "boolean"
+        },
+        "requiresConfigurationEnv": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "streaming": {
+          "type": "boolean"
+        },
+        "structuredOutput": {
+          "type": "boolean"
+        },
+        "toolCalls": {
+          "type": "boolean"
+        },
+        "toolSearch": {
+          "type": "boolean"
+        },
+        "vision": {
+          "type": "boolean"
+        },
+        "webSearch": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "configured",
+        "namespaceTools",
+        "imageGeneration",
+        "webSearch",
+        "toolCalls",
+        "structuredOutput",
+        "vision",
+        "streaming",
+        "promptCache",
+        "toolSearch",
+        "reasoning"
+      ],
+      "type": "object"
+    },
+    "ProviderCatalogEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "authModes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCatalogCapabilities"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "defaultModelId": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "models": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ModelCatalogEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "optionalEnvVars": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "package": {
+          "type": "string"
+        },
+        "requiredEnvVars": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "package",
+        "description",
+        "configured",
+        "hidden",
+        "defaultModelId",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "ProviderListParams": {
+      "additionalProperties": false,
+      "properties": {
+        "configuredOnly": {
+          "type": "boolean"
+        },
+        "includeHidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ProviderListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ProviderCatalogEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providers": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ProviderCatalogEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "providers"
       ],
       "type": "object"
     },
@@ -12488,6 +13093,198 @@
           "type": "string"
         }
       ]
+    },
+    "RuntimeDeltaNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "delta": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "delta",
+        "at"
+      ],
+      "type": "object"
+    },
+    "RuntimeModelParams": {
+      "additionalProperties": false,
+      "properties": {
+        "adaptiveThinking": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input": {},
+        "maxTokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settings": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stopSequences": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thinkingBudget": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topP": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeThreadNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadLifecycleStatus"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "at"
+      ],
+      "type": "object"
+    },
+    "RuntimeTurnNotification": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnLifecycleStatus"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "at"
+      ],
+      "type": "object"
     },
     "SandboxMode": {
       "enum": [
@@ -15671,6 +16468,148 @@
       ],
       "type": "object"
     },
+    "ThreadRunStartParams": {
+      "additionalProperties": false,
+      "properties": {
+        "adaptiveThinking": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input": {},
+        "maxTokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settings": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stopSequences": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "thinkingBudget": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "topP": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ThreadRunStartResult": {
+      "additionalProperties": false,
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/ThreadRecord"
+        },
+        "turn": {
+          "$ref": "#/$defs/TurnRecord"
+        }
+      },
+      "required": [
+        "thread",
+        "turn"
+      ],
+      "type": "object"
+    },
     "ThreadSetNameParams": {
       "additionalProperties": false,
       "properties": {
@@ -16893,6 +17832,189 @@
         "status",
         "createdAt",
         "updatedAt"
+      ],
+      "type": "object"
+    },
+    "TurnRunInterruptParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "TurnRunInterruptResult": {
+      "additionalProperties": false,
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "TurnRunStartParams": {
+      "additionalProperties": false,
+      "properties": {
+        "adaptiveThinking": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "input": {},
+        "maxTokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settings": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stopSequences": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "thinkingBudget": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "topP": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "TurnRunStartResult": {
+      "additionalProperties": false,
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/ThreadRecord"
+        },
+        "turn": {
+          "$ref": "#/$defs/TurnRecord"
+        }
+      },
+      "required": [
+        "thread",
+        "turn"
       ],
       "type": "object"
     },
@@ -19198,6 +20320,13 @@
       "surface": "client-notification"
     },
     {
+      "method": "item/agentMessage/delta",
+      "surface": "server-notification",
+      "params": [
+        "RuntimeDeltaNotification"
+      ]
+    },
+    {
       "method": "item/commandExecution/outputDelta",
       "surface": "server-notification",
       "params": [
@@ -19258,6 +20387,13 @@
       ]
     },
     {
+      "method": "item/reasoning/textDelta",
+      "surface": "server-notification",
+      "params": [
+        "RuntimeDeltaNotification"
+      ]
+    },
+    {
       "method": "item/started",
       "surface": "server-notification",
       "params": [
@@ -19297,6 +20433,26 @@
       ],
       "result": [
         "McpServerElicitationRequestResponse"
+      ]
+    },
+    {
+      "method": "model/list",
+      "surface": "client-request",
+      "params": [
+        "ModelCatalogListParams"
+      ],
+      "result": [
+        "ModelCatalogListResponse"
+      ]
+    },
+    {
+      "method": "provider/list",
+      "surface": "gollem-extension",
+      "params": [
+        "ProviderListParams"
+      ],
+      "result": [
+        "ProviderListResponse"
       ]
     },
     {
@@ -19476,6 +20632,23 @@
       ]
     },
     {
+      "method": "thread/start",
+      "surface": "client-request",
+      "params": [
+        "ThreadRunStartParams"
+      ],
+      "result": [
+        "ThreadRunStartResult"
+      ]
+    },
+    {
+      "method": "thread/started",
+      "surface": "server-notification",
+      "params": [
+        "RuntimeThreadNotification"
+      ]
+    },
+    {
       "method": "thread/tokenUsage/updated",
       "surface": "server-notification",
       "params": [
@@ -19510,10 +20683,44 @@
       ]
     },
     {
+      "method": "turn/completed",
+      "surface": "server-notification",
+      "params": [
+        "RuntimeTurnNotification"
+      ]
+    },
+    {
       "method": "turn/diff/updated",
       "surface": "server-notification",
       "params": [
         "TurnDiffUpdatedNotification"
+      ]
+    },
+    {
+      "method": "turn/interrupt",
+      "surface": "client-request",
+      "params": [
+        "TurnRunInterruptParams"
+      ],
+      "result": [
+        "TurnRunInterruptResult"
+      ]
+    },
+    {
+      "method": "turn/start",
+      "surface": "client-request",
+      "params": [
+        "TurnRunStartParams"
+      ],
+      "result": [
+        "TurnRunStartResult"
+      ]
+    },
+    {
+      "method": "turn/started",
+      "surface": "server-notification",
+      "params": [
+        "RuntimeTurnNotification"
       ]
     }
   ]

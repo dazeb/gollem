@@ -146,11 +146,11 @@ func TestPublicTurnTypeScriptAndBindingsRemainStandalone(t *testing.T) {
 	if !strings.Contains(string(generated), want) {
 		t.Fatalf("generated TypeScript missing exact Turn:\n%s", generated)
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 527 {
-		t.Fatalf("definition count = %d, want 527", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 549 {
+		t.Fatalf("definition count = %d, want 549", len(JSONSchema()["$defs"].(Schema)))
 	}
-	if len(WireTypeBindings()) != 59 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 59/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
+	if len(WireTypeBindings()) != 69 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 69/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
 	}
 	for _, binding := range WireTypeBindings() {
 		if slices.Contains(binding.Params, "Turn") || slices.Contains(binding.Result, "Turn") {

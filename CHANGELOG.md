@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Typed app-server catalog and run-lifecycle bindings.** Generated clients
+  can now infer provider/model discovery, thread and turn start, turn
+  interruption, thread/turn lifecycle notifications, and live text/reasoning
+  deltas without raw JSON. Runtime-specific types preserve the current Gollem
+  wire while exact standalone Codex contracts remain distinct.
 - **Adaptive thinking for Anthropic providers.** New
   `ModelSettings.AdaptiveThinking *bool` emits
   `{thinking: {type: "adaptive"}}` from both the `anthropic` and

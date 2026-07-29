@@ -212,7 +212,7 @@ These definitions are data contracts only. They are not bound to
 `thread/start`, dynamic-call items or methods, registration, input validation,
 deferred loading, namespace dispatch, persistence, or execution. Generated
 TypeScript preserves the exact public function/namespace intersections without
-changing Gollem's existing 59 method bindings or five item bindings.
+changing Gollem's runtime-specific bindings or five item bindings.
 
 ## Exported Collaboration And Capability Contracts
 
@@ -287,6 +287,26 @@ its final response public: Gollem currently starts a legacy string command
 asynchronously and returns a process snapshot, while the public contract
 requires argv, PTY/sandbox/stream/cap/timeout controls and a deferred buffered
 result after process exit.
+
+## Version 1 Runtime Client Bindings
+
+Generated clients can discover providers and models, start and interrupt live
+runs, and consume the current streaming lifecycle without an untyped JSON
+escape hatch. `provider/list` and `model/list` bind the provider-aware catalog
+records; `thread/start`, `turn/start`, and `turn/interrupt` bind durable
+thread/turn results; and `thread/started`, `turn/started`, `turn/completed`,
+`item/agentMessage/delta`, and `item/reasoning/textDelta` bind the live
+notification records. The registry now contains 69 method bindings and five
+durable item bindings.
+
+The live names are intentionally explicit: `ModelCatalog*`, `ThreadRun*`,
+`TurnRun*`, and `Runtime*`. Exact standalone public `ModelList*`,
+`ThreadStart*`, `TurnStart*`, lifecycle-notification, and delta-notification
+types remain separate and retain their stricter Codex shapes. This exposes the
+implemented Gollem wire truthfully without weakening or falsely claiming those
+public contracts. Catalog responses expose configuration state and required
+environment-variable names, never credential values; runtime requests contain
+selection and model settings but no credential-bearing fields.
 
 ## Exported Thread-Item Prerequisites
 
