@@ -84,7 +84,14 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 		t.Fatalf("NewService after restart: %v", err)
 	}
 	defer fsService.Close()
-	server = readyServer(WithStore(st), WithFilesystem(fsService), WithApprovalService(approvals))
+	server = readyServer(
+		WithStore(st),
+		WithFilesystem(fsService),
+		WithApprovalService(approvals),
+		WithRuntimeService(NewRuntimeService(
+			WithRuntimeModel(core.NewTestModel(core.TextResponse("should not run")), RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+		)),
+	)
 	deniedCh := make(chan protocol.Response, 1)
 	go func() {
 		deniedCh <- server.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
@@ -127,6 +134,17 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 			params.ItemID != fileItem.Item.ID || params.Operation != string(toolfs.OperationRevertFileChange) ||
 			params.Path != "notes.txt" || !params.Destructive {
 			t.Fatalf("revert approval params = %+v", params)
+		}
+		blockedStart := server.HandleRequest(ctx, request("turn/start", map[string]any{
+			"threadId": started.Thread.ID,
+			"prompt":   "must not start while revert is reserved",
+		}))
+		if blockedStart.Error == nil || blockedStart.Error.Code != protocol.CodeInvalidParams {
+			t.Fatalf("turn start during revert = %+v", blockedStart)
+		}
+		read := server.HandleRequest(ctx, request("thread/read", map[string]any{"threadId": started.Thread.ID}))
+		if read.Error != nil {
+			t.Fatalf("thread read during revert approval = %v", read.Error)
 		}
 	})
 	var response protocol.Response
@@ -351,7 +369,11 @@ func TestFileChangeRevertCompletesPendingReceiptAfterResponseLoss(t *testing.T) 
 	if err != nil {
 		t.Fatalf("GetFileChangeRecovery: %v", err)
 	}
-	active, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: started.Thread.ID})
+	otherThread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Shared workspace", Workspace: root})
+	if err != nil {
+		t.Fatalf("CreateThread shared workspace: %v", err)
+	}
+	active, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: otherThread.ID})
 	if err != nil {
 		t.Fatalf("CreateTurn active: %v", err)
 	}
@@ -712,6 +734,7 @@ func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 		{"absolute path", func(event *core.ArtifactChangedEvent) { event.Path = filepath.Join(t.TempDir(), "outside.txt") }},
 		{"directory", func(event *core.ArtifactChangedEvent) { event.AfterIsDir = true }},
 		{"symlink", func(event *core.ArtifactChangedEvent) { event.AfterIsSymlink = true }},
+		{"symlink path component", func(event *core.ArtifactChangedEvent) { event.BeforeHasSymlinkPath = true }},
 		{"no existence evidence", func(event *core.ArtifactChangedEvent) {
 			event.BeforeExists = false
 			event.AfterExists = false
@@ -750,8 +773,10 @@ func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 }
 
 func TestRuntimeFileChangeTrackerRecoveryCapabilityAndErrors(t *testing.T) {
+	root := t.TempDir()
 	event := core.ArtifactChangedEvent{
 		Path:               "notes.txt",
+		WorkspaceRoot:      root,
 		Operation:          "update",
 		BeforeExists:       true,
 		AfterExists:        true,
@@ -768,7 +793,7 @@ func TestRuntimeFileChangeTrackerRecoveryCapabilityAndErrors(t *testing.T) {
 	newTurn := func(t *testing.T) (*store.SQLiteStore, *store.Turn) {
 		t.Helper()
 		st := newRuntimeTestStore(t)
-		thread, err := st.CreateThread(context.Background(), store.CreateThreadRequest{Title: "File changes"})
+		thread, err := st.CreateThread(context.Background(), store.CreateThreadRequest{Title: "File changes", Workspace: root})
 		if err != nil {
 			t.Fatalf("CreateThread: %v", err)
 		}
@@ -799,6 +824,26 @@ func TestRuntimeFileChangeTrackerRecoveryCapabilityAndErrors(t *testing.T) {
 		}
 		if notifier.method != "item/completed" {
 			t.Fatalf("last notification = %q, want item/completed", notifier.method)
+		}
+	})
+
+	t.Run("mismatched thread workspace is not advertised", func(t *testing.T) {
+		st, turn := newTurn(t)
+		mismatched := event
+		mismatched.WorkspaceRoot = t.TempDir()
+		tracker := newRuntimeFileChangeTracker(st, &runtimeErrorCaptureNotifier{}, turn, nil)
+		tracker.artifactChanged(mismatched)
+		if err := tracker.Err(); err != nil {
+			t.Fatalf("artifactChanged: %v", err)
+		}
+		items, err := st.ListItems(context.Background(), store.ItemFilter{ThreadID: turn.ThreadID, TurnID: turn.ID})
+		if err != nil {
+			t.Fatalf("ListItems: %v", err)
+		}
+		fileItem := findRuntimeFileChangeItem(t, items, event.Path)
+		evidence := fileItem.Payload.Evidence[0]
+		if evidence.RevertSnapshotAvailable || evidence.RevertUnavailableReason != "thread workspace does not match the filesystem root" {
+			t.Fatalf("mismatched workspace evidence = %+v", evidence)
 		}
 	})
 

@@ -363,6 +363,7 @@ type ArtifactChangedEvent struct {
 	ToolCallID           string
 	ToolName             string
 	Path                 string
+	WorkspaceRoot        string
 	Operation            string
 	Bytes                int64
 	BeforeExists         bool
@@ -371,6 +372,8 @@ type ArtifactChangedEvent struct {
 	AfterIsDir           bool
 	BeforeIsSymlink      bool
 	AfterIsSymlink       bool
+	BeforeHasSymlinkPath bool
+	AfterHasSymlinkPath  bool
 	BeforeMode           uint32
 	AfterMode            uint32
 	BeforeSize           int64

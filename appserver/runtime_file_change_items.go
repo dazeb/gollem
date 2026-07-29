@@ -81,6 +81,17 @@ func (t *runtimeFileChangeTracker) artifactChanged(event core.ArtifactChangedEve
 		}},
 	}
 	recovery, recoveryUnavailable := runtimeFileChangeRecovery(event, t.turn)
+	if recoveryUnavailable == "" {
+		thread, err := t.store.GetThread(context.Background(), t.turn.ThreadID)
+		switch {
+		case err != nil:
+			recoveryUnavailable = "thread workspace could not be verified"
+		case strings.TrimSpace(event.WorkspaceRoot) == "":
+			recoveryUnavailable = "filesystem workspace root is unavailable"
+		case requireExactThreadWorkspace(thread, event.WorkspaceRoot) != nil:
+			recoveryUnavailable = "thread workspace does not match the filesystem root"
+		}
+	}
 	payload.Evidence[0].RevertUnavailableReason = recoveryUnavailable
 	recoveryStore, recoveryStoreAvailable := t.store.(store.FileChangeRecoveryStore)
 	if recoveryUnavailable == "" && !recoveryStoreAvailable {
@@ -199,6 +210,9 @@ func runtimeFileChangeRecovery(event core.ArtifactChangedEvent, turn *store.Turn
 	}
 	if event.BeforeIsSymlink || event.AfterIsSymlink {
 		return store.FileChangeRecovery{}, "symlink changes cannot be reverted"
+	}
+	if event.BeforeHasSymlinkPath || event.AfterHasSymlinkPath {
+		return store.FileChangeRecovery{}, "paths traversing symlinks cannot be reverted"
 	}
 	if !event.BeforeExists && !event.AfterExists {
 		return store.FileChangeRecovery{}, "file existence evidence is incomplete"

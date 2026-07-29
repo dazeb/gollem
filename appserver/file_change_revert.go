@@ -91,19 +91,20 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 		}
 		return fileChangeRevertProtocolResult(prepared.Recovery, prepared.Marker, true)
 	}
-	activeTurns, err := st.ListTurns(ctx, store.TurnFilter{
-		ThreadID: thread.ID,
-		Statuses: []store.TurnStatus{store.TurnQueued, store.TurnRunning},
-	})
-	if err != nil {
-		return nil, mapError(fileChangeRevertMethod, err)
-	}
-	if len(activeTurns) > 0 {
-		return nil, rpcError(protocol.CodeInvalidRequest, "cannot revert a file change while a turn is active", nil)
-	}
 	if recovery.Status == store.FileChangeRecoveryPending && recovery.IdempotencyKey != params.IdempotencyKey {
 		return nil, mapError(fileChangeRevertMethod, store.ErrFileChangeRevertIdempotencyConflict)
 	}
+	releaseWorkspace, err := s.reserveWorkspaceRevert(ctx, st, fsService.Root())
+	if err != nil {
+		if errors.Is(err, ErrWorkspaceTurnActive) {
+			return nil, rpcError(protocol.CodeInvalidRequest, "cannot revert a file change while a workspace turn is active", nil)
+		}
+		if errors.Is(err, ErrWorkspaceRevertInProgress) {
+			return nil, rpcError(protocol.CodeInvalidRequest, "another workspace file-change revert is in progress", nil)
+		}
+		return nil, mapError(fileChangeRevertMethod, err)
+	}
+	defer releaseWorkspace()
 
 	current, err := captureRuntimeArtifact(ctx, fsService, recovery.Path)
 	if err != nil {

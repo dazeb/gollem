@@ -1424,8 +1424,12 @@ func pruneRolledBackHistoryTx(ctx context.Context, tx *sql.Tx, threadID string, 
 		`, threadID, cutoff); err != nil {
 			return fmt.Errorf("delete rolled back file-change recovery: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM app_items WHERE thread_id = ? AND seq >= ?`, threadID, cutoff); err != nil {
-			return fmt.Errorf("delete rolled back items: %w", err)
+		preservedReceipts, err := retainedFileChangeReceiptIDsTx(ctx, tx, threadID)
+		if err != nil {
+			return err
+		}
+		if err := deleteItemsFromSeqTx(ctx, tx, threadID, cutoff, preservedReceipts); err != nil {
+			return err
 		}
 	} else {
 		for id := range removedIDs {
@@ -1445,6 +1449,73 @@ func pruneRolledBackHistoryTx(ctx context.Context, tx *sql.Tx, threadID string, 
 	for id := range removedIDs {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM app_turns WHERE id = ?`, id); err != nil {
 			return fmt.Errorf("delete rolled back turn: %w", err)
+		}
+	}
+	return nil
+}
+
+func retainedFileChangeReceiptIDsTx(ctx context.Context, tx *sql.Tx, threadID string) (map[string]struct{}, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT payload
+		FROM app_file_change_recovery
+		WHERE thread_id = ? AND status = ?
+	`, threadID, string(FileChangeRecoveryReverted))
+	if err != nil {
+		return nil, fmt.Errorf("load retained file-change receipts: %w", err)
+	}
+	defer rows.Close()
+	preserved := make(map[string]struct{})
+	for rows.Next() {
+		recovery, err := scanFileChangeRecovery(rows)
+		if err != nil {
+			return nil, err
+		}
+		if recovery.MarkerID != "" {
+			preserved[recovery.MarkerID] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate retained file-change receipts: %w", err)
+	}
+	return preserved, nil
+}
+
+func deleteItemsFromSeqTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	threadID string,
+	cutoff int64,
+	preserved map[string]struct{},
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM app_items
+		WHERE thread_id = ? AND seq >= ?
+		ORDER BY seq ASC
+	`, threadID, cutoff)
+	if err != nil {
+		return fmt.Errorf("load rolled back items: %w", err)
+	}
+	var deleteIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan rolled back item id: %w", err)
+		}
+		if _, keep := preserved[id]; !keep {
+			deleteIDs = append(deleteIDs, id)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close rolled back item rows: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate rolled back item ids: %w", err)
+	}
+	for _, id := range deleteIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM app_items WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("delete rolled back item %q: %w", id, err)
 		}
 	}
 	return nil

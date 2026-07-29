@@ -814,6 +814,71 @@ func TestServiceWatchRejectsUnsafeRequests(t *testing.T) {
 	}
 }
 
+func TestExactRootReplacementRestoresQuarantineOnFailure(t *testing.T) {
+	t.Run("failed install restores original", func(t *testing.T) {
+		ops := &scriptedExactRootOps{
+			linkErrors: []error{errors.New("install failed"), nil},
+		}
+		if err := installRootReplacement(ops, "temp", "notes.txt", "quarantine"); err == nil {
+			t.Fatal("failed installation returned nil")
+		}
+		if got := strings.Join(ops.calls, ","); got != "link temp notes.txt,link quarantine notes.txt,remove quarantine" {
+			t.Fatalf("replacement calls = %q", got)
+		}
+	})
+
+	t.Run("occupied destination preserves quarantine", func(t *testing.T) {
+		ops := &scriptedExactRootOps{
+			linkErrors: []error{errors.New("install failed"), errors.New("destination occupied")},
+		}
+		if err := installRootReplacement(ops, "temp", "notes.txt", "quarantine"); err == nil ||
+			!strings.Contains(err.Error(), `preserved at "quarantine"`) {
+			t.Fatalf("occupied replacement error = %v", err)
+		}
+		if got := strings.Join(ops.calls, ","); got != "link temp notes.txt,link quarantine notes.txt" {
+			t.Fatalf("occupied replacement calls = %q", got)
+		}
+	})
+
+	t.Run("failed quarantine removal restores original", func(t *testing.T) {
+		ops := &scriptedExactRootOps{
+			removeErrors: []error{errors.New("remove failed"), nil},
+		}
+		if err := removeQuarantinedRootFile(ops, "quarantine", "notes.txt"); err == nil {
+			t.Fatal("failed quarantine removal returned nil")
+		}
+		if got := strings.Join(ops.calls, ","); got != "remove quarantine,link quarantine notes.txt,remove quarantine" {
+			t.Fatalf("removal recovery calls = %q", got)
+		}
+	})
+}
+
+type scriptedExactRootOps struct {
+	linkErrors   []error
+	removeErrors []error
+	calls        []string
+}
+
+func (s *scriptedExactRootOps) Link(oldname, newname string) error {
+	s.calls = append(s.calls, "link "+oldname+" "+newname)
+	if len(s.linkErrors) == 0 {
+		return nil
+	}
+	err := s.linkErrors[0]
+	s.linkErrors = s.linkErrors[1:]
+	return err
+}
+
+func (s *scriptedExactRootOps) Remove(name string) error {
+	s.calls = append(s.calls, "remove "+name)
+	if len(s.removeErrors) == 0 {
+		return nil
+	}
+	err := s.removeErrors[0]
+	s.removeErrors = s.removeErrors[1:]
+	return err
+}
+
 func newTestService(t *testing.T, opts ...Option) *Service {
 	t.Helper()
 	svc, err := NewService(t.TempDir(), opts...)

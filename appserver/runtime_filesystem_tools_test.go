@@ -131,6 +131,86 @@ func TestFilesystemRuntimeToolsBoundEvidenceAndSuppressNoOpChanges(t *testing.T)
 	}
 }
 
+func TestFilesystemRuntimeMutationCapturesStateAfterApproval(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(path, []byte("initial\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile initial: %v", err)
+	}
+	approvalStarted := make(chan struct{})
+	approve := make(chan struct{})
+	fsSvc, err := toolfs.NewService(root, toolfs.WithApproval(func(context.Context, toolfs.Operation) error {
+		close(approvalStarted)
+		<-approve
+		return nil
+	}))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	bus := core.NewEventBus()
+	defer bus.Close()
+	events := make(chan core.ArtifactChangedEvent, 1)
+	unsubscribe := core.Subscribe(bus, func(event core.ArtifactChangedEvent) {
+		events <- event
+	})
+	defer unsubscribe()
+
+	tool := findRuntimeToolByName(t, FilesystemRuntimeTools(fsSvc), "workspace_write_file")
+	result := make(chan error, 1)
+	go func() {
+		_, err := tool.Handler(
+			context.Background(),
+			&core.RunContext{EventBus: bus, RunID: "run-approved", ToolCallID: "call-approved", ToolName: "workspace_write_file"},
+			`{"path":"notes.txt","content":"tool\n"}`,
+		)
+		result <- err
+	}()
+	<-approvalStarted
+	if err := os.WriteFile(path, []byte("editor\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile editor state: %v", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("Chmod editor state: %v", err)
+	}
+	close(approve)
+	if err := <-result; err != nil {
+		t.Fatalf("runtime write: %v", err)
+	}
+	event := <-events
+	if string(event.BeforeContentBytes) != "editor\n" ||
+		event.BeforeSHA256 != runtimeSHA256([]byte("editor\n")) ||
+		event.BeforeMode != 0o600 ||
+		string(event.AfterContentBytes) != "tool\n" {
+		t.Fatalf("approved mutation evidence = %+v", event)
+	}
+}
+
+func TestCaptureRuntimeArtifactMarksSymlinkPathComponents(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "real"), 0o755); err != nil {
+		t.Fatalf("Mkdir real: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "real", "notes.txt"), []byte("content\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile notes: %v", err)
+	}
+	if err := os.Symlink("real", filepath.Join(root, "linked")); err != nil {
+		t.Fatalf("Symlink linked: %v", err)
+	}
+	fsSvc, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	capture, err := captureRuntimeArtifact(context.Background(), fsSvc, "linked/notes.txt")
+	if err != nil {
+		t.Fatalf("captureRuntimeArtifact: %v", err)
+	}
+	if !capture.Exists || !capture.HasSymlinkComponent || capture.IsSymlink {
+		t.Fatalf("symlink-path capture = %+v", capture)
+	}
+}
+
 func TestRuntimeToolTimelinePayloadsAreBounded(t *testing.T) {
 	large := strings.Repeat("payload", runtimeToolPayloadMaxBytes)
 	arguments := runtimeToolArguments(`{"content":"` + large + `"}`)
@@ -176,8 +256,9 @@ func TestServerRuntimeApprovedFilesystemWritePersistsFileChange(t *testing.T) {
 	)
 
 	resp := server.HandleRequest(ctx, request("thread/start", map[string]any{
-		"title":  "Runtime filesystem",
-		"prompt": "write the result",
+		"title":     "Runtime filesystem",
+		"workspace": root,
+		"prompt":    "write the result",
 	}))
 	if resp.Error != nil {
 		t.Fatalf("thread/start error: %v", resp.Error)

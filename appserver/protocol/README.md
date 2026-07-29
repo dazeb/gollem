@@ -179,17 +179,21 @@ replacement content. The handler resolves those values from private SQLite
 recovery evidence and cross-checks them against the public item before any
 mutation.
 
-Gollem captures recovery snapshots only for regular, non-symlink files whose
-before and after contents are each at most 1 MiB. Public
+Gollem captures recovery snapshots only after mutation approval, with the
+before snapshot, mutation, and after snapshot sharing the filesystem mutation
+lock. Snapshots are limited to regular files whose paths do not traverse
+symlinks and whose before and after contents are each at most 1 MiB. Public
 `FileChangeArtifactEvidence` exposes the optional
 `revertSnapshotAvailable` capability and a bounded unavailable reason, but
-never the private before-content bytes. A call is rejected while any turn in
-the thread is active, when the original turn is not terminal, when the thread
-is deleted, when the thread's canonical workspace differs from the configured
-filesystem root, or when current bytes or mode no longer match the recorded
-post-change state. Turn starts and reverts share one serialized request scope,
-and forked history explicitly marks copied file-change items unavailable
-because private recovery evidence does not transfer to the fork.
+never the private before-content bytes. A call is rejected while any turn that
+can access the configured filesystem workspace is active, when the original
+turn is not terminal, when the thread is deleted, when the thread's canonical
+workspace differs from the configured filesystem root, or when current bytes
+or mode no longer match the recorded post-change state. A dedicated revert
+request scope and workspace reservation reject new turn starts during approval
+without blocking thread reads. Forked history explicitly marks copied
+file-change items unavailable because private recovery evidence does not
+transfer to the fork.
 
 The filesystem mutation runs through the existing
 `item/fileChange/requestApproval` request unless the daemon was explicitly

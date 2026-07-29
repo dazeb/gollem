@@ -162,16 +162,17 @@ func FilesystemRuntimeTools(service *toolfs.Service) []core.Tool {
 				if strings.TrimSpace(params.Path) == "" {
 					return runtimeFilesystemMutationResult{}, errors.New("path is required")
 				}
-				before, err := captureRuntimeArtifact(ctx, service, params.Path)
+				before, after, err := captureApprovedRuntimeMutation(
+					ctx,
+					service,
+					toolfs.Operation{Kind: toolfs.OperationWriteFile, Path: params.Path},
+					params.Path,
+					func(mutationCtx context.Context) error {
+						return service.WriteFile(mutationCtx, params.Path, []byte(params.Content), 0o644)
+					},
+				)
 				if err != nil {
 					return runtimeFilesystemMutationResult{}, err
-				}
-				if err := service.WriteFile(ctx, params.Path, []byte(params.Content), 0o644); err != nil {
-					return runtimeFilesystemMutationResult{}, err
-				}
-				after, err := captureRuntimeArtifact(ctx, service, params.Path)
-				if err != nil {
-					return runtimeFilesystemMutationResult{}, fmt.Errorf("capture written artifact: %w", err)
 				}
 				operation := "update"
 				if !before.Exists {
@@ -190,16 +191,17 @@ func FilesystemRuntimeTools(service *toolfs.Service) []core.Tool {
 				if strings.TrimSpace(params.Path) == "" {
 					return runtimeFilesystemMutationResult{}, errors.New("path is required")
 				}
-				before, err := captureRuntimeArtifact(ctx, service, params.Path)
+				before, after, err := captureApprovedRuntimeMutation(
+					ctx,
+					service,
+					toolfs.Operation{Kind: toolfs.OperationCreateDirectory, Path: params.Path},
+					params.Path,
+					func(mutationCtx context.Context) error {
+						return service.CreateDirectory(mutationCtx, params.Path)
+					},
+				)
 				if err != nil {
 					return runtimeFilesystemMutationResult{}, err
-				}
-				if err := service.CreateDirectory(ctx, params.Path); err != nil {
-					return runtimeFilesystemMutationResult{}, err
-				}
-				after, err := captureRuntimeArtifact(ctx, service, params.Path)
-				if err != nil {
-					return runtimeFilesystemMutationResult{}, fmt.Errorf("capture created directory: %w", err)
 				}
 				changed := publishRuntimeArtifactChange(ctx, rc, before, after, "create")
 				return runtimeFilesystemMutationResult{Path: after.Path, Operation: "createDirectory", Changed: changed}, nil
@@ -214,16 +216,17 @@ func FilesystemRuntimeTools(service *toolfs.Service) []core.Tool {
 				if strings.TrimSpace(params.Path) == "" {
 					return runtimeFilesystemMutationResult{}, errors.New("path is required")
 				}
-				before, err := captureRuntimeArtifact(ctx, service, params.Path)
+				before, after, err := captureApprovedRuntimeMutation(
+					ctx,
+					service,
+					toolfs.Operation{Kind: toolfs.OperationRemove, Path: params.Path, Destructive: true},
+					params.Path,
+					func(mutationCtx context.Context) error {
+						return service.Remove(mutationCtx, params.Path)
+					},
+				)
 				if err != nil {
 					return runtimeFilesystemMutationResult{}, err
-				}
-				if err := service.Remove(ctx, params.Path); err != nil {
-					return runtimeFilesystemMutationResult{}, err
-				}
-				after, err := captureRuntimeArtifact(ctx, service, params.Path)
-				if err != nil {
-					return runtimeFilesystemMutationResult{}, fmt.Errorf("capture removed artifact: %w", err)
 				}
 				changed := publishRuntimeArtifactChange(ctx, rc, before, after, "delete")
 				return runtimeFilesystemMutationResult{Path: before.Path, Operation: "remove", Changed: changed}, nil
@@ -238,16 +241,17 @@ func FilesystemRuntimeTools(service *toolfs.Service) []core.Tool {
 				if strings.TrimSpace(params.Source) == "" || strings.TrimSpace(params.Destination) == "" {
 					return runtimeFilesystemMutationResult{}, errors.New("source and destination are required")
 				}
-				before, err := captureRuntimeArtifact(ctx, service, params.Destination)
+				before, after, err := captureApprovedRuntimeMutation(
+					ctx,
+					service,
+					toolfs.Operation{Kind: toolfs.OperationCopy, Path: params.Source, Destination: params.Destination},
+					params.Destination,
+					func(mutationCtx context.Context) error {
+						return service.Copy(mutationCtx, params.Source, params.Destination)
+					},
+				)
 				if err != nil {
 					return runtimeFilesystemMutationResult{}, err
-				}
-				if err := service.Copy(ctx, params.Source, params.Destination); err != nil {
-					return runtimeFilesystemMutationResult{}, err
-				}
-				after, err := captureRuntimeArtifact(ctx, service, params.Destination)
-				if err != nil {
-					return runtimeFilesystemMutationResult{}, fmt.Errorf("capture copied artifact: %w", err)
 				}
 				operation := "update"
 				if !before.Exists {
@@ -289,31 +293,71 @@ func newRuntimeFilesystemReadResult(content *toolfs.FileContent) runtimeFilesyst
 }
 
 type runtimeArtifactCapture struct {
-	Path      string
-	Exists    bool
-	IsDir     bool
-	IsSymlink bool
-	Size      int64
-	Mode      uint32
-	Content   []byte
-	SHA256    string
+	Path                string
+	WorkspaceRoot       string
+	Exists              bool
+	IsDir               bool
+	IsSymlink           bool
+	HasSymlinkComponent bool
+	Size                int64
+	Mode                uint32
+	Content             []byte
+	SHA256              string
+}
+
+func captureApprovedRuntimeMutation(
+	ctx context.Context,
+	service *toolfs.Service,
+	op toolfs.Operation,
+	path string,
+	mutate func(context.Context) error,
+) (runtimeArtifactCapture, runtimeArtifactCapture, error) {
+	var before runtimeArtifactCapture
+	var after runtimeArtifactCapture
+	err := service.RunApprovedMutation(ctx, op, func(mutationCtx context.Context) error {
+		var err error
+		before, err = captureRuntimeArtifact(mutationCtx, service, path)
+		if err != nil {
+			return fmt.Errorf("capture artifact before mutation: %w", err)
+		}
+		if err := mutate(mutationCtx); err != nil {
+			return err
+		}
+		after, err = captureRuntimeArtifact(mutationCtx, service, path)
+		if err != nil {
+			return fmt.Errorf("capture artifact after mutation: %w", err)
+		}
+		return nil
+	})
+	return before, after, err
 }
 
 func captureRuntimeArtifact(ctx context.Context, service *toolfs.Service, path string) (runtimeArtifactCapture, error) {
+	workspaceRoot := service.Root()
+	hasSymlinkComponent, err := runtimeArtifactHasSymlinkComponent(workspaceRoot, path)
+	if err != nil {
+		return runtimeArtifactCapture{}, err
+	}
 	metadata, err := service.Metadata(ctx, path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return runtimeArtifactCapture{Path: runtimeRelativeFilesystemPath(service.Root(), path)}, nil
+			return runtimeArtifactCapture{
+				Path:                runtimeRelativeFilesystemPath(workspaceRoot, path),
+				WorkspaceRoot:       workspaceRoot,
+				HasSymlinkComponent: hasSymlinkComponent,
+			}, nil
 		}
 		return runtimeArtifactCapture{}, err
 	}
 	capture := runtimeArtifactCapture{
-		Path:      filepath.ToSlash(metadata.Path),
-		Exists:    true,
-		IsDir:     metadata.IsDir,
-		IsSymlink: metadata.IsSymlink,
-		Size:      metadata.Size,
-		Mode:      uint32(metadata.Mode & runtimeExactFileModeMask),
+		Path:                filepath.ToSlash(metadata.Path),
+		WorkspaceRoot:       workspaceRoot,
+		Exists:              true,
+		IsDir:               metadata.IsDir,
+		IsSymlink:           metadata.IsSymlink,
+		HasSymlinkComponent: hasSymlinkComponent,
+		Size:                metadata.Size,
+		Mode:                uint32(metadata.Mode & runtimeExactFileModeMask),
 	}
 	if metadata.IsDir {
 		return capture, nil
@@ -325,6 +369,36 @@ func captureRuntimeArtifact(ctx context.Context, service *toolfs.Service, path s
 	capture.Content = append([]byte(nil), content.Content...)
 	capture.SHA256 = runtimeSHA256(content.Content)
 	return capture, nil
+}
+
+func runtimeArtifactHasSymlinkComponent(root, path string) (bool, error) {
+	candidate := path
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(root, candidate)
+	}
+	candidate = filepath.Clean(candidate)
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return false, toolfs.ErrPathOutsideRoot
+	}
+	current := root
+	for _, component := range strings.Split(relative, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("inspect artifact path component: %w", err)
+		}
+		if info.Mode()&iofs.ModeSymlink != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func publishRuntimeArtifactChange(ctx context.Context, rc *core.RunContext, before, after runtimeArtifactCapture, operation string) bool {
@@ -347,6 +421,7 @@ func publishRuntimeArtifactChange(ctx context.Context, rc *core.RunContext, befo
 		ToolCallID:           firstRuntimeNonEmpty(core.ToolCallIDFromContext(ctx), rc.ToolCallID),
 		ToolName:             rc.ToolName,
 		Path:                 filepath.ToSlash(path),
+		WorkspaceRoot:        after.WorkspaceRoot,
 		Operation:            operation,
 		Bytes:                bytesChanged,
 		BeforeExists:         before.Exists,
@@ -355,6 +430,8 @@ func publishRuntimeArtifactChange(ctx context.Context, rc *core.RunContext, befo
 		AfterIsDir:           after.IsDir,
 		BeforeIsSymlink:      before.IsSymlink,
 		AfterIsSymlink:       after.IsSymlink,
+		BeforeHasSymlinkPath: before.HasSymlinkComponent,
+		AfterHasSymlinkPath:  after.HasSymlinkComponent,
 		BeforeMode:           before.Mode,
 		AfterMode:            after.Mode,
 		BeforeSize:           before.Size,

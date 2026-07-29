@@ -26,6 +26,7 @@ var (
 	ErrWatchIDRequired        = errors.New("appserver/fs: watch id is required")
 	ErrWatchAlreadyExists     = errors.New("appserver/fs: watch id already exists")
 	ErrWatchNotFound          = errors.New("appserver/fs: watch id not found")
+	ErrInvalidMutationScope   = errors.New("appserver/fs: invalid approved mutation scope")
 	ErrExactStateMismatch     = errors.New("appserver/fs: current file does not match expected state")
 	ErrExactRevertSymlink     = errors.New("appserver/fs: exact revert refuses symlinks")
 	ErrExactRevertUnsupported = errors.New("appserver/fs: exact revert supports regular files only")
@@ -91,6 +92,16 @@ type Service struct {
 	watches map[string]*watchRegistration
 
 	mutationMu sync.Mutex
+}
+
+type approvedMutationScopeKey struct{}
+
+type approvedMutationScope struct {
+	mu        sync.Mutex
+	service   *Service
+	operation Operation
+	active    bool
+	used      bool
 }
 
 type FileContent struct {
@@ -181,6 +192,53 @@ func (s *Service) Root() string {
 	return s.root
 }
 
+// RunApprovedMutation waits for approval before entering the mutation lock,
+// then lets callers capture before/after evidence around exactly one matching
+// service mutation. The scoped context cannot bypass approval after fn returns.
+func (s *Service) RunApprovedMutation(
+	ctx context.Context,
+	op Operation,
+	fn func(context.Context) error,
+) error {
+	if s == nil {
+		return errors.New("appserver/fs: nil service")
+	}
+	if fn == nil {
+		return errors.New("appserver/fs: mutation callback is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resolved, destination, err := s.resolveMutationOperation(op)
+	if err != nil {
+		s.emit(op, resolved, destination, false, err)
+		return err
+	}
+	if err := s.requireApproval(ctx, op); err != nil {
+		s.emit(op, resolved, destination, false, err)
+		return err
+	}
+	if err := checkContext(ctx); err != nil {
+		s.emit(op, resolved, destination, false, err)
+		return err
+	}
+
+	s.mutationMu.Lock()
+	scope := &approvedMutationScope{
+		service:   s,
+		operation: op,
+		active:    true,
+	}
+	scopedCtx := context.WithValue(ctx, approvedMutationScopeKey{}, scope)
+	defer func() {
+		scope.mu.Lock()
+		scope.active = false
+		scope.mu.Unlock()
+		s.mutationMu.Unlock()
+	}()
+	return fn(scopedCtx)
+}
+
 func (s *Service) ReadFile(ctx context.Context, path string) (*FileContent, error) {
 	op := Operation{Kind: OperationReadFile, Path: path}
 	if err := checkContext(ctx); err != nil {
@@ -213,12 +271,16 @@ func (s *Service) ReadFile(ctx context.Context, path string) (*FileContent, erro
 }
 
 func (s *Service) WriteFile(ctx context.Context, path string, content []byte, perm iofs.FileMode) error {
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
 	if perm == 0 {
 		perm = 0o644
 	}
 	op := Operation{Kind: OperationWriteFile, Path: path}
+	release, approved, err := s.enterMutation(ctx, op)
+	if err != nil {
+		s.emit(op, "", "", false, err)
+		return err
+	}
+	defer release()
 	if err := checkContext(ctx); err != nil {
 		s.emit(op, "", "", false, err)
 		return err
@@ -228,7 +290,10 @@ func (s *Service) WriteFile(ctx context.Context, path string, content []byte, pe
 		s.emit(op, "", "", false, err)
 		return err
 	}
-	if err := s.requireApproval(ctx, op); err != nil {
+	if !approved {
+		err = s.requireApproval(ctx, op)
+	}
+	if err != nil {
 		s.emit(op, resolved, "", false, err)
 		return err
 	}
@@ -249,9 +314,13 @@ func (s *Service) CreateDirectory(ctx context.Context, path string) error {
 }
 
 func (s *Service) CreateDirectoryWithOptions(ctx context.Context, path string, options CreateDirectoryOptions) error {
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
 	op := Operation{Kind: OperationCreateDirectory, Path: path}
+	release, approved, err := s.enterMutation(ctx, op)
+	if err != nil {
+		s.emit(op, "", "", false, err)
+		return err
+	}
+	defer release()
 	if err := checkContext(ctx); err != nil {
 		s.emit(op, "", "", false, err)
 		return err
@@ -261,7 +330,10 @@ func (s *Service) CreateDirectoryWithOptions(ctx context.Context, path string, o
 		s.emit(op, "", "", false, err)
 		return err
 	}
-	if err := s.requireApproval(ctx, op); err != nil {
+	if !approved {
+		err = s.requireApproval(ctx, op)
+	}
+	if err != nil {
 		s.emit(op, resolved, "", false, err)
 		return err
 	}
@@ -348,9 +420,13 @@ func (s *Service) Remove(ctx context.Context, path string) error {
 }
 
 func (s *Service) RemoveWithOptions(ctx context.Context, path string, options RemoveOptions) error {
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
 	op := Operation{Kind: OperationRemove, Path: path, Destructive: true}
+	release, approved, err := s.enterMutation(ctx, op)
+	if err != nil {
+		s.emit(op, "", "", false, err)
+		return err
+	}
+	defer release()
 	if err := checkContext(ctx); err != nil {
 		s.emit(op, "", "", false, err)
 		return err
@@ -364,7 +440,10 @@ func (s *Service) RemoveWithOptions(ctx context.Context, path string, options Re
 		s.emit(op, resolved, "", false, ErrRefusingRoot)
 		return ErrRefusingRoot
 	}
-	if err := s.requireApproval(ctx, op); err != nil {
+	if !approved {
+		err = s.requireApproval(ctx, op)
+	}
+	if err != nil {
 		s.emit(op, resolved, "", false, err)
 		return err
 	}
@@ -397,9 +476,13 @@ func (s *Service) Copy(ctx context.Context, src, dst string) error {
 }
 
 func (s *Service) CopyWithOptions(ctx context.Context, src, dst string, options CopyOptions) error {
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
 	op := Operation{Kind: OperationCopy, Path: src, Destination: dst}
+	release, approved, err := s.enterMutation(ctx, op)
+	if err != nil {
+		s.emit(op, "", "", false, err)
+		return err
+	}
+	defer release()
 	if err := checkContext(ctx); err != nil {
 		s.emit(op, "", "", false, err)
 		return err
@@ -427,7 +510,10 @@ func (s *Service) CopyWithOptions(ctx context.Context, src, dst string, options 
 		s.emit(op, resolvedSrc, resolvedDst, false, ErrRecursiveRequired)
 		return ErrRecursiveRequired
 	}
-	if err := s.requireApproval(ctx, op); err != nil {
+	if !approved {
+		err = s.requireApproval(ctx, op)
+	}
+	if err != nil {
 		s.emit(op, resolvedSrc, resolvedDst, false, err)
 		return err
 	}
@@ -678,9 +764,10 @@ func atomicWriteRootFile(root *os.Root, path string, content []byte, mode iofs.F
 		if quarantineErr != nil {
 			return quarantineErr
 		}
-		defer func() {
-			_ = root.Remove(quarantine)
-		}()
+		if err = installRootReplacement(root, tempPath, path, quarantine); err != nil {
+			return err
+		}
+		return nil
 	} else if err = verifyExactRootFileState(root, path, expectedAfter); err != nil {
 		return err
 	}
@@ -695,8 +782,42 @@ func removeExactRootFile(root *os.Root, path string, expectedAfter ExactFileStat
 	if err != nil {
 		return err
 	}
+	return removeQuarantinedRootFile(root, quarantine, path)
+}
+
+func removeQuarantinedRootFile(root exactRootLinkRemover, quarantine, path string) error {
 	if err := root.Remove(quarantine); err != nil {
-		return fmt.Errorf("remove quarantined reverted file: %w", err)
+		removeErr := fmt.Errorf("remove quarantined reverted file: %w", err)
+		if restoreErr := restoreQuarantinedRootFile(root, quarantine, path); restoreErr != nil {
+			return errors.Join(removeErr, fmt.Errorf("restore file after failed removal; preserved at %q: %w", quarantine, restoreErr))
+		}
+		return removeErr
+	}
+	return nil
+}
+
+type exactRootLinkRemover interface {
+	Link(oldname, newname string) error
+	Remove(name string) error
+}
+
+func installRootReplacement(root exactRootLinkRemover, tempPath, path, quarantine string) error {
+	if err := root.Link(tempPath, path); err != nil {
+		installErr := fmt.Errorf("install reverted file without replacement: %w", err)
+		if restoreErr := restoreQuarantinedRootFile(root, quarantine, path); restoreErr != nil {
+			return errors.Join(installErr, fmt.Errorf("restore file after failed installation; preserved at %q: %w", quarantine, restoreErr))
+		}
+		return installErr
+	}
+	if err := root.Remove(quarantine); err != nil {
+		cleanupErr := fmt.Errorf("remove replaced file quarantine: %w", err)
+		if removeErr := root.Remove(path); removeErr != nil {
+			return errors.Join(cleanupErr, fmt.Errorf("remove installed file during rollback; preserved prior file at %q: %w", quarantine, removeErr))
+		}
+		if restoreErr := restoreQuarantinedRootFile(root, quarantine, path); restoreErr != nil {
+			return errors.Join(cleanupErr, fmt.Errorf("restore prior file after cleanup failure; preserved at %q: %w", quarantine, restoreErr))
+		}
+		return cleanupErr
 	}
 	return nil
 }
@@ -718,7 +839,7 @@ func quarantineExactRootFile(root *os.Root, path string, expected ExactFileState
 	return quarantine, nil
 }
 
-func restoreQuarantinedRootFile(root *os.Root, quarantine, path string) error {
+func restoreQuarantinedRootFile(root exactRootLinkRemover, quarantine, path string) error {
 	if err := root.Link(quarantine, path); err != nil {
 		return err
 	}
@@ -828,6 +949,48 @@ func (s *Service) rel(path string) string {
 		return filepath.ToSlash(path)
 	}
 	return filepath.ToSlash(rel)
+}
+
+func (s *Service) resolveMutationOperation(op Operation) (string, string, error) {
+	switch op.Kind {
+	case OperationWriteFile, OperationCreateDirectory, OperationRemove:
+	case OperationCopy:
+		if strings.TrimSpace(op.Destination) == "" {
+			return "", "", errors.New("appserver/fs: mutation destination is required")
+		}
+	default:
+		return "", "", ErrInvalidMutationScope
+	}
+	resolved, err := s.resolve(op.Path)
+	if err != nil {
+		return "", "", err
+	}
+	if op.Kind != OperationCopy {
+		return resolved, "", nil
+	}
+	destination, err := s.resolve(op.Destination)
+	if err != nil {
+		return resolved, "", err
+	}
+	return resolved, destination, nil
+}
+
+func (s *Service) enterMutation(ctx context.Context, op Operation) (func(), bool, error) {
+	var scope *approvedMutationScope
+	if ctx != nil {
+		scope, _ = ctx.Value(approvedMutationScopeKey{}).(*approvedMutationScope)
+	}
+	if scope != nil && scope.service == s {
+		scope.mu.Lock()
+		defer scope.mu.Unlock()
+		if !scope.active || scope.used || scope.operation != op {
+			return func() {}, false, ErrInvalidMutationScope
+		}
+		scope.used = true
+		return func() {}, true, nil
+	}
+	s.mutationMu.Lock()
+	return s.mutationMu.Unlock, false, nil
 }
 
 func (s *Service) requireApproval(ctx context.Context, op Operation) error {

@@ -783,6 +783,99 @@ func TestSQLiteStoreRollbackThreadPrunesTurnsAndItems(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreRollbackPreservesReceiptForRetainedFileChange(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Receipt rollback"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	retainedTurn, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn retained: %v", err)
+	}
+	fileItem, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: thread.ID,
+		TurnID:   retainedTurn.ID,
+		Kind:     "fileChange",
+		Status:   "completed",
+		Payload:  json.RawMessage(`{"type":"fileChange"}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem file change: %v", err)
+	}
+	removedTurn, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn removed: %v", err)
+	}
+	removedItem, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: thread.ID,
+		TurnID:   removedTurn.ID,
+		Kind:     "message",
+		Status:   "completed",
+		Payload:  json.RawMessage(`{"text":"remove"}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem removed: %v", err)
+	}
+	now := time.Now().UTC()
+	if _, err := s.SaveFileChangeRecovery(ctx, SaveFileChangeRecoveryRequest{Recovery: FileChangeRecovery{
+		ItemID:        fileItem.ID,
+		ThreadID:      thread.ID,
+		TurnID:        retainedTurn.ID,
+		Path:          "notes.txt",
+		BeforeExists:  true,
+		AfterExists:   true,
+		BeforeSHA256:  "before",
+		AfterSHA256:   "after",
+		BeforeContent: []byte("before"),
+		Status:        FileChangeRecoveryAvailable,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}}); err != nil {
+		t.Fatalf("SaveFileChangeRecovery: %v", err)
+	}
+	if _, err := s.PrepareFileChangeRevert(ctx, PrepareFileChangeRevertRequest{
+		ItemID:         fileItem.ID,
+		IdempotencyKey: "receipt-key",
+		PreparedAt:     now,
+	}); err != nil {
+		t.Fatalf("PrepareFileChangeRevert: %v", err)
+	}
+	completed, err := s.CompleteFileChangeRevert(ctx, CompleteFileChangeRevertRequest{
+		ItemID:         fileItem.ID,
+		IdempotencyKey: "receipt-key",
+		RevertedAt:     now,
+	})
+	if err != nil {
+		t.Fatalf("CompleteFileChangeRevert: %v", err)
+	}
+	if completed.Marker.Seq <= removedItem.Seq {
+		t.Fatalf("receipt seq = %d, want after removed item seq %d", completed.Marker.Seq, removedItem.Seq)
+	}
+
+	if _, err := s.RollbackThread(ctx, RollbackThreadRequest{ID: thread.ID, NumTurns: 1}); err != nil {
+		t.Fatalf("RollbackThread: %v", err)
+	}
+	if _, err := s.GetItem(ctx, removedItem.ID); !errors.Is(err, ErrItemNotFound) {
+		t.Fatalf("removed item lookup error = %v, want ErrItemNotFound", err)
+	}
+	if marker, err := s.GetItem(ctx, completed.Marker.ID); err != nil || marker.Kind != "fileChangeRevert" {
+		t.Fatalf("retained receipt = %+v, error %v", marker, err)
+	}
+	reused, err := s.CompleteFileChangeRevert(ctx, CompleteFileChangeRevertRequest{
+		ItemID:         fileItem.ID,
+		IdempotencyKey: "receipt-key",
+		RevertedAt:     now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("reuse retained receipt: %v", err)
+	}
+	if !reused.Reused || reused.Marker.ID != completed.Marker.ID {
+		t.Fatalf("reused retained receipt = %+v", reused)
+	}
+}
+
 func TestSQLiteStoreRollbackThreadPrunesTrailingItemsWhenTurnHasNoItems(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))

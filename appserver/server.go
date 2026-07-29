@@ -51,6 +51,9 @@ type Server struct {
 	commandExec map[string]struct{}
 	commandSeq  int
 
+	workspaceMutationMu sync.Mutex
+	workspaceRevert     *workspaceRevertReservation
+
 	store     store.Store
 	fs        *toolfs.Service
 	process   *toolprocess.Service
@@ -1505,6 +1508,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
+	_, fileRecoveryAvailable := s.store.(store.FileChangeRecoveryStore)
 	return catalog.ListTools(params, catalog.ToolServices{
 		Filesystem:   s.fs != nil,
 		Process:      s.process != nil,
@@ -1516,6 +1520,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Runtime:      s.runtime != nil,
 		Interactions: s.interact != nil,
 		Memory:       s.memory != nil,
+		FileRecovery: fileRecoveryAvailable,
 	}), nil
 }
 
@@ -2263,6 +2268,7 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, store.ErrFileChangeRevertIdempotencyConflict),
 		errors.Is(err, ErrMemoryRootRequired),
 		errors.Is(err, ErrMemoryRootUnsafe),
+		errors.Is(err, ErrWorkspaceRevertInProgress),
 		errors.Is(err, ErrRuntimePromptEmpty):
 		return invalidParams("invalid params", err)
 	case errors.Is(err, toolfs.ErrApprovalDenied),

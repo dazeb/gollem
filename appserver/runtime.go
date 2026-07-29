@@ -128,6 +128,10 @@ type runtimeNotifier interface {
 	PublishNotification(method string, params any)
 }
 
+type runtimeTurnStartCoordinator interface {
+	acquireTurnStartLease() (func(), error)
+}
+
 type activeRuntimeTurn struct {
 	cancel context.CancelFunc
 }
@@ -145,6 +149,11 @@ func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier run
 	}
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
+	releaseStart, err := acquireRuntimeTurnStartLease(notifier)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseStart()
 	s.mu.Lock()
 	if s.shuttingDown {
 		s.mu.Unlock()
@@ -241,6 +250,11 @@ func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier run
 	}
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
+	releaseStart, err := acquireRuntimeTurnStartLease(notifier)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseStart()
 	s.mu.Lock()
 	if s.shuttingDown {
 		s.mu.Unlock()
@@ -314,6 +328,14 @@ func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier run
 		s.run(runCtx, st, notifier, started, startReq)
 	}()
 	return result, nil
+}
+
+func acquireRuntimeTurnStartLease(notifier runtimeNotifier) (func(), error) {
+	coordinator, ok := notifier.(runtimeTurnStartCoordinator)
+	if !ok {
+		return func() {}, nil
+	}
+	return coordinator.acquireTurnStartLease()
 }
 
 func (s *RuntimeService) failPreparedRetry(st store.Store, turn *store.Turn, cause error) {
