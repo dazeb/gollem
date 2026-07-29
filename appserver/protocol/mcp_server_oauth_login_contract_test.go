@@ -228,8 +228,8 @@ func TestMcpServerOauthLoginContractsRemainStandaloneAndBlocked(t *testing.T) {
 	if !ok || notification.Surface != SurfaceServerNotification || notification.State != MethodBlocked {
 		t.Fatalf("mcpServer/oauthLogin/completed = %#v, %v; want blocked server notification", notification, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 513 {
-		t.Fatalf("definition count = %d, want 513", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 516 {
+		t.Fatalf("definition count = %d, want 516", got)
 	}
 	if len(Methods()) != 224 || len(WireTypeBindings()) != 59 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("counts = %d/%d/%d, want 224/59/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))

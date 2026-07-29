@@ -2643,6 +2643,23 @@ export type PatchChangeKind = {
 
 export type PermissionGrantScope = "turn" | "session";
 
+export type PermissionProfileListParams = {
+  "cursor"?: string | null;
+  "cwd"?: string | null;
+  "limit"?: number | null;
+};
+
+export type PermissionProfileListResponse = {
+  "data": Array<PermissionProfileSummary>;
+  "nextCursor": string | null;
+};
+
+export type PermissionProfileSummary = {
+  "allowed": boolean;
+  "description": string | null;
+  "id": string;
+};
+
 export type PermissionsApprovalRequestParams = {
   "base"?: string;
   "branch"?: string;

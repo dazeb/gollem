@@ -429,6 +429,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "NetworkApprovalContext", Type: reflect.TypeFor[NetworkApprovalContext]()},
 		{Name: "NetworkApprovalProtocol", Type: reflect.TypeFor[NetworkApprovalProtocol]()},
 		{Name: "ParsedCommand", Type: reflect.TypeFor[ParsedCommand]()},
+		{Name: "PermissionProfileListParams", Type: reflect.TypeFor[PermissionProfileListParams]()},
+		{Name: "PermissionProfileListResponse", Type: reflect.TypeFor[PermissionProfileListResponse]()},
+		{Name: "PermissionProfileSummary", Type: reflect.TypeFor[PermissionProfileSummary]()},
 		{Name: "PermissionGrantScope", Type: reflect.TypeFor[PermissionGrantScope]()},
 		{Name: "PermissionsApprovalRequestParams", Type: reflect.TypeFor[PermissionsApprovalRequestParams]()},
 		{Name: "PermissionsRequestApprovalParams", Type: reflect.TypeFor[PermissionsRequestApprovalParams]()},
@@ -1050,6 +1053,9 @@ func wireSchemaDefinitions() Schema {
 		string(NetworkApprovalProtocolSocks5TCP), string(NetworkApprovalProtocolSocks5UDP),
 	)
 	schemas["ParsedCommand"] = parsedCommandSchema()
+	for name, schema := range permissionProfileListSchemas() {
+		schemas[name] = schema
+	}
 	schemas["ProcessExitedNotification"] = processExitedNotificationSchema()
 	schemas["ProcessOutputDeltaNotification"] = processOutputDeltaNotificationSchema()
 	schemas["ProcessOutputStream"] = processOutputStreamSchema()
