@@ -3280,6 +3280,33 @@ export type ReviewDecision = "approved" | {
   };
 } | "denied" | "timed_out" | "abort";
 
+export type ReviewDelivery = "inline" | "detached";
+
+export type ReviewStartParams = {
+  "delivery"?: ReviewDelivery | null;
+  "target": ReviewTarget;
+  "threadId": string;
+};
+
+export type ReviewStartResponse = {
+  "reviewThreadId": string;
+  "turn": Turn;
+};
+
+export type ReviewTarget = {
+  "type": "uncommittedChanges";
+} | {
+  "branch": string;
+  "type": "baseBranch";
+} | {
+  "sha": string;
+  "title": string | null;
+  "type": "commit";
+} | {
+  "instructions": string;
+  "type": "custom";
+};
+
 export type RuntimeDeltaNotification = {
   "at": string;
   "delta": string;

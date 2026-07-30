@@ -489,7 +489,11 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ResourceContent", Type: reflect.TypeFor[ResourceContent]()},
 		{Name: "ResourceTemplate", Type: reflect.TypeFor[ResourceTemplate]()},
 		{Name: "ResponseItem", Type: reflect.TypeFor[ResponseItem]()},
+		{Name: "ReviewDelivery", Type: reflect.TypeFor[ReviewDelivery]()},
 		{Name: "ReviewDecision", Type: reflect.TypeFor[ReviewDecision]()},
+		{Name: "ReviewStartParams", Type: reflect.TypeFor[ReviewStartParams]()},
+		{Name: "ReviewStartResponse", Type: reflect.TypeFor[ReviewStartResponse]()},
+		{Name: "ReviewTarget", Type: reflect.TypeFor[ReviewTarget]()},
 		{Name: "ResponsesApiWebSearchAction", Type: reflect.TypeFor[ResponsesApiWebSearchAction]()},
 		{Name: "RuntimeDeltaNotification", Type: reflect.TypeFor[RuntimeDeltaNotification]()},
 		{Name: "RuntimeModelParams", Type: reflect.TypeFor[RuntimeModelParams]()},
@@ -1238,6 +1242,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["ReasoningItemContent"] = rawResponseContentSchema(reasoningItemContentVariants)
 	schemas["ReasoningItemReasoningSummary"] = rawResponseContentSchema(reasoningItemSummaryVariants)
 	schemas["ReviewDecision"] = reviewDecisionSchema()
+	for name, schema := range reviewStartSchemas() {
+		schemas[name] = schema
+	}
 	schemas["ResponsesApiWebSearchAction"] = responsesAPIWebSearchActionSchema()
 	schemas["ContentItem"] = contentItemSchema(contentItemVariants)
 	schemas["FunctionCallOutputContentItem"] = contentItemSchema(functionCallOutputContentItemVariants)
