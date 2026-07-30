@@ -300,7 +300,7 @@ func TestHookRunNotificationsRemainStandalone(t *testing.T) {
 	if got := len(JSONSchema()["$defs"].(Schema)); got != 558 {
 		t.Fatalf("definition count = %d, want 558", got)
 	}
-	if len(Methods()) != 225 || len(WireTypeBindings()) != 73 || len(ItemPayloadBindings()) != 5 {
+	if len(Methods()) != 225 || len(WireTypeBindings()) != 74 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("surface changed: %d methods, %d wire bindings, %d item bindings", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
 	}
 }

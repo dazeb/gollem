@@ -180,6 +180,144 @@ func TestRuntimeMessagesFromItemsReconstructsMixedToolHistory(t *testing.T) {
 	}
 }
 
+func TestRuntimeMessagesFromItemsReplaysOnlyConsumedSteers(t *testing.T) {
+	now := time.Now().UTC()
+	consumedAt := now.Add(2 * time.Second)
+	failedAt := now.Add(3 * time.Second)
+	items := []*store.Item{
+		{
+			ID:     "completed-steer",
+			Seq:    1,
+			Kind:   runtimeSteerItemKind,
+			Status: runtimeSteerStatusComplete,
+			Payload: mustRuntimeJSON(runtimeSteerPayload{
+				ClientUserMessageID: "client-completed",
+				Message:             "use the focused test result",
+				Status:              runtimeSteerStatusComplete,
+				QueuedAt:            now,
+				ConsumedAfterSeq:    1,
+				ConsumedAt:          &consumedAt,
+			}),
+		},
+		{
+			ID:     "queued-steer",
+			Seq:    2,
+			Kind:   runtimeSteerItemKind,
+			Status: runtimeSteerStatusQueued,
+			Payload: mustRuntimeJSON(runtimeSteerPayload{
+				ClientUserMessageID: "client-queued",
+				Message:             "do not replay queued",
+				Status:              runtimeSteerStatusQueued,
+				QueuedAt:            now,
+			}),
+		},
+		{
+			ID:     "failed-steer",
+			Seq:    3,
+			Kind:   runtimeSteerItemKind,
+			Status: runtimeSteerStatusFailed,
+			Payload: mustRuntimeJSON(runtimeSteerPayload{
+				ClientUserMessageID: "client-failed",
+				Message:             "do not replay failed",
+				Status:              runtimeSteerStatusFailed,
+				QueuedAt:            now,
+				FailedAt:            &failedAt,
+				Error:               "turn interrupted",
+			}),
+		},
+		{
+			ID:     "partial-steer",
+			Seq:    4,
+			Kind:   runtimeSteerItemKind,
+			Status: runtimeSteerStatusComplete,
+			Payload: mustRuntimeJSON(runtimeSteerPayload{
+				ClientUserMessageID: "client-partial",
+				Message:             "do not replay partial persistence",
+				Status:              runtimeSteerStatusQueued,
+				QueuedAt:            now,
+			}),
+		},
+		{
+			ID:      "malformed-steer",
+			Seq:     5,
+			Kind:    runtimeSteerItemKind,
+			Status:  runtimeSteerStatusComplete,
+			Payload: json.RawMessage(`{"message":`),
+		},
+		{
+			ID:     "backward-boundary-steer",
+			Seq:    6,
+			Kind:   runtimeSteerItemKind,
+			Status: runtimeSteerStatusComplete,
+			Payload: mustRuntimeJSON(runtimeSteerPayload{
+				ClientUserMessageID: "client-backward",
+				Message:             "do not replay corrupt boundary",
+				Status:              runtimeSteerStatusComplete,
+				QueuedAt:            now,
+				ConsumedAfterSeq:    5,
+				ConsumedAt:          &consumedAt,
+			}),
+		},
+	}
+
+	messages := runtimeMessagesFromItems(items)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %#v, want only the consumed steer", messages)
+	}
+	assertRuntimeUserPrompt(t, messages[0], "use the focused test result")
+	request, ok := messages[0].(core.ModelRequest)
+	if !ok || !request.Timestamp.Equal(consumedAt) {
+		t.Fatalf("consumed steer timestamp = %#v, want %s", messages[0], consumedAt)
+	}
+}
+
+func TestRuntimeMessagesFromItemsOrdersConsumedSteerAfterToolBoundary(t *testing.T) {
+	now := time.Now().UTC()
+	consumedAt := now.Add(4 * time.Second)
+	success := true
+	items := []*store.Item{
+		runtimeHistoryMessageItem("message-user", "user", "inspect first", now),
+		{
+			ID:     "steer-before-tool-item",
+			Seq:    2,
+			Kind:   runtimeSteerItemKind,
+			Status: runtimeSteerStatusComplete,
+			Payload: mustRuntimeJSON(runtimeSteerPayload{
+				ClientUserMessageID: "client-boundary",
+				Message:             "adjust after tool",
+				Status:              runtimeSteerStatusComplete,
+				QueuedAt:            now.Add(time.Second),
+				ConsumedAfterSeq:    3,
+				ConsumedAt:          &consumedAt,
+			}),
+			CreatedAt: now.Add(time.Second),
+			UpdatedAt: consumedAt,
+		},
+		runtimeHistoryDynamicToolItem("tool-after-queue", runtimeDynamicToolCallPayload{
+			Tool:         "workspace_read_file",
+			Arguments:    map[string]any{"path": "README.md"},
+			Status:       runtimeToolStatusCompleted,
+			ContentItems: []runtimeDynamicToolCallContentItem{{Type: "inputText", Text: "contents"}},
+			Success:      &success,
+		}, now.Add(2*time.Second)),
+		runtimeHistoryMessageItem("message-assistant", "assistant", "adjusted answer", now.Add(5*time.Second)),
+	}
+	for i, item := range items {
+		if item.Seq == 0 {
+			item.Seq = int64(i + 1)
+		}
+	}
+
+	messages := runtimeMessagesFromItems(items)
+	if len(messages) != 5 {
+		t.Fatalf("messages = %#v, want user + tool pair + steer + assistant", messages)
+	}
+	assertRuntimeUserPrompt(t, messages[0], "inspect first")
+	assertRuntimeReplayPair(t, messages[1], messages[2], "workspace_read_file", "tool-after-queue", false, "contents")
+	assertRuntimeUserPrompt(t, messages[3], "adjust after tool")
+	assertRuntimeAssistantText(t, messages[4], "adjusted answer")
+}
+
 func TestRuntimeMessagesFromItemsReconstructsStandaloneOperationalItems(t *testing.T) {
 	now := time.Now().UTC()
 	output := "tests passed\n... tool output truncated ...\nfinal line"

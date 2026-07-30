@@ -48,6 +48,10 @@ func TestRuntimeClientBindingsAreExact(t *testing.T) {
 			Method: "turn/start", Surface: SurfaceClientRequest,
 			Params: []string{"TurnRunStartParams"}, Result: []string{"TurnRunStartResult"},
 		},
+		"turn/steer": {
+			Method: "turn/steer", Surface: SurfaceClientRequest,
+			Params: []string{"TurnSteerParams"}, Result: []string{"TurnSteerResponse"},
+		},
 		"turn/started": {
 			Method: "turn/started", Surface: SurfaceServerNotification,
 			Params: []string{"RuntimeTurnNotification"},

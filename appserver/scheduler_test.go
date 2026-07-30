@@ -163,6 +163,7 @@ func TestRequestScheduleForThreadControls(t *testing.T) {
 		"thread/resume",
 		"turn/start",
 		"turn/retry",
+		"turn/steer",
 	}
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {

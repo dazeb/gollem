@@ -18,6 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Durable live turn steering.** The app server now binds the exact public
+  `turn/steer` request and response, requires thread and expected-active-turn
+  correlation, and queues text instructions for the next safe model-request
+  boundary. A durable steer item moves from queued to completed only after the
+  next provider stream starts; interruption or terminal completion first marks
+  it failed, and only completed instructions replay into later turns. Stable
+  client message ids make active-turn response retries idempotent and reject
+  conflicting text.
 - **Response-loss-safe full-history thread forks.** The generated
   `thread/fork` extension accepts a source thread and bounded idempotency key,
   rejects queued or running source work, and transactionally copies durable

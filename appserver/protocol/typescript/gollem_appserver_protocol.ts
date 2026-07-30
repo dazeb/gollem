@@ -4413,6 +4413,7 @@ export const wireTypeBindings = [
   { "method": "turn/retry", "surface": "gollem-extension", "params": ["TurnRunRetryParams"], "result": ["TurnRunRetryResult"] },
   { "method": "turn/start", "surface": "client-request", "params": ["TurnRunStartParams"], "result": ["TurnRunStartResult"] },
   { "method": "turn/started", "surface": "server-notification", "params": ["RuntimeTurnNotification"] },
+  { "method": "turn/steer", "surface": "client-request", "params": ["TurnSteerParams"], "result": ["TurnSteerResponse"] },
 ] as const satisfies readonly WireTypeBinding[];
 
 export interface MethodParamsByName {
@@ -4489,6 +4490,7 @@ export interface MethodParamsByName {
   "turn/retry": TurnRunRetryParams;
   "turn/start": TurnRunStartParams;
   "turn/started": RuntimeTurnNotification;
+  "turn/steer": TurnSteerParams;
 }
 
 export interface MethodResultsByName {
@@ -4539,6 +4541,7 @@ export interface MethodResultsByName {
   "turn/interrupt": TurnRunInterruptResult;
   "turn/retry": TurnRunRetryResult;
   "turn/start": TurnRunStartResult;
+  "turn/steer": TurnSteerResponse;
 }
 
 export type BoundRequestMethod = Extract<

@@ -103,7 +103,7 @@ func RequestScheduleFor(method string, params json.RawMessage) RequestSchedule {
 	case "thread/list", "thread/search", "thread/loaded/list", "thread/unsubscribe", "thread/read", "thread/fork", "thread/compact/start", "thread/shellCommand", "thread/approveGuardianDeniedAction", "thread/rollback", "thread/archive", "thread/unarchive", "thread/delete", "thread/settings/update",
 		"thread/goal/get", "thread/goal/set", "thread/goal/clear", "thread/metadata/update", "thread/memoryMode/set",
 		"thread/name/set", "thread/turns/list", "thread/items/list", "thread/inject_items",
-		"thread/start", "thread/resume", "turn/start", "turn/retry":
+		"thread/start", "thread/resume", "turn/start", "turn/steer", "turn/retry":
 		return RequestSchedule{Scope: "thread", Serial: true}
 	case "item/fileChange/revert":
 		return RequestSchedule{Scope: "file-change-revert", Serial: true}

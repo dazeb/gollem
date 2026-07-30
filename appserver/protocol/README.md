@@ -349,14 +349,15 @@ result after process exit.
 
 ## Version 1 Runtime Client Bindings
 
-Generated clients can discover providers and models, start and interrupt live
-runs, and consume the current streaming lifecycle without an untyped JSON
-escape hatch. `provider/list` and `model/list` bind the provider-aware catalog
-records; `thread/start`, `turn/start`, `turn/retry`, and `turn/interrupt` bind
-durable thread/turn results; and `thread/started`, `turn/started`,
-`turn/completed`, `item/agentMessage/delta`, and
-`item/reasoning/textDelta` bind the live notification records. The registry
-now contains 70 method bindings and five durable item bindings.
+Generated clients can discover providers and models, start, steer, and
+interrupt live runs, and consume the current streaming lifecycle without an
+untyped JSON escape hatch. `provider/list` and `model/list` bind the
+provider-aware catalog records; `thread/start`, `turn/start`, `turn/steer`,
+`turn/retry`, and `turn/interrupt` bind durable thread/turn results; and
+`thread/started`, `turn/started`, `turn/completed`,
+`item/agentMessage/delta`, and `item/reasoning/textDelta` bind the live
+notification records. The registry now contains 74 method bindings and five
+durable item bindings.
 
 The live names are intentionally explicit: `ModelCatalog*`, `ThreadRun*`,
 `TurnRun*`, and `Runtime*`. Exact standalone public `ModelList*`,
@@ -580,13 +581,26 @@ live handler accepts a legacy id alias without required thread correlation and
 returns a richer durable interrupt result, so these definitions remain outside
 method bindings pending a separate compatibility migration.
 
-Exact standalone `TurnSteerParams` and `TurnSteerResponse` establish the fixed
-canonical turn-steer contract. The params require thread id, strict user input,
-and an expected active turn id, with optional nullable client message id; the
-response requires turn id. The current live handler instead accepts turn-id and
-prompt aliases, does not enforce the public active-turn precondition, persists
-a durable steer item, and returns richer status fields, so these definitions
-remain outside method bindings pending a separate compatibility migration.
+Exact `TurnSteerParams` and `TurnSteerResponse` establish the fixed canonical
+turn-steer contract. The params require thread id, strict user input, and an
+expected active turn id, with optional nullable client message id; the response
+requires turn id. The live handler binds these exact contracts,
+requires the supplied thread and expected turn to identify the active run, and
+currently accepts only text user-input parts. Other valid public input variants
+fail explicitly until the runtime supports multimodal steering.
+
+Accepted text is persisted as a queued `steer` timeline item before it becomes
+visible to the run. At most 64 instructions may remain pending; further
+requests receive an overloaded error and a failed durable item. The agent
+consumes queued instructions in order at the next safe model-request boundary
+after the current response and any tool results. The item becomes completed
+only after that next provider stream starts; interruption, terminal completion,
+or request failure first marks it failed. Only completed steer items enter
+later thread-history replay. Repeating the same non-empty client message id and
+text while the turn remains active reuses the original item; reusing the id for
+different text fails closed. Clients reconcile the durable item through
+lifecycle notifications or a fresh `thread/read`. Steering does not cancel an
+in-flight provider stream and is not same-execution resume.
 
 `TurnRunRetryParams` and `TurnRunRetryResult` define Gollem's restart-safe
 retry extension. Typed clients must persist a non-empty idempotency key before

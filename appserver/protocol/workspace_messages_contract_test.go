@@ -212,8 +212,8 @@ func TestWorkspaceMessageContractsRemainStandaloneAndDeferred(t *testing.T) {
 	if got := len(JSONSchema()["$defs"].(Schema)); got != 558 {
 		t.Fatalf("definition count = %d, want 558", got)
 	}
-	if len(Methods()) != 225 || len(WireTypeBindings()) != 73 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("counts = %d methods/%d method bindings/%d item bindings; want 225/73/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
+	if len(Methods()) != 225 || len(WireTypeBindings()) != 74 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("counts = %d methods/%d method bindings/%d item bindings; want 225/74/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
 	}
 }
 
