@@ -19,11 +19,13 @@ import (
 func TestDeterministicProviderDriverConformance(t *testing.T) {
 	openAICancellationReady := make(chan struct{})
 	openAIRetry := newRetryFixture()
-	openAIServer := httptest.NewServer(openAIConformanceFixture(t, openAICancellationReady, openAIRetry))
+	openAITimeout := newTimeoutFixture()
+	openAIServer := httptest.NewServer(openAIConformanceFixture(t, openAICancellationReady, openAIRetry, openAITimeout))
 	defer openAIServer.Close()
 	anthropicCancellationReady := make(chan struct{})
 	anthropicRetry := newRetryFixture()
-	anthropicServer := httptest.NewServer(anthropicConformanceFixture(t, anthropicCancellationReady, anthropicRetry))
+	anthropicTimeout := newTimeoutFixture()
+	anthropicServer := httptest.NewServer(anthropicConformanceFixture(t, anthropicCancellationReady, anthropicRetry, anthropicTimeout))
 	defer anthropicServer.Close()
 
 	cases := []struct {
@@ -34,10 +36,11 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 			name: "native OpenAI",
 			model: func() (conformance.Driver, error) {
 				return conformance.Driver{
-					Name:              "native OpenAI",
-					Model:             openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true},
-					CancellationReady: openAICancellationReady,
+					Name:                "native OpenAI",
+					Model:               openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
+					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true, RequestTimeout: true},
+					CancellationReady:   openAICancellationReady,
+					RequestTimeoutReady: openAITimeout.readyFor("gpt-4o"),
 					Expectations: conformance.Expectations{
 						ResponseText: "openai response",
 						ToolName:     "conformance_echo",
@@ -60,10 +63,11 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					return conformance.Driver{}, err
 				}
 				return conformance.Driver{
-					Name:              "OpenAI-compatible local",
-					Model:             model,
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true},
-					CancellationReady: openAICancellationReady,
+					Name:                "OpenAI-compatible local",
+					Model:               model,
+					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true, RequestTimeout: true},
+					CancellationReady:   openAICancellationReady,
+					RequestTimeoutReady: openAITimeout.readyFor("gpt-5.2-codex"),
 					Expectations: conformance.Expectations{
 						ResponseText: "openai response",
 						ToolName:     "conformance_echo",
@@ -78,10 +82,11 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 			name: "native Anthropic",
 			model: func() (conformance.Driver, error) {
 				return conformance.Driver{
-					Name:              "native Anthropic",
-					Model:             anthropic.New(anthropic.WithAPIKey("test-anthropic-key"), anthropic.WithBaseURL(anthropicServer.URL), anthropic.WithModel(anthropic.ClaudeSonnet46)),
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true},
-					CancellationReady: anthropicCancellationReady,
+					Name:                "native Anthropic",
+					Model:               anthropic.New(anthropic.WithAPIKey("test-anthropic-key"), anthropic.WithBaseURL(anthropicServer.URL), anthropic.WithModel(anthropic.ClaudeSonnet46)),
+					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true, RequestTimeout: true},
+					CancellationReady:   anthropicCancellationReady,
+					RequestTimeoutReady: anthropicTimeout.readyFor(anthropic.ClaudeSonnet46),
 					Expectations: conformance.Expectations{
 						ResponseText: "anthropic response",
 						ToolName:     "conformance_echo",
@@ -140,9 +145,17 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	if err == nil {
 		t.Fatal("Verify accepted a retry claim without expected retry text")
 	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing timeout fixture",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{RequestTimeout: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a timeout claim without a start signal")
+	}
 }
 
-func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture) http.Handler {
+func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture, timeout *timeoutFixture) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -155,8 +168,20 @@ func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, r
 		if err != nil {
 			t.Fatalf("read OpenAI request: %v", err)
 		}
+		var request struct {
+			Model  string          `json:"model"`
+			Stream bool            `json:"stream"`
+			Tools  json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Fatalf("decode OpenAI request: %v", err)
+		}
 		if strings.Contains(string(body), "cancel conformance") {
 			waitForCancellation(r, cancellationReady)
+			return
+		}
+		if strings.Contains(string(body), "timeout conformance") {
+			timeout.waitForCancellation(r.Context(), request.Model)
 			return
 		}
 		if strings.Contains(string(body), "partial stream conformance") {
@@ -168,14 +193,6 @@ func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, r
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprint(w, "data: {\"fixture_sensitive\":\n\n")
 			return
-		}
-		var request struct {
-			Model  string          `json:"model"`
-			Stream bool            `json:"stream"`
-			Tools  json.RawMessage `json:"tools"`
-		}
-		if err := json.Unmarshal(body, &request); err != nil {
-			t.Fatalf("decode OpenAI request: %v", err)
 		}
 		if strings.Contains(string(body), "retry conformance") {
 			if retry.firstAttempt(request.Model) {
@@ -208,7 +225,7 @@ data: [DONE]
 	})
 }
 
-func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture) http.Handler {
+func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture, timeout *timeoutFixture) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
@@ -221,8 +238,20 @@ func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}
 		if err != nil {
 			t.Fatalf("read Anthropic request: %v", err)
 		}
+		var request struct {
+			Model  string          `json:"model"`
+			Stream bool            `json:"stream"`
+			Tools  json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Fatalf("decode Anthropic request: %v", err)
+		}
 		if strings.Contains(string(body), "cancel conformance") {
 			waitForCancellation(r, cancellationReady)
+			return
+		}
+		if strings.Contains(string(body), "timeout conformance") {
+			timeout.waitForCancellation(r.Context(), request.Model)
 			return
 		}
 		if strings.Contains(string(body), "partial stream conformance") {
@@ -234,14 +263,6 @@ func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"fixture_sensitive\":\n\n")
 			return
-		}
-		var request struct {
-			Model  string          `json:"model"`
-			Stream bool            `json:"stream"`
-			Tools  json.RawMessage `json:"tools"`
-		}
-		if err := json.Unmarshal(body, &request); err != nil {
-			t.Fatalf("decode Anthropic request: %v", err)
 		}
 		if strings.Contains(string(body), "retry conformance") {
 			if retry.firstAttempt(request.Model) {
@@ -308,4 +329,44 @@ func (f *retryFixture) firstAttempt(model string) bool {
 	defer f.mu.Unlock()
 	f.attempts[model]++
 	return f.attempts[model] == 1
+}
+
+type timeoutFixture struct {
+	mu    sync.Mutex
+	ready map[string]chan struct{}
+}
+
+func newTimeoutFixture() *timeoutFixture {
+	return &timeoutFixture{ready: make(map[string]chan struct{})}
+}
+
+func (f *timeoutFixture) readyFor(model string) <-chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.channelForLocked(model)
+}
+
+func (f *timeoutFixture) waitForCancellation(ctx context.Context, model string) {
+	f.markStarted(model)
+	<-ctx.Done()
+}
+
+func (f *timeoutFixture) markStarted(model string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ready := f.channelForLocked(model)
+	select {
+	case <-ready:
+	default:
+		close(ready)
+	}
+}
+
+func (f *timeoutFixture) channelForLocked(model string) chan struct{} {
+	ready := f.ready[model]
+	if ready == nil {
+		ready = make(chan struct{})
+		f.ready[model] = ready
+	}
+	return ready
 }

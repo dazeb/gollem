@@ -22,7 +22,8 @@ of behavior and must not enable a control solely on provider identity.
 | Abrupt EOF partial-stream result | Proven | Proven | Proven | `provider/conformance` plus provider parser tests; preserves partial response and returns `StreamIncompleteError` |
 | Read-error peer-disconnect classification | Proven | Proven | Proven | Provider parser tests; returns source-free `StreamTransportError`, while context cancellation remains intact |
 | Retryable 429 request recovery | Proven | Proven | Proven | `provider/conformance` exercises bounded `modelutil.RetryModel` recovery |
-| Request timeout and post-output replay | Not yet proven | Not yet proven | Not yet proven | Follow-up conformance scenario required |
+| Request deadline propagation | Proven | Proven | Proven | `provider/conformance` confirms HTTP request cancellation and `context.DeadlineExceeded` normalization |
+| Post-output retry / replay | Not yet proven | Not yet proven | Not yet proven | A stream may have produced caller-visible output; recovery must not replay it without an explicit safe-resume contract |
 | Endpoint health probe and capability mismatch | Not yet proven | Not yet proven | Not yet proven | Must remain a typed unavailable/degraded state |
 
 `Catalog-supported` means the catalog may expose the capability only for the
