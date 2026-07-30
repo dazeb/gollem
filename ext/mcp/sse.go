@@ -68,11 +68,6 @@ func NewSSEClientWithConfig(ctx context.Context, url string, config ClientConfig
 		return nil, fmt.Errorf("mcp: timed out waiting for endpoint event: %w", ctx.Err())
 	}
 
-	if err := c.initialize(ctx); err != nil {
-		c.Close()
-		return nil, fmt.Errorf("mcp: initialization failed: %w", err)
-	}
-
 	return c, nil
 }
 
@@ -142,10 +137,6 @@ func (c *SSEClient) resolveURL(endpoint string) string {
 	return base[:idx+3+hostEnd] + endpoint
 }
 
-func (c *SSEClient) initialize(ctx context.Context) error {
-	return initializeClient(ctx, c.clientState, c.call, c.notify)
-}
-
 func (c *SSEClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id, ch, err := c.prepareCall()
 	if err != nil {
@@ -156,7 +147,16 @@ func (c *SSEClient) call(ctx context.Context, method string, params any) (json.R
 		JSONRPC: "2.0",
 		ID:      id,
 		Method:  method,
-		Params:  params,
+	}
+	if raw, ok := params.(json.RawMessage); ok && len(raw) > 0 {
+		req.Params = raw
+	} else if params != nil {
+		data, mErr := json.Marshal(params)
+		if mErr != nil {
+			c.removePending(id)
+			return nil, mErr
+		}
+		req.Params = data
 	}
 
 	c.mu.Lock()
@@ -193,31 +193,20 @@ func (c *SSEClient) call(ctx context.Context, method string, params any) (json.R
 	return c.awaitResponse(ctx, id, ch)
 }
 
-func (c *SSEClient) notify(ctx context.Context, method string, params any) error {
-	req := struct {
-		JSONRPC string `json:"jsonrpc"`
-		Method  string `json:"method"`
-		Params  any    `json:"params,omitempty"`
-	}{
-		JSONRPC: "2.0",
-		Method:  method,
-		Params:  params,
-	}
-
-	data, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-
-	return c.postMessage(ctx, data)
-}
-
 func (c *SSEClient) respond(ctx context.Context, id any, result any, rpcErr *jsonRPCError) error {
 	resp := jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
-		Result:  result,
 		Error:   rpcErr,
+	}
+	if raw, ok := result.(json.RawMessage); ok {
+		resp.Result = raw
+	} else if result != nil {
+		data, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		resp.Result = data
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -247,44 +236,45 @@ func (c *SSEClient) postMessage(ctx context.Context, data []byte) error {
 	return nil
 }
 
-// ListTools discovers available tools from the MCP server.
-func (c *SSEClient) ListTools(ctx context.Context) ([]Tool, error) {
-	return listTools(ctx, c.call)
+// Discover calls server/discover and caches the server's identity, capabilities,
+// and instructions on the client state.
+func (c *SSEClient) Discover(ctx context.Context) (*DiscoverResult, error) {
+	return discover(ctx, c.call, c.clientState)
 }
 
-// CallTool invokes a tool on the MCP server.
+// ListTools discovers available tools from the MCP server.
+func (c *SSEClient) ListTools(ctx context.Context) ([]Tool, error) {
+	return listTools(ctx, c.call, c.clientState)
+}
+
+// CallTool invokes a tool on the MCP server. tools/call is MRTR-eligible.
 func (c *SSEClient) CallTool(ctx context.Context, name string, args map[string]any) (*ToolResult, error) {
-	return callTool(ctx, c.call, name, args)
+	return callTool(ctx, c.call, c.clientState, name, args)
 }
 
 // ListResources lists resources exposed by the MCP server.
 func (c *SSEClient) ListResources(ctx context.Context) ([]Resource, error) {
-	return listResources(ctx, c.call)
+	return listResources(ctx, c.call, c.clientState)
 }
 
-// ReadResource reads a resource from the MCP server.
+// ReadResource reads a resource from the MCP server. resources/read is MRTR-eligible.
 func (c *SSEClient) ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error) {
-	return readResource(ctx, c.call, uri)
+	return readResource(ctx, c.call, c.clientState, uri)
 }
 
 // ListResourceTemplates lists URI templates exposed by the MCP server.
 func (c *SSEClient) ListResourceTemplates(ctx context.Context) ([]ResourceTemplate, error) {
-	return listResourceTemplates(ctx, c.call)
+	return listResourceTemplates(ctx, c.call, c.clientState)
 }
 
 // ListPrompts lists prompts exposed by the MCP server.
 func (c *SSEClient) ListPrompts(ctx context.Context) ([]Prompt, error) {
-	return listPrompts(ctx, c.call)
+	return listPrompts(ctx, c.call, c.clientState)
 }
 
-// GetPrompt resolves a prompt from the MCP server.
+// GetPrompt resolves a prompt from the MCP server. prompts/get is MRTR-eligible.
 func (c *SSEClient) GetPrompt(ctx context.Context, name string, args map[string]string) (*PromptResult, error) {
-	return getPrompt(ctx, c.call, name, args)
-}
-
-// NotifyRootsListChanged emits notifications/roots/list_changed to the server.
-func (c *SSEClient) NotifyRootsListChanged(ctx context.Context) error {
-	return notifyRootsListChanged(ctx, c.notify)
+	return getPrompt(ctx, c.call, c.clientState, name, args)
 }
 
 // Tools converts MCP tools into core.Tool instances backed by the SSE client.

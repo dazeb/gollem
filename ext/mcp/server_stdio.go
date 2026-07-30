@@ -60,7 +60,7 @@ func (t *StdioServerTransport) Run(ctx context.Context) error {
 
 		var msg jsonRPCMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			_ = t.server.respond(ctx, nil, nil, &jsonRPCError{
+			_ = t.server.writeResponse(nil, nil, &jsonRPCError{
 				Code:    jsonRPCCodeParseError,
 				Message: "parse error: " + err.Error(),
 			})

@@ -7,21 +7,67 @@ import (
 )
 
 const (
-	ProtocolVersion = "2025-11-25"
+	// ProtocolVersion is the MCP revision implemented by this package.
+	ProtocolVersion = "2026-07-28"
 	protocolVersion = ProtocolVersion
 	clientName      = "gollem"
 	clientVersion   = "1.0.0"
+)
+
+// SupportedProtocolVersions lists every protocol revision this implementation
+// accepts. The 2026-07-28 spec is a hard cut: only this revision is supported.
+var SupportedProtocolVersions = []string{ProtocolVersion}
+
+// Reserved _meta keys defined by the 2026-07-28 specification. Every request
+// carries its protocol version and client capabilities inline (there is no
+// initialize handshake), and results echo server identity.
+const (
+	MetaProtocolVersion    = "io.modelcontextprotocol/protocolVersion"
+	MetaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
+	MetaClientInfo         = "io.modelcontextprotocol/clientInfo"
+	MetaServerInfo         = "io.modelcontextprotocol/serverInfo"
+	MetaLogLevel           = "io.modelcontextprotocol/logLevel"
+	MetaSubscriptionID     = "io.modelcontextprotocol/subscriptionId"
+
+	// OpenTelemetry trace-context propagation keys (SEP-414).
+	MetaTraceParent = "traceparent"
+	MetaTraceState  = "tracestate"
+	MetaBaggage     = "baggage"
+)
+
+// Extension identifiers negotiated via the extensions capability map.
+const (
+	ExtensionTasks = "io.modelcontextprotocol/tasks"
+)
+
+// ResultType discriminates ordinary results from multi round-trip interim
+// results. Results from earlier-protocol servers that omit it are "complete".
+const (
+	ResultTypeComplete      = "complete"
+	ResultTypeInputRequired = "input_required"
+)
+
+// CacheScope controls whether shared intermediaries may cache a result.
+const (
+	CacheScopePublic  = "public"
+	CacheScopePrivate = "private"
 )
 
 // EmptyCapability is used for presence-only MCP capabilities.
 type EmptyCapability struct{}
 
 // ClientCapabilities describes the protocol surfaces exposed by an MCP client.
+//
+// Roots and Sampling are deprecated in 2026-07-28 (SEP-2577); new clients
+// should not advertise them. Elicitation is now delivered via Multi Round-Trip
+// Requests (MRTR) rather than a server-initiated request.
 type ClientCapabilities struct {
 	Roots        *RootsCapability          `json:"roots,omitempty"`
 	Sampling     *ClientSamplingCapability `json:"sampling,omitempty"`
 	Elicitation  *ElicitationCapability    `json:"elicitation,omitempty"`
 	Experimental map[string]map[string]any `json:"experimental,omitempty"`
+	// Extensions negotiates optional MCP extensions beyond the core protocol.
+	Extensions map[string]json.RawMessage `json:"extensions,omitempty"`
 }
 
 // ClientSamplingCapability describes client-side sampling support.
@@ -47,6 +93,8 @@ type ServerCapabilities struct {
 	Prompts      *PromptCapabilities   `json:"prompts,omitempty"`
 	Resources    *ResourceCapabilities `json:"resources,omitempty"`
 	Experimental map[string]any        `json:"experimental,omitempty"`
+	// Extensions advertises optional MCP extensions supported by the server.
+	Extensions map[string]json.RawMessage `json:"extensions,omitempty"`
 }
 
 // ToolCapabilities describes the server's tool support.
@@ -81,13 +129,85 @@ type InitializeParams struct {
 	ClientInfo      ImplementationInfo `json:"clientInfo"`
 }
 
-// InitializeResult is returned by the MCP initialize handshake.
+// InitializeResult is retained only as the payload shape shared with
+// server/discover. The 2026-07-28 protocol removes the initialize handshake;
+// clients learn server identity and capabilities from DiscoverResult or from
+// the serverInfo echoed in each result's _meta.
 type InitializeResult struct {
 	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    ServerCapabilities `json:"capabilities"`
 	ServerInfo      *ServerInfo        `json:"serverInfo,omitempty"`
 	Instructions    string             `json:"instructions,omitempty"`
 	Meta            map[string]any     `json:"_meta,omitempty"`
+}
+
+// DiscoverResult is returned by the required server/discover RPC. Clients MAY
+// call it before any other request to select a protocol version up front, or
+// use it as a backward-compatibility probe on STDIO.
+type DiscoverResult struct {
+	SupportedVersions []string           `json:"supportedVersions"`
+	Capabilities      ServerCapabilities `json:"capabilities"`
+	ServerInfo        *ServerInfo        `json:"serverInfo,omitempty"`
+	Instructions      string             `json:"instructions,omitempty"`
+	Meta              map[string]any     `json:"_meta,omitempty"`
+	// CacheableResult carries the ttlMs/cacheScope hints; server/discover
+	// supports caching per the specification.
+	CacheableResult
+}
+
+// RequestMeta is the reserved _meta envelope carried by every stateless
+// request. It replaces the initialize handshake: each request self-describes
+// its protocol version, the client's capabilities, and the client's identity.
+type RequestMeta struct {
+	ProtocolVersion    string              `json:"io.modelcontextprotocol/protocolVersion,omitempty"`
+	ClientCapabilities *ClientCapabilities `json:"io.modelcontextprotocol/clientCapabilities,omitempty"`
+	ClientInfo         *ImplementationInfo `json:"io.modelcontextprotocol/clientInfo,omitempty"`
+	LogLevel           string              `json:"io.modelcontextprotocol/logLevel,omitempty"`
+}
+
+// CacheableResult carries the freshness hints required on list and read
+// results (SEP-2549). TTLMs is a caching hint in milliseconds; CacheScope is
+// "public" or "private". Both are embedded into the wire result.
+type CacheableResult struct {
+	TTLMs      *int64 `json:"ttlMs,omitempty"`
+	CacheScope string `json:"cacheScope,omitempty"`
+}
+
+// InputRequest is a single server-to-client request embedded in an
+// InputRequiredResult. Method is one of "elicitation/create",
+// "sampling/createMessage", or "roots/list"; Params is the corresponding
+// request payload. It replaces the previous server-initiated request pattern.
+type InputRequest struct {
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params,omitempty"`
+}
+
+// InputRequests maps server-assigned identifiers to the requests a client must
+// fulfill before retrying. Identifiers are unique within a single request.
+type InputRequests map[string]InputRequest
+
+// InputResponses maps the same identifiers to the client's results
+// (ElicitResult, CreateMessageResult, or ListRootsResult), sent on retry.
+type InputResponses map[string]json.RawMessage
+
+// InputRequiredResult is returned with resultType "input_required" when a
+// server needs additional information mid-request. The client fulfills each
+// entry in InputRequests and retries the original call (with a new JSON-RPC
+// id) carrying InputResponses and echoing RequestState verbatim. A server MUST
+// include at least one of InputRequests or RequestState.
+type InputRequiredResult struct {
+	ResultType    string         `json:"resultType"`
+	InputRequests InputRequests  `json:"inputRequests,omitempty"`
+	RequestState  string         `json:"requestState,omitempty"`
+	Meta          map[string]any `json:"_meta,omitempty"`
+}
+
+// MRTRContinuation carries the client's answers on the retry of an MRTR
+// request. It is merged into the request params alongside the original
+// arguments. RequestState is echoed verbatim from the InputRequiredResult.
+type MRTRContinuation struct {
+	InputResponses InputResponses `json:"inputResponses,omitempty"`
+	RequestState   string         `json:"requestState,omitempty"`
 }
 
 // Root is a client-declared root URI visible to the server.
@@ -243,10 +363,13 @@ type ResourceContents struct {
 	Raw      json.RawMessage `json:"-"`
 }
 
-// ReadResourceResult is the result of resources/read.
+// ReadResourceResult is the result of resources/read. The 2026-07-28 spec
+// requires resources/read results to carry the cache freshness hints embedded
+// via CacheableResult.
 type ReadResourceResult struct {
 	Contents []ResourceContents `json:"contents"`
-	Meta     map[string]any     `json:"_meta,omitempty"`
+	CacheableResult
+	Meta map[string]any `json:"_meta,omitempty"`
 }
 
 // ToolResult represents the result of an MCP tool call.
@@ -440,16 +563,20 @@ func stringifyContentFallback(value any) string {
 
 type listToolsResult struct {
 	Tools []Tool `json:"tools"`
+	CacheableResult
 }
 
 type listResourcesResult struct {
 	Resources []Resource `json:"resources"`
+	CacheableResult
 }
 
 type listResourceTemplatesResult struct {
 	ResourceTemplates []ResourceTemplate `json:"resourceTemplates"`
+	CacheableResult
 }
 
 type listPromptsResult struct {
 	Prompts []Prompt `json:"prompts"`
+	CacheableResult
 }

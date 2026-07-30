@@ -59,7 +59,9 @@ func WithStdioEnv(env map[string]string) StdioClientOption {
 	}
 }
 
-// NewStdioClient spawns an MCP server process and connects via stdio.
+// NewStdioClient spawns an MCP server process and connects via stdio. The
+// 2026-07-28 protocol is stateless: no initialize handshake is performed.
+// Clients MAY call Discover to learn server identity and capabilities.
 func NewStdioClient(ctx context.Context, command string, args ...string) (*Client, error) {
 	return NewStdioClientWithOptions(ctx, command, WithStdioArgs(args...))
 }
@@ -116,11 +118,6 @@ func NewStdioClientWithConfig(ctx context.Context, command string, config Client
 
 	go c.readLoop()
 
-	if err := c.initialize(ctx); err != nil {
-		c.Close()
-		return nil, fmt.Errorf("mcp: initialization failed: %w", err)
-	}
-
 	return c, nil
 }
 
@@ -129,11 +126,9 @@ func NewStdioClientWithOptions(ctx context.Context, command string, opts ...Stdi
 	return NewStdioClientWithConfig(ctx, command, ClientConfig{}, opts...)
 }
 
-func (c *Client) initialize(ctx context.Context) error {
-	return initializeClient(ctx, c.clientState, c.call, c.notify)
-}
-
-// call sends a JSON-RPC request and waits for a response.
+// call sends a JSON-RPC request and waits for a response. params is expected to
+// be a json.RawMessage already carrying the stateless _meta envelope (built via
+// mergeRequestMeta by the shared roundTrip driver).
 func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id, ch, err := c.prepareCall()
 	if err != nil {
@@ -144,7 +139,16 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		JSONRPC: "2.0",
 		ID:      id,
 		Method:  method,
-		Params:  params,
+	}
+	if raw, ok := params.(json.RawMessage); ok && len(raw) > 0 {
+		req.Params = raw
+	} else if params != nil {
+		data, mErr := json.Marshal(params)
+		if mErr != nil {
+			c.removePending(id)
+			return nil, mErr
+		}
+		req.Params = data
 	}
 
 	data, err := json.Marshal(req)
@@ -167,29 +171,48 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 // notify sends a JSON-RPC notification (no response expected).
 func (c *Client) notify(_ context.Context, method string, params any) error {
 	req := struct {
-		JSONRPC string `json:"jsonrpc"`
-		Method  string `json:"method"`
-		Params  any    `json:"params,omitempty"`
+		JSONRPC string          `json:"jsonrpc"`
+		Method  string          `json:"method"`
+		Params  json.RawMessage `json:"params,omitempty"`
 	}{
 		JSONRPC: "2.0",
 		Method:  method,
-		Params:  params,
+	}
+	if raw, ok := params.(json.RawMessage); ok {
+		req.Params = raw
+	} else if params != nil {
+		data, err := json.Marshal(params)
+		if err != nil {
+			return err
+		}
+		req.Params = data
 	}
 
+	return c.writeJSON(mustRawJSON(marshalRequest(req)))
+}
+
+func marshalRequest(req any) []byte {
 	data, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return nil
 	}
-
-	return c.writeJSON(data)
+	return data
 }
 
 func (c *Client) respond(_ context.Context, id any, result any, rpcErr *jsonRPCError) error {
 	resp := jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
-		Result:  result,
 		Error:   rpcErr,
+	}
+	if raw, ok := result.(json.RawMessage); ok {
+		resp.Result = raw
+	} else if result != nil {
+		data, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		resp.Result = data
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -222,44 +245,97 @@ func (c *Client) readLoop() {
 	}
 }
 
-// ListTools discovers available tools from the MCP server.
-func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
-	return listTools(ctx, c.call)
+// Discover calls server/discover and caches the server's identity, capabilities,
+// and instructions on the client state. It is optional; clients MAY call it
+// before any other request to select a protocol version up front.
+func (c *Client) Discover(ctx context.Context) (*DiscoverResult, error) {
+	return discover(ctx, c.call, c.clientState)
 }
 
-// CallTool invokes a tool on the MCP server.
+// ListTools discovers available tools from the MCP server.
+func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
+	return listTools(ctx, c.call, c.clientState)
+}
+
+// CallTool invokes a tool on the MCP server. tools/call is MRTR-eligible: if the
+// server returns input_required, the client fulfills the input requests and
+// retries automatically.
 func (c *Client) CallTool(ctx context.Context, name string, args map[string]any) (*ToolResult, error) {
-	return callTool(ctx, c.call, name, args)
+	return callTool(ctx, c.call, c.clientState, name, args)
 }
 
 // ListResources lists resources exposed by the MCP server.
 func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
-	return listResources(ctx, c.call)
+	return listResources(ctx, c.call, c.clientState)
 }
 
-// ReadResource reads a resource from the MCP server.
+// ReadResource reads a resource from the MCP server. resources/read is
+// MRTR-eligible.
 func (c *Client) ReadResource(ctx context.Context, uri string) (*ReadResourceResult, error) {
-	return readResource(ctx, c.call, uri)
+	return readResource(ctx, c.call, c.clientState, uri)
 }
 
 // ListResourceTemplates lists URI templates exposed by the MCP server.
 func (c *Client) ListResourceTemplates(ctx context.Context) ([]ResourceTemplate, error) {
-	return listResourceTemplates(ctx, c.call)
+	return listResourceTemplates(ctx, c.call, c.clientState)
 }
 
 // ListPrompts lists prompts exposed by the MCP server.
 func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
-	return listPrompts(ctx, c.call)
+	return listPrompts(ctx, c.call, c.clientState)
 }
 
-// GetPrompt resolves a prompt from the MCP server.
+// GetPrompt resolves a prompt from the MCP server. prompts/get is MRTR-eligible.
 func (c *Client) GetPrompt(ctx context.Context, name string, args map[string]string) (*PromptResult, error) {
-	return getPrompt(ctx, c.call, name, args)
+	return getPrompt(ctx, c.call, c.clientState, name, args)
 }
 
-// NotifyRootsListChanged emits notifications/roots/list_changed to the server.
-func (c *Client) NotifyRootsListChanged(ctx context.Context) error {
-	return notifyRootsListChanged(ctx, c.notify)
+// Listen opens a subscriptions/listen stream over the shared stdio channel. It
+// registers handler for every server notification, sends subscriptions/listen
+// (the server replies with notifications/subscriptions/acknowledged and then
+// fans out notifications on the same channel), and blocks until ctx is
+// cancelled. On cancellation it unregisters the handler and sends
+// notifications/cancelled referencing the listen request id so the server
+// gracefully closes the subscription. Notifications are also delivered to any
+// handlers registered via OnNotification.
+func (c *Client) Listen(ctx context.Context, filter SubscriptionFilter, handler func(Notification)) error {
+	unregister := c.OnNotification("", handler)
+
+	params := SubscribeParams{Notifications: filter}
+	paramsRaw, err := mergeRequestMeta(params, c.requestMeta())
+	if err != nil {
+		unregister()
+		return fmt.Errorf("mcp: failed to build subscriptions/listen params: %w", err)
+	}
+	id := c.nextID.Add(1)
+	req := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  "subscriptions/listen",
+		Params:  paramsRaw,
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		unregister()
+		return err
+	}
+	c.writeMu.Lock()
+	_, werr := fmt.Fprintf(c.stdin, "%s\n", data)
+	c.writeMu.Unlock()
+	if werr != nil {
+		unregister()
+		return fmt.Errorf("mcp: failed to send subscriptions/listen: %w", werr)
+	}
+
+	<-ctx.Done()
+	unregister()
+
+	// Cooperatively cancel the subscription so the server can close it and
+	// reclaim the hub entry.
+	idJSON, _ := json.Marshal(id)
+	cancelParams := map[string]any{"requestId": json.RawMessage(idJSON)}
+	_ = c.notify(context.Background(), "notifications/cancelled", cancelParams)
+	return ctx.Err()
 }
 
 // Close shuts down the MCP server process and releases resources.

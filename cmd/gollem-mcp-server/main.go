@@ -38,7 +38,6 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-type initializeResult = mcp.InitializeResult
 type toolsListResult struct {
 	Tools []mcp.Tool `json:"tools"`
 }
@@ -314,19 +313,14 @@ func normalizeID(raw *json.RawMessage) any {
 func createModel(provider, modelName string, rc *mcp.RequestContext) (core.Model, error) {
 	switch provider {
 	case "mcp":
-		if rc == nil || rc.ClientCapabilities().Sampling == nil {
-			return nil, fmt.Errorf("provider %q requires an MCP client with sampling support", provider)
-		}
-		var opts []mcp.MCPModelOption
-		if modelName != "" {
-			opts = append(opts,
-				mcp.WithMCPModelName(modelName),
-				mcp.WithMCPModelPreferences(mcp.ModelPreferences{
-					Hints: []mcp.ModelHint{{Name: modelName}},
-				}),
-			)
-		}
-		return mcp.NewMCPModel(rc, opts...), nil
+		// The 2026-07-28 MCP protocol replaces server-initiated sampling with
+		// Multi Round-Trip Requests (MRTR). Borrowing the connected client's
+		// model now requires a handler to return an *mcp.InputRequiredResult
+		// built via rc.NeedInput and mcp.BuildSamplingInputRequest, then parse
+		// the client's answer with mcp.ParseCreateMessageResult on retry.
+		// TODO(mcp-2026): wire the run_agent tool to MRTR sampling so provider
+		// "mcp" borrows the client's model again.
+		return nil, fmt.Errorf("provider %q requires MRTR sampling wiring (not yet implemented for this server)", provider)
 	case "openai":
 		var opts []openai.Option
 		if modelName != "" {

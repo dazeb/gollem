@@ -39,14 +39,15 @@ func TestJSONRPCRequestSerialization(t *testing.T) {
 }
 
 func TestJSONRPCRequestWithParams(t *testing.T) {
+	params, _ := json.Marshal(map[string]any{
+		"name":      "get_weather",
+		"arguments": map[string]any{"city": "NYC"},
+	})
 	req := jsonRPCRequest{
 		JSONRPC: "2.0",
 		ID:      2,
 		Method:  "tools/call",
-		Params: map[string]any{
-			"name":      "get_weather",
-			"arguments": map[string]any{"city": "NYC"},
-		},
+		Params:  params,
 	}
 
 	data, err := json.Marshal(req)
@@ -57,11 +58,11 @@ func TestJSONRPCRequestWithParams(t *testing.T) {
 	var parsed map[string]any
 	json.Unmarshal(data, &parsed)
 
-	params := parsed["params"].(map[string]any)
-	if params["name"] != "get_weather" {
-		t.Errorf("expected name get_weather, got %v", params["name"])
+	paramsMap := parsed["params"].(map[string]any)
+	if paramsMap["name"] != "get_weather" {
+		t.Errorf("expected name get_weather, got %v", paramsMap["name"])
 	}
-	args := params["arguments"].(map[string]any)
+	args := paramsMap["arguments"].(map[string]any)
 	if args["city"] != "NYC" {
 		t.Errorf("expected city NYC, got %v", args["city"])
 	}

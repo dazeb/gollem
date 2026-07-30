@@ -3,53 +3,19 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"sync"
-	"sync/atomic"
+	"strings"
 )
 
-// HTTPServerTransport serves MCP over the streamable HTTP transport.
-// Each MCP session gets its own cloned Server instance.
+// HTTPServerTransport serves MCP over the stateless streamable HTTP transport.
+// The 2026-07-28 protocol has no sessions: each POST carries a single
+// self-describing JSON-RPC request and returns the result inline as
+// application/json. There is no Mcp-Session-Id, no DELETE teardown, and no SSE
+// resumability. The one long-lived stream is subscriptions/listen, which is
+// delivered as a POST whose response is text/event-stream (SSE); it replaces
+// the old GET endpoint.
 type HTTPServerTransport struct {
-	mu         sync.Mutex
-	template   *Server
-	sessions   map[string]*httpServerSession
-	sessionCtx func(*http.Request) context.Context
-}
-
-// SetSessionContextFunc installs a hook that derives each new MCP
-// session's base context from the HTTP request that initialized it.
-// This is how hosts thread per-connection identity (a workspace
-// resolved from the Authorization header, say) through to tool
-// handlers, whose ctx is the session context.
-//
-// The returned context must NOT be (or derive its cancellation from)
-// the request context — sessions outlive their initializing request.
-// Carry values only, e.g.:
-//
-//	t.SetSessionContextFunc(func(r *http.Request) context.Context {
-//		ws := resolveWorkspace(r.Header.Get("Authorization"))
-//		return context.WithValue(context.Background(), workspaceKey{}, ws)
-//	})
-//
-// A nil hook (the default) and a nil return both mean
-// context.Background().
-func (t *HTTPServerTransport) SetSessionContextFunc(f func(*http.Request) context.Context) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.sessionCtx = f
-}
-
-type httpServerSession struct {
-	mu      sync.Mutex
-	id      string
-	server  *Server
-	ctx     context.Context
-	cancel  context.CancelFunc
-	outbox  chan []byte
-	backlog [][]byte
-	closed  bool
+	template *Server
 }
 
 // NewHTTPServerTransport binds a reusable Server template to an HTTP transport.
@@ -57,271 +23,206 @@ func NewHTTPServerTransport(server *Server) *HTTPServerTransport {
 	if server == nil {
 		server = NewServer()
 	}
-	return &HTTPServerTransport{
-		template: server,
-		sessions: make(map[string]*httpServerSession),
-	}
+	return &HTTPServerTransport{template: server}
 }
 
-// Run blocks until ctx is cancelled, then closes all active sessions.
+// Run blocks until ctx is cancelled. The stateless transport holds no
+// per-connection resources to clean up.
 func (t *HTTPServerTransport) Run(ctx context.Context) error {
 	<-ctx.Done()
-	_ = t.Close()
 	return ctx.Err()
 }
 
-// Close shuts down all active HTTP MCP sessions.
-func (t *HTTPServerTransport) Close() error {
-	t.mu.Lock()
-	sessions := make([]*httpServerSession, 0, len(t.sessions))
-	for _, session := range t.sessions {
-		sessions = append(sessions, session)
-	}
-	t.sessions = make(map[string]*httpServerSession)
-	t.mu.Unlock()
+// Close is a no-op for the stateless transport; retained for io.Closer.
+func (t *HTTPServerTransport) Close() error { return nil }
 
-	for _, session := range sessions {
-		session.close()
-	}
-	return nil
-}
-
-// ServeHTTP implements http.Handler for the streamable HTTP MCP transport.
+// ServeHTTP implements http.Handler for the stateless streamable HTTP transport.
 func (t *HTTPServerTransport) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		t.handleStream(w, r)
+		t.handleGet(w, r)
 	case http.MethodPost:
 		t.handlePost(w, r)
-	case http.MethodDelete:
-		t.handleDelete(w, r)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-func (t *HTTPServerTransport) handleStream(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	sessionID := r.Header.Get("Mcp-Session-Id")
-	if sessionID == "" {
-		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
-		return
-	}
-
-	session, ok := t.getSession(sessionID)
-	if !ok {
-		http.Error(w, "unknown session", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Mcp-Session-Id", sessionID)
-
-	for _, payload := range session.drainBacklog() {
-		fmt.Fprintf(w, "event: message\ndata: %s\n\n", payload)
-		flusher.Flush()
-	}
-
-	for {
-		select {
-		case payload, ok := <-session.outbox:
-			if !ok {
-				return
-			}
-			fmt.Fprintf(w, "event: message\ndata: %s\n\n", payload)
-			flusher.Flush()
-		case <-r.Context().Done():
-			return
-		case <-session.ctx.Done():
-			return
-		}
-	}
+// handleGet retains the subscriptions seam for backward compatibility. The
+// 2026-07-28 protocol routes subscriptions/listen through POST (see
+// handlePost), so GET returns 501.
+func (t *HTTPServerTransport) handleGet(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotImplemented)
+	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":{"code":-32601,"message":"subscriptions/listen is delivered via POST; GET is not supported"}}`))
 }
 
 func (t *HTTPServerTransport) handlePost(w http.ResponseWriter, r *http.Request) {
 	var msg jsonRPCMessage
 	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		writeHTTPJSONRPCError(w, nil, http.StatusBadRequest, &jsonRPCError{
+			Code:    jsonRPCCodeParseError,
+			Message: "invalid JSON: " + err.Error(),
+		})
 		return
 	}
 
-	sessionID := r.Header.Get("Mcp-Session-Id")
-	if msg.Method == "initialize" && sessionID == "" {
-		session := t.newSession(r)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Mcp-Session-Id", session.id)
+	// Validate MCP-Protocol-Version header when present.
+	if pv := r.Header.Get("MCP-Protocol-Version"); pv != "" && !isSupportedProtocolVersion(pv) {
+		writeHTTPJSONRPCError(w, normalizeID(msg.ID), http.StatusBadRequest, UnsupportedProtocolVersionError(pv))
+		return
+	}
 
-		result, rpcErr := session.server.handleInitialize(msg.Params)
-		payload, err := json.Marshal(jsonRPCMessage{
-			JSONRPC: "2.0",
-			ID:      rawJSONID(normalizeID(msg.ID)),
-			Result:  mustRawResult(result, rpcErr == nil),
-			Error:   rpcErr,
-		})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+	// Validate Mcp-Method header when present: must match the JSON-RPC body method.
+	if hMethod := r.Header.Get("Mcp-Method"); hMethod != "" && hMethod != msg.Method {
+		writeHTTPJSONRPCError(w, normalizeID(msg.ID), http.StatusBadRequest, HeaderMismatchError(
+			"Mcp-Method header does not match request method"))
+		return
+	}
+
+	// Validate Mcp-Name header when present: must match the tool/prompt name or
+	// resource uri in the request params.
+	if hName := r.Header.Get("Mcp-Name"); hName != "" {
+		if expected := mcpNameForRequest(msg.Method, msg.Params); expected != "" && expected != hName {
+			writeHTTPJSONRPCError(w, normalizeID(msg.ID), http.StatusBadRequest, HeaderMismatchError(
+				"Mcp-Name header does not match request target"))
 			return
 		}
-		_, _ = w.Write(payload)
+	}
+
+	// subscriptions/listen is the one long-lived stream: switch the response to
+	// text/event-stream and stream notifications until the client disconnects
+	// or the server shuts down.
+	if msg.Method == "subscriptions/listen" {
+		t.handleSubscriptionsListen(w, r, &msg)
 		return
 	}
 
-	if sessionID == "" {
-		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
-		return
-	}
+	headers := collectXMCPHeaders(r.Header)
+	ctx := r.Context()
+	resp := t.template.HandleRequestSync(ctx, &msg, headers)
 
-	session, ok := t.getSession(sessionID)
-	if !ok {
-		http.Error(w, "unknown session", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Mcp-Session-Id", sessionID)
-
-	go session.server.HandleMessage(session.ctx, &msg)
-	w.WriteHeader(http.StatusAccepted)
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(resp)
 }
 
-func (t *HTTPServerTransport) handleDelete(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.Header.Get("Mcp-Session-Id")
-	if sessionID == "" {
-		http.Error(w, "missing Mcp-Session-Id", http.StatusBadRequest)
+// handleSubscriptionsListen streams a subscriptions/listen response as SSE. It
+// validates _meta (returning the normal JSON-RPC error response on failure),
+// sends notifications/subscriptions/acknowledged as the first event, then fans
+// out server notifications to the stream until the client disconnects or the
+// server shuts down. On graceful closure it emits the JSON-RPC response to the
+// original request id before returning. No SSE event ids / Last-Event-ID are
+// emitted (no resumability).
+func (t *HTTPServerTransport) handleSubscriptionsListen(w http.ResponseWriter, r *http.Request, msg *jsonRPCMessage) {
+	requestID := normalizeID(msg.ID)
+
+	meta, metaErr := parseRequestMeta(msg.Params)
+	if metaErr != nil {
+		resp := jsonRPCResponse{JSONRPC: "2.0", ID: requestID, Error: metaErr}
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
 		return
 	}
 
-	session, ok := t.deleteSession(sessionID)
+	filter := parseSubscribeParams(msg.Params)
+
+	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "unknown session", http.StatusNotFound)
+		resp := jsonRPCResponse{JSONRPC: "2.0", ID: requestID, Error: &jsonRPCError{
+			Code:    jsonRPCCodeInternalError,
+			Message: "mcp: streaming unsupported by response writer",
+		}}
+		data, _ := json.Marshal(resp)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
 		return
 	}
-	session.close()
-	w.WriteHeader(http.StatusNoContent)
-}
 
-func (t *HTTPServerTransport) newSession(r *http.Request) *httpServerSession {
-	sessionID := generateHTTPSessionID()
-	base := context.Background()
-	t.mu.Lock()
-	hook := t.sessionCtx
-	t.mu.Unlock()
-	if hook != nil {
-		if derived := hook(r); derived != nil {
-			base = derived
+	// Buffered channel: the ack is enqueued first so it is always the first
+	// event, before any notification that arrives after registration.
+	ch := make(chan []byte, 256)
+	ackBytes := ackMessage(requestID, filter)
+	select {
+	case ch <- ackBytes:
+	default:
+	}
+
+	sub := &subscription{
+		id:     requestID,
+		idKey:  idKeyString(requestID),
+		filter: filter,
+		deliver: func(data []byte) {
+			select {
+			case ch <- data:
+			default:
+				// Client is slow; drop the notification rather than block the hub.
+			}
+		},
+	}
+	deregister := t.template.hub.register(sub)
+	defer deregister()
+
+	_ = meta // client capabilities already validated; no further use needed here
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ctx := r.Context()
+	for {
+		select {
+		case data := <-ch:
+			if _, err := writeSSEEvent(w, data); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ctx.Done():
+			// Graceful closure: emit the JSON-RPC response to the original id,
+			// then close the stream.
+			_, _ = writeSSEEvent(w, subscriptionClosureResponse(requestID))
+			flusher.Flush()
+			return
 		}
 	}
-	ctx, cancel := context.WithCancel(base)
-	server := cloneServerTemplate(t.template)
-	session := &httpServerSession{
-		id:     sessionID,
-		server: server,
-		ctx:    ctx,
-		cancel: cancel,
-		outbox: make(chan []byte, 256),
-	}
-	server.attachWriter(func(data []byte) error {
-		session.enqueue(data)
-		return nil
-	})
-
-	t.mu.Lock()
-	t.sessions[sessionID] = session
-	t.mu.Unlock()
-	return session
 }
 
-func (t *HTTPServerTransport) getSession(id string) (*httpServerSession, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	session, ok := t.sessions[id]
-	return session, ok
+// writeSSEEvent writes a single SSE message event with the given JSON payload.
+func writeSSEEvent(w http.ResponseWriter, data []byte) (int, error) {
+	return w.Write(append(append([]byte("event: message\ndata: "), data...), '\n', '\n'))
 }
 
-func (t *HTTPServerTransport) deleteSession(id string) (*httpServerSession, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	session, ok := t.sessions[id]
-	if ok {
-		delete(t.sessions, id)
+// collectXMCPHeaders returns the x-mcp-* request headers (lowercased keys) so
+// tool handlers can read SEP-2243 custom headers passed from tool params via
+// RequestContext.XHeader.
+func collectXMCPHeaders(header http.Header) map[string]string {
+	out := make(map[string]string)
+	for key, values := range header {
+		if !strings.HasPrefix(strings.ToLower(key), "x-mcp-") {
+			continue
+		}
+		if len(values) == 0 {
+			continue
+		}
+		out[strings.ToLower(key)] = values[0]
 	}
-	return session, ok
-}
-
-func (s *httpServerSession) enqueue(data []byte) {
-	snapshot := append([]byte(nil), data...)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return
-	}
-	select {
-	case s.outbox <- snapshot:
-	default:
-		s.backlog = append(s.backlog, snapshot)
-	}
-}
-
-func (s *httpServerSession) drainBacklog() [][]byte {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.backlog) == 0 {
+	if len(out) == 0 {
 		return nil
 	}
-	items := append([][]byte(nil), s.backlog...)
-	s.backlog = nil
-	return items
+	return out
 }
 
-func (s *httpServerSession) close() {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return
+func writeHTTPJSONRPCError(w http.ResponseWriter, id any, status int, rpcErr *jsonRPCError) {
+	resp := jsonRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   rpcErr,
 	}
-	s.closed = true
-	close(s.outbox)
-	s.mu.Unlock()
-	s.cancel()
-	_ = s.server.Close()
+	data, _ := json.Marshal(resp)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(data)
 }
-
-func cloneServerTemplate(template *Server) *Server {
-	template.mu.Lock()
-	defer template.mu.Unlock()
-
-	cloned := NewServer(
-		WithServerInfo(template.serverInfo),
-		WithServerInstructions(template.instructions),
-	)
-	cloned.protocol = template.protocol
-	cloned.tools = append([]serverTool(nil), template.tools...)
-	cloned.resources = append([]Resource(nil), template.resources...)
-	cloned.resourceTemplates = append([]ResourceTemplate(nil), template.resourceTemplates...)
-	cloned.resourceReader = template.resourceReader
-	cloned.prompts = append([]Prompt(nil), template.prompts...)
-	cloned.promptGetter = template.promptGetter
-	return cloned
-}
-
-func generateHTTPSessionID() string {
-	return fmt.Sprintf("mcp-%d", httpSessionCounter.Add(1))
-}
-
-func mustRawResult(result any, ok bool) json.RawMessage {
-	if !ok || result == nil {
-		return nil
-	}
-	data, err := json.Marshal(result)
-	if err != nil {
-		return nil
-	}
-	return data
-}
-
-var httpSessionCounter atomic.Int64

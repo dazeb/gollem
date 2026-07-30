@@ -10,9 +10,25 @@ import (
 	"testing"
 )
 
-// sendRequest formats a JSON-RPC request line.
+// sendRequest formats a JSON-RPC request line. Every request carries the
+// stateless _meta envelope required by the 2026-07-28 protocol.
 func sendRequest(t *testing.T, id interface{}, method string, params interface{}) string {
 	t.Helper()
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	if pm, ok := params.(map[string]interface{}); ok {
+		if _, exists := pm["_meta"]; !exists {
+			pm["_meta"] = map[string]interface{}{
+				"io.modelcontextprotocol/protocolVersion":    protocolVersion,
+				"io.modelcontextprotocol/clientCapabilities": map[string]interface{}{},
+				"io.modelcontextprotocol/clientInfo": map[string]interface{}{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			}
+		}
+	}
 	req := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  method,
@@ -63,18 +79,10 @@ func runServer(t *testing.T, lines ...string) []string {
 	return results
 }
 
-func TestInitializeHandshake(t *testing.T) {
-	initReq := sendRequest(t, 1, "initialize", map[string]interface{}{
-		"protocolVersion": protocolVersion,
-		"capabilities":    map[string]interface{}{},
-		"clientInfo": map[string]interface{}{
-			"name":    "test-client",
-			"version": "1.0.0",
-		},
-	})
-	notifReq := sendRequest(t, nil, "notifications/initialized", nil)
+func TestDiscover(t *testing.T) {
+	discoverReq := sendRequest(t, 1, "server/discover", nil)
 
-	lines := runServer(t, initReq, notifReq)
+	lines := runServer(t, discoverReq)
 	if len(lines) != 1 {
 		t.Fatalf("expected 1 response line, got %d: %v", len(lines), lines)
 	}
@@ -84,24 +92,32 @@ func TestInitializeHandshake(t *testing.T) {
 		t.Fatalf("unexpected error: %v", resp.Error)
 	}
 
-	// Parse the result.
 	resultJSON, err := json.Marshal(resp.Result)
 	if err != nil {
 		t.Fatalf("marshal result: %v", err)
 	}
 
-	var initResult initializeResult
-	if err := json.Unmarshal(resultJSON, &initResult); err != nil {
-		t.Fatalf("unmarshal init result: %v", err)
+	var discResult struct {
+		SupportedVersions []string `json:"supportedVersions"`
+		ServerInfo        struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"serverInfo"`
+		Capabilities struct {
+			Tools interface{} `json:"tools"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(resultJSON, &discResult); err != nil {
+		t.Fatalf("unmarshal discover result: %v", err)
 	}
 
-	if initResult.ProtocolVersion != protocolVersion {
-		t.Errorf("protocol version = %q, want %q", initResult.ProtocolVersion, protocolVersion)
+	if len(discResult.SupportedVersions) != 1 || discResult.SupportedVersions[0] != protocolVersion {
+		t.Errorf("protocol versions = %+v, want [%s]", discResult.SupportedVersions, protocolVersion)
 	}
-	if initResult.ServerInfo.Name != "gollem-mcp-server" {
-		t.Errorf("server name = %q, want %q", initResult.ServerInfo.Name, "gollem-mcp-server")
+	if discResult.ServerInfo.Name != "gollem-mcp-server" {
+		t.Errorf("server name = %q, want %q", discResult.ServerInfo.Name, "gollem-mcp-server")
 	}
-	if initResult.Capabilities.Tools == nil {
+	if discResult.Capabilities.Tools == nil {
 		t.Error("expected tools capability to be set")
 	}
 }
@@ -423,22 +439,16 @@ func TestUnknownMethod(t *testing.T) {
 }
 
 func TestMultipleRequests(t *testing.T) {
-	initReq := sendRequest(t, 1, "initialize", map[string]interface{}{
-		"protocolVersion": protocolVersion,
-		"capabilities":    map[string]interface{}{},
-		"clientInfo":      map[string]interface{}{"name": "test", "version": "1.0.0"},
-	})
-	notifReq := sendRequest(t, nil, "notifications/initialized", nil)
+	discoverReq := sendRequest(t, 1, "server/discover", nil)
 	listReq := sendRequest(t, 2, "tools/list", nil)
 	provReq := sendRequest(t, 3, "tools/call", map[string]interface{}{
 		"name":      "list_providers",
 		"arguments": map[string]interface{}{},
 	})
 
-	lines := runServer(t, initReq, notifReq, listReq, provReq)
+	lines := runServer(t, discoverReq, listReq, provReq)
 
-	// Should get 3 responses: initialize, tools/list, tools/call.
-	// notifications/initialized has no id so no response.
+	// Should get 3 responses: server/discover, tools/list, tools/call.
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 responses, got %d: %v", len(lines), lines)
 	}
