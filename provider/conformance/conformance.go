@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/fugue-labs/gollem/core"
 )
@@ -19,9 +20,10 @@ import (
 // A driver must not advertise one of these capabilities in Slang unless it has
 // a matching deterministic fixture and this verification passes.
 type Claims struct {
-	ToolCalls bool
-	Streaming bool
-	Usage     bool
+	ToolCalls    bool
+	Streaming    bool
+	Usage        bool
+	Cancellation bool
 }
 
 // Expectations declares the normalized outputs a deterministic fixture
@@ -36,10 +38,11 @@ type Expectations struct {
 // Driver binds a provider model to the common capability claims and expected
 // normalized results that its deterministic fixture produces.
 type Driver struct {
-	Name         string
-	Model        core.Model
-	Claims       Claims
-	Expectations Expectations
+	Name              string
+	Model             core.Model
+	Claims            Claims
+	Expectations      Expectations
+	CancellationReady <-chan struct{}
 }
 
 // Verify exercises the claimed common model surface through core.Model. It is
@@ -56,6 +59,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.Streaming && strings.TrimSpace(driver.Expectations.StreamText) == "" {
 		return fmt.Errorf("provider conformance: %s streaming fixture must expect stream text", driver.Name)
+	}
+	if driver.Claims.Cancellation && driver.CancellationReady == nil {
+		return fmt.Errorf("provider conformance: %s cancellation-capable fixture must signal request start", driver.Name)
 	}
 
 	params := &core.ModelRequestParameters{AllowTextOutput: true}
@@ -82,6 +88,11 @@ func Verify(ctx context.Context, driver Driver) error {
 	if err := verifyResponse(driver, response, false); err != nil {
 		return err
 	}
+	if driver.Claims.Cancellation {
+		if err := verifyCancellation(ctx, driver); err != nil {
+			return err
+		}
+	}
 
 	if !driver.Claims.Streaming {
 		return nil
@@ -104,6 +115,35 @@ func Verify(ctx context.Context, driver Driver) error {
 		return err
 	}
 	return nil
+}
+
+func verifyCancellation(ctx context.Context, driver Driver) error {
+	requestContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := driver.Model.Request(requestContext, cancellationMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+		result <- err
+	}()
+
+	select {
+	case <-driver.CancellationReady:
+		cancel()
+	case <-ctx.Done():
+		return fmt.Errorf("provider conformance: %s cancellation request did not start: %w", driver.Name, ctx.Err())
+	case <-time.After(time.Second):
+		return fmt.Errorf("provider conformance: %s cancellation request did not start", driver.Name)
+	}
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			return fmt.Errorf("provider conformance: %s cancellation error, want context canceled: %w", driver.Name, err)
+		}
+		return nil
+	case <-time.After(time.Second):
+		return fmt.Errorf("provider conformance: %s cancellation request did not finish", driver.Name)
+	}
 }
 
 func verifyResponse(driver Driver, response *core.ModelResponse, streaming bool) error {
@@ -138,5 +178,11 @@ func hasToolCall(parts []core.ModelResponsePart, name string) bool {
 func conformanceMessages() []core.ModelMessage {
 	return []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "run conformance"}}},
+	}
+}
+
+func cancellationMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "cancel conformance"}}},
 	}
 }
