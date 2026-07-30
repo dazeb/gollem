@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -197,6 +198,38 @@ data: [DONE]
 	// Usage should be extracted from the incomplete response.
 	if resp.Usage.InputTokens != 100 || resp.Usage.OutputTokens != 50 {
 		t.Errorf("expected usage {100, 50}, got %+v", resp.Usage)
+	}
+}
+
+func TestResponsesStreamedResponse_IncompleteEOFPreservesPartialResponse(t *testing.T) {
+	sse := `data: {"type":"response.output_text.delta","delta":"partial"}
+
+`
+	s := newResponsesStreamedResponse(io.NopCloser(strings.NewReader(sse)), "gpt-5")
+
+	if _, err := s.Next(); err != nil {
+		t.Fatalf("first Next() error = %v", err)
+	}
+	_, err := s.Next()
+	var incomplete *core.StreamIncompleteError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("Next() error = %v, want StreamIncompleteError", err)
+	}
+	if got := s.Response().TextContent(); got != "partial" {
+		t.Fatalf("partial response text = %q, want %q", got, "partial")
+	}
+}
+
+func TestResponsesStreamedResponse_RejectsMalformedJSONEvent(t *testing.T) {
+	s := newResponsesStreamedResponse(io.NopCloser(strings.NewReader("data: {\"fixture_sensitive\":\n\n")), "gpt-5")
+
+	_, err := s.Next()
+	var protocol *core.StreamProtocolError
+	if !errors.As(err, &protocol) {
+		t.Fatalf("Next() error = %v, want StreamProtocolError", err)
+	}
+	if strings.Contains(err.Error(), "fixture_sensitive") {
+		t.Fatalf("protocol error leaked raw stream data: %v", err)
 	}
 }
 

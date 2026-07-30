@@ -3,8 +3,10 @@ package anthropic
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,6 +58,10 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 
 		event, err := s.readSSEEvent()
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				s.failStream(&core.StreamIncompleteError{Provider: "anthropic"})
+				return nil, s.streamErr
+			}
 			return nil, err
 		}
 
@@ -116,6 +122,8 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 		}
 		if err := json.Unmarshal([]byte(event.Data), &msg); err == nil {
 			s.usage = mapUsage(msg.Message.Usage)
+		} else {
+			return s.failProtocol()
 		}
 		return nil, false
 
@@ -125,7 +133,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 			ContentBlock json.RawMessage `json:"content_block"`
 		}
 		if err := json.Unmarshal([]byte(event.Data), &block); err != nil {
-			return nil, false
+			return s.failProtocol()
 		}
 
 		var blockType struct {
@@ -137,7 +145,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 			Signature string `json:"signature,omitempty"`
 		}
 		if err := json.Unmarshal(block.ContentBlock, &blockType); err != nil {
-			return nil, false
+			return s.failProtocol()
 		}
 
 		var part core.ModelResponsePart
@@ -183,7 +191,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 			} `json:"delta"`
 		}
 		if err := json.Unmarshal([]byte(event.Data), &delta); err != nil {
-			return nil, false
+			return s.failProtocol()
 		}
 
 		switch delta.Delta.Type {
@@ -232,7 +240,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 			Index int `json:"index"`
 		}
 		if err := json.Unmarshal([]byte(event.Data), &block); err != nil {
-			return nil, false
+			return s.failProtocol()
 		}
 
 		// Finalize the part.
@@ -266,15 +274,19 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 			if md.Usage.OutputTokens > 0 {
 				s.usage.OutputTokens = md.Usage.OutputTokens
 			}
+		} else {
+			return s.failProtocol()
 		}
 		return nil, false
 
 	case "message_stop":
 		s.done = true
+		s.finalizeAll()
 		return nil, false
 
 	case "error":
 		s.done = true
+		s.finalizeAll()
 		// Parse error event data to propagate a meaningful error.
 		var errData struct {
 			Error struct {
@@ -292,6 +304,40 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 	default:
 		return nil, false
 	}
+}
+
+func (s *streamedResponse) failProtocol() (core.ModelResponseStreamEvent, bool) {
+	s.failStream(&core.StreamProtocolError{Provider: "anthropic"})
+	return nil, false
+}
+
+func (s *streamedResponse) failStream(err error) {
+	s.done = true
+	s.finalizeAll()
+	s.streamErr = err
+}
+
+func (s *streamedResponse) finalizeAll() {
+	indices := make([]int, 0, len(s.currentParts))
+	for index := range s.currentParts {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	for _, index := range indices {
+		part := s.currentParts[index]
+		if toolCall, ok := part.(core.ToolCallPart); ok {
+			if args, ok := s.argsBuffers[index]; ok {
+				toolCall.ArgsJSON = args.String()
+			}
+			if toolCall.ArgsJSON == "" {
+				toolCall.ArgsJSON = "{}"
+			}
+			part = toolCall
+		}
+		s.parts = append(s.parts, part)
+	}
+	s.currentParts = make(map[int]core.ModelResponsePart)
+	s.argsBuffers = make(map[int]*strings.Builder)
 }
 
 // Response returns the complete ModelResponse built from the stream.

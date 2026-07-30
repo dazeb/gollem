@@ -2511,6 +2511,37 @@ func TestParseSSEStreamEOFWithoutDone(t *testing.T) {
 	}
 }
 
+func TestParseSSEStreamIncompleteEOFPreservesPartialResponse(t *testing.T) {
+	body := io.NopCloser(strings.NewReader("data: {\"id\":\"chatcmpl-partial\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	if _, err := stream.Next(); err != nil {
+		t.Fatalf("first Next() error = %v", err)
+	}
+	_, err := stream.Next()
+	var incomplete *core.StreamIncompleteError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("Next() error = %v, want StreamIncompleteError", err)
+	}
+	if got := stream.Response().TextContent(); got != "partial" {
+		t.Fatalf("partial response text = %q, want %q", got, "partial")
+	}
+}
+
+func TestParseSSEStreamRejectsMalformedJSONEvent(t *testing.T) {
+	body := io.NopCloser(strings.NewReader("data: {\"fixture_sensitive\":\n\n"))
+	stream := newStreamedResponse(body, "gpt-4o")
+
+	_, err := stream.Next()
+	var protocol *core.StreamProtocolError
+	if !errors.As(err, &protocol) {
+		t.Fatalf("Next() error = %v, want StreamProtocolError", err)
+	}
+	if strings.Contains(err.Error(), "fixture_sensitive") {
+		t.Fatalf("protocol error leaked raw stream data: %v", err)
+	}
+}
+
 // --- Stream: empty tool call args get "{}" in finalization ---
 
 func TestParseSSEStreamEmptyToolCallArgs(t *testing.T) {

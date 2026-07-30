@@ -20,10 +20,12 @@ import (
 // A driver must not advertise one of these capabilities in Slang unless it has
 // a matching deterministic fixture and this verification passes.
 type Claims struct {
-	ToolCalls    bool
-	Streaming    bool
-	Usage        bool
-	Cancellation bool
+	ToolCalls       bool
+	Streaming       bool
+	Usage           bool
+	Cancellation    bool
+	PartialStream   bool
+	MalformedStream bool
 }
 
 // Expectations declares the normalized outputs a deterministic fixture
@@ -33,6 +35,7 @@ type Expectations struct {
 	ResponseText string
 	ToolName     string
 	StreamText   string
+	PartialText  string
 }
 
 // Driver binds a provider model to the common capability claims and expected
@@ -62,6 +65,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.Cancellation && driver.CancellationReady == nil {
 		return fmt.Errorf("provider conformance: %s cancellation-capable fixture must signal request start", driver.Name)
+	}
+	if driver.Claims.PartialStream && strings.TrimSpace(driver.Expectations.PartialText) == "" {
+		return fmt.Errorf("provider conformance: %s partial-stream fixture must expect partial text", driver.Name)
 	}
 
 	params := &core.ModelRequestParameters{AllowTextOutput: true}
@@ -114,6 +120,16 @@ func Verify(ctx context.Context, driver Driver) error {
 	if err := verifyResponse(driver, stream.Response(), true); err != nil {
 		return err
 	}
+	if driver.Claims.PartialStream {
+		if err := verifyPartialStream(ctx, driver); err != nil {
+			return err
+		}
+	}
+	if driver.Claims.MalformedStream {
+		if err := verifyMalformedStream(ctx, driver); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -143,6 +159,48 @@ func verifyCancellation(ctx context.Context, driver Driver) error {
 		return nil
 	case <-time.After(time.Second):
 		return fmt.Errorf("provider conformance: %s cancellation request did not finish", driver.Name)
+	}
+}
+
+func verifyPartialStream(ctx context.Context, driver Driver) error {
+	stream, err := driver.Model.RequestStream(ctx, partialStreamMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		return fmt.Errorf("provider conformance: %s partial stream request: %w", driver.Name, err)
+	}
+	defer stream.Close()
+	for {
+		_, err := stream.Next()
+		if err == nil {
+			continue
+		}
+		var incomplete *core.StreamIncompleteError
+		if !errors.As(err, &incomplete) {
+			return fmt.Errorf("provider conformance: %s partial stream error = %w, want StreamIncompleteError", driver.Name, err)
+		}
+		break
+	}
+	if got := stream.Response().TextContent(); got != driver.Expectations.PartialText {
+		return fmt.Errorf("provider conformance: %s partial text = %q, want %q", driver.Name, got, driver.Expectations.PartialText)
+	}
+	return nil
+}
+
+func verifyMalformedStream(ctx context.Context, driver Driver) error {
+	stream, err := driver.Model.RequestStream(ctx, malformedStreamMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		return fmt.Errorf("provider conformance: %s malformed stream request: %w", driver.Name, err)
+	}
+	defer stream.Close()
+	for {
+		_, err := stream.Next()
+		if err == nil {
+			continue
+		}
+		var protocol *core.StreamProtocolError
+		if !errors.As(err, &protocol) {
+			return fmt.Errorf("provider conformance: %s malformed stream error = %w, want StreamProtocolError", driver.Name, err)
+		}
+		return nil
 	}
 }
 
@@ -184,5 +242,17 @@ func conformanceMessages() []core.ModelMessage {
 func cancellationMessages() []core.ModelMessage {
 	return []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "cancel conformance"}}},
+	}
+}
+
+func partialStreamMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "partial stream conformance"}}},
+	}
+}
+
+func malformedStreamMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "malformed stream conformance"}}},
 	}
 }

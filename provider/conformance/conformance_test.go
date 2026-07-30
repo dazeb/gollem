@@ -33,12 +33,13 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 				return conformance.Driver{
 					Name:              "native OpenAI",
 					Model:             openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true},
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true},
 					CancellationReady: openAICancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "openai response",
 						ToolName:     "conformance_echo",
 						StreamText:   "openai stream",
+						PartialText:  "openai partial",
 					},
 				}, nil
 			},
@@ -57,12 +58,13 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 				return conformance.Driver{
 					Name:              "OpenAI-compatible local",
 					Model:             model,
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true},
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true},
 					CancellationReady: openAICancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "openai response",
 						ToolName:     "conformance_echo",
 						StreamText:   "openai stream",
+						PartialText:  "openai partial",
 					},
 				}, nil
 			},
@@ -73,12 +75,13 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 				return conformance.Driver{
 					Name:              "native Anthropic",
 					Model:             anthropic.New(anthropic.WithAPIKey("test-anthropic-key"), anthropic.WithBaseURL(anthropicServer.URL), anthropic.WithModel(anthropic.ClaudeSonnet46)),
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true},
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true},
 					CancellationReady: anthropicCancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "anthropic response",
 						ToolName:     "conformance_echo",
 						StreamText:   "anthropic stream",
+						PartialText:  "anthropic partial",
 					},
 				}, nil
 			},
@@ -115,6 +118,14 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	if err == nil {
 		t.Fatal("Verify accepted a cancellation claim without a start signal")
 	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing partial stream fixture",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{PartialStream: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a partial stream claim without expected partial text")
+	}
 }
 
 func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}) http.Handler {
@@ -132,6 +143,16 @@ func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}) h
 		}
 		if strings.Contains(string(body), "cancel conformance") {
 			waitForCancellation(r, cancellationReady)
+			return
+		}
+		if strings.Contains(string(body), "partial stream conformance") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-partial\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"openai partial\"},\"finish_reason\":null}]}\n\n")
+			return
+		}
+		if strings.Contains(string(body), "malformed stream conformance") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"fixture_sensitive\":\n\n")
 			return
 		}
 		var request struct {
@@ -176,6 +197,16 @@ func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}
 		}
 		if strings.Contains(string(body), "cancel conformance") {
 			waitForCancellation(r, cancellationReady)
+			return
+		}
+		if strings.Contains(string(body), "partial stream conformance") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"anthropic partial\"}}\n\n")
+			return
+		}
+		if strings.Contains(string(body), "malformed stream conformance") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"fixture_sensitive\":\n\n")
 			return
 		}
 		var request struct {

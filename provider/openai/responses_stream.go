@@ -37,6 +37,7 @@ type responsesStreamedResponse struct {
 
 	stopReason core.FinishReason
 	done       bool
+	terminal   bool
 	streamErr  error // non-nil if server sent an error mid-stream
 
 	// instrumentation receives per-request latency updates; nil = no-op. It is
@@ -114,26 +115,11 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 
 		if !s.scanner.Scan() {
 			if err := s.scanner.Err(); err != nil {
-				// Some providers deliver a terminal response event and then abort the
-				// underlying HTTP/2 stream before sending [DONE]. Once we have the
-				// completed response payload, treat the stream as successfully done.
-				if !s.done {
-					s.instrumentation.recordError(err)
-					s.instrumentation.finish()
-					return nil, fmt.Errorf("openai: SSE read error: %w", err)
-				}
-			}
-			// Scanner exhausted without a terminal response event.
-			s.done = true
-			if err := s.finalizeModelIdentity(); err != nil {
-				s.streamErr = err
 				s.instrumentation.recordError(err)
 				s.instrumentation.finish()
-				return nil, err
+				return nil, fmt.Errorf("openai: SSE read error: %w", err)
 			}
-			s.finalize()
-			s.instrumentation.finish()
-			return nil, io.EOF
+			return s.failIncompleteStream()
 		}
 
 		line := s.scanner.Text()
@@ -143,20 +129,19 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 		data := strings.TrimPrefix(line, "data:")
 		data = strings.TrimPrefix(data, " ")
 		if data == "[DONE]" {
-			s.done = true
-			if err := s.finalizeModelIdentity(); err != nil {
-				s.streamErr = err
-				s.instrumentation.recordError(err)
-				s.instrumentation.finish()
-				return nil, err
+			if !s.terminal {
+				return s.failIncompleteStream()
 			}
-			s.finalize()
+			s.done = true
 			s.instrumentation.finish()
 			return nil, io.EOF
 		}
 
 		var event responsesStreamEvent
 		if json.Unmarshal([]byte(data), &event) != nil {
+			if strings.HasPrefix(strings.TrimSpace(data), "{") {
+				return s.failStream(&core.StreamProtocolError{Provider: "openai"})
+			}
 			continue
 		}
 		s.instrumentation.recordFirstEvent()
@@ -170,6 +155,22 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 			return events[0], nil
 		}
 	}
+}
+
+func (s *responsesStreamedResponse) failStream(err error) (core.ModelResponseStreamEvent, error) {
+	s.done = true
+	s.finalize()
+	s.streamErr = err
+	s.instrumentation.recordError(err)
+	s.instrumentation.finish()
+	return nil, err
+}
+
+func (s *responsesStreamedResponse) failIncompleteStream() (core.ModelResponseStreamEvent, error) {
+	if err := s.finalizeModelIdentity(); err != nil {
+		return s.failStream(err)
+	}
+	return s.failStream(&core.StreamIncompleteError{Provider: "openai"})
 }
 
 func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []core.ModelResponseStreamEvent {
@@ -194,6 +195,7 @@ func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []
 		return nil
 
 	case "response.failed":
+		s.terminal = true
 		s.done = true
 		s.finalize()
 		// response.failed is a terminal outcome; record terminal timing so a
@@ -225,6 +227,7 @@ func (s *responsesStreamedResponse) processEvent(event *responsesStreamEvent) []
 
 	case "response.incomplete":
 		s.stopReason = core.FinishReasonLength
+		s.terminal = true
 		s.done = true
 		// Extract usage from the response payload (incomplete responses
 		// still report token counts) and finalize accumulated parts.
@@ -491,6 +494,7 @@ func (s *responsesStreamedResponse) handleCompleted(respJSON json.RawMessage) {
 	if err := s.finalizeModelIdentity(); err != nil {
 		s.streamErr = err
 	}
+	s.terminal = true
 	s.done = true
 	s.finalize()
 	s.instrumentation.recordTerminal()

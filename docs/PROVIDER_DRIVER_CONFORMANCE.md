@@ -18,8 +18,9 @@ of behavior and must not enable a control solely on provider identity.
 | Vision | Catalog-supported | Unsupported | Catalog-supported | Provider-specific tests; no common conformance claim yet |
 | Reasoning visibility | Catalog-supported where applicable | Unsupported | Catalog-supported where applicable | Provider-specific tests; no common conformance claim yet |
 | Prompt cache / Responses API | Catalog-supported where applicable | Unsupported | Catalog-supported where applicable | Provider-specific tests; no common conformance claim yet |
-| Malformed stream normalization | Not yet proven | Not yet proven | Not yet proven | Follow-up conformance scenario required |
-| Partial-stream / peer disconnect result | Not yet proven | Not yet proven | Not yet proven | Follow-up conformance scenario required |
+| Malformed JSON stream event normalization | Proven | Proven | Proven | `provider/conformance` plus provider parser tests; returns `StreamProtocolError` without raw event data |
+| Abrupt EOF partial-stream result | Proven | Proven | Proven | `provider/conformance` plus provider parser tests; preserves partial response and returns `StreamIncompleteError` |
+| Read-error peer-disconnect classification | Not yet proven | Not yet proven | Not yet proven | Follow-up conformance scenario required |
 | Timeout and retryability classification | Not yet proven | Not yet proven | Not yet proven | Follow-up conformance scenario required |
 | Endpoint health probe and capability mismatch | Not yet proven | Not yet proven | Not yet proven | Must remain a typed unavailable/degraded state |
 
