@@ -503,6 +503,43 @@ func TestServiceRevertFileHonorsCancellationAfterApproval(t *testing.T) {
 	}
 }
 
+func TestServiceRevertFileAlreadyRestoredStillRequiresApproval(t *testing.T) {
+	ctx := context.Background()
+	approvals := 0
+	svc := newTestService(t, WithApproval(func(_ context.Context, op Operation) error {
+		approvals++
+		if op.Kind != OperationRevertFileChange || op.Path != "notes.txt" || !op.Destructive {
+			t.Fatalf("approval operation = %+v", op)
+		}
+		return nil
+	}))
+	before := []byte("before\n")
+	path := filepath.Join(svc.Root(), "notes.txt")
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatalf("WriteFile before: %v", err)
+	}
+	result, err := svc.RevertFile(ctx, RevertFileRequest{
+		Path:          "notes.txt",
+		TransactionID: "already-restored",
+		Before: ExactFileState{
+			Exists: true, SHA256: exactSHA256(before), Content: before, Mode: 0o600, CheckMode: true,
+		},
+		After: ExactFileState{
+			Exists: true, SHA256: exactSHA256([]byte("after\n")), Mode: 0o644, CheckMode: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("RevertFile already restored: %v", err)
+	}
+	if approvals != 1 || !result.Reused || !result.Restored || result.Removed || result.Changed ||
+		result.SHA256 != exactSHA256(before) {
+		t.Fatalf("already-restored result = %+v, approvals=%d", result, approvals)
+	}
+	if content, err := os.ReadFile(path); err != nil || string(content) != string(before) {
+		t.Fatalf("already-restored target = %q, error %v", content, err)
+	}
+}
+
 func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)
