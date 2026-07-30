@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 // Claims are the capabilities covered by a deterministic conformance fixture.
@@ -26,6 +27,7 @@ type Claims struct {
 	Cancellation    bool
 	PartialStream   bool
 	MalformedStream bool
+	Retryability    bool
 }
 
 // Expectations declares the normalized outputs a deterministic fixture
@@ -36,6 +38,7 @@ type Expectations struct {
 	ToolName     string
 	StreamText   string
 	PartialText  string
+	RetryText    string
 }
 
 // Driver binds a provider model to the common capability claims and expected
@@ -68,6 +71,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.PartialStream && strings.TrimSpace(driver.Expectations.PartialText) == "" {
 		return fmt.Errorf("provider conformance: %s partial-stream fixture must expect partial text", driver.Name)
+	}
+	if driver.Claims.Retryability && strings.TrimSpace(driver.Expectations.RetryText) == "" {
+		return fmt.Errorf("provider conformance: %s retry fixture must expect retry text", driver.Name)
 	}
 
 	params := &core.ModelRequestParameters{AllowTextOutput: true}
@@ -127,6 +133,11 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.MalformedStream {
 		if err := verifyMalformedStream(ctx, driver); err != nil {
+			return err
+		}
+	}
+	if driver.Claims.Retryability {
+		if err := verifyRetryability(ctx, driver); err != nil {
 			return err
 		}
 	}
@@ -204,6 +215,28 @@ func verifyMalformedStream(ctx context.Context, driver Driver) error {
 	}
 }
 
+func verifyRetryability(ctx context.Context, driver Driver) error {
+	retryingModel := modelutil.NewRetryModel(driver.Model, modelutil.RetryConfig{
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		BackoffFactor:  1,
+		Jitter:         false,
+		MinRemaining:   0,
+	})
+	response, err := retryingModel.Request(ctx, retryMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		return fmt.Errorf("provider conformance: %s retry request: %w", driver.Name, err)
+	}
+	if response == nil {
+		return fmt.Errorf("provider conformance: %s retry request returned a nil response", driver.Name)
+	}
+	if got := response.TextContent(); got != driver.Expectations.RetryText {
+		return fmt.Errorf("provider conformance: %s retry text = %q, want %q", driver.Name, got, driver.Expectations.RetryText)
+	}
+	return nil
+}
+
 func verifyResponse(driver Driver, response *core.ModelResponse, streaming bool) error {
 	if response == nil {
 		return fmt.Errorf("provider conformance: %s returned a nil response", driver.Name)
@@ -254,5 +287,11 @@ func partialStreamMessages() []core.ModelMessage {
 func malformedStreamMessages() []core.ModelMessage {
 	return []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "malformed stream conformance"}}},
+	}
+}
+
+func retryMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "retry conformance"}}},
 	}
 }
