@@ -552,7 +552,7 @@ func TestRequestViaResponsesWebSocketFallbackPreservesExplicitStoreTrue(t *testi
 			responsesMessage("user", "hello"),
 		},
 	}
-	resp, err := p.requestViaResponsesWithReq(context.Background(), req)
+	resp, err := p.requestViaResponsesWithReq(context.Background(), req, nil)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -934,7 +934,7 @@ func TestSendResponsesCreateLockedUsesFallbackReadTimeoutWithoutContextDeadline(
 		WithBaseURL(server.URL),
 		WithTransport("websocket"),
 	)
-	conn, err := p.ensureResponsesWebSocketLocked(context.Background())
+	conn, err := p.ensureResponsesWebSocketLocked(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ensure websocket failed: %v", err)
 	}
@@ -948,7 +948,7 @@ func TestSendResponsesCreateLockedUsesFallbackReadTimeoutWithoutContextDeadline(
 	}
 
 	start := time.Now()
-	_, err = p.sendResponsesCreateLocked(context.Background(), conn, req)
+	_, err = p.sendResponsesCreateLocked(context.Background(), conn, req, nil)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected read timeout error")
@@ -1019,7 +1019,7 @@ func TestSendResponsesCreateLockedRecomputesReadDeadlinePerEvent(t *testing.T) {
 		WithBaseURL(server.URL),
 		WithTransport("websocket"),
 	)
-	conn, err := p.ensureResponsesWebSocketLocked(context.Background())
+	conn, err := p.ensureResponsesWebSocketLocked(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ensure websocket failed: %v", err)
 	}
@@ -1036,7 +1036,7 @@ func TestSendResponsesCreateLockedRecomputesReadDeadlinePerEvent(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	resp, err := p.sendResponsesCreateLocked(ctx, conn, req)
+	resp, err := p.sendResponsesCreateLocked(ctx, conn, req, nil)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("expected rolling read deadlines to allow progress, got: %v", err)

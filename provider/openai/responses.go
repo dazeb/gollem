@@ -129,13 +129,13 @@ type responsesOutputTokensDetails struct {
 	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
-func (p *Provider) requestViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+func (p *Provider) requestViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, ri *requestInstrumentation) (*core.ModelResponse, error) {
 	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens, p.disableToolSearch)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
 	}
 	p.applyResponsesEndpointSettings(req)
-	return p.requestViaResponsesWithReq(ctx, req)
+	return p.requestViaResponsesWithReq(ctx, req, ri)
 }
 
 // applyResponsesEndpointSettings configures endpoint-specific fields on the
@@ -189,9 +189,16 @@ func (p *Provider) applyResponsesEndpointSettings(req *responsesRequest) {
 // internally. The non-streaming Request() path continues to use WebSocket
 // when configured; RequestStream() falls back to HTTP SSE which provides
 // true incremental event delivery.
-func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, ri *requestInstrumentation) (core.StreamedResponse, error) {
+	// requestStreamViaResponses always uses HTTP SSE, even when the provider is
+	// configured for websocket (the websocket transport exposes no streaming
+	// interface). Label the physical transport accordingly so consumers do not
+	// misattribute HTTP header timing to WebSocket.
+	ri.setTransport(transportHTTP)
+
 	req, err := buildResponsesRequest(messages, settings, params, p.model, p.maxTokens, p.disableToolSearch)
 	if err != nil {
+		ri.finish()
 		return nil, fmt.Errorf("openai: failed to build responses request: %w", err)
 	}
 
@@ -203,11 +210,18 @@ func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []cor
 
 	body, err := json.Marshal(req)
 	if err != nil {
+		ri.finish()
 		return nil, fmt.Errorf("openai: failed to marshal responses request: %w", err)
 	}
+	ri.setRequestShape(len(body), len(req.Input))
+	ri.markCacheKey(req.PromptCacheKey)
 
-	resp, err := p.doRequest(ctx, p.responsesEP(), body)
+	resp, err := p.doRequest(ctx, p.responsesEP(), body, ri)
 	if err != nil {
+		// The stream is never returned, so finalize the trace here for failed
+		// setup (429s, connection errors). Without this the observer never
+		// fires for precisely the failed physical requests.
+		ri.finish()
 		return nil, err
 	}
 
@@ -225,16 +239,21 @@ func (p *Provider) requestStreamViaResponses(ctx context.Context, messages []cor
 		defer resp.Body.Close()
 		var apiResp responsesAPIResponse
 		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+			ri.recordError(err)
+			ri.finish()
 			return nil, fmt.Errorf("openai: failed to decode responses API response: %w", err)
 		}
 		bound, bindErr := p.parseBoundResponsesResponse(&apiResp)
 		if bindErr != nil {
+			ri.recordError(bindErr)
+			ri.finish()
 			return nil, bindErr
 		}
-		return newPrebuiltResponsesStream(bound), nil
+		ri.recordTerminal()
+		return &prebuiltResponsesStream{response: bound, instrumentation: ri}, nil
 	}
 
-	return newBoundResponsesStreamedResponse(resp.Body, p.model, p.resolveResponseModel), nil
+	return newBoundResponsesStreamedResponse(resp.Body, p.model, p.resolveResponseModel, ri), nil
 }
 
 // applyChatGPTRequirements modifies a request for the ChatGPT backend:
@@ -331,7 +350,23 @@ func extractTextContent(content any) string {
 	return ""
 }
 
-func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *responsesRequest) (*core.ModelResponse, error) {
+func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *responsesRequest, ri *requestInstrumentation) (*core.ModelResponse, error) {
+	// The cache key actually sent is whatever applyResponsesEndpointSettings
+	// copied onto req, falling back to the provider's configured key (the WS
+	// create event carries it regardless of endpoint classification).
+	cacheKey := req.PromptCacheKey
+	if cacheKey == "" {
+		cacheKey = p.promptCacheKey
+	}
+	ri.markCacheKey(cacheKey)
+
+	// Finish the active trace on return. ri is reassigned below when the
+	// websocket attempt fails and falls back to HTTP (a fresh trace is started
+	// for the HTTP attempt). Capturing ri by reference ensures whichever trace
+	// is active at return is delivered exactly once; the caller's defer
+	// ri.finish() is an idempotent no-op on the already-finished original.
+	defer func() { ri.finish() }()
+
 	if p.shouldUseResponsesWebSocket() {
 		// Keep websocket continuations strictly in-memory on the active socket,
 		// aligned with WebSocket mode guidance and ZDR/store=false compatibility.
@@ -340,19 +375,27 @@ func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *response
 			storeFalse := false
 			req.Store = &storeFalse
 		}
-		resp, wsErr := p.requestViaResponsesWebSocket(ctx, req)
+		resp, wsErr := p.requestViaResponsesWebSocket(ctx, req, ri)
 		if wsErr == nil {
 			return resp, nil
 		}
 		if !p.wsHTTPFallback {
+			ri.recordError(wsErr)
 			return nil, wsErr
 		}
+		// The websocket attempt failed and HTTP fallback is enabled. Deliver
+		// the failed WS attempt as its own trace (with its error and timing),
+		// then start a fresh trace for the HTTP fallback so the two physical
+		// requests are attributable separately rather than merged into one.
+		ri.recordError(wsErr)
+		ri.finish()
+		ri = newRequestInstrumentation(p.requestObserver, transportHTTP, p.model)
 		// Restore caller intent for HTTP fallback; websocket-specific store=false
 		// coercion should not leak into the fallback transport.
 		req.Store = cloneBoolPtr(origStore)
 	}
 
-	return p.requestViaResponsesHTTP(ctx, req)
+	return p.requestViaResponsesHTTP(ctx, req, ri)
 }
 
 func cloneBoolPtr(v *bool) *bool {
@@ -363,13 +406,30 @@ func cloneBoolPtr(v *bool) *bool {
 	return &c
 }
 
-func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRequest) (*core.ModelResponse, error) {
+// estimateResponsesRequestBytes reports the marshaled size of a Responses
+// request. It is used by the websocket path to record the actual payload size
+// (after continuation trimming) on the trace; the HTTP path records len(body)
+// directly from its own marshal. Guarded by the caller so unobserved requests
+// never pay for this extra serialization.
+func estimateResponsesRequestBytes(req *responsesRequest) int {
+	if req == nil {
+		return 0
+	}
+	if b, err := json.Marshal(req); err == nil {
+		return len(b)
+	}
+	return 0
+}
+
+func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRequest, ri *requestInstrumentation) (*core.ModelResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to marshal responses request: %w", err)
 	}
+	ri.setRequestShape(len(body), len(req.Input))
+	ri.markCacheKey(req.PromptCacheKey)
 
-	resp, err := p.doRequest(ctx, p.responsesEP(), body)
+	resp, err := p.doRequest(ctx, p.responsesEP(), body, ri)
 	if err != nil {
 		return nil, err
 	}
@@ -378,15 +438,21 @@ func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRe
 	// ChatGPT backend requires stream=true and returns SSE events.
 	// Parse the stream and extract the final terminal response event.
 	if req.Stream != nil && *req.Stream {
-		return p.parseSSEResponses(resp)
+		return p.parseSSEResponses(resp, ri)
 	}
 
 	var apiResp responsesAPIResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		ri.recordError(err)
 		return nil, fmt.Errorf("openai: failed to decode responses API response: %w", err)
 	}
-
-	return p.parseBoundResponsesResponse(&apiResp)
+	ri.recordTerminal()
+	bound, err := p.parseBoundResponsesResponse(&apiResp)
+	if err != nil {
+		ri.recordError(err)
+		return nil, err
+	}
+	return bound, nil
 }
 
 // parseSSEResponses reads an SSE stream and returns the final response.
@@ -399,13 +465,17 @@ func (p *Provider) requestViaResponsesHTTP(ctx context.Context, req *responsesRe
 // output is empty (which it always is for codex). This is the bug fix
 // for sleepy meta-evolution: without this, every codex call returns
 // empty text and looks like a rate limit.
-func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, error) {
+func (p *Provider) parseSSEResponses(resp *http.Response, ri *requestInstrumentation) (*core.ModelResponse, error) {
 	scanner := bufio.NewScanner(resp.Body)
 	// Allow large lines (SSE events can be big).
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var finalResp *responsesAPIResponse
 	var streamedItems []responsesOutputItem // accumulated from output_item.done events
+	// terminalFailure holds a sanitized classification for an in-band
+	// response.failed / response.incomplete outcome so we can record it in the
+	// trace (terminal timing + classification) before translating it to an error.
+	var terminalFailure string
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -419,20 +489,46 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 			Type     string               `json:"type"`
 			Response responsesAPIResponse `json:"response,omitempty"`
 			Item     responsesOutputItem  `json:"item,omitempty"`
+			Delta    string               `json:"delta,omitempty"`
 		}
 		if json.Unmarshal([]byte(data), &event) != nil {
 			continue
 		}
+		ri.recordFirstEvent()
 		switch event.Type {
 		case "response.completed", "response.done":
 			finalResp = &event.Response
+			ri.recordTerminal()
+		case "response.output_text.delta", "response.function_call_arguments.delta":
+			// Deltas arrive before output_item.done; timestamp the first token
+			// as soon as the model produces output content, not at item
+			// completion. This keeps the non-stream SSE path's first-token
+			// measurement comparable to the streaming/WebSocket paths.
+			if event.Delta != "" {
+				ri.recordFirstToken()
+			}
 		case "response.output_item.done":
 			// Accumulate completed message items so we can recover
 			// the response text even when the terminal event has
 			// output:[] (codex backend behavior).
 			if event.Item.Type == "message" || event.Item.Type == "function_call" {
+				ri.recordFirstToken()
 				streamedItems = append(streamedItems, event.Item)
 			}
+		case "response.failed":
+			terminalFailure = "response_failed"
+			if event.Response.IncompleteDetails != nil {
+				terminalFailure = classifyProviderError("response.failed", event.Response.IncompleteDetails.Reason)
+			}
+			finalResp = &event.Response
+			ri.recordTerminalFailure(terminalFailure)
+		case "response.incomplete":
+			terminalFailure = "response_incomplete"
+			if event.Response.IncompleteDetails != nil {
+				terminalFailure = classifyProviderError("response.incomplete", event.Response.IncompleteDetails.Reason)
+			}
+			finalResp = &event.Response
+			ri.recordTerminalFailure(terminalFailure)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -441,18 +537,28 @@ func (p *Provider) parseSSEResponses(resp *http.Response) (*core.ModelResponse, 
 		// that case we already have the complete response payload, so prefer it
 		// over surfacing a transport error.
 		if finalResp == nil {
+			ri.recordError(err)
 			return nil, fmt.Errorf("openai: SSE read error: %w", err)
 		}
 	}
+	if terminalFailure != "" {
+		return nil, fmt.Errorf("openai: %s", terminalFailure)
+	}
 	if finalResp == nil {
+		ri.recordError(errors.New("openai: no terminal response event in stream"))
 		return nil, errors.New("openai: no terminal response event in stream")
 	}
 	// Codex backend fix: if the terminal response has no output items
-	// but we accumulated streamed message items, use those instead.
+	// but we accumulated streamed message items, use these instead.
 	if len(finalResp.Output) == 0 && len(streamedItems) > 0 {
 		finalResp.Output = streamedItems
 	}
-	return p.parseBoundResponsesResponse(finalResp)
+	result, err := p.parseBoundResponsesResponse(finalResp)
+	if err != nil {
+		ri.recordError(err)
+		return nil, err
+	}
+	return result, nil
 }
 
 func buildResponsesRequest(messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters, model string, defaultMaxTokens int, disableToolSearch bool) (*responsesRequest, error) {

@@ -94,6 +94,7 @@ type Provider struct {
 	chatgptAccountID        string
 	tokenRefresher          TokenRefresher
 	reasoningSummaryHandler func(text string)
+	requestObserver         RequestObserver
 }
 
 // Option configures the OpenAI provider.
@@ -345,6 +346,12 @@ func New(opts ...Option) *Provider {
 	if p.textVerbosity == "" {
 		p.textVerbosity = os.Getenv("OPENAI_TEXT_VERBOSITY")
 	}
+	// OPENAI_REQUEST_TRACE=1 installs the default stderr request observer when
+	// no explicit observer was provided. This is the lowest-friction way to
+	// turn on secret-safe per-request latency diagnostics.
+	if p.requestObserver == nil && isTruthy(os.Getenv("OPENAI_REQUEST_TRACE")) {
+		p.requestObserver = DefaultStderrRequestObserver()
+	}
 	// Strip trailing /v1 or /v1/ from the base URL. Our endpoint path
 	// already includes /v1, so a base URL with /v1 (which is the convention
 	// in the OpenAI Python client) would produce /v1/v1/chat/completions.
@@ -426,6 +433,7 @@ func (p *Provider) NewSession() core.Model {
 		chatgptAccountID:        p.chatgptAccountID,
 		tokenRefresher:          p.tokenRefresher,
 		reasoningSummaryHandler: p.reasoningSummaryHandler,
+		requestObserver:         p.requestObserver,
 	}
 }
 
@@ -456,8 +464,11 @@ func (p *Provider) ModelName() string {
 
 // Request sends messages to OpenAI and returns a complete response.
 func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	ri := newRequestInstrumentation(p.requestObserver, p.transport, p.model)
+	defer ri.finish()
+
 	if p.shouldUseResponsesAPI() {
-		return p.requestViaResponses(ctx, messages, settings, params)
+		return p.requestViaResponses(ctx, messages, settings, params, ri)
 	}
 
 	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, false)
@@ -472,24 +483,32 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
+	// Count the built API messages, not the input slice: one ModelMessage can
+	// expand into multiple API messages (multi-part system/user/tool content).
+	ri.setRequestShape(len(body), len(req.Messages))
+	ri.markCacheKey(p.promptCacheKey)
 
-	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body)
+	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body, ri)
 	if err != nil {
 		if isChatCompletionsMismatch(err) {
 			// Some models (e.g. Codex variants) are only available via /v1/responses.
 			p.useResponses = true
-			return p.requestViaResponses(ctx, messages, settings, params)
+			return p.requestViaResponses(ctx, messages, settings, params, ri)
 		}
+		ri.recordError(err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		ri.recordError(err)
 		return nil, fmt.Errorf("openai: failed to decode response: %w", err)
 	}
+	ri.recordTerminal()
 	responseModel, err := p.resolveResponseModel(apiResp.Model)
 	if err != nil {
+		ri.recordError(err)
 		return nil, err
 	}
 	return parseResponse(&apiResp, responseModel), nil
@@ -497,12 +516,15 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 
 // RequestStream sends messages and returns a streaming response.
 func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	ri := newRequestInstrumentation(p.requestObserver, p.transport, p.model)
+
 	if p.shouldUseResponsesAPI() {
-		return p.requestStreamViaResponses(ctx, messages, settings, params)
+		return p.requestStreamViaResponses(ctx, messages, settings, params, ri)
 	}
 
 	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, true)
 	if err != nil {
+		ri.finish()
 		return nil, fmt.Errorf("openai: failed to build request: %w", err)
 	}
 	req.PromptCacheKey = p.promptCacheKey
@@ -511,19 +533,30 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 
 	body, err := json.Marshal(req)
 	if err != nil {
+		ri.finish()
 		return nil, fmt.Errorf("openai: failed to marshal request: %w", err)
 	}
+	// Count the built API messages, not the input slice: one ModelMessage can
+	// expand into multiple API messages (multi-part system/user/tool content).
+	ri.setRequestShape(len(body), len(req.Messages))
+	ri.markCacheKey(p.promptCacheKey)
 
-	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body) //nolint:bodyclose // Response body ownership transfers to streamedResponse.
+	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body, ri) //nolint:bodyclose // Response body ownership transfers to streamedResponse.
 	if err != nil {
 		if isChatCompletionsMismatch(err) {
 			p.useResponses = true
-			return p.requestStreamViaResponses(ctx, messages, settings, params)
+			stream, sErr := p.requestStreamViaResponses(ctx, messages, settings, params, ri)
+			if sErr != nil {
+				ri.finish()
+			}
+			return stream, sErr
 		}
+		ri.recordError(err)
+		ri.finish()
 		return nil, err
 	}
 
-	return newBoundStreamedResponse(resp.Body, p.model, p.resolveResponseModel), nil
+	return newBoundStreamedResponse(resp.Body, p.model, p.resolveResponseModel, ri), nil
 }
 
 // responsesEP returns the Responses API endpoint path. ChatGPT subscription
@@ -539,26 +572,30 @@ func (p *Provider) responsesEP() string {
 // doRequest sends a single HTTP request and returns the response or a typed
 // error. Retry logic is handled at the model level by modelutil.RetryModel,
 // which uses this error's RetryAfter field for backoff.
-func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte) (*http.Response, error) {
+func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte, ri *requestInstrumentation) (*http.Response, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
 	}
-	if err := p.setHeaders(httpReq); err != nil {
+	if err := p.setHeaders(httpReq, ri); err != nil {
+		ri.recordError(err)
 		return nil, err
 	}
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
+		ri.recordError(err)
 		return nil, fmt.Errorf("openai: HTTP request failed: %w", err)
 	}
 
+	ri.recordHeaders(resp.StatusCode)
 	if resp.StatusCode == http.StatusOK {
 		return resp, nil
 	}
 
 	classification := readProviderErrorClassification(resp.Body)
 	resp.Body.Close()
+	ri.classifyHTTPResponse(resp.StatusCode, classification)
 
 	httpErr := sanitizedProviderHTTPError("openai API error", resp.StatusCode, classification, p.model)
 
@@ -568,18 +605,22 @@ func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte) 
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
 			if secs, err := strconv.Atoi(ra); err == nil {
 				httpErr.RetryAfter = time.Duration(secs) * time.Second
+				ri.recordRetryAfter(httpErr.RetryAfter)
 			}
 		}
 	}
 
+	ri.recordError(httpErr)
 	return nil, httpErr
 }
 
-func (p *Provider) authorizationToken() (string, error) {
+func (p *Provider) authorizationToken(ri *requestInstrumentation) (string, error) {
 	if p.tokenRefresher == nil {
 		return p.apiKey, nil
 	}
+	ri.beginTokenRefresh()
 	token, err := p.tokenRefresher()
+	ri.endTokenRefresh()
 	if err != nil {
 		return "", fmt.Errorf("openai: refreshing access token: %w", err)
 	}
@@ -645,8 +686,8 @@ func (p *Provider) parseBoundResponsesResponse(resp *responsesAPIResponse) (*cor
 	return parseResponsesResponse(resp, responseModel), nil
 }
 
-func (p *Provider) setHeaders(req *http.Request) error {
-	token, err := p.authorizationToken()
+func (p *Provider) setHeaders(req *http.Request, ri *requestInstrumentation) error {
+	token, err := p.authorizationToken(ri)
 	if err != nil {
 		return err
 	}
