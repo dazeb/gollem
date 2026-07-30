@@ -126,20 +126,60 @@ func normalizeCacheValue(value any, path []string) (any, error) {
 	}
 }
 
+// toolReturnDataPathKey marks the data object of a core tool-return part
+// envelope in the traversal path so its opaque content payload is preserved
+// verbatim rather than normalized as transport metadata.
+const toolReturnDataPathKey = "\x00tool-return-data"
+
 func normalizeCacheMap(value map[string]any, path []string) (map[string]any, error) {
 	out := make(map[string]any, len(value))
-	inSchemaProperties := len(path) > 0 && isSchemaPropertyContainer(path[len(path)-1])
+	last := ""
+	if len(path) > 0 {
+		last = path[len(path)-1]
+	}
+	inSchemaProperties := isSchemaPropertyContainer(last)
+	inToolReturnData := last == toolReturnDataPathKey
+	toolReturnEnvelope := isToolReturnEnvelope(value)
 	for key, raw := range value {
 		if !inSchemaProperties && shouldDropCacheKey(key, value) {
 			continue
 		}
-		normalized, err := normalizeCacheField(key, raw, append(path, key))
+		// The content of a tool-return part is opaque user/tool output.
+		// Applying the metadata drop list, sorting, or canonicalization to it
+		// would let materially different tool results (say {"duration":5}
+		// versus {"duration":10}) collapse to one cache key and return a stale
+		// model response, so preserve it verbatim.
+		if inToolReturnData && normalizedKey(key) == "content" {
+			out[key] = raw
+			continue
+		}
+		childKey := key
+		if toolReturnEnvelope && key == "data" {
+			childKey = toolReturnDataPathKey
+		}
+		normalized, err := normalizeCacheField(key, raw, append(path, childKey))
 		if err != nil {
 			return nil, err
 		}
 		out[key] = normalized
 	}
 	return out, nil
+}
+
+// isToolReturnEnvelope reports whether value is a core tool-return part envelope
+// ({"type":"tool-return","data":{...}}), whose data.content is opaque tool
+// output. It deliberately does not match provider-native content blocks, which
+// carry only "type" (not "data") and whose transport metadata is still
+// normalized to preserve cache hit rates.
+func isToolReturnEnvelope(value map[string]any) bool {
+	if _, ok := value["data"]; !ok {
+		return false
+	}
+	t, ok := value["type"].(string)
+	if !ok {
+		return false
+	}
+	return normalizedKey(t) == "toolreturn"
 }
 
 func normalizeCacheField(key string, raw any, path []string) (any, error) {

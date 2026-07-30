@@ -97,6 +97,42 @@ func TestStableCacheKey_DifferentSemanticContentDiffers(t *testing.T) {
 	}
 }
 
+func TestStableCacheKey_ToolContentWithDropListedKeysStaysDistinct(t *testing.T) {
+	build := func(content map[string]any) []core.ModelMessage {
+		return []core.ModelMessage{
+			core.ModelResponse{
+				Parts: []core.ModelResponsePart{
+					core.ToolCallPart{ToolName: "bench", ArgsJSON: `{}`, ToolCallID: "call-1"},
+				},
+			},
+			core.ModelRequest{
+				Parts: []core.ModelRequestPart{
+					core.ToolReturnPart{
+						ToolName:   "bench",
+						ToolCallID: "call-1",
+						Content:    content,
+					},
+				},
+			},
+		}
+	}
+
+	// "duration" is on the transport metadata drop list, but here it is a
+	// semantic field inside the tool result: 5 and 10 are materially different
+	// outputs and must not share a cache entry.
+	key1 := mustStableKey(t, StableCacheKeyInput{Model: "m", Messages: build(map[string]any{"duration": 5})})
+	key2 := mustStableKey(t, StableCacheKeyInput{Model: "m", Messages: build(map[string]any{"duration": 10})})
+	if key1 == key2 {
+		t.Fatal("stable keys collided for tool results with different duration values")
+	}
+
+	// Identical tool content still produces a stable key.
+	key3 := mustStableKey(t, StableCacheKeyInput{Model: "m", Messages: build(map[string]any{"duration": 5})})
+	if key1 != key3 {
+		t.Fatalf("stable keys differ for identical tool content:\n%s\n%s", key1, key3)
+	}
+}
+
 func TestStableCacheKey_NormalizesSafeOrderingNoise(t *testing.T) {
 	params1 := &core.ModelRequestParameters{
 		FunctionTools: []core.ToolDefinition{

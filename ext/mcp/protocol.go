@@ -31,9 +31,14 @@ const (
 	jsonRPCCodeUnsupportedProtocolVersion = -32022
 )
 
-// maxMRTRRounds bounds the number of input_required round trips a client will
-// complete for a single logical request before treating the exchange as failed.
-const maxMRTRRounds = 8
+// defaultMaxMRTRRounds bounds the number of input_required round trips a client
+// will complete for a single logical request before treating the exchange as
+// failed. Each round corresponds to one server-driven input request (e.g. a
+// single sampling call), so the default is generous enough to cover a caller's
+// full per-request retry policy (retries plus fallbacks plus empty/backoff
+// responses) without imposing a hidden lower limit. Callers with heavier
+// policies can raise it via ClientConfig.MaxMRTRRounds.
+const defaultMaxMRTRRounds = 64
 
 // HeaderMismatchError constructs a JSON-RPC -32020 error.
 func HeaderMismatchError(message string) *jsonRPCError {
@@ -114,6 +119,11 @@ type ClientConfig struct {
 	RootsProvider      RootsProvider
 	SamplingHandler    SamplingHandler
 	ElicitationHandler ElicitationHandler
+	// MaxMRTRRounds overrides the number of input_required round trips the
+	// client will complete for a single logical request. Zero or negative uses
+	// defaultMaxMRTRRounds. Set this to at least the caller's worst-case
+	// per-request sampling count so a recoverable exchange is not aborted.
+	MaxMRTRRounds int
 }
 
 // StaticRoots returns a provider that always returns the same roots.
@@ -203,6 +213,7 @@ type clientState struct {
 	instructions         string
 	clientInfo           ImplementationInfo
 	clientCapabilities   ClientCapabilities
+	maxMRTRRounds        int
 }
 
 func newClientState(configs ...ClientConfig) *clientState {
@@ -217,6 +228,12 @@ func newClientState(configs ...ClientConfig) *clientState {
 		cfg.RootsProvider = override.RootsProvider
 		cfg.SamplingHandler = override.SamplingHandler
 		cfg.ElicitationHandler = override.ElicitationHandler
+		cfg.MaxMRTRRounds = override.MaxMRTRRounds
+	}
+
+	maxRounds := cfg.MaxMRTRRounds
+	if maxRounds <= 0 {
+		maxRounds = defaultMaxMRTRRounds
 	}
 
 	state := &clientState{
@@ -224,6 +241,7 @@ func newClientState(configs ...ClientConfig) *clientState {
 		notificationHandlers: make(map[string]map[int64]NotificationHandler),
 		requestHandlers:      make(map[string]RequestHandler),
 		protocolVersion:      protocolVersion,
+		maxMRTRRounds:        maxRounds,
 	}
 
 	if cfg.ClientInfo != nil {
@@ -818,7 +836,11 @@ func mustRawJSON(data []byte) json.RawMessage {
 // returned for the caller to unmarshal.
 func (s *clientState) roundTrip(ctx context.Context, call rpcCaller, method string, params any, mrtr bool) (json.RawMessage, error) {
 	baseParams := normalizeParamsMap(params)
-	for range maxMRTRRounds {
+	maxRounds := s.maxMRTRRounds
+	if maxRounds <= 0 {
+		maxRounds = defaultMaxMRTRRounds
+	}
+	for range maxRounds {
 		paramsRaw, err := mergeRequestMeta(baseParams, s.requestMeta())
 		if err != nil {
 			return nil, err
@@ -867,7 +889,7 @@ func (s *clientState) roundTrip(ctx context.Context, call rpcCaller, method stri
 			return nil, fmt.Errorf("mcp: unrecognized resultType %q for method %q", rt, method)
 		}
 	}
-	return nil, fmt.Errorf("mcp: MRTR round limit (%d) exceeded for method %q", maxMRTRRounds, method)
+	return nil, fmt.Errorf("mcp: MRTR round limit (%d) exceeded for method %q", maxRounds, method)
 }
 
 // fulfillInputRequests invokes the registered client handler for each input
@@ -1166,7 +1188,13 @@ func parsePendingID(raw *json.RawMessage) (int64, error) {
 	return 0, fmt.Errorf("unsupported response id: %s", string(*raw))
 }
 
-// normalizeID converts the raw JSON id to a concrete type for serialization.
+// normalizeID converts the raw JSON id to a concrete type for serialization
+// while preserving the client's exact id. Integers that fit int64 and strings
+// decode to their concrete Go values so the client and server can correlate a
+// response; anything else (integers beyond int64, or otherwise unusual ids) is
+// preserved as raw JSON bytes and echoed verbatim. A previous float64 fallback
+// silently rounded large integers, producing a response id the client could
+// not correlate.
 func normalizeID(raw *json.RawMessage) any {
 	if raw == nil {
 		return nil
@@ -1175,11 +1203,6 @@ func normalizeID(raw *json.RawMessage) any {
 	var intID int64
 	if err := json.Unmarshal(*raw, &intID); err == nil {
 		return intID
-	}
-
-	var floatID float64
-	if err := json.Unmarshal(*raw, &floatID); err == nil {
-		return floatID
 	}
 
 	var strID string
