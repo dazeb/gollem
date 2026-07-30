@@ -39,17 +39,18 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Name:                "native OpenAI",
 					Model:               openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
 					ReasoningModel:      openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-5")),
-					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, ReasoningVisibility: true},
+					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   openAICancellationReady,
 					RequestTimeoutReady: openAITimeout.readyFor("gpt-4o"),
 					Expectations: conformance.Expectations{
-						ResponseText:   "openai response",
-						ToolName:       "conformance_echo",
-						StreamText:     "openai stream",
-						PartialText:    "openai partial",
-						DisconnectText: "openai disconnect",
-						RetryText:      "openai retry",
-						ReasoningText:  "openai reasoning",
+						ResponseText:      "openai response",
+						ToolName:          "conformance_echo",
+						StreamText:        "openai stream",
+						PartialText:       "openai partial",
+						DisconnectText:    "openai disconnect",
+						RetryText:         "openai retry",
+						StreamTimeoutText: "openai deadline",
+						ReasoningText:     "openai reasoning",
 					},
 				}, nil
 			},
@@ -68,16 +69,17 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 				return conformance.Driver{
 					Name:                "OpenAI-compatible local",
 					Model:               model,
-					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true},
+					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true},
 					CancellationReady:   openAICancellationReady,
 					RequestTimeoutReady: openAITimeout.readyFor("gpt-5.2-codex"),
 					Expectations: conformance.Expectations{
-						ResponseText:   "openai response",
-						ToolName:       "conformance_echo",
-						StreamText:     "openai stream",
-						PartialText:    "openai partial",
-						DisconnectText: "openai disconnect",
-						RetryText:      "openai retry",
+						ResponseText:      "openai response",
+						ToolName:          "conformance_echo",
+						StreamText:        "openai stream",
+						PartialText:       "openai partial",
+						DisconnectText:    "openai disconnect",
+						RetryText:         "openai retry",
+						StreamTimeoutText: "openai deadline",
 					},
 				}, nil
 			},
@@ -90,17 +92,18 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Name:                "native Anthropic",
 					Model:               model,
 					ReasoningModel:      model,
-					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, ReasoningVisibility: true},
+					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   anthropicCancellationReady,
 					RequestTimeoutReady: anthropicTimeout.readyFor(anthropic.ClaudeSonnet46),
 					Expectations: conformance.Expectations{
-						ResponseText:   "anthropic response",
-						ToolName:       "conformance_echo",
-						StreamText:     "anthropic stream",
-						PartialText:    "anthropic partial",
-						DisconnectText: "anthropic disconnect",
-						RetryText:      "anthropic retry",
-						ReasoningText:  "anthropic reasoning",
+						ResponseText:      "anthropic response",
+						ToolName:          "conformance_echo",
+						StreamText:        "anthropic stream",
+						PartialText:       "anthropic partial",
+						DisconnectText:    "anthropic disconnect",
+						RetryText:         "anthropic retry",
+						StreamTimeoutText: "anthropic deadline",
+						ReasoningText:     "anthropic reasoning",
 					},
 				}, nil
 			},
@@ -170,6 +173,14 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 		t.Fatal("Verify accepted a timeout claim without a start signal")
 	}
 	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing stream timeout fixture",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{StreamTimeout: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a stream timeout claim without expected partial text")
+	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
 		Name:   "missing reasoning model",
 		Model:  openai.New(openai.WithAPIKey("test-key")),
 		Claims: conformance.Claims{ReasoningVisibility: true},
@@ -215,6 +226,12 @@ func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, r
 		}
 		if strings.Contains(string(body), "cancel conformance") {
 			waitForCancellation(r, cancellationReady)
+			return
+		}
+		if strings.Contains(string(body), "stream timeout conformance") {
+			writeDeadlineBoundSSE(w, r, `data: {"id":"chatcmpl-deadline","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"openai deadline"},"finish_reason":null}]}
+
+`)
 			return
 		}
 		if strings.Contains(string(body), "timeout conformance") {
@@ -328,6 +345,16 @@ func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}
 			waitForCancellation(r, cancellationReady)
 			return
 		}
+		if strings.Contains(string(body), "stream timeout conformance") {
+			writeDeadlineBoundSSE(w, r, `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"anthropic deadline"}}
+
+`)
+			return
+		}
 		if strings.Contains(string(body), "timeout conformance") {
 			timeout.waitForCancellation(r.Context(), request.Model)
 			return
@@ -436,6 +463,15 @@ func writeTruncatedSSE(w http.ResponseWriter, body string) {
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+func writeDeadlineBoundSSE(w http.ResponseWriter, request *http.Request, body string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprint(w, body)
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	<-request.Context().Done()
 }
 
 func waitForCancellation(request *http.Request, ready chan<- struct{}) {

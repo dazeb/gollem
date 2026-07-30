@@ -30,6 +30,7 @@ type Claims struct {
 	DisconnectStream    bool
 	Retryability        bool
 	RequestTimeout      bool
+	StreamTimeout       bool
 	ReasoningVisibility bool
 }
 
@@ -37,13 +38,14 @@ type Claims struct {
 // produces. ToolName is required when Claims.ToolCalls is true. StreamText is
 // required when Claims.Streaming is true.
 type Expectations struct {
-	ResponseText   string
-	ToolName       string
-	StreamText     string
-	PartialText    string
-	DisconnectText string
-	RetryText      string
-	ReasoningText  string
+	ResponseText      string
+	ToolName          string
+	StreamText        string
+	PartialText       string
+	DisconnectText    string
+	RetryText         string
+	StreamTimeoutText string
+	ReasoningText     string
 }
 
 // Driver binds a provider model to the common capability claims and expected
@@ -88,6 +90,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	if driver.Claims.RequestTimeout && driver.RequestTimeoutReady == nil {
 		return fmt.Errorf("provider conformance: %s timeout-capable fixture must signal request start", driver.Name)
 	}
+	if driver.Claims.StreamTimeout && strings.TrimSpace(driver.Expectations.StreamTimeoutText) == "" {
+		return fmt.Errorf("provider conformance: %s stream-timeout fixture must expect partial text", driver.Name)
+	}
 	if driver.Claims.ReasoningVisibility && driver.ReasoningModel == nil {
 		return fmt.Errorf("provider conformance: %s reasoning-capable fixture must supply a reasoning model", driver.Name)
 	}
@@ -126,6 +131,11 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.RequestTimeout {
 		if err := verifyRequestTimeout(ctx, driver); err != nil {
+			return err
+		}
+	}
+	if driver.Claims.StreamTimeout {
+		if err := verifyStreamTimeout(ctx, driver); err != nil {
 			return err
 		}
 	}
@@ -233,6 +243,30 @@ func verifyRequestTimeout(ctx context.Context, driver Driver) error {
 	case <-time.After(time.Second):
 		return fmt.Errorf("provider conformance: %s timeout request did not finish", driver.Name)
 	}
+}
+
+func verifyStreamTimeout(ctx context.Context, driver Driver) error {
+	requestContext, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	stream, err := driver.Model.RequestStream(requestContext, streamTimeoutMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		return fmt.Errorf("provider conformance: %s stream-timeout request: %w", driver.Name, err)
+	}
+	defer stream.Close()
+	for {
+		_, err := stream.Next()
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("provider conformance: %s stream-timeout error, want context deadline exceeded: %w", driver.Name, err)
+		}
+		break
+	}
+	if got := stream.Response().TextContent(); got != driver.Expectations.StreamTimeoutText {
+		return fmt.Errorf("provider conformance: %s stream-timeout text = %q, want %q", driver.Name, got, driver.Expectations.StreamTimeoutText)
+	}
+	return nil
 }
 
 func verifyPartialStream(ctx context.Context, driver Driver) error {
@@ -435,6 +469,12 @@ func retryMessages() []core.ModelMessage {
 func timeoutMessages() []core.ModelMessage {
 	return []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "timeout conformance"}}},
+	}
+}
+
+func streamTimeoutMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "stream timeout conformance"}}},
 	}
 }
 
