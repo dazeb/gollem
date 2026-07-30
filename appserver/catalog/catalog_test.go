@@ -1,8 +1,12 @@
 package catalog
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+
+	openaiprovider "github.com/fugue-labs/gollem/provider/openai"
 )
 
 func TestProviderListReportsConfigurationWithoutSecretValues(t *testing.T) {
@@ -99,6 +103,59 @@ func TestProviderCapabilities(t *testing.T) {
 	_, err = c.ProviderCapabilities("missing")
 	if !errors.Is(err, ErrProviderNotFound) {
 		t.Fatalf("missing provider err = %v, want ErrProviderNotFound", err)
+	}
+}
+
+func TestLocalOpenAICompatibleProviderUsesExplicitSafeConfiguration(t *testing.T) {
+	const baseURL = "http://127.0.0.1:8765/v1"
+	const model = "local-tool-model"
+	const token = "local-secret-value"
+	c := NewDefault(WithEnvLookup(mapEnv(map[string]string{
+		openaiprovider.LocalEndpointBaseURLEnv: baseURL,
+		openaiprovider.LocalEndpointModelEnv:   model,
+		openaiprovider.LocalEndpointAPIKeyEnv:  token,
+	})))
+
+	provider := findProvider(t, c.ListProviders(ProviderListParams{}).Data, ProviderOpenAICompatibleLocal)
+	if !provider.Configured {
+		t.Fatal("explicit valid local profile was not configured")
+	}
+	if !provider.Capabilities.ToolCalls || !provider.Capabilities.Streaming || provider.Capabilities.StructuredOutput || provider.Capabilities.Vision {
+		t.Fatalf("local provider capabilities = %#v", provider.Capabilities)
+	}
+	models, err := c.ListModels(ModelListParams{ProviderID: ProviderOpenAICompatibleLocal})
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models.Data) != 1 || models.Data[0].Model != model || !models.Data[0].Capabilities.ToolCalls || !models.Data[0].Capabilities.Streaming {
+		t.Fatalf("local provider models = %#v", models.Data)
+	}
+
+	encoded, err := json.Marshal(provider)
+	if err != nil {
+		t.Fatalf("marshal provider: %v", err)
+	}
+	for _, secret := range []string{baseURL, token} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("provider metadata leaked local configuration %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestLocalOpenAICompatibleProviderRequiresExplicitValidConfiguration(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"unset": nil,
+		"remote endpoint": {
+			openaiprovider.LocalEndpointBaseURLEnv: "https://example.com/v1",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := NewDefault(WithEnvLookup(mapEnv(env)))
+			provider := findProvider(t, c.ListProviders(ProviderListParams{}).Data, ProviderOpenAICompatibleLocal)
+			if provider.Configured {
+				t.Fatalf("local provider was configured for %#v", env)
+			}
+		})
 	}
 }
 

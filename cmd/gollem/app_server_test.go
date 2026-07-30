@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +24,7 @@ import (
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	"github.com/fugue-labs/gollem/core"
+	openaiprovider "github.com/fugue-labs/gollem/provider/openai"
 )
 
 func TestParseAppServerFlags(t *testing.T) {
@@ -915,6 +918,80 @@ func TestCLIAppServerThreadStartUsesRuntimeProviderFlag(t *testing.T) {
 	})
 	if resp.Error != nil {
 		t.Fatalf("thread/start error: %v", resp.Error)
+	}
+	waitCLINotification(t, server, "turn/completed")
+}
+
+func TestCLIAppServerRuntimeFactoryUsesLocalOpenAICompatibleProfile(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("path = %q, want /v1/chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer local" {
+			t.Fatalf("Authorization = %q, want local credential", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-local","object":"chat.completion","model":"gpt-5.2-codex","choices":[{"message":{"role":"assistant","content":"runtime reply"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv(openaiprovider.LocalEndpointBaseURLEnv, server.URL)
+	t.Setenv("OPENAI_API_KEY", "must-not-be-used")
+
+	factory := appServerRuntimeModelFactory(appServerFlags{})
+	model, info, err := factory(context.Background(), appserver.RuntimeModelSelection{
+		ProviderID: catalog.ProviderOpenAICompatibleLocal,
+		Model:      "gpt-5.2-codex",
+	})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	if info.ProviderID != catalog.ProviderOpenAICompatibleLocal || info.Model != "gpt-5.2-codex" {
+		t.Fatalf("runtime info = %#v", info)
+	}
+	response, err := model.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hello"}}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("runtime request: %v", err)
+	}
+	if response.TextContent() != "runtime reply" || requests != 1 {
+		t.Fatalf("runtime response = %#v, requests = %d", response, requests)
+	}
+}
+
+func TestCLIAppServerThreadStartUsesLocalOpenAICompatibleProfile(t *testing.T) {
+	serverFixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("path = %q, want /v1/chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-local","object":"chat.completion","model":"local-tool-model","choices":[{"message":{"role":"assistant","content":"local thread reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`))
+	}))
+	defer serverFixture.Close()
+	t.Setenv(openaiprovider.LocalEndpointBaseURLEnv, serverFixture.URL)
+	t.Setenv(openaiprovider.LocalEndpointModelEnv, "local-tool-model")
+
+	server, cleanup, err := newCLIAppServer(appServerFlags{
+		workDir:   t.TempDir(),
+		storePath: ":memory:",
+		provider:  catalog.ProviderOpenAICompatibleLocal,
+		stdio:     true,
+	})
+	if err != nil {
+		t.Fatalf("newCLIAppServer: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	response := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("start-local"),
+		Method: "thread/start",
+		Params: json.RawMessage(`{"prompt":"hello from local provider"}`),
+	})
+	if response.Error != nil {
+		t.Fatalf("thread/start error: %v", response.Error)
 	}
 	waitCLINotification(t, server, "turn/completed")
 }

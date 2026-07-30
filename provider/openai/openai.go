@@ -82,6 +82,9 @@ type Provider struct {
 	wsHTTPFallback          bool
 	wsHTTPFallbackSet       bool
 	useResponses            bool
+	forceChatCompletions    bool
+	profileOverride         *modelutil.ModelProfile
+	redactEndpointErrors    bool
 	disableToolSearch       bool
 	strictModelBinding      bool
 	wsConn                  *responsesWebSocketConn
@@ -322,28 +325,30 @@ func New(opts ...Option) *Provider {
 			p.baseURL = envURL
 		}
 	}
-	if p.promptCacheKey == "" {
-		p.promptCacheKey = os.Getenv("OPENAI_PROMPT_CACHE_KEY")
-	}
-	if p.promptCacheRetention == "" {
-		p.promptCacheRetention = os.Getenv("OPENAI_PROMPT_CACHE_RETENTION")
-	}
-	if p.serviceTier == "" {
-		p.serviceTier = os.Getenv("OPENAI_SERVICE_TIER")
-	}
-	if p.transport == "" {
-		p.transport = os.Getenv("OPENAI_TRANSPORT")
+	if !p.forceChatCompletions {
+		if p.promptCacheKey == "" {
+			p.promptCacheKey = os.Getenv("OPENAI_PROMPT_CACHE_KEY")
+		}
+		if p.promptCacheRetention == "" {
+			p.promptCacheRetention = os.Getenv("OPENAI_PROMPT_CACHE_RETENTION")
+		}
+		if p.serviceTier == "" {
+			p.serviceTier = os.Getenv("OPENAI_SERVICE_TIER")
+		}
+		if p.transport == "" {
+			p.transport = os.Getenv("OPENAI_TRANSPORT")
+		}
 	}
 	p.transport = normalizeTransport(p.transport)
-	if !p.wsHTTPFallbackSet {
+	if !p.forceChatCompletions && !p.wsHTTPFallbackSet {
 		if raw := strings.TrimSpace(os.Getenv("OPENAI_WEBSOCKET_HTTP_FALLBACK")); raw != "" {
 			p.wsHTTPFallback = isTruthy(raw)
 		}
 	}
-	if p.reasoningSummary == "" {
+	if !p.forceChatCompletions && p.reasoningSummary == "" {
 		p.reasoningSummary = os.Getenv("OPENAI_REASONING_SUMMARY")
 	}
-	if p.textVerbosity == "" {
+	if !p.forceChatCompletions && p.textVerbosity == "" {
 		p.textVerbosity = os.Getenv("OPENAI_TEXT_VERBOSITY")
 	}
 	// OPENAI_REQUEST_TRACE=1 installs the default stderr request observer when
@@ -426,6 +431,9 @@ func (p *Provider) NewSession() core.Model {
 		wsHTTPFallback:          p.wsHTTPFallback,
 		wsHTTPFallbackSet:       p.wsHTTPFallbackSet,
 		useResponses:            p.useResponses,
+		forceChatCompletions:    p.forceChatCompletions,
+		profileOverride:         p.profileOverride,
+		redactEndpointErrors:    p.redactEndpointErrors,
 		disableToolSearch:       p.disableToolSearch,
 		strictModelBinding:      p.strictModelBinding,
 		reasoningSummary:        p.reasoningSummary,
@@ -490,7 +498,7 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 
 	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body, ri)
 	if err != nil {
-		if isChatCompletionsMismatch(err) {
+		if !p.forceChatCompletions && isChatCompletionsMismatch(err) {
 			// Some models (e.g. Codex variants) are only available via /v1/responses.
 			p.useResponses = true
 			return p.requestViaResponses(ctx, messages, settings, params, ri)
@@ -543,7 +551,7 @@ func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessa
 
 	resp, err := p.doRequest(ctx, chatCompletionsEndpoint, body, ri) //nolint:bodyclose // Response body ownership transfers to streamedResponse.
 	if err != nil {
-		if isChatCompletionsMismatch(err) {
+		if !p.forceChatCompletions && isChatCompletionsMismatch(err) {
 			p.useResponses = true
 			stream, sErr := p.requestStreamViaResponses(ctx, messages, settings, params, ri)
 			if sErr != nil {
@@ -575,6 +583,9 @@ func (p *Provider) responsesEP() string {
 func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte, ri *requestInstrumentation) (*http.Response, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
+		if p.redactEndpointErrors {
+			return nil, errors.New("openai: local endpoint unavailable")
+		}
 		return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
 	}
 	if err := p.setHeaders(httpReq, ri); err != nil {
@@ -585,6 +596,9 @@ func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte, 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		ri.recordError(err)
+		if p.redactEndpointErrors && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			return nil, errors.New("openai: local endpoint unavailable")
+		}
 		return nil, fmt.Errorf("openai: HTTP request failed: %w", err)
 	}
 
@@ -709,7 +723,7 @@ func (p *Provider) setHeaders(req *http.Request, ri *requestInstrumentation) err
 }
 
 func (p *Provider) shouldUseResponsesAPI() bool {
-	return p.useResponses || modelNeedsResponsesAPI(p.model)
+	return !p.forceChatCompletions && (p.useResponses || modelNeedsResponsesAPI(p.model))
 }
 
 func (p *Provider) shouldUseResponsesWebSocket() bool {
@@ -835,6 +849,9 @@ func (p *Provider) hasChatGPTAuth() bool {
 // Profile returns the model's capability profile. Vision is supported by
 // GPT-4o, GPT-4o-mini, O-series, and Codex models.
 func (p *Provider) Profile() modelutil.ModelProfile {
+	if p.profileOverride != nil {
+		return *p.profileOverride
+	}
 	return modelutil.ModelProfile{
 		SupportsToolCalls:        true,
 		SupportsStructuredOutput: true,
