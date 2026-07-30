@@ -193,6 +193,13 @@ type requestInstrumentation struct {
 	terminalRecorded   bool
 }
 
+func recordedDurationSince(start time.Time) time.Duration {
+	if elapsed := time.Since(start); elapsed > 0 {
+		return elapsed
+	}
+	return time.Nanosecond
+}
+
 // newRequestInstrumentation returns a ready accumulator, or nil when there is
 // no observer. Callers should keep the nil result rather than wrapping it.
 func newRequestInstrumentation(obs RequestObserver, transport, model string) *requestInstrumentation {
@@ -242,7 +249,7 @@ func (ri *requestInstrumentation) endTokenRefresh() {
 	if ri == nil || ri.tokenSt.IsZero() {
 		return
 	}
-	ri.trace.TokenRefreshDuration = time.Since(ri.tokenSt)
+	ri.trace.TokenRefreshDuration = recordedDurationSince(ri.tokenSt)
 }
 
 func (ri *requestInstrumentation) recordHeaders(status int) {
@@ -250,7 +257,7 @@ func (ri *requestInstrumentation) recordHeaders(status int) {
 		return
 	}
 	ri.headersRecorded = true
-	ri.trace.TimeToHeaders = time.Since(ri.start)
+	ri.trace.TimeToHeaders = recordedDurationSince(ri.start)
 	ri.trace.HTTPStatus = status
 }
 
@@ -259,7 +266,7 @@ func (ri *requestInstrumentation) recordFirstEvent() {
 		return
 	}
 	ri.firstEventRecorded = true
-	ri.trace.TimeToFirstEvent = time.Since(ri.start)
+	ri.trace.TimeToFirstEvent = recordedDurationSince(ri.start)
 }
 
 func (ri *requestInstrumentation) recordFirstToken() {
@@ -267,7 +274,7 @@ func (ri *requestInstrumentation) recordFirstToken() {
 		return
 	}
 	ri.firstTokenRecorded = true
-	ri.trace.TimeToFirstToken = time.Since(ri.start)
+	ri.trace.TimeToFirstToken = recordedDurationSince(ri.start)
 }
 
 func (ri *requestInstrumentation) recordTerminal() {
@@ -275,7 +282,7 @@ func (ri *requestInstrumentation) recordTerminal() {
 		return
 	}
 	ri.terminalRecorded = true
-	ri.trace.TimeToTerminal = time.Since(ri.start)
+	ri.trace.TimeToTerminal = recordedDurationSince(ri.start)
 }
 
 // recordTerminalFailure records the terminal timing for an in-band Responses
@@ -380,7 +387,7 @@ func (ri *requestInstrumentation) finish() {
 		return
 	}
 	ri.finished = true
-	ri.trace.TotalDuration = time.Since(ri.start)
+	ri.trace.TotalDuration = recordedDurationSince(ri.start)
 	ri.obs(ri.trace)
 }
 
