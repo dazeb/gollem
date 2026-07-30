@@ -112,6 +112,14 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 		}
 	}
 
+	// Record the actual payload shape after continuation trimming so the
+	// trace reflects the bytes sent on the wire (a trimmed continuation sends
+	// far fewer input items than the full context), not the pre-trim request.
+	// Guarded so unobserved requests never pay for the marshal.
+	if ri != nil {
+		ri.setRequestShape(estimateResponsesRequestBytes(&sendReq), len(sendReq.Input))
+	}
+
 	apiResp, err := p.sendResponsesCreateLocked(ctx, conn, &sendReq, ri)
 	if err != nil {
 		// If continuation/cache state is lost, or socket lifetime is reached, or
@@ -131,6 +139,9 @@ func (p *Provider) requestViaResponsesWebSocket(ctx context.Context, req *respon
 				}
 				fullReq := *req
 				fullReq.PreviousResponseID = ""
+				if ri != nil {
+					ri.setRequestShape(estimateResponsesRequestBytes(&fullReq), len(fullReq.Input))
+				}
 				apiResp, err = p.sendResponsesCreateLocked(ctx, conn, &fullReq, ri)
 				if err == nil {
 					// New chain started; local previous-response cache is reset.

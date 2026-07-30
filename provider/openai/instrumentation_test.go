@@ -900,3 +900,194 @@ func TestEstimateResponsesRequestBytes(t *testing.T) {
 		t.Error("non-empty request should estimate > 0 bytes")
 	}
 }
+
+// allTracesObserver returns a RequestObserver that collects every trace
+// delivered (not just the latest), plus a snapshot function.
+func allTracesObserver() (RequestObserver, func() []RequestTrace) {
+	var (
+		mu     sync.Mutex
+		traces []RequestTrace
+	)
+	obs := func(t RequestTrace) {
+		mu.Lock()
+		defer mu.Unlock()
+		traces = append(traces, t)
+	}
+	snapshot := func() []RequestTrace {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]RequestTrace(nil), traces...)
+	}
+	return obs, snapshot
+}
+
+// TestRequestObserver_WebSocketFallbackEmitsTwoTraces verifies that when a
+// websocket attempt fails and falls back to HTTP, the observer receives two
+// distinct traces: one for the failed WS attempt (with its error) and one for
+// the successful HTTP attempt — not a single merged trace.
+func TestRequestObserver_WebSocketFallbackEmitsTwoTraces(t *testing.T) {
+	var postHits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodGet && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			// Refuse the upgrade so the WS attempt fails with a connection error.
+			w.WriteHeader(http.StatusUpgradeRequired)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		postHits++
+		resp := responsesAPIResponse{
+			ID:    "resp_http_fallback",
+			Model: "gpt-5.3-codex",
+			Output: []responsesOutputItem{{
+				Type: "message", Role: "assistant",
+				Content: []responsesContentItem{{Type: "output_text", Text: "ok"}},
+			}},
+			Usage: responsesUsage{InputTokens: 5, OutputTokens: 2},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	obs, snapshot := allTracesObserver()
+	p := New(
+		WithAPIKey("test-key"),
+		WithModel("gpt-5.3-codex"),
+		WithBaseURL(server.URL),
+		WithTransport("websocket"),
+		WithWebSocketHTTPFallback(true),
+		WithRequestObserver(obs),
+	)
+	defer p.Close()
+
+	if _, err := p.Request(context.Background(), []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "hi"}}},
+	}, nil, nil); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	if postHits != 1 {
+		t.Fatalf("expected one HTTP fallback call, got %d", postHits)
+	}
+
+	traces := snapshot()
+	if len(traces) != 2 {
+		t.Fatalf("expected 2 traces (WS failure + HTTP success), got %d", len(traces))
+	}
+	wsTrace, httpTrace := traces[0], traces[1]
+	if wsTrace.Transport != transportWebSocket {
+		t.Errorf("first trace transport = %q, want %q", wsTrace.Transport, transportWebSocket)
+	}
+	if wsTrace.ErrorClass == "" {
+		t.Error("WS failure trace should carry an error class")
+	}
+	if wsTrace.TotalDuration <= 0 {
+		t.Error("WS failure trace should have a total duration")
+	}
+	if httpTrace.Transport != transportHTTP {
+		t.Errorf("fallback trace transport = %q, want %q", httpTrace.Transport, transportHTTP)
+	}
+	if httpTrace.ErrorClass != "" {
+		t.Errorf("HTTP success trace should have no error class, got %q", httpTrace.ErrorClass)
+	}
+	if httpTrace.TimeToTerminal <= 0 {
+		t.Error("HTTP success trace should record terminal timing")
+	}
+}
+
+// TestRequestObserver_WebSocketRecordsTrimmedPayload verifies that the WS
+// continuation path records the trimmed delta payload shape (InputItems equals
+// the delta length, not the full input length) so upload-size attribution
+// reflects the bytes actually sent on the wire.
+func TestRequestObserver_WebSocketRecordsTrimmedPayload(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+			_ = conn.WriteJSON(responsesWSEvent{
+				Type: "response.completed",
+				Response: &responsesAPIResponse{
+					ID: "r", Model: "gpt-5.3-codex",
+					Output: []responsesOutputItem{{
+						Type: "message", Role: "assistant",
+						Content: []responsesContentItem{{Type: "output_text", Text: "ok"}},
+					}},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	obs, snapshot := allTracesObserver()
+	p := New(
+		WithAPIKey("test-key"),
+		WithModel("gpt-5.3-codex"),
+		WithBaseURL(server.URL),
+		WithTransport("websocket"),
+		WithRequestObserver(obs),
+	)
+	defer p.Close()
+
+	first := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "turn one"}}},
+	}
+	if _, err := p.Request(context.Background(), first, nil, nil); err != nil {
+		t.Fatalf("first Request: %v", err)
+	}
+	// Second request extends the first; the WS path should send only the delta
+	// (the assistant reply + new user turn), reusing previous_response_id.
+	second := []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "turn one"}}},
+		core.ModelResponse{Parts: []core.ModelResponsePart{core.TextPart{Content: "ok"}}},
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "turn two"}}},
+	}
+	if _, err := p.Request(context.Background(), second, nil, nil); err != nil {
+		t.Fatalf("second Request: %v", err)
+	}
+
+	traces := snapshot()
+	if len(traces) != 2 {
+		t.Fatalf("expected 2 traces, got %d", len(traces))
+	}
+	tr1, tr2 := traces[0], traces[1]
+	// First request sends the full input (1 item).
+	if tr1.InputItems != 1 {
+		t.Errorf("first trace InputItems = %d, want 1 (full)", tr1.InputItems)
+	}
+	if tr1.PreviousResponseIDReused {
+		t.Error("first request should not reuse previous_response_id")
+	}
+	// Second request sends only the trimmed delta. trimContinuationDelta strips
+	// leading assistant-generated items (the prior assistant reply is already
+	// embodied by previous_response_id), leaving just the new user turn (1
+	// item), not the full 3-item input. This proves the trace reflects the wire
+	// payload after continuation trimming.
+	if !tr2.PreviousResponseIDReused {
+		t.Error("second request should reuse previous_response_id")
+	}
+	if tr2.InputItems != 1 {
+		t.Errorf("second trace InputItems = %d, want 1 (trimmed new user turn, not 3)", tr2.InputItems)
+	}
+	// The trimmed payload should be smaller than the full second request.
+	fullSecond := &responsesRequest{Model: "gpt-5.3-codex", Input: []map[string]any{
+		responsesMessage("user", "turn one"),
+		responsesMessage("assistant", "ok"),
+		responsesMessage("user", "turn two"),
+	}}
+	if fullBytes := estimateResponsesRequestBytes(fullSecond); tr2.RequestBytes >= fullBytes {
+		t.Errorf("trimmed RequestBytes = %d should be < full = %d", tr2.RequestBytes, fullBytes)
+	}
+}

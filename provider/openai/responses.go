@@ -351,11 +351,6 @@ func extractTextContent(content any) string {
 }
 
 func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *responsesRequest, ri *requestInstrumentation) (*core.ModelResponse, error) {
-	// Record request shape and cache continuity once for the physical request,
-	// covering both the websocket and HTTP branches. The websocket branch does
-	// not marshal the body itself (the create event does), so recording here
-	// ensures WS traces report input bytes/items and the cache fingerprint too.
-	ri.setRequestShape(estimateResponsesRequestBytes(req), len(req.Input))
 	// The cache key actually sent is whatever applyResponsesEndpointSettings
 	// copied onto req, falling back to the provider's configured key (the WS
 	// create event carries it regardless of endpoint classification).
@@ -364,6 +359,13 @@ func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *response
 		cacheKey = p.promptCacheKey
 	}
 	ri.markCacheKey(cacheKey)
+
+	// Finish the active trace on return. ri is reassigned below when the
+	// websocket attempt fails and falls back to HTTP (a fresh trace is started
+	// for the HTTP attempt). Capturing ri by reference ensures whichever trace
+	// is active at return is delivered exactly once; the caller's defer
+	// ri.finish() is an idempotent no-op on the already-finished original.
+	defer func() { ri.finish() }()
 
 	if p.shouldUseResponsesWebSocket() {
 		// Keep websocket continuations strictly in-memory on the active socket,
@@ -381,6 +383,13 @@ func (p *Provider) requestViaResponsesWithReq(ctx context.Context, req *response
 			ri.recordError(wsErr)
 			return nil, wsErr
 		}
+		// The websocket attempt failed and HTTP fallback is enabled. Deliver
+		// the failed WS attempt as its own trace (with its error and timing),
+		// then start a fresh trace for the HTTP fallback so the two physical
+		// requests are attributable separately rather than merged into one.
+		ri.recordError(wsErr)
+		ri.finish()
+		ri = newRequestInstrumentation(p.requestObserver, transportHTTP, p.model)
 		// Restore caller intent for HTTP fallback; websocket-specific store=false
 		// coercion should not leak into the fallback transport.
 		req.Store = cloneBoolPtr(origStore)
@@ -398,9 +407,10 @@ func cloneBoolPtr(v *bool) *bool {
 }
 
 // estimateResponsesRequestBytes reports the marshaled size of a Responses
-// request without serializing the body a second time on the HTTP path. The
-// websocket transport builds the create event separately, so this is the only
-// place WS traces learn their request size.
+// request. It is used by the websocket path to record the actual payload size
+// (after continuation trimming) on the trace; the HTTP path records len(body)
+// directly from its own marshal. Guarded by the caller so unobserved requests
+// never pay for this extra serialization.
 func estimateResponsesRequestBytes(req *responsesRequest) int {
 	if req == nil {
 		return 0
