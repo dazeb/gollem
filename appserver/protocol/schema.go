@@ -108,6 +108,12 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ApprovalRespondParams", Type: reflect.TypeFor[ApprovalRespondParams]()},
 		{Name: "ApprovalRespondResult", Type: reflect.TypeFor[ApprovalRespondResult]()},
 		{Name: "ApprovalsReviewer", Type: reflect.TypeFor[ApprovalsReviewer]()},
+		{Name: "BackgroundTerminal", Type: reflect.TypeFor[BackgroundTerminal]()},
+		{Name: "BackgroundTerminalCleanResponse", Type: reflect.TypeFor[BackgroundTerminalCleanResponse]()},
+		{Name: "BackgroundTerminalListResponse", Type: reflect.TypeFor[BackgroundTerminalListResponse]()},
+		{Name: "BackgroundTerminalStatus", Type: reflect.TypeFor[BackgroundTerminalStatus]()},
+		{Name: "BackgroundTerminalTerminateParams", Type: reflect.TypeFor[BackgroundTerminalTerminateParams]()},
+		{Name: "BackgroundTerminalTerminateResponse", Type: reflect.TypeFor[BackgroundTerminalTerminateResponse]()},
 		{Name: "AppBranding", Type: reflect.TypeFor[AppBranding]()},
 		{Name: "AppConfig", Type: reflect.TypeFor[AppConfig]()},
 		{Name: "AppInfo", Type: reflect.TypeFor[AppInfo]()},
@@ -344,6 +350,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "NetworkUnixSocketPermission", Type: reflect.TypeFor[NetworkUnixSocketPermission]()},
 		{Name: "NewThreadModelDefaults", Type: reflect.TypeFor[NewThreadModelDefaults]()},
 		{Name: "NonSteerableTurnKind", Type: reflect.TypeFor[NonSteerableTurnKind]()},
+		{Name: "OperationalListParams", Type: reflect.TypeFor[OperationalListParams]()},
 		{Name: "McpElicitationArrayType", Type: reflect.TypeFor[McpElicitationArrayType]()},
 		{Name: "McpElicitationBooleanSchema", Type: reflect.TypeFor[McpElicitationBooleanSchema]()},
 		{Name: "McpElicitationBooleanType", Type: reflect.TypeFor[McpElicitationBooleanType]()},
@@ -420,6 +427,11 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FuzzyFileSearchResponse", Type: reflect.TypeFor[FuzzyFileSearchResponse]()},
 		{Name: "FuzzyFileSearchSessionUpdatedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionUpdatedNotification]()},
 		{Name: "FuzzyFileSearchSessionCompletedNotification", Type: reflect.TypeFor[FuzzyFileSearchSessionCompletedNotification]()},
+		{Name: "GitStatusResponse", Type: reflect.TypeFor[GitStatusResponse]()},
+		{Name: "GitStatusEntry", Type: reflect.TypeFor[GitStatusEntry]()},
+		{Name: "GitStatusSnapshot", Type: reflect.TypeFor[GitStatusSnapshot]()},
+		{Name: "GitWorktree", Type: reflect.TypeFor[GitWorktree]()},
+		{Name: "GitWorktreeListResponse", Type: reflect.TypeFor[GitWorktreeListResponse]()},
 		{Name: "GuardianApprovalReview", Type: reflect.TypeFor[GuardianApprovalReview]()},
 		{Name: "GuardianApprovalReviewAction", Type: reflect.TypeFor[GuardianApprovalReviewAction]()},
 		{Name: "GuardianApprovalReviewStatus", Type: reflect.TypeFor[GuardianApprovalReviewStatus]()},
@@ -1108,6 +1120,13 @@ func wireSchemaDefinitions() Schema {
 	schemas["ProcessOutputDeltaNotification"] = processOutputDeltaNotificationSchema()
 	schemas["ProcessOutputStream"] = processOutputStreamSchema()
 	schemas["ProcessTerminalSize"] = processTerminalSizeSchema()
+	schemas["BackgroundTerminalStatus"] = stringEnumSchema(
+		string(BackgroundTerminalStatusRunning),
+		string(BackgroundTerminalStatusCompleted),
+		string(BackgroundTerminalStatusFailed),
+		string(BackgroundTerminalStatusKilled),
+		string(BackgroundTerminalStatusTimedOut),
+	)
 	for name, schema := range accountRateLimitSchemas() {
 		schemas[name] = schema
 	}

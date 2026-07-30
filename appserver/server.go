@@ -598,11 +598,11 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 	case "thread/name/set":
 		return s.handleThreadNameSet(ctx, params)
 	case "thread/backgroundTerminals/list":
-		return s.handleBackgroundTerminalsList(ctx)
+		return s.handleBackgroundTerminalsList(ctx, params)
 	case "thread/backgroundTerminals/terminate":
 		return s.handleBackgroundTerminalTerminate(ctx, params)
 	case "thread/backgroundTerminals/clean":
-		return s.handleBackgroundTerminalsClean(ctx)
+		return s.handleBackgroundTerminalsClean(ctx, params)
 	case "thread/turns/list":
 		return s.handleThreadTurnsList(ctx, params)
 	case "thread/items/list":
@@ -718,13 +718,13 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 	case "process/kill":
 		return s.handleProcessKill(ctx, params)
 	case "git/status":
-		return s.handleGitStatus(ctx)
+		return s.handleGitStatus(ctx, params)
 	case "git/diff":
 		return s.handleGitDiff(ctx, params)
 	case "git/commit":
 		return s.handleGitCommit(ctx, params)
 	case "git/worktree/list":
-		return s.handleGitWorktreeList(ctx)
+		return s.handleGitWorktreeList(ctx, params)
 	case "git/worktree/create":
 		return s.handleGitWorktreeCreate(ctx, params)
 	default:
@@ -1246,8 +1246,12 @@ func (s *Server) handleThreadNameSet(ctx context.Context, raw json.RawMessage) (
 	}, nil
 }
 
-func (s *Server) handleBackgroundTerminalsList(ctx context.Context) (any, *protocol.Error) {
+func (s *Server) handleBackgroundTerminalsList(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/list")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	params, rpcErr := decodeOperationalListParams(raw)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -1255,11 +1259,24 @@ func (s *Server) handleBackgroundTerminalsList(ctx context.Context) (any, *proto
 	if err != nil {
 		return nil, mapError("thread/backgroundTerminals/list", err)
 	}
-	terminals := backgroundTerminalResultsFromSnapshots(snapshots)
-	return backgroundTerminalListResult{
-		Terminals:           terminals,
-		BackgroundTerminals: cloneBackgroundTerminalResults(terminals),
-		Data:                cloneBackgroundTerminalResults(terminals),
+	terminals := operationalBackgroundTerminals(processSvc.Root(), snapshots)
+	snapshotID := operationalSnapshotID("thread/backgroundTerminals/list", terminals)
+	start, end, nextCursor, rpcErr := operationalPageBounds(
+		params, "thread/backgroundTerminals/list", snapshotID, len(terminals),
+	)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	page := cloneOperationalTerminals(terminals[start:end])
+	return protocol.BackgroundTerminalListResponse{
+		Terminals:           page,
+		BackgroundTerminals: cloneOperationalTerminals(page),
+		Data:                cloneOperationalTerminals(page),
+		Total:               len(terminals),
+		Truncated:           len(page) < len(terminals),
+		SnapshotID:          snapshotID,
+		NextCursor:          nextCursor,
+		ObservedAt:          operationalObservedAt(),
 	}, nil
 }
 
@@ -1268,11 +1285,11 @@ func (s *Server) handleBackgroundTerminalTerminate(ctx context.Context, raw json
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params backgroundTerminalIDParams
-	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
-		return nil, rpcErr
+	var params protocol.BackgroundTerminalTerminateParams
+	if err := decodeOperationalParams(raw, &params); err != nil {
+		return nil, invalidParams("invalid background terminal params", err)
 	}
-	id := params.id()
+	id := params.EffectiveID()
 	if id == "" {
 		return nil, invalidParams("id, terminalId, backgroundTerminalId, or processId is required", nil)
 	}
@@ -1283,28 +1300,35 @@ func (s *Server) handleBackgroundTerminalTerminate(ctx context.Context, raw json
 	if err != nil {
 		return nil, mapError("thread/backgroundTerminals/terminate", err)
 	}
-	return map[string]any{
-		"ok":       true,
-		"id":       id,
-		"terminal": backgroundTerminalResultFromSnapshot(*snapshot),
+	return protocol.BackgroundTerminalTerminateResponse{
+		OK:       true,
+		ID:       id,
+		Terminal: operationalBackgroundTerminal(processSvc.Root(), snapshot),
 	}, nil
 }
 
-func (s *Server) handleBackgroundTerminalsClean(ctx context.Context) (any, *protocol.Error) {
+func (s *Server) handleBackgroundTerminalsClean(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/clean")
 	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	if rpcErr := rejectOperationalParams(raw); rpcErr != nil {
 		return nil, rpcErr
 	}
 	removed, err := processSvc.CleanCompleted(ctx)
 	if err != nil {
 		return nil, mapError("thread/backgroundTerminals/clean", err)
 	}
-	terminals := backgroundTerminalResultsFromSnapshots(removed)
-	return backgroundTerminalCleanResult{
+	terminals := operationalBackgroundTerminals(processSvc.Root(), removed)
+	removedCount := len(terminals)
+	terminals, truncated := boundedOperationalTerminals(terminals)
+	return protocol.BackgroundTerminalCleanResponse{
 		Removed:             terminals,
-		BackgroundTerminals: cloneBackgroundTerminalResults(terminals),
-		Data:                cloneBackgroundTerminalResults(terminals),
-		RemovedCount:        len(terminals),
+		BackgroundTerminals: cloneOperationalTerminals(terminals),
+		Data:                cloneOperationalTerminals(terminals),
+		RemovedCount:        removedCount,
+		Truncated:           truncated,
+		ObservedAt:          operationalObservedAt(),
 	}, nil
 }
 
@@ -2122,8 +2146,12 @@ func (s *Server) handleProcessKill(ctx context.Context, raw json.RawMessage) (an
 	return okResult(id), nil
 }
 
-func (s *Server) handleGitStatus(ctx context.Context) (any, *protocol.Error) {
+func (s *Server) handleGitStatus(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	gitSvc, rpcErr := s.requireGit("git/status")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	params, rpcErr := decodeOperationalListParams(raw)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -2131,7 +2159,30 @@ func (s *Server) handleGitStatus(ctx context.Context) (any, *protocol.Error) {
 	if err != nil {
 		return nil, mapError("git/status", err)
 	}
-	return map[string]any{"status": status}, nil
+	branch, branchTruncated, entries, clean := operationalGitStatus(status)
+	snapshotID := operationalSnapshotID("git/status", struct {
+		BranchLine      string
+		BranchTruncated bool
+		Entries         []protocol.GitStatusEntry
+		Clean           bool
+	}{BranchLine: branch, BranchTruncated: branchTruncated, Entries: entries, Clean: clean})
+	start, end, nextCursor, rpcErr := operationalPageBounds(params, "git/status", snapshotID, len(entries))
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return protocol.GitStatusResponse{
+		Status: protocol.GitStatusSnapshot{
+			BranchLine:       branch,
+			BranchTruncated:  branchTruncated,
+			Entries:          append([]protocol.GitStatusEntry{}, entries[start:end]...),
+			Clean:            clean,
+			EntryCount:       len(entries),
+			EntriesTruncated: end-start < len(entries),
+		},
+		SnapshotID: snapshotID,
+		NextCursor: nextCursor,
+		ObservedAt: operationalObservedAt(),
+	}, nil
 }
 
 func (s *Server) handleGitDiff(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -2171,8 +2222,12 @@ func (s *Server) handleGitCommit(ctx context.Context, raw json.RawMessage) (any,
 	return map[string]any{"commit": result}, nil
 }
 
-func (s *Server) handleGitWorktreeList(ctx context.Context) (any, *protocol.Error) {
+func (s *Server) handleGitWorktreeList(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
 	gitSvc, rpcErr := s.requireGit("git/worktree/list")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	params, rpcErr := decodeOperationalListParams(raw)
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
@@ -2180,7 +2235,22 @@ func (s *Server) handleGitWorktreeList(ctx context.Context) (any, *protocol.Erro
 	if err != nil {
 		return nil, mapError("git/worktree/list", err)
 	}
-	return map[string]any{"worktrees": worktrees}, nil
+	records := operationalGitWorktrees(worktrees)
+	snapshotID := operationalSnapshotID("git/worktree/list", records)
+	start, end, nextCursor, rpcErr := operationalPageBounds(
+		params, "git/worktree/list", snapshotID, len(records),
+	)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	return protocol.GitWorktreeListResponse{
+		Worktrees:  append([]protocol.GitWorktree{}, records[start:end]...),
+		Total:      len(records),
+		Truncated:  end-start < len(records),
+		SnapshotID: snapshotID,
+		NextCursor: nextCursor,
+		ObservedAt: operationalObservedAt(),
+	}, nil
 }
 
 func (s *Server) handleGitWorktreeCreate(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -2434,47 +2504,6 @@ func processSnapshotResultFrom(snapshot *toolprocess.Snapshot) processSnapshotRe
 	}
 }
 
-func backgroundTerminalResultsFromSnapshots(snapshots []toolprocess.Snapshot) []backgroundTerminalResult {
-	terminals := make([]backgroundTerminalResult, 0, len(snapshots))
-	for _, snapshot := range snapshots {
-		terminals = append(terminals, backgroundTerminalResultFromSnapshot(snapshot))
-	}
-	return terminals
-}
-
-func backgroundTerminalResultFromSnapshot(snapshot toolprocess.Snapshot) backgroundTerminalResult {
-	process := processSnapshotResultFrom(&snapshot)
-	title := snapshot.Command
-	if len(snapshot.Args) > 0 {
-		title = strings.TrimSpace(snapshot.Command + " " + strings.Join(snapshot.Args, " "))
-	}
-	return backgroundTerminalResult{
-		ID:         snapshot.ID,
-		TerminalID: snapshot.ID,
-		ProcessID:  snapshot.ID,
-		PID:        snapshot.PID,
-		Title:      title,
-		Command:    snapshot.Command,
-		Args:       append([]string(nil), snapshot.Args...),
-		WorkDir:    snapshot.WorkDir,
-		Status:     snapshot.Status,
-		StartedAt:  snapshot.StartedAt,
-		EndedAt:    snapshot.EndedAt,
-		ExitCode:   snapshot.ExitCode,
-		Error:      snapshot.Error,
-		Process:    process,
-	}
-}
-
-func cloneBackgroundTerminalResults(in []backgroundTerminalResult) []backgroundTerminalResult {
-	out := make([]backgroundTerminalResult, 0, len(in))
-	for _, terminal := range in {
-		terminal.Args = append([]string(nil), terminal.Args...)
-		out = append(out, terminal)
-	}
-	return out
-}
-
 func okResult(path string) map[string]any {
 	if path == "" {
 		return map[string]any{"ok": true}
@@ -2650,47 +2679,6 @@ type processResizeParams struct {
 	ProcessID string `json:"processId,omitempty"`
 	Cols      int    `json:"cols"`
 	Rows      int    `json:"rows"`
-}
-
-type backgroundTerminalIDParams struct {
-	ID                   string `json:"id,omitempty"`
-	TerminalID           string `json:"terminalId,omitempty"`
-	BackgroundTerminalID string `json:"backgroundTerminalId,omitempty"`
-	ProcessID            string `json:"processId,omitempty"`
-}
-
-func (p backgroundTerminalIDParams) id() string {
-	return firstNonEmpty(p.ID, p.TerminalID, p.BackgroundTerminalID, p.ProcessID)
-}
-
-type backgroundTerminalListResult struct {
-	Terminals           []backgroundTerminalResult `json:"terminals"`
-	BackgroundTerminals []backgroundTerminalResult `json:"backgroundTerminals"`
-	Data                []backgroundTerminalResult `json:"data"`
-}
-
-type backgroundTerminalCleanResult struct {
-	Removed             []backgroundTerminalResult `json:"removed"`
-	BackgroundTerminals []backgroundTerminalResult `json:"backgroundTerminals"`
-	Data                []backgroundTerminalResult `json:"data"`
-	RemovedCount        int                        `json:"removedCount"`
-}
-
-type backgroundTerminalResult struct {
-	ID         string                `json:"id"`
-	TerminalID string                `json:"terminalId"`
-	ProcessID  string                `json:"processId"`
-	PID        int                   `json:"pid"`
-	Title      string                `json:"title"`
-	Command    string                `json:"command"`
-	Args       []string              `json:"args,omitempty"`
-	WorkDir    string                `json:"workDir"`
-	Status     toolprocess.Status    `json:"status"`
-	StartedAt  time.Time             `json:"startedAt"`
-	EndedAt    time.Time             `json:"endedAt,omitempty"`
-	ExitCode   int                   `json:"exitCode"`
-	Error      string                `json:"error,omitempty"`
-	Process    processSnapshotResult `json:"process"`
 }
 
 type processSnapshotResult struct {

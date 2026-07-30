@@ -771,6 +771,58 @@ export type AutoCompactTokenLimitScope = "total" | "body_after_prefix";
 
 export type AutoReviewDecisionSource = "agent";
 
+export type BackgroundTerminal = {
+  "argumentCount": number;
+  "command": string;
+  "commandRedacted": boolean;
+  "endedAt"?: string | null;
+  "exitCode"?: number | null;
+  "id": string;
+  "metadataTruncated": boolean;
+  "pid": number;
+  "processId": string;
+  "startedAt": string;
+  "status": BackgroundTerminalStatus;
+  "terminalId": string;
+  "title": string;
+  "workDir": string;
+};
+
+export type BackgroundTerminalCleanResponse = {
+  "backgroundTerminals": Array<BackgroundTerminal>;
+  "data": Array<BackgroundTerminal>;
+  "observedAt": string;
+  "removed": Array<BackgroundTerminal>;
+  "removedCount": number;
+  "truncated": boolean;
+};
+
+export type BackgroundTerminalListResponse = {
+  "backgroundTerminals": Array<BackgroundTerminal>;
+  "data": Array<BackgroundTerminal>;
+  "nextCursor"?: string;
+  "observedAt": string;
+  "snapshotId": string;
+  "terminals": Array<BackgroundTerminal>;
+  "total": number;
+  "truncated": boolean;
+};
+
+export type BackgroundTerminalStatus = "running" | "completed" | "failed" | "killed" | "timed_out";
+
+export type BackgroundTerminalTerminateParams = {
+  "backgroundTerminalId"?: string;
+  "id"?: string;
+  "processId"?: string;
+  "terminalId"?: string;
+};
+
+export type BackgroundTerminalTerminateResponse = {
+  "id": string;
+  "ok": boolean;
+  "terminal": BackgroundTerminal;
+};
+
 export type ByteRange = {
   "end": number;
   "start": number;
@@ -1825,6 +1877,46 @@ export type GitInfo = {
   "sha": string | null;
 };
 
+export type GitStatusEntry = {
+  "code": string;
+  "path": string;
+  "truncated": boolean;
+};
+
+export type GitStatusResponse = {
+  "nextCursor"?: string;
+  "observedAt": string;
+  "snapshotId": string;
+  "status": GitStatusSnapshot;
+};
+
+export type GitStatusSnapshot = {
+  "branchLine": string;
+  "branchTruncated": boolean;
+  "clean": boolean;
+  "entries": Array<GitStatusEntry>;
+  "entriesTruncated": boolean;
+  "entryCount": number;
+};
+
+export type GitWorktree = {
+  "bare": boolean;
+  "branch": string;
+  "detached": boolean;
+  "head": string;
+  "metadataTruncated": boolean;
+  "path": string;
+};
+
+export type GitWorktreeListResponse = {
+  "nextCursor"?: string;
+  "observedAt": string;
+  "snapshotId": string;
+  "total": number;
+  "truncated": boolean;
+  "worktrees": Array<GitWorktree>;
+};
+
 export type GrantedPermissionProfile = {
   "fileSystem"?: AdditionalFileSystemPermissions;
   "network"?: AdditionalNetworkPermissions;
@@ -2718,6 +2810,11 @@ export type NonSteerableTurnKind = "review" | "compact";
 export type Notification = {
   "method": "account/login/completed" | "account/rateLimits/updated" | "account/updated" | "app/list/updated" | "command/exec/outputDelta" | "configWarning" | "deprecationNotice" | "error" | "externalAgentConfig/import/completed" | "externalAgentConfig/import/progress" | "fs/changed" | "fuzzyFileSearch/sessionCompleted" | "fuzzyFileSearch/sessionUpdated" | "guardianWarning" | "hook/completed" | "hook/started" | "item/agentMessage/delta" | "item/autoApprovalReview/completed" | "item/autoApprovalReview/started" | "item/commandExecution/outputDelta" | "item/commandExecution/terminalInteraction" | "item/completed" | "item/fileChange/outputDelta" | "item/fileChange/patchUpdated" | "item/mcpToolCall/progress" | "item/plan/delta" | "item/reasoning/summaryPartAdded" | "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" | "item/started" | "mcpServer/oauthLogin/completed" | "mcpServer/startupStatus/updated" | "model/rerouted" | "model/safetyBuffering/updated" | "model/verification" | "process/exited" | "process/outputDelta" | "rawResponseItem/completed" | "remoteControl/status/changed" | "serverRequest/resolved" | "skills/changed" | "thread/archived" | "thread/closed" | "thread/compacted" | "thread/deleted" | "thread/goal/cleared" | "thread/goal/updated" | "thread/name/updated" | "thread/realtime/closed" | "thread/realtime/error" | "thread/realtime/itemAdded" | "thread/realtime/outputAudio/delta" | "thread/realtime/sdp" | "thread/realtime/started" | "thread/realtime/transcript/delta" | "thread/realtime/transcript/done" | "thread/settings/updated" | "thread/started" | "thread/status/changed" | "thread/tokenUsage/updated" | "thread/unarchived" | "turn/completed" | "turn/diff/updated" | "turn/moderationMetadata" | "turn/plan/updated" | "turn/started" | "warning" | "windows/worldWritableWarning" | "windowsSandbox/setupCompleted" | "cache/benchmark/completed" | "initialized";
   "params"?: unknown;
+};
+
+export type OperationalListParams = {
+  "cursor"?: string;
+  "limit"?: number;
 };
 
 export type OverriddenMetadata = {
@@ -4361,6 +4458,8 @@ export const wireTypeBindings = [
   { "method": "fs/unwatch", "surface": "client-request", "params": ["FsUnwatchParams"], "result": ["FsUnwatchResponse"] },
   { "method": "fs/watch", "surface": "client-request", "params": ["FsWatchParams"], "result": ["FsWatchResponse"] },
   { "method": "fs/writeFile", "surface": "client-request", "params": ["FsWriteFileParams"], "result": ["FsWriteFileResponse"] },
+  { "method": "git/status", "surface": "gollem-extension", "params": ["OperationalListParams"], "result": ["GitStatusResponse"] },
+  { "method": "git/worktree/list", "surface": "gollem-extension", "params": ["OperationalListParams"], "result": ["GitWorktreeListResponse"] },
   { "method": "initialize", "surface": "client-request", "params": ["InitializeParams"], "result": ["InitializeResponse"] },
   { "method": "initialized", "surface": "client-notification" },
   { "method": "item/agentMessage/delta", "surface": "server-notification", "params": ["RuntimeDeltaNotification"] },
@@ -4382,6 +4481,9 @@ export const wireTypeBindings = [
   { "method": "serverRequest/resolved", "surface": "server-notification", "params": ["ServerRequestResolvedNotification"] },
   { "method": "thread/archive", "surface": "client-request", "params": ["ThreadArchiveParams"], "result": ["ThreadArchiveResponse"] },
   { "method": "thread/archived", "surface": "server-notification", "params": ["ThreadArchivedNotification"] },
+  { "method": "thread/backgroundTerminals/clean", "surface": "client-request", "result": ["BackgroundTerminalCleanResponse"] },
+  { "method": "thread/backgroundTerminals/list", "surface": "client-request", "params": ["OperationalListParams"], "result": ["BackgroundTerminalListResponse"] },
+  { "method": "thread/backgroundTerminals/terminate", "surface": "client-request", "params": ["BackgroundTerminalTerminateParams"], "result": ["BackgroundTerminalTerminateResponse"] },
   { "method": "thread/closed", "surface": "server-notification", "params": ["ThreadClosedNotification"] },
   { "method": "thread/compact/start", "surface": "client-request", "params": ["ThreadCompactStartParams"], "result": ["ThreadCompactStartResponse"] },
   { "method": "thread/compacted", "surface": "server-notification", "params": ["ContextCompactedNotification"] },
@@ -4438,6 +4540,8 @@ export interface MethodParamsByName {
   "fs/unwatch": FsUnwatchParams;
   "fs/watch": FsWatchParams;
   "fs/writeFile": FsWriteFileParams;
+  "git/status": OperationalListParams;
+  "git/worktree/list": OperationalListParams;
   "initialize": InitializeParams;
   "initialized": undefined;
   "item/agentMessage/delta": RuntimeDeltaNotification;
@@ -4459,6 +4563,9 @@ export interface MethodParamsByName {
   "serverRequest/resolved": ServerRequestResolvedNotification;
   "thread/archive": ThreadArchiveParams;
   "thread/archived": ThreadArchivedNotification;
+  "thread/backgroundTerminals/clean": undefined;
+  "thread/backgroundTerminals/list": OperationalListParams;
+  "thread/backgroundTerminals/terminate": BackgroundTerminalTerminateParams;
   "thread/closed": ThreadClosedNotification;
   "thread/compact/start": ThreadCompactStartParams;
   "thread/compacted": ContextCompactedNotification;
@@ -4512,6 +4619,8 @@ export interface MethodResultsByName {
   "fs/unwatch": FsUnwatchResponse;
   "fs/watch": FsWatchResponse;
   "fs/writeFile": FsWriteFileResponse;
+  "git/status": GitStatusResponse;
+  "git/worktree/list": GitWorktreeListResponse;
   "initialize": InitializeResponse;
   "item/commandExecution/requestApproval": CommandExecutionRequestApprovalResponse;
   "item/fileChange/requestApproval": FileChangeRequestApprovalResponse;
@@ -4522,6 +4631,9 @@ export interface MethodResultsByName {
   "model/list": ModelCatalogListResponse;
   "provider/list": ProviderListResponse;
   "thread/archive": ThreadArchiveResponse;
+  "thread/backgroundTerminals/clean": BackgroundTerminalCleanResponse;
+  "thread/backgroundTerminals/list": BackgroundTerminalListResponse;
+  "thread/backgroundTerminals/terminate": BackgroundTerminalTerminateResponse;
   "thread/compact/start": ThreadCompactStartResponse;
   "thread/delete": ThreadDeleteResponse;
   "thread/goal/clear": ThreadGoalClearResponse;

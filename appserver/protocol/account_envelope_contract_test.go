@@ -268,11 +268,11 @@ func TestAccountEnvelopeContractsRemainStandaloneAndDeferred(t *testing.T) {
 			t.Errorf("%s = %#v, %v; want deferred %s", methodName, method, ok, surface)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 558 {
-		t.Fatalf("definition count = %d, want 558", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 570 {
+		t.Fatalf("definition count = %d, want 570", got)
 	}
-	if len(Methods()) != 225 || len(WireTypeBindings()) != 74 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("counts = %d methods/%d method bindings/%d item bindings; want 225/74/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
+	if len(Methods()) != 225 || len(WireTypeBindings()) != 79 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("counts = %d methods/%d method bindings/%d item bindings; want 225/79/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
 	}
 }
 

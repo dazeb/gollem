@@ -356,7 +356,7 @@ provider-aware catalog records; `thread/start`, `turn/start`, `turn/steer`,
 `turn/retry`, and `turn/interrupt` bind durable thread/turn results; and
 `thread/started`, `turn/started`, `turn/completed`,
 `item/agentMessage/delta`, and `item/reasoning/textDelta` bind the live
-notification records. The registry now contains 74 method bindings and five
+notification records. The registry now contains 79 method bindings and five
 durable item bindings.
 
 The live names are intentionally explicit: `ModelCatalog*`, `ThreadRun*`,
@@ -377,6 +377,27 @@ and retry recovers the source turn choice when the request omits it. Clients
 must still gate controls from the selected model's capability record. A model
 or effort absent from that record is unavailable rather than optimistically
 forwarded to a provider.
+
+## Version 1 Operational Inspector Bindings
+
+`thread/backgroundTerminals/list`,
+`thread/backgroundTerminals/terminate`,
+`thread/backgroundTerminals/clean`, `git/status`, and `git/worktree/list` use
+exported request and response contracts. List responses are ordered by their
+underlying service, capped at 32 records per page, and carry an observed time,
+snapshot digest, total count, truncation state, and opaque continuation cursor.
+A continuation is rejected if the method or current snapshot no longer matches
+the cursor, so clients cannot merge pages from different repository or process
+states.
+
+Background-terminal records retain the historical id aliases, but expose only
+a command label, workspace-relative directory, lifecycle state, timestamps,
+exit code, and argument count. Arguments, environment, captured output, nested
+native process snapshots, and raw errors are intentionally omitted. Git status
+omits raw porcelain output and returns bounded structured entries. Worktree
+metadata is bounded, while desktop clients remain responsible for retaining
+native paths in their privileged process and projecting opaque ids to an
+untrusted renderer.
 
 ## Exported Thread-Item Prerequisites
 

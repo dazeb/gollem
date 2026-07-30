@@ -2335,14 +2335,31 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 		t.Fatalf("wait completed process: %v", err)
 	}
 
-	listResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", nil))
+	listResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", map[string]any{"limit": 1}))
 	if listResp.Error != nil {
 		t.Fatalf("thread/backgroundTerminals/list error: %v", listResp.Error)
 	}
-	var list backgroundTerminalListResult
+	var list protocol.BackgroundTerminalListResponse
 	decodeResult(t, listResp, &list)
-	if len(list.Terminals) != 2 || len(list.BackgroundTerminals) != 2 || len(list.Data) != 2 {
+	if len(list.Terminals) != 1 || len(list.BackgroundTerminals) != 1 || len(list.Data) != 1 ||
+		list.Total != 2 || !list.Truncated || list.NextCursor == "" || list.SnapshotID == "" || list.ObservedAt.IsZero() {
 		t.Fatalf("background terminal list = %#v", list)
+	}
+	if list.Terminals[0].ArgumentCount != 0 || list.Terminals[0].WorkDir != "." {
+		t.Fatalf("background terminal projection = %#v", list.Terminals[0])
+	}
+	pageTwoResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", map[string]any{
+		"limit":  1,
+		"cursor": list.NextCursor,
+	}))
+	if pageTwoResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/list page two error: %v", pageTwoResp.Error)
+	}
+	var pageTwo protocol.BackgroundTerminalListResponse
+	decodeResult(t, pageTwoResp, &pageTwo)
+	if len(pageTwo.Terminals) != 1 || pageTwo.Total != 2 || !pageTwo.Truncated || pageTwo.NextCursor != "" ||
+		pageTwo.SnapshotID != list.SnapshotID || pageTwo.Terminals[0].ID == list.Terminals[0].ID {
+		t.Fatalf("background terminal page two = %#v", pageTwo)
 	}
 
 	terminateResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/terminate", map[string]any{
@@ -2351,13 +2368,9 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	if terminateResp.Error != nil {
 		t.Fatalf("thread/backgroundTerminals/terminate error: %v", terminateResp.Error)
 	}
-	var terminated struct {
-		OK       bool                     `json:"ok"`
-		ID       string                   `json:"id"`
-		Terminal backgroundTerminalResult `json:"terminal"`
-	}
+	var terminated protocol.BackgroundTerminalTerminateResponse
 	decodeResult(t, terminateResp, &terminated)
-	if !terminated.OK || terminated.ID != runningStarted.Process.ID || terminated.Terminal.ProcessID != runningStarted.Process.ID {
+	if !terminated.OK || terminated.ID != runningStarted.Process.ID || terminated.Terminal.ID != runningStarted.Process.ID {
 		t.Fatalf("terminate result = %#v", terminated)
 	}
 	if killed, err := waitProcessSnapshot(t, processSvc, runningStarted.Process.ID); err != nil || killed.Status != toolprocess.StatusKilled {
@@ -2368,24 +2381,102 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	if cleanResp.Error != nil {
 		t.Fatalf("thread/backgroundTerminals/clean error: %v", cleanResp.Error)
 	}
-	var cleaned backgroundTerminalCleanResult
+	var cleaned protocol.BackgroundTerminalCleanResponse
 	decodeResult(t, cleanResp, &cleaned)
-	if cleaned.RemovedCount != 2 || len(cleaned.Removed) != 2 {
+	if cleaned.RemovedCount != 2 || len(cleaned.Removed) != 2 || cleaned.Truncated || cleaned.ObservedAt.IsZero() {
 		t.Fatalf("cleaned terminals = %#v", cleaned)
 	}
 	listAfterResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", nil))
 	if listAfterResp.Error != nil {
 		t.Fatalf("thread/backgroundTerminals/list after clean error: %v", listAfterResp.Error)
 	}
-	var listAfter backgroundTerminalListResult
+	var listAfter protocol.BackgroundTerminalListResponse
 	decodeResult(t, listAfterResp, &listAfter)
-	if len(listAfter.Terminals) != 0 {
+	if len(listAfter.Terminals) != 0 || listAfter.Total != 0 || listAfter.SnapshotID == "" {
 		t.Fatalf("terminals after clean = %#v", listAfter)
+	}
+	if strings.Contains(string(listAfterResp.Result), `"terminals":null`) ||
+		strings.Contains(string(listAfterResp.Result), `"backgroundTerminals":null`) ||
+		strings.Contains(string(listAfterResp.Result), `"data":null`) {
+		t.Fatalf("empty terminal inventory emitted null arrays: %s", listAfterResp.Result)
 	}
 
 	missingIDResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/terminate", nil))
 	if missingIDResp.Error == nil || missingIDResp.Error.Code != protocol.CodeInvalidParams {
 		t.Fatalf("missing id terminate response = %#v, want invalid params", missingIDResp)
+	}
+	unknownListResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", map[string]any{"unknown": true}))
+	if unknownListResp.Error == nil || unknownListResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("unknown list params response = %#v, want invalid params", unknownListResp)
+	}
+	unknownTerminateResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/terminate", map[string]any{
+		"id":      "missing",
+		"unknown": true,
+	}))
+	if unknownTerminateResp.Error == nil || unknownTerminateResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("unknown terminate params response = %#v, want invalid params", unknownTerminateResp)
+	}
+	unexpectedCleanResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/clean", map[string]any{"all": true}))
+	if unexpectedCleanResp.Error == nil || unexpectedCleanResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("unexpected clean params response = %#v, want invalid params", unexpectedCleanResp)
+	}
+}
+
+func TestServerBackgroundTerminalInventoryRejectsStaleCursorAndRedactsArguments(t *testing.T) {
+	ctx := context.Background()
+	processSvc, err := toolprocess.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithProcess(processSvc))
+
+	for _, id := range []string{"one", "two"} {
+		resp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+			"id":      id,
+			"command": "sh",
+			"args":    []string{"-c", "printf super-secret-" + id},
+		}))
+		if resp.Error != nil {
+			t.Fatalf("process/spawn %s error: %v", id, resp.Error)
+		}
+		if _, err := waitProcessSnapshot(t, processSvc, id); err != nil {
+			t.Fatalf("wait %s: %v", id, err)
+		}
+	}
+
+	firstResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", map[string]any{"limit": 1}))
+	if firstResp.Error != nil {
+		t.Fatalf("first page error: %v", firstResp.Error)
+	}
+	if strings.Contains(string(firstResp.Result), "super-secret") || strings.Contains(string(firstResp.Result), `"args"`) ||
+		strings.Contains(string(firstResp.Result), `"stdout"`) || strings.Contains(string(firstResp.Result), `"stderr"`) {
+		t.Fatalf("terminal inventory leaked process metadata: %s", firstResp.Result)
+	}
+	var first protocol.BackgroundTerminalListResponse
+	decodeResult(t, firstResp, &first)
+	if first.NextCursor == "" || len(first.Terminals) != 1 || first.Terminals[0].Command != "sh" ||
+		!first.Terminals[0].CommandRedacted || first.Terminals[0].ArgumentCount != 2 {
+		t.Fatalf("first terminal page = %#v", first)
+	}
+
+	thirdResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"id":      "three",
+		"command": "printf",
+		"args":    []string{"three"},
+	}))
+	if thirdResp.Error != nil {
+		t.Fatalf("process/spawn three error: %v", thirdResp.Error)
+	}
+	if _, err := waitProcessSnapshot(t, processSvc, "three"); err != nil {
+		t.Fatalf("wait three: %v", err)
+	}
+	staleResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", map[string]any{
+		"limit":  1,
+		"cursor": first.NextCursor,
+	}))
+	if staleResp.Error == nil || staleResp.Error.Code != protocol.CodeInvalidParams ||
+		!strings.Contains(staleResp.Error.Message, "stale") {
+		t.Fatalf("stale cursor response = %#v", staleResp)
 	}
 }
 
@@ -2401,16 +2492,35 @@ func TestServerGitHandlers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatalf("write changed file: %v", err)
 	}
-	statusResp := server.HandleRequest(ctx, request("git/status", nil))
+	if err := os.WriteFile(filepath.Join(repo, "SECOND.md"), []byte("second\n"), 0o644); err != nil {
+		t.Fatalf("write second file: %v", err)
+	}
+	statusResp := server.HandleRequest(ctx, request("git/status", map[string]any{"limit": 1}))
 	if statusResp.Error != nil {
 		t.Fatalf("git/status error: %v", statusResp.Error)
 	}
-	var status struct {
-		Status *toolgit.Status `json:"status"`
-	}
+	var status protocol.GitStatusResponse
 	decodeResult(t, statusResp, &status)
-	if status.Status.Clean || len(status.Status.Entries) != 1 {
+	if status.Status.Clean || len(status.Status.Entries) != 1 || status.Status.EntryCount != 2 ||
+		!status.Status.EntriesTruncated || status.NextCursor == "" || status.SnapshotID == "" || status.ObservedAt.IsZero() {
 		t.Fatalf("git/status = %#v", status.Status)
+	}
+	if strings.Contains(string(statusResp.Result), `"raw"`) {
+		t.Fatalf("git/status leaked raw porcelain output: %s", statusResp.Result)
+	}
+	statusPageTwoResp := server.HandleRequest(ctx, request("git/status", map[string]any{
+		"limit":  1,
+		"cursor": status.NextCursor,
+	}))
+	if statusPageTwoResp.Error != nil {
+		t.Fatalf("git/status page two error: %v", statusPageTwoResp.Error)
+	}
+	var statusPageTwo protocol.GitStatusResponse
+	decodeResult(t, statusPageTwoResp, &statusPageTwo)
+	if len(statusPageTwo.Status.Entries) != 1 || statusPageTwo.Status.EntryCount != 2 ||
+		!statusPageTwo.Status.EntriesTruncated || statusPageTwo.NextCursor != "" ||
+		statusPageTwo.SnapshotID != status.SnapshotID {
+		t.Fatalf("git/status page two = %#v", statusPageTwo)
 	}
 
 	diffResp := server.HandleRequest(ctx, request("git/diff", nil))
@@ -2439,10 +2549,28 @@ func TestServerGitHandlers(t *testing.T) {
 	if commit.Commit.Hash == "" {
 		t.Fatalf("git/commit = %#v", commit.Commit)
 	}
+	cleanStatusResp := server.HandleRequest(ctx, request("git/status", nil))
+	if cleanStatusResp.Error != nil {
+		t.Fatalf("clean git/status error: %v", cleanStatusResp.Error)
+	}
+	if strings.Contains(string(cleanStatusResp.Result), `"entries":null`) {
+		t.Fatalf("clean git/status emitted null entries: %s", cleanStatusResp.Result)
+	}
+	var cleanStatus protocol.GitStatusResponse
+	decodeResult(t, cleanStatusResp, &cleanStatus)
+	if !cleanStatus.Status.Clean || len(cleanStatus.Status.Entries) != 0 || cleanStatus.Status.EntryCount != 0 {
+		t.Fatalf("clean git/status = %#v", cleanStatus)
+	}
 
 	listResp := server.HandleRequest(ctx, request("git/worktree/list", nil))
 	if listResp.Error != nil {
 		t.Fatalf("git/worktree/list error: %v", listResp.Error)
+	}
+	var worktrees protocol.GitWorktreeListResponse
+	decodeResult(t, listResp, &worktrees)
+	if len(worktrees.Worktrees) != 1 || worktrees.Total != 1 || worktrees.Truncated ||
+		worktrees.SnapshotID == "" || worktrees.ObservedAt.IsZero() || worktrees.Worktrees[0].Path == "" {
+		t.Fatalf("git/worktree/list = %#v", worktrees)
 	}
 }
 
