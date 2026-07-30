@@ -90,6 +90,57 @@ func TestSQLiteStoreThreadLifecyclePersists(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreThreadLifecycleRejectsActiveTurnsAndArchivedExecution(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Lifecycle guard"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	turn, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := s.ArchiveThread(ctx, thread.ID); !errors.Is(err, ErrThreadHasActiveTurn) {
+		t.Fatalf("ArchiveThread with queued turn error = %v, want ErrThreadHasActiveTurn", err)
+	}
+	if _, err := s.DeleteThread(ctx, thread.ID); !errors.Is(err, ErrThreadHasActiveTurn) {
+		t.Fatalf("DeleteThread with queued turn error = %v, want ErrThreadHasActiveTurn", err)
+	}
+	unchanged, err := s.GetThread(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread after rejected lifecycle changes: %v", err)
+	}
+	if unchanged.Status != ThreadActive || !unchanged.ArchivedAt.IsZero() || !unchanged.DeletedAt.IsZero() {
+		t.Fatalf("thread changed after rejected lifecycle controls: %#v", unchanged)
+	}
+
+	if _, err := s.CompleteTurn(ctx, CompleteTurnRequest{
+		ID:     turn.ID,
+		Status: TurnCompleted,
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	archived, err := s.ArchiveThread(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("ArchiveThread after terminal turn: %v", err)
+	}
+	if archived.Status != ThreadArchived {
+		t.Fatalf("archived status = %q, want %q", archived.Status, ThreadArchived)
+	}
+	if _, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID}); !errors.Is(err, ErrThreadArchived) {
+		t.Fatalf("CreateTurn on archived thread error = %v, want ErrThreadArchived", err)
+	}
+
+	if _, err := s.UnarchiveThread(ctx, thread.ID); err != nil {
+		t.Fatalf("UnarchiveThread: %v", err)
+	}
+	if _, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID}); err != nil {
+		t.Fatalf("CreateTurn after unarchive: %v", err)
+	}
+}
+
 func TestSQLiteStoreFileChangeRecoverySurvivesRestartAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "appserver.db")
@@ -801,6 +852,44 @@ func TestSQLiteStorePrepareTurnRetryIsAtomicAcrossHandlesAndDurable(t *testing.T
 	}
 }
 
+func TestSQLiteStorePrepareTurnRetryRejectsArchivedThread(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Archived retry"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	source, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := s.CompleteTurn(ctx, CompleteTurnRequest{
+		ID:     source.ID,
+		Status: TurnFailed,
+		Error:  "expected",
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	if _, err := s.ArchiveThread(ctx, thread.ID); err != nil {
+		t.Fatalf("ArchiveThread: %v", err)
+	}
+
+	if _, err := s.PrepareTurnRetry(ctx, PrepareTurnRetryRequest{
+		SourceTurnID:   source.ID,
+		IdempotencyKey: "archived-retry",
+	}); !errors.Is(err, ErrThreadArchived) {
+		t.Fatalf("PrepareTurnRetry archived thread error = %v, want ErrThreadArchived", err)
+	}
+	turns, err := s.ListTurns(ctx, TurnFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	if len(turns) != 1 || turns[0].ID != source.ID {
+		t.Fatalf("archived retry created a turn: %#v", turns)
+	}
+}
+
 func TestSQLiteStoreTurnsAndItemsPersistAndPaginate(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
@@ -1173,6 +1262,12 @@ func TestSQLiteStoreForkCopiesThreadHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppendItem child: %v", err)
 	}
+	if _, err := s.CompleteTurn(ctx, CompleteTurnRequest{
+		ID:     turn.ID,
+		Status: TurnCompleted,
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
 
 	fork, err := s.ForkThread(ctx, ForkThreadRequest{
 		SourceThreadID: source.ID,
@@ -1218,6 +1313,33 @@ func TestSQLiteStoreForkCopiesThreadHistory(t *testing.T) {
 	}
 	if forkParentPayload.ID != forkItems[0].ID {
 		t.Fatalf("fork parent payload id = %q, want %q", forkParentPayload.ID, forkItems[0].ID)
+	}
+}
+
+func TestSQLiteStoreForkRejectsActiveSource(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+
+	source, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Active source"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	if _, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: source.ID}); err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+
+	if _, err := s.ForkThread(ctx, ForkThreadRequest{
+		SourceThreadID: source.ID,
+		IncludeItems:   true,
+	}); !errors.Is(err, ErrThreadHasActiveTurn) {
+		t.Fatalf("ForkThread active source error = %v, want ErrThreadHasActiveTurn", err)
+	}
+	threads, err := s.ListThreads(ctx, ThreadFilter{})
+	if err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+	if len(threads) != 1 || threads[0].ID != source.ID {
+		t.Fatalf("active fork created a thread: %#v", threads)
 	}
 }
 
@@ -1369,6 +1491,12 @@ func TestSQLiteStoreForkDisablesFileChangeRevertEvidence(t *testing.T) {
 		Payload:  json.RawMessage(`{"itemId":"` + item.ID + `","path":"notes.txt"}`),
 	}); err != nil {
 		t.Fatalf("AppendItem receipt: %v", err)
+	}
+	if _, err := s.CompleteTurn(ctx, CompleteTurnRequest{
+		ID:     turn.ID,
+		Status: TurnCompleted,
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
 	}
 	fork, err := s.ForkThread(ctx, ForkThreadRequest{SourceThreadID: source.ID, IncludeItems: true})
 	if err != nil {
@@ -1573,7 +1701,7 @@ func TestSQLiteStoreRejectsCrossThreadItemTurn(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreRejectsStartingExistingTurnAfterThreadDeleted(t *testing.T) {
+func TestSQLiteStoreRejectsDeletingActiveTurnAndStartingExistingTurnAfterDelete(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
 
@@ -1585,8 +1713,20 @@ func TestSQLiteStoreRejectsStartingExistingTurnAfterThreadDeleted(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CreateTurn: %v", err)
 	}
+	if _, err := s.DeleteThread(ctx, thread.ID); !errors.Is(err, ErrThreadHasActiveTurn) {
+		t.Fatalf("DeleteThread with queued turn error = %v, want ErrThreadHasActiveTurn", err)
+	}
+	if _, err := s.StartTurn(ctx, turn.ID); err != nil {
+		t.Fatalf("StartTurn: %v", err)
+	}
+	if _, err := s.CompleteTurn(ctx, CompleteTurnRequest{
+		ID:     turn.ID,
+		Status: TurnCompleted,
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
 	if _, err := s.DeleteThread(ctx, thread.ID); err != nil {
-		t.Fatalf("DeleteThread: %v", err)
+		t.Fatalf("DeleteThread after terminal turn: %v", err)
 	}
 	if _, err := s.StartTurn(ctx, turn.ID); !errors.Is(err, ErrThreadDeleted) {
 		t.Fatalf("StartTurn after delete error = %v, want ErrThreadDeleted", err)

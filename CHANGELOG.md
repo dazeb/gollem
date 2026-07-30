@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Thread lifecycle changes now serialize with active execution.** Archive and
+  soft-delete reject threads with queued or running turns, and archived threads
+  reject new turns, retries, and pre-existing turn starts until explicitly
+  unarchived. Full-history forks reject active sources instead of copying
+  nonterminal turns, and startup failures terminalize any turn created before
+  execution ownership is established. Rename remains available during execution
+  because it does not alter run ownership.
+
 ### Added
 
 - **Response-loss-safe full-history thread forks.** The generated

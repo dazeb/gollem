@@ -279,6 +279,11 @@ func (s *SQLiteStore) setThreadStatus(ctx context.Context, id string, status Thr
 		if loaded.Status == ThreadDeleted && status != ThreadDeleted {
 			return ErrThreadDeleted
 		}
+		if status == ThreadArchived || status == ThreadDeleted {
+			if err := ensureThreadHasNoActiveTurnTx(ctx, tx, loaded.ID); err != nil {
+				return err
+			}
+		}
 		now := time.Now().UTC()
 		loaded.Status = status
 		loaded.UpdatedAt = now
@@ -315,6 +320,11 @@ func (s *SQLiteStore) ForkThread(ctx context.Context, req ForkThreadRequest) (*T
 		}
 		if source.Status == ThreadDeleted {
 			return ErrThreadDeleted
+		}
+		if req.IncludeItems {
+			if err := ensureThreadHasNoActiveTurnTx(ctx, tx, source.ID); err != nil {
+				return err
+			}
 		}
 		now := time.Now().UTC()
 		title := req.Title
@@ -398,22 +408,8 @@ func (s *SQLiteStore) PrepareThreadFork(
 		if source.Status == ThreadDeleted {
 			return ErrThreadDeleted
 		}
-		var active int
-		err = tx.QueryRowContext(
-			ctx,
-			`SELECT 1
-			 FROM app_turns
-			 WHERE thread_id = ? AND status IN (?, ?)
-			 LIMIT 1`,
-			source.ID,
-			TurnQueued,
-			TurnRunning,
-		).Scan(&active)
-		switch {
-		case err == nil:
-			return ErrThreadHasActiveTurn
-		case !errors.Is(err, sql.ErrNoRows):
-			return fmt.Errorf("check active source turns: %w", err)
+		if err := ensureThreadHasNoActiveTurnTx(ctx, tx, source.ID); err != nil {
+			return err
 		}
 
 		now := time.Now().UTC()
@@ -528,8 +524,11 @@ func (s *SQLiteStore) CreateTurn(ctx context.Context, req CreateTurnRequest) (*T
 		if err != nil {
 			return err
 		}
-		if thread.Status == ThreadDeleted {
+		switch thread.Status {
+		case ThreadDeleted:
 			return ErrThreadDeleted
+		case ThreadArchived:
+			return ErrThreadArchived
 		}
 		now := time.Now().UTC()
 		turn = &Turn{
@@ -564,8 +563,11 @@ func (s *SQLiteStore) StartTurn(ctx context.Context, id string) (*Turn, error) {
 		if err != nil {
 			return err
 		}
-		if thread.Status == ThreadDeleted {
+		switch thread.Status {
+		case ThreadDeleted:
 			return ErrThreadDeleted
+		case ThreadArchived:
+			return ErrThreadArchived
 		}
 		now := time.Now().UTC()
 		loaded.Status = TurnRunning
@@ -707,6 +709,9 @@ func (s *SQLiteStore) PrepareTurnRetry(ctx context.Context, req PrepareTurnRetry
 		if thread.Status == ThreadDeleted {
 			return ErrThreadDeleted
 		}
+		if thread.Status == ThreadArchived {
+			return ErrThreadArchived
+		}
 
 		turns, err := loadAllTurnsTx(ctx, tx)
 		if err != nil {
@@ -756,6 +761,28 @@ func (s *SQLiteStore) PrepareTurnRetry(ctx context.Context, req PrepareTurnRetry
 		return nil, err
 	}
 	return result, nil
+}
+
+func ensureThreadHasNoActiveTurnTx(ctx context.Context, tx *sql.Tx, threadID string) error {
+	var active int
+	err := tx.QueryRowContext(
+		ctx,
+		`SELECT 1
+		 FROM app_turns
+		 WHERE thread_id = ? AND status IN (?, ?)
+		 LIMIT 1`,
+		threadID,
+		TurnQueued,
+		TurnRunning,
+	).Scan(&active)
+	switch {
+	case err == nil:
+		return ErrThreadHasActiveTurn
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	default:
+		return fmt.Errorf("check active thread turns: %w", err)
+	}
 }
 
 // RecoverOrphanedTurns terminalizes work whose in-memory execution owner did

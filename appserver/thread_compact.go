@@ -62,7 +62,7 @@ func (s *Server) handleThreadCompactStart(ctx context.Context, raw json.RawMessa
 	}
 	started, err := st.StartTurn(ctx, turn.ID)
 	if err != nil {
-		return nil, mapError("thread/compact/start", err)
+		return nil, mapError("thread/compact/start", failUnownedTurn(st, turn, err))
 	}
 	releaseStart()
 	item, err := st.AppendItem(ctx, store.AppendItemRequest{
@@ -77,7 +77,7 @@ func (s *Server) handleThreadCompactStart(ctx context.Context, raw json.RawMessa
 		}),
 	})
 	if err != nil {
-		return nil, mapError("thread/compact/start", err)
+		return nil, mapError("thread/compact/start", failUnownedTurn(st, started, err))
 	}
 	completed, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{
 		ID:     started.ID,
@@ -88,7 +88,7 @@ func (s *Server) handleThreadCompactStart(ctx context.Context, raw json.RawMessa
 		}),
 	})
 	if err != nil {
-		return nil, mapError("thread/compact/start", err)
+		return nil, mapError("thread/compact/start", failUnownedTurn(st, started, err))
 	}
 	s.markThreadLoaded(thread)
 	publishTurnStarted(s, started)

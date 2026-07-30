@@ -105,7 +105,7 @@ func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessa
 	}
 	startedTurn, err := st.StartTurn(ctx, turn.ID)
 	if err != nil {
-		return nil, mapError("thread/shellCommand", err)
+		return nil, mapError("thread/shellCommand", failUnownedTurn(st, turn, err))
 	}
 	releaseStart()
 	item, err := st.AppendItem(ctx, store.AppendItemRequest{
@@ -125,7 +125,7 @@ func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessa
 		)),
 	})
 	if err != nil {
-		return nil, mapError("thread/shellCommand", err)
+		return nil, mapError("thread/shellCommand", failUnownedTurn(st, startedTurn, err))
 	}
 	s.markThreadLoaded(thread)
 	publishTurnStarted(s, startedTurn)
@@ -184,6 +184,7 @@ func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessa
 			nil,
 		)),
 	}); err != nil {
+		go s.waitForThreadShellCommand(run)
 		return nil, mapError("thread/shellCommand", err)
 	}
 	go s.waitForThreadShellCommand(run)
@@ -245,9 +246,7 @@ func (s *Server) completeThreadShellCommand(ctx context.Context, run threadShell
 			&completedAt,
 		)),
 	})
-	if err != nil {
-		return
-	}
+	itemErr := err
 	turnStatus := store.TurnCompleted
 	if status != commandExecutionStatusCompleted {
 		turnStatus = store.TurnFailed
@@ -270,7 +269,9 @@ func (s *Server) completeThreadShellCommand(ctx context.Context, run threadShell
 		return
 	}
 	s.publishTurnDiffUpdatedIfChanged(ctx, completedTurn, run.BeforeDiff)
-	publishItemCompleted(s, completedTurn, item)
+	if itemErr == nil {
+		publishItemCompleted(s, completedTurn, item)
+	}
 	publishTurnCompleted(s, completedTurn)
 }
 
