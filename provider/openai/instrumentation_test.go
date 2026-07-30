@@ -889,6 +889,12 @@ func TestRequestInstrumentationRecordTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestRecordedDurationSinceIsNeverZero(t *testing.T) {
+	if got := recordedDurationSince(time.Now().Add(time.Hour)); got != time.Nanosecond {
+		t.Fatalf("future start duration = %v, want %v", got, time.Nanosecond)
+	}
+}
+
 // TestEstimateResponsesRequestBytes is a small direct test of the helper used
 // to give the WS trace a request size.
 func TestEstimateResponsesRequestBytes(t *testing.T) {
