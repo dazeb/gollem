@@ -12,5 +12,9 @@ func metadataLinkCount(_ string, info os.FileInfo) uint64 {
 	if !ok {
 		return 0
 	}
-	return uint64(stat.Nlink)
+	return metadataUnsignedLinkCount(stat.Nlink)
+}
+
+func metadataUnsignedLinkCount[T ~uint16 | ~uint32 | ~uint64](count T) uint64 {
+	return uint64(count)
 }
