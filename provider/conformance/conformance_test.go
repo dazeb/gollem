@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/fugue-labs/gollem/provider/anthropic"
@@ -14,9 +16,11 @@ import (
 )
 
 func TestDeterministicProviderDriverConformance(t *testing.T) {
-	openAIServer := httptest.NewServer(openAIConformanceFixture(t))
+	openAICancellationReady := make(chan struct{})
+	openAIServer := httptest.NewServer(openAIConformanceFixture(t, openAICancellationReady))
 	defer openAIServer.Close()
-	anthropicServer := httptest.NewServer(anthropicConformanceFixture(t))
+	anthropicCancellationReady := make(chan struct{})
+	anthropicServer := httptest.NewServer(anthropicConformanceFixture(t, anthropicCancellationReady))
 	defer anthropicServer.Close()
 
 	cases := []struct {
@@ -27,9 +31,10 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 			name: "native OpenAI",
 			model: func() (conformance.Driver, error) {
 				return conformance.Driver{
-					Name:   "native OpenAI",
-					Model:  openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
-					Claims: conformance.Claims{ToolCalls: true, Streaming: true, Usage: true},
+					Name:              "native OpenAI",
+					Model:             openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true},
+					CancellationReady: openAICancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "openai response",
 						ToolName:     "conformance_echo",
@@ -50,9 +55,10 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					return conformance.Driver{}, err
 				}
 				return conformance.Driver{
-					Name:   "OpenAI-compatible local",
-					Model:  model,
-					Claims: conformance.Claims{ToolCalls: true, Streaming: true, Usage: true},
+					Name:              "OpenAI-compatible local",
+					Model:             model,
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true},
+					CancellationReady: openAICancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "openai response",
 						ToolName:     "conformance_echo",
@@ -65,9 +71,10 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 			name: "native Anthropic",
 			model: func() (conformance.Driver, error) {
 				return conformance.Driver{
-					Name:   "native Anthropic",
-					Model:  anthropic.New(anthropic.WithAPIKey("test-anthropic-key"), anthropic.WithBaseURL(anthropicServer.URL), anthropic.WithModel(anthropic.ClaudeSonnet46)),
-					Claims: conformance.Claims{ToolCalls: true, Streaming: true, Usage: true},
+					Name:              "native Anthropic",
+					Model:             anthropic.New(anthropic.WithAPIKey("test-anthropic-key"), anthropic.WithBaseURL(anthropicServer.URL), anthropic.WithModel(anthropic.ClaudeSonnet46)),
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true},
+					CancellationReady: anthropicCancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "anthropic response",
 						ToolName:     "conformance_echo",
@@ -100,9 +107,17 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	if err == nil {
 		t.Fatal("Verify accepted a tool claim without an expected tool")
 	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing cancellation fixture",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{Cancellation: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a cancellation claim without a start signal")
+	}
 }
 
-func openAIConformanceFixture(t *testing.T) http.Handler {
+func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -111,11 +126,19 @@ func openAIConformanceFixture(t *testing.T) http.Handler {
 		if r.Header.Get("Authorization") == "" {
 			t.Fatal("OpenAI fixture request had no authorization header")
 		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read OpenAI request: %v", err)
+		}
+		if strings.Contains(string(body), "cancel conformance") {
+			waitForCancellation(r, cancellationReady)
+			return
+		}
 		var request struct {
 			Stream bool            `json:"stream"`
 			Tools  json.RawMessage `json:"tools"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatalf("decode OpenAI request: %v", err)
 		}
 		if request.Stream {
@@ -138,7 +161,7 @@ data: [DONE]
 	})
 }
 
-func anthropicConformanceFixture(t *testing.T) http.Handler {
+func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
@@ -147,11 +170,19 @@ func anthropicConformanceFixture(t *testing.T) http.Handler {
 		if r.Header.Get("x-api-key") == "" {
 			t.Fatal("Anthropic fixture request had no API key header")
 		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read Anthropic request: %v", err)
+		}
+		if strings.Contains(string(body), "cancel conformance") {
+			waitForCancellation(r, cancellationReady)
+			return
+		}
 		var request struct {
 			Stream bool            `json:"stream"`
 			Tools  json.RawMessage `json:"tools"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatalf("decode Anthropic request: %v", err)
 		}
 		if request.Stream {
@@ -183,4 +214,13 @@ data: {"type":"message_stop"}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"id":"msg-conformance","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"anthropic response"},{"type":"tool_use","id":"call_anthropic","name":"conformance_echo","input":{"value":"ok"}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":2}}`)
 	})
+}
+
+func waitForCancellation(request *http.Request, ready chan<- struct{}) {
+	select {
+	case ready <- struct{}{}:
+	case <-request.Context().Done():
+		return
+	}
+	<-request.Context().Done()
 }
