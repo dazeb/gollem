@@ -525,6 +525,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadDeleteParams", Type: reflect.TypeFor[ThreadDeleteParams]()},
 		{Name: "ThreadDeleteResponse", Type: reflect.TypeFor[ThreadDeleteResponse]()},
 		{Name: "ThreadDeletedNotification", Type: reflect.TypeFor[ThreadDeletedNotification]()},
+		{Name: "ThreadExtra", Type: reflect.TypeFor[ThreadExtra]()},
 		{Name: "ThreadForkParams", Type: reflect.TypeFor[ThreadForkParams]()},
 		{Name: "ThreadForkResponse", Type: reflect.TypeFor[ThreadForkResponse]()},
 		{Name: "ThreadGoal", Type: reflect.TypeFor[ThreadGoal]()},
@@ -539,6 +540,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadGoalUpdatedNotification", Type: reflect.TypeFor[ThreadGoalUpdatedNotification]()},
 		{Name: "ThreadHistoryForkParams", Type: reflect.TypeFor[ThreadHistoryForkParams]()},
 		{Name: "ThreadHistoryForkResult", Type: reflect.TypeFor[ThreadHistoryForkResult]()},
+		{Name: "ThreadHistoryMode", Type: reflect.TypeFor[ThreadHistoryMode]()},
 		{Name: "ThreadHistoryRollbackParams", Type: reflect.TypeFor[ThreadHistoryRollbackParams]()},
 		{Name: "ThreadHistoryRollbackRecord", Type: reflect.TypeFor[ThreadHistoryRollbackRecord]()},
 		{Name: "ThreadHistoryRollbackResult", Type: reflect.TypeFor[ThreadHistoryRollbackResult]()},
@@ -569,6 +571,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadResumeResponse", Type: reflect.TypeFor[ThreadResumeResponse]()},
 		{Name: "ThreadSetNameParams", Type: reflect.TypeFor[ThreadSetNameParams]()},
 		{Name: "ThreadSetNameResponse", Type: reflect.TypeFor[ThreadSetNameResponse]()},
+		{Name: "ThreadSettings", Type: reflect.TypeFor[ThreadSettings]()},
+		{Name: "ThreadSettingsUpdatedNotification", Type: reflect.TypeFor[ThreadSettingsUpdatedNotification]()},
 		{Name: "ThreadSortKey", Type: reflect.TypeFor[ThreadSortKey]()},
 		{Name: "ThreadSource", Type: reflect.TypeFor[ThreadSource]()},
 		{Name: "ThreadSourceKind", Type: reflect.TypeFor[ThreadSourceKind]()},
@@ -1243,6 +1247,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["ReasoningItemReasoningSummary"] = rawResponseContentSchema(reasoningItemSummaryVariants)
 	schemas["ReviewDecision"] = reviewDecisionSchema()
 	for name, schema := range reviewStartSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range threadSettingsSchemas() {
 		schemas[name] = schema
 	}
 	schemas["ResponsesApiWebSearchAction"] = responsesAPIWebSearchActionSchema()
