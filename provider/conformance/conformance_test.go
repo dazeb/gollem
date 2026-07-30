@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/fugue-labs/gollem/provider/anthropic"
@@ -17,10 +18,12 @@ import (
 
 func TestDeterministicProviderDriverConformance(t *testing.T) {
 	openAICancellationReady := make(chan struct{})
-	openAIServer := httptest.NewServer(openAIConformanceFixture(t, openAICancellationReady))
+	openAIRetry := newRetryFixture()
+	openAIServer := httptest.NewServer(openAIConformanceFixture(t, openAICancellationReady, openAIRetry))
 	defer openAIServer.Close()
 	anthropicCancellationReady := make(chan struct{})
-	anthropicServer := httptest.NewServer(anthropicConformanceFixture(t, anthropicCancellationReady))
+	anthropicRetry := newRetryFixture()
+	anthropicServer := httptest.NewServer(anthropicConformanceFixture(t, anthropicCancellationReady, anthropicRetry))
 	defer anthropicServer.Close()
 
 	cases := []struct {
@@ -33,13 +36,14 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 				return conformance.Driver{
 					Name:              "native OpenAI",
 					Model:             openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true},
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true},
 					CancellationReady: openAICancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "openai response",
 						ToolName:     "conformance_echo",
 						StreamText:   "openai stream",
 						PartialText:  "openai partial",
+						RetryText:    "openai retry",
 					},
 				}, nil
 			},
@@ -58,13 +62,14 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 				return conformance.Driver{
 					Name:              "OpenAI-compatible local",
 					Model:             model,
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true},
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true},
 					CancellationReady: openAICancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "openai response",
 						ToolName:     "conformance_echo",
 						StreamText:   "openai stream",
 						PartialText:  "openai partial",
+						RetryText:    "openai retry",
 					},
 				}, nil
 			},
@@ -75,13 +80,14 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 				return conformance.Driver{
 					Name:              "native Anthropic",
 					Model:             anthropic.New(anthropic.WithAPIKey("test-anthropic-key"), anthropic.WithBaseURL(anthropicServer.URL), anthropic.WithModel(anthropic.ClaudeSonnet46)),
-					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true},
+					Claims:            conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true},
 					CancellationReady: anthropicCancellationReady,
 					Expectations: conformance.Expectations{
 						ResponseText: "anthropic response",
 						ToolName:     "conformance_echo",
 						StreamText:   "anthropic stream",
 						PartialText:  "anthropic partial",
+						RetryText:    "anthropic retry",
 					},
 				}, nil
 			},
@@ -126,9 +132,17 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	if err == nil {
 		t.Fatal("Verify accepted a partial stream claim without expected partial text")
 	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing retry fixture",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{Retryability: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a retry claim without expected retry text")
+	}
 }
 
-func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}) http.Handler {
+func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -156,11 +170,23 @@ func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}) h
 			return
 		}
 		var request struct {
+			Model  string          `json:"model"`
 			Stream bool            `json:"stream"`
 			Tools  json.RawMessage `json:"tools"`
 		}
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatalf("decode OpenAI request: %v", err)
+		}
+		if strings.Contains(string(body), "retry conformance") {
+			if retry.firstAttempt(request.Model) {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = fmt.Fprint(w, `{"error":{"type":"rate_limit_error"}}`)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"id":"chatcmpl-retry","object":"chat.completion","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"openai retry"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+			return
 		}
 		if request.Stream {
 			if len(request.Tools) != 0 && string(request.Tools) != "null" {
@@ -182,7 +208,7 @@ data: [DONE]
 	})
 }
 
-func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}) http.Handler {
+func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
@@ -210,11 +236,23 @@ func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}
 			return
 		}
 		var request struct {
+			Model  string          `json:"model"`
 			Stream bool            `json:"stream"`
 			Tools  json.RawMessage `json:"tools"`
 		}
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatalf("decode Anthropic request: %v", err)
+		}
+		if strings.Contains(string(body), "retry conformance") {
+			if retry.firstAttempt(request.Model) {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = fmt.Fprint(w, `{"error":{"type":"rate_limit_error"}}`)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"id":"msg-retry","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"anthropic retry"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`)
+			return
 		}
 		if request.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -254,4 +292,20 @@ func waitForCancellation(request *http.Request, ready chan<- struct{}) {
 		return
 	}
 	<-request.Context().Done()
+}
+
+type retryFixture struct {
+	mu       sync.Mutex
+	attempts map[string]int
+}
+
+func newRetryFixture() *retryFixture {
+	return &retryFixture{attempts: make(map[string]int)}
+}
+
+func (f *retryFixture) firstAttempt(model string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attempts[model]++
+	return f.attempts[model] == 1
 }
