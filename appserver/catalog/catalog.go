@@ -251,6 +251,55 @@ func (c *Catalog) ProviderCapabilities(providerID string) (ProviderCapabilities,
 	return aggregate, nil
 }
 
+// ValidateAgentRuntimeSelection proves that a catalog selection can support
+// Gollem's streaming, tool-capable agent runtime. It deliberately returns only
+// catalog identities and capability names, never configuration values.
+func (c *Catalog) ValidateAgentRuntimeSelection(providerID, modelName string) error {
+	c = ensureCatalog(c)
+	providerID = normalizeProviderID(providerID)
+	modelName = strings.TrimSpace(modelName)
+	if providerID == "" {
+		return errors.New("provider selection is unavailable")
+	}
+
+	var selectedProvider *Provider
+	for index := range c.providers {
+		provider := &c.providers[index]
+		if provider.ID == providerID {
+			selectedProvider = provider
+			break
+		}
+	}
+	if selectedProvider == nil {
+		return fmt.Errorf("provider selection is unavailable for %q", providerID)
+	}
+	if !selectedProvider.Configured {
+		return fmt.Errorf("provider %q is not configured", selectedProvider.ID)
+	}
+	if !selectedProvider.Capabilities.Streaming || !selectedProvider.Capabilities.ToolCalls {
+		return fmt.Errorf("provider %q does not advertise streaming agent tool use", selectedProvider.ID)
+	}
+
+	for index := range selectedProvider.Models {
+		model := &selectedProvider.Models[index]
+		if modelName == "" {
+			if !model.IsDefault && model.ID != selectedProvider.DefaultModelID {
+				continue
+			}
+		} else if model.ID != modelName && model.Model != modelName {
+			continue
+		}
+		if !model.Capabilities.Streaming || !model.Capabilities.ToolCalls {
+			return fmt.Errorf("model %q does not advertise streaming agent tool use", model.ID)
+		}
+		return nil
+	}
+	if modelName == "" {
+		return fmt.Errorf("provider %q has no available default model", selectedProvider.ID)
+	}
+	return fmt.Errorf("model selection is unavailable for %q", modelName)
+}
+
 // ProbeProvider reports bounded health for the selected provider. The only
 // network operation permitted here is a discovery request to an explicitly
 // configured loopback OpenAI-compatible endpoint.

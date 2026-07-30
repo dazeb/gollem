@@ -273,6 +273,45 @@ func TestServerRuntimeReasoningEffortFailsClosedAgainstModelCatalog(t *testing.T
 	}
 }
 
+func TestServerRuntimeSelectionValidatorFailsClosedBeforeThreadCreation(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	factoryCalls := 0
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModelFactory(
+			func(context.Context, RuntimeModelSelection) (core.Model, RuntimeModelInfo, error) {
+				factoryCalls++
+				return core.NewTestModel(core.TextResponse("must not run")), RuntimeModelInfo{}, nil
+			},
+		))),
+		WithRuntimeSelectionValidator(func(RuntimeModelSelection) error {
+			return errors.New("selected model does not advertise streaming agent tool use")
+		}),
+	)
+
+	response := server.HandleRequest(ctx, request("thread/start", map[string]any{
+		"workspace":  t.TempDir(),
+		"prompt":     "do not persist",
+		"providerId": "openai",
+		"model":      "gpt-4o",
+	}))
+	if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams ||
+		!strings.Contains(response.Error.Message, "does not advertise streaming agent tool use") {
+		t.Fatalf("thread/start error = %#v", response.Error)
+	}
+	threads, err := st.ListThreads(ctx, store.ThreadFilter{})
+	if err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+	if len(threads) != 0 {
+		t.Fatalf("rejected selection created threads: %#v", threads)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("rejected selection called runtime factory %d times", factoryCalls)
+	}
+}
+
 func TestServerThreadCompactStartFailureTerminalizesCreatedTurn(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

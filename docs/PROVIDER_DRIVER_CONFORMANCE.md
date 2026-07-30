@@ -25,7 +25,7 @@ of behavior and must not enable a control solely on provider identity.
 | Request deadline propagation | Proven | Proven | Proven | `provider/conformance` confirms HTTP request cancellation and `context.DeadlineExceeded` normalization |
 | Post-output retry / replay | Not yet proven | Not yet proven | Not yet proven | A stream may have produced caller-visible output; recovery must not replay it without an explicit safe-resume contract |
 | Endpoint health probe | Unsupported | Proven | Unsupported | `provider/health/probe` performs a loopback-only `GET /v1/models`; it returns only a typed status and never starts a model turn |
-| Capability mismatch | Not yet proven | Not yet proven | Not yet proven | Must remain a typed unavailable/degraded state |
+| Capability mismatch | Catalog/daemon proven | Catalog/daemon proven | Catalog/daemon proven | `ValidateAgentRuntimeSelection` rejects unconfigured, unknown, cross-provider, and non-streaming/non-tool-capable selections before the daemon persists a thread or turn; Slang continues to render the same condition as unavailable |
 
 `Catalog-supported` means the catalog may expose the capability only for the
 listed provider/model profile. It does not make that behavior part of the common

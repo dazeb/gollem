@@ -16,6 +16,7 @@ import (
 	"time"
 
 	appserver "github.com/fugue-labs/gollem/appserver"
+	"github.com/fugue-labs/gollem/appserver/catalog"
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
 	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
 	"github.com/fugue-labs/gollem/appserver/protocol"
@@ -224,10 +225,24 @@ func newCLIAppServer(flags appServerFlags) (*appserver.Server, func(), error) {
 }
 
 func newCLIAppServerWithTransport(flags appServerFlags, transport string) (*appserver.Server, func(), error) {
-	return newCLIAppServerWithRuntimeFactory(flags, transport, appServerRuntimeModelFactory(flags))
+	return newCLIAppServerWithRuntimeFactoryAndSelectionValidation(
+		flags,
+		transport,
+		appServerRuntimeModelFactory(flags),
+		true,
+	)
 }
 
 func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, runtimeFactory appserver.RuntimeModelFactory) (*appserver.Server, func(), error) {
+	return newCLIAppServerWithRuntimeFactoryAndSelectionValidation(flags, transport, runtimeFactory, false)
+}
+
+func newCLIAppServerWithRuntimeFactoryAndSelectionValidation(
+	flags appServerFlags,
+	transport string,
+	runtimeFactory appserver.RuntimeModelFactory,
+	validateSelection bool,
+) (*appserver.Server, func(), error) {
 	workDir, err := filepath.Abs(flags.workDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve workdir: %w", err)
@@ -326,6 +341,7 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 	if version == "" {
 		version = "dev"
 	}
+	catalogSvc := catalog.NewDefault()
 	opts := []appserver.Option{
 		appserver.WithImplementationInfo(protocol.ImplementationInfo{Name: "gollem-appserver", Version: version}),
 		appserver.WithInitializeHome(filepath.Join(workDir, ".gollem")),
@@ -350,6 +366,12 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 		appserver.WithApprovalService(approvals),
 		appserver.WithInteractionService(interactionSvc),
 		appserver.WithRuntimeService(runtimeSvc),
+		appserver.WithCatalog(catalogSvc),
+	}
+	if validateSelection {
+		opts = append(opts, appserver.WithRuntimeSelectionValidator(
+			appServerRuntimeSelectionValidator(flags, catalogSvc),
+		))
 	}
 	if flags.workspaceCoordinator != nil {
 		opts = append(opts, appserver.WithWorkspaceMutationCoordinator(flags.workspaceCoordinator))
@@ -681,6 +703,22 @@ func appServerRuntimeModelFactory(flags appServerFlags) appserver.RuntimeModelFa
 			Provider:   provider,
 			Model:      modelName,
 		}, nil
+	}
+}
+
+func appServerRuntimeSelectionValidator(flags appServerFlags, catalogSvc *catalog.Catalog) appserver.RuntimeSelectionValidator {
+	return func(selection appserver.RuntimeModelSelection) error {
+		provider := firstNonEmptyAppServer(selection.ProviderID, selection.Provider, flags.provider)
+		// The built-in deterministic model is a credential-free CLI fixture, not
+		// a catalog-backed external provider.
+		if strings.EqualFold(strings.TrimSpace(provider), "test") {
+			return nil
+		}
+		if provider == "" {
+			provider = detectProvider()
+		}
+		modelName := firstNonEmptyAppServer(selection.Model, flags.modelName)
+		return catalogSvc.ValidateAgentRuntimeSelection(provider, modelName)
 	}
 }
 

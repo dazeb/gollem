@@ -922,6 +922,30 @@ func TestCLIAppServerThreadStartUsesRuntimeProviderFlag(t *testing.T) {
 	waitCLINotification(t, server, "turn/completed")
 }
 
+func TestCLIAppServerCapabilityGateRejectsUnconfiguredProvider(t *testing.T) {
+	server, cleanup, err := newCLIAppServer(appServerFlags{
+		workDir:   t.TempDir(),
+		storePath: ":memory:",
+		provider:  catalog.ProviderAnthropic,
+		stdio:     true,
+	})
+	if err != nil {
+		t.Fatalf("newCLIAppServer: %v", err)
+	}
+	defer cleanup()
+	readyCLIAppServer(t, server)
+
+	response := server.HandleRequest(context.Background(), protocol.Request{
+		ID:     protocol.NewStringID("rejected-capability"),
+		Method: "thread/start",
+		Params: json.RawMessage(`{"prompt":"do not create a thread"}`),
+	})
+	if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams ||
+		!strings.Contains(response.Error.Message, "not configured") {
+		t.Fatalf("thread/start error = %#v", response.Error)
+	}
+}
+
 func TestCLIAppServerRuntimeFactoryUsesLocalOpenAICompatibleProfile(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
