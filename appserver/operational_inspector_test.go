@@ -55,6 +55,24 @@ func TestOperationalDisplayTextNormalizesControlAndInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestOperationalTerminalTerminateApprovalItemIDBindsOpaqueTarget(t *testing.T) {
+	first := operationalTerminalTerminateApprovalItemID("process-1")
+	second := operationalTerminalTerminateApprovalItemID("process-2")
+	if !strings.HasPrefix(first, "terminal-terminate-sha256:") ||
+		len(strings.TrimPrefix(first, "terminal-terminate-sha256:")) != 64 {
+		t.Fatalf("approval item id = %q", first)
+	}
+	if first == second {
+		t.Fatal("different process ids produced the same approval item id")
+	}
+	if strings.Contains(first, "process-1") {
+		t.Fatalf("approval item id leaked native process id: %q", first)
+	}
+	if again := operationalTerminalTerminateApprovalItemID("process-1"); again != first {
+		t.Fatalf("approval item id changed: %q != %q", again, first)
+	}
+}
+
 func TestOperationalPageBoundsRejectsStaleAndMalformedCursors(t *testing.T) {
 	params := protocol.OperationalListParams{Limit: 2}
 	start, end, next, rpcErr := operationalPageBounds(params, "inventory", "sha256:one", 5)

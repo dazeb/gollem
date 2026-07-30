@@ -2480,6 +2480,98 @@ func TestServerBackgroundTerminalTerminateDoesNotClaimSuccessBeforeExit(t *testi
 	}
 }
 
+func TestServerBackgroundTerminalTerminateApprovalBindsTarget(t *testing.T) {
+	ctx := context.Background()
+	approvals := NewApprovalService()
+	processSvc, err := toolprocess.NewService(
+		t.TempDir(),
+		toolprocess.WithApproval(func(ctx context.Context, op toolprocess.Operation) error {
+			if op.Kind == toolprocess.OperationTerminate {
+				return approvals.ProcessApproval(ctx, op)
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(
+		WithProcess(processSvc),
+		WithApprovalService(approvals),
+	)
+
+	spawnResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"command": "cat",
+	}))
+	if spawnResp.Error != nil {
+		t.Fatalf("process/spawn error: %v", spawnResp.Error)
+	}
+	var running struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, spawnResp, &running)
+	t.Cleanup(func() {
+		_ = processSvc.Kill(context.Background(), running.Process.ID)
+		_, _ = processSvc.Wait(context.Background(), running.Process.ID)
+	})
+
+	terminateResult := make(chan protocol.Response, 1)
+	go func() {
+		terminateResult <- server.HandleRequest(
+			ctx,
+			request("thread/backgroundTerminals/terminate", map[string]any{
+				"id": running.Process.ID,
+			}),
+		)
+	}()
+
+	approvalRequest := waitForServerRequest(t, server)
+	if approvalRequest.Method != "item/commandExecution/requestApproval" {
+		t.Fatalf("approval method = %q", approvalRequest.Method)
+	}
+	var approvalParams protocol.CommandExecutionApprovalRequestParams
+	if err := json.Unmarshal(approvalRequest.Params, &approvalParams); err != nil {
+		t.Fatalf("decode command approval params: %v", err)
+	}
+	wantItemID := operationalTerminalTerminateApprovalItemID(running.Process.ID)
+	if approvalParams.ItemID != wantItemID {
+		t.Fatalf("approval item id = %q, want %q", approvalParams.ItemID, wantItemID)
+	}
+	if strings.Contains(approvalParams.ItemID, running.Process.ID) {
+		t.Fatalf("approval item id leaked native process id: %q", approvalParams.ItemID)
+	}
+	if approvalParams.Operation != string(toolprocess.OperationTerminate) ||
+		approvalParams.Signal != "SIGTERM" ||
+		!approvalParams.Destructive {
+		t.Fatalf("terminate approval params = %#v", approvalParams)
+	}
+
+	requestID, _ := approvalRequest.ID.Value().(string)
+	approvalResp := server.HandleRequest(ctx, request("approval/respond", map[string]any{
+		"requestId": requestID,
+		"approved":  true,
+	}))
+	if approvalResp.Error != nil {
+		t.Fatalf("approval/respond error: %v", approvalResp.Error)
+	}
+
+	select {
+	case terminateResp := <-terminateResult:
+		if terminateResp.Error != nil {
+			t.Fatalf("thread/backgroundTerminals/terminate error: %v", terminateResp.Error)
+		}
+		var terminated protocol.BackgroundTerminalTerminateResponse
+		decodeResult(t, terminateResp, &terminated)
+		if !terminated.OK ||
+			terminated.ID != running.Process.ID ||
+			terminated.Terminal.Status != protocol.BackgroundTerminalStatusKilled {
+			t.Fatalf("terminate result = %#v", terminated)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for approved terminate response")
+	}
+}
+
 func TestServerBackgroundTerminalInventoryRejectsStaleCursorAndRedactsArguments(t *testing.T) {
 	ctx := context.Background()
 	processSvc, err := toolprocess.NewService(t.TempDir())
