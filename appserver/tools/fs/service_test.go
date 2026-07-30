@@ -850,6 +850,21 @@ func TestServiceRecoverPendingRevertTransactionStates(t *testing.T) {
 	})
 }
 
+func TestSyncExactRevertDirectoriesDeduplicatesAndRejectsMissingPaths(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenRoot: %v", err)
+	}
+	defer root.Close()
+
+	if err := syncExactRevertDirectories(root, ".", "."); err != nil {
+		t.Fatalf("sync duplicate root directories: %v", err)
+	}
+	if err := syncExactRevertDirectories(root, "missing", "missing"); err == nil {
+		t.Fatal("sync missing directory succeeded")
+	}
+}
+
 func TestServiceRecoverPendingRevertRejectsMalformedAndUnsafeState(t *testing.T) {
 	ctx := context.Background()
 	var nilService *Service

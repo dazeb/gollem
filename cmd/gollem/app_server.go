@@ -50,6 +50,8 @@ type appServerFlags struct {
 	allowMutations  bool
 	gitRootExplicit bool
 	stdioExplicit   bool
+
+	workspaceCoordinator *appserver.WorkspaceMutationCoordinator
 }
 
 func runAppServer() {
@@ -349,6 +351,9 @@ func newCLIAppServerWithRuntimeFactory(flags appServerFlags, transport string, r
 		appserver.WithInteractionService(interactionSvc),
 		appserver.WithRuntimeService(runtimeSvc),
 	}
+	if flags.workspaceCoordinator != nil {
+		opts = append(opts, appserver.WithWorkspaceMutationCoordinator(flags.workspaceCoordinator))
+	}
 	if gitSvc != nil {
 		opts = append(opts, appserver.WithGit(gitSvc))
 	}
@@ -379,6 +384,9 @@ func serveCLIAppServerTransports(ctx context.Context, flags appServerFlags) erro
 	defer storeLock.Close()
 	if err := recoverCLIAppServerState(flags); err != nil {
 		return fmt.Errorf("recover app-server state: %w", err)
+	}
+	if flags.workspaceCoordinator == nil {
+		flags.workspaceCoordinator = appserver.NewWorkspaceMutationCoordinator()
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -467,6 +475,9 @@ func serveAppServerUnixSocket(ctx context.Context, flags appServerFlags) error {
 	if runtime.GOOS == "windows" {
 		return errors.New("unix socket app-server transport is not supported on windows")
 	}
+	if flags.workspaceCoordinator == nil {
+		flags.workspaceCoordinator = appserver.NewWorkspaceMutationCoordinator()
+	}
 	socketPath, err := filepath.Abs(flags.socketPath)
 	if err != nil {
 		return fmt.Errorf("resolve socket path: %w", err)
@@ -529,6 +540,9 @@ func serveAppServerUnixSocket(ctx context.Context, flags appServerFlags) error {
 }
 
 func serveAppServerWebSocket(ctx context.Context, flags appServerFlags) error {
+	if flags.workspaceCoordinator == nil {
+		flags.workspaceCoordinator = appserver.NewWorkspaceMutationCoordinator()
+	}
 	mux := http.NewServeMux()
 	httpServer := &http.Server{
 		Addr:              flags.websocketAddr,

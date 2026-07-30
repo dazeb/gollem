@@ -675,6 +675,14 @@ func (s *SQLiteStore) RecoverOrphanedTurns(ctx context.Context, req RecoverOrpha
 				if !orphanedItemStatus(item.Status) {
 					continue
 				}
+				reconciled, err := reconcileDurableFileChangeItemTx(ctx, tx, item, recoveredAt)
+				if err != nil {
+					return err
+				}
+				if reconciled {
+					result.Items = append(result.Items, cloneItem(item))
+					continue
+				}
 				item.Status = "failed"
 				item.Payload = recoveredItemPayload(item.Payload)
 				item.UpdatedAt = recoveredAt
@@ -725,6 +733,54 @@ func (s *SQLiteStore) RecoverOrphanedTurns(ctx context.Context, req RecoverOrpha
 		return nil, err
 	}
 	return result, nil
+}
+
+func reconcileDurableFileChangeItemTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	item *Item,
+	reconciledAt time.Time,
+) (bool, error) {
+	if item == nil || item.Kind != "fileChange" {
+		return false, nil
+	}
+	recovery, err := loadFileChangeRecoveryTx(ctx, tx, item.ID)
+	if errors.Is(err, ErrFileChangeRecoveryNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if recovery.ThreadID != item.ThreadID || recovery.TurnID != item.TurnID {
+		return false, errors.New("appserver/store: file-change recovery ownership mismatch")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(item.Payload, &payload); err != nil {
+		return false, fmt.Errorf("decode durable file-change item %q: %w", item.ID, err)
+	}
+	evidence, ok := payload["evidence"].([]any)
+	if !ok || len(evidence) != 1 {
+		return false, fmt.Errorf("appserver/store: durable file-change item %q has invalid evidence", item.ID)
+	}
+	artifact, ok := evidence[0].(map[string]any)
+	if !ok {
+		return false, fmt.Errorf("appserver/store: durable file-change item %q has invalid artifact evidence", item.ID)
+	}
+	artifact["revertSnapshotAvailable"] = true
+	artifact["revertUnavailableReason"] = ""
+	payload["id"] = item.ID
+	payload["status"] = "completed"
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return false, fmt.Errorf("encode durable file-change item %q: %w", item.ID, err)
+	}
+	item.Status = "completed"
+	item.Payload = encoded
+	item.UpdatedAt = reconciledAt
+	if err := saveItemTx(ctx, tx, item); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RollbackThread implements Store.

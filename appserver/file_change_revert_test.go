@@ -95,6 +95,19 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 			WithRuntimeModel(core.NewTestModel(core.TextResponse("should not run")), RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
 		)),
 	)
+	peerFS, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService peer: %v", err)
+	}
+	defer peerFS.Close()
+	peerServer := readyServer(
+		WithStore(st),
+		WithFilesystem(peerFS),
+		WithWorkspaceMutationCoordinator(server.workspaceCoordinator),
+		WithRuntimeService(NewRuntimeService(
+			WithRuntimeModel(core.NewTestModel(core.TextResponse("peer should not run")), RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+		)),
+	)
 	transactionSum := sha256.Sum256([]byte(filepath.ToSlash(filepath.Clean("notes.txt")) + "\x00" + "revert-denied"))
 	unownedTransaction := filepath.Join(root, ".gollem-revert-"+hex.EncodeToString(transactionSum[:16]))
 	unownedReplacement := filepath.Join(unownedTransaction, "replacement")
@@ -178,6 +191,13 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 		if len(threadsAfter) != len(threadsBefore) {
 			t.Fatalf("blocked thread start created a durable thread: before=%d after=%d", len(threadsBefore), len(threadsAfter))
 		}
+		blockedPeerStart := peerServer.HandleRequest(ctx, request("thread/start", map[string]any{
+			"workspace": root,
+			"prompt":    "must not start from another connection",
+		}))
+		if blockedPeerStart.Error == nil || blockedPeerStart.Error.Code != protocol.CodeInvalidParams {
+			t.Fatalf("peer thread start during revert = %+v", blockedPeerStart)
+		}
 		blockedRollback := server.HandleRequest(ctx, request("thread/rollback", map[string]any{
 			"threadId": started.Thread.ID,
 			"numTurns": 1,
@@ -190,6 +210,20 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 		}))
 		if blockedDelete.Error == nil || blockedDelete.Error.Code != protocol.CodeInvalidRequest {
 			t.Fatalf("thread delete during revert = %+v", blockedDelete)
+		}
+		blockedPeerDelete := peerServer.HandleRequest(ctx, request("thread/delete", map[string]any{
+			"threadId": started.Thread.ID,
+		}))
+		if blockedPeerDelete.Error == nil || blockedPeerDelete.Error.Code != protocol.CodeInvalidRequest {
+			t.Fatalf("peer thread delete during revert = %+v", blockedPeerDelete)
+		}
+		blockedPeerRevert := peerServer.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
+			"threadId":       started.Thread.ID,
+			"itemId":         fileItem.Item.ID,
+			"idempotencyKey": "revert-restart-1",
+		}))
+		if blockedPeerRevert.Error == nil || blockedPeerRevert.Error.Code != protocol.CodeInvalidRequest {
+			t.Fatalf("peer file-change revert during revert = %+v", blockedPeerRevert)
 		}
 		read := server.HandleRequest(ctx, request("thread/read", map[string]any{"threadId": started.Thread.ID}))
 		if read.Error != nil {
@@ -1202,6 +1236,26 @@ func TestWorkspaceRevertReservationLifecycleAndFailures(t *testing.T) {
 	}
 	startRelease()
 	startRelease()
+
+	sharedCoordinator := NewWorkspaceMutationCoordinator()
+	first := readyServer(WithWorkspaceMutationCoordinator(sharedCoordinator))
+	second := readyServer(WithWorkspaceMutationCoordinator(sharedCoordinator))
+	releaseShared, err := first.reserveWorkspaceRevert(ctx, st, root)
+	if err != nil {
+		t.Fatalf("reserve shared workspace revert: %v", err)
+	}
+	if _, err := second.acquireTurnStartLease(); !errors.Is(err, ErrWorkspaceRevertInProgress) {
+		t.Fatalf("peer turn-start lease error = %v, want ErrWorkspaceRevertInProgress", err)
+	}
+	if _, err := second.reserveWorkspaceRevert(ctx, st, root); !errors.Is(err, ErrWorkspaceRevertInProgress) {
+		t.Fatalf("peer workspace reservation error = %v, want ErrWorkspaceRevertInProgress", err)
+	}
+	releaseShared()
+	peerRelease, err := second.acquireTurnStartLease()
+	if err != nil {
+		t.Fatalf("peer turn-start lease after release: %v", err)
+	}
+	peerRelease()
 
 	closed := newRuntimeTestStore(t)
 	if err := closed.Close(); err != nil {

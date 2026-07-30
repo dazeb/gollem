@@ -14,6 +14,72 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
+func TestRuntimeStartLeaseIsSharedAndContextScoped(t *testing.T) {
+	ctx := context.Background()
+	coordinator := NewWorkspaceMutationCoordinator()
+	server := readyServer(WithWorkspaceMutationCoordinator(coordinator))
+	peer := readyServer(WithWorkspaceMutationCoordinator(coordinator))
+	runtimeSvc := NewRuntimeService(
+		WithRuntimeModel(core.NewTestModel(core.TextResponse("unused")), RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+	)
+
+	leasedCtx, release, err := runtimeSvc.acquireStartLease(ctx, server)
+	if err != nil {
+		t.Fatalf("acquireStartLease: %v", err)
+	}
+	if !runtimeStartLeaseHeld(leasedCtx, runtimeSvc) || !workspaceMutationLeaseHeld(leasedCtx) {
+		t.Fatal("combined runtime/workspace lease was not recorded in context")
+	}
+	type leaseResult struct {
+		release func()
+		err     error
+	}
+	peerLease := make(chan leaseResult, 1)
+	go func() {
+		release, err := peer.acquireTurnStartLease()
+		peerLease <- leaseResult{release: release, err: err}
+	}()
+	select {
+	case result := <-peerLease:
+		if result.release != nil {
+			result.release()
+		}
+		t.Fatalf("peer lease was not serialized: %v", result.err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	nestedCtx, releaseNested, err := runtimeSvc.acquireStartLease(leasedCtx, server)
+	if err != nil {
+		t.Fatalf("nested acquireStartLease: %v", err)
+	}
+	if nestedCtx != leasedCtx {
+		t.Fatal("nested start lease replaced the leased context")
+	}
+	releaseNested()
+	select {
+	case result := <-peerLease:
+		if result.release != nil {
+			result.release()
+		}
+		t.Fatalf("nested release unlocked peer lease: %v", result.err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	release()
+	release()
+	select {
+	case result := <-peerLease:
+		if result.err != nil {
+			t.Fatalf("peer lease after release: %v", result.err)
+		}
+		result.release()
+	case <-time.After(time.Second):
+		t.Fatal("peer lease remained blocked after release")
+	}
+
+	if runtimeStartLeaseHeld(ctx, nil) {
+		t.Fatal("nil runtime service reported a held start lease")
+	}
+}
+
 func TestServerRuntimeThreadStartCompletesTurn(t *testing.T) {
 	ctx := context.Background()
 	st := newRuntimeTestStore(t)

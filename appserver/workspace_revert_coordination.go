@@ -18,6 +18,17 @@ type workspaceRevertReservation struct {
 	root string
 }
 
+// WorkspaceMutationCoordinator owns the daemon-wide exclusion state between
+// exact reverts and operations that can start or rewrite workspace history.
+type WorkspaceMutationCoordinator struct {
+	mu     sync.Mutex
+	revert *workspaceRevertReservation
+}
+
+func NewWorkspaceMutationCoordinator() *WorkspaceMutationCoordinator {
+	return &WorkspaceMutationCoordinator{}
+}
+
 type workspaceMutationLeaseContextKey struct{}
 
 func withWorkspaceMutationLease(ctx context.Context) context.Context {
@@ -32,17 +43,18 @@ func workspaceMutationLeaseHeld(ctx context.Context) bool {
 // acquireWorkspaceMutationLease closes the race between checking active turns
 // and reserving the filesystem for an exact revert.
 func (s *Server) acquireWorkspaceMutationLease() (func(), error) {
-	if s == nil {
+	if s == nil || s.workspaceCoordinator == nil {
 		return func() {}, errors.New("appserver: nil server")
 	}
-	s.workspaceMutationMu.Lock()
-	if s.workspaceRevert != nil {
-		s.workspaceMutationMu.Unlock()
+	coordinator := s.workspaceCoordinator
+	coordinator.mu.Lock()
+	if coordinator.revert != nil {
+		coordinator.mu.Unlock()
 		return func() {}, ErrWorkspaceRevertInProgress
 	}
 	var once sync.Once
 	return func() {
-		once.Do(s.workspaceMutationMu.Unlock)
+		once.Do(coordinator.mu.Unlock)
 	}, nil
 }
 
@@ -58,7 +70,7 @@ func (s *Server) reserveWorkspaceRevert(
 	st store.Store,
 	root string,
 ) (func(), error) {
-	if s == nil || st == nil {
+	if s == nil || s.workspaceCoordinator == nil || st == nil {
 		return func() {}, errors.New("appserver: workspace revert coordination is unavailable")
 	}
 	canonicalRoot, err := canonicalExistingPath(root)
@@ -66,34 +78,35 @@ func (s *Server) reserveWorkspaceRevert(
 		return func() {}, fmt.Errorf("resolve revert workspace: %w", err)
 	}
 
-	s.workspaceMutationMu.Lock()
-	if s.workspaceRevert != nil {
-		s.workspaceMutationMu.Unlock()
+	coordinator := s.workspaceCoordinator
+	coordinator.mu.Lock()
+	if coordinator.revert != nil {
+		coordinator.mu.Unlock()
 		return func() {}, ErrWorkspaceRevertInProgress
 	}
 	reservation := &workspaceRevertReservation{root: canonicalRoot}
-	s.workspaceRevert = reservation
+	coordinator.revert = reservation
 	activeTurns, err := st.ListTurns(ctx, store.TurnFilter{
 		Statuses: []store.TurnStatus{store.TurnQueued, store.TurnRunning},
 	})
 	if err != nil || len(activeTurns) > 0 {
-		s.workspaceRevert = nil
-		s.workspaceMutationMu.Unlock()
+		coordinator.revert = nil
+		coordinator.mu.Unlock()
 		if err != nil {
 			return func() {}, err
 		}
 		return func() {}, ErrWorkspaceTurnActive
 	}
-	s.workspaceMutationMu.Unlock()
+	coordinator.mu.Unlock()
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			s.workspaceMutationMu.Lock()
-			if s.workspaceRevert == reservation {
-				s.workspaceRevert = nil
+			coordinator.mu.Lock()
+			if coordinator.revert == reservation {
+				coordinator.revert = nil
 			}
-			s.workspaceMutationMu.Unlock()
+			coordinator.mu.Unlock()
 		})
 	}, nil
 }

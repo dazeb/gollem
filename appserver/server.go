@@ -51,8 +51,7 @@ type Server struct {
 	commandExec map[string]struct{}
 	commandSeq  int
 
-	workspaceMutationMu sync.Mutex
-	workspaceRevert     *workspaceRevertReservation
+	workspaceCoordinator *WorkspaceMutationCoordinator
 
 	store     store.Store
 	fs        *toolfs.Service
@@ -110,6 +109,16 @@ func WithStore(st store.Store) Option {
 func WithFilesystem(fs *toolfs.Service) Option {
 	return func(s *Server) {
 		s.fs = fs
+	}
+}
+
+// WithWorkspaceMutationCoordinator shares exact-revert reservations across
+// every transport connection that can mutate the same workspace.
+func WithWorkspaceMutationCoordinator(coordinator *WorkspaceMutationCoordinator) Option {
+	return func(s *Server) {
+		if coordinator != nil {
+			s.workspaceCoordinator = coordinator
+		}
 	}
 }
 
@@ -227,6 +236,7 @@ func NewServer(opts ...Option) *Server {
 		approvals:             NewApprovalService(),
 		interact:              NewInteractionService(),
 		daemon:                NewDaemonService(),
+		workspaceCoordinator:  NewWorkspaceMutationCoordinator(),
 		requestSchedulerLimit: defaultRequestSchedulerLimit,
 		threadIdleUnloadAfter: 30 * time.Minute,
 	}
@@ -740,12 +750,11 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	}
 	settings := cloneSettings(params.Settings)
 	settings = mergeRuntimeSelectionIntoSettings(settings, params.ProviderID, params.Provider, params.Model)
-	releaseStart, err := s.acquireWorkspaceMutationLease()
+	ctx, releaseStart, err := runtimeSvc.acquireStartLease(ctx, s)
 	if err != nil {
 		return nil, mapError("thread/start", err)
 	}
 	defer releaseStart()
-	ctx = withWorkspaceMutationLease(ctx)
 	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{
 		Title:     params.Title,
 		Workspace: params.Workspace,

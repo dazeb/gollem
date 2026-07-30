@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -424,6 +425,41 @@ func TestSQLiteStoreRecoverOrphanedRuntimeStateIsAtomicAndIdempotent(t *testing.
 	if err != nil {
 		t.Fatalf("AppendItem stable: %v", err)
 	}
+	durableFileChange, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: running.ThreadID,
+		TurnID:   running.ID,
+		Kind:     "fileChange",
+		Status:   "inProgress",
+		Payload: json.RawMessage(`{
+			"type":"fileChange",
+			"id":"durable-file-change",
+			"status":"inProgress",
+			"changes":[{"path":"notes.txt","kind":{"type":"update"}}],
+			"evidence":[{
+				"path":"notes.txt",
+				"operation":"writeFile",
+				"revertSnapshotAvailable":false,
+				"revertUnavailableReason":""
+			}]
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem durable file change: %v", err)
+	}
+	if _, err := s.SaveFileChangeRecovery(ctx, SaveFileChangeRecoveryRequest{
+		Recovery: FileChangeRecovery{
+			ItemID:       durableFileChange.ID,
+			ThreadID:     running.ThreadID,
+			TurnID:       running.ID,
+			Path:         "notes.txt",
+			BeforeExists: true,
+			AfterExists:  true,
+			BeforeSHA256: "before",
+			AfterSHA256:  "after",
+		},
+	}); err != nil {
+		t.Fatalf("SaveFileChangeRecovery durable file change: %v", err)
+	}
 
 	recoveredAt := time.Date(2026, 7, 29, 11, 30, 0, 0, time.UTC)
 	result, err := s.RecoverOrphanedTurns(ctx, RecoverOrphanedTurnsRequest{
@@ -433,7 +469,7 @@ func TestSQLiteStoreRecoverOrphanedRuntimeStateIsAtomicAndIdempotent(t *testing.
 	if err != nil {
 		t.Fatalf("RecoverOrphanedTurns: %v", err)
 	}
-	if len(result.Turns) != 2 || len(result.Items) != 2 || len(result.Markers) != 2 {
+	if len(result.Turns) != 2 || len(result.Items) != 3 || len(result.Markers) != 2 {
 		t.Fatalf("recovery result = %#v", result)
 	}
 	for _, turnID := range []string{queued.ID, running.ID} {
@@ -483,6 +519,22 @@ func TestSQLiteStoreRecoverOrphanedRuntimeStateIsAtomicAndIdempotent(t *testing.
 	if gotStable.Status != "completed" || string(gotStable.Payload) != `{"role":"user","text":"keep"}` {
 		t.Fatalf("stable item changed = %#v", gotStable)
 	}
+	gotDurableFileChange, err := s.GetItem(ctx, durableFileChange.ID)
+	if err != nil {
+		t.Fatalf("GetItem durable file change: %v", err)
+	}
+	if gotDurableFileChange.Status != "completed" || !gotDurableFileChange.UpdatedAt.Equal(recoveredAt) {
+		t.Fatalf("durable file-change item = %#v", gotDurableFileChange)
+	}
+	var durablePayload map[string]any
+	if err := json.Unmarshal(gotDurableFileChange.Payload, &durablePayload); err != nil {
+		t.Fatalf("decode durable file-change payload: %v", err)
+	}
+	evidence := durablePayload["evidence"].([]any)[0].(map[string]any)
+	if durablePayload["id"] != durableFileChange.ID || durablePayload["status"] != "completed" || evidence["revertSnapshotAvailable"] != true ||
+		evidence["revertUnavailableReason"] != "" {
+		t.Fatalf("reconciled durable file-change payload = %#v", durablePayload)
+	}
 
 	again, err := s.RecoverOrphanedTurns(ctx, RecoverOrphanedTurnsRequest{
 		RecoveredAt: recoveredAt.Add(time.Minute),
@@ -505,6 +557,140 @@ func TestSQLiteStoreRecoverOrphanedRuntimeStateIsAtomicAndIdempotent(t *testing.
 	}
 	if persisted.Status != TurnInterrupted || persisted.Error != RuntimeOwnerLostReason {
 		t.Fatalf("persisted recovered turn = %#v", persisted)
+	}
+}
+
+func TestSQLiteStoreReconcileDurableFileChangeRejectsInvalidState(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+
+	recovery := func(itemID string) *FileChangeRecovery {
+		return &FileChangeRecovery{
+			ItemID:   itemID,
+			ThreadID: "thread",
+			TurnID:   "turn",
+			Path:     "notes.txt",
+			Status:   FileChangeRecoveryAvailable,
+		}
+	}
+	item := func(id string, payload json.RawMessage) *Item {
+		return &Item{
+			ID:       id,
+			ThreadID: "thread",
+			TurnID:   "turn",
+			Kind:     "fileChange",
+			Status:   "inProgress",
+			Payload:  payload,
+		}
+	}
+
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		reconciled, err := reconcileDurableFileChangeItemTx(
+			ctx,
+			tx,
+			item("missing", json.RawMessage(`{"evidence":[]}`)),
+			time.Now(),
+		)
+		if err != nil || reconciled {
+			t.Fatalf("missing recovery reconciliation = %v, %v", reconciled, err)
+		}
+
+		ownership := recovery("ownership")
+		ownership.ThreadID = "other-thread"
+		if err := saveFileChangeRecoveryTx(ctx, tx, ownership); err != nil {
+			return err
+		}
+		if reconciled, err := reconcileDurableFileChangeItemTx(
+			ctx,
+			tx,
+			item("ownership", json.RawMessage(`{"evidence":[{}]}`)),
+			time.Now(),
+		); err == nil || reconciled {
+			t.Fatalf("ownership mismatch reconciliation = %v, %v", reconciled, err)
+		}
+
+		for _, test := range []struct {
+			id      string
+			payload json.RawMessage
+		}{
+			{id: "malformed", payload: json.RawMessage(`{`)},
+			{id: "bad-evidence", payload: json.RawMessage(`{"evidence":[]}`)},
+			{id: "bad-artifact", payload: json.RawMessage(`{"evidence":[true]}`)},
+		} {
+			if err := saveFileChangeRecoveryTx(ctx, tx, recovery(test.id)); err != nil {
+				return err
+			}
+			if reconciled, err := reconcileDurableFileChangeItemTx(
+				ctx,
+				tx,
+				item(test.id, test.payload),
+				time.Now(),
+			); err == nil || reconciled {
+				t.Fatalf("%s reconciliation = %v, %v", test.id, reconciled, err)
+			}
+		}
+
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		if reconciled, err := reconcileDurableFileChangeItemTx(
+			canceled,
+			tx,
+			item("canceled", json.RawMessage(`{"evidence":[{}]}`)),
+			time.Now(),
+		); err == nil || reconciled {
+			t.Fatalf("canceled reconciliation = %v, %v", reconciled, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("exercise invalid durable file-change state: %v", err)
+	}
+}
+
+func TestSQLiteStoreRecoverOrphanedTurnsRejectsInvalidDurableFileChangeAtomically(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))
+	thread, err := s.CreateThread(ctx, CreateThreadRequest{Workspace: "/work"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	turn, err := s.CreateTurn(ctx, CreateTurnRequest{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	item, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: thread.ID,
+		TurnID:   turn.ID,
+		Kind:     "fileChange",
+		Status:   "inProgress",
+		Payload:  json.RawMessage(`{"type":"fileChange","status":"inProgress","evidence":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("AppendItem: %v", err)
+	}
+	if _, err := s.SaveFileChangeRecovery(ctx, SaveFileChangeRecoveryRequest{
+		Recovery: FileChangeRecovery{
+			ItemID:   item.ID,
+			ThreadID: thread.ID,
+			TurnID:   turn.ID,
+			Path:     "notes.txt",
+		},
+	}); err != nil {
+		t.Fatalf("SaveFileChangeRecovery: %v", err)
+	}
+
+	if _, err := s.RecoverOrphanedTurns(ctx, RecoverOrphanedTurnsRequest{}); err == nil {
+		t.Fatal("invalid durable file-change state was recovered")
+	}
+	gotTurn, err := s.GetTurn(ctx, turn.ID)
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	gotItem, err := s.GetItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	if gotTurn.Status != TurnQueued || gotItem.Status != "inProgress" {
+		t.Fatalf("failed recovery was not atomic: turn=%s item=%s", gotTurn.Status, gotItem.Status)
 	}
 }
 

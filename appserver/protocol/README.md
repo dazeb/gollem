@@ -207,12 +207,17 @@ workspace effects.
 
 The store binds the idempotency key before mutation and writes a
 `fileChangeRevert` receipt atomically with terminal recovery state. Repeating
-the same key returns that receipt. After owner loss, a pending request is
-completed without another mutation only when the file exactly matches the
-recorded before state; it is retried only when the file exactly matches the
-recorded after state. Approval denials and pre-mutation failures release the
-key only after Gollem proves the after state is unchanged. Ambiguous outcomes
-remain pending for same-key recovery.
+the same key returns that receipt. Restored file metadata and every affected
+directory entry are synchronized before receipt completion. Startup also
+reconciles a durable private snapshot when owner loss interrupted the matching
+public item completion. A daemon-wide coordinator prevents other client
+connections from starting turns, rewriting history, deleting the thread, or
+starting another exact revert while approval or mutation is pending. After
+owner loss, a pending request is completed without another mutation only when
+the file exactly matches the recorded before state; it is retried only when
+the file exactly matches the recorded after state. Approval denials and
+pre-mutation failures release the key only after Gollem proves the after state
+is unchanged. Ambiguous outcomes remain pending for same-key recovery.
 
 ## Version 1 Command-Execution Approval Responses
 

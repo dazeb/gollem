@@ -21,9 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   blocking unrelated thread reads. Pending operations reconcile after restart
   from deterministic transaction directories only inside the approved revert
   operation when the target and quarantined regular file are provably in a safe
-  state. Rollback, thread deletion, and turn or thread starts serialize with
-  that reservation, while denied operations release their key only after
-  proving no mutation occurred.
+  state. File metadata and affected directories are synchronized before a
+  durable receipt can commit, and startup reconciles a private snapshot whose
+  public item completion was interrupted. A daemon-wide coordinator makes
+  rollback, thread deletion, and turn or thread starts serialize with that
+  reservation across every client connection, while denied operations release
+  their key only after proving no mutation occurred.
 - **Restart-safe app-server retry and daemon ownership.** File-backed app-server
   daemons now hold one process-lifetime store lock and reconcile queued or
   running turns to an inspectable interrupted state after owner loss. The
@@ -70,6 +73,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ReasoningEffort` per phase — effort is adaptive thinking's depth
   control — keeping the plan-high/implement-lower/verify-high shape
   on Anthropic. First direct tests for the middleware included.
+
+### Removed
+
+- Hosted coverage uploads, patch thresholds, badge, and service configuration.
 
 ### Phase 14: Ten Innovations from Pydantic-AI, LangChain 1.0, OpenAI Agents SDK, AutoGen & CrewAI
 
@@ -386,5 +393,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Makefile with comprehensive targets
 - golangci-lint v2 configuration
 - GitHub Actions CI/CD workflows
-- MIT License, .gitignore, codecov config
+- MIT License and .gitignore
 - Testable examples

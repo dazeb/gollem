@@ -11,6 +11,7 @@ import (
 	iofs "io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -767,14 +768,23 @@ func recoverPendingRevertRoot(root *os.Root, relative string, req RevertFileRequ
 		if err := root.Remove(quarantine); err != nil {
 			return false, fmt.Errorf("remove recovered exact revert quarantine: %w", err)
 		}
+		if err := syncExactRevertDirectory(root, transactionDir); err != nil {
+			return false, err
+		}
 	case absent && req.Before.Exists:
 		if err := restoreQuarantinedRootFile(root, quarantine, relative); err != nil {
 			return false, fmt.Errorf("restore interrupted exact revert quarantine; preserved at %q: %w", quarantine, err)
+		}
+		if err := syncExactRevertDirectories(root, filepath.Dir(relative), transactionDir); err != nil {
+			return false, err
 		}
 		changed = true
 	case absent:
 		if err := root.Remove(quarantine); err != nil {
 			return false, fmt.Errorf("remove completed exact revert quarantine: %w", err)
+		}
+		if err := syncExactRevertDirectory(root, transactionDir); err != nil {
+			return false, err
 		}
 	default:
 		return false, fmt.Errorf("%w: target and quarantine states conflict", ErrExactRevertPending)
@@ -930,8 +940,14 @@ func atomicWriteRootFile(
 	if err = temp.Chmod(exactFileMode(mode)); err != nil {
 		return fmt.Errorf("set reverted file mode: %w", err)
 	}
+	if err = temp.Sync(); err != nil {
+		return fmt.Errorf("sync reverted file metadata: %w", err)
+	}
 	if err = temp.Close(); err != nil {
 		return fmt.Errorf("close revert temp file: %w", err)
+	}
+	if err = syncExactRevertDirectory(root, transactionDir); err != nil {
+		return err
 	}
 	if expectedAfter.Exists {
 		if err = quarantineExactRootFileInTransaction(root, path, quarantine, expectedAfter); err != nil {
@@ -940,13 +956,18 @@ func atomicWriteRootFile(
 		if err = installRootReplacement(root, replacement, path, quarantine); err != nil {
 			return err
 		}
+		if err = syncExactRevertDirectories(root, filepath.Dir(path), transactionDir); err != nil {
+			return err
+		}
 	} else if err = verifyExactRootFileState(root, path, expectedAfter); err != nil {
 		return err
 	} else if err = root.Link(replacement, path); err != nil {
 		return fmt.Errorf("install reverted file without replacement: %w", err)
+	} else if err = syncExactRevertDirectory(root, filepath.Dir(path)); err != nil {
+		return err
 	}
-	if err = root.Remove(replacement); err != nil {
-		return fmt.Errorf("remove exact revert replacement link: %w", err)
+	if err = removeExactRevertReplacement(root, replacement); err != nil {
+		return err
 	}
 	if err = removeExactRevertTransactionDir(root, transactionDir); err != nil {
 		return err
@@ -961,6 +982,9 @@ func removeExactRootFile(root *os.Root, path string, expectedAfter ExactFileStat
 	}
 	if err := removeQuarantinedRootFile(root, quarantine, path); err != nil {
 		_ = removeExactRevertTransactionDir(root, transactionDir)
+		return err
+	}
+	if err := syncExactRevertDirectory(root, transactionDir); err != nil {
 		return err
 	}
 	return removeExactRevertTransactionDir(root, transactionDir)
@@ -1023,9 +1047,12 @@ func quarantineExactRootFileInTransaction(root *os.Root, path, quarantine string
 		if restoreErr := restoreQuarantinedRootFile(root, quarantine, path); restoreErr != nil {
 			return fmt.Errorf("%w; preserve concurrently changed file at %q: %w", err, quarantine, restoreErr)
 		}
+		if syncErr := syncExactRevertDirectories(root, filepath.Dir(path), filepath.Dir(quarantine)); syncErr != nil {
+			return errors.Join(err, syncErr)
+		}
 		return err
 	}
-	return nil
+	return syncExactRevertDirectories(root, filepath.Dir(path), filepath.Dir(quarantine))
 }
 
 func restoreQuarantinedRootFile(root exactRootLinkRemover, quarantine, path string) error {
@@ -1045,6 +1072,10 @@ func beginExactRevertTransaction(root *os.Root, path, transactionID string) (str
 			return transactionDir, quarantine, replacement, ErrExactRevertPending
 		}
 		return transactionDir, quarantine, replacement, fmt.Errorf("create exact revert transaction: %w", err)
+	}
+	if err := syncExactRevertDirectory(root, filepath.Dir(transactionDir)); err != nil {
+		_ = root.Remove(transactionDir)
+		return transactionDir, quarantine, replacement, err
 	}
 	return transactionDir, quarantine, replacement, nil
 }
@@ -1081,12 +1112,42 @@ func removeExactRevertReplacement(root *os.Root, replacement string) error {
 	if err := root.Remove(replacement); err != nil {
 		return fmt.Errorf("remove exact revert replacement: %w", err)
 	}
-	return nil
+	return syncExactRevertDirectory(root, filepath.Dir(replacement))
 }
 
 func removeExactRevertTransactionDir(root *os.Root, transactionDir string) error {
 	if err := root.Remove(transactionDir); err != nil {
 		return fmt.Errorf("remove exact revert transaction: %w", err)
+	}
+	return syncExactRevertDirectory(root, filepath.Dir(transactionDir))
+}
+
+func syncExactRevertDirectories(root *os.Root, paths ...string) error {
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		path = filepath.Clean(path)
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		if err := syncExactRevertDirectory(root, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncExactRevertDirectory(root *os.Root, path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	dir, err := root.Open(path)
+	if err != nil {
+		return fmt.Errorf("open exact revert directory for sync: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("sync exact revert directory: %w", err)
 	}
 	return nil
 }
