@@ -109,6 +109,73 @@ func TestProviderCapabilities(t *testing.T) {
 	}
 }
 
+func TestValidateAgentRuntimeSelection(t *testing.T) {
+	c := NewDefault(WithEnvLookup(mapEnv(map[string]string{
+		"OPENAI_API_KEY": "configured",
+	})))
+
+	if err := c.ValidateAgentRuntimeSelection(ProviderOpenAI, "gpt-5"); err != nil {
+		t.Fatalf("ValidateAgentRuntimeSelection configured model: %v", err)
+	}
+	mutatedToolCapability := false
+	for providerIndex := range c.providers {
+		provider := &c.providers[providerIndex]
+		if provider.ID != ProviderOpenAI {
+			continue
+		}
+		for modelIndex := range provider.Models {
+			model := &provider.Models[modelIndex]
+			if model.Model != "gpt-4o" {
+				continue
+			}
+			model.Capabilities.ToolCalls = false
+			mutatedToolCapability = true
+			err := c.ValidateAgentRuntimeSelection(ProviderOpenAI, model.Model)
+			if err == nil || !strings.Contains(err.Error(), "does not advertise streaming agent tool use") {
+				t.Fatalf("ValidateAgentRuntimeSelection missing tool capability error = %v", err)
+			}
+			break
+		}
+		break
+	}
+	if !mutatedToolCapability {
+		t.Fatal("OpenAI gpt-4o catalog fixture is missing")
+	}
+
+	for _, tc := range []struct {
+		name       string
+		providerID string
+		model      string
+		want       string
+	}{
+		{
+			name:       "unconfigured provider",
+			providerID: ProviderAnthropic,
+			model:      "claude-sonnet-4-6",
+			want:       "not configured",
+		},
+		{
+			name:       "unknown provider",
+			providerID: "unsupported-provider",
+			model:      "model",
+			want:       "provider selection is unavailable",
+		},
+		{
+			name:       "unknown model",
+			providerID: ProviderOpenAI,
+			model:      "unlisted-model",
+			want:       "model selection is unavailable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := c.ValidateAgentRuntimeSelection(tc.providerID, tc.model)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateAgentRuntimeSelection(%q, %q) error = %v, want %q", tc.providerID, tc.model, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLocalOpenAICompatibleProviderUsesExplicitSafeConfiguration(t *testing.T) {
 	const baseURL = "http://127.0.0.1:8765/v1"
 	const model = "local-tool-model"

@@ -53,22 +53,23 @@ type Server struct {
 
 	workspaceCoordinator *WorkspaceMutationCoordinator
 
-	store     store.Store
-	fs        *toolfs.Service
-	process   *toolprocess.Service
-	git       *toolgit.Service
-	catalog   *catalog.Catalog
-	config    *appconfig.Service
-	cache     *appcache.Service
-	mcp       *appmcp.Service
-	skills    *appskills.Service
-	events    *EventQueue
-	requests  *RequestQueue
-	approvals *ApprovalService
-	interact  *InteractionService
-	daemon    *DaemonService
-	runtime   *RuntimeService
-	memory    *MemoryService
+	store              store.Store
+	fs                 *toolfs.Service
+	process            *toolprocess.Service
+	git                *toolgit.Service
+	catalog            *catalog.Catalog
+	config             *appconfig.Service
+	cache              *appcache.Service
+	mcp                *appmcp.Service
+	skills             *appskills.Service
+	events             *EventQueue
+	requests           *RequestQueue
+	approvals          *ApprovalService
+	interact           *InteractionService
+	daemon             *DaemonService
+	runtime            *RuntimeService
+	memory             *MemoryService
+	selectionValidator RuntimeSelectionValidator
 
 	requestSchedulerLimit int
 	threadIdleUnloadAfter time.Duration
@@ -76,6 +77,17 @@ type Server struct {
 
 // Option configures a Server.
 type Option func(*Server)
+
+// RuntimeSelectionValidator rejects a requested provider/model before the
+// server creates a durable thread or turn. It is optional so embedders that
+// supply their own non-catalog runtime can define their own authority.
+type RuntimeSelectionValidator func(RuntimeModelSelection) error
+
+func WithRuntimeSelectionValidator(validator RuntimeSelectionValidator) Option {
+	return func(s *Server) {
+		s.selectionValidator = validator
+	}
+}
 
 func WithImplementationInfo(info protocol.ImplementationInfo) Option {
 	return func(s *Server) {
@@ -755,7 +767,7 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	selection := runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model)
 	modelSettings := runtimeModelSettingsFromParams(params.RuntimeModelParams)
 	settings = mergeRuntimeReasoningIntoSettings(settings, modelSettings.ReasoningEffort)
-	if err := validateRuntimeReasoningSelection(s.catalog, selection, modelSettings); err != nil {
+	if err := s.validateRuntimeSelection(selection, modelSettings); err != nil {
 		return nil, invalidParams(err.Error(), err)
 	}
 	ctx, releaseStart, err := runtimeSvc.acquireStartLease(ctx, s)
@@ -1498,7 +1510,7 @@ func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any,
 	if modelSettings.ReasoningEffort == nil {
 		modelSettings = runtimeModelSettingsFromInput(source.Input)
 	}
-	if err := validateRuntimeReasoningSelection(s.catalog, selection, modelSettings); err != nil {
+	if err := s.validateRuntimeSelection(selection, modelSettings); err != nil {
 		return nil, invalidParams(err.Error(), err)
 	}
 	retry, err := runtimeSvc.Retry(ctx, st, s, RuntimeRetryRequest{
@@ -1548,7 +1560,7 @@ func (s *Server) startTurnWithParams(ctx context.Context, method string, params 
 	selection = runtimeSelectionWithThreadDefaults(selection, thread.Settings)
 	modelSettings := runtimeModelSettingsFromParams(params.RuntimeModelParams)
 	modelSettings = runtimeModelSettingsWithThreadDefaults(modelSettings, thread.Settings)
-	if err := validateRuntimeReasoningSelection(s.catalog, selection, modelSettings); err != nil {
+	if err := s.validateRuntimeSelection(selection, modelSettings); err != nil {
 		return nil, invalidParams(err.Error(), err)
 	}
 	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
