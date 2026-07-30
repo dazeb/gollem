@@ -879,10 +879,7 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 	if status == store.ThreadDeleted {
 		releaseWorkspace, leaseErr := s.acquireWorkspaceMutationLease()
 		if leaseErr != nil {
-			if errors.Is(leaseErr, ErrWorkspaceRevertInProgress) {
-				return nil, rpcError(protocol.CodeInvalidRequest, "cannot delete a thread while a workspace file-change revert is in progress", nil)
-			}
-			return nil, mapError(method, leaseErr)
+			return nil, rpcError(protocol.CodeInvalidRequest, "cannot delete a thread while a workspace file-change revert is in progress", nil)
 		}
 		defer releaseWorkspace()
 	}
