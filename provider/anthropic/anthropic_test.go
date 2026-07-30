@@ -605,6 +605,27 @@ func TestParseSSEStreamRejectsMalformedJSONEvent(t *testing.T) {
 	}
 }
 
+func TestParseSSEStreamNormalizesReadFailure(t *testing.T) {
+	stream := newStreamedResponse(io.NopCloser(streamReadFailure{err: io.ErrUnexpectedEOF}), ClaudeSonnet46)
+
+	_, err := stream.Next()
+	var transport *core.StreamTransportError
+	if !errors.As(err, &transport) {
+		t.Fatalf("Next() error = %v, want StreamTransportError", err)
+	}
+	if strings.Contains(err.Error(), "unexpected EOF") {
+		t.Fatalf("transport error leaked raw read failure: %v", err)
+	}
+}
+
+type streamReadFailure struct {
+	err error
+}
+
+func (r streamReadFailure) Read(_ []byte) (int, error) {
+	return 0, r.err
+}
+
 func TestParseSSEStreamToolCall(t *testing.T) {
 	sseData := `event: message_start
 data: {"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet-4-5","usage":{"input_tokens":10,"output_tokens":0}}}
@@ -837,10 +858,12 @@ data: {"type":"message_stop"}
 	}
 }
 
-func TestRequestHTTPError(t *testing.T) {
+func TestRequestHTTPErrorIsRedacted(t *testing.T) {
+	const secret = "provider-sensitive-request-data"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "30")
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"` + secret + `"}}`))
 	}))
 	defer server.Close()
 
@@ -857,6 +880,15 @@ func TestRequestHTTPError(t *testing.T) {
 	}
 	if httpErr.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("status = %d, want 429", httpErr.StatusCode)
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(httpErr.Body, secret) {
+		t.Fatalf("HTTP error leaked provider body: %#v", httpErr)
+	}
+	if httpErr.Body != "rate_limited" {
+		t.Errorf("classification = %q, want rate_limited", httpErr.Body)
+	}
+	if httpErr.RetryAfter != 30*time.Second {
+		t.Errorf("RetryAfter = %v, want 30s", httpErr.RetryAfter)
 	}
 }
 

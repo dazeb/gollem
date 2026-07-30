@@ -117,3 +117,18 @@ func (e *StreamProtocolError) Error() string {
 	}
 	return e.Provider + " stream contained malformed protocol data"
 }
+
+// StreamTransportError indicates a non-context read failure after a streaming
+// response has started. The original transport detail is intentionally omitted
+// because it can contain provider or endpoint data; callers may inspect this
+// type to offer an explicit fresh-run recovery path.
+type StreamTransportError struct {
+	Provider string
+}
+
+func (e *StreamTransportError) Error() string {
+	if e.Provider == "" {
+		return "model stream transport failed"
+	}
+	return e.Provider + " stream transport failed"
+}

@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -295,15 +294,10 @@ func (p *Provider) doRequest(ctx context.Context, body []byte) (*http.Response, 
 		return resp, nil
 	}
 
-	respBody, _ := io.ReadAll(resp.Body)
+	classification := readProviderErrorClassification(resp.Body)
 	resp.Body.Close()
 
-	httpErr := &core.ModelHTTPError{
-		Message:    "anthropic API error: " + string(respBody),
-		StatusCode: resp.StatusCode,
-		Body:       string(respBody),
-		ModelName:  p.model,
-	}
+	httpErr := sanitizedProviderHTTPError(resp.StatusCode, classification, p.model)
 
 	// Parse Retry-After header for 429 responses so the model-level
 	// retry (modelutil.RetryModel) can use appropriate backoff.

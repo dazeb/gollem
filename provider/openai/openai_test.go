@@ -2542,6 +2542,36 @@ func TestParseSSEStreamRejectsMalformedJSONEvent(t *testing.T) {
 	}
 }
 
+func TestParseSSEStreamNormalizesReadFailure(t *testing.T) {
+	stream := newStreamedResponse(io.NopCloser(streamReadFailure{err: io.ErrUnexpectedEOF}), "gpt-4o")
+
+	_, err := stream.Next()
+	var transport *core.StreamTransportError
+	if !errors.As(err, &transport) {
+		t.Fatalf("Next() error = %v, want StreamTransportError", err)
+	}
+	if strings.Contains(err.Error(), "unexpected EOF") {
+		t.Fatalf("transport error leaked raw read failure: %v", err)
+	}
+}
+
+func TestParseSSEStreamPreservesContextCancellation(t *testing.T) {
+	stream := newStreamedResponse(io.NopCloser(streamReadFailure{err: context.Canceled}), "gpt-4o")
+
+	_, err := stream.Next()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Next() error = %v, want context canceled", err)
+	}
+}
+
+type streamReadFailure struct {
+	err error
+}
+
+func (r streamReadFailure) Read(_ []byte) (int, error) {
+	return 0, r.err
+}
+
 // --- Stream: empty tool call args get "{}" in finalization ---
 
 func TestParseSSEStreamEmptyToolCallArgs(t *testing.T) {

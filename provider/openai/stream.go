@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,9 +144,7 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 				}
 				// Data received with EOF; process this line, finalize on next read.
 			} else {
-				s.instrumentation.recordError(err)
-				s.instrumentation.finish()
-				return nil, err
+				return s.failStream(normalizeStreamReadError(err))
 			}
 		}
 
@@ -249,6 +248,13 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 			return events[0], nil
 		}
 	}
+}
+
+func normalizeStreamReadError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return &core.StreamTransportError{Provider: "openai"}
 }
 
 func (s *streamedResponse) failStream(err error) (core.ModelResponseStreamEvent, error) {
