@@ -1440,6 +1440,230 @@
       ],
       "type": "string"
     },
+    "BackgroundTerminal": {
+      "additionalProperties": false,
+      "properties": {
+        "argumentCount": {
+          "type": "integer"
+        },
+        "command": {
+          "type": "string"
+        },
+        "commandRedacted": {
+          "type": "boolean"
+        },
+        "endedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "metadataTruncated": {
+          "type": "boolean"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "startedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/BackgroundTerminalStatus",
+          "enum": [
+            "running",
+            "completed",
+            "failed",
+            "killed",
+            "timed_out"
+          ]
+        },
+        "terminalId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "workDir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "terminalId",
+        "processId",
+        "pid",
+        "title",
+        "command",
+        "workDir",
+        "status",
+        "startedAt",
+        "argumentCount",
+        "commandRedacted",
+        "metadataTruncated"
+      ],
+      "type": "object"
+    },
+    "BackgroundTerminalCleanResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "backgroundTerminals": {
+          "items": {
+            "$ref": "#/$defs/BackgroundTerminal"
+          },
+          "type": "array"
+        },
+        "data": {
+          "items": {
+            "$ref": "#/$defs/BackgroundTerminal"
+          },
+          "type": "array"
+        },
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "removed": {
+          "items": {
+            "$ref": "#/$defs/BackgroundTerminal"
+          },
+          "type": "array"
+        },
+        "removedCount": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "removed",
+        "backgroundTerminals",
+        "data",
+        "removedCount",
+        "truncated",
+        "observedAt"
+      ],
+      "type": "object"
+    },
+    "BackgroundTerminalListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "backgroundTerminals": {
+          "items": {
+            "$ref": "#/$defs/BackgroundTerminal"
+          },
+          "type": "array"
+        },
+        "data": {
+          "items": {
+            "$ref": "#/$defs/BackgroundTerminal"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "type": "string"
+        },
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "terminals": {
+          "items": {
+            "$ref": "#/$defs/BackgroundTerminal"
+          },
+          "type": "array"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "terminals",
+        "backgroundTerminals",
+        "data",
+        "total",
+        "truncated",
+        "snapshotId",
+        "observedAt"
+      ],
+      "type": "object"
+    },
+    "BackgroundTerminalStatus": {
+      "enum": [
+        "running",
+        "completed",
+        "failed",
+        "killed",
+        "timed_out"
+      ],
+      "type": "string"
+    },
+    "BackgroundTerminalTerminateParams": {
+      "additionalProperties": false,
+      "properties": {
+        "backgroundTerminalId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "processId": {
+          "type": "string"
+        },
+        "terminalId": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "BackgroundTerminalTerminateResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "terminal": {
+          "$ref": "#/$defs/BackgroundTerminal"
+        }
+      },
+      "required": [
+        "ok",
+        "id",
+        "terminal"
+      ],
+      "type": "object"
+    },
     "ByteRange": {
       "additionalProperties": false,
       "properties": {
@@ -6506,6 +6730,152 @@
       ],
       "type": "object"
     },
+    "GitStatusEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "path",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "GitStatusResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "nextCursor": {
+          "type": "string"
+        },
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/GitStatusSnapshot"
+        }
+      },
+      "required": [
+        "status",
+        "snapshotId",
+        "observedAt"
+      ],
+      "type": "object"
+    },
+    "GitStatusSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "branchLine": {
+          "type": "string"
+        },
+        "branchTruncated": {
+          "type": "boolean"
+        },
+        "clean": {
+          "type": "boolean"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/GitStatusEntry"
+          },
+          "type": "array"
+        },
+        "entriesTruncated": {
+          "type": "boolean"
+        },
+        "entryCount": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "branchLine",
+        "branchTruncated",
+        "entries",
+        "clean",
+        "entryCount",
+        "entriesTruncated"
+      ],
+      "type": "object"
+    },
+    "GitWorktree": {
+      "additionalProperties": false,
+      "properties": {
+        "bare": {
+          "type": "boolean"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "detached": {
+          "type": "boolean"
+        },
+        "head": {
+          "type": "string"
+        },
+        "metadataTruncated": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "head",
+        "branch",
+        "detached",
+        "bare",
+        "metadataTruncated"
+      ],
+      "type": "object"
+    },
+    "GitWorktreeListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "nextCursor": {
+          "type": "string"
+        },
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "worktrees": {
+          "items": {
+            "$ref": "#/$defs/GitWorktree"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "worktrees",
+        "total",
+        "truncated",
+        "snapshotId",
+        "observedAt"
+      ],
+      "type": "object"
+    },
     "GrantedPermissionProfile": {
       "additionalProperties": false,
       "properties": {
@@ -10813,6 +11183,18 @@
       "required": [
         "method"
       ],
+      "type": "object"
+    },
+    "OperationalListParams": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "OverriddenMetadata": {
@@ -20726,6 +21108,26 @@
       ]
     },
     {
+      "method": "git/status",
+      "surface": "gollem-extension",
+      "params": [
+        "OperationalListParams"
+      ],
+      "result": [
+        "GitStatusResponse"
+      ]
+    },
+    {
+      "method": "git/worktree/list",
+      "surface": "gollem-extension",
+      "params": [
+        "OperationalListParams"
+      ],
+      "result": [
+        "GitWorktreeListResponse"
+      ]
+    },
+    {
       "method": "initialize",
       "surface": "client-request",
       "params": [
@@ -20907,6 +21309,33 @@
       "surface": "server-notification",
       "params": [
         "ThreadArchivedNotification"
+      ]
+    },
+    {
+      "method": "thread/backgroundTerminals/clean",
+      "surface": "client-request",
+      "result": [
+        "BackgroundTerminalCleanResponse"
+      ]
+    },
+    {
+      "method": "thread/backgroundTerminals/list",
+      "surface": "client-request",
+      "params": [
+        "OperationalListParams"
+      ],
+      "result": [
+        "BackgroundTerminalListResponse"
+      ]
+    },
+    {
+      "method": "thread/backgroundTerminals/terminate",
+      "surface": "client-request",
+      "params": [
+        "BackgroundTerminalTerminateParams"
+      ],
+      "result": [
+        "BackgroundTerminalTerminateResponse"
       ]
     },
     {
