@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -562,6 +563,45 @@ func TestParseSSEStreamNoSpaceAfterColon(t *testing.T) {
 	}
 	if tp.Content != "OK" {
 		t.Errorf("text = %q, want 'OK'", tp.Content)
+	}
+}
+
+func TestParseSSEStreamIncompleteEOFPreservesPartialResponse(t *testing.T) {
+	sseData := `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}
+
+`
+	stream := newStreamedResponse(io.NopCloser(strings.NewReader(sseData)), ClaudeSonnet46)
+
+	if _, err := stream.Next(); err != nil {
+		t.Fatalf("first Next() error = %v", err)
+	}
+	if _, err := stream.Next(); err != nil {
+		t.Fatalf("second Next() error = %v", err)
+	}
+	_, err := stream.Next()
+	var incomplete *core.StreamIncompleteError
+	if !errors.As(err, &incomplete) {
+		t.Fatalf("Next() error = %v, want StreamIncompleteError", err)
+	}
+	if got := stream.Response().TextContent(); got != "partial" {
+		t.Fatalf("partial response text = %q, want %q", got, "partial")
+	}
+}
+
+func TestParseSSEStreamRejectsMalformedJSONEvent(t *testing.T) {
+	stream := newStreamedResponse(io.NopCloser(strings.NewReader("event: message_start\ndata: {\"fixture_sensitive\":\n\n")), ClaudeSonnet46)
+
+	_, err := stream.Next()
+	var protocol *core.StreamProtocolError
+	if !errors.As(err, &protocol) {
+		t.Fatalf("Next() error = %v, want StreamProtocolError", err)
+	}
+	if strings.Contains(err.Error(), "fixture_sensitive") {
+		t.Fatalf("protocol error leaked raw stream data: %v", err)
 	}
 }
 

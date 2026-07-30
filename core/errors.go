@@ -90,3 +90,30 @@ type ModelHTTPError struct {
 func (e *ModelHTTPError) Error() string {
 	return fmt.Sprintf("%s (status %d)", e.Message, e.StatusCode)
 }
+
+// StreamIncompleteError indicates that a provider closed a stream before it
+// supplied its documented terminal event. The partial response remains
+// available from the stream for callers that can safely present it as partial.
+type StreamIncompleteError struct {
+	Provider string
+}
+
+func (e *StreamIncompleteError) Error() string {
+	if e.Provider == "" {
+		return "model stream ended before a terminal event"
+	}
+	return e.Provider + " stream ended before a terminal event"
+}
+
+// StreamProtocolError indicates malformed provider stream data. It deliberately
+// excludes raw event data so protocol failures cannot disclose provider payloads.
+type StreamProtocolError struct {
+	Provider string
+}
+
+func (e *StreamProtocolError) Error() string {
+	if e.Provider == "" {
+		return "model stream contained malformed protocol data"
+	}
+	return e.Provider + " stream contained malformed protocol data"
+}

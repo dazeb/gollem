@@ -24,6 +24,7 @@ type streamedResponse struct {
 	parts        []core.ModelResponsePart
 	stopReason   core.FinishReason
 	done         bool
+	terminal     bool
 	streamErr    error // non-nil if server sent an error mid-stream
 
 	// instrumentation receives per-request latency updates; nil = no-op. It is
@@ -126,6 +127,9 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				if strings.TrimSpace(line) == "" {
+					if !s.terminal {
+						return s.failIncompleteStream()
+					}
 					s.done = true
 					if modelErr := s.finalizeModelIdentity(); modelErr != nil {
 						s.streamErr = modelErr
@@ -158,6 +162,7 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 
 		// Check for stream termination.
 		if data == "[DONE]" {
+			s.terminal = true
 			s.done = true
 			if err := s.finalizeModelIdentity(); err != nil {
 				s.streamErr = err
@@ -172,6 +177,9 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 
 		var chunk apiChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			if strings.HasPrefix(strings.TrimSpace(data), "{") {
+				return s.failStream(&core.StreamProtocolError{Provider: "openai"})
+			}
 			continue
 		}
 		if chunk.Model != "" {
@@ -216,6 +224,7 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		// Check finish reason.
 		if choice.FinishReason != nil {
 			s.stopReason = mapFinishReasonStr(*choice.FinishReason)
+			s.terminal = true
 		}
 
 		var events []core.ModelResponseStreamEvent
@@ -240,6 +249,22 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 			return events[0], nil
 		}
 	}
+}
+
+func (s *streamedResponse) failStream(err error) (core.ModelResponseStreamEvent, error) {
+	s.done = true
+	s.finalizeAll()
+	s.streamErr = err
+	s.instrumentation.recordError(err)
+	s.instrumentation.finish()
+	return nil, err
+}
+
+func (s *streamedResponse) failIncompleteStream() (core.ModelResponseStreamEvent, error) {
+	if err := s.finalizeModelIdentity(); err != nil {
+		return s.failStream(err)
+	}
+	return s.failStream(&core.StreamIncompleteError{Provider: "openai"})
 }
 
 func (s *streamedResponse) finalizeModelIdentity() error {
