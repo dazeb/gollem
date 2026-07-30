@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,91 @@ import (
 	toolprocess "github.com/fugue-labs/gollem/appserver/tools/process"
 	"github.com/fugue-labs/gollem/core"
 )
+
+func TestServerThreadShellCommandStartupFailureDoesNotOrphanTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		appendErr error
+		startErr  error
+	}{
+		{name: "start turn", startErr: errors.New("shell start failure")},
+		{name: "append item", appendErr: errors.New("shell append failure")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := newRuntimeTestStore(t)
+			thread, err := st.CreateThread(ctx, store.CreateThreadRequest{
+				Title:     "Shell startup failure",
+				Workspace: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatalf("CreateThread: %v", err)
+			}
+			processSvc, err := toolprocess.NewService(thread.Workspace)
+			if err != nil {
+				t.Fatalf("NewService: %v", err)
+			}
+			failing := turnStartupFailureStore{
+				Store:     st,
+				appendErr: tc.appendErr,
+				startErr:  tc.startErr,
+			}
+			server := readyServer(WithStore(failing), WithProcess(processSvc))
+
+			resp := server.HandleRequest(ctx, request("thread/shellCommand", map[string]any{
+				"threadId": thread.ID,
+				"command":  "printf 'must not run'",
+			}))
+			if resp.Error == nil {
+				t.Fatal("thread/shellCommand unexpectedly succeeded")
+			}
+			turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: thread.ID})
+			if err != nil {
+				t.Fatalf("ListTurns: %v", err)
+			}
+			if len(turns) != 1 || turns[0].Status != store.TurnFailed || turns[0].CompletedAt.IsZero() {
+				t.Fatalf("shell startup failure turn = %#v, want one terminal failed turn", turns)
+			}
+		})
+	}
+}
+
+func TestServerThreadShellCommandCompletionTerminalizesTurnWhenItemUpdateFails(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{
+		Title:     "Shell completion failure",
+		Workspace: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	processSvc, err := toolprocess.NewService(thread.Workspace)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	failing := turnStartupFailureStore{
+		Store:     st,
+		updateErr: errors.New("item update failure"),
+	}
+	server := readyServer(WithStore(failing), WithProcess(processSvc))
+
+	resp := server.HandleRequest(ctx, request("thread/shellCommand", map[string]any{
+		"threadId": thread.ID,
+		"command":  "printf 'done'",
+	}))
+	if resp.Error == nil {
+		t.Fatal("thread/shellCommand unexpectedly succeeded after item update failure")
+	}
+	waitForNotificationSet(t, server, "turn/completed")
+	turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: thread.ID})
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	if len(turns) != 1 || turns[0].Status != store.TurnCompleted || turns[0].CompletedAt.IsZero() {
+		t.Fatalf("shell completion failure turn = %#v, want one terminal completed turn", turns)
+	}
+}
 
 func TestProcessRuntimeToolsExposeScopedOperations(t *testing.T) {
 	processSvc, err := toolprocess.NewService(t.TempDir())

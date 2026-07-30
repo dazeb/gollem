@@ -201,11 +201,11 @@ func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier run
 		Status:   "completed",
 		Payload:  mustRuntimeJSON(runtimeMessagePayload{Role: "user", Text: req.Prompt, CreatedAt: time.Now().UTC()}),
 	}); err != nil {
-		return nil, err
+		return nil, failUnownedTurn(st, turn, err)
 	}
 	started, err := st.StartTurn(ctx, turn.ID)
 	if err != nil {
-		return nil, err
+		return nil, failUnownedTurn(st, turn, err)
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -213,7 +213,7 @@ func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier run
 	if _, exists := s.active[started.ID]; exists {
 		s.mu.Unlock()
 		cancel()
-		return nil, ErrRuntimeTurnActive
+		return nil, failUnownedTurn(st, started, ErrRuntimeTurnActive)
 	}
 	s.active[started.ID] = &activeRuntimeTurn{cancel: cancel}
 	s.wg.Add(1)
@@ -381,14 +381,21 @@ func (s *RuntimeService) acquireStartLease(
 }
 
 func (s *RuntimeService) failPreparedRetry(st store.Store, turn *store.Turn, cause error) {
+	_ = failUnownedTurn(st, turn, cause)
+}
+
+func failUnownedTurn(st store.Store, turn *store.Turn, cause error) error {
 	if st == nil || turn == nil || cause == nil {
-		return
+		return cause
 	}
-	_, _ = st.CompleteTurn(context.Background(), store.CompleteTurnRequest{
+	if _, err := st.CompleteTurn(context.Background(), store.CompleteTurnRequest{
 		ID:     turn.ID,
 		Status: store.TurnFailed,
 		Error:  cause.Error(),
-	})
+	}); err != nil {
+		return errors.Join(cause, fmt.Errorf("terminalize unowned turn %q: %w", turn.ID, err))
+	}
+	return cause
 }
 
 func (s *RuntimeService) IsActive(turnID string) bool {

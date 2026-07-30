@@ -14,6 +14,123 @@ import (
 	"github.com/fugue-labs/gollem/core"
 )
 
+type turnStartupFailureStore struct {
+	store.Store
+	appendErr error
+	startErr  error
+	updateErr error
+}
+
+func (s turnStartupFailureStore) AppendItem(
+	ctx context.Context,
+	req store.AppendItemRequest,
+) (*store.Item, error) {
+	if s.appendErr != nil {
+		return nil, s.appendErr
+	}
+	return s.Store.AppendItem(ctx, req)
+}
+
+func (s turnStartupFailureStore) StartTurn(ctx context.Context, id string) (*store.Turn, error) {
+	if s.startErr != nil {
+		return nil, s.startErr
+	}
+	return s.Store.StartTurn(ctx, id)
+}
+
+func (s turnStartupFailureStore) UpdateItem(
+	ctx context.Context,
+	req store.UpdateItemRequest,
+) (*store.Item, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
+	return s.Store.UpdateItem(ctx, req)
+}
+
+func TestRuntimeStartFailureTerminalizesCreatedTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		appendErr error
+		startErr  error
+	}{
+		{name: "append item", appendErr: errors.New("append startup failure")},
+		{name: "start turn", startErr: errors.New("start startup failure")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := newRuntimeTestStore(t)
+			thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Startup failure"})
+			if err != nil {
+				t.Fatalf("CreateThread: %v", err)
+			}
+			failing := turnStartupFailureStore{
+				Store:     st,
+				appendErr: tc.appendErr,
+				startErr:  tc.startErr,
+			}
+			runtimeSvc := NewRuntimeService(WithRuntimeModel(
+				core.NewTestModel(core.TextResponse("must not run")),
+				RuntimeModelInfo{ProviderID: "test", Model: "test-model"},
+			))
+
+			if _, err := runtimeSvc.Start(ctx, failing, nil, RuntimeStartRequest{
+				ThreadID: thread.ID,
+				Prompt:   "fail before ownership",
+			}); err == nil {
+				t.Fatal("RuntimeService.Start unexpectedly succeeded")
+			}
+			turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: thread.ID})
+			if err != nil {
+				t.Fatalf("ListTurns: %v", err)
+			}
+			if len(turns) != 1 || turns[0].Status != store.TurnFailed || turns[0].CompletedAt.IsZero() {
+				t.Fatalf("startup failure turn = %#v, want one terminal failed turn", turns)
+			}
+		})
+	}
+}
+
+func TestServerThreadCompactStartFailureTerminalizesCreatedTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		appendErr error
+		startErr  error
+	}{
+		{name: "start turn", startErr: errors.New("compact start failure")},
+		{name: "append item", appendErr: errors.New("compact append failure")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := newRuntimeTestStore(t)
+			thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Compact failure"})
+			if err != nil {
+				t.Fatalf("CreateThread: %v", err)
+			}
+			failing := turnStartupFailureStore{
+				Store:     st,
+				appendErr: tc.appendErr,
+				startErr:  tc.startErr,
+			}
+			server := readyServer(WithStore(failing))
+
+			resp := server.HandleRequest(ctx, request("thread/compact/start", map[string]any{
+				"threadId": thread.ID,
+			}))
+			if resp.Error == nil {
+				t.Fatal("thread/compact/start unexpectedly succeeded")
+			}
+			turns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: thread.ID})
+			if err != nil {
+				t.Fatalf("ListTurns: %v", err)
+			}
+			if len(turns) != 1 || turns[0].Status != store.TurnFailed || turns[0].CompletedAt.IsZero() {
+				t.Fatalf("compact failure turn = %#v, want one terminal failed turn", turns)
+			}
+		})
+	}
+}
+
 func TestRuntimeStartLeaseIsSharedAndContextScoped(t *testing.T) {
 	ctx := context.Background()
 	coordinator := NewWorkspaceMutationCoordinator()

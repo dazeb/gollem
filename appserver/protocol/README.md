@@ -82,8 +82,11 @@ model converges.
 
 Archive and soft-delete are rejected while the target thread has a queued or
 running turn. The check and lifecycle mutation share one store transaction, and
-archived threads cannot create or start turns until `thread/unarchive`
-completes. This prevents lifecycle changes from racing execution across daemon
+archived threads cannot create, retry, or start turns until `thread/unarchive`
+completes. Full-history forks reject active sources rather than copying queued
+or running turn states. Runtime, compaction, and shell-command startup failures
+terminalize turns created before an execution owner is established. Together,
+these rules prevent lifecycle changes from racing execution across daemon
 clients; set-name remains available because it does not change run ownership.
 
 ## Version 1 Thread Goals
