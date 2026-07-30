@@ -27,6 +27,7 @@ type Claims struct {
 	Cancellation        bool
 	PartialStream       bool
 	MalformedStream     bool
+	DisconnectStream    bool
 	Retryability        bool
 	RequestTimeout      bool
 	ReasoningVisibility bool
@@ -36,12 +37,13 @@ type Claims struct {
 // produces. ToolName is required when Claims.ToolCalls is true. StreamText is
 // required when Claims.Streaming is true.
 type Expectations struct {
-	ResponseText  string
-	ToolName      string
-	StreamText    string
-	PartialText   string
-	RetryText     string
-	ReasoningText string
+	ResponseText   string
+	ToolName       string
+	StreamText     string
+	PartialText    string
+	DisconnectText string
+	RetryText      string
+	ReasoningText  string
 }
 
 // Driver binds a provider model to the common capability claims and expected
@@ -76,6 +78,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.PartialStream && strings.TrimSpace(driver.Expectations.PartialText) == "" {
 		return fmt.Errorf("provider conformance: %s partial-stream fixture must expect partial text", driver.Name)
+	}
+	if driver.Claims.DisconnectStream && strings.TrimSpace(driver.Expectations.DisconnectText) == "" {
+		return fmt.Errorf("provider conformance: %s disconnect-stream fixture must expect partial text", driver.Name)
 	}
 	if driver.Claims.Retryability && strings.TrimSpace(driver.Expectations.RetryText) == "" {
 		return fmt.Errorf("provider conformance: %s retry fixture must expect retry text", driver.Name)
@@ -162,6 +167,11 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.MalformedStream {
 		if err := verifyMalformedStream(ctx, driver); err != nil {
+			return err
+		}
+	}
+	if driver.Claims.DisconnectStream {
+		if err := verifyDisconnectStream(ctx, driver); err != nil {
 			return err
 		}
 	}
@@ -265,6 +275,29 @@ func verifyMalformedStream(ctx context.Context, driver Driver) error {
 		}
 		return nil
 	}
+}
+
+func verifyDisconnectStream(ctx context.Context, driver Driver) error {
+	stream, err := driver.Model.RequestStream(ctx, disconnectStreamMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		return fmt.Errorf("provider conformance: %s disconnect stream request: %w", driver.Name, err)
+	}
+	defer stream.Close()
+	for {
+		_, err := stream.Next()
+		if err == nil {
+			continue
+		}
+		var transport *core.StreamTransportError
+		if !errors.As(err, &transport) {
+			return fmt.Errorf("provider conformance: %s disconnect stream error = %w, want StreamTransportError", driver.Name, err)
+		}
+		break
+	}
+	if got := stream.Response().TextContent(); got != driver.Expectations.DisconnectText {
+		return fmt.Errorf("provider conformance: %s disconnect text = %q, want %q", driver.Name, got, driver.Expectations.DisconnectText)
+	}
+	return nil
 }
 
 func verifyRetryability(ctx context.Context, driver Driver) error {
@@ -384,6 +417,12 @@ func partialStreamMessages() []core.ModelMessage {
 func malformedStreamMessages() []core.ModelMessage {
 	return []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "malformed stream conformance"}}},
+	}
+}
+
+func disconnectStreamMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "disconnect stream conformance"}}},
 	}
 }
 
