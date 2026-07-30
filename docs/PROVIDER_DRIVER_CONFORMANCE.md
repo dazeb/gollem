@@ -11,7 +11,7 @@ of behavior and must not enable a control solely on provider identity.
 | Behavior | Native OpenAI | OpenAI-compatible local | Native Anthropic | Evidence |
 | --- | --- | --- | --- | --- |
 | Non-stream text response | Proven | Proven | Proven | `provider/conformance` |
-| Function-tool request and normalized tool call | Proven | Proven | Proven | `provider/conformance` |
+| Function-tool request and normalized tool-call name, ID, and argument JSON | Proven | Proven | Proven | `provider/conformance` |
 | Streaming text and terminal usage | Proven | Proven | Proven | `provider/conformance` |
 | In-flight request cancellation | Proven | Proven | Proven | `provider/conformance` |
 | Structured output | Catalog-supported | Unsupported | Catalog-supported | Provider-specific tests; no common conformance claim yet |
