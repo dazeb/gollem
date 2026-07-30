@@ -368,6 +368,16 @@ public contracts. Catalog responses expose configuration state and required
 environment-variable names, never credential values; runtime requests contain
 selection and model settings but no credential-bearing fields.
 
+An explicit `reasoningEffort` is accepted only when the selected catalog model
+advertises reasoning and that exact effort. Validation happens before
+`thread/start` creates a thread and before `turn/start`, `thread/resume`, or
+`turn/retry` creates a turn. Supported choices are copied into durable thread
+settings and native runtime turn input; later turns inherit the thread choice,
+and retry recovers the source turn choice when the request omits it. Clients
+must still gate controls from the selected model's capability record. A model
+or effort absent from that record is unavailable rather than optimistically
+forwarded to a provider.
+
 ## Exported Thread-Item Prerequisites
 
 The schema exports the exact public `ByteRange`, `TextElement`, `ImageDetail`,

@@ -119,6 +119,160 @@ func TestRuntimeStartFailureTerminalizesCreatedTurn(t *testing.T) {
 	}
 }
 
+func TestRuntimeStartPersistsExplicitReasoningEffort(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Reasoning receipt"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	effort := "high"
+	runtimeSvc := NewRuntimeService(WithRuntimeModel(
+		core.NewTestModel(core.TextResponse("done")),
+		RuntimeModelInfo{ProviderID: "openai", Model: "gpt-5"},
+	))
+
+	started, err := runtimeSvc.Start(ctx, st, nil, RuntimeStartRequest{
+		ThreadID: thread.ID,
+		Prompt:   "persist the selected effort",
+		Selection: RuntimeModelSelection{
+			ProviderID: "openai",
+			Model:      "gpt-5",
+		},
+		ModelSettings: core.ModelSettings{ReasoningEffort: &effort},
+	})
+	if err != nil {
+		t.Fatalf("RuntimeService.Start: %v", err)
+	}
+	var input runtimeTurnInput
+	if err := json.Unmarshal(started.Turn.Input, &input); err != nil {
+		t.Fatalf("decode turn input: %v", err)
+	}
+	if input.ReasoningEffort != effort {
+		t.Fatalf("turn reasoning effort = %q, want %q", input.ReasoningEffort, effort)
+	}
+	inherited := runtimeModelSettingsFromInput(started.Turn.Input)
+	if inherited.ReasoningEffort == nil || *inherited.ReasoningEffort != effort {
+		t.Fatalf("inherited reasoning settings = %#v, want %q", inherited, effort)
+	}
+}
+
+func TestServerRuntimeReasoningEffortFailsClosedAgainstModelCatalog(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		model      string
+		effort     string
+		wantCode   int
+		wantReason string
+	}{
+		{
+			name:       "model does not advertise reasoning",
+			model:      "gpt-4o",
+			effort:     "high",
+			wantCode:   protocol.CodeInvalidParams,
+			wantReason: "does not advertise reasoning",
+		},
+		{
+			name:       "effort is not advertised",
+			model:      "gpt-5",
+			effort:     "ultra",
+			wantCode:   protocol.CodeInvalidParams,
+			wantReason: "does not advertise reasoning effort",
+		},
+		{
+			name:       "model is unknown",
+			model:      "future-model",
+			effort:     "high",
+			wantCode:   protocol.CodeInvalidParams,
+			wantReason: "model capability is unavailable",
+		},
+		{
+			name:   "advertised effort",
+			model:  "gpt-5",
+			effort: "high",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := newRuntimeTestStore(t)
+			server := readyServer(
+				WithStore(st),
+				WithRuntimeService(NewRuntimeService(WithRuntimeModel(
+					core.NewTestModel(core.TextResponse("done")),
+					RuntimeModelInfo{ProviderID: "openai", Model: tc.model},
+				))),
+			)
+			response := server.HandleRequest(ctx, request("thread/start", map[string]any{
+				"workspace":       t.TempDir(),
+				"prompt":          "use explicit reasoning",
+				"providerId":      "openai",
+				"model":           tc.model,
+				"reasoningEffort": tc.effort,
+			}))
+			if tc.wantCode != 0 {
+				if response.Error == nil || response.Error.Code != tc.wantCode {
+					t.Fatalf("thread/start error = %#v, want code %d", response.Error, tc.wantCode)
+				}
+				if !strings.Contains(response.Error.Message, tc.wantReason) {
+					t.Fatalf("thread/start error = %q, want %q", response.Error.Message, tc.wantReason)
+				}
+				threads, err := st.ListThreads(ctx, store.ThreadFilter{})
+				if err != nil {
+					t.Fatalf("ListThreads: %v", err)
+				}
+				if len(threads) != 0 {
+					t.Fatalf("invalid reasoning created %d threads", len(threads))
+				}
+				return
+			}
+			if response.Error != nil {
+				t.Fatalf("thread/start error: %v", response.Error)
+			}
+			var result protocol.ThreadRunStartResult
+			decodeResult(t, response, &result)
+			var input runtimeTurnInput
+			if err := json.Unmarshal(result.Turn.Input, &input); err != nil {
+				t.Fatalf("decode turn input: %v", err)
+			}
+			if input.ReasoningEffort != tc.effort {
+				t.Fatalf("turn reasoning effort = %q, want %q", input.ReasoningEffort, tc.effort)
+			}
+			storedThread, err := st.GetThread(ctx, result.Thread.ID)
+			if err != nil {
+				t.Fatalf("GetThread: %v", err)
+			}
+			if storedThread.Settings["reasoningEffort"] != tc.effort {
+				t.Fatalf(
+					"thread reasoning setting = %#v, want %q",
+					storedThread.Settings["reasoningEffort"],
+					tc.effort,
+				)
+			}
+			waitForNotificationSet(t, server, "turn/completed")
+			nextResponse := server.HandleRequest(ctx, request("turn/start", map[string]any{
+				"threadId": result.Thread.ID,
+				"prompt":   "inherit the thread reasoning setting",
+			}))
+			if nextResponse.Error != nil {
+				t.Fatalf("inherited turn/start error: %v", nextResponse.Error)
+			}
+			var next protocol.TurnRunStartResult
+			decodeResult(t, nextResponse, &next)
+			var nextInput runtimeTurnInput
+			if err := json.Unmarshal(next.Turn.Input, &nextInput); err != nil {
+				t.Fatalf("decode inherited turn input: %v", err)
+			}
+			if nextInput.ReasoningEffort != tc.effort {
+				t.Fatalf(
+					"inherited turn reasoning effort = %q, want %q",
+					nextInput.ReasoningEffort,
+					tc.effort,
+				)
+			}
+		})
+	}
+}
+
 func TestServerThreadCompactStartFailureTerminalizesCreatedTurn(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
