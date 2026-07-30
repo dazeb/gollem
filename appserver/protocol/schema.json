@@ -14774,6 +14774,10 @@
       ],
       "type": "object"
     },
+    "ThreadExtra": {
+      "description": "Extra app-server data for a thread.",
+      "type": "object"
+    },
     "ThreadForkParams": {
       "additionalProperties": false,
       "properties": {
@@ -15434,6 +15438,13 @@
         "fileChangeRecoveryTransferred"
       ],
       "type": "object"
+    },
+    "ThreadHistoryMode": {
+      "enum": [
+        "legacy",
+        "paginated"
+      ],
+      "type": "string"
     },
     "ThreadHistoryRollbackParams": {
       "additionalProperties": false,
@@ -17457,6 +17468,104 @@
           "type": "string"
         }
       },
+      "type": "object"
+    },
+    "ThreadSettings": {
+      "properties": {
+        "activePermissionProfile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActivePermissionProfile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalPolicy": {
+          "$ref": "#/$defs/AskForApproval"
+        },
+        "approvalsReviewer": {
+          "$ref": "#/$defs/ApprovalsReviewer"
+        },
+        "collaborationMode": {
+          "$ref": "#/$defs/CollaborationMode"
+        },
+        "cwd": {
+          "$ref": "#/$defs/AbsolutePathBuf"
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "modelProvider": {
+          "type": "string"
+        },
+        "personality": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Personality"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sandboxPolicy": {
+          "$ref": "#/$defs/SandboxPolicy"
+        },
+        "serviceTier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "collaborationMode",
+        "cwd",
+        "model",
+        "modelProvider",
+        "sandboxPolicy"
+      ],
+      "type": "object"
+    },
+    "ThreadSettingsUpdatedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "threadSettings": {
+          "$ref": "#/$defs/ThreadSettings"
+        }
+      },
+      "required": [
+        "threadId",
+        "threadSettings"
+      ],
+      "title": "ThreadSettingsUpdatedNotification",
       "type": "object"
     },
     "ThreadSortKey": {

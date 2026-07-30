@@ -532,6 +532,25 @@ func MarshalTypeScript() ([]byte, error) {
 			schema["x-gollem-typescript-ignore-additional-properties"] = true
 			definition = schema
 		}
+		if name == "ThreadExtra" {
+			// The source schema intentionally leaves this extension record open,
+			// while ts-rs renders its empty Rust struct as Record<string, never>.
+			schema, _ := typeScriptSchema(definition)
+			schema["additionalProperties"] = false
+			definition = schema
+		}
+		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
+			// The source schema permits forward-compatible fields, while ts-rs
+			// renders these public records as closed object literals.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			if name == "ThreadSettings" {
+				// The source JSON Schema uses a type array here, which ts-rs
+				// renders as a nullable string union.
+				schema["properties"].(Schema)["serviceTier"] = nullableStringSchema()
+			}
+			definition = schema
+		}
 		switch name {
 		case "PermissionProfileListParams":
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{

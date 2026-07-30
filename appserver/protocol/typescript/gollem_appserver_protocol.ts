@@ -3526,6 +3526,8 @@ export type ThreadDeletedNotification = {
   "threadId": string;
 };
 
+export type ThreadExtra = Record<string, never>;
+
 export type ThreadForkParams = {
   "approvalPolicy"?: AskForApproval | null;
   "approvalsReviewer"?: ApprovalsReviewer | null;
@@ -3652,6 +3654,8 @@ export type ThreadHistoryForkResult = {
   "sourceThreadId": string;
   "thread": ThreadRecord;
 };
+
+export type ThreadHistoryMode = "legacy" | "paginated";
 
 export type ThreadHistoryRollbackParams = {
   "id"?: string;
@@ -4012,6 +4016,26 @@ export type ThreadSetNameResponse = {
   "name"?: string;
   "thread"?: ThreadRecord | null;
   "threadId"?: string;
+};
+
+export type ThreadSettings = {
+  "activePermissionProfile"?: ActivePermissionProfile | null;
+  "approvalPolicy": AskForApproval;
+  "approvalsReviewer": ApprovalsReviewer;
+  "collaborationMode": CollaborationMode;
+  "cwd": AbsolutePathBuf;
+  "effort"?: ReasoningEffort | null;
+  "model": string;
+  "modelProvider": string;
+  "personality"?: Personality | null;
+  "sandboxPolicy": SandboxPolicy;
+  "serviceTier"?: string | null;
+  "summary"?: ReasoningSummary | null;
+};
+
+export type ThreadSettingsUpdatedNotification = {
+  "threadId": string;
+  "threadSettings": ThreadSettings;
 };
 
 export type ThreadSortKey = "created_at" | "updated_at" | "recency_at";
