@@ -1083,12 +1083,21 @@ func TestSQLiteStoreForkDisablesFileChangeRevertEvidence(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("SaveFileChangeRecovery: %v", err)
 	}
+	if _, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: source.ID,
+		TurnID:   turn.ID,
+		Kind:     "fileChangeRevert",
+		Status:   "completed",
+		Payload:  json.RawMessage(`{"itemId":"` + item.ID + `","path":"notes.txt"}`),
+	}); err != nil {
+		t.Fatalf("AppendItem receipt: %v", err)
+	}
 	fork, err := s.ForkThread(ctx, ForkThreadRequest{SourceThreadID: source.ID, IncludeItems: true})
 	if err != nil {
 		t.Fatalf("ForkThread: %v", err)
 	}
 	items, err := s.ListItems(ctx, ItemFilter{ThreadID: fork.ID})
-	if err != nil || len(items) != 1 {
+	if err != nil || len(items) != 2 {
 		t.Fatalf("fork items = %+v, error %v", items, err)
 	}
 	var forked struct {
@@ -1105,6 +1114,15 @@ func TestSQLiteStoreForkDisablesFileChangeRevertEvidence(t *testing.T) {
 		forked.Evidence[0].RevertSnapshotAvailable ||
 		forked.Evidence[0].RevertUnavailableReason != "file-change recovery does not transfer to forked threads" {
 		t.Fatalf("forked file-change payload = %+v", forked)
+	}
+	var forkedReceipt struct {
+		ItemID string `json:"itemId"`
+	}
+	if err := json.Unmarshal(items[1].Payload, &forkedReceipt); err != nil {
+		t.Fatalf("decode forked receipt: %v", err)
+	}
+	if items[1].Kind != "fileChangeRevert" || forkedReceipt.ItemID != items[0].ID {
+		t.Fatalf("forked receipt item = %+v payload=%+v, want target %q", items[1], forkedReceipt, items[0].ID)
 	}
 	if _, err := s.GetFileChangeRecovery(ctx, items[0].ID); !errors.Is(err, ErrFileChangeRecoveryNotFound) {
 		t.Fatalf("forked private recovery error = %v, want ErrFileChangeRecoveryNotFound", err)

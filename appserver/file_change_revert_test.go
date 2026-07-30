@@ -143,6 +143,31 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 		if blockedStart.Error == nil || blockedStart.Error.Code != protocol.CodeInvalidParams {
 			t.Fatalf("turn start during revert = %+v", blockedStart)
 		}
+		threadsBefore, err := st.ListThreads(ctx, store.ThreadFilter{})
+		if err != nil {
+			t.Fatalf("ListThreads before blocked thread start: %v", err)
+		}
+		blockedThreadStart := server.HandleRequest(ctx, request("thread/start", map[string]any{
+			"workspace": root,
+			"prompt":    "must not create a thread while revert is reserved",
+		}))
+		if blockedThreadStart.Error == nil || blockedThreadStart.Error.Code != protocol.CodeInvalidParams {
+			t.Fatalf("thread start during revert = %+v", blockedThreadStart)
+		}
+		threadsAfter, err := st.ListThreads(ctx, store.ThreadFilter{})
+		if err != nil {
+			t.Fatalf("ListThreads after blocked thread start: %v", err)
+		}
+		if len(threadsAfter) != len(threadsBefore) {
+			t.Fatalf("blocked thread start created a durable thread: before=%d after=%d", len(threadsBefore), len(threadsAfter))
+		}
+		blockedRollback := server.HandleRequest(ctx, request("thread/rollback", map[string]any{
+			"threadId": started.Thread.ID,
+			"numTurns": 1,
+		}))
+		if blockedRollback.Error == nil || blockedRollback.Error.Code != protocol.CodeInvalidRequest {
+			t.Fatalf("thread rollback during revert = %+v", blockedRollback)
+		}
 		read := server.HandleRequest(ctx, request("thread/read", map[string]any{"threadId": started.Thread.ID}))
 		if read.Error != nil {
 			t.Fatalf("thread read during revert approval = %v", read.Error)
@@ -217,6 +242,22 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 	}))
 	if malformed.Error == nil || malformed.Error.Code != protocol.CodeInvalidParams {
 		t.Fatalf("malformed revert response = %+v", malformed)
+	}
+	if _, err := st.DeleteThread(ctx, started.Thread.ID); err != nil {
+		t.Fatalf("DeleteThread after completed revert: %v", err)
+	}
+	deletedReplay := server.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
+		"threadId":       started.Thread.ID,
+		"itemId":         fileItem.Item.ID,
+		"idempotencyKey": "revert-restart-1",
+	}))
+	if deletedReplay.Error != nil {
+		t.Fatalf("deleted-thread receipt replay error: %v", deletedReplay.Error)
+	}
+	var deletedReused protocol.FileChangeRevertResult
+	decodeResult(t, deletedReplay, &deletedReused)
+	if !deletedReused.Reused || deletedReused.Marker.ID != reverted.Marker.ID {
+		t.Fatalf("deleted-thread receipt replay = %+v", deletedReused)
 	}
 }
 
@@ -398,6 +439,7 @@ func TestFileChangeRevertCompletesPendingReceiptAfterResponseLoss(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(root, "notes.txt"), recovery.BeforeContent, os.FileMode(recovery.BeforeMode)); err != nil {
 		t.Fatalf("simulate completed filesystem mutation: %v", err)
 	}
+	server.DrainNotifications()
 
 	response := server.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
 		"threadId":       started.Thread.ID,
@@ -411,6 +453,93 @@ func TestFileChangeRevertCompletesPendingReceiptAfterResponseLoss(t *testing.T) 
 	decodeResult(t, response, &result)
 	if !result.Reused || result.Marker.Kind != "fileChangeRevert" {
 		t.Fatalf("recovered result = %+v", result)
+	}
+	for _, notification := range server.DrainNotifications() {
+		if notification.Method == "fs/changed" {
+			t.Fatal("restart receipt reconciliation published a filesystem mutation")
+		}
+	}
+}
+
+func TestFileChangeRevertPublishesMutationBeforeReceiptFailureExactlyOnce(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile before: %v", err)
+	}
+	st := newRuntimeTestStore(t)
+	fsService, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsService.Close()
+	model := core.NewTestModel(
+		core.ToolCallResponseWithID("workspace_write_file", `{"path":"notes.txt","content":"after\n"}`, "call-update"),
+		core.TextResponse("updated"),
+	)
+	setupServer := readyServer(
+		WithStore(st),
+		WithFilesystem(fsService),
+		WithRuntimeService(NewRuntimeService(
+			WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
+			WithRuntimeTools(FilesystemRuntimeTools(fsService)...),
+		)),
+	)
+	start := setupServer.HandleRequest(ctx, request("thread/start", map[string]any{"workspace": root, "prompt": "update"}))
+	if start.Error != nil {
+		t.Fatalf("thread/start error: %v", start.Error)
+	}
+	var started protocol.ThreadRunStartResult
+	decodeResult(t, start, &started)
+	waitForNotificationSet(t, setupServer, "turn/completed")
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: started.Thread.ID, TurnID: started.Turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	fileItem := findRuntimeFileChangeItem(t, items, "notes.txt")
+
+	completeErr := errors.New("receipt write failed")
+	failingStore := completeFailingFileChangeRecoveryStore{
+		Store:    st,
+		recovery: st,
+		err:      completeErr,
+	}
+	failingServer := readyServer(WithStore(failingStore), WithFilesystem(fsService))
+	response := failingServer.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
+		"threadId":       started.Thread.ID,
+		"itemId":         fileItem.Item.ID,
+		"idempotencyKey": "receipt-failure",
+	}))
+	if response.Error == nil || response.Error.Code != protocol.CodeInternalError {
+		t.Fatalf("receipt failure response = %+v", response)
+	}
+	if content, err := os.ReadFile(path); err != nil || string(content) != "before\n" {
+		t.Fatalf("filesystem mutation after receipt failure = %q, error %v", content, err)
+	}
+	changed := 0
+	for _, notification := range failingServer.DrainNotifications() {
+		if notification.Method == "fs/changed" {
+			changed++
+		}
+	}
+	if changed != 1 {
+		t.Fatalf("filesystem notifications after receipt failure = %d, want 1", changed)
+	}
+
+	recoveredServer := readyServer(WithStore(st), WithFilesystem(fsService))
+	retry := recoveredServer.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
+		"threadId":       started.Thread.ID,
+		"itemId":         fileItem.Item.ID,
+		"idempotencyKey": "receipt-failure",
+	}))
+	if retry.Error != nil {
+		t.Fatalf("receipt retry error: %v", retry.Error)
+	}
+	for _, notification := range recoveredServer.DrainNotifications() {
+		if notification.Method == "fs/changed" {
+			t.Fatal("receipt-only retry republished the filesystem mutation")
+		}
 	}
 }
 
@@ -828,6 +957,8 @@ func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 		Operation:          "update",
 		BeforeExists:       true,
 		AfterExists:        true,
+		BeforeIsRegular:    true,
+		AfterIsRegular:     true,
 		BeforeMode:         0o644,
 		BeforeSize:         int64(len("before")),
 		AfterSize:          int64(len("after")),
@@ -846,6 +977,7 @@ func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 		{"empty path", func(event *core.ArtifactChangedEvent) { event.Path = "" }},
 		{"absolute path", func(event *core.ArtifactChangedEvent) { event.Path = filepath.Join(t.TempDir(), "outside.txt") }},
 		{"directory", func(event *core.ArtifactChangedEvent) { event.AfterIsDir = true }},
+		{"non-regular file", func(event *core.ArtifactChangedEvent) { event.BeforeIsRegular = false }},
 		{"symlink", func(event *core.ArtifactChangedEvent) { event.AfterIsSymlink = true }},
 		{"symlink path component", func(event *core.ArtifactChangedEvent) { event.BeforeHasSymlinkPath = true }},
 		{"no existence evidence", func(event *core.ArtifactChangedEvent) {
@@ -893,6 +1025,8 @@ func TestRuntimeFileChangeTrackerRecoveryCapabilityAndErrors(t *testing.T) {
 		Operation:          "update",
 		BeforeExists:       true,
 		AfterExists:        true,
+		BeforeIsRegular:    true,
+		AfterIsRegular:     true,
 		BeforeMode:         0o644,
 		AfterMode:          0o644,
 		BeforeSize:         int64(len("before")),
@@ -1054,7 +1188,7 @@ func TestWorkspaceRevertReservationLifecycleAndFailures(t *testing.T) {
 		t.Fatalf("closed-store reservation error = %v, want ErrStoreClosed", err)
 	}
 
-	releaseUncoordinated, err := acquireRuntimeTurnStartLease(&runtimeErrorCaptureNotifier{})
+	releaseUncoordinated, err := acquireRuntimeTurnStartLease(ctx, &runtimeErrorCaptureNotifier{})
 	if err != nil {
 		t.Fatalf("uncoordinated runtime lease: %v", err)
 	}
@@ -1143,6 +1277,47 @@ func (s failingFileChangeRecoveryStore) AbortFileChangeRevert(context.Context, s
 }
 
 func (s failingFileChangeRecoveryStore) CompleteFileChangeRevert(context.Context, store.CompleteFileChangeRevertRequest) (*store.CompleteFileChangeRevertResult, error) {
+	return nil, s.err
+}
+
+type completeFailingFileChangeRecoveryStore struct {
+	store.Store
+	recovery store.FileChangeRecoveryStore
+	err      error
+}
+
+func (s completeFailingFileChangeRecoveryStore) SaveFileChangeRecovery(
+	ctx context.Context,
+	req store.SaveFileChangeRecoveryRequest,
+) (*store.FileChangeRecovery, error) {
+	return s.recovery.SaveFileChangeRecovery(ctx, req)
+}
+
+func (s completeFailingFileChangeRecoveryStore) GetFileChangeRecovery(
+	ctx context.Context,
+	itemID string,
+) (*store.FileChangeRecovery, error) {
+	return s.recovery.GetFileChangeRecovery(ctx, itemID)
+}
+
+func (s completeFailingFileChangeRecoveryStore) PrepareFileChangeRevert(
+	ctx context.Context,
+	req store.PrepareFileChangeRevertRequest,
+) (*store.PrepareFileChangeRevertResult, error) {
+	return s.recovery.PrepareFileChangeRevert(ctx, req)
+}
+
+func (s completeFailingFileChangeRecoveryStore) AbortFileChangeRevert(
+	ctx context.Context,
+	req store.AbortFileChangeRevertRequest,
+) (*store.FileChangeRecovery, error) {
+	return s.recovery.AbortFileChangeRevert(ctx, req)
+}
+
+func (s completeFailingFileChangeRecoveryStore) CompleteFileChangeRevert(
+	context.Context,
+	store.CompleteFileChangeRevertRequest,
+) (*store.CompleteFileChangeRevertResult, error) {
 	return nil, s.err
 }
 

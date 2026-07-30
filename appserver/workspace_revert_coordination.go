@@ -18,10 +18,20 @@ type workspaceRevertReservation struct {
 	root string
 }
 
-// acquireTurnStartLease closes the race between checking active turns and
-// reserving the filesystem for an exact revert. Callers hold the lease only
-// through durable transition to running; the active turn then guards itself.
-func (s *Server) acquireTurnStartLease() (func(), error) {
+type workspaceMutationLeaseContextKey struct{}
+
+func withWorkspaceMutationLease(ctx context.Context) context.Context {
+	return context.WithValue(ctx, workspaceMutationLeaseContextKey{}, true)
+}
+
+func workspaceMutationLeaseHeld(ctx context.Context) bool {
+	held, _ := ctx.Value(workspaceMutationLeaseContextKey{}).(bool)
+	return held
+}
+
+// acquireWorkspaceMutationLease closes the race between checking active turns
+// and reserving the filesystem for an exact revert.
+func (s *Server) acquireWorkspaceMutationLease() (func(), error) {
 	if s == nil {
 		return func() {}, errors.New("appserver: nil server")
 	}
@@ -34,6 +44,13 @@ func (s *Server) acquireTurnStartLease() (func(), error) {
 	return func() {
 		once.Do(s.workspaceMutationMu.Unlock)
 	}, nil
+}
+
+// acquireTurnStartLease is implemented separately for the runtime coordinator
+// interface. Callers hold it only through durable transition to running; the
+// active turn then guards itself.
+func (s *Server) acquireTurnStartLease() (func(), error) {
+	return s.acquireWorkspaceMutationLease()
 }
 
 func (s *Server) reserveWorkspaceRevert(

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,8 +144,8 @@ func TestFilesystemRuntimeToolsBoundEvidenceAndSuppressNoOpChanges(t *testing.T)
 		t.Fatalf("large read result = content bytes %d, truncated %v, encoding %q", len(large.Content), large.ContentTruncated, large.ContentEncoding)
 	}
 	_, _, omitted := runtimeArtifactDiff("large.txt",
-		runtimeArtifactCapture{Exists: true, Content: []byte("before\n")},
-		runtimeArtifactCapture{Exists: true, Content: []byte(largeContent)},
+		runtimeArtifactCapture{Exists: true, IsRegular: true, Content: []byte("before\n")},
+		runtimeArtifactCapture{Exists: true, IsRegular: true, Content: []byte(largeContent)},
 	)
 	if !strings.Contains(omitted, "diff limit") {
 		t.Fatalf("large diff omitted reason = %q", omitted)
@@ -696,13 +697,14 @@ func TestFileChangeApprovalCancelInterruptsActiveTurn(t *testing.T) {
 	}
 }
 
-func TestRuntimeArtifactCapturesEqualIncludesModeAndSymlinkState(t *testing.T) {
+func TestRuntimeArtifactCapturesEqualIncludesModeTypeAndSymlinkState(t *testing.T) {
 	base := runtimeArtifactCapture{
-		Path:   "notes.txt",
-		Exists: true,
-		Size:   5,
-		Mode:   0o644,
-		SHA256: runtimeSHA256([]byte("notes")),
+		Path:      "notes.txt",
+		Exists:    true,
+		IsRegular: true,
+		Size:      5,
+		Mode:      0o644,
+		SHA256:    runtimeSHA256([]byte("notes")),
 	}
 	if !runtimeArtifactCapturesEqual(base, base) {
 		t.Fatal("identical artifact captures differ")
@@ -712,10 +714,42 @@ func TestRuntimeArtifactCapturesEqualIncludesModeAndSymlinkState(t *testing.T) {
 	if runtimeArtifactCapturesEqual(base, modeChanged) {
 		t.Fatal("permission-only artifact change was ignored")
 	}
+	typeChanged := base
+	typeChanged.IsRegular = false
+	if runtimeArtifactCapturesEqual(base, typeChanged) {
+		t.Fatal("regular-file type change was ignored")
+	}
 	symlinkChanged := base
 	symlinkChanged.IsSymlink = true
 	if runtimeArtifactCapturesEqual(base, symlinkChanged) {
 		t.Fatal("symlink-state artifact change was ignored")
+	}
+}
+
+func TestCaptureRuntimeArtifactClassifiesNonRegularFilesWithoutReading(t *testing.T) {
+	root := t.TempDir()
+	socketPath := filepath.Join(root, "agent.sock")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", socketPath)
+	if err != nil {
+		t.Skipf("unix sockets are unavailable: %v", err)
+	}
+	defer listener.Close()
+	fsService, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsService.Close()
+
+	captured, err := captureRuntimeArtifact(context.Background(), fsService, "agent.sock")
+	if err != nil {
+		t.Fatalf("captureRuntimeArtifact: %v", err)
+	}
+	if !captured.Exists || captured.IsRegular || captured.IsDir || captured.IsSymlink ||
+		len(captured.Content) != 0 || captured.SHA256 != "" {
+		t.Fatalf("non-regular artifact capture = %+v", captured)
+	}
+	if _, _, omitted := runtimeArtifactDiff("agent.sock", captured, runtimeArtifactCapture{}); omitted != "non-regular file content omitted" {
+		t.Fatalf("non-regular diff omitted reason = %q", omitted)
 	}
 }
 

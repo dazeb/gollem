@@ -1687,6 +1687,9 @@ func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkTh
 		oldParentID := item.ParentItemID
 		item.ID = itemMap[oldID]
 		item.Payload = remapForkedItemPayloadID(item.Payload, oldID, item.ID)
+		if item.Kind == "fileChangeRevert" {
+			item.Payload = remapForkedFileChangeReceiptTarget(item.Payload, itemMap)
+		}
 		item.Payload = disableForkedFileChangeRevert(item.Payload)
 		item.ThreadID = forkThreadID
 		item.TurnID = turnMap[item.TurnID]
@@ -1699,6 +1702,34 @@ func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkTh
 		}
 	}
 	return nil
+}
+
+func remapForkedFileChangeReceiptTarget(raw json.RawMessage, itemMap map[string]string) json.RawMessage {
+	if len(raw) == 0 || len(itemMap) == 0 {
+		return raw
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return raw
+	}
+	var sourceItemID string
+	if json.Unmarshal(payload["itemId"], &sourceItemID) != nil {
+		return raw
+	}
+	forkedItemID := itemMap[sourceItemID]
+	if forkedItemID == "" {
+		return raw
+	}
+	encodedItemID, err := json.Marshal(forkedItemID)
+	if err != nil {
+		return raw
+	}
+	payload["itemId"] = encodedItemID
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }
 
 func disableForkedFileChangeRevert(raw json.RawMessage) json.RawMessage {

@@ -297,6 +297,7 @@ type runtimeArtifactCapture struct {
 	WorkspaceRoot       string
 	Exists              bool
 	IsDir               bool
+	IsRegular           bool
 	IsSymlink           bool
 	HasSymlinkComponent bool
 	Size                int64
@@ -354,12 +355,13 @@ func captureRuntimeArtifact(ctx context.Context, service *toolfs.Service, path s
 		WorkspaceRoot:       workspaceRoot,
 		Exists:              true,
 		IsDir:               metadata.IsDir,
+		IsRegular:           metadata.IsFile,
 		IsSymlink:           metadata.IsSymlink,
 		HasSymlinkComponent: hasSymlinkComponent,
 		Size:                metadata.Size,
 		Mode:                uint32(metadata.Mode & runtimeExactFileModeMask),
 	}
-	if metadata.IsDir {
+	if !metadata.IsFile {
 		return capture, nil
 	}
 	content, err := service.ReadFile(ctx, path)
@@ -428,6 +430,8 @@ func publishRuntimeArtifactChange(ctx context.Context, rc *core.RunContext, befo
 		AfterExists:          after.Exists,
 		BeforeIsDir:          before.IsDir,
 		AfterIsDir:           after.IsDir,
+		BeforeIsRegular:      before.IsRegular,
+		AfterIsRegular:       after.IsRegular,
 		BeforeIsSymlink:      before.IsSymlink,
 		AfterIsSymlink:       after.IsSymlink,
 		BeforeHasSymlinkPath: before.HasSymlinkComponent,
@@ -463,6 +467,7 @@ func runtimeRecoveryContentBytes(content []byte) []byte {
 func runtimeArtifactCapturesEqual(before, after runtimeArtifactCapture) bool {
 	if before.Exists != after.Exists ||
 		before.IsDir != after.IsDir ||
+		before.IsRegular != after.IsRegular ||
 		before.IsSymlink != after.IsSymlink ||
 		before.Size != after.Size ||
 		before.Mode != after.Mode {
@@ -480,6 +485,9 @@ func runtimeArtifactCapturesEqual(before, after runtimeArtifactCapture) bool {
 func runtimeArtifactDiff(path string, before, after runtimeArtifactCapture) (string, bool, string) {
 	if before.IsDir || after.IsDir {
 		return "", false, "directory content omitted"
+	}
+	if (before.Exists && !before.IsRegular) || (after.Exists && !after.IsRegular) {
+		return "", false, "non-regular file content omitted"
 	}
 	if len(before.Content) > runtimeFilesystemContentMaxBytes || len(after.Content) > runtimeFilesystemContentMaxBytes {
 		return "", false, fmt.Sprintf("content exceeds %d byte diff limit", runtimeFilesystemContentMaxBytes)
@@ -516,6 +524,9 @@ func runtimeArtifactContents(before, after runtimeArtifactCapture) (string, stri
 	if before.IsDir || after.IsDir {
 		return "", "", false, "directory content omitted"
 	}
+	if (before.Exists && !before.IsRegular) || (after.Exists && !after.IsRegular) {
+		return "", "", false, "non-regular file content omitted"
+	}
 	if !runtimeArtifactText(before.Content) || !runtimeArtifactText(after.Content) {
 		return "", "", false, "binary content omitted"
 	}
@@ -525,7 +536,8 @@ func runtimeArtifactContents(before, after runtimeArtifactCapture) (string, stri
 }
 
 func runtimeArtifactContentEncoding(before, after runtimeArtifactCapture, omitted string) string {
-	if omitted != "" || before.IsDir || after.IsDir {
+	if omitted != "" || before.IsDir || after.IsDir ||
+		(before.Exists && !before.IsRegular) || (after.Exists && !after.IsRegular) {
 		return ""
 	}
 	return "utf-8"

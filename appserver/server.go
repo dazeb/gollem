@@ -740,6 +740,12 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	}
 	settings := cloneSettings(params.Settings)
 	settings = mergeRuntimeSelectionIntoSettings(settings, params.ProviderID, params.Provider, params.Model)
+	releaseStart, err := s.acquireWorkspaceMutationLease()
+	if err != nil {
+		return nil, mapError("thread/start", err)
+	}
+	defer releaseStart()
+	ctx = withWorkspaceMutationLease(ctx)
 	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{
 		Title:     params.Title,
 		Workspace: params.Workspace,
@@ -762,6 +768,7 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	if err != nil {
 		return nil, mapError("thread/start", err)
 	}
+	releaseStart()
 	return protocol.ThreadRunStartResult{
 		Thread: protocolThreadRecord(thread),
 		Turn:   protocolTurnRecord(turn.Turn),
@@ -2246,6 +2253,7 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, toolfs.ErrExactStateMismatch),
 		errors.Is(err, toolfs.ErrExactRevertSymlink),
 		errors.Is(err, toolfs.ErrExactRevertUnsupported),
+		errors.Is(err, toolfs.ErrExactRevertPending),
 		errors.Is(err, toolfs.ErrWatchPathNotAbsolute),
 		errors.Is(err, toolfs.ErrWatchIDRequired),
 		errors.Is(err, toolfs.ErrWatchAlreadyExists),

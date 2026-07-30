@@ -149,7 +149,7 @@ func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier run
 	}
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
-	releaseStart, err := acquireRuntimeTurnStartLease(notifier)
+	releaseStart, err := acquireRuntimeTurnStartLease(ctx, notifier)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +250,7 @@ func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier run
 	}
 	s.startMu.Lock()
 	defer s.startMu.Unlock()
-	releaseStart, err := acquireRuntimeTurnStartLease(notifier)
+	releaseStart, err := acquireRuntimeTurnStartLease(ctx, notifier)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +330,10 @@ func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier run
 	return result, nil
 }
 
-func acquireRuntimeTurnStartLease(notifier runtimeNotifier) (func(), error) {
+func acquireRuntimeTurnStartLease(ctx context.Context, notifier runtimeNotifier) (func(), error) {
+	if workspaceMutationLeaseHeld(ctx) {
+		return func() {}, nil
+	}
 	coordinator, ok := notifier.(runtimeTurnStartCoordinator)
 	if !ok {
 		return func() {}, nil

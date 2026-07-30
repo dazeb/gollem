@@ -301,7 +301,8 @@ func TestServiceRevertFileRestoresExactStateAndMode(t *testing.T) {
 		t.Fatalf("WriteFile fixture: %v", err)
 	}
 	result, err := svc.RevertFile(ctx, RevertFileRequest{
-		Path: "notes.txt",
+		Path:          "notes.txt",
+		TransactionID: "restore-exact-state",
 		Before: ExactFileState{
 			Exists:  true,
 			SHA256:  exactSHA256([]byte("before\n")),
@@ -341,8 +342,9 @@ func TestServiceRevertFileReversesCreateAndDelete(t *testing.T) {
 			t.Fatalf("WriteFile fixture: %v", err)
 		}
 		result, err := svc.RevertFile(context.Background(), RevertFileRequest{
-			Path:   "created.txt",
-			Before: ExactFileState{},
+			Path:          "created.txt",
+			TransactionID: "reverse-create",
+			Before:        ExactFileState{},
 			After: ExactFileState{
 				Exists: true, SHA256: exactSHA256(content), Mode: 0o640, CheckMode: true,
 			},
@@ -362,7 +364,8 @@ func TestServiceRevertFileReversesCreateAndDelete(t *testing.T) {
 		svc := newTestService(t)
 		content := []byte("deleted\n")
 		result, err := svc.RevertFile(context.Background(), RevertFileRequest{
-			Path: "deleted.txt",
+			Path:          "deleted.txt",
+			TransactionID: "reverse-delete",
 			Before: ExactFileState{
 				Exists: true, SHA256: exactSHA256(content), Content: content, Mode: 0o600, CheckMode: true,
 			},
@@ -394,9 +397,10 @@ func TestServiceRevertFileRejectsStaleAndSymlinkStates(t *testing.T) {
 		t.Fatalf("WriteFile stale fixture: %v", err)
 	}
 	req := RevertFileRequest{
-		Path:   "notes.txt",
-		Before: ExactFileState{Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o644},
-		After:  ExactFileState{Exists: true, SHA256: exactSHA256([]byte("after\n"))},
+		Path:          "notes.txt",
+		TransactionID: "reject-stale",
+		Before:        ExactFileState{Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o644},
+		After:         ExactFileState{Exists: true, SHA256: exactSHA256([]byte("after\n"))},
 	}
 	if _, err := svc.RevertFile(ctx, req); !errors.Is(err, ErrExactStateMismatch) {
 		t.Fatalf("stale RevertFile error = %v, want ErrExactStateMismatch", err)
@@ -457,9 +461,10 @@ func TestServiceRevertFileRechecksAfterApproval(t *testing.T) {
 		t.Fatalf("WriteFile fixture: %v", err)
 	}
 	_, err := svc.RevertFile(ctx, RevertFileRequest{
-		Path:   "notes.txt",
-		Before: ExactFileState{Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o644},
-		After:  ExactFileState{Exists: true, SHA256: exactSHA256([]byte("after\n"))},
+		Path:          "notes.txt",
+		TransactionID: "recheck-after-approval",
+		Before:        ExactFileState{Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o644},
+		After:         ExactFileState{Exists: true, SHA256: exactSHA256([]byte("after\n"))},
 	})
 	if !errors.Is(err, ErrExactStateMismatch) {
 		t.Fatalf("RevertFile concurrent error = %v, want ErrExactStateMismatch", err)
@@ -482,7 +487,8 @@ func TestServiceRevertFileHonorsCancellationAfterApproval(t *testing.T) {
 		t.Fatalf("WriteFile fixture: %v", err)
 	}
 	_, err := svc.RevertFile(ctx, RevertFileRequest{
-		Path: "notes.txt",
+		Path:          "notes.txt",
+		TransactionID: "cancel-after-approval",
 		Before: ExactFileState{
 			Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o644,
 		},
@@ -507,7 +513,8 @@ func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testin
 		t.Fatalf("WriteFile fixture: %v", err)
 	}
 	valid := RevertFileRequest{
-		Path: "notes.txt",
+		Path:          "notes.txt",
+		TransactionID: "valid-request",
 		Before: ExactFileState{
 			Exists: true, SHA256: exactSHA256(before), Content: before, Mode: 0o600, CheckMode: true,
 		},
@@ -525,6 +532,11 @@ func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testin
 	invalid.Path = ""
 	if _, err := svc.RevertFile(ctx, invalid); err == nil {
 		t.Fatal("blank revert path was accepted")
+	}
+	invalid = valid
+	invalid.TransactionID = ""
+	if _, err := svc.RevertFile(ctx, invalid); err == nil {
+		t.Fatal("blank revert transaction id was accepted")
 	}
 	invalid = valid
 	invalid.Before.SHA256 = "wrong"
@@ -545,6 +557,11 @@ func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testin
 	invalid.Path = "."
 	if _, err := svc.RevertFile(ctx, invalid); !errors.Is(err, ErrRefusingRoot) {
 		t.Fatalf("root revert error = %v, want ErrRefusingRoot", err)
+	}
+	invalid = valid
+	invalid.Path = "../outside.txt"
+	if _, err := svc.RevertFile(ctx, invalid); !errors.Is(err, ErrPathOutsideRoot) {
+		t.Fatalf("outside revert error = %v, want ErrPathOutsideRoot", err)
 	}
 	invalid = valid
 	invalid.After.Mode = 0o600
@@ -580,6 +597,320 @@ func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testin
 	if string(content) != string(after) {
 		t.Fatalf("denied revert changed content to %q", content)
 	}
+
+	transactionDir, _, _ := exactRevertTransactionPaths(valid.Path, valid.TransactionID)
+	if err := os.Mkdir(filepath.Join(svc.Root(), transactionDir), 0o700); err != nil {
+		t.Fatalf("Mkdir pending transaction: %v", err)
+	}
+	if _, err := svc.RevertFile(ctx, valid); !errors.Is(err, ErrExactRevertPending) {
+		t.Fatalf("pending transaction revert error = %v, want ErrExactRevertPending", err)
+	}
+}
+
+func TestServiceRecoverPendingRevertTransactionStates(t *testing.T) {
+	updateRequest := func(transactionID string) RevertFileRequest {
+		return RevertFileRequest{
+			Path:          "notes.txt",
+			TransactionID: transactionID,
+			Before: ExactFileState{
+				Exists: true, SHA256: exactSHA256([]byte("before\n")), Content: []byte("before\n"), Mode: 0o600, CheckMode: true,
+			},
+			After: ExactFileState{
+				Exists: true, SHA256: exactSHA256([]byte("after\n")), Mode: 0o644, CheckMode: true,
+			},
+		}
+	}
+	prepareQuarantine := func(t *testing.T, svc *Service, req RevertFileRequest) (*os.Root, string, string) {
+		t.Helper()
+		root, err := os.OpenRoot(svc.Root())
+		if err != nil {
+			t.Fatalf("OpenRoot: %v", err)
+		}
+		transactionDir, quarantine, _ := exactRevertTransactionPaths(req.Path, req.TransactionID)
+		if err := root.Mkdir(transactionDir, 0o700); err != nil {
+			root.Close()
+			t.Fatalf("Mkdir transaction: %v", err)
+		}
+		if err := root.Rename(req.Path, quarantine); err != nil {
+			root.Close()
+			t.Fatalf("Rename quarantine: %v", err)
+		}
+		return root, transactionDir, quarantine
+	}
+	assertTransactionRemoved := func(t *testing.T, svc *Service, transactionDir string) {
+		t.Helper()
+		if _, err := os.Stat(filepath.Join(svc.Root(), transactionDir)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("transaction directory stat = %v, want not-exist", err)
+		}
+	}
+
+	t.Run("cleans pre-quarantine replacement", func(t *testing.T) {
+		svc := newTestService(t)
+		req := updateRequest("pre-quarantine-update")
+		if err := os.WriteFile(filepath.Join(svc.Root(), req.Path), []byte("after\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile after: %v", err)
+		}
+		root, err := os.OpenRoot(svc.Root())
+		if err != nil {
+			t.Fatalf("OpenRoot: %v", err)
+		}
+		defer root.Close()
+		transactionDir, _, replacement := exactRevertTransactionPaths(req.Path, req.TransactionID)
+		if err := root.Mkdir(transactionDir, 0o700); err != nil {
+			t.Fatalf("Mkdir transaction: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(svc.Root(), replacement), []byte("before\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile replacement: %v", err)
+		}
+
+		if err := svc.RecoverPendingRevert(context.Background(), req); err != nil {
+			t.Fatalf("RecoverPendingRevert: %v", err)
+		}
+		content, err := os.ReadFile(filepath.Join(svc.Root(), req.Path))
+		if err != nil || string(content) != "after\n" {
+			t.Fatalf("unchanged target = %q, error %v", content, err)
+		}
+		assertTransactionRemoved(t, svc, transactionDir)
+	})
+
+	t.Run("restores interrupted update quarantine", func(t *testing.T) {
+		svc := newTestService(t)
+		req := updateRequest("interrupted-update")
+		if err := os.WriteFile(filepath.Join(svc.Root(), req.Path), []byte("after\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile after: %v", err)
+		}
+		root, transactionDir, _ := prepareQuarantine(t, svc, req)
+		defer root.Close()
+
+		if err := svc.RecoverPendingRevert(context.Background(), req); err != nil {
+			t.Fatalf("RecoverPendingRevert: %v", err)
+		}
+		content, err := os.ReadFile(filepath.Join(svc.Root(), req.Path))
+		if err != nil || string(content) != "after\n" {
+			t.Fatalf("restored target = %q, error %v", content, err)
+		}
+		assertTransactionRemoved(t, svc, transactionDir)
+	})
+
+	t.Run("cleans restored update quarantine", func(t *testing.T) {
+		svc := newTestService(t)
+		req := updateRequest("restored-update")
+		if err := os.WriteFile(filepath.Join(svc.Root(), req.Path), []byte("after\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile after: %v", err)
+		}
+		root, transactionDir, quarantine := prepareQuarantine(t, svc, req)
+		defer root.Close()
+		if err := root.Link(quarantine, req.Path); err != nil {
+			t.Fatalf("Link restored target: %v", err)
+		}
+
+		if err := svc.RecoverPendingRevert(context.Background(), req); err != nil {
+			t.Fatalf("RecoverPendingRevert: %v", err)
+		}
+		content, err := os.ReadFile(filepath.Join(svc.Root(), req.Path))
+		if err != nil || string(content) != "after\n" {
+			t.Fatalf("restored target = %q, error %v", content, err)
+		}
+		assertTransactionRemoved(t, svc, transactionDir)
+	})
+
+	t.Run("cleans completed update quarantine", func(t *testing.T) {
+		svc := newTestService(t)
+		req := updateRequest("completed-update")
+		target := filepath.Join(svc.Root(), req.Path)
+		if err := os.WriteFile(target, []byte("after\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile after: %v", err)
+		}
+		root, transactionDir, _ := prepareQuarantine(t, svc, req)
+		defer root.Close()
+		_, _, replacement := exactRevertTransactionPaths(req.Path, req.TransactionID)
+		replacementFile, err := root.OpenFile(replacement, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatalf("OpenFile replacement: %v", err)
+		}
+		if _, err := replacementFile.Write([]byte("before\n")); err != nil {
+			replacementFile.Close()
+			t.Fatalf("Write replacement: %v", err)
+		}
+		if err := replacementFile.Close(); err != nil {
+			t.Fatalf("Close replacement: %v", err)
+		}
+		if err := root.Link(replacement, req.Path); err != nil {
+			t.Fatalf("Link installed replacement: %v", err)
+		}
+
+		if err := svc.RecoverPendingRevert(context.Background(), req); err != nil {
+			t.Fatalf("RecoverPendingRevert: %v", err)
+		}
+		content, err := os.ReadFile(target)
+		if err != nil || string(content) != "before\n" {
+			t.Fatalf("completed target = %q, error %v", content, err)
+		}
+		assertTransactionRemoved(t, svc, transactionDir)
+	})
+
+	t.Run("cleans completed create revert quarantine", func(t *testing.T) {
+		svc := newTestService(t)
+		after := []byte("created\n")
+		req := RevertFileRequest{
+			Path:          "created.txt",
+			TransactionID: "completed-create",
+			Before:        ExactFileState{},
+			After: ExactFileState{
+				Exists: true, SHA256: exactSHA256(after), Mode: 0o640, CheckMode: true,
+			},
+		}
+		if err := os.WriteFile(filepath.Join(svc.Root(), req.Path), after, 0o640); err != nil {
+			t.Fatalf("WriteFile created: %v", err)
+		}
+		root, transactionDir, _ := prepareQuarantine(t, svc, req)
+		defer root.Close()
+
+		if err := svc.RecoverPendingRevert(context.Background(), req); err != nil {
+			t.Fatalf("RecoverPendingRevert: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(svc.Root(), req.Path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("created target stat = %v, want not-exist", err)
+		}
+		assertTransactionRemoved(t, svc, transactionDir)
+	})
+
+	t.Run("preserves conflicting target and quarantine", func(t *testing.T) {
+		svc := newTestService(t)
+		req := updateRequest("conflicting-update")
+		target := filepath.Join(svc.Root(), req.Path)
+		if err := os.WriteFile(target, []byte("after\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile after: %v", err)
+		}
+		root, transactionDir, quarantine := prepareQuarantine(t, svc, req)
+		defer root.Close()
+		if err := os.WriteFile(target, []byte("external\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile external: %v", err)
+		}
+
+		if err := svc.RecoverPendingRevert(context.Background(), req); !errors.Is(err, ErrExactRevertPending) {
+			t.Fatalf("conflicting recovery error = %v, want ErrExactRevertPending", err)
+		}
+		if content, _ := os.ReadFile(target); string(content) != "external\n" {
+			t.Fatalf("conflicting target changed to %q", content)
+		}
+		if content, err := root.ReadFile(quarantine); err != nil || string(content) != "after\n" {
+			t.Fatalf("preserved quarantine = %q, error %v", content, err)
+		}
+		if _, err := os.Stat(filepath.Join(svc.Root(), transactionDir)); err != nil {
+			t.Fatalf("preserved transaction stat: %v", err)
+		}
+	})
+}
+
+func TestServiceRecoverPendingRevertRejectsMalformedAndUnsafeState(t *testing.T) {
+	ctx := context.Background()
+	var nilService *Service
+	if err := nilService.RecoverPendingRevert(ctx, RevertFileRequest{}); err == nil {
+		t.Fatal("nil service recovered a transaction")
+	}
+	svc := newTestService(t)
+	after := []byte("after\n")
+	before := []byte("before\n")
+	if err := os.WriteFile(filepath.Join(svc.Root(), "notes.txt"), after, 0o644); err != nil {
+		t.Fatalf("WriteFile after: %v", err)
+	}
+	valid := RevertFileRequest{
+		Path:          "notes.txt",
+		TransactionID: "recover-validation",
+		Before: ExactFileState{
+			Exists: true, SHA256: exactSHA256(before), Content: before, Mode: 0o600, CheckMode: true,
+		},
+		After: ExactFileState{
+			Exists: true, SHA256: exactSHA256(after), Mode: 0o644, CheckMode: true,
+		},
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := svc.RecoverPendingRevert(canceled, valid); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled recovery error = %v, want context.Canceled", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*RevertFileRequest)
+	}{
+		{"blank path", func(req *RevertFileRequest) { req.Path = "" }},
+		{"blank transaction", func(req *RevertFileRequest) { req.TransactionID = "" }},
+		{"before digest", func(req *RevertFileRequest) { req.Before.SHA256 = "wrong" }},
+		{"absent before content", func(req *RevertFileRequest) {
+			req.Before = ExactFileState{Content: []byte("unexpected")}
+		}},
+		{"after digest", func(req *RevertFileRequest) { req.After.SHA256 = "" }},
+		{"outside path", func(req *RevertFileRequest) { req.Path = "../outside.txt" }},
+		{"workspace root", func(req *RevertFileRequest) { req.Path = "." }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := valid
+			test.mutate(&req)
+			if err := svc.RecoverPendingRevert(ctx, req); err == nil {
+				t.Fatal("unsafe recovery state was accepted")
+			}
+		})
+	}
+
+	t.Run("transaction path is not a directory", func(t *testing.T) {
+		req := valid
+		req.TransactionID = "regular-transaction"
+		transactionDir, _, _ := exactRevertTransactionPaths(req.Path, req.TransactionID)
+		if err := os.WriteFile(filepath.Join(svc.Root(), transactionDir), []byte("occupied"), 0o600); err != nil {
+			t.Fatalf("WriteFile transaction path: %v", err)
+		}
+		if err := svc.RecoverPendingRevert(ctx, req); !errors.Is(err, ErrExactRevertPending) {
+			t.Fatalf("regular transaction error = %v, want ErrExactRevertPending", err)
+		}
+	})
+
+	t.Run("replacement is not regular", func(t *testing.T) {
+		req := valid
+		req.TransactionID = "directory-replacement"
+		transactionDir, _, replacement := exactRevertTransactionPaths(req.Path, req.TransactionID)
+		if err := os.Mkdir(filepath.Join(svc.Root(), transactionDir), 0o700); err != nil {
+			t.Fatalf("Mkdir transaction: %v", err)
+		}
+		if err := os.Mkdir(filepath.Join(svc.Root(), replacement), 0o700); err != nil {
+			t.Fatalf("Mkdir replacement: %v", err)
+		}
+		if err := svc.RecoverPendingRevert(ctx, req); !errors.Is(err, ErrExactRevertPending) {
+			t.Fatalf("directory replacement error = %v, want ErrExactRevertPending", err)
+		}
+	})
+
+	t.Run("quarantine digest is inconsistent", func(t *testing.T) {
+		req := valid
+		req.TransactionID = "bad-quarantine"
+		transactionDir, quarantine, _ := exactRevertTransactionPaths(req.Path, req.TransactionID)
+		if err := os.Mkdir(filepath.Join(svc.Root(), transactionDir), 0o700); err != nil {
+			t.Fatalf("Mkdir transaction: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(svc.Root(), quarantine), []byte("unexpected"), 0o644); err != nil {
+			t.Fatalf("WriteFile quarantine: %v", err)
+		}
+		if err := svc.RecoverPendingRevert(ctx, req); !errors.Is(err, ErrExactRevertPending) {
+			t.Fatalf("bad quarantine error = %v, want ErrExactRevertPending", err)
+		}
+	})
+
+	t.Run("quarantine is impossible for absent after state", func(t *testing.T) {
+		req := valid
+		req.TransactionID = "absent-after-quarantine"
+		req.After = ExactFileState{}
+		transactionDir, quarantine, _ := exactRevertTransactionPaths(req.Path, req.TransactionID)
+		if err := os.Mkdir(filepath.Join(svc.Root(), transactionDir), 0o700); err != nil {
+			t.Fatalf("Mkdir transaction: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(svc.Root(), quarantine), after, 0o644); err != nil {
+			t.Fatalf("WriteFile quarantine: %v", err)
+		}
+		if err := svc.RecoverPendingRevert(ctx, req); !errors.Is(err, ErrExactRevertPending) {
+			t.Fatalf("absent-after quarantine error = %v, want ErrExactRevertPending", err)
+		}
+	})
 }
 
 func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T) {
@@ -654,23 +985,23 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 	}
 	if err := atomicWriteRootFile(root, "notes.txt", []byte("before"), 0o600, ExactFileState{
 		Exists: true, SHA256: exactSHA256([]byte("stale")),
-	}); !errors.Is(err, ErrExactStateMismatch) {
+	}, "stale-write"); !errors.Is(err, ErrExactStateMismatch) {
 		t.Fatalf("stale atomic write error = %v", err)
 	}
 	content, err := os.ReadFile(filepath.Join(rootPath, "notes.txt"))
 	if err != nil || string(content) != "after" {
 		t.Fatalf("stale atomic write changed file to %q, error %v", content, err)
 	}
-	if err := atomicWriteRootFile(root, "notes.txt", []byte("before"), 0o600, ExactFileState{}); !errors.Is(err, ErrExactStateMismatch) {
+	if err := atomicWriteRootFile(root, "notes.txt", []byte("before"), 0o600, ExactFileState{}, "occupied-write"); !errors.Is(err, ErrExactStateMismatch) {
 		t.Fatalf("unexpected-destination atomic write error = %v", err)
 	}
-	if err := atomicWriteRootFile(root, "missing/notes.txt", []byte("before"), 0o600, ExactFileState{}); err == nil {
+	if err := atomicWriteRootFile(root, "missing/notes.txt", []byte("before"), 0o600, ExactFileState{}, "missing-parent"); err == nil {
 		t.Fatal("atomic write into missing parent succeeded")
 	}
-	if err := removeExactRootFile(root, "missing.txt", ExactFileState{Exists: true, SHA256: "missing"}); err == nil {
+	if err := removeExactRootFile(root, "missing.txt", ExactFileState{Exists: true, SHA256: "missing"}, "missing-remove"); err == nil {
 		t.Fatal("exact remove of missing file succeeded")
 	}
-	if _, err := quarantineExactRootFile(root, "missing.txt", ExactFileState{Exists: true, SHA256: "missing"}); err == nil {
+	if _, _, err := quarantineExactRootFile(root, "missing.txt", ExactFileState{Exists: true, SHA256: "missing"}, "missing-quarantine"); err == nil {
 		t.Fatal("quarantine of missing file succeeded")
 	}
 
@@ -695,9 +1026,9 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 	if err := os.Mkdir(filepath.Join(rootPath, "concurrent-dir"), 0o755); err != nil {
 		t.Fatalf("Mkdir concurrent directory: %v", err)
 	}
-	if _, err := quarantineExactRootFile(root, "concurrent-dir", ExactFileState{
+	if _, _, err := quarantineExactRootFile(root, "concurrent-dir", ExactFileState{
 		Exists: true, SHA256: exactSHA256([]byte("expected file")),
-	}); !errors.Is(err, ErrExactRevertUnsupported) {
+	}, "concurrent-directory"); !errors.Is(err, ErrExactRevertUnsupported) {
 		t.Fatalf("concurrent-directory quarantine error = %v, want ErrExactRevertUnsupported", err)
 	}
 	entries, err := os.ReadDir(rootPath)
@@ -707,7 +1038,7 @@ func TestExactRootFileHelpersRejectMismatchesAndCleanTemporaryFiles(t *testing.T
 	preservedConcurrentDirectories := 0
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".gollem-revert-") {
-			if entry.IsDir() && strings.HasPrefix(entry.Name(), ".gollem-revert-current-") {
+			if entry.IsDir() {
 				preservedConcurrentDirectories++
 				continue
 			}

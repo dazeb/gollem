@@ -19,8 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Runtime mutations capture before/after evidence under the filesystem
   mutation lock only after approval, and reverts reserve the workspace without
   blocking unrelated thread reads. Pending operations reconcile after restart
-  when the file is provably in either the before or after state, while denied
-  operations release their key only after proving no mutation occurred.
+  from deterministic transaction directories when the target and quarantined
+  regular file are provably in a safe state. Rollback and turn starts serialize
+  with that reservation, while denied operations release their key only after
+  proving no mutation occurred.
 - **Restart-safe app-server retry and daemon ownership.** File-backed app-server
   daemons now hold one process-lifetime store lock and reconcile queued or
   running turns to an inspectable interrupted state after owner loss. The

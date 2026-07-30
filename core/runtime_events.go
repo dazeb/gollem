@@ -370,6 +370,8 @@ type ArtifactChangedEvent struct {
 	AfterExists          bool
 	BeforeIsDir          bool
 	AfterIsDir           bool
+	BeforeIsRegular      bool
+	AfterIsRegular       bool
 	BeforeIsSymlink      bool
 	AfterIsSymlink       bool
 	BeforeHasSymlinkPath bool

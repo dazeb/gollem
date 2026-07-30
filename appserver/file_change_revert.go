@@ -53,33 +53,11 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 	if err != nil {
 		return nil, mapError(fileChangeRevertMethod, err)
 	}
-	if thread.Status == store.ThreadDeleted {
-		return nil, mapError(fileChangeRevertMethod, store.ErrThreadDeleted)
+	state, rpcErr := loadFileChangeRevertState(ctx, st, recoveryStore, thread, params.ItemID)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
-	if err := requireExactThreadWorkspace(thread, fsService.Root()); err != nil {
-		return nil, invalidParams("thread workspace does not match the configured filesystem root", err)
-	}
-	item, err := st.GetItem(ctx, params.ItemID)
-	if err != nil {
-		return nil, mapError(fileChangeRevertMethod, err)
-	}
-	if item.ThreadID != thread.ID || item.Kind != runtimeFileChangeItemKind || item.Status != runtimeFileChangeStatusCompleted {
-		return nil, invalidParams("item is not a completed file change in the requested thread", nil)
-	}
-	turn, err := st.GetTurn(ctx, item.TurnID)
-	if err != nil {
-		return nil, mapError(fileChangeRevertMethod, err)
-	}
-	if turn.ThreadID != thread.ID || !fileChangeRevertTerminalTurnStatus(turn.Status) {
-		return nil, invalidParams("file-change turn is not terminal in the requested thread", nil)
-	}
-	recovery, err := recoveryStore.GetFileChangeRecovery(ctx, item.ID)
-	if err != nil {
-		return nil, mapError(fileChangeRevertMethod, err)
-	}
-	if err := validateFileChangeRevertEvidence(item, recovery); err != nil {
-		return nil, invalidParams("file-change recovery evidence is inconsistent", err)
-	}
+	item, recovery := state.item, state.recovery
 
 	if recovery.Status == store.FileChangeRecoveryReverted {
 		prepared, err := recoveryStore.PrepareFileChangeRevert(ctx, store.PrepareFileChangeRevertRequest{
@@ -90,6 +68,12 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 			return nil, mapError(fileChangeRevertMethod, err)
 		}
 		return fileChangeRevertProtocolResult(prepared.Recovery, prepared.Marker, true)
+	}
+	if thread.Status == store.ThreadDeleted {
+		return nil, mapError(fileChangeRevertMethod, store.ErrThreadDeleted)
+	}
+	if err := requireExactThreadWorkspace(thread, fsService.Root()); err != nil {
+		return nil, invalidParams("thread workspace does not match the configured filesystem root", err)
 	}
 	if recovery.Status == store.FileChangeRecoveryPending && recovery.IdempotencyKey != params.IdempotencyKey {
 		return nil, mapError(fileChangeRevertMethod, store.ErrFileChangeRevertIdempotencyConflict)
@@ -106,6 +90,30 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 	}
 	defer releaseWorkspace()
 
+	state, rpcErr = loadFileChangeRevertState(ctx, st, recoveryStore, thread, params.ItemID)
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	item, recovery = state.item, state.recovery
+	turn := state.turn
+	if recovery.Status == store.FileChangeRecoveryReverted {
+		prepared, err := recoveryStore.PrepareFileChangeRevert(ctx, store.PrepareFileChangeRevertRequest{
+			ItemID:         item.ID,
+			IdempotencyKey: params.IdempotencyKey,
+		})
+		if err != nil {
+			return nil, mapError(fileChangeRevertMethod, err)
+		}
+		return fileChangeRevertProtocolResult(prepared.Recovery, prepared.Marker, true)
+	}
+	if recovery.Status == store.FileChangeRecoveryPending && recovery.IdempotencyKey != params.IdempotencyKey {
+		return nil, mapError(fileChangeRevertMethod, store.ErrFileChangeRevertIdempotencyConflict)
+	}
+
+	revertRequest := fileChangeRevertFilesystemRequest(recovery, params.IdempotencyKey)
+	if err := fsService.RecoverPendingRevert(ctx, revertRequest); err != nil {
+		return nil, mapError(fileChangeRevertMethod, err)
+	}
 	current, err := captureRuntimeArtifact(ctx, fsService, recovery.Path)
 	if err != nil {
 		return nil, mapError(fileChangeRevertMethod, err)
@@ -131,25 +139,11 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 	if currentIsAfter {
 		approvalCtx := withRuntimeTurnContext(ctx, thread.ID, turn.ID)
 		approvalCtx = withRuntimeApprovalItemID(approvalCtx, item.ID)
-		if _, err := fsService.RevertFile(approvalCtx, toolfs.RevertFileRequest{
-			Path: recovery.Path,
-			Before: toolfs.ExactFileState{
-				Exists:    recovery.BeforeExists,
-				SHA256:    recovery.BeforeSHA256,
-				Content:   append([]byte(nil), recovery.BeforeContent...),
-				Mode:      iofs.FileMode(recovery.BeforeMode),
-				CheckMode: true,
-			},
-			After: toolfs.ExactFileState{
-				Exists:    recovery.AfterExists,
-				SHA256:    recovery.AfterSHA256,
-				Mode:      iofs.FileMode(recovery.AfterMode),
-				CheckMode: true,
-			},
-		}); err != nil {
+		if _, err := fsService.RevertFile(approvalCtx, revertRequest); err != nil {
 			abortFileChangeRevertIfUnchanged(ctx, recoveryStore, fsService, recovery, params.IdempotencyKey)
 			return nil, mapError(fileChangeRevertMethod, err)
 		}
+		s.publishFileChanged(string(toolfs.OperationRevertFileChange), recovery.Path, "")
 	}
 	completed, err := recoveryStore.CompleteFileChangeRevert(ctx, store.CompleteFileChangeRevertRequest{
 		ItemID:         item.ID,
@@ -159,12 +153,71 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 	if err != nil {
 		return nil, mapError(fileChangeRevertMethod, err)
 	}
-	s.publishFileChanged(string(toolfs.OperationRevertFileChange), recovery.Path, "")
 	if !completed.Reused {
 		publishItemCompleted(s, turn, completed.Marker)
 	}
 	s.markThreadLoaded(thread)
 	return fileChangeRevertProtocolResult(completed.Recovery, completed.Marker, reused || completed.Reused)
+}
+
+type loadedFileChangeRevertState struct {
+	item     *store.Item
+	turn     *store.Turn
+	recovery *store.FileChangeRecovery
+}
+
+func loadFileChangeRevertState(
+	ctx context.Context,
+	st store.Store,
+	recoveryStore store.FileChangeRecoveryStore,
+	thread *store.Thread,
+	itemID string,
+) (loadedFileChangeRevertState, *protocol.Error) {
+	item, err := st.GetItem(ctx, itemID)
+	if err != nil {
+		return loadedFileChangeRevertState{}, mapError(fileChangeRevertMethod, err)
+	}
+	if thread == nil || item.ThreadID != thread.ID || item.Kind != runtimeFileChangeItemKind || item.Status != runtimeFileChangeStatusCompleted {
+		return loadedFileChangeRevertState{}, invalidParams("item is not a completed file change in the requested thread", nil)
+	}
+	turn, err := st.GetTurn(ctx, item.TurnID)
+	if err != nil {
+		return loadedFileChangeRevertState{}, mapError(fileChangeRevertMethod, err)
+	}
+	if turn.ThreadID != thread.ID || !fileChangeRevertTerminalTurnStatus(turn.Status) {
+		return loadedFileChangeRevertState{}, invalidParams("file-change turn is not terminal in the requested thread", nil)
+	}
+	recovery, err := recoveryStore.GetFileChangeRecovery(ctx, item.ID)
+	if err != nil {
+		return loadedFileChangeRevertState{}, mapError(fileChangeRevertMethod, err)
+	}
+	if err := validateFileChangeRevertEvidence(item, recovery); err != nil {
+		return loadedFileChangeRevertState{}, invalidParams("file-change recovery evidence is inconsistent", err)
+	}
+	return loadedFileChangeRevertState{item: item, turn: turn, recovery: recovery}, nil
+}
+
+func fileChangeRevertFilesystemRequest(
+	recovery *store.FileChangeRecovery,
+	idempotencyKey string,
+) toolfs.RevertFileRequest {
+	return toolfs.RevertFileRequest{
+		Path:          recovery.Path,
+		TransactionID: idempotencyKey,
+		Before: toolfs.ExactFileState{
+			Exists:    recovery.BeforeExists,
+			SHA256:    recovery.BeforeSHA256,
+			Content:   append([]byte(nil), recovery.BeforeContent...),
+			Mode:      iofs.FileMode(recovery.BeforeMode),
+			CheckMode: true,
+		},
+		After: toolfs.ExactFileState{
+			Exists:    recovery.AfterExists,
+			SHA256:    recovery.AfterSHA256,
+			Mode:      iofs.FileMode(recovery.AfterMode),
+			CheckMode: true,
+		},
+	}
 }
 
 func abortFileChangeRevertIfUnchanged(
@@ -235,7 +288,7 @@ func validateFileChangeRevertEvidence(item *store.Item, recovery *store.FileChan
 }
 
 func runtimeArtifactMatchesRecoveryState(current runtimeArtifactCapture, exists bool, sha256 string, mode uint32) bool {
-	if current.IsDir || current.IsSymlink || current.Exists != exists {
+	if current.IsDir || current.IsSymlink || current.Exists != exists || (current.Exists && !current.IsRegular) {
 		return false
 	}
 	if !exists {

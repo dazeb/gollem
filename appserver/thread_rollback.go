@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/fugue-labs/gollem/appserver/protocol"
@@ -27,6 +28,18 @@ func (s *Server) handleThreadRollback(ctx context.Context, raw json.RawMessage) 
 	if params.NumTurns < 1 {
 		return nil, invalidParams("numTurns must be >= 1", nil)
 	}
+	releaseMutation, err := s.acquireWorkspaceMutationLease()
+	if err != nil {
+		if errors.Is(err, ErrWorkspaceRevertInProgress) {
+			return nil, rpcError(
+				protocol.CodeInvalidRequest,
+				"cannot roll back thread history while a workspace file-change revert is in progress",
+				nil,
+			)
+		}
+		return nil, mapError("thread/rollback", err)
+	}
+	defer releaseMutation()
 	activeTurns, err := st.ListTurns(ctx, store.TurnFilter{
 		ThreadID: threadID,
 		Statuses: []store.TurnStatus{store.TurnQueued, store.TurnRunning},

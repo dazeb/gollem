@@ -30,6 +30,7 @@ var (
 	ErrExactStateMismatch     = errors.New("appserver/fs: current file does not match expected state")
 	ErrExactRevertSymlink     = errors.New("appserver/fs: exact revert refuses symlinks")
 	ErrExactRevertUnsupported = errors.New("appserver/fs: exact revert supports regular files only")
+	ErrExactRevertPending     = errors.New("appserver/fs: exact revert has pending recovery state")
 )
 
 const exactFileModeMask = iofs.ModePerm | iofs.ModeSetuid | iofs.ModeSetgid | iofs.ModeSticky
@@ -154,9 +155,10 @@ type ExactFileState struct {
 }
 
 type RevertFileRequest struct {
-	Path   string
-	Before ExactFileState
-	After  ExactFileState
+	Path          string
+	TransactionID string
+	Before        ExactFileState
+	After         ExactFileState
 }
 
 type RevertFileResult struct {
@@ -548,6 +550,9 @@ func (s *Service) RevertFile(ctx context.Context, req RevertFileRequest) (*Rever
 	if strings.TrimSpace(req.Path) == "" {
 		return fail("", errors.New("appserver/fs: revert path is required"))
 	}
+	if strings.TrimSpace(req.TransactionID) == "" {
+		return fail("", errors.New("appserver/fs: revert transaction id is required"))
+	}
 	if req.Before.Exists {
 		if req.Before.SHA256 == "" || exactSHA256(req.Before.Content) != req.Before.SHA256 {
 			return fail("", errors.New("appserver/fs: before-state digest is inconsistent"))
@@ -603,13 +608,13 @@ func (s *Service) RevertFile(ctx context.Context, req RevertFileRequest) (*Rever
 		if !info.IsDir() || info.Mode()&iofs.ModeSymlink != 0 {
 			return fail(resolved, ErrExactRevertUnsupported)
 		}
-		if err := atomicWriteRootFile(root, relative, req.Before.Content, req.Before.Mode, req.After); err != nil {
+		if err := atomicWriteRootFile(root, relative, req.Before.Content, req.Before.Mode, req.After, req.TransactionID); err != nil {
 			return fail(resolved, err)
 		}
 		result.Restored = true
 		result.SHA256 = req.Before.SHA256
 	} else {
-		if err := removeExactRootFile(root, relative, req.After); err != nil {
+		if err := removeExactRootFile(root, relative, req.After, req.TransactionID); err != nil {
 			return fail(resolved, err)
 		}
 		result.Removed = true
@@ -619,6 +624,114 @@ func (s *Service) RevertFile(ctx context.Context, req RevertFileRequest) (*Rever
 	}
 	s.emit(op, resolved, "", true, nil)
 	return result, nil
+}
+
+// RecoverPendingRevert repairs or cleans a deterministic quarantine left by an
+// interrupted exact revert. It never overwrites an unexpected target state.
+func (s *Service) RecoverPendingRevert(ctx context.Context, req RevertFileRequest) error {
+	if s == nil {
+		return errors.New("appserver/fs: nil service")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		return errors.New("appserver/fs: revert path is required")
+	}
+	if strings.TrimSpace(req.TransactionID) == "" {
+		return errors.New("appserver/fs: revert transaction id is required")
+	}
+	if req.Before.Exists {
+		if req.Before.SHA256 == "" || exactSHA256(req.Before.Content) != req.Before.SHA256 {
+			return errors.New("appserver/fs: before-state digest is inconsistent")
+		}
+	} else if len(req.Before.Content) != 0 || req.Before.SHA256 != "" {
+		return errors.New("appserver/fs: absent before state cannot include content or digest")
+	}
+	if req.After.Exists && req.After.SHA256 == "" {
+		return errors.New("appserver/fs: expected after-state digest is required")
+	}
+
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
+	resolved, err := s.resolve(req.Path)
+	if err != nil {
+		return err
+	}
+	if samePath(resolved, s.root) {
+		return ErrRefusingRoot
+	}
+	if err := rejectSymlinkComponents(s.root, resolved); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(s.root)
+	if err != nil {
+		return fmt.Errorf("open exact revert recovery root: %w", err)
+	}
+	defer root.Close()
+	relative := filepath.Clean(s.rel(resolved))
+	if filepath.IsAbs(relative) || relative == "." || relative == ".." ||
+		strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return ErrPathOutsideRoot
+	}
+	if err := rejectRootSymlinkComponents(root, relative); err != nil {
+		return err
+	}
+
+	transactionDir, quarantine, replacement := exactRevertTransactionPaths(relative, req.TransactionID)
+	info, err := root.Lstat(transactionDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat exact revert transaction: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&iofs.ModeSymlink != 0 {
+		return ErrExactRevertPending
+	}
+
+	if _, err := root.Lstat(quarantine); errors.Is(err, os.ErrNotExist) {
+		if err := removeExactRevertReplacement(root, replacement); err != nil {
+			return err
+		}
+		return removeExactRevertTransactionDir(root, transactionDir)
+	} else if err != nil {
+		return fmt.Errorf("stat exact revert quarantine: %w", err)
+	}
+	if !req.After.Exists {
+		return ErrExactRevertPending
+	}
+	if err := verifyExactRootFileState(root, quarantine, req.After); err != nil {
+		return fmt.Errorf("%w: verify pending quarantine: %w", ErrExactRevertPending, err)
+	}
+
+	beforeMatches := verifyExactRootFileState(root, relative, req.Before) == nil
+	afterMatches := verifyExactRootFileState(root, relative, req.After) == nil
+	absent := verifyExactRootFileState(root, relative, ExactFileState{}) == nil
+	switch {
+	case beforeMatches || afterMatches:
+		if err := root.Remove(quarantine); err != nil {
+			return fmt.Errorf("remove recovered exact revert quarantine: %w", err)
+		}
+	case absent && req.Before.Exists:
+		if err := restoreQuarantinedRootFile(root, quarantine, relative); err != nil {
+			return fmt.Errorf("restore interrupted exact revert quarantine; preserved at %q: %w", quarantine, err)
+		}
+	case absent:
+		if err := root.Remove(quarantine); err != nil {
+			return fmt.Errorf("remove completed exact revert quarantine: %w", err)
+		}
+	default:
+		return fmt.Errorf("%w: target and quarantine states conflict", ErrExactRevertPending)
+	}
+	if err := removeExactRevertReplacement(root, replacement); err != nil {
+		return err
+	}
+	return removeExactRevertTransactionDir(root, transactionDir)
 }
 
 func verifyExactFileState(path string, expected ExactFileState) error {
@@ -733,19 +846,29 @@ func verifyExactRootFileState(root *os.Root, path string, expected ExactFileStat
 	return nil
 }
 
-func atomicWriteRootFile(root *os.Root, path string, content []byte, mode iofs.FileMode, expectedAfter ExactFileState) (err error) {
-	parent := filepath.Dir(path)
-	tempPath, err := unusedRootPath(root, parent, ".gollem-revert-")
+func atomicWriteRootFile(
+	root *os.Root,
+	path string,
+	content []byte,
+	mode iofs.FileMode,
+	expectedAfter ExactFileState,
+	transactionID string,
+) (err error) {
+	transactionDir, quarantine, replacement, err := beginExactRevertTransaction(root, path, transactionID)
 	if err != nil {
 		return err
 	}
-	temp, err := root.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	temp, err := root.OpenFile(replacement, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
+		_ = removeExactRevertTransactionDir(root, transactionDir)
 		return fmt.Errorf("create rooted revert temp file: %w", err)
 	}
 	defer func() {
 		_ = temp.Close()
-		_ = root.Remove(tempPath)
+		if err != nil {
+			_ = removeExactRevertReplacement(root, replacement)
+			_ = removeExactRevertTransactionDir(root, transactionDir)
+		}
 	}()
 	if _, err = temp.Write(content); err != nil {
 		return fmt.Errorf("write revert temp file: %w", err)
@@ -760,29 +883,36 @@ func atomicWriteRootFile(root *os.Root, path string, content []byte, mode iofs.F
 		return fmt.Errorf("close revert temp file: %w", err)
 	}
 	if expectedAfter.Exists {
-		quarantine, quarantineErr := quarantineExactRootFile(root, path, expectedAfter)
-		if quarantineErr != nil {
-			return quarantineErr
-		}
-		if err = installRootReplacement(root, tempPath, path, quarantine); err != nil {
+		if err = quarantineExactRootFileInTransaction(root, path, quarantine, expectedAfter); err != nil {
 			return err
 		}
-		return nil
+		if err = installRootReplacement(root, replacement, path, quarantine); err != nil {
+			return err
+		}
 	} else if err = verifyExactRootFileState(root, path, expectedAfter); err != nil {
 		return err
-	}
-	if err = root.Link(tempPath, path); err != nil {
+	} else if err = root.Link(replacement, path); err != nil {
 		return fmt.Errorf("install reverted file without replacement: %w", err)
+	}
+	if err = root.Remove(replacement); err != nil {
+		return fmt.Errorf("remove exact revert replacement link: %w", err)
+	}
+	if err = removeExactRevertTransactionDir(root, transactionDir); err != nil {
+		return err
 	}
 	return nil
 }
 
-func removeExactRootFile(root *os.Root, path string, expectedAfter ExactFileState) error {
-	quarantine, err := quarantineExactRootFile(root, path, expectedAfter)
+func removeExactRootFile(root *os.Root, path string, expectedAfter ExactFileState, transactionID string) error {
+	quarantine, transactionDir, err := quarantineExactRootFile(root, path, expectedAfter, transactionID)
 	if err != nil {
 		return err
 	}
-	return removeQuarantinedRootFile(root, quarantine, path)
+	if err := removeQuarantinedRootFile(root, quarantine, path); err != nil {
+		_ = removeExactRevertTransactionDir(root, transactionDir)
+		return err
+	}
+	return removeExactRevertTransactionDir(root, transactionDir)
 }
 
 func removeQuarantinedRootFile(root exactRootLinkRemover, quarantine, path string) error {
@@ -822,21 +952,29 @@ func installRootReplacement(root exactRootLinkRemover, tempPath, path, quarantin
 	return nil
 }
 
-func quarantineExactRootFile(root *os.Root, path string, expected ExactFileState) (string, error) {
-	quarantine, err := unusedRootPath(root, filepath.Dir(path), ".gollem-revert-current-")
+func quarantineExactRootFile(root *os.Root, path string, expected ExactFileState, transactionID string) (string, string, error) {
+	transactionDir, quarantine, _, err := beginExactRevertTransaction(root, path, transactionID)
 	if err != nil {
-		return "", err
+		return "", transactionDir, err
 	}
+	if err := quarantineExactRootFileInTransaction(root, path, quarantine, expected); err != nil {
+		_ = removeExactRevertTransactionDir(root, transactionDir)
+		return "", transactionDir, err
+	}
+	return quarantine, transactionDir, nil
+}
+
+func quarantineExactRootFileInTransaction(root *os.Root, path, quarantine string, expected ExactFileState) error {
 	if err := root.Rename(path, quarantine); err != nil {
-		return "", fmt.Errorf("quarantine current file: %w", err)
+		return fmt.Errorf("quarantine current file: %w", err)
 	}
 	if err := verifyExactRootFileState(root, quarantine, expected); err != nil {
 		if restoreErr := restoreQuarantinedRootFile(root, quarantine, path); restoreErr != nil {
-			return "", fmt.Errorf("%w; preserve concurrently changed file at %q: %w", err, quarantine, restoreErr)
+			return fmt.Errorf("%w; preserve concurrently changed file at %q: %w", err, quarantine, restoreErr)
 		}
-		return "", err
+		return err
 	}
-	return quarantine, nil
+	return nil
 }
 
 func restoreQuarantinedRootFile(root exactRootLinkRemover, quarantine, path string) error {
@@ -845,6 +983,50 @@ func restoreQuarantinedRootFile(root exactRootLinkRemover, quarantine, path stri
 	}
 	if err := root.Remove(quarantine); err != nil {
 		return fmt.Errorf("remove restored quarantine link: %w", err)
+	}
+	return nil
+}
+
+func beginExactRevertTransaction(root *os.Root, path, transactionID string) (string, string, string, error) {
+	transactionDir, quarantine, replacement := exactRevertTransactionPaths(path, transactionID)
+	if err := root.Mkdir(transactionDir, 0o700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return transactionDir, quarantine, replacement, ErrExactRevertPending
+		}
+		return transactionDir, quarantine, replacement, fmt.Errorf("create exact revert transaction: %w", err)
+	}
+	return transactionDir, quarantine, replacement, nil
+}
+
+func exactRevertTransactionPaths(path, transactionID string) (string, string, string) {
+	sum := sha256.Sum256([]byte(filepath.ToSlash(filepath.Clean(path)) + "\x00" + transactionID))
+	transactionDir := filepath.Join(
+		filepath.Dir(path),
+		".gollem-revert-"+hex.EncodeToString(sum[:16]),
+	)
+	return transactionDir, filepath.Join(transactionDir, "current"), filepath.Join(transactionDir, "replacement")
+}
+
+func removeExactRevertReplacement(root *os.Root, replacement string) error {
+	info, err := root.Lstat(replacement)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat exact revert replacement: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&iofs.ModeSymlink != 0 {
+		return ErrExactRevertPending
+	}
+	if err := root.Remove(replacement); err != nil {
+		return fmt.Errorf("remove exact revert replacement: %w", err)
+	}
+	return nil
+}
+
+func removeExactRevertTransactionDir(root *os.Root, transactionDir string) error {
+	if err := root.Remove(transactionDir); err != nil {
+		return fmt.Errorf("remove exact revert transaction: %w", err)
 	}
 	return nil
 }

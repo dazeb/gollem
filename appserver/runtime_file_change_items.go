@@ -208,6 +208,9 @@ func runtimeFileChangeRecovery(event core.ArtifactChangedEvent, turn *store.Turn
 	if event.BeforeIsDir || event.AfterIsDir {
 		return store.FileChangeRecovery{}, "directory changes cannot be reverted"
 	}
+	if (event.BeforeExists && !event.BeforeIsRegular) || (event.AfterExists && !event.AfterIsRegular) {
+		return store.FileChangeRecovery{}, "non-regular file changes cannot be reverted"
+	}
 	if event.BeforeIsSymlink || event.AfterIsSymlink {
 		return store.FileChangeRecovery{}, "symlink changes cannot be reverted"
 	}
