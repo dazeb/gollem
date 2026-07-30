@@ -1016,6 +1016,8 @@ func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 		AfterExists:        true,
 		BeforeIsRegular:    true,
 		AfterIsRegular:     true,
+		BeforeLinkCount:    1,
+		AfterLinkCount:     1,
 		BeforeMode:         0o644,
 		BeforeSize:         int64(len("before")),
 		AfterSize:          int64(len("after")),
@@ -1037,6 +1039,10 @@ func TestRuntimeFileChangeRecoveryRejectsUnsupportedSnapshots(t *testing.T) {
 		{"non-regular file", func(event *core.ArtifactChangedEvent) { event.BeforeIsRegular = false }},
 		{"symlink", func(event *core.ArtifactChangedEvent) { event.AfterIsSymlink = true }},
 		{"symlink path component", func(event *core.ArtifactChangedEvent) { event.BeforeHasSymlinkPath = true }},
+		{"before hard-link count unavailable", func(event *core.ArtifactChangedEvent) { event.BeforeLinkCount = 0 }},
+		{"after hard-link count unavailable", func(event *core.ArtifactChangedEvent) { event.AfterLinkCount = 0 }},
+		{"before multiply linked", func(event *core.ArtifactChangedEvent) { event.BeforeLinkCount = 2 }},
+		{"after multiply linked", func(event *core.ArtifactChangedEvent) { event.AfterLinkCount = 2 }},
 		{"no existence evidence", func(event *core.ArtifactChangedEvent) {
 			event.BeforeExists = false
 			event.AfterExists = false
@@ -1084,6 +1090,8 @@ func TestRuntimeFileChangeTrackerRecoveryCapabilityAndErrors(t *testing.T) {
 		AfterExists:        true,
 		BeforeIsRegular:    true,
 		AfterIsRegular:     true,
+		BeforeLinkCount:    1,
+		AfterLinkCount:     1,
 		BeforeMode:         0o644,
 		AfterMode:          0o644,
 		BeforeSize:         int64(len("before")),

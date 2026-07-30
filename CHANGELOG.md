@@ -14,8 +14,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   idempotency key, reuses the existing file-mutation approval flow, verifies
   exact workspace, path, content digest, mode, and terminal-turn ownership,
   and emits a durable receipt. Reversal is limited to regular files up to
-  1 MiB; directories, paths traversing symlinks, stale files, mismatched
-  workspaces, active workspace turns, and incomplete evidence fail closed.
+  1 MiB with exactly one observed hard link; directories, paths traversing
+  symlinks, multiply linked files, unknown link counts, stale files,
+  mismatched workspaces, active workspace turns, and incomplete evidence fail
+  closed.
   Runtime mutations capture before/after evidence under the filesystem
   mutation lock only after approval, and reverts reserve the workspace without
   blocking unrelated thread reads. Pending operations reconcile after restart

@@ -376,6 +376,8 @@ type ArtifactChangedEvent struct {
 	AfterIsSymlink       bool
 	BeforeHasSymlinkPath bool
 	AfterHasSymlinkPath  bool
+	BeforeLinkCount      uint64
+	AfterLinkCount       uint64
 	BeforeMode           uint32
 	AfterMode            uint32
 	BeforeSize           int64

@@ -181,8 +181,9 @@ mutation.
 
 Gollem captures recovery snapshots only after mutation approval, with the
 before snapshot, mutation, and after snapshot sharing the filesystem mutation
-lock. Snapshots are limited to regular files whose paths do not traverse
-symlinks and whose before and after contents are each at most 1 MiB. Public
+lock. Snapshots are limited to regular files with exactly one observed hard
+link, whose paths do not traverse symlinks, and whose before and after contents
+are each at most 1 MiB. Unknown or multiple link counts fail closed. Public
 `FileChangeArtifactEvidence` exposes the optional
 `revertSnapshotAvailable` capability and a bounded unavailable reason, but
 never the private before-content bytes. A call is rejected while any turn that

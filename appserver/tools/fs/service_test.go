@@ -42,7 +42,7 @@ func TestServiceReadWriteDirectoryMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Metadata: %v", err)
 	}
-	if meta.IsDir || meta.Size != int64(len("ship it\n")) {
+	if meta.IsDir || meta.Size != int64(len("ship it\n")) || meta.LinkCount != 1 {
 		t.Fatalf("metadata = %+v", meta)
 	}
 	if len(events) < 5 {

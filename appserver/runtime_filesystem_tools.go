@@ -300,6 +300,7 @@ type runtimeArtifactCapture struct {
 	IsRegular           bool
 	IsSymlink           bool
 	HasSymlinkComponent bool
+	LinkCount           uint64
 	Size                int64
 	Mode                uint32
 	Content             []byte
@@ -358,6 +359,7 @@ func captureRuntimeArtifact(ctx context.Context, service *toolfs.Service, path s
 		IsRegular:           metadata.IsFile,
 		IsSymlink:           metadata.IsSymlink,
 		HasSymlinkComponent: hasSymlinkComponent,
+		LinkCount:           metadata.LinkCount,
 		Size:                metadata.Size,
 		Mode:                uint32(metadata.Mode & runtimeExactFileModeMask),
 	}
@@ -436,6 +438,8 @@ func publishRuntimeArtifactChange(ctx context.Context, rc *core.RunContext, befo
 		AfterIsSymlink:       after.IsSymlink,
 		BeforeHasSymlinkPath: before.HasSymlinkComponent,
 		AfterHasSymlinkPath:  after.HasSymlinkComponent,
+		BeforeLinkCount:      before.LinkCount,
+		AfterLinkCount:       after.LinkCount,
 		BeforeMode:           before.Mode,
 		AfterMode:            after.Mode,
 		BeforeSize:           before.Size,
@@ -469,6 +473,7 @@ func runtimeArtifactCapturesEqual(before, after runtimeArtifactCapture) bool {
 		before.IsDir != after.IsDir ||
 		before.IsRegular != after.IsRegular ||
 		before.IsSymlink != after.IsSymlink ||
+		before.LinkCount != after.LinkCount ||
 		before.Size != after.Size ||
 		before.Mode != after.Mode {
 		return false

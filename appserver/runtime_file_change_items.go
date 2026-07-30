@@ -217,6 +217,12 @@ func runtimeFileChangeRecovery(event core.ArtifactChangedEvent, turn *store.Turn
 	if event.BeforeHasSymlinkPath || event.AfterHasSymlinkPath {
 		return store.FileChangeRecovery{}, "paths traversing symlinks cannot be reverted"
 	}
+	if (event.BeforeExists && event.BeforeLinkCount != 1) || (event.AfterExists && event.AfterLinkCount != 1) {
+		if event.BeforeLinkCount > 1 || event.AfterLinkCount > 1 {
+			return store.FileChangeRecovery{}, "multiply linked file changes cannot be reverted"
+		}
+		return store.FileChangeRecovery{}, "file hard-link count is unavailable"
+	}
 	if !event.BeforeExists && !event.AfterExists {
 		return store.FileChangeRecovery{}, "file existence evidence is incomplete"
 	}

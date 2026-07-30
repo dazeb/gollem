@@ -129,6 +129,7 @@ type Metadata struct {
 	IsDir     bool
 	IsFile    bool
 	IsSymlink bool
+	LinkCount uint64
 	Size      int64
 	Mode      iofs.FileMode
 	ModTime   time.Time
@@ -414,6 +415,7 @@ func (s *Service) Metadata(ctx context.Context, path string) (*Metadata, error) 
 		IsDir:     info.IsDir(),
 		IsFile:    info.Mode().IsRegular(),
 		IsSymlink: isSymlink(resolved),
+		LinkCount: metadataLinkCount(resolved, info),
 		Size:      info.Size(),
 		Mode:      info.Mode(),
 		ModTime:   info.ModTime(),

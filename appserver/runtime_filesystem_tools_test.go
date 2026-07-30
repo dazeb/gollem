@@ -230,6 +230,8 @@ func TestFilesystemRuntimeMutationCapturesStateAfterApproval(t *testing.T) {
 	if string(event.BeforeContentBytes) != "editor\n" ||
 		event.BeforeSHA256 != runtimeSHA256([]byte("editor\n")) ||
 		event.BeforeMode != 0o600 ||
+		event.BeforeLinkCount != 1 ||
+		event.AfterLinkCount != 1 ||
 		string(event.AfterContentBytes) != "tool\n" {
 		t.Fatalf("approved mutation evidence = %+v", event)
 	}
@@ -257,6 +259,60 @@ func TestCaptureRuntimeArtifactMarksSymlinkPathComponents(t *testing.T) {
 	}
 	if !capture.Exists || !capture.HasSymlinkComponent || capture.IsSymlink {
 		t.Fatalf("symlink-path capture = %+v", capture)
+	}
+}
+
+func TestPublishedHardLinkedArtifactChangeIsNotRevertible(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile notes: %v", err)
+	}
+	if err := os.Link(path, filepath.Join(root, "alias.txt")); err != nil {
+		t.Skipf("hard links are unavailable: %v", err)
+	}
+	fsSvc, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	before, err := captureRuntimeArtifact(context.Background(), fsSvc, "notes.txt")
+	if err != nil {
+		t.Fatalf("capture before: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile mutation: %v", err)
+	}
+	after, err := captureRuntimeArtifact(context.Background(), fsSvc, "notes.txt")
+	if err != nil {
+		t.Fatalf("capture after: %v", err)
+	}
+
+	bus := core.NewEventBus()
+	defer bus.Close()
+	events := make(chan core.ArtifactChangedEvent, 1)
+	unsubscribe := core.Subscribe(bus, func(event core.ArtifactChangedEvent) {
+		events <- event
+	})
+	defer unsubscribe()
+	if !publishRuntimeArtifactChange(
+		context.Background(),
+		&core.RunContext{EventBus: bus, RunID: "hard-link-run"},
+		before,
+		after,
+		"update",
+	) {
+		t.Fatal("hard-linked mutation was not published")
+	}
+	event := <-events
+	if event.BeforeLinkCount != 2 || event.AfterLinkCount != 2 {
+		t.Fatalf("published hard-link counts = %d/%d", event.BeforeLinkCount, event.AfterLinkCount)
+	}
+	if _, reason := runtimeFileChangeRecovery(
+		event,
+		&store.Turn{ID: "turn", ThreadID: "thread"},
+	); reason != "multiply linked file changes cannot be reverted" {
+		t.Fatalf("hard-linked recovery reason = %q", reason)
 	}
 }
 
@@ -697,11 +753,12 @@ func TestFileChangeApprovalCancelInterruptsActiveTurn(t *testing.T) {
 	}
 }
 
-func TestRuntimeArtifactCapturesEqualIncludesModeTypeAndSymlinkState(t *testing.T) {
+func TestRuntimeArtifactCapturesEqualIncludesModeTypeSymlinkAndLinkCount(t *testing.T) {
 	base := runtimeArtifactCapture{
 		Path:      "notes.txt",
 		Exists:    true,
 		IsRegular: true,
+		LinkCount: 1,
 		Size:      5,
 		Mode:      0o644,
 		SHA256:    runtimeSHA256([]byte("notes")),
@@ -723,6 +780,11 @@ func TestRuntimeArtifactCapturesEqualIncludesModeTypeAndSymlinkState(t *testing.
 	symlinkChanged.IsSymlink = true
 	if runtimeArtifactCapturesEqual(base, symlinkChanged) {
 		t.Fatal("symlink-state artifact change was ignored")
+	}
+	linkCountChanged := base
+	linkCountChanged.LinkCount = 2
+	if runtimeArtifactCapturesEqual(base, linkCountChanged) {
+		t.Fatal("hard-link-count artifact change was ignored")
 	}
 }
 
