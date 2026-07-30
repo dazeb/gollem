@@ -38,15 +38,17 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 				return conformance.Driver{
 					Name:                "native OpenAI",
 					Model:               openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
-					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true, RequestTimeout: true},
+					ReasoningModel:      openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-5")),
+					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true, RequestTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   openAICancellationReady,
 					RequestTimeoutReady: openAITimeout.readyFor("gpt-4o"),
 					Expectations: conformance.Expectations{
-						ResponseText: "openai response",
-						ToolName:     "conformance_echo",
-						StreamText:   "openai stream",
-						PartialText:  "openai partial",
-						RetryText:    "openai retry",
+						ResponseText:  "openai response",
+						ToolName:      "conformance_echo",
+						StreamText:    "openai stream",
+						PartialText:   "openai partial",
+						RetryText:     "openai retry",
+						ReasoningText: "openai reasoning",
 					},
 				}, nil
 			},
@@ -81,18 +83,21 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 		{
 			name: "native Anthropic",
 			model: func() (conformance.Driver, error) {
+				model := anthropic.New(anthropic.WithAPIKey("test-anthropic-key"), anthropic.WithBaseURL(anthropicServer.URL), anthropic.WithModel(anthropic.ClaudeSonnet46))
 				return conformance.Driver{
 					Name:                "native Anthropic",
-					Model:               anthropic.New(anthropic.WithAPIKey("test-anthropic-key"), anthropic.WithBaseURL(anthropicServer.URL), anthropic.WithModel(anthropic.ClaudeSonnet46)),
-					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true, RequestTimeout: true},
+					Model:               model,
+					ReasoningModel:      model,
+					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, Retryability: true, RequestTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   anthropicCancellationReady,
 					RequestTimeoutReady: anthropicTimeout.readyFor(anthropic.ClaudeSonnet46),
 					Expectations: conformance.Expectations{
-						ResponseText: "anthropic response",
-						ToolName:     "conformance_echo",
-						StreamText:   "anthropic stream",
-						PartialText:  "anthropic partial",
-						RetryText:    "anthropic retry",
+						ResponseText:  "anthropic response",
+						ToolName:      "conformance_echo",
+						StreamText:    "anthropic stream",
+						PartialText:   "anthropic partial",
+						RetryText:     "anthropic retry",
+						ReasoningText: "anthropic reasoning",
 					},
 				}, nil
 			},
@@ -153,11 +158,32 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	if err == nil {
 		t.Fatal("Verify accepted a timeout claim without a start signal")
 	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing reasoning model",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{ReasoningVisibility: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a reasoning claim without a reasoning model")
+	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:           "missing reasoning fixture",
+		Model:          openai.New(openai.WithAPIKey("test-key")),
+		ReasoningModel: openai.New(openai.WithAPIKey("test-key")),
+		Claims:         conformance.Claims{ReasoningVisibility: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a reasoning claim without expected reasoning text")
+	}
 }
 
 func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture, timeout *timeoutFixture) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/responses" {
+			openAIReasoningConformanceFixture(t, w, r)
+			return
+		}
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Fatalf("OpenAI path = %q, want /v1/chat/completions", r.URL.Path)
 		}
@@ -225,6 +251,41 @@ data: [DONE]
 	})
 }
 
+func openAIReasoningConformanceFixture(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+	if r.Header.Get("Authorization") == "" {
+		t.Fatal("OpenAI reasoning fixture request had no authorization header")
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatalf("read OpenAI reasoning request: %v", err)
+	}
+	var request struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatalf("decode OpenAI reasoning request: %v", err)
+	}
+	if request.Model != "gpt-5" || !request.Stream || !strings.Contains(string(body), "reasoning conformance") {
+		t.Fatalf("unexpected OpenAI reasoning request: model=%q stream=%t body=%s", request.Model, request.Stream, body)
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprint(w, `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","summary":[]}}
+
+data: {"type":"response.reasoning_summary_text.delta","output_index":0,"delta":"openai reasoning"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"openai reasoning"}]}}
+
+data: {"type":"response.output_text.delta","delta":"openai reasoning answer"}
+
+data: {"type":"response.completed","response":{"id":"resp-reasoning","model":"gpt-5","output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"openai reasoning"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"openai reasoning answer"}]}],"usage":{"input_tokens":3,"output_tokens":2}}}
+
+data: [DONE]
+
+`)
+}
+
 func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture, timeout *timeoutFixture) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -273,6 +334,41 @@ func anthropicConformanceFixture(t *testing.T, cancellationReady chan<- struct{}
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, `{"id":"msg-retry","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"anthropic retry"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`)
+			return
+		}
+		if strings.Contains(string(body), "reasoning conformance") {
+			if !request.Stream {
+				t.Fatal("Anthropic reasoning request was not streaming")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, `event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"anthropic reasoning"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"anthropic reasoning answer"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`)
 			return
 		}
 		if request.Stream {

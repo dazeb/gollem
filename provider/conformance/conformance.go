@@ -21,25 +21,27 @@ import (
 // A driver must not advertise one of these capabilities in Slang unless it has
 // a matching deterministic fixture and this verification passes.
 type Claims struct {
-	ToolCalls       bool
-	Streaming       bool
-	Usage           bool
-	Cancellation    bool
-	PartialStream   bool
-	MalformedStream bool
-	Retryability    bool
-	RequestTimeout  bool
+	ToolCalls           bool
+	Streaming           bool
+	Usage               bool
+	Cancellation        bool
+	PartialStream       bool
+	MalformedStream     bool
+	Retryability        bool
+	RequestTimeout      bool
+	ReasoningVisibility bool
 }
 
 // Expectations declares the normalized outputs a deterministic fixture
 // produces. ToolName is required when Claims.ToolCalls is true. StreamText is
 // required when Claims.Streaming is true.
 type Expectations struct {
-	ResponseText string
-	ToolName     string
-	StreamText   string
-	PartialText  string
-	RetryText    string
+	ResponseText  string
+	ToolName      string
+	StreamText    string
+	PartialText   string
+	RetryText     string
+	ReasoningText string
 }
 
 // Driver binds a provider model to the common capability claims and expected
@@ -51,6 +53,7 @@ type Driver struct {
 	Expectations        Expectations
 	CancellationReady   <-chan struct{}
 	RequestTimeoutReady <-chan struct{}
+	ReasoningModel      core.Model
 }
 
 // Verify exercises the claimed common model surface through core.Model. It is
@@ -79,6 +82,12 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.RequestTimeout && driver.RequestTimeoutReady == nil {
 		return fmt.Errorf("provider conformance: %s timeout-capable fixture must signal request start", driver.Name)
+	}
+	if driver.Claims.ReasoningVisibility && driver.ReasoningModel == nil {
+		return fmt.Errorf("provider conformance: %s reasoning-capable fixture must supply a reasoning model", driver.Name)
+	}
+	if driver.Claims.ReasoningVisibility && strings.TrimSpace(driver.Expectations.ReasoningText) == "" {
+		return fmt.Errorf("provider conformance: %s reasoning fixture must expect reasoning text", driver.Name)
 	}
 
 	params := &core.ModelRequestParameters{AllowTextOutput: true}
@@ -117,6 +126,11 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.Retryability {
 		if err := verifyRetryability(ctx, driver); err != nil {
+			return err
+		}
+	}
+	if driver.Claims.ReasoningVisibility {
+		if err := verifyReasoningVisibility(ctx, driver); err != nil {
 			return err
 		}
 	}
@@ -275,6 +289,51 @@ func verifyRetryability(ctx context.Context, driver Driver) error {
 	return nil
 }
 
+func verifyReasoningVisibility(ctx context.Context, driver Driver) error {
+	stream, err := driver.ReasoningModel.RequestStream(ctx, reasoningMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		return fmt.Errorf("provider conformance: %s reasoning stream request: %w", driver.Name, err)
+	}
+	defer stream.Close()
+
+	var (
+		started bool
+		deltas  strings.Builder
+	)
+	for {
+		event, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("provider conformance: %s reasoning stream: %w", driver.Name, err)
+		}
+		switch value := event.(type) {
+		case core.PartStartEvent:
+			if part, ok := value.Part.(core.ThinkingPart); ok {
+				started = true
+				deltas.WriteString(part.Content)
+			}
+		case core.PartDeltaEvent:
+			if delta, ok := value.Delta.(core.ThinkingPartDelta); ok {
+				deltas.WriteString(delta.ContentDelta)
+			}
+		}
+	}
+	if !started {
+		return fmt.Errorf("provider conformance: %s reasoning stream did not emit a ThinkingPart start", driver.Name)
+	}
+	if got := deltas.String(); got != driver.Expectations.ReasoningText {
+		return fmt.Errorf("provider conformance: %s reasoning deltas = %q, want %q", driver.Name, got, driver.Expectations.ReasoningText)
+	}
+	for _, part := range stream.Response().Parts {
+		if thinking, ok := part.(core.ThinkingPart); ok && thinking.Content == driver.Expectations.ReasoningText {
+			return nil
+		}
+	}
+	return fmt.Errorf("provider conformance: %s final response did not retain reasoning text", driver.Name)
+}
+
 func verifyResponse(driver Driver, response *core.ModelResponse, streaming bool) error {
 	if response == nil {
 		return fmt.Errorf("provider conformance: %s returned a nil response", driver.Name)
@@ -337,5 +396,11 @@ func retryMessages() []core.ModelMessage {
 func timeoutMessages() []core.ModelMessage {
 	return []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "timeout conformance"}}},
+	}
+}
+
+func reasoningMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "reasoning conformance"}}},
 	}
 }

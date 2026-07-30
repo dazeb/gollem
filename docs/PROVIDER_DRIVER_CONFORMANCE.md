@@ -16,7 +16,7 @@ of behavior and must not enable a control solely on provider identity.
 | In-flight request cancellation | Proven | Proven | Proven | `provider/conformance` |
 | Structured output | Catalog-supported | Unsupported | Catalog-supported | Provider-specific tests; no common conformance claim yet |
 | Vision | Catalog-supported | Unsupported | Catalog-supported | Provider-specific tests; no common conformance claim yet |
-| Reasoning visibility | Catalog-supported where applicable | Unsupported | Catalog-supported where applicable | Provider-specific tests; no common conformance claim yet |
+| Reasoning visibility | Proven where catalog-supported | Unsupported | Proven where catalog-supported | `provider/conformance` verifies native `ThinkingPart` start/delta events and final retention; local Chat Completions remains unsupported |
 | Prompt cache / Responses API | Catalog-supported where applicable | Unsupported | Catalog-supported where applicable | Provider-specific tests; no common conformance claim yet |
 | Malformed JSON stream event normalization | Proven | Proven | Proven | `provider/conformance` plus provider parser tests; returns `StreamProtocolError` without raw event data |
 | Abrupt EOF partial-stream result | Proven | Proven | Proven | `provider/conformance` plus provider parser tests; preserves partial response and returns `StreamIncompleteError` |
