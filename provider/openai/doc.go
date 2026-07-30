@@ -42,6 +42,23 @@
 //	    openai.WithModel("claude-3-sonnet"),
 //	)
 //
+// # Local OpenAI-Compatible Endpoint
+//
+// Use NewLocalEndpoint for a process-owned loopback Chat Completions server:
+//
+//	model, err := openai.NewLocalEndpoint(openai.LocalEndpointConfig{
+//	    BaseURL: "http://127.0.0.1:11434",
+//	    Model:   "my-local-tool-model",
+//	})
+//
+// The profile only accepts HTTP(S) localhost or loopback addresses, always
+// uses Chat Completions, and never inherits OPENAI_API_KEY or OPENAI_BASE_URL.
+// It exposes tool calls and streaming, but does not claim structured output,
+// vision, prompt caching, or Responses API behavior until separately proven.
+// The app-server profile reads GOLLEM_LOCAL_OPENAI_BASE_URL,
+// GOLLEM_LOCAL_OPENAI_MODEL, and GOLLEM_LOCAL_OPENAI_API_KEY from its own
+// process environment; their values are not included in the provider catalog.
+//
 // # Latency Instrumentation
 //
 // WithRequestObserver installs a callback that receives one secret-safe

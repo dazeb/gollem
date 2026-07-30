@@ -2168,6 +2168,15 @@ func createModel(provider, modelName, location, project string, requestTimeout t
 			opts = append(opts, openai.WithModel(modelName))
 		}
 		return openai.New(opts...), nil
+	case "openai-compatible-local":
+		config, err := openai.LocalEndpointConfigFromLookup(os.LookupEnv)
+		if err != nil {
+			return nil, err
+		}
+		if modelName != "" {
+			config.Model = modelName
+		}
+		return openai.NewLocalEndpoint(config, openai.WithHTTPClient(httpClient))
 	case "xai":
 		opts := []openai.Option{openai.WithHTTPClient(httpClient)}
 		if modelName != "" {
@@ -2199,7 +2208,7 @@ func createModel(provider, modelName, location, project string, requestTimeout t
 		}
 		return vertexai_anthropic.New(opts...), nil
 	default:
-		return nil, fmt.Errorf("provider %q not supported (available: test, anthropic, openai, xai, vertexai, vertexai-anthropic)", provider)
+		return nil, fmt.Errorf("provider %q not supported (available: test, anthropic, openai, openai-compatible-local, xai, vertexai, vertexai-anthropic)", provider)
 	}
 }
 

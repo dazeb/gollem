@@ -575,6 +575,18 @@ OpenAI provider note:
 - Current limitation: this path is non-streaming (`Request()` flow). Streaming
   UI output still relies on provider streaming support via `RequestStream()`.
 
+Local OpenAI-compatible endpoint note:
+- `openai.NewLocalEndpoint` accepts only HTTP(S) `localhost` or IP-loopback
+  endpoints and forces the Chat Completions protocol. It never inherits
+  `OPENAI_API_KEY` or `OPENAI_BASE_URL`.
+- The Gollem app-server profile is configured only by
+  `GOLLEM_LOCAL_OPENAI_BASE_URL`, `GOLLEM_LOCAL_OPENAI_MODEL`, and optional
+  `GOLLEM_LOCAL_OPENAI_API_KEY`. Those values remain in the Gollem process and
+  are not projected into the provider/model catalog.
+- This profile currently proves tool calls, streaming, and usage through
+  deterministic conformance fixtures. It does not advertise structured output,
+  vision, prompt caching, or Responses API behavior.
+
 | Feature | Anthropic | OpenAI | Vertex AI | Vertex AI Anthropic |
 |---------|-----------|--------|-----------|---------------------|
 | Structured output | Yes | Yes | Yes | Yes |

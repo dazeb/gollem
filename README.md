@@ -98,11 +98,15 @@ model := anthropic.New() // reads ANTHROPIC_API_KEY
 |---|---|
 | Anthropic (Claude) | `provider/anthropic` |
 | OpenAI (GPT, o-series) | `provider/openai` |
+| OpenAI-compatible local endpoint | `provider/openai` (`NewLocalEndpoint`) |
 | Google Gemini (Vertex AI) | `provider/vertexai` |
 | Claude via Vertex AI | `provider/vertexai_anthropic` |
 
-All providers support streaming, tool calls, and structured output. Providers implement a
-small `Model` interface, so wrapping or adding one is straightforward.
+The native providers listed above support streaming, tool calls, and structured output.
+`NewLocalEndpoint` is deliberately more conservative: it supports the loopback Chat
+Completions tool-and-streaming surface and leaves structured output, vision, caching, and
+Responses API behavior unavailable until a compatible server proves them. Providers implement
+a small `Model` interface, so wrapping or adding one is straightforward.
 
 ## A production-shaped example
 

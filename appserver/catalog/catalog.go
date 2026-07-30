@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	ProviderOpenAI            = "openai"
-	ProviderAnthropic         = "anthropic"
-	ProviderVertexAI          = "vertexai"
-	ProviderVertexAIAnthropic = "vertexai-anthropic"
+	ProviderOpenAI                = "openai"
+	ProviderOpenAICompatibleLocal = "openai-compatible-local"
+	ProviderAnthropic             = "anthropic"
+	ProviderVertexAI              = "vertexai"
+	ProviderVertexAIAnthropic     = "vertexai-anthropic"
 )
 
 var ErrProviderNotFound = errors.New("provider not found")
@@ -248,6 +249,18 @@ func (c *Catalog) defaultProviders() []Provider {
 	openaiConfigured := envConfigured(c.env, "OPENAI_API_KEY") || envConfigured(c.env, "CHATGPT_ACCESS_TOKEN")
 	anthropicConfigured := envConfigured(c.env, "ANTHROPIC_API_KEY")
 	vertexConfigured := envConfigured(c.env, "GOOGLE_CLOUD_PROJECT") || envConfigured(c.env, "GOOGLE_APPLICATION_CREDENTIALS")
+	localConfig, localConfigErr := openaiprovider.LocalEndpointConfigFromLookup(c.env)
+	// Merely having a safe default is not evidence that a local server exists.
+	// Require an explicit local-profile setting before offering it as runnable.
+	localConfigured := localConfigErr == nil && envConfigured(c.env,
+		openaiprovider.LocalEndpointBaseURLEnv,
+		openaiprovider.LocalEndpointModelEnv,
+		openaiprovider.LocalEndpointAPIKeyEnv,
+	)
+	localModel := "llama3"
+	if localConfigured {
+		localModel = localConfig.Model
+	}
 
 	return []Provider{
 		{
@@ -279,6 +292,38 @@ func (c *Catalog) defaultProviders() []Provider {
 				model(ProviderOpenAI, openaiprovider.GPT5Mini, "GPT-5 mini", "Lower-latency GPT-5 family model.", false, textAndImage(), false, capabilities(true, true, true, true, true, true, false), []string{"minimal", "low", "medium", "high"}, "medium"),
 				model(ProviderOpenAI, openaiprovider.GPT5Nano, "GPT-5 nano", "Small GPT-5 family model for fast utility work.", true, textAndImage(), false, capabilities(true, true, true, true, true, true, false), []string{"minimal", "low", "medium", "high"}, "low"),
 				model(ProviderOpenAI, openaiprovider.GPT5Codex, "GPT-5 Codex", "OpenAI coding-specialized model exposed through Gollem's neutral model controls.", false, textAndImage(), false, capabilities(true, true, true, true, true, true, true), []string{"minimal", "low", "medium", "high"}, "medium"),
+			},
+		},
+		{
+			ID:             ProviderOpenAICompatibleLocal,
+			Name:           "Local OpenAI-compatible",
+			Package:        "github.com/fugue-labs/gollem/provider/openai",
+			Description:    "A loopback-only OpenAI Chat Completions endpoint with a configured local model fallback.",
+			Configured:     localConfigured,
+			DefaultModelID: modelID(ProviderOpenAICompatibleLocal, localModel),
+			OptionalEnvVars: []string{
+				openaiprovider.LocalEndpointBaseURLEnv,
+				openaiprovider.LocalEndpointModelEnv,
+				openaiprovider.LocalEndpointAPIKeyEnv,
+			},
+			AuthModes: []string{"local-loopback"},
+			Capabilities: ProviderCapabilities{
+				ToolCalls: true,
+				Streaming: true,
+			},
+			Models: []Model{
+				model(
+					ProviderOpenAICompatibleLocal,
+					localModel,
+					localModel,
+					"Configured local OpenAI-compatible Chat Completions model. Structured output and multimodal capabilities remain unavailable until separately verified.",
+					false,
+					[]string{"text"},
+					false,
+					capabilities(true, false, false, true, false, false, false),
+					nil,
+					"",
+				),
 			},
 		},
 		{
