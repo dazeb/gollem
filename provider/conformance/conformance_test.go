@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/fugue-labs/gollem/core"
 	"github.com/fugue-labs/gollem/provider/anthropic"
 	"github.com/fugue-labs/gollem/provider/conformance"
 	"github.com/fugue-labs/gollem/provider/openai"
@@ -45,6 +46,8 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Expectations: conformance.Expectations{
 						ResponseText:      "openai response",
 						ToolName:          "conformance_echo",
+						ToolCallID:        "call_openai",
+						ToolArgumentsJSON: `{"value":"ok"}`,
 						StreamText:        "openai stream",
 						PartialText:       "openai partial",
 						DisconnectText:    "openai disconnect",
@@ -75,6 +78,8 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Expectations: conformance.Expectations{
 						ResponseText:      "openai response",
 						ToolName:          "conformance_echo",
+						ToolCallID:        "call_openai",
+						ToolArgumentsJSON: `{"value":"ok"}`,
 						StreamText:        "openai stream",
 						PartialText:       "openai partial",
 						DisconnectText:    "openai disconnect",
@@ -98,6 +103,8 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Expectations: conformance.Expectations{
 						ResponseText:      "anthropic response",
 						ToolName:          "conformance_echo",
+						ToolCallID:        "call_anthropic",
+						ToolArgumentsJSON: `{"value":"ok"}`,
 						StreamText:        "anthropic stream",
 						PartialText:       "anthropic partial",
 						DisconnectText:    "anthropic disconnect",
@@ -131,6 +138,30 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Verify accepted a tool claim without an expected tool")
+	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing tool call ID",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{ToolCalls: true},
+		Expectations: conformance.Expectations{
+			ToolName:          "conformance_echo",
+			ToolArgumentsJSON: `{"value":"ok"}`,
+		},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a tool claim without an expected tool call ID")
+	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing tool arguments",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{ToolCalls: true},
+		Expectations: conformance.Expectations{
+			ToolName:   "conformance_echo",
+			ToolCallID: "call_conformance",
+		},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a tool claim without expected tool arguments")
 	}
 	err = conformance.Verify(context.Background(), conformance.Driver{
 		Name:   "missing cancellation fixture",
@@ -196,6 +227,76 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Verify accepted a reasoning claim without expected reasoning text")
+	}
+}
+
+func TestVerifyRejectsToolCallFieldMismatch(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		toolCallID    string
+		argumentsJSON string
+		want          string
+	}{
+		{
+			name:          "call ID",
+			toolCallID:    "call_other",
+			argumentsJSON: `{"value":"ok"}`,
+			want:          "call ID",
+		},
+		{
+			name:          "arguments",
+			toolCallID:    "call_conformance",
+			argumentsJSON: `{"value":"other"}`,
+			want:          "arguments",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			driver := conformance.Driver{
+				Name: "mismatched tool call",
+				Model: core.NewTestModel(core.ToolCallResponseWithID(
+					"conformance_echo",
+					`{"value":"ok"}`,
+					"call_conformance",
+				)),
+				Claims: conformance.Claims{ToolCalls: true},
+				Expectations: conformance.Expectations{
+					ToolName:          "conformance_echo",
+					ToolCallID:        tt.toolCallID,
+					ToolArgumentsJSON: tt.argumentsJSON,
+				},
+			}
+			err := conformance.Verify(context.Background(), driver)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Verify tool mismatch error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestVerifyMatchesTheExpectedToolCallAmongSameNamedCalls(t *testing.T) {
+	driver := conformance.Driver{
+		Name: "multiple tool calls",
+		Model: core.NewTestModel(core.MultiToolCallResponse(
+			core.ToolCallPart{
+				ToolName:   "conformance_echo",
+				ToolCallID: "call_first",
+				ArgsJSON:   `{"value":"first"}`,
+			},
+			core.ToolCallPart{
+				ToolName:   "conformance_echo",
+				ToolCallID: "call_expected",
+				ArgsJSON:   `{"value":"expected"}`,
+			},
+		)),
+		Claims: conformance.Claims{ToolCalls: true},
+		Expectations: conformance.Expectations{
+			ToolName:          "conformance_echo",
+			ToolCallID:        "call_expected",
+			ToolArgumentsJSON: `{"value":"expected"}`,
+		},
+	}
+	if err := conformance.Verify(context.Background(), driver); err != nil {
+		t.Fatalf("Verify multiple tool calls: %v", err)
 	}
 }
 

@@ -35,11 +35,14 @@ type Claims struct {
 }
 
 // Expectations declares the normalized outputs a deterministic fixture
-// produces. ToolName is required when Claims.ToolCalls is true. StreamText is
-// required when Claims.Streaming is true.
+// produces. ToolName, ToolCallID, and ToolArgumentsJSON are required when
+// Claims.ToolCalls is true. StreamText is required when Claims.Streaming is
+// true.
 type Expectations struct {
 	ResponseText      string
 	ToolName          string
+	ToolCallID        string
+	ToolArgumentsJSON string
 	StreamText        string
 	PartialText       string
 	DisconnectText    string
@@ -71,6 +74,12 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.ToolCalls && strings.TrimSpace(driver.Expectations.ToolName) == "" {
 		return fmt.Errorf("provider conformance: %s tool-capable fixture must expect a tool call", driver.Name)
+	}
+	if driver.Claims.ToolCalls && strings.TrimSpace(driver.Expectations.ToolCallID) == "" {
+		return fmt.Errorf("provider conformance: %s tool-capable fixture must expect a tool call ID", driver.Name)
+	}
+	if driver.Claims.ToolCalls && strings.TrimSpace(driver.Expectations.ToolArgumentsJSON) == "" {
+		return fmt.Errorf("provider conformance: %s tool-capable fixture must expect tool arguments", driver.Name)
 	}
 	if driver.Claims.Streaming && strings.TrimSpace(driver.Expectations.StreamText) == "" {
 		return fmt.Errorf("provider conformance: %s streaming fixture must expect stream text", driver.Name)
@@ -412,8 +421,10 @@ func verifyResponse(driver Driver, response *core.ModelResponse, streaming bool)
 	if got := response.TextContent(); got != wantText {
 		return fmt.Errorf("provider conformance: %s text = %q, want %q", driver.Name, got, wantText)
 	}
-	if driver.Claims.ToolCalls && !streaming && !hasToolCall(response.Parts, driver.Expectations.ToolName) {
-		return fmt.Errorf("provider conformance: %s response did not contain tool %q", driver.Name, driver.Expectations.ToolName)
+	if driver.Claims.ToolCalls && !streaming {
+		if err := verifyToolCall(driver, response.Parts); err != nil {
+			return err
+		}
 	}
 	if driver.Claims.Usage && response.Usage.InputTokens+response.Usage.OutputTokens == 0 {
 		return fmt.Errorf("provider conformance: %s response did not report usage", driver.Name)
@@ -421,13 +432,45 @@ func verifyResponse(driver Driver, response *core.ModelResponse, streaming bool)
 	return nil
 }
 
-func hasToolCall(parts []core.ModelResponsePart, name string) bool {
+func verifyToolCall(driver Driver, parts []core.ModelResponsePart) error {
+	foundName := false
+	foundCallID := false
 	for _, part := range parts {
-		if call, ok := part.(core.ToolCallPart); ok && call.ToolName == name {
-			return true
+		call, ok := part.(core.ToolCallPart)
+		if !ok || call.ToolName != driver.Expectations.ToolName {
+			continue
+		}
+		foundName = true
+		if call.ToolCallID != driver.Expectations.ToolCallID {
+			continue
+		}
+		foundCallID = true
+		if call.ArgsJSON == driver.Expectations.ToolArgumentsJSON {
+			return nil
 		}
 	}
-	return false
+	if !foundName {
+		return fmt.Errorf(
+			"provider conformance: %s response did not contain tool %q",
+			driver.Name,
+			driver.Expectations.ToolName,
+		)
+	}
+	if !foundCallID {
+		return fmt.Errorf(
+			"provider conformance: %s response did not contain tool %q call ID %q",
+			driver.Name,
+			driver.Expectations.ToolName,
+			driver.Expectations.ToolCallID,
+		)
+	}
+	return fmt.Errorf(
+		"provider conformance: %s response did not contain tool %q arguments %q for call ID %q",
+		driver.Name,
+		driver.Expectations.ToolName,
+		driver.Expectations.ToolArgumentsJSON,
+		driver.Expectations.ToolCallID,
+	)
 }
 
 func conformanceMessages() []core.ModelMessage {
