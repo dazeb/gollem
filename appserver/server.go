@@ -1382,46 +1382,40 @@ func (s *Server) handleTurnInterrupt(ctx context.Context, raw json.RawMessage) (
 }
 
 func (s *Server) handleTurnSteer(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
-	st, runtimeSvc, rpcErr := s.requireRuntime("turn/steer")
+	_, runtimeSvc, rpcErr := s.requireRuntime("turn/steer")
 	if rpcErr != nil {
 		return nil, rpcErr
 	}
-	var params turnSteerParams
+	var params protocol.TurnSteerParams
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
-	turnID := firstNonEmpty(params.TurnID, params.ID)
-	if turnID == "" {
-		return nil, invalidParams("turnId is required", nil)
+	params.ThreadID = strings.TrimSpace(params.ThreadID)
+	params.ExpectedTurnID = strings.TrimSpace(params.ExpectedTurnID)
+	if params.ThreadID == "" {
+		return nil, invalidParams("threadId is required", nil)
 	}
-	message := strings.TrimSpace(firstNonEmpty(params.Prompt, params.Message, params.Text))
-	if message == "" {
-		return nil, invalidParams("message is required", nil)
+	if params.ExpectedTurnID == "" {
+		return nil, invalidParams("expectedTurnId is required", nil)
 	}
-	turn, err := st.GetTurn(ctx, turnID)
+	message, err := runtimeSteerText(params.Input)
 	if err != nil {
-		return nil, mapError("turn/steer", err)
+		return nil, invalidParams("invalid steer input", err)
 	}
-	item, err := st.AppendItem(ctx, store.AppendItemRequest{
-		ThreadID: turn.ThreadID,
-		TurnID:   turn.ID,
-		Kind:     "steer",
-		Status:   "queued",
-		Payload: mustRuntimeJSON(map[string]any{
-			"message": message,
-			"at":      time.Now().UTC(),
-		}),
+	clientUserMessageID := ""
+	if params.ClientUserMessageID != nil {
+		clientUserMessageID = *params.ClientUserMessageID
+	}
+	result, err := runtimeSvc.Steer(ctx, RuntimeSteerRequest{
+		ThreadID:            params.ThreadID,
+		TurnID:              params.ExpectedTurnID,
+		ClientUserMessageID: clientUserMessageID,
+		Message:             message,
 	})
 	if err != nil {
 		return nil, mapError("turn/steer", err)
 	}
-	accepted := runtimeSvc.IsActive(turn.ID)
-	return map[string]any{
-		"accepted": accepted,
-		"turnId":   turn.ID,
-		"item":     item,
-		"reason":   runtimeSteerReason(accepted),
-	}, nil
+	return protocol.TurnSteerResponse{TurnID: result.TurnID}, nil
 }
 
 func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
@@ -2319,6 +2313,8 @@ func mapError(method string, err error) *protocol.Error {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return rpcError(protocol.CodeInvalidRequest, "request context ended", err)
+	case errors.Is(err, core.ErrSteerQueueFull):
+		return rpcError(protocol.CodeOverloaded, "steer queue is full", err)
 	case errors.Is(err, toolprocess.ErrPTYUnsupported):
 		return protocol.MethodUnavailableErrorWithReason(method, "pty resize is not supported until a PTY backend is configured")
 	case errors.Is(err, toolfs.ErrPathOutsideRoot),
@@ -2355,7 +2351,12 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, ErrMemoryRootRequired),
 		errors.Is(err, ErrMemoryRootUnsafe),
 		errors.Is(err, ErrWorkspaceRevertInProgress),
-		errors.Is(err, ErrRuntimePromptEmpty):
+		errors.Is(err, ErrRuntimePromptEmpty),
+		errors.Is(err, ErrRuntimeTurnNotActive),
+		errors.Is(err, ErrRuntimeSteerIdempotencyConflict),
+		errors.Is(err, ErrRuntimeSteerMessageTooLarge),
+		errors.Is(err, ErrRuntimeSteerIDTooLarge),
+		errors.Is(err, core.ErrSteerMessageEmpty):
 		return invalidParams("invalid params", err)
 	case errors.Is(err, toolfs.ErrApprovalDenied),
 		errors.Is(err, toolgit.ErrApprovalDenied),

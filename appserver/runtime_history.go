@@ -3,6 +3,7 @@ package appserver
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,6 +77,7 @@ func boundedRuntimeReplayItems(items []*store.Item) []*store.Item {
 }
 
 func runtimeMessagesFromItems(items []*store.Item) []core.ModelMessage {
+	items = runtimeItemsInReplayOrder(items)
 	builder := runtimeHistoryBuilder{
 		dynamicParents: make(map[string]struct{}),
 		callIDCounts:   make(map[string]int),
@@ -98,6 +100,10 @@ func runtimeMessagesFromItems(items []*store.Item) []core.ModelMessage {
 			}
 		case "message":
 			if message, ok := runtimeMessageFromStoredItem(item.Payload); ok {
+				messages = append(messages, message)
+			}
+		case runtimeSteerItemKind:
+			if message, ok := runtimeMessageFromSteerItem(item); ok {
 				messages = append(messages, message)
 			}
 		case runtimeDynamicToolCallItemKind:
@@ -128,6 +134,36 @@ func runtimeMessagesFromItems(items []*store.Item) []core.ModelMessage {
 		}
 	}
 	return messages
+}
+
+func runtimeItemsInReplayOrder(items []*store.Item) []*store.Item {
+	ordered := append([]*store.Item(nil), items...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		leftSeq, leftAfter := runtimeReplayOrder(ordered[i])
+		rightSeq, rightAfter := runtimeReplayOrder(ordered[j])
+		if leftSeq != rightSeq {
+			return leftSeq < rightSeq
+		}
+		return !leftAfter && rightAfter
+	})
+	return ordered
+}
+
+func runtimeReplayOrder(item *store.Item) (int64, bool) {
+	if item == nil {
+		return 0, false
+	}
+	if item.Kind != runtimeSteerItemKind || item.Status != runtimeSteerStatusComplete {
+		return item.Seq, false
+	}
+	var payload runtimeSteerPayload
+	if json.Unmarshal(item.Payload, &payload) == nil &&
+		payload.Status == runtimeSteerStatusComplete &&
+		payload.ConsumedAfterSeq >= item.Seq &&
+		payload.ConsumedAfterSeq > 0 {
+		return payload.ConsumedAfterSeq, true
+	}
+	return item.Seq, false
 }
 
 func (b *runtimeHistoryBuilder) collectDynamicParents(items []*store.Item) {
@@ -231,6 +267,29 @@ func runtimeMessageFromStoredItem(raw json.RawMessage) (core.ModelMessage, bool)
 	default:
 		return nil, false
 	}
+}
+
+func runtimeMessageFromSteerItem(item *store.Item) (core.ModelMessage, bool) {
+	if item == nil || item.Status != runtimeSteerStatusComplete {
+		return nil, false
+	}
+	var payload runtimeSteerPayload
+	if err := json.Unmarshal(item.Payload, &payload); err != nil ||
+		payload.Status != runtimeSteerStatusComplete ||
+		payload.ConsumedAfterSeq < item.Seq ||
+		payload.ConsumedAfterSeq <= 0 ||
+		payload.ConsumedAt == nil ||
+		strings.TrimSpace(payload.Message) == "" {
+		return nil, false
+	}
+	consumedAt := payload.ConsumedAt.UTC()
+	return core.ModelRequest{
+		Parts: []core.ModelRequestPart{core.UserPromptPart{
+			Content:   payload.Message,
+			Timestamp: consumedAt,
+		}},
+		Timestamp: consumedAt,
+	}, true
 }
 
 func runtimeReplayDynamicToolRecord(item *store.Item) (runtimeReplayToolRecord, bool) {

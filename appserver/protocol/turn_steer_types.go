@@ -6,8 +6,8 @@ import (
 	"fmt"
 )
 
-// TurnSteerParams is the exact fixed public turn-steer request. It remains
-// standalone from Gollem's prompt-alias live handler contract.
+// TurnSteerParams is the exact fixed public turn-steer request accepted by the
+// live runtime.
 type TurnSteerParams struct {
 	ThreadID            string      `json:"threadId"`
 	ClientUserMessageID *string     `json:"clientUserMessageId,omitempty"`

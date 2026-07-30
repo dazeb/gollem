@@ -21182,6 +21182,16 @@
       "params": [
         "RuntimeTurnNotification"
       ]
+    },
+    {
+      "method": "turn/steer",
+      "surface": "client-request",
+      "params": [
+        "TurnSteerParams"
+      ],
+      "result": [
+        "TurnSteerResponse"
+      ]
     }
   ]
 }

@@ -94,6 +94,7 @@ type RuntimeStartRequest struct {
 	Selection     RuntimeModelSelection
 	ModelSettings core.ModelSettings
 	History       []core.ModelMessage
+	steerQueue    *core.SteerQueue
 }
 
 type RuntimeStartResult struct {
@@ -148,6 +149,7 @@ func runtimeStartLeaseHeld(ctx context.Context, service *RuntimeService) bool {
 
 type activeRuntimeTurn struct {
 	cancel context.CancelFunc
+	*runtimeSteerState
 }
 
 func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier runtimeNotifier, req RuntimeStartRequest) (*RuntimeStartResult, error) {
@@ -215,7 +217,9 @@ func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier run
 		cancel()
 		return nil, failUnownedTurn(st, started, ErrRuntimeTurnActive)
 	}
-	s.active[started.ID] = &activeRuntimeTurn{cancel: cancel}
+	active := newActiveRuntimeTurn(cancel, st, notifier, started)
+	req.steerQueue = active.queue
+	s.active[started.ID] = active
 	s.wg.Add(1)
 	s.mu.Unlock()
 
@@ -318,7 +322,8 @@ func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier run
 		s.failPreparedRetry(st, started, ErrRuntimeTurnActive)
 		return nil, ErrRuntimeTurnActive
 	}
-	s.active[started.ID] = &activeRuntimeTurn{cancel: cancel}
+	active := newActiveRuntimeTurn(cancel, st, notifier, started)
+	s.active[started.ID] = active
 	s.wg.Add(1)
 	s.mu.Unlock()
 
@@ -332,6 +337,7 @@ func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier run
 		Selection:     req.Selection,
 		ModelSettings: req.ModelSettings,
 		History:       append([]core.ModelMessage(nil), req.History...),
+		steerQueue:    active.queue,
 	}
 	go func() {
 		defer s.wg.Done()
@@ -448,7 +454,11 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 
 	ctx = withRuntimeTurnContext(ctx, turn.ThreadID, turn.ID)
 	model, info, err := s.modelFactory(ctx, req.Selection)
+	if err == nil && model == nil {
+		err = ErrRuntimeNotConfigured
+	}
 	if err != nil {
+		req.steerQueue.RejectAll(err)
 		s.complete(st, notifier, turn, store.TurnFailed, nil, err, info)
 		return
 	}
@@ -505,6 +515,9 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	}
 	if hasRuntimeModelSettings(req.ModelSettings) {
 		runOpts = append(runOpts, core.WithRunModelSettings(req.ModelSettings))
+	}
+	if req.steerQueue != nil {
+		runOpts = append(runOpts, core.WithSteerQueue(req.steerQueue))
 	}
 	stream, err := agent.RunStream(ctx, req.Prompt, runOpts...)
 	if err != nil {
@@ -684,6 +697,19 @@ func publishItemCompleted(notifier runtimeNotifier, turn *store.Turn, item *stor
 		return
 	}
 	notifier.PublishNotification("item/completed", runtimeItemNotificationParams{
+		ThreadID: turn.ThreadID,
+		TurnID:   turn.ID,
+		ItemID:   item.ID,
+		Item:     protocolTimelineItem(item),
+		At:       time.Now().UTC(),
+	})
+}
+
+func publishItemStarted(notifier runtimeNotifier, turn *store.Turn, item *store.Item) {
+	if notifier == nil || turn == nil || item == nil {
+		return
+	}
+	notifier.PublishNotification("item/started", runtimeItemNotificationParams{
 		ThreadID: turn.ThreadID,
 		TurnID:   turn.ID,
 		ItemID:   item.ID,

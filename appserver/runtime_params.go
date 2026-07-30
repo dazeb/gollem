@@ -43,14 +43,6 @@ const (
 type turnStartParams = protocol.TurnRunStartParams
 type turnIDParams = protocol.TurnRunInterruptParams
 
-type turnSteerParams struct {
-	ID      string `json:"id,omitempty"`
-	TurnID  string `json:"turnId,omitempty"`
-	Prompt  string `json:"prompt,omitempty"`
-	Message string `json:"message,omitempty"`
-	Text    string `json:"text,omitempty"`
-}
-
 type turnRetryParams struct {
 	ID             string         `json:"id,omitempty"`
 	TurnID         string         `json:"turnId,omitempty"`
@@ -192,11 +184,4 @@ func firstRaw(values ...json.RawMessage) json.RawMessage {
 		}
 	}
 	return nil
-}
-
-func runtimeSteerReason(accepted bool) string {
-	if accepted {
-		return "steer message recorded for the active turn"
-	}
-	return "turn is not currently active; steer message was recorded for audit only"
 }

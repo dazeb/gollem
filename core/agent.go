@@ -452,6 +452,7 @@ type runConfig struct {
 	batchConcurrency    int
 	detach              <-chan struct{}
 	toolState           map[string]any
+	steerQueue          *SteerQueue
 }
 
 // WithRunDeps sets dependencies available to tools via RunContext.
@@ -516,6 +517,14 @@ func WithDetach(ch <-chan struct{}) RunOption {
 	}
 }
 
+// WithSteerQueue attaches a queue consumed at safe model-request boundaries.
+// It is supported by RunStream; synchronous Run rejects this option.
+func WithSteerQueue(queue *SteerQueue) RunOption {
+	return func(c *runConfig) {
+		c.steerQueue = queue
+	}
+}
+
 func (a *Agent[T]) ensureOutputSchema() *OutputSchema {
 	a.outputSchemaMu.Lock()
 	defer a.outputSchemaMu.Unlock()
@@ -530,6 +539,10 @@ func (a *Agent[T]) Run(ctx context.Context, prompt string, opts ...RunOption) (*
 	cfg := &runConfig{}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+	if cfg.steerQueue != nil {
+		cfg.steerQueue.close(ErrSteeringNeedsStreaming)
+		return nil, ErrSteeringNeedsStreaming
 	}
 
 	// Build output schema.
@@ -623,10 +636,12 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 	var err error
 	prompt, err = a.applyInputGuardrails(ctx, state, deps, prompt, true)
 	if err != nil {
+		cfg.steerQueue.close(err)
 		return nil, err
 	}
 
 	if err := a.bootstrapRunMessages(ctx, state, prompt, deps, cfg.deferredResults, cfg.initialRequestParts); err != nil {
+		cfg.steerQueue.close(err)
 		return nil, err
 	}
 
@@ -663,7 +678,19 @@ func (a *Agent[T]) RunStream(ctx context.Context, prompt string, opts ...RunOpti
 		outputToolNames[ot.Name] = true
 	}
 
-	stream := newAgentStream(a, ctx, state, settings, limits, deps, prompt, allTools, toolMap, outputToolNames)
+	stream := newAgentStream(
+		a,
+		ctx,
+		state,
+		settings,
+		limits,
+		deps,
+		prompt,
+		allTools,
+		toolMap,
+		outputToolNames,
+		cfg.steerQueue,
+	)
 
 	initialMessages := make([]ModelMessage, len(state.messages))
 	copy(initialMessages, state.messages)

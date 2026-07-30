@@ -161,12 +161,14 @@ type agentStream[T any] struct {
 	allTools []Tool
 	toolMap  map[string]*Tool
 	outNames map[string]bool
+	steers   *SteerQueue
 
 	current         StreamedResponse
 	currentTurnRC   *RunContext
 	currentModelRC  *RunContext
 	currentReqStart time.Time
 	finalResponse   *ModelResponse
+	pendingSteers   []SteerMessage
 
 	done   bool
 	result *RunResult[T]
@@ -186,6 +188,7 @@ func newAgentStream[T any](
 	allTools []Tool,
 	toolMap map[string]*Tool,
 	outNames map[string]bool,
+	steers *SteerQueue,
 ) *agentStream[T] {
 	return &agentStream[T]{
 		agent:    agent,
@@ -198,6 +201,7 @@ func newAgentStream[T any](
 		allTools: allTools,
 		toolMap:  toolMap,
 		outNames: outNames,
+		steers:   steers,
 	}
 }
 
@@ -562,7 +566,14 @@ func (s *agentStream[T]) startTurn() error {
 		stream, err = s.agent.model.RequestStream(s.ctx, messages, settings, params)
 	}
 	if err != nil {
+		s.rejectPendingSteers(err)
 		streamErr := fmt.Errorf("model stream request failed: %w", err)
+		s.emitStreamTurnCompleted(nil, streamErr)
+		return streamErr
+	}
+	if err := s.acknowledgePendingSteers(); err != nil {
+		_ = stream.Close()
+		streamErr := fmt.Errorf("acknowledge steer consumption: %w", err)
 		s.emitStreamTurnCompleted(nil, streamErr)
 		return streamErr
 	}
@@ -606,6 +617,10 @@ func (s *agentStream[T]) completeTurn() error {
 
 	if len(s.agent.responseInterceptors) > 0 {
 		if runResponseInterceptors(s.ctx, s.agent.responseInterceptors, resp) {
+			if _, err := s.queueSteersForNextRequest(false); err != nil {
+				s.completeActiveTurn(resp, err)
+				return err
+			}
 			s.completeActiveTurn(resp, nil)
 			return nil
 		}
@@ -715,6 +730,7 @@ func (s *agentStream[T]) completeTurn() error {
 		})
 	}
 	if len(deferredReqs) > 0 {
+		s.steers.close(errors.New("run is waiting for deferred input"))
 		fireTurnEnd()
 		s.completeActiveTurn(resp, nil)
 		if s.agent.eventBus != nil {
@@ -742,6 +758,18 @@ func (s *agentStream[T]) completeTurn() error {
 				Usage:            s.state.usage,
 			},
 		}
+	}
+	terminal := result != nil
+	queuedSteers, err := s.queueSteersForNextRequest(terminal)
+	if err != nil {
+		fireTurnEnd()
+		s.completeActiveTurn(resp, err)
+		return err
+	}
+	if queuedSteers {
+		fireTurnEnd()
+		s.completeActiveTurn(resp, nil)
+		return nil
 	}
 	if result != nil {
 		fireTurnEnd()
@@ -787,6 +815,8 @@ func (s *agentStream[T]) finish(result *RunResult[T], runErr error) {
 		s.currentTurnRC = nil
 		s.currentModelRC = nil
 	}
+	s.rejectPendingSteers(runErr)
+	s.steers.close(runErr)
 
 	s.done = true
 	s.result = result
@@ -811,4 +841,48 @@ func (s *agentStream[T]) finish(result *RunResult[T], runErr error) {
 			}
 		}
 	})
+}
+
+func (s *agentStream[T]) queueSteersForNextRequest(terminal bool) (bool, error) {
+	steers := s.steers.take(terminal)
+	if len(steers) == 0 {
+		return false, nil
+	}
+	if err := s.steers.prepared(steers); err != nil {
+		return false, fmt.Errorf("prepare steer consumption: %w", err)
+	}
+	parts := make([]ModelRequestPart, 0, len(steers))
+	for _, message := range steers {
+		parts = append(parts, UserPromptPart{
+			Content:   message.Text,
+			Timestamp: message.QueuedAt,
+		})
+	}
+	s.state.messages = append(s.state.messages, ModelRequest{
+		Parts:     parts,
+		Timestamp: time.Now(),
+	})
+	s.pendingSteers = append(s.pendingSteers, steers...)
+	return true, nil
+}
+
+func (s *agentStream[T]) acknowledgePendingSteers() error {
+	if len(s.pendingSteers) == 0 {
+		return nil
+	}
+	messages := append([]SteerMessage(nil), s.pendingSteers...)
+	s.pendingSteers = nil
+	return s.steers.consumed(messages)
+}
+
+func (s *agentStream[T]) rejectPendingSteers(reason error) {
+	if len(s.pendingSteers) == 0 {
+		return
+	}
+	if reason == nil {
+		reason = ErrSteerQueueClosed
+	}
+	messages := append([]SteerMessage(nil), s.pendingSteers...)
+	s.pendingSteers = nil
+	s.steers.reject(messages, reason)
 }

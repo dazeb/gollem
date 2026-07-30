@@ -90,6 +90,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "turn/retry", Surface: SurfaceGollemExtension, Params: []string{"TurnRunRetryParams"}, Result: []string{"TurnRunRetryResult"}},
 	{Method: "turn/start", Surface: SurfaceClientRequest, Params: []string{"TurnRunStartParams"}, Result: []string{"TurnRunStartResult"}},
 	{Method: "turn/started", Surface: SurfaceServerNotification, Params: []string{"RuntimeTurnNotification"}},
+	{Method: "turn/steer", Surface: SurfaceClientRequest, Params: []string{"TurnSteerParams"}, Result: []string{"TurnSteerResponse"}},
 }
 
 var itemPayloadBindings = []ItemPayloadBinding{

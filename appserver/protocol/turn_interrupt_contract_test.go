@@ -122,8 +122,8 @@ func TestTurnInterruptContractsRemainStandalone(t *testing.T) {
 	if got := len(JSONSchema()["$defs"].(Schema)); got != 558 {
 		t.Fatalf("definition count = %d, want 558", got)
 	}
-	if got := len(WireTypeBindings()); got != 73 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 73/5", got, len(ItemPayloadBindings()))
+	if got := len(WireTypeBindings()); got != 74 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 74/5", got, len(ItemPayloadBindings()))
 	}
 }
 

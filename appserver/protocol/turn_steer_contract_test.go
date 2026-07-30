@@ -150,17 +150,25 @@ func TestTurnSteerResponseWireContract(t *testing.T) {
 	}
 }
 
-func TestTurnSteerContractsRemainStandalone(t *testing.T) {
+func TestTurnSteerContractsAreBoundToLiveRuntime(t *testing.T) {
+	found := false
 	for _, binding := range WireTypeBindings() {
 		if binding.Method == "turn/steer" {
-			t.Fatalf("turn/steer unexpectedly bound: %#v", binding)
+			found = true
+			if !slices.Equal(binding.Params, []string{"TurnSteerParams"}) ||
+				!slices.Equal(binding.Result, []string{"TurnSteerResponse"}) {
+				t.Fatalf("turn/steer binding = %#v", binding)
+			}
 		}
+	}
+	if !found {
+		t.Fatal("turn/steer runtime binding missing")
 	}
 	if got := len(JSONSchema()["$defs"].(Schema)); got != 558 {
 		t.Fatalf("definition count = %d, want 558", got)
 	}
-	if got := len(WireTypeBindings()); got != 73 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 73/5", got, len(ItemPayloadBindings()))
+	if got := len(WireTypeBindings()); got != 74 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 74/5", got, len(ItemPayloadBindings()))
 	}
 }
 

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +21,32 @@ type turnStartupFailureStore struct {
 	appendErr error
 	startErr  error
 	updateErr error
+}
+
+type failNextRuntimeItemListStore struct {
+	store.Store
+	mu       sync.Mutex
+	failNext bool
+}
+
+func (s *failNextRuntimeItemListStore) arm() {
+	s.mu.Lock()
+	s.failNext = true
+	s.mu.Unlock()
+}
+
+func (s *failNextRuntimeItemListStore) ListItems(
+	ctx context.Context,
+	filter store.ItemFilter,
+) ([]*store.Item, error) {
+	s.mu.Lock()
+	fail := s.failNext
+	s.failNext = false
+	s.mu.Unlock()
+	if fail {
+		return nil, errors.New("item boundary unavailable")
+	}
+	return s.Store.ListItems(ctx, filter)
 }
 
 func (s turnStartupFailureStore) AppendItem(
@@ -1063,13 +1091,13 @@ func TestRuntimeShutdownRejectsNewStarts(t *testing.T) {
 	}
 }
 
-func TestServerRuntimeTurnSteerRecordsActiveMessage(t *testing.T) {
+func TestServerRuntimeTurnSteerIsConsumedAndCompleted(t *testing.T) {
 	ctx := context.Background()
 	st := newRuntimeTestStore(t)
-	model := &blockingRuntimeModel{started: make(chan struct{})}
+	model := newSteerRuntimeModel()
 	server := readyServer(
 		WithStore(st),
-		WithRuntimeService(NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "blocking"}))),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(model, RuntimeModelInfo{ProviderID: "test", Model: "steer"}))),
 	)
 
 	startResp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "block"}))
@@ -1080,29 +1108,532 @@ func TestServerRuntimeTurnSteerRecordsActiveMessage(t *testing.T) {
 		Turn *store.Turn `json:"turn"`
 	}
 	decodeResult(t, startResp, &started)
-	waitForBlockingModel(t, model)
+	model.waitStarted(t)
 
 	steerResp := server.HandleRequest(ctx, request("turn/steer", map[string]any{
-		"turnId":  started.Turn.ID,
-		"message": "adjust course",
+		"threadId":            started.Turn.ThreadID,
+		"expectedTurnId":      started.Turn.ID,
+		"clientUserMessageId": "steer-client-1",
+		"input": []map[string]any{{
+			"type":          "text",
+			"text":          "adjust course",
+			"text_elements": []any{},
+		}},
 	}))
 	if steerResp.Error != nil {
 		t.Fatalf("turn/steer error: %v", steerResp.Error)
 	}
 	var steer struct {
-		Accepted bool        `json:"accepted"`
-		Item     *store.Item `json:"item"`
+		TurnID string `json:"turnId"`
 	}
 	decodeResult(t, steerResp, &steer)
-	if !steer.Accepted || steer.Item == nil || steer.Item.Kind != "steer" || steer.Item.Status != "queued" {
+	if steer.TurnID != started.Turn.ID {
 		t.Fatalf("turn/steer result = %#v", steer)
 	}
+	model.releaseFirst()
+	notifications := waitForNotificationSet(t, server, "turn/completed")
+	assertRuntimeSteerNotificationOrder(t, notifications)
+	assertRuntimeSteerDeltaBoundary(t, notifications)
 
-	interruptResp := server.HandleRequest(ctx, request("turn/interrupt", map[string]any{"turnId": started.Turn.ID}))
-	if interruptResp.Error != nil {
-		t.Fatalf("turn/interrupt error: %v", interruptResp.Error)
+	calls := model.callsSnapshot()
+	if len(calls) != 2 || !runtimeMessagesContainText(calls[1], "adjust course") {
+		t.Fatalf("model calls = %#v, want consumed steer in second request", calls)
+	}
+	readResp := server.HandleRequest(ctx, request("thread/read", map[string]any{
+		"threadId": started.Turn.ThreadID,
+	}))
+	if readResp.Error != nil {
+		t.Fatalf("thread/read error: %v", readResp.Error)
+	}
+	var read protocol.ThreadReadResult
+	decodeResult(t, readResp, &read)
+	var steerItem *protocol.TimelineItem
+	for i := range read.Items {
+		if read.Items[i].Kind == runtimeSteerItemKind {
+			steerItem = &read.Items[i]
+		}
+	}
+	if steerItem == nil || steerItem.Status != runtimeSteerStatusComplete {
+		t.Fatalf("public steer item = %#v, want completed", steerItem)
+	}
+	var payload struct {
+		ClientUserMessageID string     `json:"clientUserMessageId"`
+		Status              string     `json:"status"`
+		ConsumedAfterSeq    int64      `json:"consumedAfterSeq"`
+		ConsumedAt          *time.Time `json:"consumedAt"`
+	}
+	if err := json.Unmarshal(steerItem.Payload, &payload); err != nil {
+		t.Fatalf("decode public steer payload: %v", err)
+	}
+	if payload.ClientUserMessageID != "steer-client-1" ||
+		payload.Status != runtimeSteerStatusComplete ||
+		payload.ConsumedAfterSeq <= 0 ||
+		payload.ConsumedAt == nil {
+		t.Fatalf("steer payload = %#v", payload)
+	}
+}
+
+func TestServerRuntimeTurnSteerRejectsMismatchedUnsupportedAndOversizedInput(t *testing.T) {
+	ctx, st, server, model, turn := startSteerRuntimeTest(t)
+	cases := []struct {
+		name   string
+		params map[string]any
+	}{
+		{
+			name: "mismatched thread",
+			params: runtimeSteerTestParams(
+				"wrong-thread", turn.ID, "mismatch-thread", "do not enqueue",
+			),
+		},
+		{
+			name: "mismatched turn",
+			params: runtimeSteerTestParams(
+				turn.ThreadID, "wrong-turn", "mismatch-turn", "do not enqueue",
+			),
+		},
+		{
+			name: "unsupported image input",
+			params: map[string]any{
+				"threadId":            turn.ThreadID,
+				"expectedTurnId":      turn.ID,
+				"clientUserMessageId": "unsupported-image",
+				"input": []map[string]any{{
+					"type": "image",
+					"url":  "image.png",
+				}},
+			},
+		},
+		{
+			name: "oversized message",
+			params: runtimeSteerTestParams(
+				turn.ThreadID, turn.ID, "oversized-message",
+				strings.Repeat("x", runtimeSteerMessageMaxSize+1),
+			),
+		},
+		{
+			name: "oversized client ID",
+			params: runtimeSteerTestParams(
+				turn.ThreadID, turn.ID,
+				strings.Repeat("x", runtimeSteerIDMaxSize+1), "do not enqueue",
+			),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := server.HandleRequest(ctx, request("turn/steer", tc.params))
+			if resp.Error == nil || resp.Error.Code != protocol.CodeInvalidParams {
+				t.Fatalf("turn/steer error = %#v, want invalid params", resp.Error)
+			}
+		})
+	}
+
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: turn.ThreadID, TurnID: turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	for _, item := range items {
+		if item.Kind == runtimeSteerItemKind {
+			t.Fatalf("rejected steer persisted item %#v", item)
+		}
+	}
+	if interrupt := server.HandleRequest(ctx, request("turn/interrupt", map[string]any{"turnId": turn.ID})); interrupt.Error != nil {
+		t.Fatalf("turn/interrupt error: %v", interrupt.Error)
 	}
 	waitForNotificationSet(t, server, "turn/completed")
+	if got := len(model.callsSnapshot()); got != 1 {
+		t.Fatalf("model calls = %d, want only initial request", got)
+	}
+}
+
+func TestServerRuntimeTurnSteerIsIdempotentWhileActive(t *testing.T) {
+	ctx, st, server, model, turn := startSteerRuntimeTest(t)
+	params := runtimeSteerTestParams(
+		turn.ThreadID, turn.ID, "stable-client-message", "adjust once",
+	)
+	for attempt := 1; attempt <= 2; attempt++ {
+		resp := server.HandleRequest(ctx, request("turn/steer", params))
+		if resp.Error != nil {
+			t.Fatalf("turn/steer attempt %d error: %v", attempt, resp.Error)
+		}
+		var result protocol.TurnSteerResponse
+		decodeResult(t, resp, &result)
+		if result.TurnID != turn.ID {
+			t.Fatalf("turn/steer attempt %d result = %#v", attempt, result)
+		}
+	}
+	conflict := server.HandleRequest(ctx, request("turn/steer", runtimeSteerTestParams(
+		turn.ThreadID, turn.ID, "stable-client-message", "different instruction",
+	)))
+	if conflict.Error == nil || conflict.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("conflicting turn/steer error = %#v, want invalid params", conflict.Error)
+	}
+
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: turn.ThreadID, TurnID: turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems before consume: %v", err)
+	}
+	if got := runtimeSteerItemCount(items); got != 1 {
+		t.Fatalf("steer items before consume = %d, want 1", got)
+	}
+
+	model.releaseFirst()
+	waitForNotificationSet(t, server, "turn/completed")
+	calls := model.callsSnapshot()
+	if len(calls) != 2 || runtimeMessageTextCount(calls[1], "adjust once") != 1 {
+		t.Fatalf("model calls = %#v, want one idempotent steer in second request", calls)
+	}
+	items, err = st.ListItems(ctx, store.ItemFilter{ThreadID: turn.ThreadID, TurnID: turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems after consume: %v", err)
+	}
+	if got := runtimeSteerItemCount(items); got != 1 {
+		t.Fatalf("steer items after consume = %d, want 1", got)
+	}
+}
+
+func TestServerRuntimeTurnSteerQueueCapacityIsDurableAndIdempotent(t *testing.T) {
+	ctx, st, server, _, turn := startSteerRuntimeTest(t)
+	for i := range core.SteerQueueMaxPending {
+		resp := server.HandleRequest(ctx, request("turn/steer", runtimeSteerTestParams(
+			turn.ThreadID,
+			turn.ID,
+			"capacity-"+strings.Repeat("x", i+1),
+			"queued instruction",
+		)))
+		if resp.Error != nil {
+			t.Fatalf("turn/steer %d error: %v", i, resp.Error)
+		}
+	}
+	overflow := runtimeSteerTestParams(
+		turn.ThreadID, turn.ID, "capacity-overflow", "overflow instruction",
+	)
+	for attempt := 1; attempt <= 2; attempt++ {
+		resp := server.HandleRequest(ctx, request("turn/steer", overflow))
+		if resp.Error == nil || resp.Error.Code != protocol.CodeOverloaded {
+			t.Fatalf("overflow attempt %d error = %#v, want overloaded", attempt, resp.Error)
+		}
+	}
+
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: turn.ThreadID, TurnID: turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if got := runtimeSteerItemCount(items); got != core.SteerQueueMaxPending+1 {
+		t.Fatalf("steer items = %d, want %d", got, core.SteerQueueMaxPending+1)
+	}
+	foundOverflow := false
+	for _, item := range items {
+		if item.Kind != runtimeSteerItemKind {
+			continue
+		}
+		var payload runtimeSteerPayload
+		if err := json.Unmarshal(item.Payload, &payload); err != nil {
+			t.Fatalf("decode steer payload: %v", err)
+		}
+		if payload.ClientUserMessageID == "capacity-overflow" {
+			foundOverflow = true
+			if item.Status != runtimeSteerStatusFailed ||
+				payload.Status != runtimeSteerStatusFailed ||
+				!strings.Contains(payload.Error, core.ErrSteerQueueFull.Error()) {
+				t.Fatalf("overflow item = %#v, payload = %#v", item, payload)
+			}
+		}
+	}
+	if !foundOverflow {
+		t.Fatal("durable overflow steer item not found")
+	}
+	if interrupt := server.HandleRequest(ctx, request("turn/interrupt", map[string]any{"turnId": turn.ID})); interrupt.Error != nil {
+		t.Fatalf("turn/interrupt error: %v", interrupt.Error)
+	}
+	waitForNotificationSet(t, server, "turn/completed")
+}
+
+func TestServerRuntimeTurnSteerFailsWhenInterruptedBeforeConsumption(t *testing.T) {
+	ctx, st, server, model, turn := startSteerRuntimeTest(t)
+	resp := server.HandleRequest(ctx, request("turn/steer", runtimeSteerTestParams(
+		turn.ThreadID, turn.ID, "interrupt-client-message", "never consume",
+	)))
+	if resp.Error != nil {
+		t.Fatalf("turn/steer error: %v", resp.Error)
+	}
+	if interrupt := server.HandleRequest(ctx, request("turn/interrupt", map[string]any{"turnId": turn.ID})); interrupt.Error != nil {
+		t.Fatalf("turn/interrupt error: %v", interrupt.Error)
+	}
+	notifications := waitForNotificationSet(t, server, "turn/completed")
+	assertRuntimeSteerNotificationOrder(t, notifications)
+
+	if got := len(model.callsSnapshot()); got != 1 {
+		t.Fatalf("model calls = %d, want no request containing interrupted steer", got)
+	}
+	items, err := st.ListItems(ctx, store.ItemFilter{ThreadID: turn.ThreadID, TurnID: turn.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	var steerItem *store.Item
+	for _, item := range items {
+		if item.Kind == runtimeSteerItemKind {
+			steerItem = item
+			break
+		}
+	}
+	if steerItem == nil || steerItem.Status != runtimeSteerStatusFailed {
+		t.Fatalf("steer item = %#v, want failed", steerItem)
+	}
+	var payload runtimeSteerPayload
+	if err := json.Unmarshal(steerItem.Payload, &payload); err != nil {
+		t.Fatalf("decode steer payload: %v", err)
+	}
+	if payload.Status != runtimeSteerStatusFailed ||
+		payload.FailedAt == nil ||
+		payload.ConsumedAt != nil ||
+		payload.Error == "" {
+		t.Fatalf("steer payload = %#v, want rejected before consumption", payload)
+	}
+}
+
+func TestServerRuntimeTurnSteerFailsWhenModelFactoryCannotStart(t *testing.T) {
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	factoryStarted := make(chan struct{})
+	releaseFactory := make(chan struct{})
+	runtimeSvc := NewRuntimeService(WithRuntimeModelFactory(func(
+		context.Context,
+		RuntimeModelSelection,
+	) (core.Model, RuntimeModelInfo, error) {
+		close(factoryStarted)
+		<-releaseFactory
+		return nil, RuntimeModelInfo{ProviderID: "unavailable"}, errors.New("model factory unavailable")
+	}))
+	server := readyServer(WithStore(st), WithRuntimeService(runtimeSvc))
+	startResp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "wait for factory"}))
+	if startResp.Error != nil {
+		t.Fatalf("thread/start error: %v", startResp.Error)
+	}
+	var started struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, startResp, &started)
+	select {
+	case <-factoryStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("model factory did not start")
+	}
+
+	steerResp := server.HandleRequest(ctx, request("turn/steer", runtimeSteerTestParams(
+		started.Turn.ThreadID, started.Turn.ID, "factory-failure", "cannot consume",
+	)))
+	if steerResp.Error != nil {
+		t.Fatalf("turn/steer error: %v", steerResp.Error)
+	}
+	close(releaseFactory)
+	notifications := waitForNotificationSet(t, server, "turn/completed")
+	assertRuntimeSteerNotificationOrder(t, notifications)
+
+	items, err := st.ListItems(ctx, store.ItemFilter{
+		ThreadID: started.Turn.ThreadID,
+		TurnID:   started.Turn.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	for _, item := range items {
+		if item.Kind != runtimeSteerItemKind {
+			continue
+		}
+		if item.Status != runtimeSteerStatusFailed {
+			t.Fatalf("steer item status = %q, want failed", item.Status)
+		}
+		var payload runtimeSteerPayload
+		if err := json.Unmarshal(item.Payload, &payload); err != nil {
+			t.Fatalf("decode steer payload: %v", err)
+		}
+		if payload.FailedAt == nil || payload.ConsumedAt != nil || !strings.Contains(payload.Error, "model factory unavailable") {
+			t.Fatalf("steer payload = %#v", payload)
+		}
+		return
+	}
+	t.Fatal("steer item not found")
+}
+
+func TestServerRuntimeTurnSteerFailsClosedWhenConsumptionBoundaryCannotPersist(t *testing.T) {
+	ctx := context.Background()
+	base := newRuntimeTestStore(t)
+	failing := &failNextRuntimeItemListStore{Store: base}
+	model := newSteerRuntimeModel()
+	server := readyServer(
+		WithStore(failing),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(
+			model,
+			RuntimeModelInfo{ProviderID: "test", Model: "steer"},
+		))),
+	)
+	startResp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "block"}))
+	if startResp.Error != nil {
+		t.Fatalf("thread/start error: %v", startResp.Error)
+	}
+	var started struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, startResp, &started)
+	model.waitStarted(t)
+	steerResp := server.HandleRequest(ctx, request("turn/steer", runtimeSteerTestParams(
+		started.Turn.ThreadID, started.Turn.ID, "boundary-failure", "fail closed",
+	)))
+	if steerResp.Error != nil {
+		t.Fatalf("turn/steer error: %v", steerResp.Error)
+	}
+
+	failing.arm()
+	model.releaseFirst()
+	waitForNotificationSet(t, server, "turn/completed")
+	turn, err := base.GetTurn(ctx, started.Turn.ID)
+	if err != nil {
+		t.Fatalf("GetTurn: %v", err)
+	}
+	if turn.Status != store.TurnFailed || !strings.Contains(turn.Error, "item boundary unavailable") {
+		t.Fatalf("turn = %#v, want failed consumption acknowledgement", turn)
+	}
+	items, err := base.ListItems(ctx, store.ItemFilter{
+		ThreadID: started.Turn.ThreadID,
+		TurnID:   started.Turn.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	for _, item := range items {
+		if item.Kind != runtimeSteerItemKind {
+			continue
+		}
+		var payload runtimeSteerPayload
+		if err := json.Unmarshal(item.Payload, &payload); err != nil {
+			t.Fatalf("decode steer payload: %v", err)
+		}
+		if item.Status != runtimeSteerStatusFailed ||
+			payload.Status != runtimeSteerStatusFailed ||
+			payload.ConsumedAfterSeq != 0 ||
+			payload.ConsumedAt != nil ||
+			payload.FailedAt == nil {
+			t.Fatalf("failed steer item = %#v, payload = %#v", item, payload)
+		}
+		return
+	}
+	t.Fatal("steer item not found")
+}
+
+func startSteerRuntimeTest(
+	t *testing.T,
+) (context.Context, *store.SQLiteStore, *Server, *steerRuntimeModel, *store.Turn) {
+	t.Helper()
+	ctx := context.Background()
+	st := newRuntimeTestStore(t)
+	model := newSteerRuntimeModel()
+	server := readyServer(
+		WithStore(st),
+		WithRuntimeService(NewRuntimeService(WithRuntimeModel(
+			model,
+			RuntimeModelInfo{ProviderID: "test", Model: "steer"},
+		))),
+	)
+	startResp := server.HandleRequest(ctx, request("thread/start", map[string]any{"prompt": "block"}))
+	if startResp.Error != nil {
+		t.Fatalf("thread/start error: %v", startResp.Error)
+	}
+	var started struct {
+		Turn *store.Turn `json:"turn"`
+	}
+	decodeResult(t, startResp, &started)
+	model.waitStarted(t)
+	return ctx, st, server, model, started.Turn
+}
+
+func runtimeSteerTestParams(threadID, turnID, clientID, message string) map[string]any {
+	return map[string]any{
+		"threadId":            threadID,
+		"expectedTurnId":      turnID,
+		"clientUserMessageId": clientID,
+		"input": []map[string]any{{
+			"type":          "text",
+			"text":          message,
+			"text_elements": []any{},
+		}},
+	}
+}
+
+func runtimeSteerItemCount(items []*store.Item) int {
+	count := 0
+	for _, item := range items {
+		if item != nil && item.Kind == runtimeSteerItemKind {
+			count++
+		}
+	}
+	return count
+}
+
+func assertRuntimeSteerNotificationOrder(t *testing.T, notifications []protocol.Notification) {
+	t.Helper()
+	started := -1
+	completed := -1
+	for i, notification := range notifications {
+		if notification.Method != "item/started" && notification.Method != "item/completed" {
+			continue
+		}
+		var params runtimeItemNotificationParams
+		if err := json.Unmarshal(notification.Params, &params); err != nil {
+			t.Fatalf("decode %s: %v", notification.Method, err)
+		}
+		if params.Item == nil || params.Item.Kind != runtimeSteerItemKind {
+			continue
+		}
+		switch notification.Method {
+		case "item/started":
+			started = i
+		case "item/completed":
+			completed = i
+		}
+	}
+	if started < 0 || completed < 0 || started >= completed {
+		t.Fatalf("steer lifecycle order = started:%d completed:%d in %v", started, completed, notificationMethods(notifications))
+	}
+}
+
+func assertRuntimeSteerDeltaBoundary(t *testing.T, notifications []protocol.Notification) {
+	t.Helper()
+	firstDelta := -1
+	completed := -1
+	secondDelta := -1
+	for i, notification := range notifications {
+		switch notification.Method {
+		case "item/agentMessage/delta":
+			var params runtimeDeltaNotificationParams
+			if err := json.Unmarshal(notification.Params, &params); err != nil {
+				t.Fatalf("decode agent-message delta: %v", err)
+			}
+			switch params.Delta {
+			case "first answer":
+				firstDelta = i
+			case "steered answer":
+				secondDelta = i
+			}
+		case "item/completed":
+			var params runtimeItemNotificationParams
+			if err := json.Unmarshal(notification.Params, &params); err != nil {
+				t.Fatalf("decode item/completed: %v", err)
+			}
+			if params.Item != nil && params.Item.Kind == runtimeSteerItemKind {
+				completed = i
+			}
+		}
+	}
+	if firstDelta < 0 || completed < 0 || secondDelta < 0 ||
+		firstDelta >= completed || completed >= secondDelta {
+		t.Fatalf(
+			"steer delta boundary = first:%d completed:%d second:%d in %v",
+			firstDelta,
+			completed,
+			secondDelta,
+			notificationMethods(notifications),
+		)
+	}
 }
 
 func newRuntimeTestStore(t *testing.T) *store.SQLiteStore {
@@ -1314,3 +1845,160 @@ func waitForBlockingModel(t *testing.T, model *blockingRuntimeModel) {
 		t.Fatal("blocking model did not start")
 	}
 }
+
+type steerRuntimeModel struct {
+	mu      sync.Mutex
+	calls   [][]core.ModelMessage
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newSteerRuntimeModel() *steerRuntimeModel {
+	return &steerRuntimeModel{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (m *steerRuntimeModel) Request(
+	context.Context,
+	[]core.ModelMessage,
+	*core.ModelSettings,
+	*core.ModelRequestParameters,
+) (*core.ModelResponse, error) {
+	return nil, errors.New("streaming required")
+}
+
+func (m *steerRuntimeModel) RequestStream(
+	ctx context.Context,
+	messages []core.ModelMessage,
+	_ *core.ModelSettings,
+	_ *core.ModelRequestParameters,
+) (core.StreamedResponse, error) {
+	m.mu.Lock()
+	call := append([]core.ModelMessage(nil), messages...)
+	m.calls = append(m.calls, call)
+	index := len(m.calls)
+	m.mu.Unlock()
+	if index == 1 {
+		m.once.Do(func() { close(m.started) })
+		return &gatedRuntimeStream{
+			ctx:      ctx,
+			release:  m.release,
+			response: core.TextResponse("first answer"),
+		}, nil
+	}
+	return newRuntimeResponseStream(core.TextResponse("steered answer")), nil
+}
+
+func (*steerRuntimeModel) ModelName() string { return "steer" }
+
+func (m *steerRuntimeModel) waitStarted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-m.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("steer model did not start")
+	}
+}
+
+func (m *steerRuntimeModel) releaseFirst() {
+	close(m.release)
+}
+
+func (m *steerRuntimeModel) callsSnapshot() [][]core.ModelMessage {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([][]core.ModelMessage, len(m.calls))
+	for i := range m.calls {
+		out[i] = append([]core.ModelMessage(nil), m.calls[i]...)
+	}
+	return out
+}
+
+func runtimeMessagesContainText(messages []core.ModelMessage, want string) bool {
+	return runtimeMessageTextCount(messages, want) > 0
+}
+
+func runtimeMessageTextCount(messages []core.ModelMessage, want string) int {
+	count := 0
+	for _, message := range messages {
+		request, ok := message.(core.ModelRequest)
+		if !ok {
+			continue
+		}
+		for _, part := range request.Parts {
+			if prompt, ok := part.(core.UserPromptPart); ok && prompt.Content == want {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+type gatedRuntimeStream struct {
+	ctx      context.Context
+	release  <-chan struct{}
+	response *core.ModelResponse
+	inner    core.StreamedResponse
+}
+
+func (s *gatedRuntimeStream) Next() (core.ModelResponseStreamEvent, error) {
+	if s.inner == nil {
+		select {
+		case <-s.ctx.Done():
+			return nil, s.ctx.Err()
+		case <-s.release:
+			s.inner = newRuntimeResponseStream(s.response)
+		}
+	}
+	return s.inner.Next()
+}
+
+func (s *gatedRuntimeStream) Response() *core.ModelResponse {
+	if s.inner == nil {
+		return s.response
+	}
+	return s.inner.Response()
+}
+
+func (s *gatedRuntimeStream) Usage() core.Usage {
+	if s.inner == nil {
+		return s.response.Usage
+	}
+	return s.inner.Usage()
+}
+
+func (s *gatedRuntimeStream) Close() error {
+	if s.inner != nil {
+		return s.inner.Close()
+	}
+	return nil
+}
+
+func newRuntimeResponseStream(response *core.ModelResponse) core.StreamedResponse {
+	return &runtimeResponseStream{response: response}
+}
+
+type runtimeResponseStream struct {
+	response *core.ModelResponse
+	phase    int
+}
+
+func (s *runtimeResponseStream) Next() (core.ModelResponseStreamEvent, error) {
+	switch s.phase {
+	case 0:
+		s.phase++
+		return core.PartStartEvent{Index: 0, Part: s.response.Parts[0]}, nil
+	case 1:
+		s.phase++
+		return core.PartEndEvent{Index: 0}, nil
+	default:
+		return nil, io.EOF
+	}
+}
+
+func (s *runtimeResponseStream) Response() *core.ModelResponse { return s.response }
+func (s *runtimeResponseStream) Usage() core.Usage             { return s.response.Usage }
+func (s *runtimeResponseStream) Close() error                  { return nil }
