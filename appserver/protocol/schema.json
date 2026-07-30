@@ -13596,6 +13596,131 @@
         }
       ]
     },
+    "ReviewDelivery": {
+      "enum": [
+        "inline",
+        "detached"
+      ],
+      "type": "string"
+    },
+    "ReviewStartParams": {
+      "properties": {
+        "delivery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewDelivery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/ReviewTarget"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ReviewStartResponse": {
+      "properties": {
+        "reviewThreadId": {
+          "type": "string"
+        },
+        "turn": {
+          "$ref": "#/$defs/Turn"
+        }
+      },
+      "required": [
+        "reviewThreadId",
+        "turn"
+      ],
+      "type": "object"
+    },
+    "ReviewTarget": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "uncommittedChanges"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "baseBranch"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "branch",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "sha": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "commit"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "sha",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "instructions": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "custom"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "instructions",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "RuntimeDeltaNotification": {
       "additionalProperties": false,
       "properties": {

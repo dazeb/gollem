@@ -507,6 +507,31 @@ func MarshalTypeScript() ([]byte, error) {
 			schema["x-gollem-typescript-ignore-additional-properties"] = true
 			definition = schema
 		}
+		if name == "ReviewTarget" {
+			// ts-rs requires the nullable commit title even though serde accepts
+			// its omission. Keep that render-only distinction out of JSON Schema.
+			schema, _ := typeScriptSchema(definition)
+			for _, rawVariant := range schema["oneOf"].([]any) {
+				variant := rawVariant.(Schema)
+				variant["x-gollem-typescript-ignore-additional-properties"] = true
+				properties := variant["properties"].(Schema)
+				tag := properties["type"].(Schema)["enum"].([]any)[0]
+				if tag == "commit" {
+					variant["required"] = []string{"sha", "title", "type"}
+					properties["title"] = Schema{"anyOf": []any{
+						Schema{"type": "string"}, Schema{"type": "null"},
+					}}
+				}
+			}
+			definition = schema
+		}
+		if name == "ReviewStartParams" || name == "ReviewStartResponse" {
+			// The source schema permits forward-compatible fields, while ts-rs
+			// renders these public records as closed object literals.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = schema
+		}
 		switch name {
 		case "PermissionProfileListParams":
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
