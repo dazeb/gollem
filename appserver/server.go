@@ -1296,7 +1296,9 @@ func (s *Server) handleBackgroundTerminalTerminate(ctx context.Context, raw json
 	if err := processSvc.Terminate(ctx, id); err != nil {
 		return nil, mapError("thread/backgroundTerminals/terminate", err)
 	}
-	snapshot, err := processSvc.Snapshot(ctx, id)
+	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	snapshot, err := processSvc.Wait(waitCtx, id)
 	if err != nil {
 		return nil, mapError("thread/backgroundTerminals/terminate", err)
 	}
