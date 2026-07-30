@@ -80,6 +80,12 @@ still contains `ThreadRecord`; exact standalone `ThreadUnarchiveResponse`
 contains public `Thread` and remains unbound until the runtime thread/turn/item
 model converges.
 
+Archive and soft-delete are rejected while the target thread has a queued or
+running turn. The check and lifecycle mutation share one store transaction, and
+archived threads cannot create or start turns until `thread/unarchive`
+completes. This prevents lifecycle changes from racing execution across daemon
+clients; set-name remains available because it does not change run ownership.
+
 ## Version 1 Thread Goals
 
 `thread/goal/get`, `thread/goal/set`, and `thread/goal/clear` use the public

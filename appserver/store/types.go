@@ -31,6 +31,7 @@ var (
 	ErrItemNotFound                        = errors.New("appserver/store: item not found")
 	ErrFileChangeRecoveryNotFound          = errors.New("appserver/store: file-change recovery not found")
 	ErrThreadDeleted                       = errors.New("appserver/store: thread is deleted")
+	ErrThreadArchived                      = errors.New("appserver/store: thread is archived")
 	ErrStoreClosed                         = errors.New("appserver/store: store is closed")
 	ErrTurnNotTerminal                     = errors.New("appserver/store: turn is not terminal")
 	ErrRetryIdempotencyConflict            = errors.New("appserver/store: retry idempotency key is already bound to another turn")

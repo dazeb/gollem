@@ -279,6 +279,25 @@ func (s *SQLiteStore) setThreadStatus(ctx context.Context, id string, status Thr
 		if loaded.Status == ThreadDeleted && status != ThreadDeleted {
 			return ErrThreadDeleted
 		}
+		if status == ThreadArchived || status == ThreadDeleted {
+			var active int
+			err = tx.QueryRowContext(
+				ctx,
+				`SELECT 1
+				 FROM app_turns
+				 WHERE thread_id = ? AND status IN (?, ?)
+				 LIMIT 1`,
+				loaded.ID,
+				TurnQueued,
+				TurnRunning,
+			).Scan(&active)
+			switch {
+			case err == nil:
+				return ErrThreadHasActiveTurn
+			case !errors.Is(err, sql.ErrNoRows):
+				return fmt.Errorf("check active turns before thread lifecycle change: %w", err)
+			}
+		}
 		now := time.Now().UTC()
 		loaded.Status = status
 		loaded.UpdatedAt = now
@@ -528,8 +547,11 @@ func (s *SQLiteStore) CreateTurn(ctx context.Context, req CreateTurnRequest) (*T
 		if err != nil {
 			return err
 		}
-		if thread.Status == ThreadDeleted {
+		switch thread.Status {
+		case ThreadDeleted:
 			return ErrThreadDeleted
+		case ThreadArchived:
+			return ErrThreadArchived
 		}
 		now := time.Now().UTC()
 		turn = &Turn{
@@ -564,8 +586,11 @@ func (s *SQLiteStore) StartTurn(ctx context.Context, id string) (*Turn, error) {
 		if err != nil {
 			return err
 		}
-		if thread.Status == ThreadDeleted {
+		switch thread.Status {
+		case ThreadDeleted:
 			return ErrThreadDeleted
+		case ThreadArchived:
+			return ErrThreadArchived
 		}
 		now := time.Now().UTC()
 		loaded.Status = TurnRunning

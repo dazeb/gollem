@@ -125,6 +125,12 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	if _, err := st.AppendItem(ctx, store.AppendItemRequest{ThreadID: thread.ID, TurnID: turn.ID, Kind: "message", Payload: json.RawMessage(`{"text":"hi"}`)}); err != nil {
 		t.Fatalf("AppendItem: %v", err)
 	}
+	if _, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{
+		ID:     turn.ID,
+		Status: store.TurnCompleted,
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
 
 	server := readyServer(WithStore(st))
 	listResp := server.HandleRequest(ctx, request("thread/list", nil))

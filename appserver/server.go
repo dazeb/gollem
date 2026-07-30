@@ -946,6 +946,22 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 		return nil, invalidParams("unsupported thread status", nil)
 	}
 	if err != nil {
+		if errors.Is(err, store.ErrThreadHasActiveTurn) {
+			switch status {
+			case store.ThreadArchived:
+				return nil, rpcError(
+					protocol.CodeInvalidRequest,
+					"cannot archive a thread while a turn is active",
+					nil,
+				)
+			case store.ThreadDeleted:
+				return nil, rpcError(
+					protocol.CodeInvalidRequest,
+					"cannot delete a thread while a turn is active",
+					nil,
+				)
+			}
+		}
 		return nil, mapError(method, err)
 	}
 	if status == store.ThreadDeleted {
@@ -2330,6 +2346,7 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, store.ErrItemNotFound),
 		errors.Is(err, store.ErrFileChangeRecoveryNotFound),
 		errors.Is(err, store.ErrThreadDeleted),
+		errors.Is(err, store.ErrThreadArchived),
 		errors.Is(err, store.ErrTurnNotTerminal),
 		errors.Is(err, store.ErrRetryIdempotencyConflict),
 		errors.Is(err, store.ErrThreadHasActiveTurn),
