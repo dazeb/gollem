@@ -189,6 +189,139 @@ func TestServerThreadStoreHandlers(t *testing.T) {
 	assertNotificationMethods(t, threadEvents, "thread/status/changed", "thread/archived")
 }
 
+func TestServerThreadForkTypedRequestIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	source, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Source"})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: source.ID})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := st.CompleteTurn(ctx, store.CompleteTurnRequest{
+		ID:     turn.ID,
+		Status: store.TurnCompleted,
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	if _, err := st.AppendItem(ctx, store.AppendItemRequest{
+		ThreadID: source.ID,
+		TurnID:   turn.ID,
+		Kind:     "message",
+		Status:   "completed",
+		Payload:  json.RawMessage(`{"text":"fork me"}`),
+	}); err != nil {
+		t.Fatalf("AppendItem: %v", err)
+	}
+
+	server := readyServer(WithStore(st))
+	params := map[string]any{
+		"threadId":       " \t" + source.ID + "\n",
+		"idempotencyKey": " fork-key ",
+	}
+	firstResponse := server.HandleRequest(ctx, request("thread/fork", params))
+	if firstResponse.Error != nil {
+		t.Fatalf("thread/fork first error: %v", firstResponse.Error)
+	}
+	var first protocol.ThreadHistoryForkResult
+	decodeResult(t, firstResponse, &first)
+	if first.Thread.ID == source.ID ||
+		first.Thread.ForkedFromThreadID != source.ID ||
+		first.SourceThreadID != source.ID ||
+		first.IdempotencyKey != "fork-key" ||
+		first.Reused ||
+		!first.HistoryCopied ||
+		first.FileChangeRecoveryTransferred {
+		t.Fatalf("first fork = %+v", first)
+	}
+	assertNotificationMethods(t, server.DrainNotifications(), "thread/started")
+
+	forkTurns, err := st.ListTurns(ctx, store.TurnFilter{ThreadID: first.Thread.ID})
+	if err != nil {
+		t.Fatalf("ListTurns: %v", err)
+	}
+	forkItems, err := st.ListItems(ctx, store.ItemFilter{ThreadID: first.Thread.ID})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(forkTurns) != 1 || len(forkItems) != 1 ||
+		forkTurns[0].ID == turn.ID || forkItems[0].TurnID != forkTurns[0].ID {
+		t.Fatalf("fork history turns=%+v items=%+v", forkTurns, forkItems)
+	}
+
+	secondResponse := server.HandleRequest(ctx, request("thread/fork", params))
+	if secondResponse.Error != nil {
+		t.Fatalf("thread/fork second error: %v", secondResponse.Error)
+	}
+	var second protocol.ThreadHistoryForkResult
+	decodeResult(t, secondResponse, &second)
+	if !second.Reused || second.Thread.ID != first.Thread.ID {
+		t.Fatalf("second fork = %+v, want reuse of %q", second, first.Thread.ID)
+	}
+	if notifications := server.DrainNotifications(); len(notifications) != 0 {
+		t.Fatalf("reused fork notifications = %+v, want none", notifications)
+	}
+
+	other, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Other"})
+	if err != nil {
+		t.Fatalf("CreateThread other: %v", err)
+	}
+	conflict := server.HandleRequest(ctx, request("thread/fork", map[string]any{
+		"threadId":       other.ID,
+		"idempotencyKey": "fork-key",
+	}))
+	if conflict.Error == nil || conflict.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("conflicting fork response = %+v, want invalid params", conflict)
+	}
+
+	activeSource, err := st.CreateThread(ctx, store.CreateThreadRequest{Title: "Active"})
+	if err != nil {
+		t.Fatalf("CreateThread active: %v", err)
+	}
+	if _, err := st.CreateTurn(ctx, store.CreateTurnRequest{ThreadID: activeSource.ID}); err != nil {
+		t.Fatalf("CreateTurn active: %v", err)
+	}
+	activeResponse := server.HandleRequest(ctx, request("thread/fork", map[string]any{
+		"threadId":       activeSource.ID,
+		"idempotencyKey": "active-key",
+	}))
+	if activeResponse.Error == nil || activeResponse.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("active fork response = %+v, want invalid params", activeResponse)
+	}
+
+	mixed := server.HandleRequest(ctx, request("thread/fork", map[string]any{
+		"threadId":       source.ID,
+		"idempotencyKey": "other-key",
+		"includeItems":   true,
+	}))
+	if mixed.Error == nil || mixed.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("mixed typed/legacy response = %+v, want invalid params", mixed)
+	}
+	for _, key := range []string{"", " \t\n"} {
+		invalid := server.HandleRequest(ctx, request("thread/fork", map[string]any{
+			"threadId":       source.ID,
+			"idempotencyKey": key,
+		}))
+		if invalid.Error == nil || invalid.Error.Code != protocol.CodeInvalidParams {
+			t.Fatalf("thread/fork key %q response = %+v, want invalid params", key, invalid)
+		}
+	}
+	blankSource := server.HandleRequest(ctx, request("thread/fork", map[string]any{
+		"threadId":       " \t\n",
+		"idempotencyKey": "blank-source",
+	}))
+	if blankSource.Error == nil || blankSource.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("blank source response = %+v, want invalid params", blankSource)
+	}
+}
+
 func TestServerThreadApproveGuardianDeniedActionDeferredStub(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewSQLiteStore(filepath.Join(t.TempDir(), "threads.db"))

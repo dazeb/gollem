@@ -855,6 +855,49 @@ func (s *Server) handleThreadFork(ctx context.Context, raw json.RawMessage) (any
 	if sourceID == "" {
 		return nil, invalidParams("sourceThreadId or threadId is required", nil)
 	}
+	if params.IdempotencyKey != nil {
+		sourceID = strings.TrimSpace(sourceID)
+		if sourceID == "" {
+			return nil, invalidParams("threadId is required", nil)
+		}
+		idempotencyKey := strings.TrimSpace(*params.IdempotencyKey)
+		if idempotencyKey == "" || len(idempotencyKey) > 256 {
+			return nil, invalidParams("idempotencyKey must contain 1 to 256 bytes", nil)
+		}
+		if params.SourceThreadID != "" || params.ID != "" || params.Title != "" ||
+			len(params.Metadata) > 0 || params.IncludeItems {
+			return nil, invalidParams(
+				"typed idempotent fork accepts only threadId and idempotencyKey",
+				nil,
+			)
+		}
+		recoveryStore, ok := st.(store.ThreadForkRecoveryStore)
+		if !ok {
+			return nil, protocol.MethodUnavailableErrorWithReason(
+				"thread/fork",
+				"configured store does not support response-loss-safe thread forks",
+			)
+		}
+		prepared, err := recoveryStore.PrepareThreadFork(ctx, store.PrepareThreadForkRequest{
+			SourceThreadID: sourceID,
+			IdempotencyKey: idempotencyKey,
+		})
+		if err != nil {
+			return nil, mapError("thread/fork", err)
+		}
+		s.markThreadLoaded(prepared.Thread)
+		if prepared.Created {
+			s.publishThreadNotification("thread/started", prepared.Thread)
+		}
+		return protocol.ThreadHistoryForkResult{
+			Thread:                        protocolThreadRecord(prepared.Thread),
+			SourceThreadID:                sourceID,
+			IdempotencyKey:                idempotencyKey,
+			Reused:                        !prepared.Created,
+			HistoryCopied:                 true,
+			FileChangeRecoveryTransferred: false,
+		}, nil
+	}
 	thread, err := st.ForkThread(ctx, store.ForkThreadRequest{
 		SourceThreadID: sourceID,
 		Title:          params.Title,
@@ -2289,6 +2332,8 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, store.ErrThreadDeleted),
 		errors.Is(err, store.ErrTurnNotTerminal),
 		errors.Is(err, store.ErrRetryIdempotencyConflict),
+		errors.Is(err, store.ErrThreadHasActiveTurn),
+		errors.Is(err, store.ErrThreadForkIdempotencyConflict),
 		errors.Is(err, store.ErrFileChangeRevertIdempotencyConflict),
 		errors.Is(err, ErrMemoryRootRequired),
 		errors.Is(err, ErrMemoryRootUnsafe),
@@ -2448,9 +2493,35 @@ type threadForkParams struct {
 	ID             string         `json:"id,omitempty"`
 	ThreadID       string         `json:"threadId,omitempty"`
 	SourceThreadID string         `json:"sourceThreadId,omitempty"`
+	IdempotencyKey *string        `json:"idempotencyKey,omitempty"`
 	Title          string         `json:"title,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	IncludeItems   bool           `json:"includeItems,omitempty"`
+}
+
+func (p *threadForkParams) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if _, typed := fields["idempotencyKey"]; typed {
+		var params protocol.ThreadHistoryForkParams
+		if err := json.Unmarshal(data, &params); err != nil {
+			return err
+		}
+		*p = threadForkParams{
+			ThreadID:       params.ThreadID,
+			IdempotencyKey: &params.IdempotencyKey,
+		}
+		return nil
+	}
+	type legacy threadForkParams
+	var params legacy
+	if err := json.Unmarshal(data, &params); err != nil {
+		return err
+	}
+	*p = threadForkParams(params)
+	return nil
 }
 
 type threadTurnsListParams struct {

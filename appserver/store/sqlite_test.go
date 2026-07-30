@@ -1221,6 +1221,98 @@ func TestSQLiteStoreForkCopiesThreadHistory(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorePrepareThreadForkIsDurableAndIdempotent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "appserver.db")
+	s := newTestSQLiteStore(t, path)
+
+	source, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Source"})
+	if err != nil {
+		t.Fatalf("CreateThread source: %v", err)
+	}
+	active, err := s.CreateTurn(ctx, CreateTurnRequest{
+		ThreadID: source.ID,
+		Input:    json.RawMessage(`{"prompt":"fork me"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateTurn: %v", err)
+	}
+	if _, err := s.PrepareThreadFork(ctx, PrepareThreadForkRequest{
+		SourceThreadID: source.ID,
+		IdempotencyKey: "fork-key",
+	}); !errors.Is(err, ErrThreadHasActiveTurn) {
+		t.Fatalf("active fork error = %v, want ErrThreadHasActiveTurn", err)
+	}
+	if _, err := s.CompleteTurn(ctx, CompleteTurnRequest{
+		ID:     active.ID,
+		Status: TurnCompleted,
+		Result: json.RawMessage(`{"text":"done"}`),
+	}); err != nil {
+		t.Fatalf("CompleteTurn: %v", err)
+	}
+	if _, err := s.AppendItem(ctx, AppendItemRequest{
+		ThreadID: source.ID,
+		TurnID:   active.ID,
+		Kind:     "message",
+		Status:   "completed",
+		Payload:  json.RawMessage(`{"text":"done"}`),
+	}); err != nil {
+		t.Fatalf("AppendItem: %v", err)
+	}
+
+	first, err := s.PrepareThreadFork(ctx, PrepareThreadForkRequest{
+		SourceThreadID: source.ID,
+		IdempotencyKey: "fork-key",
+	})
+	if err != nil {
+		t.Fatalf("PrepareThreadFork first: %v", err)
+	}
+	if !first.Created || first.Thread.ID == source.ID ||
+		first.Thread.ForkedFromThreadID != source.ID {
+		t.Fatalf("first fork = %+v", first)
+	}
+	second, err := s.PrepareThreadFork(ctx, PrepareThreadForkRequest{
+		SourceThreadID: source.ID,
+		IdempotencyKey: "fork-key",
+	})
+	if err != nil {
+		t.Fatalf("PrepareThreadFork second: %v", err)
+	}
+	if second.Created || second.Thread.ID != first.Thread.ID {
+		t.Fatalf("second fork = %+v, want reuse of %q", second, first.Thread.ID)
+	}
+
+	other, err := s.CreateThread(ctx, CreateThreadRequest{Title: "Other"})
+	if err != nil {
+		t.Fatalf("CreateThread other: %v", err)
+	}
+	if _, err := s.PrepareThreadFork(ctx, PrepareThreadForkRequest{
+		SourceThreadID: other.ID,
+		IdempotencyKey: "fork-key",
+	}); !errors.Is(err, ErrThreadForkIdempotencyConflict) {
+		t.Fatalf("conflicting fork error = %v, want ErrThreadForkIdempotencyConflict", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	third, err := reopened.PrepareThreadFork(ctx, PrepareThreadForkRequest{
+		SourceThreadID: source.ID,
+		IdempotencyKey: "fork-key",
+	})
+	if err != nil {
+		t.Fatalf("PrepareThreadFork reopened: %v", err)
+	}
+	if third.Created || third.Thread.ID != first.Thread.ID {
+		t.Fatalf("reopened fork = %+v, want reuse of %q", third, first.Thread.ID)
+	}
+}
+
 func TestSQLiteStoreForkDisablesFileChangeRevertEvidence(t *testing.T) {
 	ctx := context.Background()
 	s := newTestSQLiteStore(t, filepath.Join(t.TempDir(), "appserver.db"))

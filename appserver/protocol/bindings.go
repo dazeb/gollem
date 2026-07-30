@@ -69,6 +69,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "thread/goal/get", Surface: SurfaceClientRequest, Params: []string{"ThreadGoalGetParams"}, Result: []string{"ThreadGoalGetResponse"}},
 	{Method: "thread/goal/set", Surface: SurfaceClientRequest, Params: []string{"ThreadGoalSetParams"}, Result: []string{"ThreadGoalSetResponse"}},
 	{Method: "thread/goal/updated", Surface: SurfaceServerNotification, Params: []string{"ThreadGoalUpdatedNotification"}},
+	{Method: "thread/fork", Surface: SurfaceClientRequest, Params: []string{"ThreadHistoryForkParams"}, Result: []string{"ThreadHistoryForkResult"}},
 	{Method: "thread/list", Surface: SurfaceClientRequest, Params: []string{"ThreadListParams"}, Result: []string{"ThreadListResult"}},
 	{Method: "thread/loaded/list", Surface: SurfaceClientRequest, Params: []string{"ThreadLoadedListParams"}, Result: []string{"ThreadLoadedListResponse"}},
 	{Method: "thread/memoryMode/set", Surface: SurfaceClientRequest, Params: []string{"ThreadMemoryModeSetParams"}, Result: []string{"ThreadMemoryModeSetResponse"}},

@@ -18,6 +18,7 @@ const timeFormat = time.RFC3339Nano
 
 var _ Store = (*SQLiteStore)(nil)
 var _ RuntimeRecoveryStore = (*SQLiteStore)(nil)
+var _ ThreadForkRecoveryStore = (*SQLiteStore)(nil)
 var _ FileChangeRecoveryStore = (*SQLiteStore)(nil)
 
 // SQLiteStore persists app-server state in SQLite.
@@ -111,6 +112,13 @@ func (s *SQLiteStore) init() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_items_thread_seq ON app_items(thread_id, seq)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_items_turn_seq ON app_items(turn_id, seq)`,
+		`CREATE TABLE IF NOT EXISTS app_thread_forks (
+			idempotency_key TEXT PRIMARY KEY,
+			source_thread_id TEXT NOT NULL,
+			fork_thread_id TEXT NOT NULL UNIQUE,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_app_thread_forks_source ON app_thread_forks(source_thread_id, created_at)`,
 		`CREATE TABLE IF NOT EXISTS app_file_change_recovery (
 			item_id TEXT PRIMARY KEY,
 			thread_id TEXT NOT NULL,
@@ -337,6 +345,113 @@ func (s *SQLiteStore) ForkThread(ctx context.Context, req ForkThreadRequest) (*T
 		return nil, err
 	}
 	return cloneThread(fork), nil
+}
+
+// PrepareThreadFork atomically creates or reuses one full-history fork for an
+// idempotency key. A new fork is rejected while the source has active work.
+func (s *SQLiteStore) PrepareThreadFork(
+	ctx context.Context,
+	req PrepareThreadForkRequest,
+) (*PrepareThreadForkResult, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	req.SourceThreadID = strings.TrimSpace(req.SourceThreadID)
+	req.IdempotencyKey = strings.TrimSpace(req.IdempotencyKey)
+	if req.SourceThreadID == "" {
+		return nil, ErrThreadNotFound
+	}
+	if req.IdempotencyKey == "" || len(req.IdempotencyKey) > 256 {
+		return nil, errors.New("appserver/store: fork idempotency key must contain 1 to 256 bytes")
+	}
+
+	var result *PrepareThreadForkResult
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		var existingSourceID, existingForkID string
+		err := tx.QueryRowContext(
+			ctx,
+			`SELECT source_thread_id, fork_thread_id
+			 FROM app_thread_forks
+			 WHERE idempotency_key = ?`,
+			req.IdempotencyKey,
+		).Scan(&existingSourceID, &existingForkID)
+		switch {
+		case err == nil:
+			if existingSourceID != req.SourceThreadID {
+				return ErrThreadForkIdempotencyConflict
+			}
+			fork, loadErr := loadThreadTx(ctx, tx, existingForkID)
+			if loadErr != nil {
+				return fmt.Errorf("load prepared fork %q: %w", existingForkID, loadErr)
+			}
+			result = &PrepareThreadForkResult{Thread: cloneThread(fork), Created: false}
+			return nil
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("read prepared thread fork: %w", err)
+		}
+
+		source, err := loadThreadTx(ctx, tx, req.SourceThreadID)
+		if err != nil {
+			return err
+		}
+		if source.Status == ThreadDeleted {
+			return ErrThreadDeleted
+		}
+		var active int
+		err = tx.QueryRowContext(
+			ctx,
+			`SELECT 1
+			 FROM app_turns
+			 WHERE thread_id = ? AND status IN (?, ?)
+			 LIMIT 1`,
+			source.ID,
+			TurnQueued,
+			TurnRunning,
+		).Scan(&active)
+		switch {
+		case err == nil:
+			return ErrThreadHasActiveTurn
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("check active source turns: %w", err)
+		}
+
+		now := time.Now().UTC()
+		fork := &Thread{
+			ID:                 newID("thread"),
+			Title:              source.Title,
+			Workspace:          source.Workspace,
+			Status:             ThreadActive,
+			ForkedFromThreadID: source.ID,
+			Settings:           cloneMap(source.Settings),
+			Metadata:           cloneMap(source.Metadata),
+			CreatedAt:          now,
+			UpdatedAt:          now,
+		}
+		if err := saveThreadTx(ctx, tx, fork); err != nil {
+			return err
+		}
+		if err := copyThreadHistoryTx(ctx, tx, source.ID, fork.ID, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO app_thread_forks (
+				idempotency_key, source_thread_id, fork_thread_id, created_at
+			) VALUES (?, ?, ?, ?)`,
+			req.IdempotencyKey,
+			source.ID,
+			fork.ID,
+			now.Format(timeFormat),
+		); err != nil {
+			return fmt.Errorf("save prepared thread fork: %w", err)
+		}
+		result = &PrepareThreadForkResult{Thread: cloneThread(fork), Created: true}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // UpdateThreadTitle implements Store.

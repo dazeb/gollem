@@ -14842,6 +14842,54 @@
       ],
       "type": "object"
     },
+    "ThreadHistoryForkParams": {
+      "additionalProperties": false,
+      "properties": {
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    },
+    "ThreadHistoryForkResult": {
+      "additionalProperties": false,
+      "properties": {
+        "fileChangeRecoveryTransferred": {
+          "type": "boolean"
+        },
+        "historyCopied": {
+          "type": "boolean"
+        },
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "reused": {
+          "type": "boolean"
+        },
+        "sourceThreadId": {
+          "type": "string"
+        },
+        "thread": {
+          "$ref": "#/$defs/ThreadRecord"
+        }
+      },
+      "required": [
+        "thread",
+        "sourceThreadId",
+        "idempotencyKey",
+        "reused",
+        "historyCopied",
+        "fileChangeRecoveryTransferred"
+      ],
+      "type": "object"
+    },
     "ThreadHistoryRollbackParams": {
       "additionalProperties": false,
       "properties": {
@@ -20944,6 +20992,16 @@
       "surface": "server-notification",
       "params": [
         "ThreadGoalUpdatedNotification"
+      ]
+    },
+    {
+      "method": "thread/fork",
+      "surface": "client-request",
+      "params": [
+        "ThreadHistoryForkParams"
+      ],
+      "result": [
+        "ThreadHistoryForkResult"
       ]
     },
     {
