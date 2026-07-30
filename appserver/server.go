@@ -1293,7 +1293,11 @@ func (s *Server) handleBackgroundTerminalTerminate(ctx context.Context, raw json
 	if id == "" {
 		return nil, invalidParams("id, terminalId, backgroundTerminalId, or processId is required", nil)
 	}
-	if err := processSvc.Terminate(ctx, id); err != nil {
+	approvalCtx := withRuntimeApprovalItemID(
+		ctx,
+		operationalTerminalTerminateApprovalItemID(id),
+	)
+	if err := processSvc.Terminate(approvalCtx, id); err != nil {
 		return nil, mapError("thread/backgroundTerminals/terminate", err)
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

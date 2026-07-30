@@ -399,6 +399,13 @@ metadata is bounded, while desktop clients remain responsible for retaining
 native paths in their privileged process and projecting opaque ids to an
 untrusted renderer.
 
+A direct background-terminal terminate request binds its one-shot command
+approval `itemId` to
+`terminal-terminate-sha256:` plus the lowercase SHA-256 of the UTF-8 bytes
+`gollem.background-terminal.terminate.v1\0<terminal-id>`. Privileged clients
+must verify that receipt before accepting the approval. The native terminal id
+does not appear in cleartext in the receipt or enter an untrusted renderer.
+
 ## Exported Thread-Item Prerequisites
 
 The schema exports the exact public `ByteRange`, `TextElement`, `ImageDetail`,
