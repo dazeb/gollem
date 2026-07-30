@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"encoding/json"
+	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 // SubscriptionFilter selects which server notifications a client wants to
@@ -29,10 +31,22 @@ type subscriptionStreamMarker struct{}
 // fully-built JSON-RPC notification message (bytes) to the consumer; it must be
 // non-blocking so the hub can fan out without holding its lock.
 type subscription struct {
-	id      any    // JSON-RPC id of the subscriptions/listen request
-	idKey   string // stable string key for the hub map
+	id      any    // JSON-RPC id of the subscriptions/listen request (echoed to the client)
+	key     string // server-generated unique hub key
 	filter  SubscriptionFilter
 	deliver func([]byte)
+}
+
+// subscriptionKeySeq generates process-unique subscription keys. The hub is
+// shared across every stateless HTTP stream, and independent clients commonly
+// reuse the same JSON-RPC request id (e.g. 1), so keying the hub by request id
+// would let a second listener overwrite the first and let one stream's
+// deregistration delete another. A monotonic server-generated key keeps each
+// stream independent regardless of client-chosen ids.
+var subscriptionKeySeq atomic.Uint64
+
+func nextSubscriptionKey() string {
+	return "sub-" + strconv.FormatUint(subscriptionKeySeq.Add(1), 10)
 }
 
 // subscriptionHub tracks active subscriptions/listen streams so server-side
@@ -48,14 +62,34 @@ func newSubscriptionHub() *subscriptionHub {
 
 // register adds a subscription and returns a deregister func.
 func (h *subscriptionHub) register(sub *subscription) func() {
+	if sub.key == "" {
+		sub.key = nextSubscriptionKey()
+	}
 	h.mu.Lock()
-	h.subs[sub.idKey] = sub
+	h.subs[sub.key] = sub
 	h.mu.Unlock()
 	return func() {
 		h.mu.Lock()
-		delete(h.subs, sub.idKey)
+		delete(h.subs, sub.key)
 		h.mu.Unlock()
 	}
+}
+
+// deregisterByID removes and returns the subscription whose JSON-RPC request id
+// matches id. Used by the framed (stdio) cancel path, where the client
+// references its own listen request id on a single connection. HTTP streams
+// deregister via the connection-scoped closure returned by register instead.
+func (h *subscriptionHub) deregisterByID(id any) *subscription {
+	want := idKeyString(id)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for key, sub := range h.subs {
+		if idKeyString(sub.id) == want {
+			delete(h.subs, key)
+			return sub
+		}
+	}
+	return nil
 }
 
 // clear drops all subscriptions. Called on server close / peer EOF so a

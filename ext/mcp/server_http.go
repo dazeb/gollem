@@ -151,7 +151,7 @@ func (t *HTTPServerTransport) handleSubscriptionsListen(w http.ResponseWriter, r
 
 	sub := &subscription{
 		id:     requestID,
-		idKey:  idKeyString(requestID),
+		key:    nextSubscriptionKey(),
 		filter: filter,
 		deliver: func(data []byte) {
 			select {

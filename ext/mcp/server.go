@@ -488,14 +488,8 @@ func (s *Server) handleSubscriptionCancel(raw json.RawMessage) {
 		return
 	}
 	id := normalizeID(params.RequestID)
-	key := idKeyString(id)
-	s.hub.mu.Lock()
-	sub, ok := s.hub.subs[key]
-	if ok {
-		delete(s.hub.subs, key)
-	}
-	s.hub.mu.Unlock()
-	if ok && sub.deliver != nil {
+	sub := s.hub.deregisterByID(id)
+	if sub != nil && sub.deliver != nil {
 		sub.deliver(subscriptionClosureResponse(id))
 	}
 }
@@ -673,7 +667,7 @@ func (s *Server) handleSubscriptionsListen(rc *RequestContext, raw json.RawMessa
 	}
 	sub := &subscription{
 		id:     id,
-		idKey:  idKeyString(id),
+		key:    nextSubscriptionKey(),
 		filter: filter,
 		deliver: func(data []byte) {
 			_ = s.writeJSON(data)
