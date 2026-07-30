@@ -28,6 +28,7 @@ type Claims struct {
 	PartialStream   bool
 	MalformedStream bool
 	Retryability    bool
+	RequestTimeout  bool
 }
 
 // Expectations declares the normalized outputs a deterministic fixture
@@ -44,11 +45,12 @@ type Expectations struct {
 // Driver binds a provider model to the common capability claims and expected
 // normalized results that its deterministic fixture produces.
 type Driver struct {
-	Name              string
-	Model             core.Model
-	Claims            Claims
-	Expectations      Expectations
-	CancellationReady <-chan struct{}
+	Name                string
+	Model               core.Model
+	Claims              Claims
+	Expectations        Expectations
+	CancellationReady   <-chan struct{}
+	RequestTimeoutReady <-chan struct{}
 }
 
 // Verify exercises the claimed common model surface through core.Model. It is
@@ -74,6 +76,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.Retryability && strings.TrimSpace(driver.Expectations.RetryText) == "" {
 		return fmt.Errorf("provider conformance: %s retry fixture must expect retry text", driver.Name)
+	}
+	if driver.Claims.RequestTimeout && driver.RequestTimeoutReady == nil {
+		return fmt.Errorf("provider conformance: %s timeout-capable fixture must signal request start", driver.Name)
 	}
 
 	params := &core.ModelRequestParameters{AllowTextOutput: true}
@@ -102,6 +107,16 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.Cancellation {
 		if err := verifyCancellation(ctx, driver); err != nil {
+			return err
+		}
+	}
+	if driver.Claims.RequestTimeout {
+		if err := verifyRequestTimeout(ctx, driver); err != nil {
+			return err
+		}
+	}
+	if driver.Claims.Retryability {
+		if err := verifyRetryability(ctx, driver); err != nil {
 			return err
 		}
 	}
@@ -136,11 +151,6 @@ func Verify(ctx context.Context, driver Driver) error {
 			return err
 		}
 	}
-	if driver.Claims.Retryability {
-		if err := verifyRetryability(ctx, driver); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -170,6 +180,34 @@ func verifyCancellation(ctx context.Context, driver Driver) error {
 		return nil
 	case <-time.After(time.Second):
 		return fmt.Errorf("provider conformance: %s cancellation request did not finish", driver.Name)
+	}
+}
+
+func verifyRequestTimeout(ctx context.Context, driver Driver) error {
+	requestContext, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := driver.Model.Request(requestContext, timeoutMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+		result <- err
+	}()
+
+	select {
+	case <-driver.RequestTimeoutReady:
+	case <-ctx.Done():
+		return fmt.Errorf("provider conformance: %s timeout request did not start: %w", driver.Name, ctx.Err())
+	case <-time.After(time.Second):
+		return fmt.Errorf("provider conformance: %s timeout request did not start", driver.Name)
+	}
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("provider conformance: %s timeout error, want context deadline exceeded: %w", driver.Name, err)
+		}
+		return nil
+	case <-time.After(time.Second):
+		return fmt.Errorf("provider conformance: %s timeout request did not finish", driver.Name)
 	}
 }
 
@@ -293,5 +331,11 @@ func malformedStreamMessages() []core.ModelMessage {
 func retryMessages() []core.ModelMessage {
 	return []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "retry conformance"}}},
+	}
+}
+
+func timeoutMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "timeout conformance"}}},
 	}
 }
