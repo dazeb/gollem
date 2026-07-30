@@ -233,6 +233,19 @@ func TestResponsesStreamedResponse_RejectsMalformedJSONEvent(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamedResponse_NormalizesReadFailure(t *testing.T) {
+	s := newResponsesStreamedResponse(io.NopCloser(streamReadFailure{err: io.ErrUnexpectedEOF}), "gpt-5")
+
+	_, err := s.Next()
+	var transport *core.StreamTransportError
+	if !errors.As(err, &transport) {
+		t.Fatalf("Next() error = %v, want StreamTransportError", err)
+	}
+	if strings.Contains(err.Error(), "unexpected EOF") {
+		t.Fatalf("transport error leaked raw read failure: %v", err)
+	}
+}
+
 func TestResponsesStreamedResponse_TextAndToolCall(t *testing.T) {
 	sse := `data: {"type":"response.output_text.delta","delta":"Thinking..."}
 

@@ -264,11 +264,11 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}
 	if err == nil {
 		t.Fatal("expected error after error event")
 	}
-	if !strings.Contains(err.Error(), "Overloaded") {
-		t.Errorf("error = %v, want to contain 'Overloaded'", err)
+	if strings.Contains(err.Error(), "Overloaded") {
+		t.Errorf("error leaked provider message: %v", err)
 	}
-	if !strings.Contains(err.Error(), "overloaded_error") {
-		t.Errorf("error = %v, want to contain 'overloaded_error'", err)
+	if !strings.Contains(err.Error(), "overloaded") {
+		t.Errorf("error = %v, want sanitized overloaded classification", err)
 	}
 }
 

@@ -2,9 +2,9 @@ package anthropic
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -62,7 +62,8 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 				s.failStream(&core.StreamIncompleteError{Provider: "anthropic"})
 				return nil, s.streamErr
 			}
-			return nil, err
+			s.failStream(normalizeStreamReadError(err))
+			return nil, s.streamErr
 		}
 
 		gollemEvent, ok := s.processSSEEvent(event)
@@ -71,6 +72,13 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 		}
 		// Some SSE events (message_start, message_stop) don't produce gollem events.
 	}
+}
+
+func normalizeStreamReadError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return &core.StreamTransportError{Provider: "anthropic"}
 }
 
 // readSSEEvent reads one SSE event from the stream.
@@ -287,18 +295,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 	case "error":
 		s.done = true
 		s.finalizeAll()
-		// Parse error event data to propagate a meaningful error.
-		var errData struct {
-			Error struct {
-				Type    string `json:"type"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(event.Data), &errData); err == nil && errData.Error.Message != "" {
-			s.streamErr = fmt.Errorf("anthropic stream error (%s): %s", errData.Error.Type, errData.Error.Message)
-		} else {
-			s.streamErr = fmt.Errorf("anthropic stream error: %s", event.Data)
-		}
+		s.streamErr = errors.New("anthropic stream error (" + classifyProviderErrorBody(event.Data) + ")")
 		return nil, false
 
 	default:

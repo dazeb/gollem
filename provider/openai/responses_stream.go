@@ -115,9 +115,7 @@ func (s *responsesStreamedResponse) Next() (core.ModelResponseStreamEvent, error
 
 		if !s.scanner.Scan() {
 			if err := s.scanner.Err(); err != nil {
-				s.instrumentation.recordError(err)
-				s.instrumentation.finish()
-				return nil, fmt.Errorf("openai: SSE read error: %w", err)
+				return s.failStream(normalizeStreamReadError(err))
 			}
 			return s.failIncompleteStream()
 		}
