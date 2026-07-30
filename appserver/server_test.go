@@ -2370,11 +2370,10 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	}
 	var terminated protocol.BackgroundTerminalTerminateResponse
 	decodeResult(t, terminateResp, &terminated)
-	if !terminated.OK || terminated.ID != runningStarted.Process.ID || terminated.Terminal.ID != runningStarted.Process.ID {
+	if !terminated.OK || terminated.ID != runningStarted.Process.ID ||
+		terminated.Terminal.ID != runningStarted.Process.ID ||
+		terminated.Terminal.Status != protocol.BackgroundTerminalStatusKilled {
 		t.Fatalf("terminate result = %#v", terminated)
-	}
-	if killed, err := waitProcessSnapshot(t, processSvc, runningStarted.Process.ID); err != nil || killed.Status != toolprocess.StatusKilled {
-		t.Fatalf("wait killed process = %#v err=%v", killed, err)
 	}
 
 	cleanResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/clean", nil))
@@ -2419,6 +2418,65 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	unexpectedCleanResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/clean", map[string]any{"all": true}))
 	if unexpectedCleanResp.Error == nil || unexpectedCleanResp.Error.Code != protocol.CodeInvalidParams {
 		t.Fatalf("unexpected clean params response = %#v, want invalid params", unexpectedCleanResp)
+	}
+}
+
+func TestServerBackgroundTerminalTerminateDoesNotClaimSuccessBeforeExit(t *testing.T) {
+	ctx := context.Background()
+	processSvc, err := toolprocess.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithProcess(processSvc))
+
+	runningResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"command": "sh",
+		"args":    []string{"-c", "trap '' TERM; printf ready; while :; do :; done"},
+	}))
+	if runningResp.Error != nil {
+		t.Fatalf("process/spawn running error: %v", runningResp.Error)
+	}
+	var running struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, runningResp, &running)
+	ready := false
+	for range 100 {
+		snapshot, snapshotErr := processSvc.Snapshot(ctx, running.Process.ID)
+		if snapshotErr != nil {
+			t.Fatalf("Snapshot before terminate: %v", snapshotErr)
+		}
+		if strings.Contains(string(snapshot.Stdout), "ready") {
+			ready = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("signal-ignore fixture did not become ready")
+	}
+	defer func() {
+		_ = processSvc.Kill(context.Background(), running.Process.ID)
+		_, _ = processSvc.Wait(context.Background(), running.Process.ID)
+	}()
+
+	terminateCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	terminateResp := server.HandleRequest(
+		terminateCtx,
+		request("thread/backgroundTerminals/terminate", map[string]any{
+			"id": running.Process.ID,
+		}),
+	)
+	if terminateResp.Error == nil {
+		t.Fatalf("terminate response claimed success before process exit: %#v", terminateResp)
+	}
+	snapshot, err := processSvc.Snapshot(context.Background(), running.Process.ID)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if snapshot.Status != toolprocess.StatusRunning {
+		t.Fatalf("process status = %s, want running after ignored SIGTERM", snapshot.Status)
 	}
 }
 
