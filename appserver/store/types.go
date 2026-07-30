@@ -34,6 +34,8 @@ var (
 	ErrStoreClosed                         = errors.New("appserver/store: store is closed")
 	ErrTurnNotTerminal                     = errors.New("appserver/store: turn is not terminal")
 	ErrRetryIdempotencyConflict            = errors.New("appserver/store: retry idempotency key is already bound to another turn")
+	ErrThreadHasActiveTurn                 = errors.New("appserver/store: thread has an active turn")
+	ErrThreadForkIdempotencyConflict       = errors.New("appserver/store: fork idempotency key is already bound")
 	ErrFileChangeRevertIdempotencyConflict = errors.New("appserver/store: file-change revert idempotency key is already bound")
 )
 
@@ -105,6 +107,16 @@ type ForkThreadRequest struct {
 	Title          string
 	Metadata       map[string]any
 	IncludeItems   bool
+}
+
+type PrepareThreadForkRequest struct {
+	SourceThreadID string
+	IdempotencyKey string
+}
+
+type PrepareThreadForkResult struct {
+	Thread  *Thread
+	Created bool
 }
 
 type UpdateThreadSettingsRequest struct {
@@ -287,6 +299,12 @@ type Store interface {
 type RuntimeRecoveryStore interface {
 	PrepareTurnRetry(context.Context, PrepareTurnRetryRequest) (*PrepareTurnRetryResult, error)
 	RecoverOrphanedTurns(context.Context, RecoverOrphanedTurnsRequest) (*RecoverOrphanedTurnsResult, error)
+}
+
+// ThreadForkRecoveryStore is the optional persistence capability required for
+// response-loss-safe full-history forks.
+type ThreadForkRecoveryStore interface {
+	PrepareThreadFork(context.Context, PrepareThreadForkRequest) (*PrepareThreadForkResult, error)
 }
 
 // FileChangeRecoveryStore is the optional persistence capability required for

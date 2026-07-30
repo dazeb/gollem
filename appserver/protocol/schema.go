@@ -518,6 +518,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadGoalSetResponse", Type: reflect.TypeFor[ThreadGoalSetResponse]()},
 		{Name: "ThreadGoalStatus", Type: reflect.TypeFor[ThreadGoalStatus]()},
 		{Name: "ThreadGoalUpdatedNotification", Type: reflect.TypeFor[ThreadGoalUpdatedNotification]()},
+		{Name: "ThreadHistoryForkParams", Type: reflect.TypeFor[ThreadHistoryForkParams]()},
+		{Name: "ThreadHistoryForkResult", Type: reflect.TypeFor[ThreadHistoryForkResult]()},
 		{Name: "ThreadHistoryRollbackParams", Type: reflect.TypeFor[ThreadHistoryRollbackParams]()},
 		{Name: "ThreadHistoryRollbackRecord", Type: reflect.TypeFor[ThreadHistoryRollbackRecord]()},
 		{Name: "ThreadHistoryRollbackResult", Type: reflect.TypeFor[ThreadHistoryRollbackResult]()},

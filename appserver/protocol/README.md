@@ -518,9 +518,11 @@ Every fixed generated field is required; service tier and reasoning effort are
 explicit nullable values, instruction source arrays/elements are non-null,
 working directories are absolute and normalized, and nested public thread and
 policy values retain their own strict validation. Experimental response fields
-are excluded. The implemented live start/resume/fork handlers still return
-incompatible durable thread/turn maps, so these definitions remain outside the
-method-binding map and do not change runtime JSON or claim producer parity.
+are excluded. The implemented live start/resume handlers still return
+incompatible durable thread/turn maps, and the live fork handler now binds the
+separate Gollem-native history-fork contract described below. These public
+session definitions remain outside the method-binding map and do not claim
+producer parity.
 
 The request-prerequisite layer exports exact standalone `Personality`,
 `SandboxMode`, and `ThreadStartSource` closed string enums. Their fixed public
@@ -536,9 +538,22 @@ Exact standalone `ThreadStartParams`, `ThreadResumeParams`, and
 Optional nullable overrides accept omission or null; resume and fork require an
 open-string thread id; fork alone gives `ephemeral` optional non-null boolean
 semantics. Config values retain strict recursive JSON and request `cwd` remains
-a generic string. The current live handlers require incompatible prompt/input,
-provider/settings, id-alias, title/metadata, and include-item fields, so these
-definitions remain outside method bindings and do not change runtime behavior.
+a generic string. The current live start/resume handlers require incompatible
+prompt/input, provider/settings, and id-alias fields. The live fork handler
+binds a narrower Gollem-native request rather than pretending to apply these
+public session overrides, so the exact public records remain standalone.
+
+`thread/fork` binds Gollem-native `ThreadHistoryForkParams` and
+`ThreadHistoryForkResult` for response-loss-safe full-history copies. Typed
+clients provide only the source thread id and a bounded idempotency key.
+SQLite records that key separately from public thread metadata, refuses new
+forks while the source has queued or running turns, copies durable turns and
+items transactionally with regenerated identities, and returns the same child
+after response loss or process restart. Reused requests do not emit a second
+`thread/started` notification. File-change timeline evidence is retained for
+audit, but private exact-restoration snapshots never transfer to the child and
+the result says so explicitly. Legacy untyped title/metadata/include-item
+requests remain accepted without this typed idempotency guarantee.
 
 Exact standalone `ReasoningSummary`, `TurnStartParams`, and
 `TurnStartResponse` establish the fixed canonical turn-start contract.

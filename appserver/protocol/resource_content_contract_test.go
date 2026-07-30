@@ -159,14 +159,14 @@ func TestResourceContentRemainsStandalone(t *testing.T) {
 	if !ok || info.State != MethodImplemented {
 		t.Fatalf("mcpServer/resource/read = %#v, %v; want implemented", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 556 {
-		t.Fatalf("definition count = %d, want 556", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 558 {
+		t.Fatalf("definition count = %d, want 558", got)
 	}
 	if got := len(Methods()); got != 225 {
 		t.Fatalf("methods = %d, want 225", got)
 	}
-	if got := len(WireTypeBindings()); got != 72 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 72/5", got, len(ItemPayloadBindings()))
+	if got := len(WireTypeBindings()); got != 73 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 73/5", got, len(ItemPayloadBindings()))
 	}
 }
 

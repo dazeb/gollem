@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -150,6 +151,70 @@ type ThreadRunStartParams struct {
 type ThreadRunStartResult struct {
 	Thread ThreadRecord `json:"thread"`
 	Turn   TurnRecord   `json:"turn"`
+}
+
+// ThreadHistoryForkParams is Gollem's response-loss-safe full-history fork
+// request. It is distinct from the broader standalone public session contract.
+type ThreadHistoryForkParams struct {
+	ThreadID       string `json:"threadId"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+func (p *ThreadHistoryForkParams) UnmarshalJSON(data []byte) error {
+	if p == nil {
+		return errors.New("decode thread-history-fork params into nil receiver")
+	}
+	payload, err := decodeRustSerdeObject(
+		data,
+		"thread-history-fork params",
+		"threadId",
+		"idempotencyKey",
+	)
+	if err != nil {
+		return err
+	}
+	var allFields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &allFields); err != nil {
+		return err
+	}
+	if err := rejectThreadItemFields(
+		allFields,
+		"thread-history-fork params",
+		"threadId",
+		"idempotencyKey",
+	); err != nil {
+		return err
+	}
+	threadID, err := decodeRequiredThreadItemValue[string](
+		payload,
+		"thread-history-fork params",
+		"threadId",
+	)
+	if err != nil {
+		return err
+	}
+	idempotencyKey, err := decodeRequiredThreadItemValue[string](
+		payload,
+		"thread-history-fork params",
+		"idempotencyKey",
+	)
+	if err != nil {
+		return err
+	}
+	*p = ThreadHistoryForkParams{
+		ThreadID:       threadID,
+		IdempotencyKey: idempotencyKey,
+	}
+	return nil
+}
+
+type ThreadHistoryForkResult struct {
+	Thread                        ThreadRecord `json:"thread"`
+	SourceThreadID                string       `json:"sourceThreadId"`
+	IdempotencyKey                string       `json:"idempotencyKey"`
+	Reused                        bool         `json:"reused"`
+	HistoryCopied                 bool         `json:"historyCopied"`
+	FileChangeRecoveryTransferred bool         `json:"fileChangeRecoveryTransferred"`
 }
 
 // ThreadHistoryRollbackParams is Gollem's typed history-only rollback request.

@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Response-loss-safe full-history thread forks.** The generated
+  `thread/fork` extension accepts a source thread and bounded idempotency key,
+  rejects queued or running source work, and transactionally copies durable
+  turns and items with regenerated identities. Repeating the same request,
+  including after daemon restart, returns the original child without emitting
+  another `thread/started` notification. Forked timelines retain public
+  file-change evidence but never inherit private exact-restoration snapshots.
 - **Restart-safe exact file-change reversal.** Runtime file-change items now
   advertise whether Gollem persisted a private recovery snapshot. The
   `item/fileChange/revert` extension accepts only thread/item identity and an

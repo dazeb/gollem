@@ -3502,6 +3502,20 @@ export type ThreadGoalUpdatedNotification = {
   "turnId": string | null;
 };
 
+export type ThreadHistoryForkParams = {
+  "idempotencyKey": string;
+  "threadId": string;
+};
+
+export type ThreadHistoryForkResult = {
+  "fileChangeRecoveryTransferred": boolean;
+  "historyCopied": boolean;
+  "idempotencyKey": string;
+  "reused": boolean;
+  "sourceThreadId": string;
+  "thread": ThreadRecord;
+};
+
 export type ThreadHistoryRollbackParams = {
   "id"?: string;
   "numTurns": number;
@@ -4378,6 +4392,7 @@ export const wireTypeBindings = [
   { "method": "thread/goal/get", "surface": "client-request", "params": ["ThreadGoalGetParams"], "result": ["ThreadGoalGetResponse"] },
   { "method": "thread/goal/set", "surface": "client-request", "params": ["ThreadGoalSetParams"], "result": ["ThreadGoalSetResponse"] },
   { "method": "thread/goal/updated", "surface": "server-notification", "params": ["ThreadGoalUpdatedNotification"] },
+  { "method": "thread/fork", "surface": "client-request", "params": ["ThreadHistoryForkParams"], "result": ["ThreadHistoryForkResult"] },
   { "method": "thread/list", "surface": "client-request", "params": ["ThreadListParams"], "result": ["ThreadListResult"] },
   { "method": "thread/loaded/list", "surface": "client-request", "params": ["ThreadLoadedListParams"], "result": ["ThreadLoadedListResponse"] },
   { "method": "thread/memoryMode/set", "surface": "client-request", "params": ["ThreadMemoryModeSetParams"], "result": ["ThreadMemoryModeSetResponse"] },
@@ -4453,6 +4468,7 @@ export interface MethodParamsByName {
   "thread/goal/get": ThreadGoalGetParams;
   "thread/goal/set": ThreadGoalSetParams;
   "thread/goal/updated": ThreadGoalUpdatedNotification;
+  "thread/fork": ThreadHistoryForkParams;
   "thread/list": ThreadListParams;
   "thread/loaded/list": ThreadLoadedListParams;
   "thread/memoryMode/set": ThreadMemoryModeSetParams;
@@ -4509,6 +4525,7 @@ export interface MethodResultsByName {
   "thread/goal/clear": ThreadGoalClearResponse;
   "thread/goal/get": ThreadGoalGetResponse;
   "thread/goal/set": ThreadGoalSetResponse;
+  "thread/fork": ThreadHistoryForkResult;
   "thread/list": ThreadListResult;
   "thread/loaded/list": ThreadLoadedListResponse;
   "thread/memoryMode/set": ThreadMemoryModeSetResponse;
