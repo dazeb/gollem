@@ -46,6 +46,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "item/completed", Surface: SurfaceServerNotification, Params: []string{"ItemCompletedNotification", "ItemLifecycleNotificationParams", "DynamicToolCallItemCompletedNotificationParams", "CommandExecutionItemCompletedNotificationParams", "FileChangeItemCompletedNotificationParams", "MCPToolCallItemCompletedNotificationParams"}},
 	{Method: "item/fileChange/patchUpdated", Surface: SurfaceServerNotification, Params: []string{"FileChangePatchUpdatedNotification"}},
 	{Method: "item/fileChange/requestApproval", Surface: SurfaceServerRequest, Params: []string{"FileChangeApprovalRequestParams"}, Result: []string{"FileChangeRequestApprovalResponse"}},
+	{Method: "item/fileChange/revert", Surface: SurfaceGollemExtension, Params: []string{"FileChangeRevertParams"}, Result: []string{"FileChangeRevertResult"}},
 	{Method: "item/mcpToolCall/progress", Surface: SurfaceServerNotification, Params: []string{"McpToolCallProgressNotification"}},
 	{Method: "item/permissions/requestApproval", Surface: SurfaceServerRequest, Params: []string{"PermissionsApprovalRequestParams"}},
 	{Method: "item/reasoning/textDelta", Surface: SurfaceServerNotification, Params: []string{"RuntimeDeltaNotification"}},

@@ -222,6 +222,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "git/status", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
 	{Method: "git/worktree/create", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
 	{Method: "git/worktree/list", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
+	{Method: "item/fileChange/revert", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
 	{Method: "provider/capabilities/read", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
 	{Method: "provider/list", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},
 	{Method: "tool/list", Surface: SurfaceGollemExtension, State: MethodImplemented, Source: "goal.txt"},

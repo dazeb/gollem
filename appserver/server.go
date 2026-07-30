@@ -51,6 +51,8 @@ type Server struct {
 	commandExec map[string]struct{}
 	commandSeq  int
 
+	workspaceCoordinator *WorkspaceMutationCoordinator
+
 	store     store.Store
 	fs        *toolfs.Service
 	process   *toolprocess.Service
@@ -107,6 +109,16 @@ func WithStore(st store.Store) Option {
 func WithFilesystem(fs *toolfs.Service) Option {
 	return func(s *Server) {
 		s.fs = fs
+	}
+}
+
+// WithWorkspaceMutationCoordinator shares exact-revert reservations across
+// every transport connection that can mutate the same workspace.
+func WithWorkspaceMutationCoordinator(coordinator *WorkspaceMutationCoordinator) Option {
+	return func(s *Server) {
+		if coordinator != nil {
+			s.workspaceCoordinator = coordinator
+		}
 	}
 }
 
@@ -224,6 +236,7 @@ func NewServer(opts ...Option) *Server {
 		approvals:             NewApprovalService(),
 		interact:              NewInteractionService(),
 		daemon:                NewDaemonService(),
+		workspaceCoordinator:  NewWorkspaceMutationCoordinator(),
 		requestSchedulerLimit: defaultRequestSchedulerLimit,
 		threadIdleUnloadAfter: 30 * time.Minute,
 	}
@@ -373,13 +386,23 @@ func (s *Server) cancelApprovalTurn(ctx context.Context, turnID string) error {
 	if turnID == "" || turnID == approvalTurnID {
 		return nil
 	}
-	if s.runtime == nil || s.store == nil {
+	if s.store == nil {
 		return errors.New("turn runtime is not configured for canceled approval")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	_, err := s.runtime.Interrupt(ctx, s.store, turnID)
+	turn, err := s.store.GetTurn(ctx, turnID)
+	if err != nil {
+		return err
+	}
+	if fileChangeRevertTerminalTurnStatus(turn.Status) {
+		return nil
+	}
+	if s.runtime == nil {
+		return errors.New("turn runtime is not configured for canceled approval")
+	}
+	_, err = s.runtime.Interrupt(ctx, s.store, turnID)
 	if errors.Is(err, ErrRuntimeTurnNotActive) {
 		return nil
 	}
@@ -550,6 +573,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadApproveGuardianDeniedAction(ctx, params)
 	case "thread/rollback":
 		return s.handleThreadRollback(ctx, params)
+	case "item/fileChange/revert":
+		return s.handleFileChangeRevert(ctx, params)
 	case "thread/archive":
 		return s.handleThreadStatus(ctx, params, method, store.ThreadArchived)
 	case "thread/unarchive":
@@ -725,6 +750,11 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	}
 	settings := cloneSettings(params.Settings)
 	settings = mergeRuntimeSelectionIntoSettings(settings, params.ProviderID, params.Provider, params.Model)
+	ctx, releaseStart, err := runtimeSvc.acquireStartLease(ctx, s)
+	if err != nil {
+		return nil, mapError("thread/start", err)
+	}
+	defer releaseStart()
 	thread, err := st.CreateThread(ctx, store.CreateThreadRequest{
 		Title:     params.Title,
 		Workspace: params.Workspace,
@@ -747,6 +777,7 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	if err != nil {
 		return nil, mapError("thread/start", err)
 	}
+	releaseStart()
 	return protocol.ThreadRunStartResult{
 		Thread: protocolThreadRecord(thread),
 		Turn:   protocolTurnRecord(turn.Turn),
@@ -854,6 +885,13 @@ func (s *Server) handleThreadStatus(ctx context.Context, raw json.RawMessage, me
 		thread *store.Thread
 		err    error
 	)
+	if status == store.ThreadDeleted {
+		releaseWorkspace, leaseErr := s.acquireWorkspaceMutationLease()
+		if leaseErr != nil {
+			return nil, rpcError(protocol.CodeInvalidRequest, "cannot delete a thread while a workspace file-change revert is in progress", nil)
+		}
+		defer releaseWorkspace()
+	}
 	switch status {
 	case store.ThreadArchived:
 		thread, err = st.ArchiveThread(ctx, threadID)
@@ -1493,6 +1531,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
 		return nil, rpcErr
 	}
+	_, fileRecoveryAvailable := s.store.(store.FileChangeRecoveryStore)
 	return catalog.ListTools(params, catalog.ToolServices{
 		Filesystem:   s.fs != nil,
 		Process:      s.process != nil,
@@ -1504,6 +1543,7 @@ func (s *Server) handleToolList(raw json.RawMessage) (any, *protocol.Error) {
 		Runtime:      s.runtime != nil,
 		Interactions: s.interact != nil,
 		Memory:       s.memory != nil,
+		FileRecovery: fileRecoveryAvailable,
 	}), nil
 }
 
@@ -2226,6 +2266,10 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, toolfs.ErrInvalidCopyDestination),
 		errors.Is(err, toolfs.ErrRecursiveRequired),
 		errors.Is(err, toolfs.ErrRefusingRoot),
+		errors.Is(err, toolfs.ErrExactStateMismatch),
+		errors.Is(err, toolfs.ErrExactRevertSymlink),
+		errors.Is(err, toolfs.ErrExactRevertUnsupported),
+		errors.Is(err, toolfs.ErrExactRevertPending),
 		errors.Is(err, toolfs.ErrWatchPathNotAbsolute),
 		errors.Is(err, toolfs.ErrWatchIDRequired),
 		errors.Is(err, toolfs.ErrWatchAlreadyExists),
@@ -2241,11 +2285,14 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, store.ErrThreadNotFound),
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
+		errors.Is(err, store.ErrFileChangeRecoveryNotFound),
 		errors.Is(err, store.ErrThreadDeleted),
 		errors.Is(err, store.ErrTurnNotTerminal),
 		errors.Is(err, store.ErrRetryIdempotencyConflict),
+		errors.Is(err, store.ErrFileChangeRevertIdempotencyConflict),
 		errors.Is(err, ErrMemoryRootRequired),
 		errors.Is(err, ErrMemoryRootUnsafe),
+		errors.Is(err, ErrWorkspaceRevertInProgress),
 		errors.Is(err, ErrRuntimePromptEmpty):
 		return invalidParams("invalid params", err)
 	case errors.Is(err, toolfs.ErrApprovalDenied),

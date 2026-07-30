@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +80,23 @@ func (t *runtimeFileChangeTracker) artifactChanged(event core.ArtifactChangedEve
 			ContentOmittedReason: event.ContentOmittedReason,
 		}},
 	}
+	recovery, recoveryUnavailable := runtimeFileChangeRecovery(event, t.turn)
+	if recoveryUnavailable == "" {
+		thread, err := t.store.GetThread(context.Background(), t.turn.ThreadID)
+		switch {
+		case err != nil:
+			recoveryUnavailable = "thread workspace could not be verified"
+		case strings.TrimSpace(event.WorkspaceRoot) == "":
+			recoveryUnavailable = "filesystem workspace root is unavailable"
+		case requireExactThreadWorkspace(thread, event.WorkspaceRoot) != nil:
+			recoveryUnavailable = "thread workspace does not match the filesystem root"
+		}
+	}
+	payload.Evidence[0].RevertUnavailableReason = recoveryUnavailable
+	recoveryStore, recoveryStoreAvailable := t.store.(store.FileChangeRecoveryStore)
+	if recoveryUnavailable == "" && !recoveryStoreAvailable {
+		payload.Evidence[0].RevertUnavailableReason = "durable recovery storage is unavailable"
+	}
 	parentItemID := ""
 	if t.toolItems != nil {
 		parentItemID = t.toolItems.itemID(event.RunID, event.ToolCallID, event.ToolName)
@@ -107,6 +125,17 @@ func (t *runtimeFileChangeTracker) artifactChanged(event core.ArtifactChangedEve
 	if err != nil {
 		t.recordErrorLocked("set id", err)
 		return
+	}
+	if recoveryUnavailable == "" && recoveryStoreAvailable {
+		recovery.ItemID = item.ID
+		if _, err := recoveryStore.SaveFileChangeRecovery(context.Background(), store.SaveFileChangeRecoveryRequest{
+			Recovery: recovery,
+		}); err != nil {
+			t.recordErrorLocked("save recovery snapshot", err)
+			return
+		}
+		payload.Evidence[0].RevertSnapshotAvailable = true
+		payload.Evidence[0].RevertUnavailableReason = ""
 	}
 	if t.notifier != nil {
 		t.notifier.PublishNotification("item/started", runtimeFileChangeItemStartedNotificationParams{
@@ -152,6 +181,84 @@ func (t *runtimeFileChangeTracker) artifactChanged(event core.ArtifactChangedEve
 		TurnID:        t.turn.ID,
 		CompletedAtMS: changedAt.UnixMilli(),
 	})
+}
+
+func runtimeFileChangeRecovery(event core.ArtifactChangedEvent, turn *store.Turn) (store.FileChangeRecovery, string) {
+	recovery := store.FileChangeRecovery{
+		ThreadID:      turn.ThreadID,
+		TurnID:        turn.ID,
+		Path:          filepath.ToSlash(filepath.Clean(event.Path)),
+		BeforeExists:  event.BeforeExists,
+		AfterExists:   event.AfterExists,
+		BeforeSHA256:  event.BeforeSHA256,
+		AfterSHA256:   event.AfterSHA256,
+		BeforeMode:    event.BeforeMode,
+		AfterMode:     event.AfterMode,
+		BeforeContent: append([]byte(nil), event.BeforeContentBytes...),
+		Status:        store.FileChangeRecoveryAvailable,
+		CreatedAt:     event.ChangedAt.UTC(),
+	}
+	if recovery.CreatedAt.IsZero() {
+		recovery.CreatedAt = time.Now().UTC()
+	}
+	if recovery.Path == "." || recovery.Path == "" || filepath.IsAbs(filepath.FromSlash(recovery.Path)) ||
+		recovery.Path == ".." || strings.HasPrefix(recovery.Path, "../") {
+		return store.FileChangeRecovery{}, "workspace-relative path is unavailable"
+	}
+	if event.BeforeIsDir || event.AfterIsDir {
+		return store.FileChangeRecovery{}, "directory changes cannot be reverted"
+	}
+	if (event.BeforeExists && !event.BeforeIsRegular) || (event.AfterExists && !event.AfterIsRegular) {
+		return store.FileChangeRecovery{}, "non-regular file changes cannot be reverted"
+	}
+	if event.BeforeIsSymlink || event.AfterIsSymlink {
+		return store.FileChangeRecovery{}, "symlink changes cannot be reverted"
+	}
+	if event.BeforeHasSymlinkPath || event.AfterHasSymlinkPath {
+		return store.FileChangeRecovery{}, "paths traversing symlinks cannot be reverted"
+	}
+	if (event.BeforeExists && event.BeforeLinkCount != 1) || (event.AfterExists && event.AfterLinkCount != 1) {
+		if event.BeforeLinkCount > 1 || event.AfterLinkCount > 1 {
+			return store.FileChangeRecovery{}, "multiply linked file changes cannot be reverted"
+		}
+		return store.FileChangeRecovery{}, "file hard-link count is unavailable"
+	}
+	if !event.BeforeExists && !event.AfterExists {
+		return store.FileChangeRecovery{}, "file existence evidence is incomplete"
+	}
+	switch runtimeFileChangeKind(event.Operation) {
+	case runtimePatchChangeAdd:
+		if event.BeforeExists || !event.AfterExists {
+			return store.FileChangeRecovery{}, "create evidence does not match file existence"
+		}
+	case runtimePatchChangeDelete:
+		if !event.BeforeExists || event.AfterExists {
+			return store.FileChangeRecovery{}, "delete evidence does not match file existence"
+		}
+	case runtimePatchChangeUpdate:
+		if !event.BeforeExists || !event.AfterExists {
+			return store.FileChangeRecovery{}, "update evidence does not match file existence"
+		}
+	}
+	if event.BeforeSize > runtimeFileChangeRecoveryMaxBytes ||
+		event.AfterSize > runtimeFileChangeRecoveryMaxBytes ||
+		len(event.BeforeContentBytes) > runtimeFileChangeRecoveryMaxBytes ||
+		len(event.AfterContentBytes) > runtimeFileChangeRecoveryMaxBytes {
+		return store.FileChangeRecovery{}, fmt.Sprintf("file exceeds %d byte revert limit", runtimeFileChangeRecoveryMaxBytes)
+	}
+	if event.BeforeExists && int64(len(event.BeforeContentBytes)) != event.BeforeSize {
+		return store.FileChangeRecovery{}, "before-content size is inconsistent"
+	}
+	if event.AfterExists && int64(len(event.AfterContentBytes)) != event.AfterSize {
+		return store.FileChangeRecovery{}, "after-content size is inconsistent"
+	}
+	if event.BeforeExists && runtimeSHA256(event.BeforeContentBytes) != event.BeforeSHA256 {
+		return store.FileChangeRecovery{}, "before-content digest is inconsistent"
+	}
+	if event.AfterExists && runtimeSHA256(event.AfterContentBytes) != event.AfterSHA256 {
+		return store.FileChangeRecovery{}, "after-content digest is inconsistent"
+	}
+	return recovery, ""
 }
 
 func (t *runtimeFileChangeTracker) Err() error {

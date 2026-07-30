@@ -8,6 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Restart-safe exact file-change reversal.** Runtime file-change items now
+  advertise whether Gollem persisted a private recovery snapshot. The
+  `item/fileChange/revert` extension accepts only thread/item identity and an
+  idempotency key, reuses the existing file-mutation approval flow, verifies
+  exact workspace, path, content digest, mode, and terminal-turn ownership,
+  and emits a durable receipt. Reversal is limited to regular files up to
+  1 MiB with exactly one observed hard link; directories, paths traversing
+  symlinks, multiply linked files, unknown link counts, stale files,
+  mismatched workspaces, active workspace turns, and incomplete evidence fail
+  closed.
+  Runtime mutations capture before/after evidence under the filesystem
+  mutation lock only after approval, and reverts reserve the workspace without
+  blocking unrelated thread reads. Pending operations reconcile after restart
+  from deterministic transaction directories only inside the approved revert
+  operation when the target and quarantined regular file are provably in a safe
+  state. File metadata and affected directories are synchronized before a
+  durable receipt can commit, and startup reconciles a private snapshot whose
+  public item completion was interrupted. A daemon-wide coordinator makes
+  rollback, thread deletion, and turn or thread starts serialize with that
+  reservation across every client connection, while denied operations release
+  their key only after proving no mutation occurred.
 - **Restart-safe app-server retry and daemon ownership.** File-backed app-server
   daemons now hold one process-lifetime store lock and reconcile queued or
   running turns to an inspectable interrupted state after owner loss. The
@@ -54,6 +75,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ReasoningEffort` per phase — effort is adaptive thinking's depth
   control — keeping the plan-high/implement-lower/verify-high shape
   on Anthropic. First direct tests for the middleware included.
+
+### Removed
+
+- Hosted coverage uploads, patch thresholds, badge, and service configuration.
 
 ### Phase 14: Ten Innovations from Pydantic-AI, LangChain 1.0, OpenAI Agents SDK, AutoGen & CrewAI
 
@@ -370,5 +395,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Makefile with comprehensive targets
 - golangci-lint v2 configuration
 - GitHub Actions CI/CD workflows
-- MIT License, .gitignore, codecov config
+- MIT License and .gitignore
 - Testable examples

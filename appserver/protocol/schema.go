@@ -219,6 +219,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FileChangeApprovalDecision", Type: reflect.TypeFor[FileChangeApprovalDecision]()},
 		{Name: "FileChangeRequestApprovalResponse", Type: reflect.TypeFor[FileChangeRequestApprovalResponse]()},
 		{Name: "FileChangeArtifactEvidence", Type: reflect.TypeFor[FileChangeArtifactEvidence]()},
+		{Name: "FileChangeRevertParams", Type: reflect.TypeFor[FileChangeRevertParams]()},
+		{Name: "FileChangeRevertResult", Type: reflect.TypeFor[FileChangeRevertResult]()},
 		{Name: "FileChangeItem", Type: reflect.TypeFor[FileChangeItem]()},
 		{Name: "FileChangeItemCompletedNotificationParams", Type: reflect.TypeFor[FileChangeItemCompletedNotificationParams]()},
 		{Name: "FileChangeItemStartedNotificationParams", Type: reflect.TypeFor[FileChangeItemStartedNotificationParams]()},

@@ -85,6 +85,11 @@ func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessa
 		cwd = "."
 	}
 	startedAt := time.Now().UTC()
+	releaseStart, err := s.acquireTurnStartLease()
+	if err != nil {
+		return nil, mapError("thread/shellCommand", err)
+	}
+	defer releaseStart()
 	turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{
 		ThreadID: thread.ID,
 		Input: mustRuntimeJSON(map[string]any{
@@ -102,6 +107,7 @@ func (s *Server) handleThreadShellCommand(ctx context.Context, raw json.RawMessa
 	if err != nil {
 		return nil, mapError("thread/shellCommand", err)
 	}
+	releaseStart()
 	item, err := st.AppendItem(ctx, store.AppendItemRequest{
 		ThreadID: thread.ID,
 		TurnID:   startedTurn.ID,

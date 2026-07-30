@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,54 @@ func TestFilesystemRuntimeToolsExposeScopedOperations(t *testing.T) {
 	}
 }
 
+func TestFilesystemRuntimeToolsExecuteAllScopedOperations(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "source.txt"), []byte("source\n"), 0o640); err != nil {
+		t.Fatalf("WriteFile source: %v", err)
+	}
+	fsSvc, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	tools := FilesystemRuntimeTools(fsSvc)
+	bus := core.NewEventBus()
+	defer bus.Close()
+	runContext := &core.RunContext{EventBus: bus, RunID: "run-all-fs"}
+	call := func(name, arguments string) any {
+		t.Helper()
+		tool := findRuntimeToolByName(t, tools, name)
+		runContext.ToolName = name
+		result, err := tool.Handler(context.Background(), runContext, arguments)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return result
+	}
+
+	if result, ok := call("workspace_read_file", `{"path":"source.txt"}`).(runtimeFilesystemReadResult); !ok || result.Content != "source\n" {
+		t.Fatalf("read result = %#v", result)
+	}
+	if result, ok := call("workspace_list_directory", `{"path":"."}`).(runtimeFilesystemListResult); !ok || len(result.Entries) != 1 {
+		t.Fatalf("list result = %#v", result)
+	}
+	if result, ok := call("workspace_file_metadata", `{"path":"source.txt"}`).(runtimeFilesystemMetadataResult); !ok || result.IsDir || result.Size != int64(len("source\n")) {
+		t.Fatalf("metadata result = %#v", result)
+	}
+	if result, ok := call("workspace_create_directory", `{"path":"nested"}`).(runtimeFilesystemMutationResult); !ok || !result.Changed || result.Operation != "createDirectory" {
+		t.Fatalf("create directory result = %#v", result)
+	}
+	if result, ok := call("workspace_copy_path", `{"source":"source.txt","destination":"nested/copied.txt"}`).(runtimeFilesystemMutationResult); !ok || !result.Changed || result.Destination != "nested/copied.txt" {
+		t.Fatalf("copy result = %#v", result)
+	}
+	if result, ok := call("workspace_write_file", `{"path":"nested/written.txt","content":"written\n"}`).(runtimeFilesystemMutationResult); !ok || !result.Changed || result.Operation != "create" {
+		t.Fatalf("write result = %#v", result)
+	}
+	if result, ok := call("workspace_remove_path", `{"path":"nested/copied.txt"}`).(runtimeFilesystemMutationResult); !ok || !result.Changed || result.Operation != "remove" {
+		t.Fatalf("remove result = %#v", result)
+	}
+}
+
 func TestFilesystemRuntimeReadToolRejectsWorkspaceEscape(t *testing.T) {
 	root := t.TempDir()
 	fsSvc, err := toolfs.NewService(root)
@@ -95,8 +144,8 @@ func TestFilesystemRuntimeToolsBoundEvidenceAndSuppressNoOpChanges(t *testing.T)
 		t.Fatalf("large read result = content bytes %d, truncated %v, encoding %q", len(large.Content), large.ContentTruncated, large.ContentEncoding)
 	}
 	_, _, omitted := runtimeArtifactDiff("large.txt",
-		runtimeArtifactCapture{Exists: true, Content: []byte("before\n")},
-		runtimeArtifactCapture{Exists: true, Content: []byte(largeContent)},
+		runtimeArtifactCapture{Exists: true, IsRegular: true, Content: []byte("before\n")},
+		runtimeArtifactCapture{Exists: true, IsRegular: true, Content: []byte(largeContent)},
 	)
 	if !strings.Contains(omitted, "diff limit") {
 		t.Fatalf("large diff omitted reason = %q", omitted)
@@ -128,6 +177,142 @@ func TestFilesystemRuntimeToolsBoundEvidenceAndSuppressNoOpChanges(t *testing.T)
 	mutation, ok := result.(runtimeFilesystemMutationResult)
 	if !ok || mutation.Changed || eventCount != 0 {
 		t.Fatalf("no-op write result = %#v, artifact events = %d", result, eventCount)
+	}
+}
+
+func TestFilesystemRuntimeMutationCapturesStateAfterApproval(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(path, []byte("initial\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile initial: %v", err)
+	}
+	approvalStarted := make(chan struct{})
+	approve := make(chan struct{})
+	fsSvc, err := toolfs.NewService(root, toolfs.WithApproval(func(context.Context, toolfs.Operation) error {
+		close(approvalStarted)
+		<-approve
+		return nil
+	}))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	bus := core.NewEventBus()
+	defer bus.Close()
+	events := make(chan core.ArtifactChangedEvent, 1)
+	unsubscribe := core.Subscribe(bus, func(event core.ArtifactChangedEvent) {
+		events <- event
+	})
+	defer unsubscribe()
+
+	tool := findRuntimeToolByName(t, FilesystemRuntimeTools(fsSvc), "workspace_write_file")
+	result := make(chan error, 1)
+	go func() {
+		_, err := tool.Handler(
+			context.Background(),
+			&core.RunContext{EventBus: bus, RunID: "run-approved", ToolCallID: "call-approved", ToolName: "workspace_write_file"},
+			`{"path":"notes.txt","content":"tool\n"}`,
+		)
+		result <- err
+	}()
+	<-approvalStarted
+	if err := os.WriteFile(path, []byte("editor\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile editor state: %v", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("Chmod editor state: %v", err)
+	}
+	close(approve)
+	if err := <-result; err != nil {
+		t.Fatalf("runtime write: %v", err)
+	}
+	event := <-events
+	if string(event.BeforeContentBytes) != "editor\n" ||
+		event.BeforeSHA256 != runtimeSHA256([]byte("editor\n")) ||
+		event.BeforeMode != 0o600 ||
+		event.BeforeLinkCount != 1 ||
+		event.AfterLinkCount != 1 ||
+		string(event.AfterContentBytes) != "tool\n" {
+		t.Fatalf("approved mutation evidence = %+v", event)
+	}
+}
+
+func TestCaptureRuntimeArtifactMarksSymlinkPathComponents(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "real"), 0o755); err != nil {
+		t.Fatalf("Mkdir real: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "real", "notes.txt"), []byte("content\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile notes: %v", err)
+	}
+	if err := os.Symlink("real", filepath.Join(root, "linked")); err != nil {
+		t.Fatalf("Symlink linked: %v", err)
+	}
+	fsSvc, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	capture, err := captureRuntimeArtifact(context.Background(), fsSvc, "linked/notes.txt")
+	if err != nil {
+		t.Fatalf("captureRuntimeArtifact: %v", err)
+	}
+	if !capture.Exists || !capture.HasSymlinkComponent || capture.IsSymlink {
+		t.Fatalf("symlink-path capture = %+v", capture)
+	}
+}
+
+func TestPublishedHardLinkedArtifactChangeIsNotRevertible(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile notes: %v", err)
+	}
+	if err := os.Link(path, filepath.Join(root, "alias.txt")); err != nil {
+		t.Skipf("hard links are unavailable: %v", err)
+	}
+	fsSvc, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsSvc.Close()
+	before, err := captureRuntimeArtifact(context.Background(), fsSvc, "notes.txt")
+	if err != nil {
+		t.Fatalf("capture before: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile mutation: %v", err)
+	}
+	after, err := captureRuntimeArtifact(context.Background(), fsSvc, "notes.txt")
+	if err != nil {
+		t.Fatalf("capture after: %v", err)
+	}
+
+	bus := core.NewEventBus()
+	defer bus.Close()
+	events := make(chan core.ArtifactChangedEvent, 1)
+	unsubscribe := core.Subscribe(bus, func(event core.ArtifactChangedEvent) {
+		events <- event
+	})
+	defer unsubscribe()
+	if !publishRuntimeArtifactChange(
+		context.Background(),
+		&core.RunContext{EventBus: bus, RunID: "hard-link-run"},
+		before,
+		after,
+		"update",
+	) {
+		t.Fatal("hard-linked mutation was not published")
+	}
+	event := <-events
+	if event.BeforeLinkCount != 2 || event.AfterLinkCount != 2 {
+		t.Fatalf("published hard-link counts = %d/%d", event.BeforeLinkCount, event.AfterLinkCount)
+	}
+	if _, reason := runtimeFileChangeRecovery(
+		event,
+		&store.Turn{ID: "turn", ThreadID: "thread"},
+	); reason != "multiply linked file changes cannot be reverted" {
+		t.Fatalf("hard-linked recovery reason = %q", reason)
 	}
 }
 
@@ -176,8 +361,9 @@ func TestServerRuntimeApprovedFilesystemWritePersistsFileChange(t *testing.T) {
 	)
 
 	resp := server.HandleRequest(ctx, request("thread/start", map[string]any{
-		"title":  "Runtime filesystem",
-		"prompt": "write the result",
+		"title":     "Runtime filesystem",
+		"workspace": root,
+		"prompt":    "write the result",
 	}))
 	if resp.Error != nil {
 		t.Fatalf("thread/start error: %v", resp.Error)
@@ -247,6 +433,17 @@ func TestServerRuntimeApprovedFilesystemWritePersistsFileChange(t *testing.T) {
 	}
 	if len(fileItem.Payload.Evidence) != 1 || fileItem.Payload.Evidence[0].AfterSHA256 == "" {
 		t.Fatalf("file item evidence = %#v", fileItem.Payload.Evidence)
+	}
+	if !fileItem.Payload.Evidence[0].RevertSnapshotAvailable || fileItem.Payload.Evidence[0].RevertUnavailableReason != "" {
+		t.Fatalf("file item revert evidence = %#v", fileItem.Payload.Evidence[0])
+	}
+	recovery, err := st.GetFileChangeRecovery(ctx, fileItem.Item.ID)
+	if err != nil {
+		t.Fatalf("GetFileChangeRecovery: %v", err)
+	}
+	if recovery.Path != "notes/result.txt" || recovery.BeforeExists || !recovery.AfterExists ||
+		len(recovery.BeforeContent) != 0 || recovery.AfterSHA256 != fileItem.Payload.Evidence[0].AfterSHA256 {
+		t.Fatalf("file item recovery = %+v", recovery)
 	}
 
 	patch := decodeRuntimeFileChangePatch(t, events)
@@ -553,6 +750,68 @@ func TestFileChangeApprovalCancelInterruptsActiveTurn(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "canceled.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("canceled file stat error = %v, want not-exist", err)
+	}
+}
+
+func TestRuntimeArtifactCapturesEqualIncludesModeTypeSymlinkAndLinkCount(t *testing.T) {
+	base := runtimeArtifactCapture{
+		Path:      "notes.txt",
+		Exists:    true,
+		IsRegular: true,
+		LinkCount: 1,
+		Size:      5,
+		Mode:      0o644,
+		SHA256:    runtimeSHA256([]byte("notes")),
+	}
+	if !runtimeArtifactCapturesEqual(base, base) {
+		t.Fatal("identical artifact captures differ")
+	}
+	modeChanged := base
+	modeChanged.Mode = 0o600
+	if runtimeArtifactCapturesEqual(base, modeChanged) {
+		t.Fatal("permission-only artifact change was ignored")
+	}
+	typeChanged := base
+	typeChanged.IsRegular = false
+	if runtimeArtifactCapturesEqual(base, typeChanged) {
+		t.Fatal("regular-file type change was ignored")
+	}
+	symlinkChanged := base
+	symlinkChanged.IsSymlink = true
+	if runtimeArtifactCapturesEqual(base, symlinkChanged) {
+		t.Fatal("symlink-state artifact change was ignored")
+	}
+	linkCountChanged := base
+	linkCountChanged.LinkCount = 2
+	if runtimeArtifactCapturesEqual(base, linkCountChanged) {
+		t.Fatal("hard-link-count artifact change was ignored")
+	}
+}
+
+func TestCaptureRuntimeArtifactClassifiesNonRegularFilesWithoutReading(t *testing.T) {
+	root := t.TempDir()
+	socketPath := filepath.Join(root, "agent.sock")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", socketPath)
+	if err != nil {
+		t.Skipf("unix sockets are unavailable: %v", err)
+	}
+	defer listener.Close()
+	fsService, err := toolfs.NewService(root)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	defer fsService.Close()
+
+	captured, err := captureRuntimeArtifact(context.Background(), fsService, "agent.sock")
+	if err != nil {
+		t.Fatalf("captureRuntimeArtifact: %v", err)
+	}
+	if !captured.Exists || captured.IsRegular || captured.IsDir || captured.IsSymlink ||
+		len(captured.Content) != 0 || captured.SHA256 != "" {
+		t.Fatalf("non-regular artifact capture = %+v", captured)
+	}
+	if _, _, omitted := runtimeArtifactDiff("agent.sock", captured, runtimeArtifactCapture{}); omitted != "non-regular file content omitted" {
+		t.Fatalf("non-regular diff omitted reason = %q", omitted)
 	}
 }
 

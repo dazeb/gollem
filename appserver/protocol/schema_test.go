@@ -27,8 +27,8 @@ func TestJSONSchemaContainsEnvelopeAndMethodInventory(t *testing.T) {
 	if !ok {
 		t.Fatalf("x-gollem-methods = %T", schema["x-gollem-methods"])
 	}
-	if len(methods) != 224 {
-		t.Fatalf("schema method inventory has %d rows, want 224", len(methods))
+	if len(methods) != 225 {
+		t.Fatalf("schema method inventory has %d rows, want 225", len(methods))
 	}
 
 	defs := schema["$defs"].(Schema)

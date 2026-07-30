@@ -169,6 +169,14 @@ func TestToolListAvailability(t *testing.T) {
 	if !containsMethod(threadStoreTool.Methods, "thread/search") || !containsMethod(threadStoreTool.Methods, "thread/loaded/list") || !containsMethod(threadStoreTool.Methods, "thread/unsubscribe") || !containsMethod(threadStoreTool.Methods, "thread/compact/start") || !containsMethod(threadStoreTool.Methods, "thread/rollback") || !containsMethod(threadStoreTool.Methods, "thread/inject_items") || !containsMethod(threadStoreTool.Methods, "thread/goal/set") || !containsMethod(threadStoreTool.Methods, "thread/memoryMode/set") || !containsMethod(threadStoreTool.Methods, "thread/name/set") {
 		t.Fatalf("thread-store tool methods = %#v", threadStoreTool.Methods)
 	}
+	revertTool := findTool(ListTools(ToolListParams{}, ToolServices{Filesystem: true, FileRecovery: true}).Data, "file-change-revert")
+	if revertTool == nil || !revertTool.Available || !revertTool.Mutation || !revertTool.RequiresApproval ||
+		!containsMethod(revertTool.Methods, "item/fileChange/revert") {
+		t.Fatalf("file-change-revert tool metadata = %#v", revertTool)
+	}
+	if unavailable := findTool(ListTools(ToolListParams{IncludeUnavailable: true}, ToolServices{Filesystem: true}).Data, "file-change-revert"); unavailable == nil || unavailable.Available {
+		t.Fatalf("file-change-revert advertised without durable recovery = %#v", unavailable)
+	}
 }
 
 func mapEnv(values map[string]string) EnvLookup {

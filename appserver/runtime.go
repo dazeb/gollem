@@ -128,6 +128,24 @@ type runtimeNotifier interface {
 	PublishNotification(method string, params any)
 }
 
+type runtimeTurnStartCoordinator interface {
+	acquireTurnStartLease() (func(), error)
+}
+
+type runtimeStartLeaseContextKey struct{}
+
+func withRuntimeStartLease(ctx context.Context, service *RuntimeService) context.Context {
+	return context.WithValue(ctx, runtimeStartLeaseContextKey{}, service)
+}
+
+func runtimeStartLeaseHeld(ctx context.Context, service *RuntimeService) bool {
+	if ctx == nil || service == nil {
+		return false
+	}
+	held, _ := ctx.Value(runtimeStartLeaseContextKey{}).(*RuntimeService)
+	return held == service
+}
+
 type activeRuntimeTurn struct {
 	cancel context.CancelFunc
 }
@@ -143,8 +161,11 @@ func (s *RuntimeService) Start(ctx context.Context, st store.Store, notifier run
 	if req.Prompt == "" {
 		return nil, ErrRuntimePromptEmpty
 	}
-	s.startMu.Lock()
-	defer s.startMu.Unlock()
+	ctx, releaseStart, err := s.acquireStartLease(ctx, notifier)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseStart()
 	s.mu.Lock()
 	if s.shuttingDown {
 		s.mu.Unlock()
@@ -239,8 +260,11 @@ func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier run
 	if req.Prompt == "" {
 		return nil, ErrRuntimePromptEmpty
 	}
-	s.startMu.Lock()
-	defer s.startMu.Unlock()
+	ctx, releaseStart, err := s.acquireStartLease(ctx, notifier)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseStart()
 	s.mu.Lock()
 	if s.shuttingDown {
 		s.mu.Unlock()
@@ -314,6 +338,46 @@ func (s *RuntimeService) Retry(ctx context.Context, st store.Store, notifier run
 		s.run(runCtx, st, notifier, started, startReq)
 	}()
 	return result, nil
+}
+
+func acquireRuntimeTurnStartLease(ctx context.Context, notifier runtimeNotifier) (func(), error) {
+	if workspaceMutationLeaseHeld(ctx) {
+		return func() {}, nil
+	}
+	coordinator, ok := notifier.(runtimeTurnStartCoordinator)
+	if !ok {
+		return func() {}, nil
+	}
+	return coordinator.acquireTurnStartLease()
+}
+
+// acquireStartLease serializes every runtime start in one lock order:
+// runtime service first, then the daemon-wide workspace coordinator.
+func (s *RuntimeService) acquireStartLease(
+	ctx context.Context,
+	notifier runtimeNotifier,
+) (context.Context, func(), error) {
+	if runtimeStartLeaseHeld(ctx, s) {
+		return ctx, func() {}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.startMu.Lock()
+	releaseWorkspace, err := acquireRuntimeTurnStartLease(ctx, notifier)
+	if err != nil {
+		s.startMu.Unlock()
+		return ctx, func() {}, err
+	}
+	ctx = withWorkspaceMutationLease(ctx)
+	ctx = withRuntimeStartLease(ctx, s)
+	var once sync.Once
+	return ctx, func() {
+		once.Do(func() {
+			releaseWorkspace()
+			s.startMu.Unlock()
+		})
+	}, nil
 }
 
 func (s *RuntimeService) failPreparedRetry(st store.Store, turn *store.Turn, cause error) {

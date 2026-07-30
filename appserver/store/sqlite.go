@@ -18,6 +18,7 @@ const timeFormat = time.RFC3339Nano
 
 var _ Store = (*SQLiteStore)(nil)
 var _ RuntimeRecoveryStore = (*SQLiteStore)(nil)
+var _ FileChangeRecoveryStore = (*SQLiteStore)(nil)
 
 // SQLiteStore persists app-server state in SQLite.
 type SQLiteStore struct {
@@ -110,6 +111,16 @@ func (s *SQLiteStore) init() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_items_thread_seq ON app_items(thread_id, seq)`,
 		`CREATE INDEX IF NOT EXISTS idx_app_items_turn_seq ON app_items(turn_id, seq)`,
+		`CREATE TABLE IF NOT EXISTS app_file_change_recovery (
+			item_id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			turn_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL,
+			payload BLOB NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_app_file_change_recovery_thread ON app_file_change_recovery(thread_id, turn_id, item_id)`,
 	}
 	for _, stmt := range schema {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -664,6 +675,14 @@ func (s *SQLiteStore) RecoverOrphanedTurns(ctx context.Context, req RecoverOrpha
 				if !orphanedItemStatus(item.Status) {
 					continue
 				}
+				reconciled, err := reconcileDurableFileChangeItemTx(ctx, tx, item, recoveredAt)
+				if err != nil {
+					return err
+				}
+				if reconciled {
+					result.Items = append(result.Items, cloneItem(item))
+					continue
+				}
 				item.Status = "failed"
 				item.Payload = recoveredItemPayload(item.Payload)
 				item.UpdatedAt = recoveredAt
@@ -714,6 +733,54 @@ func (s *SQLiteStore) RecoverOrphanedTurns(ctx context.Context, req RecoverOrpha
 		return nil, err
 	}
 	return result, nil
+}
+
+func reconcileDurableFileChangeItemTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	item *Item,
+	reconciledAt time.Time,
+) (bool, error) {
+	if item == nil || item.Kind != "fileChange" {
+		return false, nil
+	}
+	recovery, err := loadFileChangeRecoveryTx(ctx, tx, item.ID)
+	if errors.Is(err, ErrFileChangeRecoveryNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if recovery.ThreadID != item.ThreadID || recovery.TurnID != item.TurnID {
+		return false, errors.New("appserver/store: file-change recovery ownership mismatch")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(item.Payload, &payload); err != nil {
+		return false, fmt.Errorf("decode durable file-change item %q: %w", item.ID, err)
+	}
+	evidence, ok := payload["evidence"].([]any)
+	if !ok || len(evidence) != 1 {
+		return false, fmt.Errorf("appserver/store: durable file-change item %q has invalid evidence", item.ID)
+	}
+	artifact, ok := evidence[0].(map[string]any)
+	if !ok {
+		return false, fmt.Errorf("appserver/store: durable file-change item %q has invalid artifact evidence", item.ID)
+	}
+	artifact["revertSnapshotAvailable"] = true
+	artifact["revertUnavailableReason"] = ""
+	payload["id"] = item.ID
+	payload["status"] = "completed"
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return false, fmt.Errorf("encode durable file-change item %q: %w", item.ID, err)
+	}
+	item.Status = "completed"
+	item.Payload = encoded
+	item.UpdatedAt = reconciledAt
+	if err := saveItemTx(ctx, tx, item); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RollbackThread implements Store.
@@ -915,6 +982,230 @@ func (s *SQLiteStore) ListItems(ctx context.Context, filter ItemFilter) ([]*Item
 	return out, nil
 }
 
+// SaveFileChangeRecovery persists private exact-revert evidence for a public
+// fileChange item.
+func (s *SQLiteStore) SaveFileChangeRecovery(ctx context.Context, req SaveFileChangeRecoveryRequest) (*FileChangeRecovery, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	recovery := cloneFileChangeRecovery(&req.Recovery)
+	if recovery == nil || recovery.ItemID == "" || recovery.ThreadID == "" || recovery.TurnID == "" || recovery.Path == "" {
+		return nil, errors.New("appserver/store: incomplete file-change recovery")
+	}
+	if recovery.Status == "" {
+		recovery.Status = FileChangeRecoveryAvailable
+	}
+	if recovery.Status != FileChangeRecoveryAvailable {
+		return nil, errors.New("appserver/store: new file-change recovery must be available")
+	}
+	now := time.Now().UTC()
+	if recovery.CreatedAt.IsZero() {
+		recovery.CreatedAt = now
+	}
+	recovery.UpdatedAt = now
+
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		item, err := loadItemTx(ctx, tx, recovery.ItemID)
+		if err != nil {
+			return err
+		}
+		if item.ThreadID != recovery.ThreadID || item.TurnID != recovery.TurnID || item.Kind != "fileChange" {
+			return ErrItemNotFound
+		}
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_file_change_recovery WHERE item_id = ?`, recovery.ItemID).Scan(&count); err != nil {
+			return fmt.Errorf("check file-change recovery: %w", err)
+		}
+		if count != 0 {
+			return errors.New("appserver/store: file-change recovery already exists")
+		}
+		return saveFileChangeRecoveryTx(ctx, tx, recovery)
+	}); err != nil {
+		return nil, err
+	}
+	return cloneFileChangeRecovery(recovery), nil
+}
+
+// GetFileChangeRecovery loads private exact-revert evidence.
+func (s *SQLiteStore) GetFileChangeRecovery(ctx context.Context, itemID string) (*FileChangeRecovery, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	db, err := s.dbLocked()
+	if err != nil {
+		return nil, err
+	}
+	recovery, err := loadFileChangeRecovery(ctx, db, itemID)
+	if err != nil {
+		return nil, err
+	}
+	return cloneFileChangeRecovery(recovery), nil
+}
+
+// PrepareFileChangeRevert durably binds one idempotency key before filesystem
+// mutation. Reusing the same key resumes or returns the prior operation.
+func (s *SQLiteStore) PrepareFileChangeRevert(ctx context.Context, req PrepareFileChangeRevertRequest) (*PrepareFileChangeRevertResult, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if req.ItemID == "" || req.IdempotencyKey == "" {
+		return nil, errors.New("appserver/store: file-change revert item and idempotency key are required")
+	}
+	preparedAt := req.PreparedAt.UTC()
+	if preparedAt.IsZero() {
+		preparedAt = time.Now().UTC()
+	}
+	var result PrepareFileChangeRevertResult
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		recovery, err := loadFileChangeRecoveryTx(ctx, tx, req.ItemID)
+		if err != nil {
+			return err
+		}
+		switch recovery.Status {
+		case FileChangeRecoveryAvailable:
+			recovery.Status = FileChangeRecoveryPending
+			recovery.IdempotencyKey = req.IdempotencyKey
+			recovery.UpdatedAt = preparedAt
+			if err := saveFileChangeRecoveryTx(ctx, tx, recovery); err != nil {
+				return err
+			}
+		case FileChangeRecoveryPending, FileChangeRecoveryReverted:
+			if recovery.IdempotencyKey != req.IdempotencyKey {
+				return ErrFileChangeRevertIdempotencyConflict
+			}
+			result.Reused = true
+		default:
+			return fmt.Errorf("appserver/store: unsupported file-change recovery status %q", recovery.Status)
+		}
+		if recovery.MarkerID != "" {
+			result.Marker, err = loadItemTx(ctx, tx, recovery.MarkerID)
+			if err != nil {
+				return err
+			}
+		}
+		result.Recovery = cloneFileChangeRecovery(recovery)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	result.Marker = cloneItem(result.Marker)
+	return &result, nil
+}
+
+// AbortFileChangeRevert releases an idempotency key after the caller has
+// independently proven that no filesystem mutation occurred.
+func (s *SQLiteStore) AbortFileChangeRevert(ctx context.Context, req AbortFileChangeRevertRequest) (*FileChangeRecovery, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if req.ItemID == "" || req.IdempotencyKey == "" {
+		return nil, errors.New("appserver/store: file-change revert item and idempotency key are required")
+	}
+	abortedAt := req.AbortedAt.UTC()
+	if abortedAt.IsZero() {
+		abortedAt = time.Now().UTC()
+	}
+	var recovery *FileChangeRecovery
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		loaded, err := loadFileChangeRecoveryTx(ctx, tx, req.ItemID)
+		if err != nil {
+			return err
+		}
+		if loaded.Status != FileChangeRecoveryPending || loaded.IdempotencyKey != req.IdempotencyKey {
+			return ErrFileChangeRevertIdempotencyConflict
+		}
+		loaded.Status = FileChangeRecoveryAvailable
+		loaded.IdempotencyKey = ""
+		loaded.UpdatedAt = abortedAt
+		if err := saveFileChangeRecoveryTx(ctx, tx, loaded); err != nil {
+			return err
+		}
+		recovery = loaded
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return cloneFileChangeRecovery(recovery), nil
+}
+
+// CompleteFileChangeRevert atomically marks the recovery record reverted and
+// appends its durable receipt marker.
+func (s *SQLiteStore) CompleteFileChangeRevert(ctx context.Context, req CompleteFileChangeRevertRequest) (*CompleteFileChangeRevertResult, error) {
+	ctx = normalizeContext(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if req.ItemID == "" || req.IdempotencyKey == "" {
+		return nil, errors.New("appserver/store: file-change revert item and idempotency key are required")
+	}
+	revertedAt := req.RevertedAt.UTC()
+	if revertedAt.IsZero() {
+		revertedAt = time.Now().UTC()
+	}
+	var result CompleteFileChangeRevertResult
+	if err := s.withTx(ctx, func(tx *sql.Tx) error {
+		recovery, err := loadFileChangeRecoveryTx(ctx, tx, req.ItemID)
+		if err != nil {
+			return err
+		}
+		if recovery.IdempotencyKey != req.IdempotencyKey {
+			return ErrFileChangeRevertIdempotencyConflict
+		}
+		if recovery.Status == FileChangeRecoveryReverted {
+			if recovery.MarkerID == "" {
+				return errors.New("appserver/store: reverted file change has no receipt marker")
+			}
+			result.Marker, err = loadItemTx(ctx, tx, recovery.MarkerID)
+			if err != nil {
+				return err
+			}
+			result.Recovery = cloneFileChangeRecovery(recovery)
+			result.Reused = true
+			return nil
+		}
+		if recovery.Status != FileChangeRecoveryPending {
+			return errors.New("appserver/store: file-change recovery is not pending")
+		}
+		payload, err := json.Marshal(map[string]any{
+			"itemId":         recovery.ItemID,
+			"path":           recovery.Path,
+			"beforeSha256":   recovery.BeforeSHA256,
+			"afterSha256":    recovery.AfterSHA256,
+			"idempotencyKey": recovery.IdempotencyKey,
+			"revertedAt":     revertedAt,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal file-change revert receipt: %w", err)
+		}
+		marker := &Item{
+			ID:        newID("item"),
+			ThreadID:  recovery.ThreadID,
+			TurnID:    recovery.TurnID,
+			Kind:      "fileChangeRevert",
+			Status:    "completed",
+			Payload:   payload,
+			CreatedAt: revertedAt,
+			UpdatedAt: revertedAt,
+		}
+		if err := saveItemTx(ctx, tx, marker); err != nil {
+			return err
+		}
+		recovery.Status = FileChangeRecoveryReverted
+		recovery.MarkerID = marker.ID
+		recovery.RevertedAt = revertedAt
+		recovery.UpdatedAt = revertedAt
+		if err := saveFileChangeRecoveryTx(ctx, tx, recovery); err != nil {
+			return err
+		}
+		result.Recovery = cloneFileChangeRecovery(recovery)
+		result.Marker = cloneItem(marker)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func saveThreadTx(ctx context.Context, tx *sql.Tx, thread *Thread) error {
 	payload, err := json.Marshal(thread)
 	if err != nil {
@@ -990,6 +1281,30 @@ func saveItemTx(ctx context.Context, tx *sql.Tx, item *Item) error {
 	return nil
 }
 
+func saveFileChangeRecoveryTx(ctx context.Context, tx *sql.Tx, recovery *FileChangeRecovery) error {
+	payload, err := json.Marshal(recovery)
+	if err != nil {
+		return fmt.Errorf("marshal file-change recovery: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO app_file_change_recovery (
+			item_id, thread_id, turn_id, status, idempotency_key, updated_at, payload
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(item_id) DO UPDATE SET
+			thread_id = excluded.thread_id,
+			turn_id = excluded.turn_id,
+			status = excluded.status,
+			idempotency_key = excluded.idempotency_key,
+			updated_at = excluded.updated_at,
+			payload = excluded.payload
+	`, recovery.ItemID, recovery.ThreadID, recovery.TurnID, string(recovery.Status), recovery.IdempotencyKey, formatTime(recovery.UpdatedAt), payload)
+	if err != nil {
+		return fmt.Errorf("save file-change recovery: %w", err)
+	}
+	return nil
+}
+
 func loadThread(ctx context.Context, db *sql.DB, id string) (*Thread, error) {
 	return scanThread(db.QueryRowContext(ctx, `SELECT payload FROM app_threads WHERE id = ?`, id))
 }
@@ -1004,6 +1319,14 @@ func loadTurn(ctx context.Context, db *sql.DB, id string) (*Turn, error) {
 
 func loadTurnTx(ctx context.Context, tx *sql.Tx, id string) (*Turn, error) {
 	return scanTurn(tx.QueryRowContext(ctx, `SELECT payload FROM app_turns WHERE id = ?`, id))
+}
+
+func loadFileChangeRecovery(ctx context.Context, db *sql.DB, itemID string) (*FileChangeRecovery, error) {
+	return scanFileChangeRecovery(db.QueryRowContext(ctx, `SELECT payload FROM app_file_change_recovery WHERE item_id = ?`, itemID))
+}
+
+func loadFileChangeRecoveryTx(ctx context.Context, tx *sql.Tx, itemID string) (*FileChangeRecovery, error) {
+	return scanFileChangeRecovery(tx.QueryRowContext(ctx, `SELECT payload FROM app_file_change_recovery WHERE item_id = ?`, itemID))
 }
 
 func loadTurnsForThreadTx(ctx context.Context, tx *sql.Tx, threadID string) ([]*Turn, error) {
@@ -1149,11 +1472,31 @@ func pruneRolledBackHistoryTx(ctx context.Context, tx *sql.Tx, threadID string, 
 		return err
 	}
 	if cutoff > 0 {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM app_items WHERE thread_id = ? AND seq >= ?`, threadID, cutoff); err != nil {
-			return fmt.Errorf("delete rolled back items: %w", err)
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM app_file_change_recovery
+			WHERE item_id IN (
+				SELECT id FROM app_items WHERE thread_id = ? AND seq >= ?
+			)
+		`, threadID, cutoff); err != nil {
+			return fmt.Errorf("delete rolled back file-change recovery: %w", err)
+		}
+		preservedReceipts, err := retainedFileChangeReceiptIDsTx(ctx, tx, threadID)
+		if err != nil {
+			return err
+		}
+		if err := deleteItemsFromSeqTx(ctx, tx, threadID, cutoff, preservedReceipts); err != nil {
+			return err
 		}
 	} else {
 		for id := range removedIDs {
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM app_file_change_recovery
+				WHERE item_id IN (
+					SELECT id FROM app_items WHERE thread_id = ? AND turn_id = ?
+				)
+			`, threadID, id); err != nil {
+				return fmt.Errorf("delete rolled back turn file-change recovery: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM app_items WHERE thread_id = ? AND turn_id = ?`, threadID, id); err != nil {
 				return fmt.Errorf("delete rolled back turn items: %w", err)
 			}
@@ -1162,6 +1505,73 @@ func pruneRolledBackHistoryTx(ctx context.Context, tx *sql.Tx, threadID string, 
 	for id := range removedIDs {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM app_turns WHERE id = ?`, id); err != nil {
 			return fmt.Errorf("delete rolled back turn: %w", err)
+		}
+	}
+	return nil
+}
+
+func retainedFileChangeReceiptIDsTx(ctx context.Context, tx *sql.Tx, threadID string) (map[string]struct{}, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT payload
+		FROM app_file_change_recovery
+		WHERE thread_id = ? AND status = ?
+	`, threadID, string(FileChangeRecoveryReverted))
+	if err != nil {
+		return nil, fmt.Errorf("load retained file-change receipts: %w", err)
+	}
+	defer rows.Close()
+	preserved := make(map[string]struct{})
+	for rows.Next() {
+		recovery, err := scanFileChangeRecovery(rows)
+		if err != nil {
+			return nil, err
+		}
+		if recovery.MarkerID != "" {
+			preserved[recovery.MarkerID] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate retained file-change receipts: %w", err)
+	}
+	return preserved, nil
+}
+
+func deleteItemsFromSeqTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	threadID string,
+	cutoff int64,
+	preserved map[string]struct{},
+) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM app_items
+		WHERE thread_id = ? AND seq >= ?
+		ORDER BY seq ASC
+	`, threadID, cutoff)
+	if err != nil {
+		return fmt.Errorf("load rolled back items: %w", err)
+	}
+	var deleteIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan rolled back item id: %w", err)
+		}
+		if _, keep := preserved[id]; !keep {
+			deleteIDs = append(deleteIDs, id)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close rolled back item rows: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate rolled back item ids: %w", err)
+	}
+	for _, id := range deleteIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM app_items WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("delete rolled back item %q: %w", id, err)
 		}
 	}
 	return nil
@@ -1253,6 +1663,21 @@ func scanItem(row interface{ Scan(dest ...any) error }) (*Item, error) {
 	return &item, nil
 }
 
+func scanFileChangeRecovery(row interface{ Scan(dest ...any) error }) (*FileChangeRecovery, error) {
+	var payload []byte
+	if err := row.Scan(&payload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrFileChangeRecoveryNotFound
+		}
+		return nil, fmt.Errorf("scan file-change recovery: %w", err)
+	}
+	var recovery FileChangeRecovery
+	if err := json.Unmarshal(payload, &recovery); err != nil {
+		return nil, fmt.Errorf("unmarshal file-change recovery: %w", err)
+	}
+	return &recovery, nil
+}
+
 func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkThreadID string, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, `SELECT payload FROM app_turns WHERE thread_id = ? ORDER BY created_at ASC, id ASC`, sourceThreadID)
 	if err != nil {
@@ -1318,6 +1743,10 @@ func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkTh
 		oldParentID := item.ParentItemID
 		item.ID = itemMap[oldID]
 		item.Payload = remapForkedItemPayloadID(item.Payload, oldID, item.ID)
+		if item.Kind == "fileChangeRevert" {
+			item.Payload = remapForkedFileChangeReceiptTarget(item.Payload, itemMap)
+		}
+		item.Payload = disableForkedFileChangeRevert(item.Payload)
 		item.ThreadID = forkThreadID
 		item.TurnID = turnMap[item.TurnID]
 		item.ParentItemID = itemMap[oldParentID]
@@ -1329,6 +1758,70 @@ func copyThreadHistoryTx(ctx context.Context, tx *sql.Tx, sourceThreadID, forkTh
 		}
 	}
 	return nil
+}
+
+func remapForkedFileChangeReceiptTarget(raw json.RawMessage, itemMap map[string]string) json.RawMessage {
+	if len(raw) == 0 || len(itemMap) == 0 {
+		return raw
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return raw
+	}
+	var sourceItemID string
+	if json.Unmarshal(payload["itemId"], &sourceItemID) != nil {
+		return raw
+	}
+	forkedItemID := itemMap[sourceItemID]
+	if forkedItemID == "" {
+		return raw
+	}
+	encodedItemID, err := json.Marshal(forkedItemID)
+	if err != nil {
+		return raw
+	}
+	payload["itemId"] = encodedItemID
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return encoded
+}
+
+func disableForkedFileChangeRevert(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return raw
+	}
+	var itemType string
+	if json.Unmarshal(payload["type"], &itemType) != nil || itemType != "fileChange" {
+		return raw
+	}
+	var evidence []map[string]json.RawMessage
+	if json.Unmarshal(payload["evidence"], &evidence) != nil {
+		return raw
+	}
+	reason, err := json.Marshal("file-change recovery does not transfer to forked threads")
+	if err != nil {
+		return raw
+	}
+	for _, entry := range evidence {
+		entry["revertSnapshotAvailable"] = json.RawMessage("false")
+		entry["revertUnavailableReason"] = reason
+	}
+	encodedEvidence, err := json.Marshal(evidence)
+	if err != nil {
+		return raw
+	}
+	payload["evidence"] = encodedEvidence
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }
 
 func remapForkedItemPayloadID(raw json.RawMessage, oldID, newID string) json.RawMessage {
@@ -1431,6 +1924,15 @@ func cloneItem(src *Item) *Item {
 	}
 	dst := *src
 	dst.Payload = cloneRaw(src.Payload)
+	return &dst
+}
+
+func cloneFileChangeRecovery(src *FileChangeRecovery) *FileChangeRecovery {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	dst.BeforeContent = append([]byte(nil), src.BeforeContent...)
 	return &dst
 }
 

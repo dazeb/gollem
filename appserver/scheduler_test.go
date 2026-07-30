@@ -100,6 +100,49 @@ func TestRequestSchedulerSerializesMatchingScopes(t *testing.T) {
 	}
 }
 
+func TestRequestSchedulerDoesNotBlockThreadReadsBehindRevertApproval(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	scheduler := NewRequestScheduler(2)
+	revert, rpcErr := scheduler.TryAcquire("item/fileChange/revert", nil)
+	if rpcErr != nil {
+		t.Fatalf("revert acquire: %v", rpcErr)
+	}
+	read, rpcErr := scheduler.TryAcquire("thread/read", nil)
+	if rpcErr != nil {
+		t.Fatalf("thread read acquire: %v", rpcErr)
+	}
+	releaseRevert := make(chan struct{})
+	revertEntered := make(chan struct{})
+	readEntered := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() {
+		errs <- revert.Run(ctx, func() error {
+			close(revertEntered)
+			<-releaseRevert
+			return nil
+		})
+	}()
+	<-revertEntered
+	go func() {
+		errs <- read.Run(ctx, func() error {
+			close(readEntered)
+			return nil
+		})
+	}()
+	select {
+	case <-readEntered:
+	case <-time.After(time.Second):
+		t.Fatal("thread read was blocked behind file-change revert scope")
+	}
+	close(releaseRevert)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("scheduled run returned error: %v", err)
+		}
+	}
+}
+
 func TestRequestScheduleForThreadControls(t *testing.T) {
 	methods := []string{
 		"thread/search",
@@ -116,6 +159,10 @@ func TestRequestScheduleForThreadControls(t *testing.T) {
 		"thread/metadata/update",
 		"thread/memoryMode/set",
 		"thread/name/set",
+		"thread/start",
+		"thread/resume",
+		"turn/start",
+		"turn/retry",
 	}
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
@@ -124,6 +171,13 @@ func TestRequestScheduleForThreadControls(t *testing.T) {
 				t.Fatalf("schedule = %#v, want serial thread scope", schedule)
 			}
 		})
+	}
+}
+
+func TestRequestScheduleForFileChangeRevertUsesDedicatedScope(t *testing.T) {
+	schedule := RequestScheduleFor("item/fileChange/revert", nil)
+	if schedule.Scope != "file-change-revert" || !schedule.Serial {
+		t.Fatalf("schedule = %#v, want dedicated serial file-change-revert scope", schedule)
 	}
 }
 

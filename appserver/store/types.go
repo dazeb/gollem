@@ -26,13 +26,15 @@ const (
 )
 
 var (
-	ErrThreadNotFound           = errors.New("appserver/store: thread not found")
-	ErrTurnNotFound             = errors.New("appserver/store: turn not found")
-	ErrItemNotFound             = errors.New("appserver/store: item not found")
-	ErrThreadDeleted            = errors.New("appserver/store: thread is deleted")
-	ErrStoreClosed              = errors.New("appserver/store: store is closed")
-	ErrTurnNotTerminal          = errors.New("appserver/store: turn is not terminal")
-	ErrRetryIdempotencyConflict = errors.New("appserver/store: retry idempotency key is already bound to another turn")
+	ErrThreadNotFound                      = errors.New("appserver/store: thread not found")
+	ErrTurnNotFound                        = errors.New("appserver/store: turn not found")
+	ErrItemNotFound                        = errors.New("appserver/store: item not found")
+	ErrFileChangeRecoveryNotFound          = errors.New("appserver/store: file-change recovery not found")
+	ErrThreadDeleted                       = errors.New("appserver/store: thread is deleted")
+	ErrStoreClosed                         = errors.New("appserver/store: store is closed")
+	ErrTurnNotTerminal                     = errors.New("appserver/store: turn is not terminal")
+	ErrRetryIdempotencyConflict            = errors.New("appserver/store: retry idempotency key is already bound to another turn")
+	ErrFileChangeRevertIdempotencyConflict = errors.New("appserver/store: file-change revert idempotency key is already bound")
 )
 
 const RuntimeOwnerLostReason = "appserver/runtime: execution owner exited before terminal state"
@@ -190,6 +192,71 @@ type ItemFilter struct {
 	Limit    int
 }
 
+type FileChangeRecoveryStatus string
+
+const (
+	FileChangeRecoveryAvailable FileChangeRecoveryStatus = "available"
+	FileChangeRecoveryPending   FileChangeRecoveryStatus = "pending"
+	FileChangeRecoveryReverted  FileChangeRecoveryStatus = "reverted"
+)
+
+// FileChangeRecovery is private durable evidence for one exact file mutation.
+// Contents are stored separately from the public timeline item so thread reads
+// do not expose full workspace files.
+type FileChangeRecovery struct {
+	ItemID         string                   `json:"itemId"`
+	ThreadID       string                   `json:"threadId"`
+	TurnID         string                   `json:"turnId"`
+	Path           string                   `json:"path"`
+	BeforeExists   bool                     `json:"beforeExists"`
+	AfterExists    bool                     `json:"afterExists"`
+	BeforeSHA256   string                   `json:"beforeSha256,omitempty"`
+	AfterSHA256    string                   `json:"afterSha256,omitempty"`
+	BeforeMode     uint32                   `json:"beforeMode,omitempty"`
+	AfterMode      uint32                   `json:"afterMode,omitempty"`
+	BeforeContent  []byte                   `json:"beforeContent,omitempty"`
+	Status         FileChangeRecoveryStatus `json:"status"`
+	IdempotencyKey string                   `json:"idempotencyKey,omitempty"`
+	MarkerID       string                   `json:"markerId,omitempty"`
+	CreatedAt      time.Time                `json:"createdAt"`
+	UpdatedAt      time.Time                `json:"updatedAt"`
+	RevertedAt     time.Time                `json:"revertedAt,omitempty"`
+}
+
+type SaveFileChangeRecoveryRequest struct {
+	Recovery FileChangeRecovery
+}
+
+type PrepareFileChangeRevertRequest struct {
+	ItemID         string
+	IdempotencyKey string
+	PreparedAt     time.Time
+}
+
+type PrepareFileChangeRevertResult struct {
+	Recovery *FileChangeRecovery
+	Marker   *Item
+	Reused   bool
+}
+
+type CompleteFileChangeRevertRequest struct {
+	ItemID         string
+	IdempotencyKey string
+	RevertedAt     time.Time
+}
+
+type CompleteFileChangeRevertResult struct {
+	Recovery *FileChangeRecovery
+	Marker   *Item
+	Reused   bool
+}
+
+type AbortFileChangeRevertRequest struct {
+	ItemID         string
+	IdempotencyKey string
+	AbortedAt      time.Time
+}
+
 // Store is the durable app-server persistence contract.
 type Store interface {
 	CreateThread(context.Context, CreateThreadRequest) (*Thread, error)
@@ -220,4 +287,14 @@ type Store interface {
 type RuntimeRecoveryStore interface {
 	PrepareTurnRetry(context.Context, PrepareTurnRetryRequest) (*PrepareTurnRetryResult, error)
 	RecoverOrphanedTurns(context.Context, RecoverOrphanedTurnsRequest) (*RecoverOrphanedTurnsResult, error)
+}
+
+// FileChangeRecoveryStore is the optional persistence capability required for
+// restart-safe, exactly-once file-change reversal.
+type FileChangeRecoveryStore interface {
+	SaveFileChangeRecovery(context.Context, SaveFileChangeRecoveryRequest) (*FileChangeRecovery, error)
+	GetFileChangeRecovery(context.Context, string) (*FileChangeRecovery, error)
+	PrepareFileChangeRevert(context.Context, PrepareFileChangeRevertRequest) (*PrepareFileChangeRevertResult, error)
+	AbortFileChangeRevert(context.Context, AbortFileChangeRevertRequest) (*FileChangeRecovery, error)
+	CompleteFileChangeRevert(context.Context, CompleteFileChangeRevertRequest) (*CompleteFileChangeRevertResult, error)
 }

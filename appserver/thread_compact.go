@@ -47,6 +47,11 @@ func (s *Server) handleThreadCompactStart(ctx context.Context, raw json.RawMessa
 	}
 	summary := summarizeCompactionMessages(runtimeMessagesFromItems(compactionWindowItems(items)), threadCompactionSummaryMax)
 	now := time.Now().UTC()
+	releaseStart, err := s.acquireTurnStartLease()
+	if err != nil {
+		return nil, mapError("thread/compact/start", err)
+	}
+	defer releaseStart()
 	turn, err := st.CreateTurn(ctx, store.CreateTurnRequest{
 		ThreadID: thread.ID,
 		Input:    mustRuntimeJSON(map[string]any{"type": threadCompactionItemKind, "requestedAt": now}),
@@ -59,6 +64,7 @@ func (s *Server) handleThreadCompactStart(ctx context.Context, raw json.RawMessa
 	if err != nil {
 		return nil, mapError("thread/compact/start", err)
 	}
+	releaseStart()
 	item, err := st.AppendItem(ctx, store.AppendItemRequest{
 		ThreadID: thread.ID,
 		TurnID:   started.ID,
