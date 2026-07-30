@@ -12038,6 +12038,43 @@
       ],
       "type": "object"
     },
+    "ProviderHealthProbeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "ProviderHealthProbeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "providerId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ProviderHealthProbeStatus"
+        }
+      },
+      "required": [
+        "providerId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ProviderHealthProbeStatus": {
+      "enum": [
+        "available",
+        "unavailable",
+        "not-configured",
+        "unsupported"
+      ],
+      "type": "string"
+    },
     "ProviderListParams": {
       "additionalProperties": false,
       "properties": {
@@ -12634,6 +12671,7 @@
             "git/worktree/list",
             "item/fileChange/revert",
             "provider/capabilities/read",
+            "provider/health/probe",
             "provider/list",
             "tool/list",
             "turn/retry"
@@ -20893,6 +20931,12 @@
       "source": "goal.txt"
     },
     {
+      "method": "provider/health/probe",
+      "surface": "gollem-extension",
+      "state": "implemented",
+      "source": "goal.txt"
+    },
+    {
       "method": "provider/list",
       "surface": "gollem-extension",
       "state": "implemented",
@@ -21275,6 +21319,16 @@
       ],
       "result": [
         "ModelCatalogListResponse"
+      ]
+    },
+    {
+      "method": "provider/health/probe",
+      "surface": "gollem-extension",
+      "params": [
+        "ProviderHealthProbeParams"
+      ],
+      "result": [
+        "ProviderHealthProbeResponse"
       ]
     },
     {

@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -127,6 +128,48 @@ func TestLocalEndpointRedactsUnavailableEndpoint(t *testing.T) {
 	}
 	if got := err.Error(); got != "openai: local endpoint unavailable" {
 		t.Fatalf("error = %q, want redacted local endpoint error", got)
+	}
+}
+
+func TestProbeLocalEndpointUsesDiscoveryAndRedactsFailure(t *testing.T) {
+	const token = "local-probe-token"
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" {
+			t.Fatalf("probe request = %s %s, want GET /v1/models", r.Method, r.URL.Path)
+		}
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer server.Close()
+
+	if err := ProbeLocalEndpoint(context.Background(), LocalEndpointConfig{
+		BaseURL: server.URL,
+		Model:   "local-tool-model",
+		Token:   token,
+	}, nil); err != nil {
+		t.Fatalf("ProbeLocalEndpoint: %v", err)
+	}
+	if authorization != "Bearer "+token {
+		t.Fatalf("Authorization = %q, want local token", authorization)
+	}
+
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("unavailable at /private/path"))
+	}))
+	defer unavailable.Close()
+	err := ProbeLocalEndpoint(context.Background(), LocalEndpointConfig{
+		BaseURL: unavailable.URL,
+		Model:   "local-tool-model",
+		Token:   token,
+	}, nil)
+	if !errors.Is(err, ErrLocalEndpointUnavailable) {
+		t.Fatalf("unavailable probe error = %v, want ErrLocalEndpointUnavailable", err)
+	}
+	if strings.Contains(err.Error(), unavailable.URL) || strings.Contains(err.Error(), token) {
+		t.Fatalf("unavailable probe leaked local details: %v", err)
 	}
 }
 

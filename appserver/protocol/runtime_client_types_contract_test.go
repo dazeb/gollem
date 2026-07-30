@@ -24,6 +24,10 @@ func TestRuntimeClientBindingsAreExact(t *testing.T) {
 			Method: "provider/list", Surface: SurfaceGollemExtension,
 			Params: []string{"ProviderListParams"}, Result: []string{"ProviderListResponse"},
 		},
+		"provider/health/probe": {
+			Method: "provider/health/probe", Surface: SurfaceGollemExtension,
+			Params: []string{"ProviderHealthProbeParams"}, Result: []string{"ProviderHealthProbeResponse"},
+		},
 		"thread/start": {
 			Method: "thread/start", Surface: SurfaceClientRequest,
 			Params: []string{"ThreadRunStartParams"}, Result: []string{"ThreadRunStartResult"},
@@ -82,6 +86,8 @@ func TestRuntimeClientSchemasAreClosedAndCredentialFree(t *testing.T) {
 		"ModelCatalogUpgradeInfo",
 		"ProviderCatalogCapabilities",
 		"ProviderCatalogEntry",
+		"ProviderHealthProbeParams",
+		"ProviderHealthProbeResponse",
 		"ProviderListParams",
 		"ProviderListResponse",
 		"RuntimeDeltaNotification",
@@ -110,9 +116,11 @@ func TestRuntimeClientSchemasAreClosedAndCredentialFree(t *testing.T) {
 	}
 
 	required := map[string][]string{
-		"ModelCatalogListResponse": {"data", "nextCursor"},
-		"ProviderListResponse":     {"data", "providers"},
-		"ThreadRunStartResult":     {"thread", "turn"},
+		"ModelCatalogListResponse":    {"data", "nextCursor"},
+		"ProviderListResponse":        {"data", "providers"},
+		"ProviderHealthProbeParams":   {"providerId"},
+		"ProviderHealthProbeResponse": {"providerId", "status"},
+		"ThreadRunStartResult":        {"thread", "turn"},
 		"ThreadHistoryRollbackResult": {
 			"thread", "removedTurnIds", "marker", "workspaceEffectsReverted",
 		},
@@ -129,10 +137,14 @@ func TestRuntimeClientSchemasAreClosedAndCredentialFree(t *testing.T) {
 			t.Errorf("%s required = %v, want %v", name, got, fields)
 		}
 	}
+	assertSchemaEnum(t, defs, "ProviderHealthProbeStatus", []any{
+		"available", "unavailable", "not-configured", "unsupported",
+	})
 
 	for _, name := range []string{
 		"ModelCatalogListParams",
 		"ProviderListParams",
+		"ProviderHealthProbeParams",
 		"RuntimeModelParams",
 		"ThreadHistoryRollbackParams",
 		"ThreadRunStartParams",

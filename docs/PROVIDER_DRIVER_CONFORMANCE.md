@@ -24,7 +24,8 @@ of behavior and must not enable a control solely on provider identity.
 | Retryable 429 request recovery | Proven | Proven | Proven | `provider/conformance` exercises bounded `modelutil.RetryModel` recovery |
 | Request deadline propagation | Proven | Proven | Proven | `provider/conformance` confirms HTTP request cancellation and `context.DeadlineExceeded` normalization |
 | Post-output retry / replay | Not yet proven | Not yet proven | Not yet proven | A stream may have produced caller-visible output; recovery must not replay it without an explicit safe-resume contract |
-| Endpoint health probe and capability mismatch | Not yet proven | Not yet proven | Not yet proven | Must remain a typed unavailable/degraded state |
+| Endpoint health probe | Unsupported | Proven | Unsupported | `provider/health/probe` performs a loopback-only `GET /v1/models`; it returns only a typed status and never starts a model turn |
+| Capability mismatch | Not yet proven | Not yet proven | Not yet proven | Must remain a typed unavailable/degraded state |
 
 `Catalog-supported` means the catalog may expose the capability only for the
 listed provider/model profile. It does not make that behavior part of the common
@@ -41,6 +42,9 @@ driver contract until a deterministic conformance scenario covers it.
 - A local endpoint connection failure is a bounded `local endpoint unavailable`
   error. It must not reveal the endpoint or local token through app-server,
   catalog, or renderer diagnostics.
+- `provider/health/probe` is available only for the explicitly configured local
+  profile. It returns `available`, `unavailable`, `not-configured`, or
+  `unsupported`; the probe reads `/v1/models` and does not invoke a model.
 
 ## Adding Or Expanding A Claim
 

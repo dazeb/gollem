@@ -1,9 +1,12 @@
 package openai
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -28,6 +31,10 @@ const (
 	defaultLocalEndpointModel   = "llama3"
 	defaultLocalEndpointAPIKey  = "local"
 )
+
+// ErrLocalEndpointUnavailable is intentionally source-free so callers can
+// report local endpoint availability without projecting its address or error.
+var ErrLocalEndpointUnavailable = errors.New("openai: local endpoint unavailable")
 
 // LocalEndpointConfig is the process-owned configuration for a trusted local
 // OpenAI-compatible Chat Completions endpoint. It contains no renderer-facing
@@ -94,6 +101,37 @@ func NewLocalEndpoint(config LocalEndpointConfig, opts ...Option) (*Provider, er
 		withLocalEndpointConstraints(),
 	)
 	return New(options...), nil
+}
+
+// ProbeLocalEndpoint verifies that a normalized local endpoint accepts a
+// lightweight OpenAI-compatible discovery request. It never creates a model
+// completion and returns only ErrLocalEndpointUnavailable for probe failures.
+func ProbeLocalEndpoint(ctx context.Context, config LocalEndpointConfig, client *http.Client) error {
+	config, err := NormalizeLocalEndpointConfig(config)
+	if err != nil {
+		return ErrLocalEndpointUnavailable
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.BaseURL+"/v1/models", nil)
+	if err != nil {
+		return ErrLocalEndpointUnavailable
+	}
+	req.Header.Set("Authorization", "Bearer "+config.Token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return ErrLocalEndpointUnavailable
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return ErrLocalEndpointUnavailable
+	}
+	return nil
 }
 
 func withLocalEndpointConstraints() Option {

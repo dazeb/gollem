@@ -73,8 +73,8 @@ type Contracts = [
   Expect<Equal<ExactMembers<MethodParamsByName[keyof MethodParamsByName], CollaborationCapabilityContracts>, never>>,
   Expect<Equal<ExactMembers<MethodResultsByName[keyof MethodResultsByName], CollaborationCapabilityContracts>, never>>,
   Expect<Equal<ExactMembers<ItemPayloadByKind[keyof ItemPayloadByKind], CollaborationCapabilityContracts>, never>>,
-  Expect<Equal<typeof protocolMethods["length"], 225>>,
-  Expect<Equal<typeof wireTypeBindings["length"], 79>>,
+  Expect<Equal<typeof protocolMethods["length"], 226>>,
+  Expect<Equal<typeof wireTypeBindings["length"], 80>>,
   Expect<Equal<typeof itemPayloadBindings["length"], 5>>,
 ];
 

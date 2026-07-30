@@ -351,12 +351,12 @@ result after process exit.
 
 Generated clients can discover providers and models, start, steer, and
 interrupt live runs, and consume the current streaming lifecycle without an
-untyped JSON escape hatch. `provider/list` and `model/list` bind the
-provider-aware catalog records; `thread/start`, `turn/start`, `turn/steer`,
-`turn/retry`, and `turn/interrupt` bind durable thread/turn results; and
+untyped JSON escape hatch. `provider/list`, `provider/health/probe`, and
+`model/list` bind the provider-aware catalog records; `thread/start`,
+`turn/start`, `turn/steer`, `turn/retry`, and `turn/interrupt` bind durable thread/turn results; and
 `thread/started`, `turn/started`, `turn/completed`,
 `item/agentMessage/delta`, and `item/reasoning/textDelta` bind the live
-notification records. The registry now contains 79 method bindings and five
+notification records. The registry now contains 80 method bindings and five
 durable item bindings.
 
 The live names are intentionally explicit: `ModelCatalog*`, `ThreadRun*`,
@@ -366,7 +366,10 @@ types remain separate and retain their stricter Codex shapes. This exposes the
 implemented Gollem wire truthfully without weakening or falsely claiming those
 public contracts. Catalog responses expose configuration state and required
 environment-variable names, never credential values; runtime requests contain
-selection and model settings but no credential-bearing fields.
+selection and model settings but no credential-bearing fields. Local endpoint
+health is an explicit bounded extension: it returns only one of `available`,
+`unavailable`, `not-configured`, or `unsupported`, and only checks a configured
+loopback endpoint without starting a turn.
 
 An explicit `reasoningEffort` is accepted only when the selected catalog model
 advertises reasoning and that exact effort. Validation happens before

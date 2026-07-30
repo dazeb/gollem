@@ -126,7 +126,7 @@ func RequestScheduleFor(method string, params json.RawMessage) RequestSchedule {
 		return RequestSchedule{Scope: "skills", Serial: true}
 	case "daemon/start", "daemon/stop", "daemon/restart", "daemon/status", "daemon/version":
 		return RequestSchedule{Scope: "daemon", Serial: true}
-	case "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "provider/list", "tool/list",
+	case "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "provider/health/probe", "provider/list", "tool/list",
 		"config/read", "config/value/write", "config/batchWrite", "configRequirements/read", "config/mcpServer/reload",
 		"environment/add", "environment/info", "collaborationMode/list", "permissionProfile/list",
 		"experimentalFeature/list", "experimentalFeature/enablement/set":

@@ -623,6 +623,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleProviderCapabilities(params)
 	case "provider/list":
 		return s.handleProviderList(params)
+	case "provider/health/probe":
+		return s.handleProviderHealthProbe(ctx, params)
 	case "tool/list":
 		return s.handleToolList(params)
 	case "collaborationMode/list":
@@ -1612,6 +1614,18 @@ func (s *Server) handleProviderList(raw json.RawMessage) (any, *protocol.Error) 
 		return nil, rpcErr
 	}
 	return s.requireCatalog().ListProviders(params), nil
+}
+
+func (s *Server) handleProviderHealthProbe(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	var params catalog.ProviderHealthProbeParams
+	if rpcErr := decodeParams(raw, &params); rpcErr != nil {
+		return nil, rpcErr
+	}
+	result, err := s.requireCatalog().ProbeProvider(ctx, params)
+	if err != nil {
+		return nil, invalidParams("invalid provider health probe params", err)
+	}
+	return result, nil
 }
 
 func (s *Server) handleProviderCapabilities(raw json.RawMessage) (any, *protocol.Error) {
