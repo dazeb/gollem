@@ -322,7 +322,7 @@ func (c *Catalog) defaultProviders() []Provider {
 					false,
 					capabilities(true, false, false, true, false, false, false),
 					nil,
-					"",
+					"low",
 				),
 			},
 		},

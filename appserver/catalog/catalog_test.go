@@ -130,6 +130,9 @@ func TestLocalOpenAICompatibleProviderUsesExplicitSafeConfiguration(t *testing.T
 	if len(models.Data) != 1 || models.Data[0].Model != model || !models.Data[0].Capabilities.ToolCalls || !models.Data[0].Capabilities.Streaming {
 		t.Fatalf("local provider models = %#v", models.Data)
 	}
+	if models.Data[0].DefaultReasoningEffort != "low" {
+		t.Fatalf("local provider default reasoning effort = %q, want low", models.Data[0].DefaultReasoningEffort)
+	}
 
 	encoded, err := json.Marshal(provider)
 	if err != nil {
