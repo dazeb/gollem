@@ -90,6 +90,13 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 	}
 	defer releaseWorkspace()
 
+	thread, err = st.GetThread(ctx, params.ThreadID)
+	if err != nil {
+		return nil, mapError(fileChangeRevertMethod, err)
+	}
+	if thread.Status == store.ThreadDeleted {
+		return nil, mapError(fileChangeRevertMethod, store.ErrThreadDeleted)
+	}
 	state, rpcErr = loadFileChangeRevertState(ctx, st, recoveryStore, thread, params.ItemID)
 	if rpcErr != nil {
 		return nil, rpcErr
@@ -110,17 +117,12 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 		return nil, mapError(fileChangeRevertMethod, store.ErrFileChangeRevertIdempotencyConflict)
 	}
 
-	revertRequest := fileChangeRevertFilesystemRequest(recovery, params.IdempotencyKey)
-	if err := fsService.RecoverPendingRevert(ctx, revertRequest); err != nil {
-		return nil, mapError(fileChangeRevertMethod, err)
-	}
 	current, err := captureRuntimeArtifact(ctx, fsService, recovery.Path)
 	if err != nil {
 		return nil, mapError(fileChangeRevertMethod, err)
 	}
 	currentIsAfter := runtimeArtifactMatchesRecoveryState(current, recovery.AfterExists, recovery.AfterSHA256, recovery.AfterMode)
-	currentIsBefore := runtimeArtifactMatchesRecoveryState(current, recovery.BeforeExists, recovery.BeforeSHA256, recovery.BeforeMode)
-	if !currentIsAfter && (recovery.Status != store.FileChangeRecoveryPending || !currentIsBefore) {
+	if recovery.Status != store.FileChangeRecoveryPending && !currentIsAfter {
 		return nil, mapError(fileChangeRevertMethod, toolfs.ErrExactStateMismatch)
 	}
 
@@ -136,13 +138,17 @@ func (s *Server) handleFileChangeRevert(ctx context.Context, raw json.RawMessage
 		return fileChangeRevertProtocolResult(prepared.Recovery, prepared.Marker, true)
 	}
 	reused := prepared.Reused
-	if currentIsAfter {
-		approvalCtx := withRuntimeTurnContext(ctx, thread.ID, turn.ID)
-		approvalCtx = withRuntimeApprovalItemID(approvalCtx, item.ID)
-		if _, err := fsService.RevertFile(approvalCtx, revertRequest); err != nil {
-			abortFileChangeRevertIfUnchanged(ctx, recoveryStore, fsService, recovery, params.IdempotencyKey)
-			return nil, mapError(fileChangeRevertMethod, err)
-		}
+	approvalCtx := withRuntimeTurnContext(ctx, thread.ID, turn.ID)
+	approvalCtx = withRuntimeApprovalItemID(approvalCtx, item.ID)
+	revertResult, err := fsService.RevertFile(
+		approvalCtx,
+		fileChangeRevertFilesystemRequest(recovery, params.IdempotencyKey),
+	)
+	if err != nil {
+		abortFileChangeRevertIfUnchanged(ctx, recoveryStore, fsService, recovery, params.IdempotencyKey)
+		return nil, mapError(fileChangeRevertMethod, err)
+	}
+	if revertResult.Changed {
 		s.publishFileChanged(string(toolfs.OperationRevertFileChange), recovery.Path, "")
 	}
 	completed, err := recoveryStore.CompleteFileChangeRevert(ctx, store.CompleteFileChangeRevertRequest{

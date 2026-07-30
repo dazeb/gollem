@@ -166,6 +166,8 @@ type RevertFileResult struct {
 	SHA256   string
 	Restored bool
 	Removed  bool
+	Reused   bool
+	Changed  bool
 }
 
 func NewService(root string, opts ...Option) (*Service, error) {
@@ -573,15 +575,6 @@ func (s *Service) RevertFile(ctx context.Context, req RevertFileRequest) (*Rever
 	if err := rejectSymlinkComponents(s.root, resolved); err != nil {
 		return fail(resolved, err)
 	}
-	if err := verifyExactFileState(resolved, req.After); err != nil {
-		return fail(resolved, err)
-	}
-	if err := s.requireApproval(ctx, op); err != nil {
-		return fail(resolved, err)
-	}
-	if err := checkContext(ctx); err != nil {
-		return fail(resolved, err)
-	}
 	root, err := os.OpenRoot(s.root)
 	if err != nil {
 		return fail(resolved, fmt.Errorf("open exact revert root: %w", err))
@@ -595,10 +588,45 @@ func (s *Service) RevertFile(ctx context.Context, req RevertFileRequest) (*Rever
 	if err := rejectRootSymlinkComponents(root, relative); err != nil {
 		return fail(resolved, err)
 	}
-	if err := verifyExactRootFileState(root, relative, req.After); err != nil {
+	transactionDir, _, _ := exactRevertTransactionPaths(relative, req.TransactionID)
+	transactionPresent, err := exactRevertTransactionPresent(root, transactionDir)
+	if err != nil {
+		return fail(resolved, err)
+	}
+	beforeErr := verifyExactRootFileState(root, relative, req.Before)
+	afterErr := verifyExactRootFileState(root, relative, req.After)
+	if !transactionPresent && beforeErr != nil && afterErr != nil {
+		if errors.Is(afterErr, ErrExactRevertSymlink) || errors.Is(afterErr, ErrExactRevertUnsupported) {
+			return fail(resolved, afterErr)
+		}
+		if errors.Is(beforeErr, ErrExactRevertSymlink) || errors.Is(beforeErr, ErrExactRevertUnsupported) {
+			return fail(resolved, beforeErr)
+		}
+		return fail(resolved, ErrExactStateMismatch)
+	}
+	if err := s.requireApproval(ctx, op); err != nil {
+		return fail(resolved, err)
+	}
+	if err := checkContext(ctx); err != nil {
+		return fail(resolved, err)
+	}
+	recoveredChange, err := recoverPendingRevertRoot(root, relative, req)
+	if err != nil {
 		return fail(resolved, err)
 	}
 	result := &RevertFileResult{Path: s.rel(resolved)}
+	if verifyExactRootFileState(root, relative, req.Before) == nil {
+		result.SHA256 = req.Before.SHA256
+		result.Restored = req.Before.Exists
+		result.Removed = !req.Before.Exists
+		result.Reused = true
+		result.Changed = recoveredChange
+		s.emit(op, resolved, "", true, nil)
+		return result, nil
+	}
+	if err := verifyExactRootFileState(root, relative, req.After); err != nil {
+		return fail(resolved, err)
+	}
 	if req.Before.Exists {
 		parent := filepath.Dir(relative)
 		info, err := root.Lstat(parent)
@@ -619,6 +647,7 @@ func (s *Service) RevertFile(ctx context.Context, req RevertFileRequest) (*Rever
 		}
 		result.Removed = true
 	}
+	result.Changed = true
 	if err := verifyExactRootFileState(root, relative, req.Before); err != nil {
 		return fail(resolved, fmt.Errorf("verify reverted file: %w", err))
 	}
@@ -627,7 +656,8 @@ func (s *Service) RevertFile(ctx context.Context, req RevertFileRequest) (*Rever
 }
 
 // RecoverPendingRevert repairs or cleans a deterministic quarantine left by an
-// interrupted exact revert. It never overwrites an unexpected target state.
+// interrupted exact revert after obtaining mutation approval. It never
+// overwrites an unexpected target state.
 func (s *Service) RecoverPendingRevert(ctx context.Context, req RevertFileRequest) error {
 	if s == nil {
 		return errors.New("appserver/fs: nil service")
@@ -681,57 +711,78 @@ func (s *Service) RecoverPendingRevert(ctx context.Context, req RevertFileReques
 	if err := rejectRootSymlinkComponents(root, relative); err != nil {
 		return err
 	}
+	transactionDir, _, _ := exactRevertTransactionPaths(relative, req.TransactionID)
+	present, err := exactRevertTransactionPresent(root, transactionDir)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	op := Operation{Kind: OperationRevertFileChange, Path: req.Path, Destructive: true}
+	if err := s.requireApproval(ctx, op); err != nil {
+		return err
+	}
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
+	_, err = recoverPendingRevertRoot(root, relative, req)
+	return err
+}
 
+func recoverPendingRevertRoot(root *os.Root, relative string, req RevertFileRequest) (bool, error) {
 	transactionDir, quarantine, replacement := exactRevertTransactionPaths(relative, req.TransactionID)
 	info, err := root.Lstat(transactionDir)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("stat exact revert transaction: %w", err)
+		return false, fmt.Errorf("stat exact revert transaction: %w", err)
 	}
 	if !info.IsDir() || info.Mode()&iofs.ModeSymlink != 0 {
-		return ErrExactRevertPending
+		return false, ErrExactRevertPending
 	}
 
 	if _, err := root.Lstat(quarantine); errors.Is(err, os.ErrNotExist) {
 		if err := removeExactRevertReplacement(root, replacement); err != nil {
-			return err
+			return false, err
 		}
-		return removeExactRevertTransactionDir(root, transactionDir)
+		return false, removeExactRevertTransactionDir(root, transactionDir)
 	} else if err != nil {
-		return fmt.Errorf("stat exact revert quarantine: %w", err)
+		return false, fmt.Errorf("stat exact revert quarantine: %w", err)
 	}
 	if !req.After.Exists {
-		return ErrExactRevertPending
+		return false, ErrExactRevertPending
 	}
 	if err := verifyExactRootFileState(root, quarantine, req.After); err != nil {
-		return fmt.Errorf("%w: verify pending quarantine: %w", ErrExactRevertPending, err)
+		return false, fmt.Errorf("%w: verify pending quarantine: %w", ErrExactRevertPending, err)
 	}
 
 	beforeMatches := verifyExactRootFileState(root, relative, req.Before) == nil
 	afterMatches := verifyExactRootFileState(root, relative, req.After) == nil
 	absent := verifyExactRootFileState(root, relative, ExactFileState{}) == nil
+	changed := false
 	switch {
 	case beforeMatches || afterMatches:
 		if err := root.Remove(quarantine); err != nil {
-			return fmt.Errorf("remove recovered exact revert quarantine: %w", err)
+			return false, fmt.Errorf("remove recovered exact revert quarantine: %w", err)
 		}
 	case absent && req.Before.Exists:
 		if err := restoreQuarantinedRootFile(root, quarantine, relative); err != nil {
-			return fmt.Errorf("restore interrupted exact revert quarantine; preserved at %q: %w", quarantine, err)
+			return false, fmt.Errorf("restore interrupted exact revert quarantine; preserved at %q: %w", quarantine, err)
 		}
+		changed = true
 	case absent:
 		if err := root.Remove(quarantine); err != nil {
-			return fmt.Errorf("remove completed exact revert quarantine: %w", err)
+			return false, fmt.Errorf("remove completed exact revert quarantine: %w", err)
 		}
 	default:
-		return fmt.Errorf("%w: target and quarantine states conflict", ErrExactRevertPending)
+		return false, fmt.Errorf("%w: target and quarantine states conflict", ErrExactRevertPending)
 	}
 	if err := removeExactRevertReplacement(root, replacement); err != nil {
-		return err
+		return changed, err
 	}
-	return removeExactRevertTransactionDir(root, transactionDir)
+	return changed, removeExactRevertTransactionDir(root, transactionDir)
 }
 
 func verifyExactFileState(path string, expected ExactFileState) error {
@@ -1005,6 +1056,15 @@ func exactRevertTransactionPaths(path, transactionID string) (string, string, st
 		".gollem-revert-"+hex.EncodeToString(sum[:16]),
 	)
 	return transactionDir, filepath.Join(transactionDir, "current"), filepath.Join(transactionDir, "replacement")
+}
+
+func exactRevertTransactionPresent(root *os.Root, transactionDir string) (bool, error) {
+	if _, err := root.Lstat(transactionDir); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("stat exact revert transaction: %w", err)
+	}
+	return true, nil
 }
 
 func removeExactRevertReplacement(root *os.Root, replacement string) error {

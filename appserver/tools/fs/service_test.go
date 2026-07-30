@@ -602,8 +602,18 @@ func TestServiceRevertFileRejectsMalformedDeniedAndUnsupportedRequests(t *testin
 	if err := os.Mkdir(filepath.Join(svc.Root(), transactionDir), 0o700); err != nil {
 		t.Fatalf("Mkdir pending transaction: %v", err)
 	}
-	if _, err := svc.RevertFile(ctx, valid); !errors.Is(err, ErrExactRevertPending) {
-		t.Fatalf("pending transaction revert error = %v, want ErrExactRevertPending", err)
+	recovered, err := svc.RevertFile(ctx, valid)
+	if err != nil {
+		t.Fatalf("pending transaction revert: %v", err)
+	}
+	if !recovered.Changed || !recovered.Restored || recovered.Reused {
+		t.Fatalf("pending transaction result = %+v", recovered)
+	}
+	if content, err := os.ReadFile(path); err != nil || string(content) != string(before) {
+		t.Fatalf("pending transaction target = %q, error %v", content, err)
+	}
+	if _, err := os.Stat(filepath.Join(svc.Root(), transactionDir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending transaction stat = %v, want not-exist", err)
 	}
 }
 
@@ -853,6 +863,31 @@ func TestServiceRecoverPendingRevertRejectsMalformedAndUnsafeState(t *testing.T)
 			}
 		})
 	}
+
+	t.Run("denied recovery preserves transaction", func(t *testing.T) {
+		denied := newTestService(t, WithApproval(func(context.Context, Operation) error {
+			return errors.New("denied")
+		}))
+		req := valid
+		req.TransactionID = "denied-recovery"
+		if err := os.WriteFile(filepath.Join(denied.Root(), req.Path), after, 0o644); err != nil {
+			t.Fatalf("WriteFile denied target: %v", err)
+		}
+		transactionDir, _, replacement := exactRevertTransactionPaths(req.Path, req.TransactionID)
+		if err := os.Mkdir(filepath.Join(denied.Root(), transactionDir), 0o700); err != nil {
+			t.Fatalf("Mkdir denied transaction: %v", err)
+		}
+		replacementPath := filepath.Join(denied.Root(), replacement)
+		if err := os.WriteFile(replacementPath, before, 0o600); err != nil {
+			t.Fatalf("WriteFile denied replacement: %v", err)
+		}
+		if err := denied.RecoverPendingRevert(ctx, req); !errors.Is(err, ErrApprovalDenied) {
+			t.Fatalf("denied recovery error = %v, want ErrApprovalDenied", err)
+		}
+		if content, err := os.ReadFile(replacementPath); err != nil || string(content) != string(before) {
+			t.Fatalf("denied replacement = %q, error %v", content, err)
+		}
+	})
 
 	t.Run("transaction path is not a directory", func(t *testing.T) {
 		req := valid

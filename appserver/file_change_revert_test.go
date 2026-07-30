@@ -2,6 +2,8 @@ package appserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -93,6 +95,15 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 			WithRuntimeModel(core.NewTestModel(core.TextResponse("should not run")), RuntimeModelInfo{ProviderID: "test", Model: "test-model"}),
 		)),
 	)
+	transactionSum := sha256.Sum256([]byte(filepath.ToSlash(filepath.Clean("notes.txt")) + "\x00" + "revert-denied"))
+	unownedTransaction := filepath.Join(root, ".gollem-revert-"+hex.EncodeToString(transactionSum[:16]))
+	unownedReplacement := filepath.Join(unownedTransaction, "replacement")
+	if err := os.Mkdir(unownedTransaction, 0o700); err != nil {
+		t.Fatalf("Mkdir unowned transaction: %v", err)
+	}
+	if err := os.WriteFile(unownedReplacement, []byte("unowned\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile unowned replacement: %v", err)
+	}
 	deniedCh := make(chan protocol.Response, 1)
 	go func() {
 		deniedCh <- server.HandleRequest(ctx, request(fileChangeRevertMethod, map[string]any{
@@ -104,6 +115,9 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 	denyServerRequest(t, server, "item/fileChange/requestApproval", func(params protocol.FileChangeApprovalRequestParams) {
 		if params.Operation != string(toolfs.OperationRevertFileChange) || params.ItemID != fileItem.Item.ID {
 			t.Fatalf("denied revert approval params = %+v", params)
+		}
+		if content, err := os.ReadFile(unownedReplacement); err != nil || string(content) != "unowned\n" {
+			t.Fatalf("pre-approval transaction changed: content=%q error=%v", content, err)
 		}
 	})
 	select {
@@ -120,6 +134,9 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 	}
 	if recoveryAfterDenial.Status != store.FileChangeRecoveryAvailable || recoveryAfterDenial.IdempotencyKey != "" {
 		t.Fatalf("recovery after denial = %+v", recoveryAfterDenial)
+	}
+	if content, err := os.ReadFile(unownedReplacement); err != nil || string(content) != "unowned\n" {
+		t.Fatalf("denied transaction changed: content=%q error=%v", content, err)
 	}
 
 	responseCh := make(chan protocol.Response, 1)
@@ -167,6 +184,12 @@ func TestFileChangeRevertSurvivesRestartUsesApprovalAndIsIdempotent(t *testing.T
 		}))
 		if blockedRollback.Error == nil || blockedRollback.Error.Code != protocol.CodeInvalidRequest {
 			t.Fatalf("thread rollback during revert = %+v", blockedRollback)
+		}
+		blockedDelete := server.HandleRequest(ctx, request("thread/delete", map[string]any{
+			"threadId": started.Thread.ID,
+		}))
+		if blockedDelete.Error == nil || blockedDelete.Error.Code != protocol.CodeInvalidRequest {
+			t.Fatalf("thread delete during revert = %+v", blockedDelete)
 		}
 		read := server.HandleRequest(ctx, request("thread/read", map[string]any{"threadId": started.Thread.ID}))
 		if read.Error != nil {
