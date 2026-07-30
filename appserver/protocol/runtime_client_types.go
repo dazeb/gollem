@@ -110,6 +110,58 @@ type ProviderListResponse struct {
 	Providers []ProviderCatalogEntry `json:"providers"`
 }
 
+// ProviderHealthProbeStatus is the bounded health outcome for a configured
+// provider. It deliberately carries no endpoint, credential, or upstream
+// failure detail.
+type ProviderHealthProbeStatus string
+
+const (
+	ProviderHealthAvailable     ProviderHealthProbeStatus = "available"
+	ProviderHealthUnavailable   ProviderHealthProbeStatus = "unavailable"
+	ProviderHealthNotConfigured ProviderHealthProbeStatus = "not-configured"
+	ProviderHealthUnsupported   ProviderHealthProbeStatus = "unsupported"
+)
+
+// ProviderHealthProbeParams selects the provider whose bounded health should
+// be checked. Only the local OpenAI-compatible provider supports probing.
+type ProviderHealthProbeParams struct {
+	ProviderID string `json:"providerId"`
+}
+
+// ProviderHealthProbeResponse reports a source-free provider health outcome.
+type ProviderHealthProbeResponse struct {
+	ProviderID string                    `json:"providerId"`
+	Status     ProviderHealthProbeStatus `json:"status"`
+}
+
+func providerHealthProbeSchemas() map[string]Schema {
+	return map[string]Schema{
+		"ProviderHealthProbeParams": {
+			"additionalProperties": false,
+			"properties": Schema{
+				"providerId": Schema{"type": "string"},
+			},
+			"required": []string{"providerId"},
+			"type":     "object",
+		},
+		"ProviderHealthProbeResponse": {
+			"additionalProperties": false,
+			"properties": Schema{
+				"providerId": Schema{"type": "string"},
+				"status":     Schema{"$ref": "#/$defs/ProviderHealthProbeStatus"},
+			},
+			"required": []string{"providerId", "status"},
+			"type":     "object",
+		},
+		"ProviderHealthProbeStatus": stringEnumSchema(
+			string(ProviderHealthAvailable),
+			string(ProviderHealthUnavailable),
+			string(ProviderHealthNotConfigured),
+			string(ProviderHealthUnsupported),
+		),
+	}
+}
+
 type ModelCatalogListParams struct {
 	Cursor        *string  `json:"cursor,omitempty"`
 	Limit         *uint32  `json:"limit,omitempty"`

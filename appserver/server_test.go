@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1441,6 +1443,52 @@ func TestServerCatalogHandlers(t *testing.T) {
 	}
 	if !toolAvailable(tools.Data, "memory") {
 		t.Fatalf("tool/list did not report memory available: %#v", tools.Data)
+	}
+}
+
+func TestServerProviderHealthProbeIsTypedAndCredentialFree(t *testing.T) {
+	const token = "server-local-probe-secret"
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" {
+			t.Fatalf("probe request = %s %s, want GET /v1/models", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Fatalf("Authorization = %q, want local token", got)
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer endpoint.Close()
+	env := map[string]string{
+		"GOLLEM_LOCAL_OPENAI_BASE_URL": endpoint.URL,
+		"GOLLEM_LOCAL_OPENAI_MODEL":    "local-tool-model",
+		"GOLLEM_LOCAL_OPENAI_API_KEY":  token,
+	}
+	catalogSvc := catalog.NewDefault(catalog.WithEnvLookup(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	}))
+	server := readyServer(WithCatalog(catalogSvc))
+
+	resp := server.HandleRequest(context.Background(), request("provider/health/probe", map[string]any{
+		"providerId": catalog.ProviderOpenAICompatibleLocal,
+	}))
+	if resp.Error != nil {
+		t.Fatalf("provider/health/probe error: %v", resp.Error)
+	}
+	var probe catalog.ProviderHealthProbeResponse
+	decodeResult(t, resp, &probe)
+	if probe.ProviderID != catalog.ProviderOpenAICompatibleLocal || probe.Status != catalog.ProviderHealthAvailable {
+		t.Fatalf("provider/health/probe = %#v", probe)
+	}
+	for _, secret := range []string{endpoint.URL, token} {
+		if strings.Contains(string(resp.Result), secret) {
+			t.Fatalf("provider/health/probe leaked %q: %s", secret, resp.Result)
+		}
+	}
+
+	unknown := server.HandleRequest(context.Background(), request("provider/health/probe", map[string]any{"providerId": "unknown"}))
+	if unknown.Error == nil || unknown.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("unknown provider probe error = %#v, want invalid params", unknown.Error)
 	}
 }
 

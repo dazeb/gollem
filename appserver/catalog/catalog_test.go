@@ -1,8 +1,11 @@
 package catalog
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -162,6 +165,89 @@ func TestLocalOpenAICompatibleProviderRequiresExplicitValidConfiguration(t *test
 	}
 }
 
+func TestProbeProviderReportsBoundedLocalHealth(t *testing.T) {
+	const token = "local-probe-secret"
+	var authorization string
+	available := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" {
+			t.Fatalf("probe request = %s %s, want GET /v1/models", r.Method, r.URL.Path)
+		}
+		authorization = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer available.Close()
+
+	configuredEnv := map[string]string{
+		openaiprovider.LocalEndpointBaseURLEnv: available.URL,
+		openaiprovider.LocalEndpointModelEnv:   "local-tool-model",
+		openaiprovider.LocalEndpointAPIKeyEnv:  token,
+	}
+	c := NewDefault(WithEnvLookup(mapEnv(configuredEnv)))
+	response, err := c.ProbeProvider(context.Background(), ProviderHealthProbeParams{ProviderID: ProviderOpenAICompatibleLocal})
+	if err != nil {
+		t.Fatalf("ProbeProvider: %v", err)
+	}
+	if response.ProviderID != ProviderOpenAICompatibleLocal || response.Status != ProviderHealthAvailable {
+		t.Fatalf("available probe = %#v", response)
+	}
+	if authorization != "Bearer "+token {
+		t.Fatalf("Authorization = %q, want local token", authorization)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	for _, secret := range []string{available.URL, token} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("probe response leaked local configuration %q: %s", secret, encoded)
+		}
+	}
+
+	notConfigured := NewDefault(WithEnvLookup(mapEnv(nil)))
+	response, err = notConfigured.ProbeProvider(context.Background(), ProviderHealthProbeParams{ProviderID: ProviderOpenAICompatibleLocal})
+	if err != nil || response.Status != ProviderHealthNotConfigured {
+		t.Fatalf("not-configured probe = %#v, %v", response, err)
+	}
+
+	unsupported, err := c.ProbeProvider(context.Background(), ProviderHealthProbeParams{ProviderID: ProviderOpenAI})
+	if err != nil || unsupported.Status != ProviderHealthUnsupported {
+		t.Fatalf("unsupported probe = %#v, %v", unsupported, err)
+	}
+
+	_, err = c.ProbeProvider(context.Background(), ProviderHealthProbeParams{ProviderID: "unknown-provider"})
+	if !errors.Is(err, ErrProviderNotFound) {
+		t.Fatalf("unknown provider error = %v, want ErrProviderNotFound", err)
+	}
+}
+
+func TestProbeProviderReportsUnavailableWithoutEndpointDetails(t *testing.T) {
+	const token = "unavailable-local-probe-secret"
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("endpoint unavailable"))
+	}))
+	defer unavailable.Close()
+	c := NewDefault(WithEnvLookup(mapEnv(map[string]string{
+		openaiprovider.LocalEndpointBaseURLEnv: unavailable.URL,
+		openaiprovider.LocalEndpointModelEnv:   "local-tool-model",
+		openaiprovider.LocalEndpointAPIKeyEnv:  token,
+	})))
+
+	response, err := c.ProbeProvider(context.Background(), ProviderHealthProbeParams{ProviderID: ProviderOpenAICompatibleLocal})
+	if err != nil || response.Status != ProviderHealthUnavailable {
+		t.Fatalf("unavailable probe = %#v, %v", response, err)
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	for _, secret := range []string{unavailable.URL, token} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("probe response leaked local configuration %q: %s", secret, encoded)
+		}
+	}
+}
+
 func TestToolListAvailability(t *testing.T) {
 	resp := ListTools(ToolListParams{}, ToolServices{Filesystem: true})
 	if len(resp.Data) == 0 {
@@ -193,6 +279,10 @@ func TestToolListAvailability(t *testing.T) {
 	cacheTool := findTool(ListTools(ToolListParams{}, ToolServices{Cache: true}).Data, "cache")
 	if cacheTool == nil || !cacheTool.Available || !cacheTool.GollemExtension {
 		t.Fatalf("cache tool metadata = %#v", cacheTool)
+	}
+	providerCatalogTool := findTool(ListTools(ToolListParams{}, ToolServices{}).Data, "provider-catalog")
+	if providerCatalogTool == nil || !providerCatalogTool.GollemExtension || !containsMethod(providerCatalogTool.Methods, "provider/health/probe") {
+		t.Fatalf("provider catalog tool metadata = %#v", providerCatalogTool)
 	}
 	memoryTool := findTool(ListTools(ToolListParams{}, ToolServices{Memory: true}).Data, "memory")
 	if memoryTool == nil || !memoryTool.Available || memoryTool.GollemExtension || !memoryTool.CodexCompatible || !memoryTool.Mutation {

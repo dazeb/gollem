@@ -188,3 +188,10 @@ func TestRequestScheduleForMemoryReset(t *testing.T) {
 		t.Fatalf("schedule = %#v, want serial memory scope", schedule)
 	}
 }
+
+func TestRequestScheduleForProviderHealthProbe(t *testing.T) {
+	schedule := RequestScheduleFor("provider/health/probe", nil)
+	if schedule.Scope != "catalog" || !schedule.Serial {
+		t.Fatalf("schedule = %#v, want serial catalog scope", schedule)
+	}
+}

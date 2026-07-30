@@ -584,7 +584,7 @@ func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte, 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		if p.redactEndpointErrors {
-			return nil, errors.New("openai: local endpoint unavailable")
+			return nil, ErrLocalEndpointUnavailable
 		}
 		return nil, fmt.Errorf("openai: failed to create HTTP request: %w", err)
 	}
@@ -597,7 +597,7 @@ func (p *Provider) doRequest(ctx context.Context, endpoint string, body []byte, 
 	if err != nil {
 		ri.recordError(err)
 		if p.redactEndpointErrors && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			return nil, errors.New("openai: local endpoint unavailable")
+			return nil, ErrLocalEndpointUnavailable
 		}
 		return nil, fmt.Errorf("openai: HTTP request failed: %w", err)
 	}

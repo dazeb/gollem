@@ -469,6 +469,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PermissionsRequestApprovalResponse", Type: reflect.TypeFor[PermissionsRequestApprovalResponse]()},
 		{Name: "ProviderCatalogCapabilities", Type: reflect.TypeFor[ProviderCatalogCapabilities]()},
 		{Name: "ProviderCatalogEntry", Type: reflect.TypeFor[ProviderCatalogEntry]()},
+		{Name: "ProviderHealthProbeParams", Type: reflect.TypeFor[ProviderHealthProbeParams]()},
+		{Name: "ProviderHealthProbeResponse", Type: reflect.TypeFor[ProviderHealthProbeResponse]()},
+		{Name: "ProviderHealthProbeStatus", Type: reflect.TypeFor[ProviderHealthProbeStatus]()},
 		{Name: "ProviderListParams", Type: reflect.TypeFor[ProviderListParams]()},
 		{Name: "ProviderListResponse", Type: reflect.TypeFor[ProviderListResponse]()},
 		{Name: "RequestPermissionProfile", Type: reflect.TypeFor[RequestPermissionProfile]()},
@@ -1114,6 +1117,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	for name, schema := range collaborationCapabilitySchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range providerHealthProbeSchemas() {
 		schemas[name] = schema
 	}
 	schemas["ProcessExitedNotification"] = processExitedNotificationSchema()

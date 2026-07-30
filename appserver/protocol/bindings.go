@@ -57,6 +57,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "item/tool/requestUserInput", Surface: SurfaceServerRequest, Params: []string{"ToolRequestUserInputParams"}, Result: []string{"ToolRequestUserInputResponse"}},
 	{Method: "mcpServer/elicitation/request", Surface: SurfaceServerRequest, Params: []string{"McpServerElicitationRequestParams"}, Result: []string{"McpServerElicitationRequestResponse"}},
 	{Method: "model/list", Surface: SurfaceClientRequest, Params: []string{"ModelCatalogListParams"}, Result: []string{"ModelCatalogListResponse"}},
+	{Method: "provider/health/probe", Surface: SurfaceGollemExtension, Params: []string{"ProviderHealthProbeParams"}, Result: []string{"ProviderHealthProbeResponse"}},
 	{Method: "provider/list", Surface: SurfaceGollemExtension, Params: []string{"ProviderListParams"}, Result: []string{"ProviderListResponse"}},
 	{Method: "serverRequest/resolved", Surface: SurfaceServerNotification, Params: []string{"ServerRequestResolvedNotification"}},
 	{Method: "thread/archive", Surface: SurfaceClientRequest, Params: []string{"ThreadArchiveParams"}, Result: []string{"ThreadArchiveResponse"}},

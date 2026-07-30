@@ -1,12 +1,15 @@
 package catalog
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	anthropicprovider "github.com/fugue-labs/gollem/provider/anthropic"
@@ -25,6 +28,8 @@ const (
 
 var ErrProviderNotFound = errors.New("provider not found")
 
+const localEndpointProbeTimeout = 5 * time.Second
+
 type EnvLookup func(string) (string, bool)
 
 type Option func(*Catalog)
@@ -37,14 +42,26 @@ func WithEnvLookup(lookup EnvLookup) Option {
 	}
 }
 
+// WithHTTPClient configures the process-owned client used for bounded local
+// endpoint health probes. It is primarily useful for deterministic tests.
+func WithHTTPClient(client *http.Client) Option {
+	return func(c *Catalog) {
+		if client != nil {
+			c.httpClient = client
+		}
+	}
+}
+
 type Catalog struct {
-	env       EnvLookup
-	providers []Provider
+	env        EnvLookup
+	httpClient *http.Client
+	providers  []Provider
 }
 
 func NewDefault(opts ...Option) *Catalog {
 	c := &Catalog{
-		env: os.LookupEnv,
+		env:        os.LookupEnv,
+		httpClient: &http.Client{Timeout: localEndpointProbeTimeout},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -65,6 +82,16 @@ type ModelListParams = protocol.ModelCatalogListParams
 type ModelListResponse = protocol.ModelCatalogListResponse
 type ProviderListParams = protocol.ProviderListParams
 type ProviderListResponse = protocol.ProviderListResponse
+type ProviderHealthProbeParams = protocol.ProviderHealthProbeParams
+type ProviderHealthProbeResponse = protocol.ProviderHealthProbeResponse
+type ProviderHealthProbeStatus = protocol.ProviderHealthProbeStatus
+
+const (
+	ProviderHealthAvailable     = protocol.ProviderHealthAvailable
+	ProviderHealthUnavailable   = protocol.ProviderHealthUnavailable
+	ProviderHealthNotConfigured = protocol.ProviderHealthNotConfigured
+	ProviderHealthUnsupported   = protocol.ProviderHealthUnsupported
+)
 
 type CapabilitiesReadParams struct {
 	ProviderID    string `json:"providerId,omitempty"`
@@ -224,6 +251,33 @@ func (c *Catalog) ProviderCapabilities(providerID string) (ProviderCapabilities,
 	return aggregate, nil
 }
 
+// ProbeProvider reports bounded health for the selected provider. The only
+// network operation permitted here is a discovery request to an explicitly
+// configured loopback OpenAI-compatible endpoint.
+func (c *Catalog) ProbeProvider(ctx context.Context, params ProviderHealthProbeParams) (ProviderHealthProbeResponse, error) {
+	c = ensureCatalog(c)
+	providerID := normalizeProviderID(params.ProviderID)
+	if !c.hasProvider(providerID) {
+		return ProviderHealthProbeResponse{}, fmt.Errorf("%w: %s", ErrProviderNotFound, providerID)
+	}
+	response := ProviderHealthProbeResponse{ProviderID: providerID}
+	if providerID != ProviderOpenAICompatibleLocal {
+		response.Status = protocol.ProviderHealthUnsupported
+		return response, nil
+	}
+
+	config, configured := c.localEndpointConfig()
+	if !configured {
+		response.Status = protocol.ProviderHealthNotConfigured
+		return response, nil
+	}
+	response.Status = protocol.ProviderHealthAvailable
+	if openaiprovider.ProbeLocalEndpoint(ctx, config, c.httpClient) != nil {
+		response.Status = protocol.ProviderHealthUnavailable
+	}
+	return response, nil
+}
+
 func ListTools(params ToolListParams, services ToolServices) ToolListResponse {
 	tools := builtinTools(services)
 	filtered := make([]Tool, 0, len(tools))
@@ -249,14 +303,7 @@ func (c *Catalog) defaultProviders() []Provider {
 	openaiConfigured := envConfigured(c.env, "OPENAI_API_KEY") || envConfigured(c.env, "CHATGPT_ACCESS_TOKEN")
 	anthropicConfigured := envConfigured(c.env, "ANTHROPIC_API_KEY")
 	vertexConfigured := envConfigured(c.env, "GOOGLE_CLOUD_PROJECT") || envConfigured(c.env, "GOOGLE_APPLICATION_CREDENTIALS")
-	localConfig, localConfigErr := openaiprovider.LocalEndpointConfigFromLookup(c.env)
-	// Merely having a safe default is not evidence that a local server exists.
-	// Require an explicit local-profile setting before offering it as runnable.
-	localConfigured := localConfigErr == nil && envConfigured(c.env,
-		openaiprovider.LocalEndpointBaseURLEnv,
-		openaiprovider.LocalEndpointModelEnv,
-		openaiprovider.LocalEndpointAPIKeyEnv,
-	)
+	localConfig, localConfigured := c.localEndpointConfig()
 	localModel := "llama3"
 	if localConfigured {
 		localModel = localConfig.Model
@@ -416,6 +463,27 @@ func (c *Catalog) defaultProviders() []Provider {
 	}
 }
 
+func (c *Catalog) localEndpointConfig() (openaiprovider.LocalEndpointConfig, bool) {
+	config, err := openaiprovider.LocalEndpointConfigFromLookup(c.env)
+	// Merely having a safe default is not evidence that a local server exists.
+	// Require an explicit local-profile setting before offering it as runnable.
+	configured := err == nil && envConfigured(c.env,
+		openaiprovider.LocalEndpointBaseURLEnv,
+		openaiprovider.LocalEndpointModelEnv,
+		openaiprovider.LocalEndpointAPIKeyEnv,
+	)
+	return config, configured
+}
+
+func (c *Catalog) hasProvider(providerID string) bool {
+	for _, provider := range c.providers {
+		if provider.ID == providerID {
+			return true
+		}
+	}
+	return false
+}
+
 func builtinTools(services ToolServices) []Tool {
 	return []Tool{
 		tool("fs", "Filesystem", "Read, write, copy, remove, inspect, and watch files under the configured workspace root.", "workspace", []string{"fs/readFile", "fs/writeFile", "fs/createDirectory", "fs/readDirectory", "fs/getMetadata", "fs/remove", "fs/copy", "fs/watch", "fs/unwatch"}, services.Filesystem, true, true, "fs/changed", true, false),
@@ -425,7 +493,7 @@ func builtinTools(services ToolServices) []Tool {
 		tool("file-change-revert", "File change revert", "Restore one exact workspace file state from durable private recovery evidence.", "workspace", []string{"item/fileChange/revert"}, services.Filesystem && services.FileRecovery, true, true, "fs/changed", true, false),
 		tool("turn-runtime", "Turn runtime", "Start, resume, interrupt, steer, and retry provider-neutral Gollem app-server turns.", "runtime", []string{"thread/start", "thread/resume", "turn/start", "turn/interrupt", "turn/steer", "turn/retry"}, services.Runtime, true, false, "turn/started", true, true),
 		tool("interactions", "Interactions", "Request user input, dynamic tool calls, and MCP elicitation from the connected Slang client.", "runtime", []string{"item/tool/requestUserInput", "item/tool/call", "mcpServer/elicitation/request"}, services.Interactions, false, false, "serverRequest/resolved", true, false),
-		tool("provider-catalog", "Provider catalog", "List provider, model, capability, and app-server tool metadata for Slang controls.", "configuration", []string{"provider/list", "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "tool/list"}, true, false, false, "", true, true),
+		tool("provider-catalog", "Provider catalog", "List provider, model, capability, and app-server tool metadata for Slang controls.", "configuration", []string{"provider/list", "provider/health/probe", "model/list", "modelProvider/capabilities/read", "provider/capabilities/read", "tool/list"}, true, false, false, "", true, true),
 		tool("config", "Configuration", "Read and update app-server config, environment metadata, permission profiles, collaboration modes, and feature flags.", "configuration", []string{"config/read", "config/value/write", "config/batchWrite", "configRequirements/read", "config/mcpServer/reload", "environment/info", "environment/add", "permissionProfile/list", "collaborationMode/list", "experimentalFeature/list", "experimentalFeature/enablement/set"}, services.Config, true, false, "", true, false),
 		tool("mcp", "MCP servers", "List MCP server startup status, read MCP resources, and call MCP tools through registered Gollem MCP clients.", "runtime", []string{"mcpServerStatus/list", "mcpServer/resource/read", "mcpServer/tool/call"}, services.MCP, true, true, "", true, false),
 		tool("skills", "Skills and plugins", "List workspace-scoped skills and read plugin manifests and skill content from configured roots.", "configuration", []string{"skills/list", "plugin/list", "plugin/installed", "plugin/read", "plugin/skill/read"}, services.Skills, false, false, "", true, false),
