@@ -750,6 +750,12 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 	}
 	settings := cloneSettings(params.Settings)
 	settings = mergeRuntimeSelectionIntoSettings(settings, params.ProviderID, params.Provider, params.Model)
+	selection := runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model)
+	modelSettings := runtimeModelSettingsFromParams(params.RuntimeModelParams)
+	settings = mergeRuntimeReasoningIntoSettings(settings, modelSettings.ReasoningEffort)
+	if err := validateRuntimeReasoningSelection(s.catalog, selection, modelSettings); err != nil {
+		return nil, invalidParams(err.Error(), err)
+	}
 	ctx, releaseStart, err := runtimeSvc.acquireStartLease(ctx, s)
 	if err != nil {
 		return nil, mapError("thread/start", err)
@@ -771,8 +777,8 @@ func (s *Server) handleThreadStart(ctx context.Context, raw json.RawMessage) (an
 		Prompt:        prompt,
 		Input:         params.Input,
 		Metadata:      params.Metadata,
-		Selection:     runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model),
-		ModelSettings: runtimeModelSettingsFromParams(params.RuntimeModelParams),
+		Selection:     selection,
+		ModelSettings: modelSettings,
 	})
 	if err != nil {
 		return nil, mapError("thread/start", err)
@@ -1456,6 +1462,13 @@ func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any,
 	}
 	selection := runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model)
 	selection = mergeRuntimeSelection(selection, runtimeSelectionFromInput(source.Input))
+	modelSettings := runtimeModelSettingsFromParams(params.RuntimeModelParams)
+	if modelSettings.ReasoningEffort == nil {
+		modelSettings = runtimeModelSettingsFromInput(source.Input)
+	}
+	if err := validateRuntimeReasoningSelection(s.catalog, selection, modelSettings); err != nil {
+		return nil, invalidParams(err.Error(), err)
+	}
 	retry, err := runtimeSvc.Retry(ctx, st, s, RuntimeRetryRequest{
 		SourceTurnID:   source.ID,
 		IdempotencyKey: idempotencyKey,
@@ -1463,7 +1476,7 @@ func (s *Server) handleTurnRetry(ctx context.Context, raw json.RawMessage) (any,
 		Input:          firstRaw(params.Input, source.Input),
 		Metadata:       params.Metadata,
 		Selection:      selection,
-		ModelSettings:  runtimeModelSettingsFromParams(params.RuntimeModelParams),
+		ModelSettings:  modelSettings,
 		History:        history,
 	})
 	if err != nil {
@@ -1501,13 +1514,18 @@ func (s *Server) startTurnWithParams(ctx context.Context, method string, params 
 	}
 	selection := runtimeSelectionFromParams(params.ProviderID, params.Provider, params.Model)
 	selection = runtimeSelectionWithThreadDefaults(selection, thread.Settings)
+	modelSettings := runtimeModelSettingsFromParams(params.RuntimeModelParams)
+	modelSettings = runtimeModelSettingsWithThreadDefaults(modelSettings, thread.Settings)
+	if err := validateRuntimeReasoningSelection(s.catalog, selection, modelSettings); err != nil {
+		return nil, invalidParams(err.Error(), err)
+	}
 	turn, err := runtimeSvc.Start(ctx, st, s, RuntimeStartRequest{
 		ThreadID:      thread.ID,
 		Prompt:        prompt,
 		Input:         params.Input,
 		Metadata:      params.Metadata,
 		Selection:     selection,
-		ModelSettings: runtimeModelSettingsFromParams(params.RuntimeModelParams),
+		ModelSettings: modelSettings,
 		History:       history,
 	})
 	if err != nil {

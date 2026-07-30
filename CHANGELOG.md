@@ -18,6 +18,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Capability-validated durable reasoning effort.** Runtime thread starts,
+  turn starts/resumes, and retries now reject explicit reasoning effort when
+  the selected catalog model is unknown, does not advertise reasoning, or
+  does not advertise that exact effort. Supported explicit choices are stored
+  in thread settings and turn input, inherited by later turns, and recovered
+  by retries instead of becoming renderer-only state.
 - **Durable live turn steering.** The app server now binds the exact public
   `turn/steer` request and response, requires thread and expected-active-turn
   correlation, and queues text instructions for the next safe model-request

@@ -133,6 +133,48 @@ func runtimeModelSettingsFromParams(params RuntimeModelParams) core.ModelSetting
 	return settings
 }
 
+func runtimeModelSettingsFromInput(input json.RawMessage) core.ModelSettings {
+	var stored runtimeTurnInput
+	if len(input) == 0 || json.Unmarshal(input, &stored) != nil {
+		return core.ModelSettings{}
+	}
+	effort := strings.TrimSpace(stored.ReasoningEffort)
+	if effort == "" {
+		return core.ModelSettings{}
+	}
+	return core.ModelSettings{ReasoningEffort: &effort}
+}
+
+func runtimeModelSettingsWithThreadDefaults(
+	settings core.ModelSettings,
+	threadSettings map[string]any,
+) core.ModelSettings {
+	if settings.ReasoningEffort == nil {
+		if effort := stringSetting(threadSettings, "reasoningEffort"); effort != "" {
+			settings.ReasoningEffort = &effort
+		}
+	}
+	return settings
+}
+
+func mergeRuntimeReasoningIntoSettings(
+	settings map[string]any,
+	reasoningEffort *string,
+) map[string]any {
+	if reasoningEffort == nil {
+		return settings
+	}
+	effort := strings.TrimSpace(*reasoningEffort)
+	if effort == "" {
+		return settings
+	}
+	if settings == nil {
+		settings = make(map[string]any)
+	}
+	settings["reasoningEffort"] = effort
+	return settings
+}
+
 func cloneSettings(settings map[string]any) map[string]any {
 	if len(settings) == 0 {
 		return nil
