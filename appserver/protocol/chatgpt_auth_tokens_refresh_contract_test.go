@@ -179,8 +179,8 @@ func TestChatgptAuthTokensRefreshRemainsStandaloneAndDeferred(t *testing.T) {
 	if !found {
 		t.Fatal("refresh method inventory entry missing")
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 596 {
-		t.Fatalf("definition count = %d, want 596", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 597 {
+		t.Fatalf("definition count = %d, want 597", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
