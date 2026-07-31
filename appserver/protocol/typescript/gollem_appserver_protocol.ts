@@ -926,6 +926,22 @@ export type CommandExecOutputDeltaNotification = {
 
 export type CommandExecOutputStream = "stdout" | "stderr";
 
+export type CommandExecParams = {
+  "command": Array<string>;
+  "cwd"?: string | null;
+  "disableOutputCap"?: boolean;
+  "disableTimeout"?: boolean;
+  "env"?: { [key in string]?: string | null } | null;
+  "outputBytesCap"?: number | null;
+  "processId"?: string | null;
+  "sandboxPolicy"?: SandboxPolicy | null;
+  "size"?: CommandExecTerminalSize | null;
+  "streamStdin"?: boolean;
+  "streamStdoutStderr"?: boolean;
+  "timeoutMs"?: number | null;
+  "tty"?: boolean;
+};
+
 export type CommandExecResizeParams = {
   "cols"?: number;
   "id"?: string;
@@ -949,6 +965,12 @@ export type CommandExecResizeParams = {
 export type CommandExecResizeResponse = {
   "ok"?: boolean;
   "path"?: string;
+};
+
+export type CommandExecResponse = {
+  "exitCode": number;
+  "stderr": string;
+  "stdout": string;
 };
 
 export type CommandExecTerminalSize = {

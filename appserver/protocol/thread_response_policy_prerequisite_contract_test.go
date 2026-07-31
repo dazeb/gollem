@@ -55,30 +55,10 @@ func TestThreadResponsePolicyPrerequisiteSchemasAreExact(t *testing.T) {
 	}
 
 	wantSandbox := Schema{"oneOf": []any{
-		threadResponsePolicyVariantSchemaForTest("dangerFullAccess", nil, nil),
-		threadResponsePolicyVariantSchemaForTest(
-			"readOnly",
-			Schema{"networkAccess": Schema{"type": "boolean"}},
-			[]string{"networkAccess"},
-		),
-		threadResponsePolicyVariantSchemaForTest(
-			"externalSandbox",
-			Schema{"networkAccess": Schema{"$ref": "#/$defs/NetworkAccess"}},
-			[]string{"networkAccess"},
-		),
-		threadResponsePolicyVariantSchemaForTest(
-			"workspaceWrite",
-			Schema{
-				"writableRoots": Schema{
-					"type":  "array",
-					"items": Schema{"$ref": "#/$defs/AbsolutePathBuf"},
-				},
-				"networkAccess":       Schema{"type": "boolean"},
-				"excludeTmpdirEnvVar": Schema{"type": "boolean"},
-				"excludeSlashTmp":     Schema{"type": "boolean"},
-			},
-			[]string{"writableRoots", "networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp"},
-		),
+		Schema{"properties": Schema{"type": Schema{"enum": []any{"dangerFullAccess"}, "title": "DangerFullAccessSandboxPolicyType", "type": "string"}}, "required": []string{"type"}, "title": "DangerFullAccessSandboxPolicy", "type": "object"},
+		Schema{"properties": Schema{"networkAccess": Schema{"default": false, "type": "boolean"}, "type": Schema{"enum": []any{"readOnly"}, "title": "ReadOnlySandboxPolicyType", "type": "string"}}, "required": []string{"type"}, "title": "ReadOnlySandboxPolicy", "type": "object"},
+		Schema{"properties": Schema{"networkAccess": Schema{"allOf": []any{Schema{"$ref": "#/$defs/NetworkAccess"}}, "default": "restricted"}, "type": Schema{"enum": []any{"externalSandbox"}, "title": "ExternalSandboxSandboxPolicyType", "type": "string"}}, "required": []string{"type"}, "title": "ExternalSandboxSandboxPolicy", "type": "object"},
+		Schema{"properties": Schema{"excludeSlashTmp": Schema{"default": false, "type": "boolean"}, "excludeTmpdirEnvVar": Schema{"default": false, "type": "boolean"}, "networkAccess": Schema{"default": false, "type": "boolean"}, "type": Schema{"enum": []any{"workspaceWrite"}, "title": "WorkspaceWriteSandboxPolicyType", "type": "string"}, "writableRoots": Schema{"default": []any{}, "items": Schema{"$ref": "#/$defs/AbsolutePathBuf"}, "type": "array"}}, "required": []string{"type"}, "title": "WorkspaceWriteSandboxPolicy", "type": "object"},
 	}}
 	if got := defs["SandboxPolicy"]; !reflect.DeepEqual(got, wantSandbox) {
 		t.Errorf("SandboxPolicy schema = %#v, want %#v", got, wantSandbox)
@@ -119,6 +99,22 @@ func TestThreadResponsePolicyPrerequisiteWireValidation(t *testing.T) {
 	} {
 		var value SandboxPolicy
 		threadResponsePolicyRoundTrip(t, input, &value)
+	}
+	for _, testCase := range []struct{ input, want string }{
+		{`{"type":"readOnly"}`, `{"type":"readOnly","networkAccess":false}`},
+		{`{"type":"externalSandbox"}`, `{"type":"externalSandbox","networkAccess":"restricted"}`},
+		{`{"type":"workspaceWrite"}`, `{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeTmpdirEnvVar":false,"excludeSlashTmp":false}`},
+		{`{"type":"dangerFullAccess","future":true}`, `{"type":"dangerFullAccess"}`},
+	} {
+		var value SandboxPolicy
+		if err := json.Unmarshal([]byte(testCase.input), &value); err != nil {
+			t.Errorf("SandboxPolicy Unmarshal(%s): %v", testCase.input, err)
+			continue
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil || string(encoded) != testCase.want {
+			t.Errorf("SandboxPolicy canonical %s = %s, %v; want %s", testCase.input, encoded, err, testCase.want)
+		}
 	}
 }
 
@@ -163,23 +159,16 @@ func TestThreadResponsePolicyPrerequisitesRejectMalformedWireValues(t *testing.T
 
 	for _, input := range []string{
 		`null`, `[]`, `{}`, `{"type":null}`, `{"type":"unknown"}`,
-		`{"type":"dangerFullAccess","networkAccess":false}`,
-		`{"type":"readOnly"}`,
 		`{"type":"readOnly","networkAccess":null}`,
 		`{"type":"readOnly","networkAccess":"restricted"}`,
-		`{"type":"externalSandbox"}`,
+		`{"type":"externalSandbox","networkAccess":null}`,
 		`{"type":"externalSandbox","networkAccess":false}`,
 		`{"type":"externalSandbox","networkAccess":"other"}`,
-		`{"type":"workspaceWrite"}`,
 		`{"type":"workspaceWrite","writableRoots":null,"networkAccess":false,"excludeTmpdirEnvVar":false,"excludeSlashTmp":false}`,
 		`{"type":"workspaceWrite","writableRoots":["relative"],"networkAccess":false,"excludeTmpdirEnvVar":false,"excludeSlashTmp":false}`,
-		`{"type":"workspaceWrite","writableRoots":[],"excludeTmpdirEnvVar":false,"excludeSlashTmp":false}`,
-		`{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeSlashTmp":false}`,
-		`{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeTmpdirEnvVar":false}`,
 		`{"type":"workspaceWrite","writableRoots":[],"networkAccess":null,"excludeTmpdirEnvVar":false,"excludeSlashTmp":false}`,
 		`{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeTmpdirEnvVar":null,"excludeSlashTmp":false}`,
 		`{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeTmpdirEnvVar":false,"excludeSlashTmp":null}`,
-		`{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeTmpdirEnvVar":false,"excludeSlashTmp":false,"readOnlyAccess":{}}`,
 		`{"type":"dangerFullAccess"} {}`,
 	} {
 		var value SandboxPolicy
@@ -273,8 +262,8 @@ func TestThreadResponsePolicyPrerequisitesRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 589 {
-		t.Fatalf("definition count = %d, want 589", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 591 {
+		t.Fatalf("definition count = %d, want 591", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))
@@ -310,27 +299,6 @@ func TestThreadResponsePolicyPrerequisiteTypeScriptIsExact(t *testing.T) {
 		if !strings.Contains(source, want) {
 			t.Errorf("generated TypeScript missing %q", want)
 		}
-	}
-}
-
-func threadResponsePolicyVariantSchemaForTest(
-	typeName string,
-	extraProperties Schema,
-	extraRequired []string,
-) Schema {
-	properties := Schema{"type": Schema{"type": "string", "enum": []any{typeName}}}
-	for name, property := range extraProperties {
-		properties[name] = property
-	}
-	required := []any{"type"}
-	for _, name := range extraRequired {
-		required = append(required, name)
-	}
-	return Schema{
-		"type":                 "object",
-		"additionalProperties": false,
-		"properties":           properties,
-		"required":             required,
 	}
 }
 
