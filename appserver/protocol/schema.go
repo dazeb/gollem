@@ -519,6 +519,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "TerminalInteractionNotification", Type: reflect.TypeFor[TerminalInteractionNotification]()},
 		{Name: "Thread", Type: reflect.TypeFor[Thread]()},
 		{Name: "ThreadActiveFlag", Type: reflect.TypeFor[ThreadActiveFlag]()},
+		{Name: "ThreadApproveGuardianDeniedActionParams", Type: reflect.TypeFor[ThreadApproveGuardianDeniedActionParams]()},
+		{Name: "ThreadApproveGuardianDeniedActionResponse", Type: reflect.TypeFor[ThreadApproveGuardianDeniedActionResponse]()},
 		{Name: "ThreadArchiveParams", Type: reflect.TypeFor[ThreadArchiveParams]()},
 		{Name: "ThreadArchiveResponse", Type: reflect.TypeFor[ThreadArchiveResponse]()},
 		{Name: "ThreadArchivedNotification", Type: reflect.TypeFor[ThreadArchivedNotification]()},
@@ -1296,6 +1298,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["TurnStartResponse"] = turnStartResponseSchema()
 	schemas["TurnEnvironmentParams"] = turnEnvironmentParamsSchema()
 	schemas["TerminalInteractionNotification"] = terminalInteractionNotificationSchema()
+	for name, schema := range threadApproveGuardianDeniedActionSchemas() {
+		schemas[name] = schema
+	}
 	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	setSchemaIntegerMinimum(schemas["TextPosition"].(Schema), 0, "line", "column")
