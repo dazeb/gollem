@@ -615,6 +615,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "Turn", Type: reflect.TypeFor[Turn]()},
 		{Name: "TurnCompletedNotification", Type: reflect.TypeFor[TurnCompletedNotification]()},
 		{Name: "TurnDiffUpdatedNotificationParams", Type: reflect.TypeFor[TurnDiffUpdatedNotificationParams]()},
+		{Name: "TurnEnvironmentParams", Type: reflect.TypeFor[TurnEnvironmentParams]()},
 		{Name: "TurnError", Type: reflect.TypeFor[TurnError]()},
 		{Name: "TurnItemsView", Type: reflect.TypeFor[TurnItemsView]()},
 		{Name: "TurnInterruptParams", Type: reflect.TypeFor[TurnInterruptParams]()},
@@ -1286,6 +1287,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["ThreadForkParams"] = threadForkParamsSchema()
 	schemas["TurnStartParams"] = turnStartParamsSchema()
 	schemas["TurnStartResponse"] = turnStartResponseSchema()
+	schemas["TurnEnvironmentParams"] = turnEnvironmentParamsSchema()
 	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	setSchemaIntegerMinimum(schemas["TextPosition"].(Schema), 0, "line", "column")
