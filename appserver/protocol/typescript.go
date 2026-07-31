@@ -574,6 +574,16 @@ func MarshalTypeScript() ([]byte, error) {
 			schema["x-gollem-typescript-ignore-additional-properties"] = true
 			definition = schema
 		}
+		if name == "ThreadShellCommandParams" || name == "ThreadShellCommandResponse" {
+			// The source schemas remain open for forward compatibility, while
+			// ts-rs renders both public Rust structs as closed object literals.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			if name == "ThreadShellCommandResponse" {
+				schema["additionalProperties"] = false
+			}
+			definition = schema
+		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
 			// renders these public records as closed object literals.
