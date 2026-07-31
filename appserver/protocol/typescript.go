@@ -644,6 +644,17 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			definition = schema
 		}
+		if name == "W3cTraceContext" {
+			// Rust accepts explicit null as None, but ts-rs renders its optional
+			// fields as strings without a null union. Preserve that distinction in
+			// the renderer only; the source JSON Schema remains nullable and open.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"traceparent": Schema{"type": "string"},
+				"tracestate":  Schema{"type": "string"},
+			})
+		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
 			// renders these public records as closed object literals.

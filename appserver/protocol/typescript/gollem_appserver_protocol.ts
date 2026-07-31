@@ -4509,6 +4509,11 @@ export type UserInput = {
 
 export type Verbosity = "low" | "medium" | "high";
 
+export type W3cTraceContext = {
+  "traceparent"?: string;
+  "tracestate"?: string;
+};
+
 export type WarningNotification = {
   "message": string;
   "threadId": string | null;
