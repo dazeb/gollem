@@ -544,6 +544,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadHistoryRollbackParams", Type: reflect.TypeFor[ThreadHistoryRollbackParams]()},
 		{Name: "ThreadHistoryRollbackRecord", Type: reflect.TypeFor[ThreadHistoryRollbackRecord]()},
 		{Name: "ThreadHistoryRollbackResult", Type: reflect.TypeFor[ThreadHistoryRollbackResult]()},
+		{Name: "ThreadInjectItemsParams", Type: reflect.TypeFor[ThreadInjectItemsParams]()},
+		{Name: "ThreadInjectItemsResponse", Type: reflect.TypeFor[ThreadInjectItemsResponse]()},
 		{Name: "ThreadId", Type: reflect.TypeFor[ThreadId]()},
 		{Name: "ThreadLifecycleStatus", Type: reflect.TypeFor[ThreadLifecycleStatus]()},
 		{Name: "ThreadListCwdFilter", Type: reflect.TypeFor[ThreadListCwdFilter]()},
@@ -1250,6 +1252,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	for name, schema := range threadSettingsSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range threadInjectItemsSchemas() {
 		schemas[name] = schema
 	}
 	schemas["ResponsesApiWebSearchAction"] = responsesAPIWebSearchActionSchema()

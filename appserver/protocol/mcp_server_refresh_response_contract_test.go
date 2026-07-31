@@ -70,8 +70,8 @@ func TestMcpServerRefreshResponseRemainsStandalone(t *testing.T) {
 	if !ok || info.State != MethodImplemented {
 		t.Fatalf("config/mcpServer/reload = %#v, %v; want implemented", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 581 {
-		t.Fatalf("definition count = %d, want 581", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 583 {
+		t.Fatalf("definition count = %d, want 583", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
