@@ -3688,6 +3688,13 @@ export type ThreadHistoryRollbackResult = {
 
 export type ThreadId = string;
 
+export type ThreadInjectItemsParams = {
+  "items": Array<JsonValue>;
+  "threadId": string;
+};
+
+export type ThreadInjectItemsResponse = Record<string, never>;
+
 export type ThreadItem = {
   "clientId": string | null;
   "content": Array<UserInput>;

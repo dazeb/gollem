@@ -539,6 +539,21 @@ func MarshalTypeScript() ([]byte, error) {
 			schema["additionalProperties"] = false
 			definition = schema
 		}
+		if name == "ThreadInjectItemsParams" || name == "ThreadInjectItemsResponse" {
+			// The source schemas remain open for forward compatibility, while
+			// ts-rs closes both Rust structs. JsonValue is render-only because the
+			// source JSON Schema represents serde_json::Value as items: true.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			if name == "ThreadInjectItemsParams" {
+				schema = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+					"items": Schema{"type": "array", "items": Schema{"$ref": "#/$defs/JsonValue"}},
+				})
+			} else {
+				schema["additionalProperties"] = false
+			}
+			definition = schema
+		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
 			// renders these public records as closed object literals.

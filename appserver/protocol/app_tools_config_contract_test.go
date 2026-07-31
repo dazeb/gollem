@@ -140,8 +140,8 @@ func TestAppToolConfigsRemainStandaloneAndUnbound(t *testing.T) {
 			t.Fatalf("%s unexpectedly bound to item %s", binding.Type, binding.Kind)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 581 {
-		t.Fatalf("definition count = %d, want 581", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 583 {
+		t.Fatalf("definition count = %d, want 583", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
