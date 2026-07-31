@@ -17489,6 +17489,21 @@
       ],
       "type": "object"
     },
+    "ThreadSearchResult": {
+      "properties": {
+        "snippet": {
+          "type": "string"
+        },
+        "thread": {
+          "$ref": "#/$defs/Thread"
+        }
+      },
+      "required": [
+        "snippet",
+        "thread"
+      ],
+      "type": "object"
+    },
     "ThreadSetNameParams": {
       "additionalProperties": false,
       "properties": {
