@@ -42,7 +42,7 @@ func TestConversationTextRoleContractIsExact(t *testing.T) {
 			t.Fatalf("standalone conversation role unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(definitions); got != 592 {
-		t.Fatalf("definition count = %d, want 592", got)
+	if got := len(definitions); got != 593 {
+		t.Fatalf("definition count = %d, want 593", got)
 	}
 }
