@@ -549,6 +549,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadRollbackParams", Type: reflect.TypeFor[ThreadRollbackParams]()},
 		{Name: "ThreadRollbackResponse", Type: reflect.TypeFor[ThreadRollbackResponse]()},
 		{Name: "ThreadSearchResult", Type: reflect.TypeFor[ThreadSearchResult]()},
+		{Name: "ThreadShellCommandParams", Type: reflect.TypeFor[ThreadShellCommandParams]()},
+		{Name: "ThreadShellCommandResponse", Type: reflect.TypeFor[ThreadShellCommandResponse]()},
 		{Name: "ThreadId", Type: reflect.TypeFor[ThreadId]()},
 		{Name: "ThreadLifecycleStatus", Type: reflect.TypeFor[ThreadLifecycleStatus]()},
 		{Name: "ThreadListCwdFilter", Type: reflect.TypeFor[ThreadListCwdFilter]()},
@@ -1264,6 +1266,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	schemas["ThreadSearchResult"] = threadSearchResultSchema()
+	for name, schema := range threadShellCommandSchemas() {
+		schemas[name] = schema
+	}
 	schemas["ResponsesApiWebSearchAction"] = responsesAPIWebSearchActionSchema()
 	schemas["ContentItem"] = contentItemSchema(contentItemVariants)
 	schemas["FunctionCallOutputContentItem"] = contentItemSchema(functionCallOutputContentItemVariants)

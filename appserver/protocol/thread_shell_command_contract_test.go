@@ -8,26 +8,25 @@ import (
 	"testing"
 )
 
-func TestThreadInjectItemsSchemasAreExact(t *testing.T) {
+func TestThreadShellCommandSchemasAreExact(t *testing.T) {
 	definitions := JSONSchema()["$defs"].(Schema)
 	wants := map[string]Schema{
-		"ThreadInjectItemsParams": {
+		"ThreadShellCommandParams": {
 			"$schema": "http://json-schema.org/draft-07/schema#",
 			"properties": Schema{
-				"items": Schema{
-					"description": "Raw Responses API items to append to the thread's model-visible history.",
-					"items":       true,
-					"type":        "array",
+				"command": Schema{
+					"description": "Shell command string evaluated by the thread's configured shell. Unlike `command/exec`, this intentionally preserves shell syntax such as pipes, redirects, and quoting. This runs unsandboxed with full access rather than inheriting the thread sandbox policy.",
+					"type":        "string",
 				},
 				"threadId": Schema{"type": "string"},
 			},
-			"required": []string{"items", "threadId"},
-			"title":    "ThreadInjectItemsParams",
+			"required": []string{"command", "threadId"},
+			"title":    "ThreadShellCommandParams",
 			"type":     "object",
 		},
-		"ThreadInjectItemsResponse": {
+		"ThreadShellCommandResponse": {
 			"$schema": "http://json-schema.org/draft-07/schema#",
-			"title":   "ThreadInjectItemsResponse",
+			"title":   "ThreadShellCommandResponse",
 			"type":    "object",
 		},
 	}
@@ -38,10 +37,10 @@ func TestThreadInjectItemsSchemasAreExact(t *testing.T) {
 	}
 }
 
-func TestThreadInjectItemsContractsPreserveSerdeWireForms(t *testing.T) {
-	const paramsInput = `{"future":true,"threadId":"thread","items":[null,true,4,"text",["nested"],{"kind":"message","content":"hello"}]}`
-	const canonicalParams = `{"threadId":"thread","items":[null,true,4,"text",["nested"],{"kind":"message","content":"hello"}]}`
-	var params ThreadInjectItemsParams
+func TestThreadShellCommandContractsPreserveSerdeWireForms(t *testing.T) {
+	const paramsInput = `{"future":true,"threadId":"thread","command":"printf 'hello' | sed 's/hello/world/'"}`
+	const canonicalParams = `{"threadId":"thread","command":"printf 'hello' | sed 's/hello/world/'"}`
+	var params ThreadShellCommandParams
 	if err := json.Unmarshal([]byte(paramsInput), &params); err != nil {
 		t.Fatalf("unmarshal params: %v", err)
 	}
@@ -50,7 +49,7 @@ func TestThreadInjectItemsContractsPreserveSerdeWireForms(t *testing.T) {
 		t.Fatalf("params round trip = %s, %v; want %s", encoded, err, canonicalParams)
 	}
 
-	var response ThreadInjectItemsResponse
+	var response ThreadShellCommandResponse
 	if err := json.Unmarshal([]byte(`{"future":true}`), &response); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
@@ -60,35 +59,35 @@ func TestThreadInjectItemsContractsPreserveSerdeWireForms(t *testing.T) {
 	}
 }
 
-func TestThreadInjectItemsContractsRejectMalformedWireForms(t *testing.T) {
+func TestThreadShellCommandContractsRejectMalformedWireForms(t *testing.T) {
 	for _, input := range []string{
 		``, `null`, `[]`, `"value"`, `1`, `true`, `{}`,
-		`{"threadId":"thread"}`, `{"items":[]}`,
-		`{"threadId":null,"items":[]}`, `{"threadId":"thread","items":null}`,
-		`{"threadId":"thread","items":{}}`,
-		`{"threadId":"a","threadId":"b","items":[]}`,
-		`{"threadId":"thread","items":[]} {}`,
+		`{"threadId":"thread"}`, `{"command":"pwd"}`,
+		`{"threadId":null,"command":"pwd"}`, `{"threadId":"thread","command":null}`,
+		`{"threadId":"thread","command":[]}`,
+		`{"threadId":"a","threadId":"b","command":"pwd"}`,
+		`{"threadId":"thread","command":"pwd"} {}`,
 	} {
-		assertJSONRejects[ThreadInjectItemsParams](t, input)
+		assertJSONRejects[ThreadShellCommandParams](t, input)
 	}
 	for _, input := range []string{
 		``, `null`, `[]`, `"value"`, `1`, `true`, `{}` + ` {}`,
 	} {
-		assertJSONRejects[ThreadInjectItemsResponse](t, input)
+		assertJSONRejects[ThreadShellCommandResponse](t, input)
 	}
 }
 
-func TestThreadInjectItemsContractsFailClosedAndRemainStandalone(t *testing.T) {
-	var params *ThreadInjectItemsParams
-	if err := params.UnmarshalJSON([]byte(`{"threadId":"thread","items":[]}`)); err == nil {
+func TestThreadShellCommandContractsFailClosedAndRemainStandalone(t *testing.T) {
+	var params *ThreadShellCommandParams
+	if err := params.UnmarshalJSON([]byte(`{"threadId":"thread","command":"pwd"}`)); err == nil {
 		t.Fatal("nil params receiver succeeded")
 	}
-	var response *ThreadInjectItemsResponse
+	var response *ThreadShellCommandResponse
 	if err := response.UnmarshalJSON([]byte(`{}`)); err == nil {
 		t.Fatal("nil response receiver succeeded")
 	}
 
-	names := []string{"ThreadInjectItemsParams", "ThreadInjectItemsResponse"}
+	names := []string{"ThreadShellCommandParams", "ThreadShellCommandResponse"}
 	for _, binding := range WireTypeBindings() {
 		for _, name := range names {
 			if slices.Contains(binding.Params, name) || slices.Contains(binding.Result, name) {
@@ -101,17 +100,17 @@ func TestThreadInjectItemsContractsFailClosedAndRemainStandalone(t *testing.T) {
 	}
 }
 
-func TestThreadInjectItemsTypeScriptIsExact(t *testing.T) {
+func TestThreadShellCommandTypeScriptIsExact(t *testing.T) {
 	generated, err := MarshalTypeScript()
 	if err != nil {
 		t.Fatalf("MarshalTypeScript: %v", err)
 	}
 	for _, want := range []string{
-		"export type ThreadInjectItemsParams = {\n" +
-			"  \"items\": Array<JsonValue>;\n" +
+		"export type ThreadShellCommandParams = {\n" +
+			"  \"command\": string;\n" +
 			"  \"threadId\": string;\n" +
 			"};",
-		`export type ThreadInjectItemsResponse = Record<string, never>;`,
+		`export type ThreadShellCommandResponse = Record<string, never>;`,
 	} {
 		if !strings.Contains(string(generated), want) {
 			t.Errorf("generated TypeScript missing %q", want)

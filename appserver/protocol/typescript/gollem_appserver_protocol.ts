@@ -4059,6 +4059,13 @@ export type ThreadSettingsUpdatedNotification = {
   "threadSettings": ThreadSettings;
 };
 
+export type ThreadShellCommandParams = {
+  "command": string;
+  "threadId": string;
+};
+
+export type ThreadShellCommandResponse = Record<string, never>;
+
 export type ThreadSortKey = "created_at" | "updated_at" | "recency_at";
 
 export type ThreadSource = string;
