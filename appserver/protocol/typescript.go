@@ -629,6 +629,21 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			definition = schema
 		}
+		if name == "ThreadApproveGuardianDeniedActionParams" || name == "ThreadApproveGuardianDeniedActionResponse" {
+			// The source schemas remain open for serde compatibility, while ts-rs
+			// renders the request as a closed JsonValue record and the empty
+			// response as Record<string, never>.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			if name == "ThreadApproveGuardianDeniedActionParams" {
+				schema = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+					"event": Schema{"$ref": "#/$defs/JsonValue"},
+				})
+			} else {
+				schema["additionalProperties"] = false
+			}
+			definition = schema
+		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
 			// renders these public records as closed object literals.

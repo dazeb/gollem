@@ -297,8 +297,8 @@ func TestHookRunNotificationsRemainStandalone(t *testing.T) {
 			t.Fatalf("%s = %#v, %v; want blocked", method, info, ok)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 593 {
-		t.Fatalf("definition count = %d, want 593", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 595 {
+		t.Fatalf("definition count = %d, want 595", got)
 	}
 	if len(Methods()) != 226 || len(WireTypeBindings()) != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("surface changed: %d methods, %d wire bindings, %d item bindings", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))

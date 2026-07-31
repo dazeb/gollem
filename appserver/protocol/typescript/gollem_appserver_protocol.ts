@@ -3513,6 +3513,13 @@ export type Thread = {
 
 export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
 
+export type ThreadApproveGuardianDeniedActionParams = {
+  "event": JsonValue;
+  "threadId": string;
+};
+
+export type ThreadApproveGuardianDeniedActionResponse = Record<string, never>;
+
 export type ThreadArchiveParams = {
   "id"?: string;
   "threadId": string;
