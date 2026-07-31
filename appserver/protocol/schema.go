@@ -516,6 +516,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "SortDirection", Type: reflect.TypeFor[SortDirection]()},
 		{Name: "SubAgentActivityKind", Type: reflect.TypeFor[SubAgentActivityKind]()},
 		{Name: "SubAgentSource", Type: reflect.TypeFor[SubAgentSource]()},
+		{Name: "TerminalInteractionNotification", Type: reflect.TypeFor[TerminalInteractionNotification]()},
 		{Name: "Thread", Type: reflect.TypeFor[Thread]()},
 		{Name: "ThreadActiveFlag", Type: reflect.TypeFor[ThreadActiveFlag]()},
 		{Name: "ThreadArchiveParams", Type: reflect.TypeFor[ThreadArchiveParams]()},
@@ -1294,6 +1295,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["TurnStartParams"] = turnStartParamsSchema()
 	schemas["TurnStartResponse"] = turnStartResponseSchema()
 	schemas["TurnEnvironmentParams"] = turnEnvironmentParamsSchema()
+	schemas["TerminalInteractionNotification"] = terminalInteractionNotificationSchema()
 	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	setSchemaIntegerMinimum(schemas["TextPosition"].(Schema), 0, "line", "column")

@@ -3464,6 +3464,14 @@ export type SubagentMigration = {
 
 export type Surface = "client-request" | "server-notification" | "server-request" | "client-notification" | "gollem-extension";
 
+export type TerminalInteractionNotification = {
+  "itemId": string;
+  "processId": string;
+  "stdin": string;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type TextElement = {
   "byteRange": ByteRange;
   "placeholder": string | null;

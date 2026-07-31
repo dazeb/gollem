@@ -484,8 +484,8 @@ func TestAccountRateLimitContractsRemainStandaloneAndDeferred(t *testing.T) {
 			t.Errorf("%s = %#v, %v; want deferred %s", methodName, method, ok, surface)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 592 {
-		t.Fatalf("definition count = %d, want 592", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 593 {
+		t.Fatalf("definition count = %d, want 593", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
