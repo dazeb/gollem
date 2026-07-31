@@ -4277,6 +4277,12 @@ export type TurnDiffUpdatedNotification = {
 
 export type TurnDiffUpdatedNotificationParams = TurnDiffUpdatedNotification;
 
+export type TurnEnvironmentParams = {
+  "cwd": LegacyAppPathString;
+  "environmentId": string;
+  "runtimeWorkspaceRoots"?: Array<LegacyAppPathString> | null;
+};
+
 export type TurnError = {
   "additionalDetails": string | null;
   "codexErrorInfo": CodexErrorInfo | null;

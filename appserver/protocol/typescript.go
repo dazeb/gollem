@@ -596,6 +596,20 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			definition = schema
 		}
+		if name == "TurnEnvironmentParams" {
+			// The source schema permits forward-compatible fields, while ts-rs
+			// renders the public Rust struct as a closed object literal. Its
+			// nullable string-array type needs a renderer-only anyOf shape.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			schema = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"runtimeWorkspaceRoots": Schema{"anyOf": []any{
+					Schema{"type": "array", "items": Schema{"$ref": "#/$defs/LegacyAppPathString"}},
+					Schema{"type": "null"},
+				}},
+			})
+			definition = schema
+		}
 		switch name {
 		case "PermissionProfileListParams":
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
