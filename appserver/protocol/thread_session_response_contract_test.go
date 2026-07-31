@@ -92,7 +92,6 @@ func TestThreadSessionResponsesRejectMalformedAndCrossedValues(t *testing.T) {
 		threadSessionResponseWire(`"model"`, `"provider"`, `null`, `{}`, `"never"`, `"user"`, `{"type":"dangerFullAccess"}`, `null`),
 		threadSessionResponseWire(`"model"`, `"provider"`, `null`, `[]`, `"always"`, `"user"`, `{"type":"dangerFullAccess"}`, `null`),
 		threadSessionResponseWire(`"model"`, `"provider"`, `null`, `[]`, `"never"`, `"other"`, `{"type":"dangerFullAccess"}`, `null`),
-		threadSessionResponseWire(`"model"`, `"provider"`, `null`, `[]`, `"never"`, `"user"`, `{"type":"readOnly"}`, `null`),
 		threadSessionResponseWire(`"model"`, `"provider"`, `null`, `[]`, `"never"`, `"user"`, `{"type":"dangerFullAccess"}`, `""`),
 		strings.Replace(threadSessionResponseWire(`"model"`, `"provider"`, `null`, `[]`, `"never"`, `"user"`, `{"type":"dangerFullAccess"}`, `null`), publicThreadWire, `{}`, 1),
 		strings.TrimSuffix(threadSessionResponseWire(`"model"`, `"provider"`, `null`, `[]`, `"never"`, `"user"`, `{"type":"dangerFullAccess"}`, `null`), `}`) + `,"runtimeWorkspaceRoots":[]}`,
@@ -155,8 +154,8 @@ func TestThreadSessionResponsesRemainStandalone(t *testing.T) {
 	if !foundRuntimeStart {
 		t.Error("thread/start runtime binding missing")
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 589 {
-		t.Fatalf("definition count = %d, want 589", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 591 {
+		t.Fatalf("definition count = %d, want 591", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))

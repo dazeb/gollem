@@ -207,7 +207,7 @@ func validateAskForApproval(data []byte) ([]byte, error) {
 }
 
 func validateSandboxPolicy(data []byte) ([]byte, error) {
-	payload, err := decodeExactThreadItemObject(
+	payload, err := decodeRustSerdeObject(
 		data,
 		"sandbox policy",
 		"type",
@@ -225,17 +225,11 @@ func validateSandboxPolicy(data []byte) ([]byte, error) {
 	}
 	switch typeName {
 	case "dangerFullAccess":
-		if err := requirePermissionFields(payload, []string{"type"}, "type"); err != nil {
-			return nil, err
-		}
 		return json.Marshal(struct {
 			Type string `json:"type"`
 		}{Type: typeName})
 	case "readOnly":
-		if err := requirePermissionFields(payload, []string{"type", "networkAccess"}, "type", "networkAccess"); err != nil {
-			return nil, err
-		}
-		networkAccess, err := decodeRequiredThreadItemValue[bool](payload, "read-only sandbox policy", "networkAccess")
+		networkAccess, err := decodeOptionalConfigBool(payload, "read-only sandbox policy", "networkAccess")
 		if err != nil {
 			return nil, err
 		}
@@ -244,10 +238,7 @@ func validateSandboxPolicy(data []byte) ([]byte, error) {
 			NetworkAccess bool   `json:"networkAccess"`
 		}{Type: typeName, NetworkAccess: networkAccess})
 	case "externalSandbox":
-		if err := requirePermissionFields(payload, []string{"type", "networkAccess"}, "type", "networkAccess"); err != nil {
-			return nil, err
-		}
-		networkAccess, err := decodeRequiredThreadItemValue[NetworkAccess](payload, "external sandbox policy", "networkAccess")
+		networkAccess, err := decodeDefaultSandboxNetworkAccess(payload)
 		if err != nil {
 			return nil, err
 		}
@@ -256,23 +247,19 @@ func validateSandboxPolicy(data []byte) ([]byte, error) {
 			NetworkAccess NetworkAccess `json:"networkAccess"`
 		}{Type: typeName, NetworkAccess: networkAccess})
 	case "workspaceWrite":
-		allowed := []string{"type", "writableRoots", "networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp"}
-		if err := requirePermissionFields(payload, allowed, allowed...); err != nil {
-			return nil, err
-		}
-		writableRoots, err := decodeRequiredThreadItemValue[[]AbsolutePathBuf](payload, "workspace-write sandbox policy", "writableRoots")
+		writableRoots, err := decodeOptionalSandboxWritableRoots(payload)
 		if err != nil {
 			return nil, err
 		}
-		networkAccess, err := decodeRequiredThreadItemValue[bool](payload, "workspace-write sandbox policy", "networkAccess")
+		networkAccess, err := decodeOptionalConfigBool(payload, "workspace-write sandbox policy", "networkAccess")
 		if err != nil {
 			return nil, err
 		}
-		excludeTmpdirEnvVar, err := decodeRequiredThreadItemValue[bool](payload, "workspace-write sandbox policy", "excludeTmpdirEnvVar")
+		excludeTmpdirEnvVar, err := decodeOptionalConfigBool(payload, "workspace-write sandbox policy", "excludeTmpdirEnvVar")
 		if err != nil {
 			return nil, err
 		}
-		excludeSlashTmp, err := decodeRequiredThreadItemValue[bool](payload, "workspace-write sandbox policy", "excludeSlashTmp")
+		excludeSlashTmp, err := decodeOptionalConfigBool(payload, "workspace-write sandbox policy", "excludeSlashTmp")
 		if err != nil {
 			return nil, err
 		}
@@ -289,6 +276,33 @@ func validateSandboxPolicy(data []byte) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported sandbox policy type %q", typeName)
 	}
+}
+
+func decodeDefaultSandboxNetworkAccess(payload map[string]json.RawMessage) (NetworkAccess, error) {
+	raw, ok := payload["networkAccess"]
+	if !ok {
+		return NetworkAccessRestricted, nil
+	}
+	if isJSONNull(raw) {
+		return "", errors.New("external sandbox policy networkAccess cannot be null")
+	}
+	var value NetworkAccess
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", fmt.Errorf("decode external sandbox policy networkAccess: %w", err)
+	}
+	return value, nil
+}
+
+func decodeOptionalSandboxWritableRoots(payload map[string]json.RawMessage) ([]AbsolutePathBuf, error) {
+	raw, ok := payload["writableRoots"]
+	if !ok {
+		return []AbsolutePathBuf{}, nil
+	}
+	return decodeRequiredThreadItemArray[AbsolutePathBuf](
+		map[string]json.RawMessage{"writableRoots": raw},
+		"workspace-write sandbox policy",
+		"writableRoots",
+	)
 }
 
 var (

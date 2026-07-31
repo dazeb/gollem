@@ -384,6 +384,51 @@ func MarshalTypeScript() ([]byte, error) {
 				"nextCursor": nullableStringSchema(),
 			})
 		}
+		if name == "CommandExecParams" {
+			// The source schema allows forward-compatible fields while ts-rs emits
+			// a closed Rust record. Normalize nullable JSON Schema type arrays and
+			// HashMap value semantics only in the TypeScript render copy.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"cwd":            nullableStringSchema(),
+				"env":            Schema{"anyOf": []any{Schema{"type": "object", "additionalProperties": Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}}, "x-gollem-typescript-optional-map": true}, Schema{"type": "null"}}},
+				"outputBytesCap": Schema{"anyOf": []any{Schema{"type": "integer"}, Schema{"type": "null"}}},
+				"processId":      nullableStringSchema(),
+				"sandboxPolicy":  nullableSchemaRef("SandboxPolicy"),
+				"size":           nullableSchemaRef("CommandExecTerminalSize"),
+				"timeoutMs":      Schema{"anyOf": []any{Schema{"type": "integer"}, Schema{"type": "null"}}},
+			})
+		}
+		if name == "CommandExecResponse" {
+			// The source schema permits extension properties while ts-rs emits a
+			// closed Rust record.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = schema
+		}
+		if name == "SandboxPolicy" {
+			// serde defaults these fields, but ts-rs presents the canonical output
+			// shape with every field explicit. Preserve that render-only contract.
+			schema, _ := typeScriptSchema(definition)
+			variants := schema["oneOf"].([]any)
+			for _, rawVariant := range variants {
+				variant := rawVariant.(Schema)
+				variant["x-gollem-typescript-ignore-additional-properties"] = true
+				properties := variant["properties"].(Schema)
+				if typeValues, ok := properties["type"].(Schema)["enum"].([]any); ok && len(typeValues) == 1 && typeValues[0] == "externalSandbox" {
+					properties["networkAccess"] = Schema{"$ref": "#/$defs/NetworkAccess"}
+				}
+				required := []string{"type"}
+				for _, field := range []string{"writableRoots", "networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp"} {
+					if _, ok := properties[field]; ok {
+						required = append(required, field)
+					}
+				}
+				variant["required"] = required
+			}
+			definition = schema
+		}
 		if name == "ProcessOutputDeltaNotification" {
 			// The exact schema wraps the stream reference in allOf to attach its
 			// description. Render that property as the referenced Rust type.

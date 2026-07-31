@@ -155,8 +155,10 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandAction", Type: reflect.TypeFor[CommandAction]()},
 		{Name: "CommandExecOutputDeltaNotification", Type: reflect.TypeFor[CommandExecOutputDeltaNotification]()},
 		{Name: "CommandExecOutputStream", Type: reflect.TypeFor[CommandExecOutputStream]()},
+		{Name: "CommandExecParams", Type: reflect.TypeFor[CommandExecParams]()},
 		{Name: "CommandExecResizeParams", Type: reflect.TypeFor[CommandExecResizeParams]()},
 		{Name: "CommandExecResizeResponse", Type: reflect.TypeFor[CommandExecResizeResponse]()},
+		{Name: "CommandExecResponse", Type: reflect.TypeFor[CommandExecResponse]()},
 		{Name: "CommandExecTerminalSize", Type: reflect.TypeFor[CommandExecTerminalSize]()},
 		{Name: "CommandExecTerminateParams", Type: reflect.TypeFor[CommandExecTerminateParams]()},
 		{Name: "CommandExecTerminateResponse", Type: reflect.TypeFor[CommandExecTerminateResponse]()},
@@ -1442,6 +1444,9 @@ func wireSchemaDefinitions() Schema {
 		string(NetworkAccessRestricted), string(NetworkAccessEnabled),
 	)
 	schemas["SandboxPolicy"] = sandboxPolicySchema()
+	for name, schema := range commandExecContractSchemas() {
+		schemas[name] = schema
+	}
 	schemas["CommandExecWriteParams"] = schemaWithRequiredFieldAlternatives(
 		schemas["CommandExecWriteParams"].(Schema),
 		[]string{"processId"},
@@ -3146,48 +3151,11 @@ func askForApprovalSchema() Schema {
 
 func sandboxPolicySchema() Schema {
 	return Schema{"oneOf": []any{
-		sandboxPolicyVariantSchema("dangerFullAccess", nil, nil),
-		sandboxPolicyVariantSchema(
-			"readOnly",
-			Schema{"networkAccess": Schema{"type": "boolean"}},
-			[]string{"networkAccess"},
-		),
-		sandboxPolicyVariantSchema(
-			"externalSandbox",
-			Schema{"networkAccess": Schema{"$ref": "#/$defs/NetworkAccess"}},
-			[]string{"networkAccess"},
-		),
-		sandboxPolicyVariantSchema(
-			"workspaceWrite",
-			Schema{
-				"writableRoots": Schema{
-					"type":  "array",
-					"items": Schema{"$ref": "#/$defs/AbsolutePathBuf"},
-				},
-				"networkAccess":       Schema{"type": "boolean"},
-				"excludeTmpdirEnvVar": Schema{"type": "boolean"},
-				"excludeSlashTmp":     Schema{"type": "boolean"},
-			},
-			[]string{"writableRoots", "networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp"},
-		),
+		Schema{"properties": Schema{"type": Schema{"enum": []any{"dangerFullAccess"}, "title": "DangerFullAccessSandboxPolicyType", "type": "string"}}, "required": []string{"type"}, "title": "DangerFullAccessSandboxPolicy", "type": "object"},
+		Schema{"properties": Schema{"networkAccess": Schema{"default": false, "type": "boolean"}, "type": Schema{"enum": []any{"readOnly"}, "title": "ReadOnlySandboxPolicyType", "type": "string"}}, "required": []string{"type"}, "title": "ReadOnlySandboxPolicy", "type": "object"},
+		Schema{"properties": Schema{"networkAccess": Schema{"allOf": []any{Schema{"$ref": "#/$defs/NetworkAccess"}}, "default": "restricted"}, "type": Schema{"enum": []any{"externalSandbox"}, "title": "ExternalSandboxSandboxPolicyType", "type": "string"}}, "required": []string{"type"}, "title": "ExternalSandboxSandboxPolicy", "type": "object"},
+		Schema{"properties": Schema{"excludeSlashTmp": Schema{"default": false, "type": "boolean"}, "excludeTmpdirEnvVar": Schema{"default": false, "type": "boolean"}, "networkAccess": Schema{"default": false, "type": "boolean"}, "type": Schema{"enum": []any{"workspaceWrite"}, "title": "WorkspaceWriteSandboxPolicyType", "type": "string"}, "writableRoots": Schema{"default": []any{}, "items": Schema{"$ref": "#/$defs/AbsolutePathBuf"}, "type": "array"}}, "required": []string{"type"}, "title": "WorkspaceWriteSandboxPolicy", "type": "object"},
 	}}
-}
-
-func sandboxPolicyVariantSchema(typeName string, extraProperties Schema, extraRequired []string) Schema {
-	properties := Schema{"type": Schema{"type": "string", "enum": []any{typeName}}}
-	for name, property := range extraProperties {
-		properties[name] = property
-	}
-	required := []any{"type"}
-	for _, name := range extraRequired {
-		required = append(required, name)
-	}
-	return Schema{
-		"type":                 "object",
-		"additionalProperties": false,
-		"properties":           properties,
-		"required":             required,
-	}
 }
 
 func mcpServerElicitationRequestParamsSchema() Schema {
