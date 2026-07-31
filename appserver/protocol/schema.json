@@ -4211,6 +4211,14 @@
       ],
       "type": "object"
     },
+    "ConversationTextRole": {
+      "enum": [
+        "user",
+        "developer",
+        "assistant"
+      ],
+      "type": "string"
+    },
     "CreditsSnapshot": {
       "properties": {
         "balance": {
