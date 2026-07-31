@@ -1284,6 +1284,8 @@ export type ContextCompactionItem = {
   "type": "contextCompaction";
 };
 
+export type ConversationTextRole = "user" | "developer" | "assistant";
+
 export type CreditsSnapshot = {
   "balance": string | null;
   "hasCredits": boolean;

@@ -190,6 +190,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ConfiguredHookHandler", Type: reflect.TypeFor[ConfiguredHookHandler]()},
 		{Name: "ConfiguredHookMatcherGroup", Type: reflect.TypeFor[ConfiguredHookMatcherGroup]()},
 		{Name: "ContentItem", Type: reflect.TypeFor[ContentItem]()},
+		{Name: "ConversationTextRole", Type: reflect.TypeFor[ConversationTextRole]()},
 		{Name: "ConsumeAccountRateLimitResetCreditOutcome", Type: reflect.TypeFor[ConsumeAccountRateLimitResetCreditOutcome]()},
 		{Name: "ConsumeAccountRateLimitResetCreditParams", Type: reflect.TypeFor[ConsumeAccountRateLimitResetCreditParams]()},
 		{Name: "ConsumeAccountRateLimitResetCreditResponse", Type: reflect.TypeFor[ConsumeAccountRateLimitResetCreditResponse]()},
@@ -1276,6 +1277,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["ContentItem"] = contentItemSchema(contentItemVariants)
 	schemas["FunctionCallOutputContentItem"] = contentItemSchema(functionCallOutputContentItemVariants)
 	schemas["FunctionCallOutputBody"] = functionCallOutputBodySchema()
+	schemas["ConversationTextRole"] = stringEnumSchema(
+		string(ConversationTextRoleUser), string(ConversationTextRoleDeveloper), string(ConversationTextRoleAssistant),
+	)
 	schemas["InternalChatMessageMetadataPassthrough"] = internalChatMessageMetadataSchema()
 	schemas["LocalShellStatus"] = stringEnumSchema(
 		string(LocalShellStatusCompleted), string(LocalShellStatusInProgress), string(LocalShellStatusIncomplete),

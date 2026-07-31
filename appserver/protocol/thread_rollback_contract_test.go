@@ -114,8 +114,8 @@ func TestThreadRollbackContractsFailClosedAndRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 591 {
-		t.Fatalf("definition count = %d, want 591", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 592 {
+		t.Fatalf("definition count = %d, want 592", got)
 	}
 }
 

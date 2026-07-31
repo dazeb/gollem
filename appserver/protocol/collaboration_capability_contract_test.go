@@ -346,8 +346,8 @@ func TestCollaborationCapabilityContractsRemainStandalone(t *testing.T) {
 			t.Fatalf("%s unexpectedly bound to item %s", binding.Type, binding.Kind)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 591 {
-		t.Fatalf("definition count = %d, want 591", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 592 {
+		t.Fatalf("definition count = %d, want 592", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
