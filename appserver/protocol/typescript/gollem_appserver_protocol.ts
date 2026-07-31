@@ -4021,6 +4021,11 @@ export type ThreadRunStartResult = {
   "turn": TurnRecord;
 };
 
+export type ThreadSearchResult = {
+  "snippet": string;
+  "thread": Thread;
+};
+
 export type ThreadSetNameParams = {
   "id"?: string;
   "name": string;

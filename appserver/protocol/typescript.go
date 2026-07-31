@@ -567,6 +567,13 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			definition = schema
 		}
+		if name == "ThreadSearchResult" {
+			// The aggregate source schema permits forward-compatible fields, while
+			// ts-rs renders the Rust struct as a closed object literal.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = schema
+		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
 			// renders these public records as closed object literals.
