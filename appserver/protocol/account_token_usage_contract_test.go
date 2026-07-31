@@ -146,8 +146,8 @@ func TestAccountTokenUsageRecordsRemainStandaloneAndDeferred(t *testing.T) {
 	if !ok || method.Surface != SurfaceClientRequest || method.State != MethodDeferredStub {
 		t.Fatalf("account/usage/read = %#v, %v; want deferred client request", method, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 595 {
-		t.Fatalf("definition count = %d, want 595", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 596 {
+		t.Fatalf("definition count = %d, want 596", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

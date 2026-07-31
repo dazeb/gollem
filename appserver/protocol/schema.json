@@ -19788,6 +19788,23 @@
       ],
       "type": "string"
     },
+    "W3cTraceContext": {
+      "properties": {
+        "traceparent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tracestate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "WarningNotification": {
       "additionalProperties": false,
       "properties": {

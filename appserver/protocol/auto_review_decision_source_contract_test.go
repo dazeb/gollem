@@ -52,8 +52,8 @@ func TestAutoReviewDecisionSourceRemainsStandalone(t *testing.T) {
 			t.Fatalf("AutoReviewDecisionSource unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 595 {
-		t.Fatalf("definition count = %d, want 595", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 596 {
+		t.Fatalf("definition count = %d, want 596", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

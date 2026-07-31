@@ -387,8 +387,8 @@ func TestThreadItemTypeScriptShapeAndBindingsRemainStandalone(t *testing.T) {
 			t.Errorf("generated TypeScript missing %q", want)
 		}
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 595 {
-		t.Fatalf("definition count = %d, want 595", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 596 {
+		t.Fatalf("definition count = %d, want 596", len(JSONSchema()["$defs"].(Schema)))
 	}
 	if len(WireTypeBindings()) != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", len(WireTypeBindings()), len(ItemPayloadBindings()))

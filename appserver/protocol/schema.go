@@ -654,6 +654,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "WebSearchMode", Type: reflect.TypeFor[WebSearchMode]()},
 		{Name: "WebSearchToolConfig", Type: reflect.TypeFor[WebSearchToolConfig]()},
 		{Name: "WarningNotification", Type: reflect.TypeFor[WarningNotification]()},
+		{Name: "W3cTraceContext", Type: reflect.TypeFor[W3cTraceContext]()},
 		{Name: "WindowsSandboxSetupMode", Type: reflect.TypeFor[WindowsSandboxSetupMode]()},
 		{Name: "WorkspaceMessage", Type: reflect.TypeFor[WorkspaceMessage]()},
 		{Name: "WorkspaceMessageType", Type: reflect.TypeFor[WorkspaceMessageType]()},
@@ -1301,6 +1302,7 @@ func wireSchemaDefinitions() Schema {
 	for name, schema := range threadApproveGuardianDeniedActionSchemas() {
 		schemas[name] = schema
 	}
+	schemas["W3cTraceContext"] = w3cTraceContextSchema()
 	schemas["JsonValue"] = jsonValueSchema()
 	setSchemaIntegerMinimum(schemas["ByteRange"].(Schema), 0, "start", "end")
 	setSchemaIntegerMinimum(schemas["TextPosition"].(Schema), 0, "line", "column")
