@@ -1825,6 +1825,28 @@
       ],
       "type": "object"
     },
+    "ClientNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "oneOf": [
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "initialized"
+              ],
+              "title": "InitializedNotificationMethod",
+              "type": "string"
+            }
+          },
+          "required": [
+            "method"
+          ],
+          "title": "InitializedNotification",
+          "type": "object"
+        }
+      ],
+      "title": "ClientNotification"
+    },
     "CodexErrorInfo": {
       "oneOf": [
         {

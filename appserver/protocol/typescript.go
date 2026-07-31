@@ -655,6 +655,15 @@ func MarshalTypeScript() ([]byte, error) {
 				"tracestate":  Schema{"type": "string"},
 			})
 		}
+		if name == "ClientNotification" {
+			// The source schema remains open for serde-compatible unknown fields,
+			// while ts-rs renders the one unit variant as a closed object literal.
+			schema, _ := typeScriptSchema(definition)
+			for _, rawVariant := range schema["oneOf"].([]any) {
+				rawVariant.(Schema)["x-gollem-typescript-ignore-additional-properties"] = true
+			}
+			definition = schema
+		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
 			// renders these public records as closed object literals.

@@ -79,8 +79,8 @@ func TestTurnEnvironmentParamsFailsClosedAndRemainsStandalone(t *testing.T) {
 			t.Fatalf("TurnEnvironmentParams unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 596 {
-		t.Fatalf("definition count = %d, want 596", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 597 {
+		t.Fatalf("definition count = %d, want 597", got)
 	}
 }
 

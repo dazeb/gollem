@@ -145,6 +145,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ChatgptAuthTokensRefreshReason", Type: reflect.TypeFor[ChatgptAuthTokensRefreshReason]()},
 		{Name: "ChatgptAuthTokensRefreshResponse", Type: reflect.TypeFor[ChatgptAuthTokensRefreshResponse]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
+		{Name: "ClientNotification", Type: reflect.TypeFor[ClientNotification]()},
 		{Name: "CodexErrorInfo", Type: reflect.TypeFor[CodexErrorInfo]()},
 		{Name: "CollabAgentState", Type: reflect.TypeFor[CollabAgentState]()},
 		{Name: "CollabAgentStatus", Type: reflect.TypeFor[CollabAgentStatus]()},
@@ -708,6 +709,7 @@ func wireSchemaDefinitions() Schema {
 		"success": Schema{"type": "boolean"},
 		"error":   nullableStringSchema(),
 	}, []string{"success"})
+	schemas["ClientNotification"] = clientNotificationSchema()
 	schemas["AccountTokenUsageDailyBucket"] = closedThreadSessionParamSchema(Schema{
 		"startDate": Schema{"type": "string"},
 		"tokens":    Schema{"type": "integer", "format": "int64"},

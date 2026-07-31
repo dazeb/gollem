@@ -861,6 +861,10 @@ export type ClientInfo = {
   "version": string;
 };
 
+export type ClientNotification = {
+  "method": "initialized";
+};
+
 export type CodexErrorInfo = "contextWindowExceeded" | "sessionBudgetExceeded" | "usageLimitExceeded" | "serverOverloaded" | "cyberPolicy" | "internalServerError" | "unauthorized" | "badRequest" | "threadRollbackFailed" | "sandboxError" | "other" | {
   "httpConnectionFailed": {
     "httpStatusCode": number | null;
