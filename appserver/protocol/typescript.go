@@ -554,6 +554,19 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			definition = schema
 		}
+		if name == "ThreadRollbackParams" || name == "ThreadRollbackResponse" {
+			// The source schemas remain open for forward compatibility, while
+			// ts-rs renders their Rust structs as closed object literals. The
+			// response wraps Thread in allOf only to attach documentation.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			if name == "ThreadRollbackResponse" {
+				schema = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+					"thread": Schema{"$ref": "#/$defs/Thread"},
+				})
+			}
+			definition = schema
+		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
 			// renders these public records as closed object literals.

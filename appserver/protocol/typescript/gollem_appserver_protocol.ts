@@ -3986,6 +3986,15 @@ export type ThreadResumeResponse = {
   "thread": Thread;
 };
 
+export type ThreadRollbackParams = {
+  "numTurns": number;
+  "threadId": string;
+};
+
+export type ThreadRollbackResponse = {
+  "thread": Thread;
+};
+
 export type ThreadRunStartParams = {
   "adaptiveThinking"?: boolean | null;
   "input"?: unknown;
