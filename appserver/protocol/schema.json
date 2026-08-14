@@ -8085,6 +8085,43 @@
       ],
       "type": "object"
     },
+    "JSONRPCError": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "A response to a request that indicates an error occurred.",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/JSONRPCErrorError"
+        },
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        }
+      },
+      "required": [
+        "error",
+        "id"
+      ],
+      "title": "JSONRPCError",
+      "type": "object"
+    },
+    "JSONRPCErrorError": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "code": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "data": {},
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "JSONRPCErrorError",
+      "type": "object"
+    },
     "JsonValue": {
       "anyOf": [
         {

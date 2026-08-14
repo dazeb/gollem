@@ -2192,6 +2192,17 @@ export type ItemStartedNotification = {
   "turnId": string;
 };
 
+export type JSONRPCError = {
+  "error": JSONRPCErrorError;
+  "id": RequestId;
+};
+
+export type JSONRPCErrorError = {
+  "code": number;
+  "data"?: JsonValue;
+  "message": string;
+};
+
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key: string]: JsonValue } | null;
 
 export type LegacyAppPathString = string;
