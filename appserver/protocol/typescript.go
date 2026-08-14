@@ -664,6 +664,18 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			definition = schema
 		}
+		if name == "JSONRPCError" || name == "JSONRPCErrorError" {
+			// The source records are serde-open in JSON Schema but closed in ts-rs.
+			// Its serde_json::Value field is rendered as the shared JsonValue alias.
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			if name == "JSONRPCErrorError" {
+				schema = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+					"data": Schema{"$ref": "#/$defs/JsonValue"},
+				})
+			}
+			definition = schema
+		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
 			// renders these public records as closed object literals.

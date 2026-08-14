@@ -98,8 +98,8 @@ func TestLegacyApprovalResponsesRemainStandaloneAndNominal(t *testing.T) {
 			t.Fatalf("%s = %#v, %v; want deferred stub", method, info, ok)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 597 {
-		t.Fatalf("definition count = %d, want 597", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 599 {
+		t.Fatalf("definition count = %d, want 599", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
