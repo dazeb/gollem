@@ -8122,6 +8122,67 @@
       "title": "JSONRPCErrorError",
       "type": "object"
     },
+    "JSONRPCNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "A notification which does not expect a response.",
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "params": {}
+      },
+      "required": [
+        "method"
+      ],
+      "title": "JSONRPCNotification",
+      "type": "object"
+    },
+    "JSONRPCRequest": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "A request that expects a response.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": {},
+        "trace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/W3cTraceContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional W3C Trace Context for distributed tracing."
+        }
+      },
+      "required": [
+        "id",
+        "method"
+      ],
+      "title": "JSONRPCRequest",
+      "type": "object"
+    },
+    "JSONRPCResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "A successful (non-error) response to a request.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId"
+        },
+        "result": {}
+      },
+      "required": [
+        "id",
+        "result"
+      ],
+      "title": "JSONRPCResponse",
+      "type": "object"
+    },
     "JsonValue": {
       "anyOf": [
         {

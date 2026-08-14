@@ -2203,6 +2203,23 @@ export type JSONRPCErrorError = {
   "message": string;
 };
 
+export type JSONRPCNotification = {
+  "method": string;
+  "params"?: JsonValue;
+};
+
+export type JSONRPCRequest = {
+  "id": RequestId;
+  "method": string;
+  "params"?: JsonValue;
+  "trace"?: W3cTraceContext;
+};
+
+export type JSONRPCResponse = {
+  "id": RequestId;
+  "result": JsonValue;
+};
+
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key: string]: JsonValue } | null;
 
 export type LegacyAppPathString = string;

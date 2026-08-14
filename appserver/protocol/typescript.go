@@ -664,17 +664,29 @@ func MarshalTypeScript() ([]byte, error) {
 			}
 			definition = schema
 		}
-		if name == "JSONRPCError" || name == "JSONRPCErrorError" {
+		if name == "JSONRPCError" || name == "JSONRPCErrorError" ||
+			name == "JSONRPCNotification" || name == "JSONRPCRequest" || name == "JSONRPCResponse" {
 			// The source records are serde-open in JSON Schema but closed in ts-rs.
-			// Its serde_json::Value field is rendered as the shared JsonValue alias.
+			// serde_json::Value fields are rendered as the shared JsonValue alias.
 			schema, _ := typeScriptSchema(definition)
 			schema["x-gollem-typescript-ignore-additional-properties"] = true
-			if name == "JSONRPCErrorError" {
-				schema = typeScriptDefinitionWithPropertySchemas(schema, Schema{
-					"data": Schema{"$ref": "#/$defs/JsonValue"},
-				})
+			replacements := Schema{}
+			switch name {
+			case "JSONRPCErrorError":
+				replacements["data"] = Schema{"$ref": "#/$defs/JsonValue"}
+			case "JSONRPCNotification":
+				replacements["params"] = Schema{"$ref": "#/$defs/JsonValue"}
+			case "JSONRPCRequest":
+				replacements["params"] = Schema{"$ref": "#/$defs/JsonValue"}
+				replacements["trace"] = Schema{"$ref": "#/$defs/W3cTraceContext"}
+			case "JSONRPCResponse":
+				replacements["result"] = Schema{"$ref": "#/$defs/JsonValue"}
 			}
-			definition = schema
+			if len(replacements) > 0 {
+				definition = typeScriptDefinitionWithPropertySchemas(schema, replacements)
+			} else {
+				definition = schema
+			}
 		}
 		if name == "ThreadSettings" || name == "ThreadSettingsUpdatedNotification" {
 			// The source schema permits forward-compatible fields, while ts-rs
