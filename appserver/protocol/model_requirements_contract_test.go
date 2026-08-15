@@ -159,8 +159,8 @@ func TestModelRequirementsContractsRemainStandalone(t *testing.T) {
 	if !ok || info.State != MethodImplemented {
 		t.Fatalf("configRequirements/read = %#v, %v; want implemented", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 643 {
-		t.Fatalf("definition count = %d, want 643", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 651 {
+		t.Fatalf("definition count = %d, want 651", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

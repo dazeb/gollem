@@ -120,8 +120,8 @@ func TestParsedCommandRemainsStandalone(t *testing.T) {
 			t.Fatalf("ParsedCommand unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 643 {
-		t.Fatalf("definition count = %d, want 643", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 651 {
+		t.Fatalf("definition count = %d, want 651", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
