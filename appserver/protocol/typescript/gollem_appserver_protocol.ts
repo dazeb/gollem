@@ -2945,6 +2945,12 @@ export type PlanDeltaNotification = {
 
 export type PlanType = "free" | "go" | "plus" | "pro" | "prolite" | "team" | "self_serve_business_usage_based" | "business" | "enterprise_cbp_usage_based" | "enterprise" | "edu" | "unknown";
 
+export type PluginInstallParams = { marketplacePath?: AbsolutePathBuf | null, remoteMarketplaceName?: string | null,
+/**
+ * Client-generated identifier used to correlate one installation attempt.
+ */
+installAttemptId?: string | null, pluginName: string, };
+
 export type PluginReadParams = { marketplacePath?: AbsolutePathBuf | null, remoteMarketplaceName?: string | null, pluginName: string, };
 
 export type PluginShareCheckoutParams = { remotePluginId: string, };

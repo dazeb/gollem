@@ -154,8 +154,8 @@ func TestThreadSessionResponsesRemainStandalone(t *testing.T) {
 	if !foundRuntimeStart {
 		t.Error("thread/start runtime binding missing")
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 628 {
-		t.Fatalf("definition count = %d, want 628", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 629 {
+		t.Fatalf("definition count = %d, want 629", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))
