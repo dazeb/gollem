@@ -102,7 +102,7 @@ func TestDynamicToolCallWireV1FixtureUsesExportedContracts(t *testing.T) {
 	if err := decodeRuntimeFixture(data, &fixture); err != nil {
 		t.Fatalf("decode dynamic tool fixture: %v", err)
 	}
-	if fixture.ProtocolVersion != ProtocolVersion || fixture.SchemaVersion != SchemaVersion || len(fixture.Cases) != 3 {
+	if fixture.ProtocolVersion != ProtocolVersion || fixture.SchemaVersion != SchemaVersion || len(fixture.Cases) != 4 {
 		t.Fatalf("dynamic tool fixture metadata = %s/%s/%d", fixture.ProtocolVersion, fixture.SchemaVersion, len(fixture.Cases))
 	}
 	bindings := WireTypeBindings()

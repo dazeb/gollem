@@ -1548,6 +1548,8 @@ func wireSchemaDefinitions() Schema {
 		string(PatchApplyStatusFailed), string(PatchApplyStatusDeclined),
 	)
 	schemas["PatchChangeKind"] = patchChangeKindSchema()
+	schemas["DynamicToolCallParams"] = dynamicToolCallParamsSchema()
+	schemas["DynamicToolCallResponse"] = dynamicToolCallResponseSchema()
 	schemas["DynamicToolCallOutputContentItem"] = dynamicToolCallOutputContentItemSchema()
 	schemas["McpElicitationArrayType"] = stringEnumSchema("array")
 	schemas["McpElicitationBooleanType"] = stringEnumSchema("boolean")
@@ -2807,18 +2809,57 @@ func dynamicToolCallOutputContentItemSchema() Schema {
 	return Schema{"oneOf": []any{
 		dynamicToolCallOutputContentItemVariantSchema("inputText", "text"),
 		dynamicToolCallOutputContentItemVariantSchema("inputImage", "imageUrl"),
+		dynamicToolCallOutputContentItemVariantSchema("inputAudio", "audioUrl"),
 	}}
 }
 
+func dynamicToolCallParamsSchema() Schema {
+	return Schema{
+		"type":  "object",
+		"title": "DynamicToolCallParams",
+		"properties": Schema{
+			"threadId":  Schema{"type": "string"},
+			"turnId":    Schema{"type": "string"},
+			"callId":    Schema{"type": "string"},
+			"namespace": Schema{"type": []any{"string", "null"}},
+			"tool":      Schema{"type": "string"},
+			"arguments": true,
+		},
+		"required": []string{"arguments", "callId", "threadId", "tool", "turnId"},
+	}
+}
+
+func dynamicToolCallResponseSchema() Schema {
+	return Schema{
+		"type":  "object",
+		"title": "DynamicToolCallResponse",
+		"properties": Schema{
+			"contentItems": Schema{"type": "array", "items": Schema{"$ref": "#/$defs/DynamicToolCallOutputContentItem"}},
+			"success":      Schema{"type": "boolean"},
+		},
+		"required": []string{"contentItems", "success"},
+	}
+}
+
 func dynamicToolCallOutputContentItemVariantSchema(contentType, valueField string) Schema {
+	variantName := ""
+	typeName := ""
+	switch contentType {
+	case "inputText":
+		variantName, typeName = "InputTextDynamicToolCallOutputContentItem", "InputTextDynamicToolCallOutputContentItemType"
+	case "inputImage":
+		variantName, typeName = "InputImageDynamicToolCallOutputContentItem", "InputImageDynamicToolCallOutputContentItemType"
+	case "inputAudio":
+		variantName, typeName = "InputAudioDynamicToolCallOutputContentItem", "InputAudioDynamicToolCallOutputContentItemType"
+	}
 	return Schema{
 		"type": "object",
 		"properties": Schema{
-			"type":     Schema{"type": "string", "enum": []any{contentType}},
+			"type":     Schema{"type": "string", "enum": []any{contentType}, "title": typeName},
 			valueField: Schema{"type": "string"},
 		},
-		"required":             []string{"type", valueField},
-		"additionalProperties": false,
+		"required": []string{valueField, "type"},
+		"title":    variantName,
 	}
 }
 

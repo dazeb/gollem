@@ -22,16 +22,7 @@ export const dynamicToolCallRequest = {
     "tool": "client.search",
     "arguments": {
       "query": "gollem"
-    },
-    "requestId": "interaction-1",
-    "itemId": "item-tool-1",
-    "startedAtMs": 1783715400000,
-    "toolName": "client.search",
-    "name": "client.search",
-    "metadata": {
-      "source": "runtime"
-    },
-    "reason": "client.search"
+    }
   }
 } satisfies BoundRequest<"item/tool/call">;
 export const dynamicToolCallRequestParams = dynamicToolCallRequest.params satisfies DynamicToolCallParams;
@@ -63,6 +54,20 @@ export const dynamicToolCallImageResponse = {
   }
 } satisfies BoundResponse<"item/tool/call">;
 export const dynamicToolCallImageResponseResult = dynamicToolCallImageResponse.result satisfies DynamicToolCallResponse;
+
+export const dynamicToolCallAudioResponse = {
+  "id": "interaction-1",
+  "result": {
+    "contentItems": [
+      {
+        "type": "inputAudio",
+        "audioUrl": "data:audio/wav;base64,AA=="
+      }
+    ],
+    "success": true
+  }
+} satisfies BoundResponse<"item/tool/call">;
+export const dynamicToolCallAudioResponseResult = dynamicToolCallAudioResponse.result satisfies DynamicToolCallResponse;
 
 // @ts-expect-error request methods cannot use notification envelopes.
 export type RejectRequestAsNotification = BoundNotification<"daemon/status">;

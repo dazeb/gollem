@@ -1396,34 +1396,11 @@ export type DynamicToolCallItemStartedNotificationParams = {
   "turnId": string;
 };
 
-export type DynamicToolCallOutputContentItem = {
-  "text": string;
-  "type": "inputText";
-} | {
-  "imageUrl": string;
-  "type": "inputImage";
-};
+export type DynamicToolCallOutputContentItem = { "type": "inputText"; "text": string; } | { "type": "inputImage"; "imageUrl": string; } | { "type": "inputAudio"; "audioUrl": string; };
 
-export type DynamicToolCallParams = {
-  "arguments": unknown;
-  "callId": string;
-  "itemId"?: string;
-  "metadata"?: Record<string, unknown> | null;
-  "name"?: string;
-  "namespace": string | null;
-  "reason"?: string;
-  "requestId"?: string;
-  "startedAtMs"?: number;
-  "threadId": string;
-  "tool": string;
-  "toolName"?: string;
-  "turnId": string;
-};
+export type DynamicToolCallParams = { "threadId": string; "turnId": string; "callId": string; "namespace": string | null; "tool": string; "arguments": JsonValue; };
 
-export type DynamicToolCallResponse = {
-  "contentItems": Array<DynamicToolCallOutputContentItem>;
-  "success": boolean;
-};
+export type DynamicToolCallResponse = { "contentItems": Array<DynamicToolCallOutputContentItem>; "success": boolean; };
 
 export type DynamicToolCallStatus = "inProgress" | "completed" | "failed";
 

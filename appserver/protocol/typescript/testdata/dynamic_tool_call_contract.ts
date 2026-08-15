@@ -12,8 +12,6 @@ export const params = {
   namespace: null,
   tool: "client.search",
   arguments: { query: "gollem" },
-  requestId: "interaction-1",
-  toolName: "client.search",
 } satisfies DynamicToolCallParams;
 
 export const text = { type: "inputText", text: "match" } satisfies DynamicToolCallOutputContentItem;
@@ -21,7 +19,11 @@ export const image = {
   type: "inputImage",
   imageUrl: "data:image/png;base64,AA==",
 } satisfies DynamicToolCallOutputContentItem;
-export const response = { contentItems: [text, image], success: true } satisfies DynamicToolCallResponse;
+export const audio = {
+  type: "inputAudio",
+  audioUrl: "data:audio/wav;base64,AA==",
+} satisfies DynamicToolCallOutputContentItem;
+export const response = { contentItems: [text, image, audio], success: true } satisfies DynamicToolCallResponse;
 response satisfies ResultFor<"item/tool/call">;
 
 // @ts-expect-error callId is required.

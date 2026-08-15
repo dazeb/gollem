@@ -16,14 +16,7 @@
           "callId": "call-1",
           "namespace": null,
           "tool": "client.search",
-          "arguments": {"query": "gollem"},
-          "requestId": "interaction-1",
-          "itemId": "item-tool-1",
-          "startedAtMs": 1783715400000,
-          "toolName": "client.search",
-          "name": "client.search",
-          "metadata": {"source": "runtime"},
-          "reason": "client.search"
+          "arguments": {"query": "gollem"}
         }
       }
     },
@@ -54,6 +47,22 @@
             {"type": "inputImage", "imageUrl": "data:image/png;base64,AA=="}
           ],
           "success": false
+        }
+      }
+    },
+    {
+      "name": "dynamic-tool-call-audio-response",
+      "surface": "server-request",
+      "method": "item/tool/call",
+      "envelope": "response",
+      "resultType": "DynamicToolCallResponse",
+      "message": {
+        "id": "interaction-1",
+        "result": {
+          "contentItems": [
+            {"type": "inputAudio", "audioUrl": "data:audio/wav;base64,AA=="}
+          ],
+          "success": true
         }
       }
     }

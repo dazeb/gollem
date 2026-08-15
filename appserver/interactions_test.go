@@ -159,8 +159,17 @@ func TestInteractionToolCallErrorResponse(t *testing.T) {
 		t.Fatalf("decode dynamic tool params: %v", err)
 	}
 	if params.ThreadID != "thread-2" || params.TurnID != "turn-2" || params.CallID != "call-2" ||
-		params.Namespace != nil || params.Tool != "client.search" || params.ToolName != params.Tool {
+		params.Namespace != nil || params.Tool != "client.search" {
 		t.Fatalf("dynamic tool params = %#v", params)
+	}
+	var rawParams map[string]json.RawMessage
+	if err := json.Unmarshal(req.Params, &rawParams); err != nil {
+		t.Fatalf("decode raw dynamic tool params: %v", err)
+	}
+	for _, forbidden := range []string{"requestId", "itemId", "startedAtMs", "toolName", "name", "metadata", "reason"} {
+		if _, exists := rawParams[forbidden]; exists {
+			t.Fatalf("dynamic tool params leak %s: %s", forbidden, req.Params)
+		}
 	}
 	if err := server.HandleResponse(ctx, protocol.Response{
 		ID:    req.ID,
@@ -184,8 +193,8 @@ func TestInteractionToolCallResponseUsesExactBoundedContract(t *testing.T) {
 		wantFail bool
 	}{
 		{
-			name:   "text and image",
-			result: `{"contentItems":[{"type":"inputText","text":"match"},{"type":"inputImage","imageUrl":"data:image/png;base64,AA=="}],"success":true}`,
+			name:   "text image and audio",
+			result: `{"contentItems":[{"type":"inputText","text":"match"},{"type":"inputImage","imageUrl":"data:image/png;base64,AA=="},{"type":"inputAudio","audioUrl":"data:audio/wav;base64,AA=="}],"success":true}`,
 		},
 		{name: "missing fields", result: `{}`, wantFail: true},
 		{name: "null content", result: `{"contentItems":null,"success":true}`, wantFail: true},
