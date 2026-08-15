@@ -3396,6 +3396,8 @@ export type ServerCapabilities = {
   "unavailable": boolean;
 };
 
+export type ServerRequest = { "method": "item/commandExecution/requestApproval"; "id": RequestId; "params": CommandExecutionRequestApprovalParams; } | { "method": "item/fileChange/requestApproval"; "id": RequestId; "params": FileChangeRequestApprovalParams; } | { "method": "item/tool/requestUserInput"; "id": RequestId; "params": ToolRequestUserInputParams; } | { "method": "mcpServer/elicitation/request"; "id": RequestId; "params": McpServerElicitationRequestParams; } | { "method": "item/permissions/requestApproval"; "id": RequestId; "params": PermissionsRequestApprovalParams; } | { "method": "item/tool/call"; "id": RequestId; "params": DynamicToolCallParams; } | { "method": "account/chatgptAuthTokens/refresh"; "id": RequestId; "params": ChatgptAuthTokensRefreshParams; } | { "method": "attestation/generate"; "id": RequestId; "params": AttestationGenerateParams; } | { "method": "applyPatchApproval"; "id": RequestId; "params": ApplyPatchApprovalParams; } | { "method": "execCommandApproval"; "id": RequestId; "params": ExecCommandApprovalParams; };
+
 export type ServerRequestResolvedNotification = {
   "requestId": RequestId;
   "threadId": string;

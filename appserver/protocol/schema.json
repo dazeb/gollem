@@ -14371,6 +14371,260 @@
       ],
       "type": "object"
     },
+    "ServerRequest": {
+      "oneOf": [
+        {
+          "description": "NEW APIs Sent when approval is requested for a specific command execution. This request is used for Turns started via turn/start.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "item/commandExecution/requestApproval"
+              ],
+              "title": "Item/commandExecution/requestApprovalRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/CommandExecutionRequestApprovalParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Item/commandExecution/requestApprovalRequest",
+          "type": "object"
+        },
+        {
+          "description": "Sent when approval is requested for a specific file change. This request is used for Turns started via turn/start.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "item/fileChange/requestApproval"
+              ],
+              "title": "Item/fileChange/requestApprovalRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/FileChangeRequestApprovalParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Item/fileChange/requestApprovalRequest",
+          "type": "object"
+        },
+        {
+          "description": "EXPERIMENTAL - Request input from the user for a tool call.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "item/tool/requestUserInput"
+              ],
+              "title": "Item/tool/requestUserInputRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/ToolRequestUserInputParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Item/tool/requestUserInputRequest",
+          "type": "object"
+        },
+        {
+          "description": "Request input for an MCP server elicitation.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "mcpServer/elicitation/request"
+              ],
+              "title": "McpServer/elicitation/requestRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/McpServerElicitationRequestParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "McpServer/elicitation/requestRequest",
+          "type": "object"
+        },
+        {
+          "description": "Request approval for additional permissions from the user.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "item/permissions/requestApproval"
+              ],
+              "title": "Item/permissions/requestApprovalRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/PermissionsRequestApprovalParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Item/permissions/requestApprovalRequest",
+          "type": "object"
+        },
+        {
+          "description": "Execute a dynamic tool call on the client.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "item/tool/call"
+              ],
+              "title": "Item/tool/callRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/DynamicToolCallParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Item/tool/callRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "account/chatgptAuthTokens/refresh"
+              ],
+              "title": "Account/chatgptAuthTokens/refreshRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/ChatgptAuthTokensRefreshParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Account/chatgptAuthTokens/refreshRequest",
+          "type": "object"
+        },
+        {
+          "description": "Generate a fresh upstream attestation result on demand.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "attestation/generate"
+              ],
+              "title": "Attestation/generateRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/AttestationGenerateParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Attestation/generateRequest",
+          "type": "object"
+        },
+        {
+          "description": "DEPRECATED APIs below Request to approve a patch. This request is used for Turns started via the legacy APIs (i.e. SendUserTurn, SendUserMessage).",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "applyPatchApproval"
+              ],
+              "title": "ApplyPatchApprovalRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/ApplyPatchApprovalParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ApplyPatchApprovalRequest",
+          "type": "object"
+        },
+        {
+          "description": "Request to exec a command. This request is used for Turns started via the legacy APIs (i.e. SendUserTurn, SendUserMessage).",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/RequestId"
+            },
+            "method": {
+              "enum": [
+                "execCommandApproval"
+              ],
+              "title": "ExecCommandApprovalRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/$defs/ExecCommandApprovalParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "ExecCommandApprovalRequest",
+          "type": "object"
+        }
+      ],
+      "title": "ServerRequest"
+    },
     "ServerRequestResolvedNotification": {
       "additionalProperties": false,
       "properties": {

@@ -140,8 +140,8 @@ func TestMcpServerToolCallParamsRemainsStandalone(t *testing.T) {
 			t.Fatalf("McpServerToolCallParams unexpectedly bound: %#v", binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 605 {
-		t.Fatalf("definition count = %d, want 605", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 606 {
+		t.Fatalf("definition count = %d, want 606", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
