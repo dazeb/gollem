@@ -23,6 +23,7 @@ import (
 type Claims struct {
 	ToolCalls           bool
 	StructuredOutput    bool
+	Vision              bool
 	Streaming           bool
 	Usage               bool
 	Cancellation        bool
@@ -38,7 +39,8 @@ type Claims struct {
 // Expectations declares the normalized outputs a deterministic fixture
 // produces. ToolName, ToolCallID, and ToolArgumentsJSON are required when
 // Claims.ToolCalls is true. StructuredOutputValue is required when
-// Claims.StructuredOutput is true. StreamText is required when
+// Claims.StructuredOutput is true. VisionText is required when Claims.Vision
+// is true. StreamText is required when
 // Claims.Streaming is true.
 type Expectations struct {
 	ResponseText          string
@@ -46,6 +48,7 @@ type Expectations struct {
 	ToolCallID            string
 	ToolArgumentsJSON     string
 	StructuredOutputValue string
+	VisionText            string
 	StreamText            string
 	PartialText           string
 	DisconnectText        string
@@ -86,6 +89,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.StructuredOutput && strings.TrimSpace(driver.Expectations.StructuredOutputValue) == "" {
 		return fmt.Errorf("provider conformance: %s structured-output fixture must expect a typed value", driver.Name)
+	}
+	if driver.Claims.Vision && strings.TrimSpace(driver.Expectations.VisionText) == "" {
+		return fmt.Errorf("provider conformance: %s vision fixture must expect a response", driver.Name)
 	}
 	if driver.Claims.Streaming && strings.TrimSpace(driver.Expectations.StreamText) == "" {
 		return fmt.Errorf("provider conformance: %s streaming fixture must expect stream text", driver.Name)
@@ -141,6 +147,11 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.StructuredOutput {
 		if err := verifyStructuredOutput(ctx, driver); err != nil {
+			return err
+		}
+	}
+	if driver.Claims.Vision {
+		if err := verifyVision(ctx, driver); err != nil {
 			return err
 		}
 	}
@@ -235,6 +246,22 @@ func verifyStructuredOutput(ctx context.Context, driver Driver) error {
 			got,
 			driver.Expectations.StructuredOutputValue,
 		)
+	}
+	return nil
+}
+
+// verifyVision sends a small deterministic PNG data URI through the public
+// core.Model request path. Provider fixtures assert their native wire shape.
+func verifyVision(ctx context.Context, driver Driver) error {
+	response, err := driver.Model.Request(ctx, visionMessages(), nil, &core.ModelRequestParameters{AllowTextOutput: true})
+	if err != nil {
+		return fmt.Errorf("provider conformance: %s vision request: %w", driver.Name, err)
+	}
+	if response == nil {
+		return fmt.Errorf("provider conformance: %s vision request returned a nil response", driver.Name)
+	}
+	if got := response.TextContent(); got != driver.Expectations.VisionText {
+		return fmt.Errorf("provider conformance: %s vision text = %q, want %q", driver.Name, got, driver.Expectations.VisionText)
 	}
 	return nil
 }
@@ -518,6 +545,15 @@ func verifyToolCall(driver Driver, parts []core.ModelResponsePart) error {
 func conformanceMessages() []core.ModelMessage {
 	return []core.ModelMessage{
 		core.ModelRequest{Parts: []core.ModelRequestPart{core.UserPromptPart{Content: "run conformance"}}},
+	}
+}
+
+func visionMessages() []core.ModelMessage {
+	return []core.ModelMessage{
+		core.ModelRequest{Parts: []core.ModelRequestPart{
+			core.UserPromptPart{Content: "vision conformance"},
+			core.ImagePart{URL: core.BinaryContent([]byte{1, 2, 3}, "image/png"), MIMEType: "image/png", Detail: "low"},
+		}},
 	}
 }
 

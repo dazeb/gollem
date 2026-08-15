@@ -40,7 +40,7 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Name:                "native OpenAI",
 					Model:               openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
 					ReasoningModel:      openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-5")),
-					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
+					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Vision: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   openAICancellationReady,
 					RequestTimeoutReady: openAITimeout.readyFor("gpt-4o"),
 					Expectations: conformance.Expectations{
@@ -49,6 +49,7 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 						ToolCallID:            "call_openai",
 						ToolArgumentsJSON:     `{"value":"ok"}`,
 						StructuredOutputValue: "openai structured",
+						VisionText:            "openai vision",
 						StreamText:            "openai stream",
 						PartialText:           "openai partial",
 						DisconnectText:        "openai disconnect",
@@ -98,7 +99,7 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Name:                "native Anthropic",
 					Model:               model,
 					ReasoningModel:      model,
-					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
+					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Vision: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   anthropicCancellationReady,
 					RequestTimeoutReady: anthropicTimeout.readyFor(anthropic.ClaudeSonnet46),
 					Expectations: conformance.Expectations{
@@ -107,6 +108,7 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 						ToolCallID:            "call_anthropic",
 						ToolArgumentsJSON:     `{"value":"ok"}`,
 						StructuredOutputValue: "anthropic structured",
+						VisionText:            "anthropic vision",
 						StreamText:            "anthropic stream",
 						PartialText:           "anthropic partial",
 						DisconnectText:        "anthropic disconnect",
@@ -140,6 +142,14 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Verify accepted a structured-output claim without a typed expectation")
+	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing vision fixture",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{Vision: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a vision claim without an expected response")
 	}
 	err = conformance.Verify(context.Background(), conformance.Driver{
 		Name:   "missing tool fixture",
@@ -401,6 +411,12 @@ func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, r
 			_, _ = fmt.Fprint(w, `{"id":"chatcmpl-structured","object":"chat.completion","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"{\"value\":\"openai structured\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
 			return
 		}
+		if strings.Contains(string(body), "vision conformance") {
+			assertOpenAIVisionRequest(t, body)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"id":"chatcmpl-vision","object":"chat.completion","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"openai vision"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+			return
+		}
 		if request.Stream {
 			if len(request.Tools) != 0 && string(request.Tools) != "null" {
 				t.Fatalf("stream request unexpectedly included tools: %s", request.Tools)
@@ -532,6 +548,12 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 			_, _ = fmt.Fprint(w, `{"id":"msg-structured","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"call_structured","name":"final_result","input":{"value":"anthropic structured"}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":2}}`)
 			return
 		}
+		if strings.Contains(string(body), "vision conformance") {
+			assertAnthropicVisionRequest(t, body)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"id":"msg-vision","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"anthropic vision"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`)
+			return
+		}
 		if strings.Contains(string(body), "reasoning conformance") {
 			if !request.Stream {
 				t.Fatal("Anthropic reasoning request was not streaming")
@@ -640,6 +662,70 @@ func assertAnthropicStructuredOutputTool(t *testing.T, raw json.RawMessage) {
 		}
 	}
 	t.Fatalf("Anthropic structured-output request omitted %q tool: %s", core.DefaultOutputToolName, raw)
+}
+
+func assertOpenAIVisionRequest(t *testing.T, body []byte) {
+	t.Helper()
+	var request struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatalf("decode OpenAI vision request: %v", err)
+	}
+	if len(request.Messages) != 1 || request.Messages[0].Role != "user" {
+		t.Fatalf("OpenAI vision messages = %#v, want one user message", request.Messages)
+	}
+	var parts []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		ImageURL *struct {
+			URL    string `json:"url"`
+			Detail string `json:"detail"`
+		} `json:"image_url"`
+	}
+	if err := json.Unmarshal(request.Messages[0].Content, &parts); err != nil {
+		t.Fatalf("decode OpenAI vision content: %v", err)
+	}
+	if len(parts) != 2 || parts[0].Type != "text" || parts[0].Text != "vision conformance" {
+		t.Fatalf("OpenAI vision content = %s, want text then image", request.Messages[0].Content)
+	}
+	if parts[1].Type != "image_url" || parts[1].ImageURL == nil || parts[1].ImageURL.URL != "data:image/png;base64,AQID" || parts[1].ImageURL.Detail != "low" {
+		t.Fatalf("OpenAI vision image = %#v, want low-detail PNG data URI", parts[1])
+	}
+}
+
+func assertAnthropicVisionRequest(t *testing.T, body []byte) {
+	t.Helper()
+	var request struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type   string `json:"type"`
+				Text   string `json:"text"`
+				Source *struct {
+					Type      string `json:"type"`
+					MediaType string `json:"media_type"`
+					Data      string `json:"data"`
+				} `json:"source"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatalf("decode Anthropic vision request: %v", err)
+	}
+	if len(request.Messages) != 1 || request.Messages[0].Role != "user" {
+		t.Fatalf("Anthropic vision messages = %#v, want one user message", request.Messages)
+	}
+	parts := request.Messages[0].Content
+	if len(parts) != 2 || parts[0].Type != "text" || parts[0].Text != "vision conformance" {
+		t.Fatalf("Anthropic vision content = %#v, want text then image", parts)
+	}
+	if parts[1].Type != "image" || parts[1].Source == nil || parts[1].Source.Type != "base64" || parts[1].Source.MediaType != "image/png" || parts[1].Source.Data != "AQID" {
+		t.Fatalf("Anthropic vision image = %#v, want base64 PNG source", parts[1])
+	}
 }
 
 func assertStructuredOutputSchema(t *testing.T, raw json.RawMessage) {
