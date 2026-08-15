@@ -248,8 +248,8 @@ func TestModelSafetyNotificationContractsRemainStandalone(t *testing.T) {
 			t.Errorf("%s = %#v, %v; want blocked", method, info, ok)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 620 {
-		t.Fatalf("definition count = %d, want 620", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 621 {
+		t.Fatalf("definition count = %d, want 621", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))

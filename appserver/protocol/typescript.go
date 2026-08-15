@@ -894,6 +894,8 @@ path?: AbsolutePathBuf | null,
 name?: string | null, enabled: boolean, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
+		case "MarketplaceRemoveParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ marketplaceName: string, }`}
 		case "McpServerElicitationRequestParams":
 			// The raw schema mirrors serde's open, flattened record. ts-rs instead
 			// emits the exact closed intersection and makes Option fields nullable.

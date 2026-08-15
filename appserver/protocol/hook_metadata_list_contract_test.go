@@ -352,8 +352,8 @@ func TestHookMetadataListContractsStayStandalone(t *testing.T) {
 			t.Errorf("standalone definition %s unexpectedly bound to item %s", binding.Type, binding.Kind)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 620 {
-		t.Errorf("definition count = %d, want 620", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 621 {
+		t.Errorf("definition count = %d, want 621", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 {
 		t.Errorf("wire binding count = %d, want 80", got)
