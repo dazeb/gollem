@@ -308,8 +308,8 @@ func TestProcessContractsRemainStandaloneFromLegacyRuntime(t *testing.T) {
 			t.Fatalf("%s = %#v, %v; want unchanged implemented notification", method, info, ok)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 624 {
-		t.Fatalf("definition count = %d, want 624", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 625 {
+		t.Fatalf("definition count = %d, want 625", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

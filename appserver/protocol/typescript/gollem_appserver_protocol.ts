@@ -2947,6 +2947,8 @@ export type PlanType = "free" | "go" | "plus" | "pro" | "prolite" | "team" | "se
 
 export type PluginShareListParams = Record<string, never>;
 
+export type PluginSkillReadParams = { remoteMarketplaceName: string, remotePluginId: string, skillName: string, };
+
 export type PluginUninstallParams = { pluginId: string, };
 
 export type PluginsMigration = {

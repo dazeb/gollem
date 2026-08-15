@@ -163,8 +163,8 @@ func TestServerRequestApprovalParamsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(defs); got != 624 {
-		t.Fatalf("definition count = %d, want 624", got)
+	if got := len(defs); got != 625 {
+		t.Fatalf("definition count = %d, want 625", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
