@@ -139,8 +139,8 @@ func TestApplyPatchApprovalParamsRemainsStandalone(t *testing.T) {
 			t.Fatalf("ApplyPatchApprovalParams unexpectedly bound to item %s", binding.Kind)
 		}
 	}
-	if got := len(defs); got != 618 {
-		t.Fatalf("definition count = %d, want 618", got)
+	if got := len(defs); got != 619 {
+		t.Fatalf("definition count = %d, want 619", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

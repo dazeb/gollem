@@ -162,8 +162,8 @@ func TestThreadSettingsContractsFailClosedAndRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 618 {
-		t.Fatalf("definition count = %d, want 618", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 619 {
+		t.Fatalf("definition count = %d, want 619", got)
 	}
 }
 
