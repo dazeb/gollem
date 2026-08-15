@@ -150,18 +150,14 @@ func (s *InteractionService) RequestToolCall(ctx context.Context, req DynamicToo
 	params := map[string]any{
 		"callId":    strings.TrimSpace(req.CallID),
 		"namespace": req.Namespace,
-		"tool":      req.ToolName,
-		"toolName":  req.ToolName,
-		"name":      req.ToolName,
+		"tool":      strings.TrimSpace(req.ToolName),
 		"arguments": json.RawMessage(append([]byte(nil), req.Arguments...)),
-		"metadata":  cloneStringAnyMap(req.Metadata),
 	}
 	return s.Request(ctx, InteractionRequest{
 		Method:   InteractionToolCall,
 		ThreadID: req.ThreadID,
 		TurnID:   req.TurnID,
 		ItemID:   req.ItemID,
-		Reason:   req.ToolName,
 		Params:   params,
 	})
 }
@@ -257,7 +253,7 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 		ItemID:    itemID,
 	}
 	payload := cloneStringAnyMap(req.Params)
-	if method != InteractionRequestUserInput && method != InteractionMCPElicitation {
+	if method != InteractionRequestUserInput && method != InteractionToolCall && method != InteractionMCPElicitation {
 		payload["requestId"] = requestID
 	}
 	payload["threadId"] = meta.ThreadID
@@ -266,10 +262,10 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 	} else {
 		payload["turnId"] = meta.TurnID
 	}
-	if method != InteractionMCPElicitation {
+	if method != InteractionToolCall && method != InteractionMCPElicitation {
 		payload["itemId"] = meta.ItemID
 	}
-	if method != InteractionRequestUserInput && method != InteractionMCPElicitation {
+	if method != InteractionRequestUserInput && method != InteractionToolCall && method != InteractionMCPElicitation {
 		payload["startedAtMs"] = time.Now().UnixMilli()
 	}
 	if method == InteractionToolCall {
@@ -278,7 +274,7 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 			payload["callId"] = firstNonEmpty(meta.ItemID, requestID)
 		}
 	}
-	if method != InteractionRequestUserInput && method != InteractionMCPElicitation && strings.TrimSpace(req.Reason) != "" {
+	if method != InteractionRequestUserInput && method != InteractionToolCall && method != InteractionMCPElicitation && strings.TrimSpace(req.Reason) != "" {
 		payload["reason"] = strings.TrimSpace(req.Reason)
 	}
 

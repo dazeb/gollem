@@ -4698,7 +4698,6 @@
     "DynamicToolCallOutputContentItem": {
       "oneOf": [
         {
-          "additionalProperties": false,
           "properties": {
             "text": {
               "type": "string"
@@ -4707,17 +4706,18 @@
               "enum": [
                 "inputText"
               ],
+              "title": "InputTextDynamicToolCallOutputContentItemType",
               "type": "string"
             }
           },
           "required": [
-            "type",
-            "text"
+            "text",
+            "type"
           ],
+          "title": "InputTextDynamicToolCallOutputContentItem",
           "type": "object"
         },
         {
-          "additionalProperties": false,
           "properties": {
             "imageUrl": {
               "type": "string"
@@ -4726,59 +4726,50 @@
               "enum": [
                 "inputImage"
               ],
+              "title": "InputImageDynamicToolCallOutputContentItemType",
               "type": "string"
             }
           },
           "required": [
-            "type",
-            "imageUrl"
+            "imageUrl",
+            "type"
           ],
+          "title": "InputImageDynamicToolCallOutputContentItem",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "audioUrl": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "inputAudio"
+              ],
+              "title": "InputAudioDynamicToolCallOutputContentItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "audioUrl",
+            "type"
+          ],
+          "title": "InputAudioDynamicToolCallOutputContentItem",
           "type": "object"
         }
       ]
     },
     "DynamicToolCallParams": {
-      "additionalProperties": false,
       "properties": {
-        "arguments": {},
+        "arguments": true,
         "callId": {
           "type": "string"
         },
-        "itemId": {
-          "type": "string"
-        },
-        "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": {},
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "name": {
-          "type": "string"
-        },
         "namespace": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
-        },
-        "reason": {
-          "type": "string"
-        },
-        "requestId": {
-          "type": "string"
-        },
-        "startedAtMs": {
-          "type": "integer"
         },
         "threadId": {
           "type": "string"
@@ -4786,25 +4777,21 @@
         "tool": {
           "type": "string"
         },
-        "toolName": {
-          "type": "string"
-        },
         "turnId": {
           "type": "string"
         }
       },
       "required": [
-        "threadId",
-        "turnId",
+        "arguments",
         "callId",
-        "namespace",
+        "threadId",
         "tool",
-        "arguments"
+        "turnId"
       ],
+      "title": "DynamicToolCallParams",
       "type": "object"
     },
     "DynamicToolCallResponse": {
-      "additionalProperties": false,
       "properties": {
         "contentItems": {
           "items": {
@@ -4820,6 +4807,7 @@
         "contentItems",
         "success"
       ],
+      "title": "DynamicToolCallResponse",
       "type": "object"
     },
     "DynamicToolCallStatus": {

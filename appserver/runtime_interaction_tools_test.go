@@ -237,11 +237,13 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 			if params["threadId"] != started.Thread.ID || params["turnId"] != started.Turn.ID {
 				t.Fatalf("server request correlation = %#v", params)
 			}
-			if tt.wantMethod != InteractionMCPElicitation && (itemID == "" || itemID == "call-runtime-interaction") {
+			if tt.wantMethod != InteractionToolCall && tt.wantMethod != InteractionMCPElicitation && (itemID == "" || itemID == "call-runtime-interaction") {
 				t.Fatalf("server request item correlation = %#v", params)
 			}
 			if tt.wantMethod == InteractionToolCall &&
-				(params["callId"] != "call-runtime-interaction" || params["tool"] != "client.search" || params["namespace"] != nil) {
+				(params["callId"] != "call-runtime-interaction" || params["tool"] != "client.search" || params["namespace"] != nil ||
+					params["requestId"] != nil || params["itemId"] != nil || params["startedAtMs"] != nil || params["reason"] != nil ||
+					params["toolName"] != nil || params["name"] != nil || params["metadata"] != nil) {
 				t.Fatalf("public dynamic tool correlation = %#v", params)
 			}
 			if tt.wantMethod == InteractionMCPElicitation {
@@ -264,7 +266,7 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 				t.Fatalf("ListItems: %v", err)
 			}
 			toolItem := findRuntimeToolItem(t, items, tt.toolName, tt.argumentKey, tt.argumentValue)
-			if (tt.wantMethod != InteractionMCPElicitation && toolItem.Item.ID != itemID) || toolItem.Status != runtimeToolStatusCompleted {
+			if (tt.wantMethod != InteractionToolCall && tt.wantMethod != InteractionMCPElicitation && toolItem.Item.ID != itemID) || toolItem.Status != runtimeToolStatusCompleted {
 				t.Fatalf("durable interaction item = %#v, request item %q", toolItem, itemID)
 			}
 		})

@@ -874,6 +874,18 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = Schema{
 				typeScriptRawTypeKeyword: `{ "action": McpServerElicitationAction; "content": JsonValue | null; "_meta": JsonValue | null; }`,
 			}
+		case "DynamicToolCallParams":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "threadId": string; "turnId": string; "callId": string; "namespace": string | null; "tool": string; "arguments": JsonValue; }`,
+			}
+		case "DynamicToolCallResponse":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "contentItems": Array<DynamicToolCallOutputContentItem>; "success": boolean; }`,
+			}
+		case "DynamicToolCallOutputContentItem":
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "type": "inputText"; "text": string; } | { "type": "inputImage"; "imageUrl": string; } | { "type": "inputAudio"; "audioUrl": string; }`,
+			}
 		case "DynamicToolFunctionSpec", "DynamicToolNamespaceSpec":
 			schema, _ := typeScriptSchema(definition)
 			schema["x-gollem-typescript-ignore-additional-properties"] = true
