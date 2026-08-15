@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -20,12 +21,12 @@ func TestUserInputSchemaAndBindingAreExact(t *testing.T) {
 		}
 	}
 	params := defs["ToolRequestUserInputParams"].(Schema)
-	for _, name := range []string{"threadId", "turnId", "itemId", "questions", "autoResolutionMs"} {
-		assertSchemaRequired(t, params, name)
+	if got, want := schemaRequiredNames(params), []string{"isBlocking", "itemId", "questions", "threadId", "turnId"}; !slices.Equal(got, want) {
+		t.Fatalf("request params required = %v, want %v", got, want)
 	}
 	question := defs["ToolRequestUserInputQuestion"].(Schema)
-	for _, name := range []string{"id", "header", "question", "isOther", "isSecret", "options"} {
-		assertSchemaRequired(t, question, name)
+	if got, want := schemaRequiredNames(question), []string{"header", "id", "question"}; !slices.Equal(got, want) {
+		t.Fatalf("request question required = %v, want %v", got, want)
 	}
 	answer := defs["ToolRequestUserInputAnswer"].(Schema)
 	assertSchemaRequired(t, answer, "answers")
@@ -41,6 +42,7 @@ func TestUserInputResponseWireValidation(t *testing.T) {
 		`{"answers":{}}`,
 		`{"answers":{"question-1":{"answers":[]}}}`,
 		`{"answers":{"question-1":{"answers":["safe","other"]}}}`,
+		`{"answers":{"question-1":{"answers":[],"extra":true}},"extra":true}`,
 	}
 	for _, input := range valid {
 		var response ToolRequestUserInputResponse
@@ -57,8 +59,9 @@ func TestUserInputResponseWireValidation(t *testing.T) {
 		`{"answers":{"question-1":{}}}`,
 		`{"answers":{"question-1":{"answers":null}}}`,
 		`{"answers":{"question-1":{"answers":[1]}}}`,
-		`{"answers":{"question-1":{"answers":[],"extra":true}}}`,
-		`{"answers":{},"extra":true}`,
+		`{"answers":{"question-1":{"answers":[],"answers":[]}}}`,
+		`{"answers":{},"answers":{}}`,
+		`{"answers":{}} {}`,
 	}
 	for _, input := range invalid {
 		var response ToolRequestUserInputResponse
@@ -73,6 +76,14 @@ func TestUserInputResponseWireValidation(t *testing.T) {
 	var answer *ToolRequestUserInputAnswer
 	if err := answer.UnmarshalJSON([]byte(`{"answers":[]}`)); err == nil {
 		t.Error("nil answer receiver succeeded")
+	}
+	var option *ToolRequestUserInputOption
+	if err := option.UnmarshalJSON([]byte(`{"label":"safe","description":""}`)); err == nil {
+		t.Error("nil option receiver succeeded")
+	}
+	var question *ToolRequestUserInputQuestion
+	if err := question.UnmarshalJSON([]byte(`{"id":"q","header":"Header","question":"Choose"}`)); err == nil {
+		t.Error("nil question receiver succeeded")
 	}
 }
 

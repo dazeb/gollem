@@ -34,11 +34,25 @@ func TestInteractionUserInputRequestResolvesFromJSONRPCResponse(t *testing.T) {
 	if req.Method != InteractionRequestUserInput {
 		t.Fatalf("request method = %q, want %s", req.Method, InteractionRequestUserInput)
 	}
+	var rawParams map[string]json.RawMessage
+	if err := json.Unmarshal(req.Params, &rawParams); err != nil {
+		t.Fatalf("decode raw request params: %v", err)
+	}
+	for name := range rawParams {
+		switch name {
+		case "threadId", "turnId", "itemId", "questions", "isBlocking", "autoResolutionMs":
+		default:
+			t.Fatalf("user input request retained legacy field %q: %s", name, req.Params)
+		}
+	}
+	if len(rawParams) != 6 {
+		t.Fatalf("user input request fields = %v, want source shape", rawParams)
+	}
 	var params protocol.ToolRequestUserInputParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		t.Fatalf("decode request params: %v", err)
 	}
-	if params.Prompt != "Need a value" || params.ThreadID != "thread-1" || params.TurnID != "turn-1" ||
+	if !params.IsBlocking || params.ThreadID != "thread-1" || params.TurnID != "turn-1" ||
 		params.ItemID == "" || params.AutoResolutionMS != nil || len(params.Questions) != 1 ||
 		params.Questions[0].ID != "input" || params.Questions[0].Header != "Input" ||
 		len(params.Questions[0].Options) != 2 || params.Questions[0].Options[0].Label != "one" {
@@ -69,7 +83,7 @@ func TestInteractionUserInputRequestResolvesFromJSONRPCResponse(t *testing.T) {
 	}
 }
 
-func TestInteractionUserInputResponseUsesExactBoundedContract(t *testing.T) {
+func TestInteractionUserInputResponseUsesSourceCompatibleContract(t *testing.T) {
 	tests := []struct {
 		name     string
 		result   string
@@ -80,8 +94,8 @@ func TestInteractionUserInputResponseUsesExactBoundedContract(t *testing.T) {
 		{name: "missing answers", result: `{}`, wantFail: true},
 		{name: "null answers", result: `{"answers":null}`, wantFail: true},
 		{name: "null answer list", result: `{"answers":{"question-1":{"answers":null}}}`, wantFail: true},
-		{name: "unknown answer field", result: `{"answers":{"question-1":{"answers":[],"extra":true}}}`, wantFail: true},
-		{name: "unknown response field", result: `{"answers":{},"extra":true}`, wantFail: true},
+		{name: "unknown answer field", result: `{"answers":{"question-1":{"answers":[],"extra":true}}}`},
+		{name: "unknown response field", result: `{"answers":{},"extra":true}`},
 		{
 			name:     "oversized",
 			result:   `{"answers":{"question-1":{"answers":["` + strings.Repeat("x", runtimeInteractionPayloadMaxBytes) + `"]}}}`,
@@ -566,7 +580,7 @@ func TestServeJSONLinesResolvesExactUserInput(t *testing.T) {
 	question := params.Questions[0]
 	if question.ID != "question-input-jsonl" || question.Header != "Target" || question.Question != "Choose a target" ||
 		!question.IsOther || question.IsSecret || len(question.Options) != 2 || question.Options[0].Label != "staging" ||
-		question.Options[0].Description != "" || params.Prompt != "Choose a target" || !params.Required {
+		question.Options[0].Description != "" || !params.IsBlocking {
 		t.Fatalf("user input question = %#v, params = %#v", question, params)
 	}
 	responseLine, err := json.Marshal(protocol.Response{

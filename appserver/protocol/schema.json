@@ -18802,7 +18802,7 @@
       "type": "object"
     },
     "ToolRequestUserInputAnswer": {
-      "additionalProperties": false,
+      "description": "EXPERIMENTAL. Captures a user's answer to a request_user_input question.",
       "properties": {
         "answers": {
           "items": {
@@ -18817,7 +18817,7 @@
       "type": "object"
     },
     "ToolRequestUserInputOption": {
-      "additionalProperties": false,
+      "description": "EXPERIMENTAL. Defines a single selectable option for request_user_input.",
       "properties": {
         "description": {
           "type": "string"
@@ -18827,55 +18827,29 @@
         }
       },
       "required": [
-        "label",
-        "description"
+        "description",
+        "label"
       ],
       "type": "object"
     },
     "ToolRequestUserInputParams": {
-      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "EXPERIMENTAL. Params sent with a request_user_input event.",
       "properties": {
         "autoResolutionMs": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
+          "default": null,
+          "description": "@deprecated Use `isBlocking` to decide whether the request should block.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
           ]
+        },
+        "isBlocking": {
+          "type": "boolean"
         },
         "itemId": {
-          "type": "string"
-        },
-        "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": {},
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "options": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "placeholder": {
-          "type": "string"
-        },
-        "prompt": {
           "type": "string"
         },
         "questions": {
@@ -18883,18 +18857,6 @@
             "$ref": "#/$defs/ToolRequestUserInputQuestion"
           },
           "type": "array"
-        },
-        "reason": {
-          "type": "string"
-        },
-        "requestId": {
-          "type": "string"
-        },
-        "required": {
-          "type": "boolean"
-        },
-        "startedAtMs": {
-          "type": "integer"
         },
         "threadId": {
           "type": "string"
@@ -18904,16 +18866,17 @@
         }
       },
       "required": [
-        "threadId",
-        "turnId",
+        "isBlocking",
         "itemId",
         "questions",
-        "autoResolutionMs"
+        "threadId",
+        "turnId"
       ],
+      "title": "ToolRequestUserInputParams",
       "type": "object"
     },
     "ToolRequestUserInputQuestion": {
-      "additionalProperties": false,
+      "description": "EXPERIMENTAL. Represents one request_user_input question and its required options.",
       "properties": {
         "header": {
           "type": "string"
@@ -18922,22 +18885,20 @@
           "type": "string"
         },
         "isOther": {
+          "default": false,
           "type": "boolean"
         },
         "isSecret": {
+          "default": false,
           "type": "boolean"
         },
         "options": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/ToolRequestUserInputOption"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
+          "items": {
+            "$ref": "#/$defs/ToolRequestUserInputOption"
+          },
+          "type": [
+            "array",
+            "null"
           ]
         },
         "question": {
@@ -18945,17 +18906,15 @@
         }
       },
       "required": [
-        "id",
         "header",
-        "question",
-        "isOther",
-        "isSecret",
-        "options"
+        "id",
+        "question"
       ],
       "type": "object"
     },
     "ToolRequestUserInputResponse": {
-      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "EXPERIMENTAL. Response payload mapping question ids to answers.",
       "properties": {
         "answers": {
           "additionalProperties": {
@@ -18967,6 +18926,7 @@
       "required": [
         "answers"
       ],
+      "title": "ToolRequestUserInputResponse",
       "type": "object"
     },
     "ToolsV2": {

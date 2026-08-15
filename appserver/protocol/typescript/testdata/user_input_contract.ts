@@ -21,8 +21,8 @@ export const params = {
   turnId: "turn-1",
   itemId: "item-1",
   questions: [question],
+  isBlocking: true,
   autoResolutionMs: null,
-  prompt: "Choose a mode",
 } satisfies ToolRequestUserInputParams;
 export const answer = { answers: ["safe"] } satisfies ToolRequestUserInputAnswer;
 export const response = { answers: { "call-1": answer } } satisfies ToolRequestUserInputResponse;

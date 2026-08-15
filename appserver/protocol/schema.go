@@ -1191,6 +1191,68 @@ func wireSchemaDefinitions() Schema {
 		"threadId": Schema{"type": "string"},
 		"turnId":   Schema{"type": "string"},
 	}, []string{"cwd", "itemId", "permissions", "startedAtMs", "threadId", "turnId"})
+	// Preserve the raw source schemas for request_user_input. TypeScript closes
+	// these serde-open records in the renderer only.
+	schemas["ToolRequestUserInputOption"] = Schema{
+		"description": "EXPERIMENTAL. Defines a single selectable option for request_user_input.",
+		"properties": Schema{
+			"description": Schema{"type": "string"},
+			"label":       Schema{"type": "string"},
+		},
+		"required": []string{"description", "label"},
+		"type":     "object",
+	}
+	schemas["ToolRequestUserInputQuestion"] = Schema{
+		"description": "EXPERIMENTAL. Represents one request_user_input question and its required options.",
+		"properties": Schema{
+			"header":   Schema{"type": "string"},
+			"id":       Schema{"type": "string"},
+			"isOther":  Schema{"default": false, "type": "boolean"},
+			"isSecret": Schema{"default": false, "type": "boolean"},
+			"options": Schema{
+				"items": Schema{"$ref": "#/$defs/ToolRequestUserInputOption"},
+				"type":  []any{"array", "null"},
+			},
+			"question": Schema{"type": "string"},
+		},
+		"required": []string{"header", "id", "question"},
+		"type":     "object",
+	}
+	schemas["ToolRequestUserInputParams"] = Schema{
+		"$schema":     "http://json-schema.org/draft-07/schema#",
+		"description": "EXPERIMENTAL. Params sent with a request_user_input event.",
+		"properties": Schema{
+			"autoResolutionMs": Schema{
+				"default":     nil,
+				"description": "@deprecated Use `isBlocking` to decide whether the request should block.",
+				"format":      "uint64",
+				"minimum":     json.Number("0.0"),
+				"type":        []any{"integer", "null"},
+			},
+			"isBlocking": Schema{"type": "boolean"},
+			"itemId":     Schema{"type": "string"},
+			"questions":  Schema{"items": Schema{"$ref": "#/$defs/ToolRequestUserInputQuestion"}, "type": "array"},
+			"threadId":   Schema{"type": "string"},
+			"turnId":     Schema{"type": "string"},
+		},
+		"required": []string{"isBlocking", "itemId", "questions", "threadId", "turnId"},
+		"title":    "ToolRequestUserInputParams",
+		"type":     "object",
+	}
+	schemas["ToolRequestUserInputAnswer"] = Schema{
+		"description": "EXPERIMENTAL. Captures a user's answer to a request_user_input question.",
+		"properties":  Schema{"answers": Schema{"items": Schema{"type": "string"}, "type": "array"}},
+		"required":    []string{"answers"},
+		"type":        "object",
+	}
+	schemas["ToolRequestUserInputResponse"] = Schema{
+		"$schema":     "http://json-schema.org/draft-07/schema#",
+		"description": "EXPERIMENTAL. Response payload mapping question ids to answers.",
+		"properties":  Schema{"answers": Schema{"additionalProperties": Schema{"$ref": "#/$defs/ToolRequestUserInputAnswer"}, "type": "object"}},
+		"required":    []string{"answers"},
+		"title":       "ToolRequestUserInputResponse",
+		"type":        "object",
+	}
 	schemas["NetworkApprovalContext"] = closedThreadSessionParamSchema(Schema{
 		"host":     Schema{"type": "string"},
 		"protocol": Schema{"$ref": "#/$defs/NetworkApprovalProtocol"},

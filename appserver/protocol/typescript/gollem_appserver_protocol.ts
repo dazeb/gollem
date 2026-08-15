@@ -4320,16 +4320,9 @@ export type ToolRequestUserInputOption = {
 
 export type ToolRequestUserInputParams = {
   "autoResolutionMs": number | null;
+  "isBlocking": boolean;
   "itemId": string;
-  "metadata"?: Record<string, unknown> | null;
-  "options"?: Array<string> | null;
-  "placeholder"?: string;
-  "prompt"?: string;
   "questions": Array<ToolRequestUserInputQuestion>;
-  "reason"?: string;
-  "requestId"?: string;
-  "required"?: boolean;
-  "startedAtMs"?: number;
   "threadId": string;
   "turnId": string;
 };

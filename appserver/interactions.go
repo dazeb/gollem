@@ -134,18 +134,14 @@ func (s *InteractionService) RequestUserInput(ctx context.Context, req UserInput
 			Options:  publicOptions,
 		}},
 		"autoResolutionMs": req.AutoResolutionMS,
-		"prompt":           req.Prompt,
-		"placeholder":      req.Placeholder,
-		"required":         req.Required,
-		"options":          append([]string(nil), req.Options...),
-		"metadata":         cloneStringAnyMap(req.Metadata),
+		// Gollem waits synchronously for every runtime user-input response.
+		"isBlocking": true,
 	}
 	return s.Request(ctx, InteractionRequest{
 		Method:   InteractionRequestUserInput,
 		ThreadID: req.ThreadID,
 		TurnID:   req.TurnID,
 		ItemID:   req.ItemID,
-		Reason:   req.Prompt,
 		Params:   params,
 	})
 }
@@ -265,7 +261,9 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 		ItemID:    itemID,
 	}
 	payload := cloneStringAnyMap(req.Params)
-	payload["requestId"] = requestID
+	if method != InteractionRequestUserInput {
+		payload["requestId"] = requestID
+	}
 	payload["threadId"] = meta.ThreadID
 	if method == InteractionMCPElicitation && meta.TurnID == "" {
 		payload["turnId"] = nil
@@ -273,14 +271,16 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 		payload["turnId"] = meta.TurnID
 	}
 	payload["itemId"] = meta.ItemID
-	payload["startedAtMs"] = time.Now().UnixMilli()
+	if method != InteractionRequestUserInput {
+		payload["startedAtMs"] = time.Now().UnixMilli()
+	}
 	if method == InteractionToolCall {
 		callID, _ := payload["callId"].(string)
 		if strings.TrimSpace(callID) == "" {
 			payload["callId"] = firstNonEmpty(meta.ItemID, requestID)
 		}
 	}
-	if strings.TrimSpace(req.Reason) != "" {
+	if method != InteractionRequestUserInput && strings.TrimSpace(req.Reason) != "" {
 		payload["reason"] = strings.TrimSpace(req.Reason)
 	}
 
