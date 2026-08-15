@@ -59,8 +59,8 @@ func TestThreadSearchResultFailsClosedAndRemainsStandalone(t *testing.T) {
 			t.Fatalf("ThreadSearchResult unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 629 {
-		t.Fatalf("definition count = %d, want 629", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 630 {
+		t.Fatalf("definition count = %d, want 630", got)
 	}
 }
 

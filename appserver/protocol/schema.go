@@ -410,6 +410,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PluginShareListParams", Type: reflect.TypeFor[PluginShareListParams]()},
 		{Name: "PluginReadParams", Type: reflect.TypeFor[PluginReadParams]()},
 		{Name: "PluginInstallParams", Type: reflect.TypeFor[PluginInstallParams]()},
+		{Name: "PluginInstalledParams", Type: reflect.TypeFor[PluginInstalledParams]()},
 		{Name: "PluginSkillReadParams", Type: reflect.TypeFor[PluginSkillReadParams]()},
 		{Name: "PluginUninstallParams", Type: reflect.TypeFor[PluginUninstallParams]()},
 		{Name: "PluginsMigration", Type: reflect.TypeFor[PluginsMigration]()},
@@ -1051,6 +1052,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["PluginShareListParams"] = pluginShareListParamSchema()
 	schemas["PluginReadParams"] = pluginReadParamSchema()
 	schemas["PluginInstallParams"] = pluginInstallParamSchema()
+	schemas["PluginInstalledParams"] = pluginInstalledParamSchema()
 	schemas["PluginSkillReadParams"] = pluginSkillReadParamSchema()
 	schemas["PluginUninstallParams"] = pluginUninstallParamSchema()
 	schemas["PluginsMigration"] = pluginsMigrationSchema()

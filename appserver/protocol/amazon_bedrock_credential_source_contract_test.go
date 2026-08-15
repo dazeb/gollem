@@ -54,8 +54,8 @@ func TestAmazonBedrockCredentialSourceRemainsStandalone(t *testing.T) {
 			t.Fatalf("AmazonBedrockCredentialSource unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 629 {
-		t.Fatalf("definition count = %d, want 629", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 630 {
+		t.Fatalf("definition count = %d, want 630", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
