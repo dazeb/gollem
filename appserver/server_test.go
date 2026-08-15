@@ -2685,6 +2685,115 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	}
 }
 
+func TestServerBackgroundTerminalResize(t *testing.T) {
+	ctx := context.Background()
+	processSvc, err := toolprocess.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithProcess(processSvc))
+
+	ptyResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"command": "cat",
+		"pty":     true,
+		"ptySize": map[string]any{"rows": 24, "cols": 80},
+	}))
+	if ptyResp.Error != nil {
+		t.Fatalf("process/spawn PTY error: %v", ptyResp.Error)
+	}
+	var ptyStarted struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, ptyResp, &ptyStarted)
+	defer func() {
+		_ = processSvc.Kill(context.Background(), ptyStarted.Process.ID)
+		_, _ = waitProcessSnapshot(t, processSvc, ptyStarted.Process.ID)
+	}()
+
+	resizeResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/resize", map[string]any{
+		"id":   ptyStarted.Process.ID,
+		"size": map[string]any{"rows": 40, "cols": 120},
+	}))
+	if resizeResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/resize error: %v", resizeResp.Error)
+	}
+	var resized protocol.BackgroundTerminalResizeResponse
+	decodeResult(t, resizeResp, &resized)
+	if !resized.OK || resized.Terminal.ID != ptyStarted.Process.ID || !resized.Terminal.PTY ||
+		resized.Terminal.PTYSize == nil || resized.Terminal.PTYSize.Rows != 40 ||
+		resized.Terminal.PTYSize.Cols != 120 || resized.ObservedAt.IsZero() {
+		t.Fatalf("background terminal resize = %#v", resized)
+	}
+	snapshot, err := processSvc.Snapshot(ctx, ptyStarted.Process.ID)
+	if err != nil {
+		t.Fatalf("snapshot after background terminal resize: %v", err)
+	}
+	if !snapshot.PTY || snapshot.PTYSize != (toolprocess.TerminalSize{Rows: 40, Cols: 120}) {
+		t.Fatalf("PTY snapshot after resize = %#v", snapshot)
+	}
+
+	nonPTYResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{"command": "cat"}))
+	if nonPTYResp.Error != nil {
+		t.Fatalf("process/spawn non-PTY error: %v", nonPTYResp.Error)
+	}
+	var nonPTYStarted struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, nonPTYResp, &nonPTYStarted)
+	defer func() {
+		_ = processSvc.Kill(context.Background(), nonPTYStarted.Process.ID)
+		_, _ = waitProcessSnapshot(t, processSvc, nonPTYStarted.Process.ID)
+	}()
+	nonPTYResize := server.HandleRequest(ctx, request("thread/backgroundTerminals/resize", map[string]any{
+		"id":   nonPTYStarted.Process.ID,
+		"size": map[string]any{"rows": 40, "cols": 120},
+	}))
+	if nonPTYResize.Error == nil || nonPTYResize.Error.Code != protocol.CodeMethodUnavailable {
+		t.Fatalf("non-PTY resize response = %#v (code %d), want method unavailable", nonPTYResize, nonPTYResize.Error.Code)
+	}
+
+	for _, test := range []struct {
+		name   string
+		params map[string]any
+	}{
+		{name: "missing id", params: map[string]any{"size": map[string]any{"rows": 40, "cols": 120}}},
+		{name: "missing size", params: map[string]any{"id": ptyStarted.Process.ID}},
+		{name: "zero rows", params: map[string]any{"id": ptyStarted.Process.ID, "size": map[string]any{"rows": 0, "cols": 120}}},
+		{name: "unknown terminal", params: map[string]any{"id": "missing", "size": map[string]any{"rows": 40, "cols": 120}}},
+		{name: "unknown field", params: map[string]any{"id": ptyStarted.Process.ID, "size": map[string]any{"rows": 40, "cols": 120}, "unknown": true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := server.HandleRequest(ctx, request("thread/backgroundTerminals/resize", test.params))
+			if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams {
+				t.Fatalf("resize response = %#v, want invalid params", response)
+			}
+		})
+	}
+
+	completedResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"command": "printf",
+		"args":    []string{"done"},
+		"pty":     true,
+	}))
+	if completedResp.Error != nil {
+		t.Fatalf("process/spawn completed PTY error: %v", completedResp.Error)
+	}
+	var completedStarted struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, completedResp, &completedStarted)
+	if _, err := waitProcessSnapshot(t, processSvc, completedStarted.Process.ID); err != nil {
+		t.Fatalf("wait completed PTY: %v", err)
+	}
+	completedResize := server.HandleRequest(ctx, request("thread/backgroundTerminals/resize", map[string]any{
+		"id":   completedStarted.Process.ID,
+		"size": map[string]any{"rows": 40, "cols": 120},
+	}))
+	if completedResize.Error == nil || completedResize.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("completed resize response = %#v, want invalid params", completedResize)
+	}
+}
+
 func TestServerBackgroundTerminalWriteUsesStableApprovalIdentity(t *testing.T) {
 	ctx := context.Background()
 	var (

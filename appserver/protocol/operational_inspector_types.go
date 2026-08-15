@@ -39,6 +39,8 @@ type BackgroundTerminal struct {
 	ArgumentCount     int                      `json:"argumentCount"`
 	CommandRedacted   bool                     `json:"commandRedacted"`
 	MetadataTruncated bool                     `json:"metadataTruncated"`
+	PTY               bool                     `json:"pty"`
+	PTYSize           *ProcessTerminalSize     `json:"ptySize,omitempty"`
 }
 
 // BackgroundTerminalListResponse is one stable page of the process inventory.
@@ -114,6 +116,21 @@ type BackgroundTerminalWriteResponse struct {
 	Terminal     BackgroundTerminal `json:"terminal"`
 	WrittenBytes int                `json:"writtenBytes"`
 	ObservedAt   time.Time          `json:"observedAt"`
+}
+
+// BackgroundTerminalResizeParams changes the cell dimensions of one current
+// PTY-backed terminal. It neither creates a PTY nor persists terminal state.
+type BackgroundTerminalResizeParams struct {
+	ID   string              `json:"id"`
+	Size ProcessTerminalSize `json:"size"`
+}
+
+// BackgroundTerminalResizeResponse acknowledges a current terminal resize
+// without exposing raw process internals.
+type BackgroundTerminalResizeResponse struct {
+	OK         bool               `json:"ok"`
+	Terminal   BackgroundTerminal `json:"terminal"`
+	ObservedAt time.Time          `json:"observedAt"`
 }
 
 type BackgroundTerminalCleanResponse struct {

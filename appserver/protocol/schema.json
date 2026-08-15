@@ -1523,6 +1523,19 @@
         "processId": {
           "type": "string"
         },
+        "pty": {
+          "type": "boolean"
+        },
+        "ptySize": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessTerminalSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "startedAt": {
           "format": "date-time",
           "type": "string"
@@ -1559,7 +1572,8 @@
         "startedAt",
         "argumentCount",
         "commandRedacted",
-        "metadataTruncated"
+        "metadataTruncated",
+        "pty"
       ],
       "type": "object"
     },
@@ -1695,6 +1709,43 @@
         "stderrBase64",
         "stdoutTruncated",
         "stderrTruncated",
+        "observedAt"
+      ],
+      "type": "object"
+    },
+    "BackgroundTerminalResizeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "size": {
+          "$ref": "#/$defs/ProcessTerminalSize"
+        }
+      },
+      "required": [
+        "id",
+        "size"
+      ],
+      "type": "object"
+    },
+    "BackgroundTerminalResizeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "terminal": {
+          "$ref": "#/$defs/BackgroundTerminal"
+        }
+      },
+      "required": [
+        "ok",
+        "terminal",
         "observedAt"
       ],
       "type": "object"
@@ -15938,6 +15989,7 @@
             "thread/backgroundTerminals/clean",
             "thread/backgroundTerminals/list",
             "thread/backgroundTerminals/read",
+            "thread/backgroundTerminals/resize",
             "thread/backgroundTerminals/terminate",
             "thread/backgroundTerminals/write",
             "thread/compact/start",
@@ -26060,6 +26112,12 @@
       "source": "gollem extension: bounded terminal transcript"
     },
     {
+      "method": "thread/backgroundTerminals/resize",
+      "surface": "client-request",
+      "state": "implemented",
+      "source": "gollem extension: bounded terminal resize"
+    },
+    {
       "method": "thread/backgroundTerminals/terminate",
       "surface": "client-request",
       "state": "implemented",
@@ -27336,6 +27394,16 @@
       ],
       "result": [
         "BackgroundTerminalReadResponse"
+      ]
+    },
+    {
+      "method": "thread/backgroundTerminals/resize",
+      "surface": "client-request",
+      "params": [
+        "BackgroundTerminalResizeParams"
+      ],
+      "result": [
+        "BackgroundTerminalResizeResponse"
       ]
     },
     {

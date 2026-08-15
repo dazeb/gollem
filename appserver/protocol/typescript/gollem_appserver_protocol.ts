@@ -114,6 +114,7 @@ export const protocolMethods = [
   { "method": "thread/backgroundTerminals/clean", "surface": "client-request", "state": "implemented", "source": "protocol crate:common.rs:593" },
   { "method": "thread/backgroundTerminals/list", "surface": "client-request", "state": "implemented", "source": "protocol crate:common.rs:599" },
   { "method": "thread/backgroundTerminals/read", "surface": "client-request", "state": "implemented", "source": "gollem extension: bounded terminal transcript" },
+  { "method": "thread/backgroundTerminals/resize", "surface": "client-request", "state": "implemented", "source": "gollem extension: bounded terminal resize" },
   { "method": "thread/backgroundTerminals/terminate", "surface": "client-request", "state": "implemented", "source": "protocol crate:common.rs:605" },
   { "method": "thread/backgroundTerminals/write", "surface": "client-request", "state": "implemented", "source": "gollem extension: bounded terminal input" },
   { "method": "thread/compact/start", "surface": "client-request", "state": "implemented", "source": "json schema:ClientRequest, protocol crate:common.rs:577, typescript:ClientRequest.ts" },
@@ -345,6 +346,7 @@ export type ClientRequestMethod =
   | "thread/backgroundTerminals/clean"
   | "thread/backgroundTerminals/list"
   | "thread/backgroundTerminals/read"
+  | "thread/backgroundTerminals/resize"
   | "thread/backgroundTerminals/terminate"
   | "thread/backgroundTerminals/write"
   | "thread/compact/start"
@@ -791,6 +793,8 @@ export type BackgroundTerminal = {
   "metadataTruncated": boolean;
   "pid": number;
   "processId": string;
+  "pty": boolean;
+  "ptySize"?: ProcessTerminalSize | null;
   "startedAt": string;
   "status": BackgroundTerminalStatus;
   "terminalId": string;
@@ -828,6 +832,17 @@ export type BackgroundTerminalReadResponse = {
   "stderrTruncated": boolean;
   "stdoutBase64": string;
   "stdoutTruncated": boolean;
+  "terminal": BackgroundTerminal;
+};
+
+export type BackgroundTerminalResizeParams = {
+  "id": string;
+  "size": ProcessTerminalSize;
+};
+
+export type BackgroundTerminalResizeResponse = {
+  "observedAt": string;
+  "ok": boolean;
   "terminal": BackgroundTerminal;
 };
 
@@ -3282,7 +3297,7 @@ export type RemoteControlStatusChangedNotification = {
 
 export type Request = {
   "id": RequestID;
-  "method": "account/login/cancel" | "account/login/start" | "account/logout" | "account/rateLimitResetCredit/consume" | "account/rateLimits/read" | "account/read" | "account/sendAddCreditsNudgeEmail" | "account/usage/read" | "account/workspaceMessages/read" | "app/list" | "collaborationMode/list" | "command/exec" | "command/exec/resize" | "command/exec/terminate" | "command/exec/write" | "config/batchWrite" | "config/mcpServer/reload" | "config/read" | "config/value/write" | "configRequirements/read" | "environment/add" | "environment/info" | "experimentalFeature/enablement/set" | "experimentalFeature/list" | "externalAgentConfig/detect" | "externalAgentConfig/import" | "externalAgentConfig/import/readHistories" | "feedback/upload" | "fs/copy" | "fs/createDirectory" | "fs/getMetadata" | "fs/readDirectory" | "fs/readFile" | "fs/remove" | "fs/unwatch" | "fs/watch" | "fs/writeFile" | "fuzzyFileSearch" | "fuzzyFileSearch/sessionStart" | "fuzzyFileSearch/sessionStop" | "fuzzyFileSearch/sessionUpdate" | "getAuthStatus" | "getConversationSummary" | "gitDiffToRemote" | "hooks/list" | "initialize" | "marketplace/add" | "marketplace/remove" | "marketplace/upgrade" | "mcpServer/oauth/login" | "mcpServer/resource/read" | "mcpServer/tool/call" | "mcpServerStatus/list" | "memory/reset" | "mock/experimentalMethod" | "model/list" | "modelProvider/capabilities/read" | "permissionProfile/list" | "plugin/install" | "plugin/installed" | "plugin/list" | "plugin/read" | "plugin/share/checkout" | "plugin/share/delete" | "plugin/share/list" | "plugin/share/save" | "plugin/share/updateTargets" | "plugin/skill/read" | "plugin/uninstall" | "process/kill" | "process/resizePty" | "process/spawn" | "process/writeStdin" | "remoteControl/client/list" | "remoteControl/client/revoke" | "remoteControl/disable" | "remoteControl/enable" | "remoteControl/pairing/start" | "remoteControl/pairing/status" | "remoteControl/status/read" | "review/start" | "skills/config/write" | "skills/extraRoots/set" | "skills/list" | "thread/approveGuardianDeniedAction" | "thread/archive" | "thread/backgroundTerminals/clean" | "thread/backgroundTerminals/list" | "thread/backgroundTerminals/read" | "thread/backgroundTerminals/terminate" | "thread/backgroundTerminals/write" | "thread/compact/start" | "thread/decrement_elicitation" | "thread/delete" | "thread/fork" | "thread/goal/clear" | "thread/goal/get" | "thread/goal/set" | "thread/increment_elicitation" | "thread/inject_items" | "thread/items/list" | "thread/list" | "thread/loaded/list" | "thread/memoryMode/set" | "thread/metadata/update" | "thread/name/set" | "thread/read" | "thread/realtime/appendAudio" | "thread/realtime/appendSpeech" | "thread/realtime/appendText" | "thread/realtime/listVoices" | "thread/realtime/start" | "thread/realtime/stop" | "thread/resume" | "thread/rollback" | "thread/search" | "thread/settings/update" | "thread/shellCommand" | "thread/start" | "thread/turns/list" | "thread/unarchive" | "thread/unsubscribe" | "turn/interrupt" | "turn/start" | "turn/steer" | "windowsSandbox/readiness" | "windowsSandbox/setupStart" | "approval/respond" | "cache/benchmark" | "cache/stats" | "daemon/restart" | "daemon/start" | "daemon/status" | "daemon/stop" | "daemon/version" | "git/commit" | "git/diff" | "git/status" | "git/worktree/create" | "git/worktree/list" | "item/fileChange/revert" | "provider/capabilities/read" | "provider/health/probe" | "provider/list" | "tool/list" | "turn/retry";
+  "method": "account/login/cancel" | "account/login/start" | "account/logout" | "account/rateLimitResetCredit/consume" | "account/rateLimits/read" | "account/read" | "account/sendAddCreditsNudgeEmail" | "account/usage/read" | "account/workspaceMessages/read" | "app/list" | "collaborationMode/list" | "command/exec" | "command/exec/resize" | "command/exec/terminate" | "command/exec/write" | "config/batchWrite" | "config/mcpServer/reload" | "config/read" | "config/value/write" | "configRequirements/read" | "environment/add" | "environment/info" | "experimentalFeature/enablement/set" | "experimentalFeature/list" | "externalAgentConfig/detect" | "externalAgentConfig/import" | "externalAgentConfig/import/readHistories" | "feedback/upload" | "fs/copy" | "fs/createDirectory" | "fs/getMetadata" | "fs/readDirectory" | "fs/readFile" | "fs/remove" | "fs/unwatch" | "fs/watch" | "fs/writeFile" | "fuzzyFileSearch" | "fuzzyFileSearch/sessionStart" | "fuzzyFileSearch/sessionStop" | "fuzzyFileSearch/sessionUpdate" | "getAuthStatus" | "getConversationSummary" | "gitDiffToRemote" | "hooks/list" | "initialize" | "marketplace/add" | "marketplace/remove" | "marketplace/upgrade" | "mcpServer/oauth/login" | "mcpServer/resource/read" | "mcpServer/tool/call" | "mcpServerStatus/list" | "memory/reset" | "mock/experimentalMethod" | "model/list" | "modelProvider/capabilities/read" | "permissionProfile/list" | "plugin/install" | "plugin/installed" | "plugin/list" | "plugin/read" | "plugin/share/checkout" | "plugin/share/delete" | "plugin/share/list" | "plugin/share/save" | "plugin/share/updateTargets" | "plugin/skill/read" | "plugin/uninstall" | "process/kill" | "process/resizePty" | "process/spawn" | "process/writeStdin" | "remoteControl/client/list" | "remoteControl/client/revoke" | "remoteControl/disable" | "remoteControl/enable" | "remoteControl/pairing/start" | "remoteControl/pairing/status" | "remoteControl/status/read" | "review/start" | "skills/config/write" | "skills/extraRoots/set" | "skills/list" | "thread/approveGuardianDeniedAction" | "thread/archive" | "thread/backgroundTerminals/clean" | "thread/backgroundTerminals/list" | "thread/backgroundTerminals/read" | "thread/backgroundTerminals/resize" | "thread/backgroundTerminals/terminate" | "thread/backgroundTerminals/write" | "thread/compact/start" | "thread/decrement_elicitation" | "thread/delete" | "thread/fork" | "thread/goal/clear" | "thread/goal/get" | "thread/goal/set" | "thread/increment_elicitation" | "thread/inject_items" | "thread/items/list" | "thread/list" | "thread/loaded/list" | "thread/memoryMode/set" | "thread/metadata/update" | "thread/name/set" | "thread/read" | "thread/realtime/appendAudio" | "thread/realtime/appendSpeech" | "thread/realtime/appendText" | "thread/realtime/listVoices" | "thread/realtime/start" | "thread/realtime/stop" | "thread/resume" | "thread/rollback" | "thread/search" | "thread/settings/update" | "thread/shellCommand" | "thread/start" | "thread/turns/list" | "thread/unarchive" | "thread/unsubscribe" | "turn/interrupt" | "turn/start" | "turn/steer" | "windowsSandbox/readiness" | "windowsSandbox/setupStart" | "approval/respond" | "cache/benchmark" | "cache/stats" | "daemon/restart" | "daemon/start" | "daemon/status" | "daemon/stop" | "daemon/version" | "git/commit" | "git/diff" | "git/status" | "git/worktree/create" | "git/worktree/list" | "item/fileChange/revert" | "provider/capabilities/read" | "provider/health/probe" | "provider/list" | "tool/list" | "turn/retry";
   "params"?: unknown;
 };
 
@@ -4894,6 +4909,7 @@ export const wireTypeBindings = [
   { "method": "thread/backgroundTerminals/clean", "surface": "client-request", "result": ["BackgroundTerminalCleanResponse"] },
   { "method": "thread/backgroundTerminals/list", "surface": "client-request", "params": ["OperationalListParams"], "result": ["BackgroundTerminalListResponse"] },
   { "method": "thread/backgroundTerminals/read", "surface": "client-request", "params": ["BackgroundTerminalReadParams"], "result": ["BackgroundTerminalReadResponse"] },
+  { "method": "thread/backgroundTerminals/resize", "surface": "client-request", "params": ["BackgroundTerminalResizeParams"], "result": ["BackgroundTerminalResizeResponse"] },
   { "method": "thread/backgroundTerminals/terminate", "surface": "client-request", "params": ["BackgroundTerminalTerminateParams"], "result": ["BackgroundTerminalTerminateResponse"] },
   { "method": "thread/backgroundTerminals/write", "surface": "client-request", "params": ["BackgroundTerminalWriteParams"], "result": ["BackgroundTerminalWriteResponse"] },
   { "method": "thread/closed", "surface": "server-notification", "params": ["ThreadClosedNotification"] },
@@ -4980,6 +4996,7 @@ export interface MethodParamsByName {
   "thread/backgroundTerminals/clean": undefined;
   "thread/backgroundTerminals/list": OperationalListParams;
   "thread/backgroundTerminals/read": BackgroundTerminalReadParams;
+  "thread/backgroundTerminals/resize": BackgroundTerminalResizeParams;
   "thread/backgroundTerminals/terminate": BackgroundTerminalTerminateParams;
   "thread/backgroundTerminals/write": BackgroundTerminalWriteParams;
   "thread/closed": ThreadClosedNotification;
@@ -5052,6 +5069,7 @@ export interface MethodResultsByName {
   "thread/backgroundTerminals/clean": BackgroundTerminalCleanResponse;
   "thread/backgroundTerminals/list": BackgroundTerminalListResponse;
   "thread/backgroundTerminals/read": BackgroundTerminalReadResponse;
+  "thread/backgroundTerminals/resize": BackgroundTerminalResizeResponse;
   "thread/backgroundTerminals/terminate": BackgroundTerminalTerminateResponse;
   "thread/backgroundTerminals/write": BackgroundTerminalWriteResponse;
   "thread/compact/start": ThreadCompactStartResponse;

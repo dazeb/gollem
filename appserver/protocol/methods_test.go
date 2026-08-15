@@ -4,8 +4,8 @@ import "testing"
 
 func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	methods := Methods()
-	if len(methods) != 228 {
-		t.Fatalf("Methods() returned %d entries, want 228", len(methods))
+	if len(methods) != 229 {
+		t.Fatalf("Methods() returned %d entries, want 229", len(methods))
 	}
 
 	counts := map[Surface]int{}
@@ -13,7 +13,7 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 		counts[info.Surface]++
 	}
 	wantCounts := map[Surface]int{
-		SurfaceClientRequest:      127,
+		SurfaceClientRequest:      128,
 		SurfaceServerNotification: 70,
 		SurfaceServerRequest:      11,
 		SurfaceClientNotification: 1,
@@ -49,6 +49,7 @@ func TestMethodRegistryCountsAndKeyMethods(t *testing.T) {
 	assertMethod(t, "thread/backgroundTerminals/read", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/backgroundTerminals/terminate", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/backgroundTerminals/write", SurfaceClientRequest, MethodImplemented)
+	assertMethod(t, "thread/backgroundTerminals/resize", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "thread/backgroundTerminals/clean", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "turn/start", SurfaceClientRequest, MethodImplemented)
 	assertMethod(t, "turn/interrupt", SurfaceClientRequest, MethodImplemented)

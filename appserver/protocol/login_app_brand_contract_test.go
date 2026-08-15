@@ -57,14 +57,14 @@ func TestLoginAppBrandRemainsStandalone(t *testing.T) {
 			t.Fatalf("LoginAppBrand unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 671 {
-		t.Fatalf("definition count = %d, want 671", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 673 {
+		t.Fatalf("definition count = %d, want 673", got)
 	}
-	if got := len(Methods()); got != 228 {
-		t.Fatalf("methods = %d, want 228", got)
+	if got := len(Methods()); got != 229 {
+		t.Fatalf("methods = %d, want 229", got)
 	}
-	if got := len(WireTypeBindings()); got != 83 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 83/5", got, len(ItemPayloadBindings()))
+	if got := len(WireTypeBindings()); got != 84 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 84/5", got, len(ItemPayloadBindings()))
 	}
 }
 
