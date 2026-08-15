@@ -890,6 +890,18 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = Schema{
 				typeScriptRawTypeKeyword: `{ "method": "item/commandExecution/requestApproval"; "id": RequestId; "params": CommandExecutionRequestApprovalParams; } | { "method": "item/fileChange/requestApproval"; "id": RequestId; "params": FileChangeRequestApprovalParams; } | { "method": "item/tool/requestUserInput"; "id": RequestId; "params": ToolRequestUserInputParams; } | { "method": "mcpServer/elicitation/request"; "id": RequestId; "params": McpServerElicitationRequestParams; } | { "method": "item/permissions/requestApproval"; "id": RequestId; "params": PermissionsRequestApprovalParams; } | { "method": "item/tool/call"; "id": RequestId; "params": DynamicToolCallParams; } | { "method": "account/chatgptAuthTokens/refresh"; "id": RequestId; "params": ChatgptAuthTokensRefreshParams; } | { "method": "attestation/generate"; "id": RequestId; "params": AttestationGenerateParams; } | { "method": "applyPatchApproval"; "id": RequestId; "params": ApplyPatchApprovalParams; } | { "method": "execCommandApproval"; "id": RequestId; "params": ExecCommandApprovalParams; }`,
 			}
+		case "ThreadSectionAppearance":
+			definition = Schema{typeScriptRawTypeKeyword: `{ icon: string | null, color: string | null, }`}
+		case "ThreadSectionCreateParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ name: string, appearance?: ThreadSectionAppearance | null, }`}
+		case "ThreadSectionDeleteParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ sectionId: string, }`}
+		case "ThreadSectionListParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ cursor?: string | null, limit?: number | null, }`}
+		case "ThreadSectionMoveParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ threadId: string, sectionId: string | null, beforeThreadId?: string | null, }`}
+		case "ThreadSectionUpdateParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ sectionId: string, name: string, appearance?: ThreadSectionAppearance | null, }`}
 		case "DynamicToolFunctionSpec", "DynamicToolNamespaceSpec":
 			schema, _ := typeScriptSchema(definition)
 			schema["x-gollem-typescript-ignore-additional-properties"] = true

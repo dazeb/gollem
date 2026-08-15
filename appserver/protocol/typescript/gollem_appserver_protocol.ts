@@ -4053,6 +4053,18 @@ export type ThreadSearchResult = {
   "thread": Thread;
 };
 
+export type ThreadSectionAppearance = { icon: string | null, color: string | null, };
+
+export type ThreadSectionCreateParams = { name: string, appearance?: ThreadSectionAppearance | null, };
+
+export type ThreadSectionDeleteParams = { sectionId: string, };
+
+export type ThreadSectionListParams = { cursor?: string | null, limit?: number | null, };
+
+export type ThreadSectionMoveParams = { threadId: string, sectionId: string | null, beforeThreadId?: string | null, };
+
+export type ThreadSectionUpdateParams = { sectionId: string, name: string, appearance?: ThreadSectionAppearance | null, };
+
 export type ThreadSetNameParams = {
   "id"?: string;
   "name": string;

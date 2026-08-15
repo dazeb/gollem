@@ -163,8 +163,8 @@ func TestNetworkRequirementContractsRemainStandalone(t *testing.T) {
 	if _, ok := configProperties["network"]; ok {
 		t.Fatal("standalone NetworkRequirements widened ConfigRequirements")
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 606 {
-		t.Fatalf("definition count = %d, want 606", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 612 {
+		t.Fatalf("definition count = %d, want 612", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

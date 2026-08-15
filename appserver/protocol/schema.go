@@ -565,6 +565,12 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadRollbackParams", Type: reflect.TypeFor[ThreadRollbackParams]()},
 		{Name: "ThreadRollbackResponse", Type: reflect.TypeFor[ThreadRollbackResponse]()},
 		{Name: "ThreadSearchResult", Type: reflect.TypeFor[ThreadSearchResult]()},
+		{Name: "ThreadSectionAppearance", Type: reflect.TypeFor[ThreadSectionAppearance]()},
+		{Name: "ThreadSectionCreateParams", Type: reflect.TypeFor[ThreadSectionCreateParams]()},
+		{Name: "ThreadSectionDeleteParams", Type: reflect.TypeFor[ThreadSectionDeleteParams]()},
+		{Name: "ThreadSectionListParams", Type: reflect.TypeFor[ThreadSectionListParams]()},
+		{Name: "ThreadSectionMoveParams", Type: reflect.TypeFor[ThreadSectionMoveParams]()},
+		{Name: "ThreadSectionUpdateParams", Type: reflect.TypeFor[ThreadSectionUpdateParams]()},
 		{Name: "ThreadShellCommandParams", Type: reflect.TypeFor[ThreadShellCommandParams]()},
 		{Name: "ThreadShellCommandResponse", Type: reflect.TypeFor[ThreadShellCommandResponse]()},
 		{Name: "ThreadId", Type: reflect.TypeFor[ThreadId]()},
@@ -1404,6 +1410,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	schemas["ThreadSearchResult"] = threadSearchResultSchema()
+	for name, schema := range threadSectionParamSchemas() {
+		schemas[name] = schema
+	}
 	for name, schema := range threadShellCommandSchemas() {
 		schemas[name] = schema
 	}
