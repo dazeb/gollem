@@ -226,6 +226,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ExperimentalFeatureListParams", Type: reflect.TypeFor[ExperimentalFeatureListParams]()},
 		{Name: "ExperimentalFeatureListResponse", Type: reflect.TypeFor[ExperimentalFeatureListResponse]()},
 		{Name: "ExperimentalFeatureStage", Type: reflect.TypeFor[ExperimentalFeatureStage]()},
+		{Name: "FeedbackUploadParams", Type: reflect.TypeFor[FeedbackUploadParams]()},
 		{Name: "FileChange", Type: reflect.TypeFor[FileChange]()},
 		{Name: "FileChangeOutputDeltaNotification", Type: reflect.TypeFor[FileChangeOutputDeltaNotification]()},
 		{Name: "FileChangeApprovalRequestParams", Type: reflect.TypeFor[FileChangeApprovalRequestParams]()},
@@ -866,6 +867,7 @@ func wireSchemaDefinitions() Schema {
 	for name, schema := range appsDiscoveryParamSchemas() {
 		schemas[name] = schema
 	}
+	schemas["FeedbackUploadParams"] = feedbackUploadParamSchema()
 	schemas["AppConfig"] = Schema{
 		"type": "object",
 		"properties": Schema{
