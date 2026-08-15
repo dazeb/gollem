@@ -22,6 +22,7 @@ import (
 // a matching deterministic fixture and this verification passes.
 type Claims struct {
 	ToolCalls           bool
+	StructuredOutput    bool
 	Streaming           bool
 	Usage               bool
 	Cancellation        bool
@@ -36,19 +37,21 @@ type Claims struct {
 
 // Expectations declares the normalized outputs a deterministic fixture
 // produces. ToolName, ToolCallID, and ToolArgumentsJSON are required when
-// Claims.ToolCalls is true. StreamText is required when Claims.Streaming is
-// true.
+// Claims.ToolCalls is true. StructuredOutputValue is required when
+// Claims.StructuredOutput is true. StreamText is required when
+// Claims.Streaming is true.
 type Expectations struct {
-	ResponseText      string
-	ToolName          string
-	ToolCallID        string
-	ToolArgumentsJSON string
-	StreamText        string
-	PartialText       string
-	DisconnectText    string
-	RetryText         string
-	StreamTimeoutText string
-	ReasoningText     string
+	ResponseText          string
+	ToolName              string
+	ToolCallID            string
+	ToolArgumentsJSON     string
+	StructuredOutputValue string
+	StreamText            string
+	PartialText           string
+	DisconnectText        string
+	RetryText             string
+	StreamTimeoutText     string
+	ReasoningText         string
 }
 
 // Driver binds a provider model to the common capability claims and expected
@@ -80,6 +83,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.ToolCalls && strings.TrimSpace(driver.Expectations.ToolArgumentsJSON) == "" {
 		return fmt.Errorf("provider conformance: %s tool-capable fixture must expect tool arguments", driver.Name)
+	}
+	if driver.Claims.StructuredOutput && strings.TrimSpace(driver.Expectations.StructuredOutputValue) == "" {
+		return fmt.Errorf("provider conformance: %s structured-output fixture must expect a typed value", driver.Name)
 	}
 	if driver.Claims.Streaming && strings.TrimSpace(driver.Expectations.StreamText) == "" {
 		return fmt.Errorf("provider conformance: %s streaming fixture must expect stream text", driver.Name)
@@ -132,6 +138,11 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if err := verifyResponse(driver, response, false); err != nil {
 		return err
+	}
+	if driver.Claims.StructuredOutput {
+		if err := verifyStructuredOutput(ctx, driver); err != nil {
+			return err
+		}
 	}
 	if driver.Claims.Cancellation {
 		if err := verifyCancellation(ctx, driver); err != nil {
@@ -193,6 +204,37 @@ func Verify(ctx context.Context, driver Driver) error {
 		if err := verifyDisconnectStream(ctx, driver); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+type structuredOutput struct {
+	Value string `json:"value"`
+}
+
+// verifyStructuredOutput exercises the public typed-agent path. Native mode
+// permits a provider to return schema-constrained JSON text or the framework's
+// schema-backed final_result tool call, but both must produce the same typed
+// output at the core.Model boundary.
+func verifyStructuredOutput(ctx context.Context, driver Driver) error {
+	agent := core.NewAgent[structuredOutput](
+		driver.Model,
+		core.WithOutputOptions[structuredOutput](core.WithOutputMode(core.OutputModeNative)),
+	)
+	result, err := agent.Run(ctx, "structured output conformance")
+	if err != nil {
+		return fmt.Errorf("provider conformance: %s structured output: %w", driver.Name, err)
+	}
+	if result == nil {
+		return fmt.Errorf("provider conformance: %s structured output returned a nil result", driver.Name)
+	}
+	if got := result.Output.Value; got != driver.Expectations.StructuredOutputValue {
+		return fmt.Errorf(
+			"provider conformance: %s structured output value = %q, want %q",
+			driver.Name,
+			got,
+			driver.Expectations.StructuredOutputValue,
+		)
 	}
 	return nil
 }
