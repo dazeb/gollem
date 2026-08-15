@@ -201,8 +201,8 @@ func TestModelListContractsRemainStandalone(t *testing.T) {
 			t.Fatalf("model-list type unexpectedly bound: %#v", binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 661 {
-		t.Fatalf("definition count = %d, want 661", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 663 {
+		t.Fatalf("definition count = %d, want 663", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))
