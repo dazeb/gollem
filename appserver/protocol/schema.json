@@ -14837,6 +14837,20 @@
       ],
       "type": "object"
     },
+    "SkillsExtraRootsSetParams": {
+      "properties": {
+        "extraRoots": {
+          "items": {
+            "$ref": "#/$defs/AbsolutePathBuf"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "extraRoots"
+      ],
+      "type": "object"
+    },
     "SkillsListParams": {
       "properties": {
         "cwds": {

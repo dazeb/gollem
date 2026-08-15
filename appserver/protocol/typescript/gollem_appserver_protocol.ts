@@ -3429,6 +3429,8 @@ export type SkillMigration = {
   "name": string;
 };
 
+export type SkillsExtraRootsSetParams = { extraRoots: Array<AbsolutePathBuf>, };
+
 export type SkillsListParams = {
 /**
  * When empty, defaults to the current session working directory.

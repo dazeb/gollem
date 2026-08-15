@@ -87,8 +87,8 @@ func TestJSONRPCEnvelopesRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 617 {
-		t.Fatalf("definition count = %d, want 617", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 618 {
+		t.Fatalf("definition count = %d, want 618", got)
 	}
 }
 

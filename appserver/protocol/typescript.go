@@ -880,6 +880,8 @@ cwds?: Array<string>,
  * When true, bypass the skills cache and re-scan skills from disk.
  */
 forceReload?: boolean, }`}
+		case "SkillsExtraRootsSetParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ extraRoots: Array<AbsolutePathBuf>, }`}
 		case "McpServerElicitationRequestParams":
 			// The raw schema mirrors serde's open, flattened record. ts-rs instead
 			// emits the exact closed intersection and makes Option fields nullable.
