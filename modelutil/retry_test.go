@@ -293,6 +293,7 @@ func TestIsPermanent429(t *testing.T) {
 		{`{"error":"reached its monthly spending limit"}`, true},
 		{`{"error":"billing issue"}`, true},
 		{`{"error":"quota exceeded for model"}`, true},
+		{`quota_exhausted`, true},
 		{`{"error":"plan limit reached"}`, true},
 		{`{"error":"subscription expired"}`, true},
 		{``, false},

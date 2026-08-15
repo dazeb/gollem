@@ -1967,10 +1967,11 @@ func TestRequestStreamHTTPError(t *testing.T) {
 }
 
 func TestParseHTTPErrorRetryAfter(t *testing.T) {
+	const secret = "vertexai-anthropic-error-body-must-not-leak"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "45")
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":"rate limited"}`))
+		w.Write([]byte(`{"error":"rate limited: ` + secret + `"}`))
 	}))
 	defer server.Close()
 
@@ -1994,6 +1995,12 @@ func TestParseHTTPErrorRetryAfter(t *testing.T) {
 	}
 	if httpErr.RetryAfter != 45*time.Second {
 		t.Errorf("expected RetryAfter 45s, got %v", httpErr.RetryAfter)
+	}
+	if httpErr.Body != "rate_limited" {
+		t.Errorf("Body = %q, want rate_limited", httpErr.Body)
+	}
+	if strings.Contains(httpErr.Error(), secret) || strings.Contains(httpErr.Body, secret) {
+		t.Fatalf("provider error body leaked: %#v", httpErr)
 	}
 }
 
