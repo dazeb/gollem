@@ -33,10 +33,10 @@ type ChatgptAuthTokensRefreshParams struct {
 }
 
 func (p ChatgptAuthTokensRefreshParams) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
-		"reason":            p.Reason,
-		"previousAccountId": p.PreviousAccountID,
-	})
+	return json.Marshal(struct {
+		Reason            ChatgptAuthTokensRefreshReason `json:"reason"`
+		PreviousAccountID *string                        `json:"previousAccountId"`
+	}{Reason: p.Reason, PreviousAccountID: p.PreviousAccountID})
 }
 
 func (p *ChatgptAuthTokensRefreshParams) UnmarshalJSON(data []byte) error {
