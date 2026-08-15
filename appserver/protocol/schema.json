@@ -1720,6 +1720,120 @@
       ],
       "type": "object"
     },
+    "CacheEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "cacheReadTokens": {
+          "type": "integer"
+        },
+        "cacheWriteTokens": {
+          "type": "integer"
+        },
+        "fixture": {
+          "type": "string"
+        },
+        "iteration": {
+          "type": "integer"
+        },
+        "key": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/CacheEventType",
+          "enum": [
+            "cache.hit",
+            "cache.miss"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "key",
+        "at"
+      ],
+      "type": "object"
+    },
+    "CacheEventType": {
+      "type": "string"
+    },
+    "CacheProviderStats": {
+      "additionalProperties": false,
+      "properties": {
+        "hitRate": {
+          "type": "number"
+        },
+        "hits": {
+          "type": "integer"
+        },
+        "misses": {
+          "type": "integer"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "totalRequests": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "provider",
+        "totalRequests",
+        "hits",
+        "misses",
+        "hitRate"
+      ],
+      "type": "object"
+    },
+    "CacheStatsResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "hitRate": {
+          "type": "number"
+        },
+        "hits": {
+          "type": "integer"
+        },
+        "misses": {
+          "type": "integer"
+        },
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/CacheProviderStats"
+          },
+          "type": "array"
+        },
+        "recentEvents": {
+          "items": {
+            "$ref": "#/$defs/CacheEvent"
+          },
+          "type": "array"
+        },
+        "totalRequests": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "totalRequests",
+        "hits",
+        "misses",
+        "hitRate",
+        "providers"
+      ],
+      "type": "object"
+    },
     "CancelLoginAccountParams": {
       "additionalProperties": false,
       "properties": {
@@ -26691,6 +26805,13 @@
       ],
       "result": [
         "ApprovalRespondResult"
+      ]
+    },
+    {
+      "method": "cache/stats",
+      "surface": "gollem-extension",
+      "result": [
+        "CacheStatsResponse"
       ]
     },
     {

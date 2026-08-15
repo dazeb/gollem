@@ -834,6 +834,38 @@ export type ByteRange = {
   "start": number;
 };
 
+export type CacheEvent = {
+  "at": string;
+  "cacheReadTokens"?: number;
+  "cacheWriteTokens"?: number;
+  "fixture"?: string;
+  "iteration"?: number;
+  "key": string;
+  "model"?: string;
+  "provider"?: string;
+  "source"?: string;
+  "type": CacheEventType;
+};
+
+export type CacheEventType = string;
+
+export type CacheProviderStats = {
+  "hitRate": number;
+  "hits": number;
+  "misses": number;
+  "provider": string;
+  "totalRequests": number;
+};
+
+export type CacheStatsResponse = {
+  "hitRate": number;
+  "hits": number;
+  "misses": number;
+  "providers": Array<CacheProviderStats>;
+  "recentEvents"?: Array<CacheEvent>;
+  "totalRequests": number;
+};
+
 export type CancelLoginAccountParams = {
   "loginId": string;
 };
@@ -4785,6 +4817,7 @@ export type WireTypeBinding = {
 
 export const wireTypeBindings = [
   { "method": "approval/respond", "surface": "gollem-extension", "params": ["ApprovalRespondParams"], "result": ["ApprovalRespondResult"] },
+  { "method": "cache/stats", "surface": "gollem-extension", "result": ["CacheStatsResponse"] },
   { "method": "command/exec/outputDelta", "surface": "server-notification", "params": ["CommandExecOutputDeltaNotification"] },
   { "method": "command/exec/resize", "surface": "client-request", "params": ["CommandExecResizeParams"], "result": ["CommandExecResizeResponse"] },
   { "method": "command/exec/terminate", "surface": "client-request", "params": ["CommandExecTerminateParams"], "result": ["CommandExecTerminateResponse"] },
@@ -4868,6 +4901,7 @@ export const wireTypeBindings = [
 
 export interface MethodParamsByName {
   "approval/respond": ApprovalRespondParams;
+  "cache/stats": undefined;
   "command/exec/outputDelta": CommandExecOutputDeltaNotification;
   "command/exec/resize": CommandExecResizeParams;
   "command/exec/terminate": CommandExecTerminateParams;
@@ -4951,6 +4985,7 @@ export interface MethodParamsByName {
 
 export interface MethodResultsByName {
   "approval/respond": ApprovalRespondResult;
+  "cache/stats": CacheStatsResponse;
   "command/exec/resize": CommandExecResizeResponse;
   "command/exec/terminate": CommandExecTerminateResponse;
   "command/exec/write": CommandExecWriteResponse;

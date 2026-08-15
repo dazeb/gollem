@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/fugue-labs/gollem/modelutil"
@@ -55,6 +56,25 @@ func TestStatsIncludesBenchmarkEvents(t *testing.T) {
 	}
 	if len(stats.RecentEvents) != int(result.Totals.TotalRequests) {
 		t.Fatalf("recent events = %d, want %d", len(stats.RecentEvents), result.Totals.TotalRequests)
+	}
+}
+
+func TestStatsBoundsRecentEvents(t *testing.T) {
+	service := NewService()
+	for index := range maxStatsRecentEvents + 1 {
+		service.RecordModelEvent(modelutil.CacheEvent{
+			Type:     modelutil.CacheEventHit,
+			Provider: ProviderOpenAI,
+			Key:      fmt.Sprintf("cache-key-%d", index),
+		})
+	}
+
+	stats := service.Stats()
+	if got := len(stats.RecentEvents); got != maxStatsRecentEvents {
+		t.Fatalf("recent event count = %d, want %d", got, maxStatsRecentEvents)
+	}
+	if got, want := stats.RecentEvents[0].Key, "cache-key-1"; got != want {
+		t.Fatalf("first retained cache key = %q, want %q", got, want)
 	}
 }
 
