@@ -2362,6 +2362,8 @@ export type MarketplaceAddParams = { source: string, refName?: string | null, sp
 
 export type MarketplaceRemoveParams = { marketplaceName: string, };
 
+export type MarketplaceUpgradeParams = { marketplaceName?: string | null, };
+
 export type McpAuthStatus = "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";
 
 export type McpElicitationArrayType = "array";
