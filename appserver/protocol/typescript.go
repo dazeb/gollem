@@ -892,6 +892,8 @@ path?: AbsolutePathBuf | null,
  * Name-based selector.
  */
 name?: string | null, enabled: boolean, }`}
+		case "PluginShareCheckoutParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
 		case "PluginSkillReadParams":
