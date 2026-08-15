@@ -168,8 +168,8 @@ func TestAppsListContractsRemainStandaloneAndDeferred(t *testing.T) {
 	if !ok || method.Surface != SurfaceClientRequest || method.State != MethodDeferredStub {
 		t.Fatalf("app/list = %#v, %v; want deferred client request", method, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 605 {
-		t.Fatalf("definition count = %d, want 605", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 606 {
+		t.Fatalf("definition count = %d, want 606", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

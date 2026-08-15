@@ -517,6 +517,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "SelectedCapabilityRoot", Type: reflect.TypeFor[SelectedCapabilityRoot]()},
 		{Name: "SendAddCreditsNudgeEmailParams", Type: reflect.TypeFor[SendAddCreditsNudgeEmailParams]()},
 		{Name: "SendAddCreditsNudgeEmailResponse", Type: reflect.TypeFor[SendAddCreditsNudgeEmailResponse]()},
+		{Name: "ServerRequest", Type: reflect.TypeFor[ServerRequest]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "SessionSource", Type: reflect.TypeFor[SessionSource]()},
@@ -1498,6 +1499,7 @@ func wireSchemaDefinitions() Schema {
 		schemas[alias] = Schema{"$ref": "#/$defs/" + canonical}
 	}
 	schemas["RequestId"] = Schema{"$ref": "#/$defs/RequestID"}
+	schemas["ServerRequest"] = serverRequestSchema()
 	schemas["SandboxMode"] = stringEnumSchema(
 		string(SandboxModeReadOnly), string(SandboxModeWorkspaceWrite), string(SandboxModeDangerFullAccess),
 	)
@@ -2811,6 +2813,28 @@ func dynamicToolCallOutputContentItemSchema() Schema {
 		dynamicToolCallOutputContentItemVariantSchema("inputImage", "imageUrl"),
 		dynamicToolCallOutputContentItemVariantSchema("inputAudio", "audioUrl"),
 	}}
+}
+
+func serverRequestSchema() Schema {
+	variants := make([]any, 0, len(serverRequestVariants))
+	for _, variant := range serverRequestVariants {
+		properties := Schema{
+			"id":     Schema{"$ref": "#/$defs/RequestId"},
+			"method": Schema{"enum": []any{variant.Method}, "title": variant.Title + "Method", "type": "string"},
+			"params": Schema{"$ref": "#/$defs/" + variant.ParamType},
+		}
+		item := Schema{
+			"properties": properties,
+			"required":   []string{"id", "method", "params"},
+			"title":      variant.Title,
+			"type":       "object",
+		}
+		if variant.Description != "" {
+			item["description"] = variant.Description
+		}
+		variants = append(variants, item)
+	}
+	return Schema{"oneOf": variants, "title": "ServerRequest"}
 }
 
 func dynamicToolCallParamsSchema() Schema {

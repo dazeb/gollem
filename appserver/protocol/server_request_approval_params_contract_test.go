@@ -153,8 +153,8 @@ func TestServerRequestApprovalParamsRemainStandalone(t *testing.T) {
 			t.Fatalf("dependency-complete %s missing", name)
 		}
 	}
-	if _, ok := defs["ServerRequest"]; ok {
-		t.Fatal("ServerRequest was added before every referenced parameter is source-exact")
+	if _, ok := defs["ServerRequest"]; !ok {
+		t.Fatal("ServerRequest missing after every referenced parameter became source-exact")
 	}
 	for _, binding := range WireTypeBindings() {
 		for _, name := range []string{"CommandExecutionRequestApprovalParams", "FileChangeRequestApprovalParams"} {
@@ -163,8 +163,8 @@ func TestServerRequestApprovalParamsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(defs); got != 605 {
-		t.Fatalf("definition count = %d, want 605", got)
+	if got := len(defs); got != 606 {
+		t.Fatalf("definition count = %d, want 606", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
