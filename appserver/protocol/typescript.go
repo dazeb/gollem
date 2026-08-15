@@ -40,6 +40,19 @@ func MarshalTypeScript() ([]byte, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		definition := defs[name]
+		if name == "ClientRequest" || name == "ServerNotification" {
+			contract := clientRequestEnvelopeContract
+			includeTimestamp := false
+			if name == "ServerNotification" {
+				contract = serverNotificationEnvelopeContract
+				includeTimestamp = true
+			}
+			rawType, err := topLevelEnvelopeTypeScript(contract, includeTimestamp)
+			if err != nil {
+				return nil, err
+			}
+			definition = Schema{typeScriptRawTypeKeyword: rawType}
+		}
 		if name == "Account" || name == "AccountLoginCompletedNotification" || name == "AccountRateLimitsUpdatedNotification" ||
 			name == "AccountUpdatedNotification" ||
 			name == "AccountTokenUsageSummary" ||

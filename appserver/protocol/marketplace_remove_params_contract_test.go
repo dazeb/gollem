@@ -52,8 +52,8 @@ func TestMarketplaceRemoveParamsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 661 {
-		t.Fatalf("definition count = %d, want 661", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 663 {
+		t.Fatalf("definition count = %d, want 663", got)
 	}
 }
 

@@ -80,7 +80,11 @@ func foundationalSchemaDefinitions() Schema {
 }
 
 func wireSchemaDefinitions() Schema {
-	definitions := []wireSchemaDefinition{
+	return wireSchemasForDefinitions(wireSchemaDefinitionTypes())
+}
+
+func wireSchemaDefinitionTypes() []wireSchemaDefinition {
+	return []wireSchemaDefinition{
 		{Name: "AbsolutePathBuf", Type: reflect.TypeFor[AbsolutePathBuf]()},
 		{Name: "ActivePermissionProfile", Type: reflect.TypeFor[ActivePermissionProfile]()},
 		{Name: "AgentMessageDeltaNotification", Type: reflect.TypeFor[AgentMessageDeltaNotification]()},
@@ -148,6 +152,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ChatgptAuthTokensRefreshResponse", Type: reflect.TypeFor[ChatgptAuthTokensRefreshResponse]()},
 		{Name: "ClientInfo", Type: reflect.TypeFor[ClientInfo]()},
 		{Name: "ClientNotification", Type: reflect.TypeFor[ClientNotification]()},
+		{Name: "ClientRequest", Type: reflect.TypeFor[ClientRequest]()},
 		{Name: "CodexErrorInfo", Type: reflect.TypeFor[CodexErrorInfo]()},
 		{Name: "CollabAgentState", Type: reflect.TypeFor[CollabAgentState]()},
 		{Name: "CollabAgentStatus", Type: reflect.TypeFor[CollabAgentStatus]()},
@@ -548,6 +553,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "SendAddCreditsNudgeEmailParams", Type: reflect.TypeFor[SendAddCreditsNudgeEmailParams]()},
 		{Name: "SendAddCreditsNudgeEmailResponse", Type: reflect.TypeFor[SendAddCreditsNudgeEmailResponse]()},
 		{Name: "ServerRequest", Type: reflect.TypeFor[ServerRequest]()},
+		{Name: "ServerNotification", Type: reflect.TypeFor[ServerNotification]()},
 		{Name: "ServerRequestResolvedNotificationParams", Type: reflect.TypeFor[ServerRequestResolvedNotificationParams]()},
 		{Name: "ServerCapabilities", Type: reflect.TypeFor[ServerCapabilities]()},
 		{Name: "SessionSource", Type: reflect.TypeFor[SessionSource]()},
@@ -740,6 +746,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadTokenUsageUpdatedNotification", Type: reflect.TypeFor[ThreadTokenUsageUpdatedNotification]()},
 		{Name: "TurnDiffUpdatedNotification", Type: reflect.TypeFor[TurnDiffUpdatedNotification]()},
 	}
+}
+
+func wireSchemasForDefinitions(definitions []wireSchemaDefinition) Schema {
 	names := make(map[reflect.Type]string, len(definitions))
 	for _, definition := range definitions {
 		names[definition.Type] = definition.Name
@@ -774,6 +783,7 @@ func wireSchemaDefinitions() Schema {
 		"error":   nullableStringSchema(),
 	}, []string{"success"})
 	schemas["ClientNotification"] = clientNotificationSchema()
+	schemas["ClientRequest"] = clientRequestSchema()
 	for name, schema := range jsonRPCErrorSchemas() {
 		schemas[name] = schema
 	}
@@ -1595,6 +1605,7 @@ func wireSchemaDefinitions() Schema {
 	}
 	schemas["RequestId"] = Schema{"$ref": "#/$defs/RequestID"}
 	schemas["ServerRequest"] = serverRequestSchema()
+	schemas["ServerNotification"] = serverNotificationSchema()
 	schemas["SandboxMode"] = stringEnumSchema(
 		string(SandboxModeReadOnly), string(SandboxModeWorkspaceWrite), string(SandboxModeDangerFullAccess),
 	)
