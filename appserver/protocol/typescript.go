@@ -894,6 +894,8 @@ path?: AbsolutePathBuf | null,
 name?: string | null, enabled: boolean, }`}
 		case "PluginShareCheckoutParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
+		case "PluginShareDeleteParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
 		case "PluginSkillReadParams":

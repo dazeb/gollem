@@ -12118,6 +12118,17 @@
       ],
       "type": "object"
     },
+    "PluginShareDeleteParams": {
+      "properties": {
+        "remotePluginId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "remotePluginId"
+      ],
+      "type": "object"
+    },
     "PluginShareListParams": {
       "type": "object"
     },
