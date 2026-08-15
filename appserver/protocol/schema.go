@@ -1159,6 +1159,24 @@ func wireSchemaDefinitions() Schema {
 			"items": Schema{"$ref": "#/$defs/ParsedCommand"},
 		},
 	}, []string{"callId", "command", "conversationId", "cwd", "parsedCmd"})
+	// Preserve the raw source schemas for standalone legacy approval records.
+	// Their closed TypeScript records are normalized only in the renderer.
+	schemas["ApplyPatchApprovalParams"] = sourceApprovalParamsSchema("ApplyPatchApprovalParams", Schema{
+		"conversationId": Schema{"$ref": "#/$defs/ThreadId"},
+		"callId":         Schema{"type": "string", "description": "Use to correlate this with [codex_protocol::protocol::PatchApplyBeginEvent] and [codex_protocol::protocol::PatchApplyEndEvent]."},
+		"fileChanges":    Schema{"type": "object", "additionalProperties": Schema{"$ref": "#/$defs/FileChange"}},
+		"reason":         Schema{"description": "Optional explanatory reason (e.g. request for extra write access).", "type": []any{"string", "null"}},
+		"grantRoot":      Schema{"description": "When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today).", "type": []any{"string", "null"}},
+	}, []string{"callId", "conversationId", "fileChanges"})
+	schemas["ExecCommandApprovalParams"] = sourceApprovalParamsSchema("ExecCommandApprovalParams", Schema{
+		"conversationId": Schema{"$ref": "#/$defs/ThreadId"},
+		"callId":         Schema{"type": "string", "description": "Use to correlate this with [codex_protocol::protocol::ExecCommandBeginEvent] and [codex_protocol::protocol::ExecCommandEndEvent]."},
+		"approvalId":     Schema{"description": "Identifier for this specific approval callback.", "type": []any{"string", "null"}},
+		"command":        Schema{"type": "array", "items": Schema{"type": "string"}},
+		"cwd":            Schema{"type": "string"},
+		"reason":         Schema{"type": []any{"string", "null"}},
+		"parsedCmd":      Schema{"type": "array", "items": Schema{"$ref": "#/$defs/ParsedCommand"}},
+	}, []string{"callId", "command", "conversationId", "cwd", "parsedCmd"})
 	schemas["NetworkApprovalContext"] = closedThreadSessionParamSchema(Schema{
 		"host":     Schema{"type": "string"},
 		"protocol": Schema{"$ref": "#/$defs/NetworkApprovalProtocol"},
@@ -3083,6 +3101,10 @@ func closedThreadSessionParamSchema(properties Schema, required []string) Schema
 		schema["required"] = required
 	}
 	return schema
+}
+
+func sourceApprovalParamsSchema(title string, properties Schema, required []string) Schema {
+	return Schema{"$schema": "http://json-schema.org/draft-07/schema#", "properties": properties, "required": required, "title": title, "type": "object"}
 }
 
 func nullableThreadSessionParamSchema(value Schema) Schema {
