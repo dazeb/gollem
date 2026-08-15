@@ -20641,6 +20641,27 @@
       ],
       "type": "string"
     },
+    "WindowsSandboxSetupStartParams": {
+      "properties": {
+        "cwd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "$ref": "#/$defs/WindowsSandboxSetupMode"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
     "WorkspaceMessage": {
       "properties": {
         "archivedAt": {

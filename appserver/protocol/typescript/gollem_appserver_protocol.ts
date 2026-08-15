@@ -4558,6 +4558,8 @@ export type WebSearchToolConfig = {
 
 export type WindowsSandboxSetupMode = "elevated" | "unelevated";
 
+export type WindowsSandboxSetupStartParams = { mode: WindowsSandboxSetupMode, cwd?: AbsolutePathBuf | null, };
+
 export type WorkspaceMessage = {
   "archivedAt": number | null;
   "createdAt": number | null;

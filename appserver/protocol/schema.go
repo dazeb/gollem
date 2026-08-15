@@ -675,6 +675,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "WarningNotification", Type: reflect.TypeFor[WarningNotification]()},
 		{Name: "W3cTraceContext", Type: reflect.TypeFor[W3cTraceContext]()},
 		{Name: "WindowsSandboxSetupMode", Type: reflect.TypeFor[WindowsSandboxSetupMode]()},
+		{Name: "WindowsSandboxSetupStartParams", Type: reflect.TypeFor[WindowsSandboxSetupStartParams]()},
 		{Name: "WorkspaceMessage", Type: reflect.TypeFor[WorkspaceMessage]()},
 		{Name: "WorkspaceMessageType", Type: reflect.TypeFor[WorkspaceMessageType]()},
 		{Name: "WriteStatus", Type: reflect.TypeFor[WriteStatus]()},
@@ -1323,6 +1324,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["WindowsSandboxSetupMode"] = stringEnumSchema(
 		string(WindowsSandboxSetupModeElevated), string(WindowsSandboxSetupModeUnelevated),
 	)
+	schemas["WindowsSandboxSetupStartParams"] = windowsSandboxSetupStartParamSchema()
 	schemas["NetworkDomainPermission"] = stringEnumSchema(
 		string(NetworkDomainPermissionAllow), string(NetworkDomainPermissionDeny),
 	)

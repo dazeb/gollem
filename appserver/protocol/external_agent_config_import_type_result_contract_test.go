@@ -175,8 +175,8 @@ func TestExternalAgentConfigImportTypeResultRemainsStandalone(t *testing.T) {
 			t.Fatalf("%s = %#v, %v; want deferred stub", method, info, ok)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 615 {
-		t.Fatalf("definition count = %d, want 615", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 616 {
+		t.Fatalf("definition count = %d, want 616", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
