@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/creack/pty"
 	workspacefs "github.com/fugue-labs/gollem/appserver/tools/fs"
 )
 
@@ -21,6 +23,8 @@ const (
 	defaultMaxProcesses = 32
 	defaultOutputBytes  = 1 << 20
 	defaultCancelWait   = 5 * time.Second
+	defaultPTYRows      = 24
+	defaultPTYCols      = 80
 )
 
 var (
@@ -32,6 +36,8 @@ var (
 	ErrProcessAlreadyExists = errors.New("appserver/process: process already exists")
 	ErrTooManyProcesses     = errors.New("appserver/process: too many running processes")
 	ErrPTYUnsupported       = errors.New("appserver/process: pty resize is not supported")
+	ErrInvalidPTYSize       = errors.New("appserver/process: pty size must be positive and fit uint16")
+	ErrPTYCloseStdin        = errors.New("appserver/process: cannot close stdin for an active pty")
 	ErrInvalidOutputBufSize = errors.New("appserver/process: output buffer size must be positive")
 )
 
@@ -165,9 +171,18 @@ type StartRequest struct {
 	Env                 map[string]string
 	Timeout             time.Duration
 	MaxOutputBytes      int
+	PTY                 bool
+	PTYSize             TerminalSize
 	OutputSink          OutputSink
 	ExitSink            ExitSink
 	SuppressGlobalSinks bool
+}
+
+// TerminalSize is the current size of an allocated pseudo-terminal in cells.
+// Rows and Cols use zero only before a process has allocated a PTY.
+type TerminalSize struct {
+	Rows int `json:"rows"`
+	Cols int `json:"cols"`
 }
 
 type Snapshot struct {
@@ -176,6 +191,8 @@ type Snapshot struct {
 	Command         string
 	Args            []string
 	Shell           bool
+	PTY             bool
+	PTYSize         TerminalSize
 	WorkDir         string
 	Status          Status
 	ExitCode        int
@@ -206,6 +223,9 @@ type managedProcess struct {
 	stdout              *outputBuffer
 	stderr              *outputBuffer
 	stdin               io.WriteCloser
+	pty                 *os.File
+	ptySize             TerminalSize
+	ptyReadDone         chan struct{}
 	cmd                 *exec.Cmd
 	done                chan struct{}
 	output              OutputSink
@@ -279,13 +299,10 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Snapshot, error
 	cmd := exec.CommandContext(context.Background(), spec.name, spec.args...)
 	cmd.Dir = workDir
 	cmd.Env = buildEnv(req.Env)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		s.emit(op, "", 0, false, err)
-		return nil, fmt.Errorf("stdin pipe: %w", err)
+	if !req.PTY {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
+
 	bufSize := req.MaxOutputBytes
 	if bufSize == 0 {
 		bufSize = s.defaultOutputBytes
@@ -302,15 +319,12 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Snapshot, error
 		status:              StatusRunning,
 		stdout:              newOutputBuffer(bufSize),
 		stderr:              newOutputBuffer(bufSize),
-		stdin:               stdin,
 		cmd:                 cmd,
 		done:                make(chan struct{}),
 		output:              req.OutputSink,
 		exit:                req.ExitSink,
 		suppressGlobalSinks: req.SuppressGlobalSinks,
 	}
-	cmd.Stdout = processWriter{svc: s, proc: proc, stream: StreamStdout}
-	cmd.Stderr = processWriter{svc: s, proc: proc, stream: StreamStderr}
 	cmd.WaitDelay = 5 * time.Second
 
 	s.mu.Lock()
@@ -328,17 +342,64 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Snapshot, error
 		s.emit(op, proc.id, 0, false, ErrProcessAlreadyExists)
 		return nil, ErrProcessAlreadyExists
 	}
-	if err := cmd.Start(); err != nil {
+	if req.PTY {
+		size, sizeErr := normalizedPTYSize(req.PTYSize)
+		if sizeErr != nil {
+			s.mu.Unlock()
+			s.emit(op, proc.id, 0, false, sizeErr)
+			return nil, sizeErr
+		}
+		ptyFile, startErr := pty.StartWithSize(cmd, &pty.Winsize{
+			Rows: uint16(size.Rows), // #nosec G115 -- normalizedPTYSize bounds dimensions to uint16.
+			Cols: uint16(size.Cols), // #nosec G115 -- normalizedPTYSize bounds dimensions to uint16.
+		})
+		if startErr != nil {
+			s.mu.Unlock()
+			s.emit(op, proc.id, 0, false, startErr)
+			return nil, fmt.Errorf("start pty process: %w", startErr)
+		}
+		proc.stdin = ptyFile
+		proc.pty = ptyFile
+		proc.ptySize = size
+		proc.ptyReadDone = make(chan struct{})
+	} else {
+		stdin, startErr := cmd.StdinPipe()
+		if startErr != nil {
+			s.mu.Unlock()
+			s.emit(op, proc.id, 0, false, startErr)
+			return nil, fmt.Errorf("stdin pipe: %w", startErr)
+		}
+		proc.stdin = stdin
+		cmd.Stdout = processWriter{svc: s, proc: proc, stream: StreamStdout}
+		cmd.Stderr = processWriter{svc: s, proc: proc, stream: StreamStderr}
+		if startErr := cmd.Start(); startErr != nil {
+			s.mu.Unlock()
+			s.emit(op, proc.id, 0, false, startErr)
+			return nil, fmt.Errorf("start process: %w", startErr)
+		}
+	}
+	if cmd.Process == nil {
 		s.mu.Unlock()
-		s.emit(op, proc.id, 0, false, err)
-		return nil, fmt.Errorf("start process: %w", err)
+		s.emit(op, proc.id, 0, false, errors.New("process started without a pid"))
+		return nil, errors.New("appserver/process: process started without a pid")
 	}
 	proc.setPID(cmd.Process.Pid)
 	s.processes[proc.id] = proc
 	s.mu.Unlock()
 
+	if proc.pty != nil {
+		go func(terminal *os.File, writer io.Writer, done chan struct{}) {
+			_, _ = io.Copy(writer, terminal)
+			close(done)
+		}(proc.pty, processWriter{svc: s, proc: proc, stream: StreamStdout}, proc.ptyReadDone)
+	}
+
 	go func() {
 		waitErr := cmd.Wait()
+		if proc.pty != nil {
+			_ = proc.pty.Close()
+			<-proc.ptyReadDone
+		}
 		proc.finish(waitErr)
 		s.emitExit(proc)
 		close(proc.done)
@@ -522,13 +583,26 @@ func (s *Service) ResizePTY(ctx context.Context, id string, cols, rows int) erro
 		s.emit(op, id, 0, false, err)
 		return err
 	}
-	if cols <= 0 || rows <= 0 {
-		err := errors.New("appserver/process: pty size must be positive")
+	if cols <= 0 || rows <= 0 || cols > math.MaxUint16 || rows > math.MaxUint16 {
+		err := ErrInvalidPTYSize
 		s.emit(op, id, proc.pid, false, err)
 		return err
 	}
-	s.emit(op, id, proc.pid, false, ErrPTYUnsupported)
-	return ErrPTYUnsupported
+	proc.mu.Lock()
+	terminal := proc.pty
+	proc.mu.Unlock()
+	if terminal == nil {
+		s.emit(op, id, proc.pid, false, ErrPTYUnsupported)
+		return ErrPTYUnsupported
+	}
+	if err := pty.Setsize(terminal, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}); err != nil {
+		err = fmt.Errorf("resize pty: %w", err)
+		s.emit(op, id, proc.pid, false, err)
+		return err
+	}
+	proc.setPTYSize(TerminalSize{Rows: rows, Cols: cols})
+	s.emit(op, id, proc.pid, true, nil)
+	return nil
 }
 
 func (s *Service) signal(ctx context.Context, id string, kind OperationKind, signalName string, sig syscall.Signal) error {
@@ -674,6 +748,8 @@ func (p *managedProcess) snapshot() Snapshot {
 		Command:         p.command,
 		Args:            cloneStrings(p.args),
 		Shell:           p.shell,
+		PTY:             p.pty != nil,
+		PTYSize:         p.ptySize,
 		WorkDir:         p.workDir,
 		Status:          p.status,
 		ExitCode:        p.exitCode,
@@ -730,7 +806,11 @@ func (p *managedProcess) closeStdin() error {
 		return ErrProcessNotRunning
 	}
 	stdin := p.stdin
+	isPTY := p.pty != nil
 	p.mu.Unlock()
+	if isPTY {
+		return ErrPTYCloseStdin
+	}
 
 	p.stdinMu.Lock()
 	defer p.stdinMu.Unlock()
@@ -738,6 +818,12 @@ func (p *managedProcess) closeStdin() error {
 		return fmt.Errorf("close stdin: %w", err)
 	}
 	return nil
+}
+
+func (p *managedProcess) setPTYSize(size TerminalSize) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ptySize = size
 }
 
 func (p *managedProcess) requestKill(status Status) error {
@@ -831,6 +917,16 @@ func normalizeStart(req StartRequest) (commandSpec, error) {
 		return commandSpec{name: "bash", args: []string{"-c", req.Command}}, nil
 	}
 	return commandSpec{name: req.Command, args: cloneStrings(req.Args)}, nil
+}
+
+func normalizedPTYSize(size TerminalSize) (TerminalSize, error) {
+	if size.Rows == 0 && size.Cols == 0 {
+		return TerminalSize{Rows: defaultPTYRows, Cols: defaultPTYCols}, nil
+	}
+	if size.Rows <= 0 || size.Cols <= 0 || size.Rows > math.MaxUint16 || size.Cols > math.MaxUint16 {
+		return TerminalSize{}, ErrInvalidPTYSize
+	}
+	return size, nil
 }
 
 func buildEnv(extra map[string]string) []string {

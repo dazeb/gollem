@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/term v0.2.1
+	github.com/creack/pty v1.1.24
 	github.com/fugue-labs/gollem-langsmith v0.0.2
 	github.com/fugue-labs/langfuse-go v0.0.0-20260221064316-0b4a57eccdb7
 	github.com/fugue-labs/monty-go v0.2.0
