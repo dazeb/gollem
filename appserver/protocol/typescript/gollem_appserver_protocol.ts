@@ -2939,6 +2939,8 @@ export type PlanDeltaNotification = {
 
 export type PlanType = "free" | "go" | "plus" | "pro" | "prolite" | "team" | "self_serve_business_usage_based" | "business" | "enterprise_cbp_usage_based" | "enterprise" | "edu" | "unknown";
 
+export type PluginShareListParams = Record<string, never>;
+
 export type PluginsMigration = {
   "marketplaceName": string;
   "pluginNames": Array<string>;

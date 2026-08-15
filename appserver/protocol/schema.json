@@ -12059,6 +12059,9 @@
       ],
       "type": "string"
     },
+    "PluginShareListParams": {
+      "type": "object"
+    },
     "PluginsMigration": {
       "additionalProperties": false,
       "properties": {
