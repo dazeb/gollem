@@ -706,6 +706,14 @@ func wireSchemaDefinitions() Schema {
 		{Name: "WorkspaceMessage", Type: reflect.TypeFor[WorkspaceMessage]()},
 		{Name: "WorkspaceMessageType", Type: reflect.TypeFor[WorkspaceMessageType]()},
 		{Name: "WriteStatus", Type: reflect.TypeFor[WriteStatus]()},
+		{Name: "EnvironmentConnectionNotification", Type: reflect.TypeFor[EnvironmentConnectionNotification]()},
+		{Name: "RemoteControlConnectionStatus", Type: reflect.TypeFor[RemoteControlConnectionStatus]()},
+		{Name: "RemoteControlStatusChangedNotification", Type: reflect.TypeFor[RemoteControlStatusChangedNotification]()},
+		{Name: "SkillsChangedNotification", Type: reflect.TypeFor[SkillsChangedNotification]()},
+		{Name: "ThreadQueueChangedNotification", Type: reflect.TypeFor[ThreadQueueChangedNotification]()},
+		{Name: "ThreadRevertedNotification", Type: reflect.TypeFor[ThreadRevertedNotification]()},
+		{Name: "WindowsSandboxSetupCompletedNotification", Type: reflect.TypeFor[WindowsSandboxSetupCompletedNotification]()},
+		{Name: "WindowsWorldWritableWarningNotification", Type: reflect.TypeFor[WindowsWorldWritableWarningNotification]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
@@ -1357,6 +1365,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	for name, schema := range accountEnvelopeSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range operationalNotificationLeafSchemas() {
 		schemas[name] = schema
 	}
 	for name, schema := range workspaceMessageSchemas() {

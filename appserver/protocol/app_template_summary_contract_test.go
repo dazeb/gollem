@@ -107,8 +107,8 @@ func TestAppTemplateSummaryRemainsStandaloneAndUnbound(t *testing.T) {
 			t.Fatalf("AppTemplateSummary unexpectedly bound to item %s", binding.Kind)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 643 {
-		t.Fatalf("definition count = %d, want 643", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 651 {
+		t.Fatalf("definition count = %d, want 651", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

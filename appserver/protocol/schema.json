@@ -5003,6 +5003,23 @@
         }
       ]
     },
+    "EnvironmentConnectionNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "environmentId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environmentId",
+        "threadId"
+      ],
+      "title": "EnvironmentConnectionNotification",
+      "type": "object"
+    },
     "Error": {
       "properties": {
         "code": {
@@ -13287,6 +13304,43 @@
       ],
       "type": "object"
     },
+    "RemoteControlConnectionStatus": {
+      "enum": [
+        "disabled",
+        "connecting",
+        "connected",
+        "errored"
+      ],
+      "type": "string"
+    },
+    "RemoteControlStatusChangedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Current remote-control connection status and remote identity exposed to clients.",
+      "properties": {
+        "environmentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installationId": {
+          "type": "string"
+        },
+        "serverName": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/RemoteControlConnectionStatus"
+        }
+      },
+      "required": [
+        "installationId",
+        "serverName",
+        "status"
+      ],
+      "title": "RemoteControlStatusChangedNotification",
+      "type": "object"
+    },
     "Request": {
       "additionalProperties": false,
       "properties": {
@@ -15265,6 +15319,12 @@
       "required": [
         "name"
       ],
+      "type": "object"
+    },
+    "SkillsChangedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Notification emitted when watched local skill files change.\n\nTreat this as an invalidation signal and re-run `skills/list` with the client's current parameters when refreshed skill metadata is needed.",
+      "title": "SkillsChangedNotification",
       "type": "object"
     },
     "SkillsConfigWriteParams": {
@@ -18077,6 +18137,19 @@
       ],
       "type": "object"
     },
+    "ThreadQueueChangedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "ThreadQueueChangedNotification",
+      "type": "object"
+    },
     "ThreadReadParams": {
       "additionalProperties": false,
       "properties": {
@@ -18444,6 +18517,19 @@
         "sandbox",
         "reasoningEffort"
       ],
+      "type": "object"
+    },
+    "ThreadRevertedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "ThreadRevertedNotification",
       "type": "object"
     },
     "ThreadRollbackParams": {
@@ -21123,6 +21209,29 @@
       ],
       "type": "object"
     },
+    "WindowsSandboxSetupCompletedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "$ref": "#/$defs/WindowsSandboxSetupMode"
+        },
+        "success": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mode",
+        "success"
+      ],
+      "title": "WindowsSandboxSetupCompletedNotification",
+      "type": "object"
+    },
     "WindowsSandboxSetupMode": {
       "enum": [
         "elevated",
@@ -21149,6 +21258,32 @@
       "required": [
         "mode"
       ],
+      "type": "object"
+    },
+    "WindowsWorldWritableWarningNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "extraCount": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failedScan": {
+          "type": "boolean"
+        },
+        "samplePaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "extraCount",
+        "failedScan",
+        "samplePaths"
+      ],
+      "title": "WindowsWorldWritableWarningNotification",
       "type": "object"
     },
     "WorkspaceMessage": {

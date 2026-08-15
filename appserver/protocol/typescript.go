@@ -54,6 +54,10 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "ConsumeAccountRateLimitResetCreditResponse" || name == "CreditsSnapshot" ||
 			name == "GetAccountParams" || name == "GetAccountRateLimitsResponse" || name == "GetAccountResponse" ||
 			name == "GetAccountTokenUsageParams" || name == "GetAccountTokenUsageResponse" || name == "GetWorkspaceMessagesResponse" ||
+			name == "EnvironmentConnectionNotification" || name == "SkillsChangedNotification" ||
+			name == "ThreadQueueChangedNotification" || name == "ThreadRevertedNotification" ||
+			name == "RemoteControlStatusChangedNotification" ||
+			name == "WindowsSandboxSetupCompletedNotification" || name == "WindowsWorldWritableWarningNotification" ||
 			name == "MigrationDetails" ||
 			name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
@@ -203,6 +207,14 @@ func MarshalTypeScript() ([]byte, error) {
 			case "GetAccountTokenUsageParams":
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 				schema["properties"].(Schema)["threadId"] = nullableStringSchema()
+			case "EnvironmentConnectionNotification", "ThreadQueueChangedNotification", "ThreadRevertedNotification", "WindowsWorldWritableWarningNotification":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "SkillsChangedNotification":
+				schema["additionalProperties"] = false
+			case "RemoteControlStatusChangedNotification":
+				schema["required"] = []string{"environmentId", "installationId", "serverName", "status"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["environmentId"] = nullableStringSchema()
 			case "GetAccountTokenUsageResponse":
 				schema["required"] = []string{"dailyUsageBuckets", "summary"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
@@ -210,6 +222,10 @@ func MarshalTypeScript() ([]byte, error) {
 					Schema{"type": "array", "items": Schema{"$ref": "#/$defs/AccountTokenUsageDailyBucket"}},
 					Schema{"type": "null"},
 				}}
+			case "WindowsSandboxSetupCompletedNotification":
+				schema["required"] = []string{"error", "mode", "success"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["error"] = nullableStringSchema()
 			case "GetWorkspaceMessagesResponse":
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ExecCommandApprovalParams":
