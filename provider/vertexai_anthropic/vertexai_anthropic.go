@@ -8,18 +8,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/provider/internal/vertexerror"
 )
 
 // Model constants for Claude models via Vertex AI.
@@ -313,11 +311,11 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	if err != nil {
 		return nil, fmt.Errorf("vertexai_anthropic: HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, p.parseHTTPError(resp)
 	}
+	defer resp.Body.Close()
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
@@ -371,25 +369,10 @@ func (p *Provider) setHeaders(ctx context.Context, req *http.Request) error {
 	return nil
 }
 
-// parseHTTPError constructs a ModelHTTPError from a non-200 response,
-// including Retry-After header parsing for rate-limited responses.
+// parseHTTPError constructs a bounded, redacted ModelHTTPError from a non-200 response.
 func (p *Provider) parseHTTPError(resp *http.Response) error {
-	respBody, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	httpErr := &core.ModelHTTPError{
-		Message:    "vertexai_anthropic API error: " + string(respBody),
-		StatusCode: resp.StatusCode,
-		Body:       string(respBody),
-		ModelName:  p.model,
-	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if secs, err := strconv.Atoi(ra); err == nil {
-				httpErr.RetryAfter = time.Duration(secs) * time.Second
-			}
-		}
-	}
-	return httpErr
+	defer resp.Body.Close()
+	return vertexerror.NewHTTPError("vertexai_anthropic", resp.StatusCode, resp.Body, resp.Header.Get("Retry-After"), p.model)
 }
 
 func envEnabled(name string) bool {

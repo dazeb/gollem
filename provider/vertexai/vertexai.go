@@ -8,17 +8,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"sync"
-	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/provider/internal/vertexerror"
 )
 
 // Model constants for Gemini models.
@@ -213,11 +211,11 @@ func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, se
 	if err != nil {
 		return nil, fmt.Errorf("vertexai: HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, p.parseHTTPError(resp)
 	}
+	defer resp.Body.Close()
 
 	var apiResp geminiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
@@ -279,25 +277,10 @@ func (p *Provider) applyCacheSettings(req *geminiRequest) {
 	}
 }
 
-// parseHTTPError constructs a ModelHTTPError from a non-200 response,
-// including Retry-After header parsing for rate-limited responses.
+// parseHTTPError constructs a bounded, redacted ModelHTTPError from a non-200 response.
 func (p *Provider) parseHTTPError(resp *http.Response) error {
-	respBody, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	httpErr := &core.ModelHTTPError{
-		Message:    "vertexai API error: " + string(respBody),
-		StatusCode: resp.StatusCode,
-		Body:       string(respBody),
-		ModelName:  p.model,
-	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if secs, err := strconv.Atoi(ra); err == nil {
-				httpErr.RetryAfter = time.Duration(secs) * time.Second
-			}
-		}
-	}
-	return httpErr
+	defer resp.Body.Close()
+	return vertexerror.NewHTTPError("vertexai", resp.StatusCode, resp.Body, resp.Header.Get("Retry-After"), p.model)
 }
 
 // Verify Provider implements core.Model.

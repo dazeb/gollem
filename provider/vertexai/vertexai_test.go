@@ -1523,10 +1523,11 @@ func TestParseResponseNilFunctionCallArgs(t *testing.T) {
 // --- parseHTTPError with Retry-After header ---
 
 func TestRequestHTTPErrorRetryAfter(t *testing.T) {
+	const secret = "vertexai-error-body-must-not-leak"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "45")
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"message":"Quota exceeded"}}`))
+		w.Write([]byte(`{"error":{"message":"Quota exceeded: ` + secret + `"}}`))
 	}))
 	defer server.Close()
 
@@ -1556,6 +1557,12 @@ func TestRequestHTTPErrorRetryAfter(t *testing.T) {
 	}
 	if httpErr.RetryAfter != 45*time.Second {
 		t.Errorf("RetryAfter = %v, want 45s", httpErr.RetryAfter)
+	}
+	if httpErr.Body != "quota_exhausted" {
+		t.Errorf("Body = %q, want quota_exhausted", httpErr.Body)
+	}
+	if strings.Contains(httpErr.Error(), secret) || strings.Contains(httpErr.Body, secret) {
+		t.Fatalf("provider error body leaked: %#v", httpErr)
 	}
 }
 

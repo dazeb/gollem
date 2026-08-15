@@ -50,6 +50,7 @@ func isPermanent429(body string) bool {
 		"spending limit",
 		"billing",
 		"quota exceeded",
+		"quota_exhausted",
 		"plan limit",
 		"subscription",
 	} {
