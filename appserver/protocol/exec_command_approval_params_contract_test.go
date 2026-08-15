@@ -13,7 +13,7 @@ func TestExecCommandApprovalParamsSchemaIsExact(t *testing.T) {
 	if !ok {
 		t.Fatal("$defs missing ExecCommandApprovalParams")
 	}
-	want := closedThreadSessionParamSchema(Schema{
+	want := sourceApprovalParamsSchema("ExecCommandApprovalParams", Schema{
 		"conversationId": Schema{"$ref": "#/$defs/ThreadId"},
 		"callId": Schema{
 			"type": "string",
@@ -21,12 +21,12 @@ func TestExecCommandApprovalParamsSchemaIsExact(t *testing.T) {
 				"and [codex_protocol::protocol::ExecCommandEndEvent].",
 		},
 		"approvalId": Schema{
-			"anyOf":       []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			"type":        []any{"string", "null"},
 			"description": "Identifier for this specific approval callback.",
 		},
 		"command": Schema{"type": "array", "items": Schema{"type": "string"}},
 		"cwd":     Schema{"type": "string"},
-		"reason":  nullableStringSchema(),
+		"reason":  Schema{"type": []any{"string", "null"}},
 		"parsedCmd": Schema{
 			"type":  "array",
 			"items": Schema{"$ref": "#/$defs/ParsedCommand"},

@@ -159,6 +159,7 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{
 					"conversationId", "callId", "fileChanges", "reason", "grantRoot",
 				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "AttestationGenerateParams":
 				// The source JSON Schema is open for serde compatibility while ts-rs
 				// exports the exact empty Rust record.
@@ -206,6 +207,7 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{
 					"conversationId", "callId", "approvalId", "command", "cwd", "reason", "parsedCmd",
 				}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ExperimentalFeature":
 				schema["required"] = []string{
 					"announcement", "defaultEnabled", "description", "displayName", "enabled", "name", "stage",
@@ -433,6 +435,18 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
 				"previousAccountId": nullableStringSchema(),
 			})
+		}
+		if name == "ApplyPatchApprovalParams" {
+			schema, _ := typeScriptSchema(definition)
+			schema["required"] = []string{"conversationId", "callId", "fileChanges", "reason", "grantRoot"}
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{"grantRoot": nullableStringSchema(), "reason": nullableStringSchema()})
+		}
+		if name == "ExecCommandApprovalParams" {
+			schema, _ := typeScriptSchema(definition)
+			schema["required"] = []string{"conversationId", "callId", "approvalId", "command", "cwd", "reason", "parsedCmd"}
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{"approvalId": nullableStringSchema(), "reason": nullableStringSchema()})
 		}
 		if name == "CommandExecParams" {
 			// The source schema allows forward-compatible fields while ts-rs emits

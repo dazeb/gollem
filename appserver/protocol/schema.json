@@ -1085,7 +1085,7 @@
       "type": "object"
     },
     "ApplyPatchApprovalParams": {
-      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "callId": {
           "description": "Use to correlate this with [codex_protocol::protocol::PatchApplyBeginEvent] and [codex_protocol::protocol::PatchApplyEndEvent].",
@@ -1101,26 +1101,18 @@
           "type": "object"
         },
         "grantRoot": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today)."
+          "description": "When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "reason": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional explanatory reason (e.g. request for extra write access)."
+          "description": "Optional explanatory reason (e.g. request for extra write access).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1128,6 +1120,7 @@
         "conversationId",
         "fileChanges"
       ],
+      "title": "ApplyPatchApprovalParams",
       "type": "object"
     },
     "ApplyPatchApprovalResponse": {
@@ -5019,18 +5012,14 @@
       "type": "object"
     },
     "ExecCommandApprovalParams": {
-      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "approvalId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Identifier for this specific approval callback."
+          "description": "Identifier for this specific approval callback.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "callId": {
           "description": "Use to correlate this with [codex_protocol::protocol::ExecCommandBeginEvent] and [codex_protocol::protocol::ExecCommandEndEvent].",
@@ -5055,13 +5044,9 @@
           "type": "array"
         },
         "reason": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         }
       },
@@ -5072,6 +5057,7 @@
         "cwd",
         "parsedCmd"
       ],
+      "title": "ExecCommandApprovalParams",
       "type": "object"
     },
     "ExecCommandApprovalResponse": {

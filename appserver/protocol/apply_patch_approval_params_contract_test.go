@@ -13,7 +13,7 @@ func TestApplyPatchApprovalParamsSchemaIsExact(t *testing.T) {
 	if !ok {
 		t.Fatal("$defs missing ApplyPatchApprovalParams")
 	}
-	want := closedThreadSessionParamSchema(Schema{
+	want := sourceApprovalParamsSchema("ApplyPatchApprovalParams", Schema{
 		"conversationId": Schema{"$ref": "#/$defs/ThreadId"},
 		"callId": Schema{
 			"type": "string",
@@ -25,11 +25,11 @@ func TestApplyPatchApprovalParamsSchemaIsExact(t *testing.T) {
 			"additionalProperties": Schema{"$ref": "#/$defs/FileChange"},
 		},
 		"reason": Schema{
-			"anyOf":       []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			"type":        []any{"string", "null"},
 			"description": "Optional explanatory reason (e.g. request for extra write access).",
 		},
 		"grantRoot": Schema{
-			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
+			"type": []any{"string", "null"},
 			"description": "When set, the agent is asking the user to allow writes under this root " +
 				"for the remainder of the session (unclear if this is honored today).",
 		},
