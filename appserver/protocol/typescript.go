@@ -894,6 +894,8 @@ path?: AbsolutePathBuf | null,
 name?: string | null, enabled: boolean, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
+		case "MarketplaceAddParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ source: string, refName?: string | null, sparsePaths?: Array<string> | null, }`}
 		case "MarketplaceRemoveParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ marketplaceName: string, }`}
 		case "McpServerElicitationRequestParams":
