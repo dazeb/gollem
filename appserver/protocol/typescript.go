@@ -898,6 +898,12 @@ name?: string | null, enabled: boolean, }`}
 			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
 		case "PluginReadParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ marketplacePath?: AbsolutePathBuf | null, remoteMarketplaceName?: string | null, pluginName: string, }`}
+		case "PluginInstallParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ marketplacePath?: AbsolutePathBuf | null, remoteMarketplaceName?: string | null,
+/**
+ * Client-generated identifier used to correlate one installation attempt.
+ */
+installAttemptId?: string | null, pluginName: string, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
 		case "PluginSkillReadParams":
