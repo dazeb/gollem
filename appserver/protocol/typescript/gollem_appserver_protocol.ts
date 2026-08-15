@@ -2951,6 +2951,17 @@ export type PluginInstallParams = { marketplacePath?: AbsolutePathBuf | null, re
  */
 installAttemptId?: string | null, pluginName: string, };
 
+export type PluginInstalledParams = {
+/**
+ * Optional working directories used to discover repo marketplaces.
+ */
+cwds?: Array<AbsolutePathBuf> | null,
+/**
+ * Additional uninstalled plugin names that should be returned when present locally.
+ * This is used by mention surfaces that intentionally expose install entrypoints.
+ */
+installSuggestionPluginNames?: Array<string> | null, };
+
 export type PluginReadParams = { marketplacePath?: AbsolutePathBuf | null, remoteMarketplaceName?: string | null, pluginName: string, };
 
 export type PluginShareCheckoutParams = { remotePluginId: string, };

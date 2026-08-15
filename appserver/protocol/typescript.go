@@ -904,6 +904,17 @@ name?: string | null, enabled: boolean, }`}
  * Client-generated identifier used to correlate one installation attempt.
  */
 installAttemptId?: string | null, pluginName: string, }`}
+		case "PluginInstalledParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{
+/**
+ * Optional working directories used to discover repo marketplaces.
+ */
+cwds?: Array<AbsolutePathBuf> | null,
+/**
+ * Additional uninstalled plugin names that should be returned when present locally.
+ * This is used by mention surfaces that intentionally expose install entrypoints.
+ */
+installSuggestionPluginNames?: Array<string> | null, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
 		case "PluginSkillReadParams":
