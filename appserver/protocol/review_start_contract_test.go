@@ -215,8 +215,8 @@ func TestReviewStartContractsFailClosedAndRemainStandalone(t *testing.T) {
 	if !ok || request.Surface != SurfaceClientRequest || request.State != MethodBlocked {
 		t.Fatalf("review/start = %#v, %v; want blocked client request", request, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 651 {
-		t.Fatalf("definition count = %d, want 651", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 661 {
+		t.Fatalf("definition count = %d, want 661", got)
 	}
 }
 

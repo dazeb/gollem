@@ -209,8 +209,8 @@ func TestWorkspaceMessageContractsRemainStandaloneAndDeferred(t *testing.T) {
 	if !ok || method.Surface != SurfaceClientRequest || method.State != MethodDeferredStub {
 		t.Fatalf("account/workspaceMessages/read = %#v, %v; want deferred client request", method, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 651 {
-		t.Fatalf("definition count = %d, want 651", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 661 {
+		t.Fatalf("definition count = %d, want 661", got)
 	}
 	if len(Methods()) != 226 || len(WireTypeBindings()) != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("counts = %d methods/%d method bindings/%d item bindings; want 226/80/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))

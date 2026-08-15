@@ -220,8 +220,8 @@ func TestThreadTurnLeafTypesRemainStandaloneAndDistinct(t *testing.T) {
 			t.Fatalf("%s unexpectedly bound by %#v", binding.Type, binding)
 		}
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 651 {
-		t.Fatalf("definition count = %d, want 651", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 661 {
+		t.Fatalf("definition count = %d, want 661", len(JSONSchema()["$defs"].(Schema)))
 	}
 	if len(WireTypeBindings()) != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", len(WireTypeBindings()), len(ItemPayloadBindings()))

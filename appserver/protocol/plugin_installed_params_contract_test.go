@@ -35,8 +35,8 @@ func TestPluginInstalledParamsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 651 {
-		t.Fatalf("definition count = %d, want 651", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 661 {
+		t.Fatalf("definition count = %d, want 661", got)
 	}
 }
 func TestPluginInstalledParamsTypeScriptIsExact(t *testing.T) {
