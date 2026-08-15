@@ -208,6 +208,7 @@ type Snapshot struct {
 type managedProcess struct {
 	mu                  sync.Mutex
 	stdinMu             sync.Mutex
+	ptyMu               sync.Mutex
 	id                  string
 	pid                 int
 	command             string
@@ -224,6 +225,7 @@ type managedProcess struct {
 	stderr              *outputBuffer
 	stdin               io.WriteCloser
 	pty                 *os.File
+	hasPTY              bool
 	ptySize             TerminalSize
 	ptyReadDone         chan struct{}
 	cmd                 *exec.Cmd
@@ -360,6 +362,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Snapshot, error
 		}
 		proc.stdin = ptyFile
 		proc.pty = ptyFile
+		proc.hasPTY = true
 		proc.ptySize = size
 		proc.ptyReadDone = make(chan struct{})
 	} else {
@@ -387,7 +390,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Snapshot, error
 	s.processes[proc.id] = proc
 	s.mu.Unlock()
 
-	if proc.pty != nil {
+	if proc.isPTY() {
 		go func(terminal *os.File, writer io.Writer, done chan struct{}) {
 			_, _ = io.Copy(writer, terminal)
 			close(done)
@@ -396,10 +399,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Snapshot, error
 
 	go func() {
 		waitErr := cmd.Wait()
-		if proc.pty != nil {
-			_ = proc.pty.Close()
-			<-proc.ptyReadDone
-		}
+		proc.closePTY()
 		proc.finish(waitErr)
 		s.emitExit(proc)
 		close(proc.done)
@@ -588,12 +588,20 @@ func (s *Service) ResizePTY(ctx context.Context, id string, cols, rows int) erro
 		s.emit(op, id, proc.pid, false, err)
 		return err
 	}
+	proc.ptyMu.Lock()
+	defer proc.ptyMu.Unlock()
 	proc.mu.Lock()
 	terminal := proc.pty
+	hasPTY := proc.hasPTY
+	running := proc.status == StatusRunning
 	proc.mu.Unlock()
-	if terminal == nil {
+	if !hasPTY {
 		s.emit(op, id, proc.pid, false, ErrPTYUnsupported)
 		return ErrPTYUnsupported
+	}
+	if !running || terminal == nil {
+		s.emit(op, id, proc.pid, false, ErrProcessNotRunning)
+		return ErrProcessNotRunning
 	}
 	if err := pty.Setsize(terminal, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}); err != nil {
 		err = fmt.Errorf("resize pty: %w", err)
@@ -748,7 +756,7 @@ func (p *managedProcess) snapshot() Snapshot {
 		Command:         p.command,
 		Args:            cloneStrings(p.args),
 		Shell:           p.shell,
-		PTY:             p.pty != nil,
+		PTY:             p.hasPTY,
 		PTYSize:         p.ptySize,
 		WorkDir:         p.workDir,
 		Status:          p.status,
@@ -788,7 +796,19 @@ func (p *managedProcess) writeStdin(data []byte) error {
 		return ErrProcessNotRunning
 	}
 	stdin := p.stdin
+	isPTY := p.hasPTY
 	p.mu.Unlock()
+	if isPTY {
+		p.ptyMu.Lock()
+		defer p.ptyMu.Unlock()
+		p.mu.Lock()
+		terminalOpen := p.pty != nil
+		running := p.status == StatusRunning
+		p.mu.Unlock()
+		if !terminalOpen || !running {
+			return ErrProcessNotRunning
+		}
+	}
 
 	p.stdinMu.Lock()
 	defer p.stdinMu.Unlock()
@@ -806,7 +826,7 @@ func (p *managedProcess) closeStdin() error {
 		return ErrProcessNotRunning
 	}
 	stdin := p.stdin
-	isPTY := p.pty != nil
+	isPTY := p.hasPTY
 	p.mu.Unlock()
 	if isPTY {
 		return ErrPTYCloseStdin
@@ -818,6 +838,29 @@ func (p *managedProcess) closeStdin() error {
 		return fmt.Errorf("close stdin: %w", err)
 	}
 	return nil
+}
+
+func (p *managedProcess) isPTY() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.hasPTY
+}
+
+// closePTY prevents concurrent descriptor operations before it closes the PTY.
+func (p *managedProcess) closePTY() {
+	p.ptyMu.Lock()
+	p.mu.Lock()
+	terminal := p.pty
+	readDone := p.ptyReadDone
+	p.pty = nil
+	p.mu.Unlock()
+	if terminal != nil {
+		_ = terminal.Close()
+	}
+	p.ptyMu.Unlock()
+	if readDone != nil {
+		<-readDone
+	}
 }
 
 func (p *managedProcess) setPTYSize(size TerminalSize) {

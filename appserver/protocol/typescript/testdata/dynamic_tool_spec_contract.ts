@@ -57,8 +57,8 @@ type Contracts = [
   Expect<Equal<ExactMembers<MethodParamsByName[keyof MethodParamsByName], DynamicToolSpecContracts>, never>>,
   Expect<Equal<ExactMembers<MethodResultsByName[keyof MethodResultsByName], DynamicToolSpecContracts>, never>>,
   Expect<Equal<ExactMembers<ItemPayloadByKind[keyof ItemPayloadByKind], DynamicToolSpecContracts>, never>>,
-  Expect<Equal<typeof protocolMethods["length"], 228>>,
-  Expect<Equal<typeof wireTypeBindings["length"], 83>>,
+  Expect<Equal<typeof protocolMethods["length"], 229>>,
+  Expect<Equal<typeof wireTypeBindings["length"], 84>>,
   Expect<Equal<typeof itemPayloadBindings["length"], 5>>,
 ];
 

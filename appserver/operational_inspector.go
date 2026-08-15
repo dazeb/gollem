@@ -206,6 +206,13 @@ func operationalBackgroundTerminal(root string, snapshot *toolprocess.Snapshot) 
 		ArgumentCount:     len(snapshot.Args),
 		CommandRedacted:   commandRedacted,
 		MetadataTruncated: commandTruncated || workDirTruncated || workDirRedacted,
+		PTY:               snapshot.PTY,
+	}
+	if snapshot.PTY {
+		result.PTYSize = &protocol.ProcessTerminalSize{
+			Rows: uint16(snapshot.PTYSize.Rows), // #nosec G115 -- process service bounds PTY dimensions.
+			Cols: uint16(snapshot.PTYSize.Cols), // #nosec G115 -- process service bounds PTY dimensions.
+		}
 	}
 	if snapshot.Status != toolprocess.StatusRunning {
 		exitCode := snapshot.ExitCode

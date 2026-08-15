@@ -29,7 +29,8 @@ func TestOperationalBackgroundTerminalProjectionIsBoundedAndRedacted(t *testing.
 	})
 	if record.ID != "process-1" || record.TerminalID != record.ID || record.ProcessID != record.ID ||
 		record.Command != "printf" || record.Title != "printf" || record.WorkDir != "subdir" ||
-		record.ArgumentCount != 2 || !record.CommandRedacted || record.ExitCode == nil || *record.ExitCode != 0 {
+		record.ArgumentCount != 2 || !record.CommandRedacted || record.PTY || record.PTYSize != nil ||
+		record.ExitCode == nil || *record.ExitCode != 0 {
 		t.Fatalf("terminal projection = %#v", record)
 	}
 	if strings.Contains(record.Command, "secret") || strings.Contains(record.WorkDir, "workspace") {
@@ -46,6 +47,18 @@ func TestOperationalBackgroundTerminalProjectionIsBoundedAndRedacted(t *testing.
 	if shell.Command != "shell command" || shell.WorkDir != "." || !shell.CommandRedacted ||
 		!shell.MetadataTruncated || shell.ExitCode != nil {
 		t.Fatalf("shell terminal projection = %#v", shell)
+	}
+
+	pty := operationalBackgroundTerminal("/workspace", &toolprocess.Snapshot{
+		ID:      "process-3",
+		Command: "cat",
+		WorkDir: "/workspace",
+		Status:  toolprocess.StatusRunning,
+		PTY:     true,
+		PTYSize: toolprocess.TerminalSize{Rows: 40, Cols: 120},
+	})
+	if !pty.PTY || pty.PTYSize == nil || pty.PTYSize.Rows != 40 || pty.PTYSize.Cols != 120 {
+		t.Fatalf("PTY terminal projection = %#v", pty)
 	}
 }
 

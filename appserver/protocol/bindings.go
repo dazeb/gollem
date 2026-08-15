@@ -66,6 +66,7 @@ var wireTypeBindings = []WireTypeBinding{
 	{Method: "thread/backgroundTerminals/clean", Surface: SurfaceClientRequest, Result: []string{"BackgroundTerminalCleanResponse"}},
 	{Method: "thread/backgroundTerminals/list", Surface: SurfaceClientRequest, Params: []string{"OperationalListParams"}, Result: []string{"BackgroundTerminalListResponse"}},
 	{Method: "thread/backgroundTerminals/read", Surface: SurfaceClientRequest, Params: []string{"BackgroundTerminalReadParams"}, Result: []string{"BackgroundTerminalReadResponse"}},
+	{Method: "thread/backgroundTerminals/resize", Surface: SurfaceClientRequest, Params: []string{"BackgroundTerminalResizeParams"}, Result: []string{"BackgroundTerminalResizeResponse"}},
 	{Method: "thread/backgroundTerminals/terminate", Surface: SurfaceClientRequest, Params: []string{"BackgroundTerminalTerminateParams"}, Result: []string{"BackgroundTerminalTerminateResponse"}},
 	{Method: "thread/backgroundTerminals/write", Surface: SurfaceClientRequest, Params: []string{"BackgroundTerminalWriteParams"}, Result: []string{"BackgroundTerminalWriteResponse"}},
 	{Method: "thread/closed", Surface: SurfaceServerNotification, Params: []string{"ThreadClosedNotification"}},

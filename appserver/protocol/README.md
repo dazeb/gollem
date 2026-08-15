@@ -386,6 +386,7 @@ forwarded to a provider.
 `thread/backgroundTerminals/list`,
 `thread/backgroundTerminals/read`,
 `thread/backgroundTerminals/terminate`, `thread/backgroundTerminals/write`,
+`thread/backgroundTerminals/resize`,
 `thread/backgroundTerminals/clean`, `git/status`, and `git/worktree/list` use
 exported request and response contracts. List responses are ordered by their
 underlying service, capped at 32 records per page, and carry an observed time,
@@ -408,6 +409,11 @@ accepted byte count and never echoes or persists submitted input. The generic
 raw-id process write endpoint remains separate; privileged desktop clients
 must retain native terminal identities and expose only opaque identifiers to
 their renderer.
+Terminal inventory identifies PTY-backed processes and their current cell size
+without exposing any additional native process detail. An explicit resize
+accepts one current running PTY id plus positive `rows` and `cols`, returns
+only refreshed redacted terminal metadata and an observation time, and neither
+creates a PTY nor makes terminal state durable.
 Git status
 omits raw porcelain output and returns bounded structured entries. Worktree
 metadata is bounded, while desktop clients remain responsible for retaining

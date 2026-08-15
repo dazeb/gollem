@@ -91,6 +91,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "thread/backgroundTerminals/clean", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:593"},
 	{Method: "thread/backgroundTerminals/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:599"},
 	{Method: "thread/backgroundTerminals/read", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "gollem extension: bounded terminal transcript"},
+	{Method: "thread/backgroundTerminals/resize", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "gollem extension: bounded terminal resize"},
 	{Method: "thread/backgroundTerminals/terminate", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:605"},
 	{Method: "thread/backgroundTerminals/write", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "gollem extension: bounded terminal input"},
 	{Method: "thread/compact/start", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:577, typescript:ClientRequest.ts"},

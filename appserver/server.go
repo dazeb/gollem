@@ -617,6 +617,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleBackgroundTerminalTerminate(ctx, params)
 	case "thread/backgroundTerminals/write":
 		return s.handleBackgroundTerminalWrite(ctx, params)
+	case "thread/backgroundTerminals/resize":
+		return s.handleBackgroundTerminalResize(ctx, params)
 	case "thread/backgroundTerminals/clean":
 		return s.handleBackgroundTerminalsClean(ctx, params)
 	case "thread/turns/list":
@@ -1398,6 +1400,43 @@ func (s *Server) handleBackgroundTerminalWrite(ctx context.Context, raw json.Raw
 		Terminal:     operationalBackgroundTerminal(processSvc.Root(), snapshot),
 		WrittenBytes: len(params.Input),
 		ObservedAt:   operationalObservedAt(),
+	}, nil
+}
+
+func (s *Server) handleBackgroundTerminalResize(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/resize")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params protocol.BackgroundTerminalResizeParams
+	if err := decodeOperationalParams(raw, &params); err != nil {
+		return nil, invalidParams("invalid background terminal resize params", err)
+	}
+	id := strings.TrimSpace(params.ID)
+	if id == "" {
+		return nil, invalidParams("id is required", nil)
+	}
+	if params.Size.Rows == 0 || params.Size.Cols == 0 {
+		return nil, invalidParams("size rows and cols must be positive", nil)
+	}
+	snapshot, err := processSvc.Snapshot(ctx, id)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/resize", err)
+	}
+	if snapshot.Status != toolprocess.StatusRunning {
+		return nil, invalidParams("background terminal is not running", nil)
+	}
+	if err := processSvc.ResizePTY(ctx, id, int(params.Size.Cols), int(params.Size.Rows)); err != nil {
+		return nil, mapError("thread/backgroundTerminals/resize", err)
+	}
+	snapshot, err = processSvc.Snapshot(ctx, id)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/resize", err)
+	}
+	return protocol.BackgroundTerminalResizeResponse{
+		OK:         true,
+		Terminal:   operationalBackgroundTerminal(processSvc.Root(), snapshot),
+		ObservedAt: operationalObservedAt(),
 	}, nil
 }
 

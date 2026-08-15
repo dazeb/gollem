@@ -39,8 +39,8 @@ func TestTopLevelEnvelopeSchemasArePinnedToSource(t *testing.T) {
 			assertSchemaRefsResolve(t, want, definitions)
 		})
 	}
-	if got := len(definitions); got != 671 {
-		t.Fatalf("definition count = %d, want 671", got)
+	if got := len(definitions); got != 673 {
+		t.Fatalf("definition count = %d, want 673", got)
 	}
 }
 
