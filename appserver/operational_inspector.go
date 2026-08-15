@@ -25,7 +25,9 @@ const (
 	operationalCursorMaxBytes         = 2048
 	operationalCommandMaxBytes        = 256
 	operationalTerminalOutputMaxBytes = 64 * 1024
+	operationalTerminalWriteMaxBytes  = 8 * 1024
 	operationalTerminateDomain        = "gollem.background-terminal.terminate.v1\x00"
+	operationalWriteDomain            = "gollem.background-terminal.write.v1\x00"
 )
 
 type operationalCursor struct {
@@ -170,6 +172,11 @@ func operationalSnapshotID(kind string, value any) string {
 func operationalTerminalTerminateApprovalItemID(id string) string {
 	sum := sha256.Sum256([]byte(operationalTerminateDomain + id))
 	return "terminal-terminate-sha256:" + hex.EncodeToString(sum[:])
+}
+
+func operationalTerminalWriteApprovalItemID(id string) string {
+	sum := sha256.Sum256([]byte(operationalWriteDomain + id))
+	return "terminal-write-sha256:" + hex.EncodeToString(sum[:])
 }
 
 func operationalBackgroundTerminals(root string, snapshots []toolprocess.Snapshot) []protocol.BackgroundTerminal {

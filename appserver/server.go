@@ -615,6 +615,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleBackgroundTerminalRead(ctx, params)
 	case "thread/backgroundTerminals/terminate":
 		return s.handleBackgroundTerminalTerminate(ctx, params)
+	case "thread/backgroundTerminals/write":
+		return s.handleBackgroundTerminalWrite(ctx, params)
 	case "thread/backgroundTerminals/clean":
 		return s.handleBackgroundTerminalsClean(ctx, params)
 	case "thread/turns/list":
@@ -1354,6 +1356,48 @@ func (s *Server) handleBackgroundTerminalTerminate(ctx context.Context, raw json
 		OK:       true,
 		ID:       id,
 		Terminal: operationalBackgroundTerminal(processSvc.Root(), snapshot),
+	}, nil
+}
+
+func (s *Server) handleBackgroundTerminalWrite(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/write")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params protocol.BackgroundTerminalWriteParams
+	if err := decodeOperationalParams(raw, &params); err != nil {
+		return nil, invalidParams("invalid background terminal write params", err)
+	}
+	id := strings.TrimSpace(params.ID)
+	if id == "" {
+		return nil, invalidParams("id is required", nil)
+	}
+	if len(params.Input) == 0 {
+		return nil, invalidParams("input is required", nil)
+	}
+	if len(params.Input) > operationalTerminalWriteMaxBytes {
+		return nil, invalidParams(fmt.Sprintf("input exceeds %d bytes", operationalTerminalWriteMaxBytes), nil)
+	}
+	snapshot, err := processSvc.Snapshot(ctx, id)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/write", err)
+	}
+	if snapshot.Status != toolprocess.StatusRunning {
+		return nil, invalidParams("background terminal is not running", nil)
+	}
+	approvalCtx := withRuntimeApprovalItemID(ctx, operationalTerminalWriteApprovalItemID(id))
+	if err := processSvc.WriteStdin(approvalCtx, id, []byte(params.Input)); err != nil {
+		return nil, mapError("thread/backgroundTerminals/write", err)
+	}
+	snapshot, err = processSvc.Snapshot(ctx, id)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/write", err)
+	}
+	return protocol.BackgroundTerminalWriteResponse{
+		OK:           true,
+		Terminal:     operationalBackgroundTerminal(processSvc.Root(), snapshot),
+		WrittenBytes: len(params.Input),
+		ObservedAt:   operationalObservedAt(),
 	}, nil
 }
 

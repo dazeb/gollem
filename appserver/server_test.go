@@ -2477,6 +2477,43 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	}
 	decodeResult(t, runningResp, &runningStarted)
 
+	writeResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/write", map[string]any{
+		"id":    runningStarted.Process.ID,
+		"input": "hello\n",
+	}))
+	if writeResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/write error: %v", writeResp.Error)
+	}
+	var wrote struct {
+		OK           bool                        `json:"ok"`
+		Terminal     protocol.BackgroundTerminal `json:"terminal"`
+		WrittenBytes int                         `json:"writtenBytes"`
+		ObservedAt   time.Time                   `json:"observedAt"`
+	}
+	decodeResult(t, writeResp, &wrote)
+	if !wrote.OK || wrote.Terminal.ID != runningStarted.Process.ID ||
+		wrote.Terminal.Status != protocol.BackgroundTerminalStatusRunning ||
+		wrote.WrittenBytes != len("hello\n") || wrote.ObservedAt.IsZero() {
+		t.Fatalf("background terminal write = %#v", wrote)
+	}
+	if strings.Contains(string(writeResp.Result), "hello") {
+		t.Fatalf("background terminal write leaked input: %s", writeResp.Result)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		snapshot, err := processSvc.Snapshot(ctx, runningStarted.Process.ID)
+		if err != nil {
+			t.Fatalf("snapshot after background terminal write: %v", err)
+		}
+		if string(snapshot.Stdout) == "hello\n" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background terminal did not receive input; stdout = %q", snapshot.Stdout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	doneResp := server.HandleRequest(ctx, request("command/exec", map[string]any{
 		"command": "printf done",
 	}))
@@ -2489,6 +2526,13 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	decodeResult(t, doneResp, &doneStarted)
 	if _, err := waitProcessSnapshot(t, processSvc, doneStarted.Process.ID); err != nil {
 		t.Fatalf("wait completed process: %v", err)
+	}
+	completedWriteResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/write", map[string]any{
+		"id":    doneStarted.Process.ID,
+		"input": "hello\n",
+	}))
+	if completedWriteResp.Error == nil || completedWriteResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("completed terminal write response = %#v, want invalid params", completedWriteResp)
 	}
 	readResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/read", map[string]any{
 		"id": doneStarted.Process.ID,
@@ -2576,6 +2620,33 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	if missingReadIDResp.Error == nil || missingReadIDResp.Error.Code != protocol.CodeInvalidParams {
 		t.Fatalf("missing id read response = %#v, want invalid params", missingReadIDResp)
 	}
+	missingWriteIDResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/write", map[string]any{
+		"input": "hello\n",
+	}))
+	if missingWriteIDResp.Error == nil || missingWriteIDResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing id write response = %#v, want invalid params", missingWriteIDResp)
+	}
+	emptyWriteResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/write", map[string]any{
+		"id":    runningStarted.Process.ID,
+		"input": "",
+	}))
+	if emptyWriteResp.Error == nil || emptyWriteResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("empty write response = %#v, want invalid params", emptyWriteResp)
+	}
+	oversizedWriteResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/write", map[string]any{
+		"id":    runningStarted.Process.ID,
+		"input": strings.Repeat("x", 8<<10+1),
+	}))
+	if oversizedWriteResp.Error == nil || oversizedWriteResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("oversized write response = %#v, want invalid params", oversizedWriteResp)
+	}
+	unknownWriteIDResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/write", map[string]any{
+		"id":    "missing",
+		"input": "hello\n",
+	}))
+	if unknownWriteIDResp.Error == nil || unknownWriteIDResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("unknown id write response = %#v, want invalid params", unknownWriteIDResp)
+	}
 	unknownReadIDResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/read", map[string]any{
 		"id": "missing",
 	}))
@@ -2588,6 +2659,14 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	}))
 	if unknownReadParamsResp.Error == nil || unknownReadParamsResp.Error.Code != protocol.CodeInvalidParams {
 		t.Fatalf("unknown read params response = %#v, want invalid params", unknownReadParamsResp)
+	}
+	unknownWriteParamsResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/write", map[string]any{
+		"id":      runningStarted.Process.ID,
+		"input":   "hello\n",
+		"unknown": true,
+	}))
+	if unknownWriteParamsResp.Error == nil || unknownWriteParamsResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("unknown write params response = %#v, want invalid params", unknownWriteParamsResp)
 	}
 	unknownListResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", map[string]any{"unknown": true}))
 	if unknownListResp.Error == nil || unknownListResp.Error.Code != protocol.CodeInvalidParams {
@@ -2603,6 +2682,54 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	unexpectedCleanResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/clean", map[string]any{"all": true}))
 	if unexpectedCleanResp.Error == nil || unexpectedCleanResp.Error.Code != protocol.CodeInvalidParams {
 		t.Fatalf("unexpected clean params response = %#v, want invalid params", unexpectedCleanResp)
+	}
+}
+
+func TestServerBackgroundTerminalWriteUsesStableApprovalIdentity(t *testing.T) {
+	ctx := context.Background()
+	var (
+		operation      toolprocess.Operation
+		approvalItemID string
+	)
+	processSvc, err := toolprocess.NewService(t.TempDir(), toolprocess.WithApproval(func(ctx context.Context, got toolprocess.Operation) error {
+		operation = got
+		approvalItemID = runtimeApprovalItemIDFrom(ctx)
+		return nil
+	}))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithProcess(processSvc))
+
+	startResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{"command": "cat"}))
+	if startResp.Error != nil {
+		t.Fatalf("process/spawn error: %v", startResp.Error)
+	}
+	var started struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, startResp, &started)
+	operation = toolprocess.Operation{}
+	approvalItemID = ""
+
+	writeResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/write", map[string]any{
+		"id":    started.Process.ID,
+		"input": "private input\n",
+	}))
+	if writeResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/write error: %v", writeResp.Error)
+	}
+	if operation.Kind != toolprocess.OperationWriteStdin || operation.ID != started.Process.ID {
+		t.Fatalf("write operation = %#v", operation)
+	}
+	if approvalItemID != operationalTerminalWriteApprovalItemID(started.Process.ID) || strings.Contains(approvalItemID, "private") {
+		t.Fatalf("write approval item id = %q", approvalItemID)
+	}
+	if err := processSvc.Kill(ctx, started.Process.ID); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if _, err := waitProcessSnapshot(t, processSvc, started.Process.ID); err != nil {
+		t.Fatalf("wait killed process: %v", err)
 	}
 }
 
