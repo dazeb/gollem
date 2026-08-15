@@ -3016,6 +3016,10 @@ export type PluginShareTarget = { principalType: PluginSharePrincipalType, princ
 
 export type PluginShareTargetRole = "reader" | "editor";
 
+export type PluginShareUpdateDiscoverability = "UNLISTED" | "PRIVATE" | "LISTED";
+
+export type PluginShareUpdateTargetsParams = { remotePluginId: string, discoverability: PluginShareUpdateDiscoverability, shareTargets: Array<PluginShareTarget>, };
+
 export type PluginSkillReadParams = { remoteMarketplaceName: string, remotePluginId: string, skillName: string, };
 
 export type PluginUninstallParams = { pluginId: string, };
