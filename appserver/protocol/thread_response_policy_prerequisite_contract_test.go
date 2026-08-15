@@ -262,8 +262,8 @@ func TestThreadResponsePolicyPrerequisitesRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 616 {
-		t.Fatalf("definition count = %d, want 616", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 617 {
+		t.Fatalf("definition count = %d, want 617", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))

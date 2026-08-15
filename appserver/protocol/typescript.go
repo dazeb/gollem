@@ -870,6 +870,16 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = Schema{typeScriptRawTypeKeyword: `{ classification: string, reason?: string | null, threadId?: string | null, includeLogs?: boolean, extraLogFiles?: Array<string> | null, tags?: { [key in string]?: string } | null, }`}
 		case "WindowsSandboxSetupStartParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ mode: WindowsSandboxSetupMode, cwd?: AbsolutePathBuf | null, }`}
+		case "SkillsListParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{
+/**
+ * When empty, defaults to the current session working directory.
+ */
+cwds?: Array<string>,
+/**
+ * When true, bypass the skills cache and re-scan skills from disk.
+ */
+forceReload?: boolean, }`}
 		case "McpServerElicitationRequestParams":
 			// The raw schema mirrors serde's open, flattened record. ts-rs instead
 			// emits the exact closed intersection and makes Option fields nullable.

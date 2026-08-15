@@ -108,8 +108,8 @@ func TestFileChangeRemainsStandalone(t *testing.T) {
 			t.Fatalf("FileChange unexpectedly bound to item %s", binding.Kind)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 616 {
-		t.Fatalf("definition count = %d, want 616", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 617 {
+		t.Fatalf("definition count = %d, want 617", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

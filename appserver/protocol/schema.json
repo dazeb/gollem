@@ -14837,6 +14837,22 @@
       ],
       "type": "object"
     },
+    "SkillsListParams": {
+      "properties": {
+        "cwds": {
+          "description": "When empty, defaults to the current session working directory.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "forceReload": {
+          "description": "When true, bypass the skills cache and re-scan skills from disk.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "SortDirection": {
       "enum": [
         "asc",
