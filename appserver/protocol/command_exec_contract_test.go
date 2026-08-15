@@ -79,8 +79,8 @@ func TestCommandExecContractsFailClosedAndRemainStandalone(t *testing.T) {
 			t.Fatalf("public command-exec contract unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 615 {
-		t.Fatalf("definition count = %d, want 615", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 616 {
+		t.Fatalf("definition count = %d, want 616", got)
 	}
 }
 
