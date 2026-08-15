@@ -8122,6 +8122,25 @@
       "title": "JSONRPCErrorError",
       "type": "object"
     },
+    "JSONRPCMessage": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JSONRPCRequest"
+        },
+        {
+          "$ref": "#/$defs/JSONRPCNotification"
+        },
+        {
+          "$ref": "#/$defs/JSONRPCResponse"
+        },
+        {
+          "$ref": "#/$defs/JSONRPCError"
+        }
+      ],
+      "description": "Refers to any valid JSON-RPC object that can be decoded off the wire, or encoded to be sent.",
+      "title": "JSONRPCMessage"
+    },
     "JSONRPCNotification": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "A notification which does not expect a response.",

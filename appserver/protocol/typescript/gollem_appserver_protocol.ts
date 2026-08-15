@@ -2203,6 +2203,8 @@ export type JSONRPCErrorError = {
   "message": string;
 };
 
+export type JSONRPCMessage = JSONRPCRequest | JSONRPCNotification | JSONRPCResponse | JSONRPCError;
+
 export type JSONRPCNotification = {
   "method": string;
   "params"?: JsonValue;

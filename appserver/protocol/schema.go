@@ -286,6 +286,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "JsonValue", Type: reflect.TypeFor[JsonValue]()},
 		{Name: "JSONRPCError", Type: reflect.TypeFor[JSONRPCError]()},
 		{Name: "JSONRPCErrorError", Type: reflect.TypeFor[JSONRPCErrorError]()},
+		{Name: "JSONRPCMessage", Type: reflect.TypeFor[JSONRPCMessage]()},
 		{Name: "JSONRPCNotification", Type: reflect.TypeFor[JSONRPCNotification]()},
 		{Name: "JSONRPCRequest", Type: reflect.TypeFor[JSONRPCRequest]()},
 		{Name: "JSONRPCResponse", Type: reflect.TypeFor[JSONRPCResponse]()},
@@ -721,6 +722,7 @@ func wireSchemaDefinitions() Schema {
 	for name, schema := range jsonRPCEnvelopeSchemas() {
 		schemas[name] = schema
 	}
+	schemas["JSONRPCMessage"] = jsonRPCMessageSchema()
 	schemas["AccountTokenUsageDailyBucket"] = closedThreadSessionParamSchema(Schema{
 		"startDate": Schema{"type": "string"},
 		"tokens":    Schema{"type": "integer", "format": "int64"},
