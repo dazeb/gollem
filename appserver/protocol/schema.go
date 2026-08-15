@@ -408,6 +408,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PluginShareCheckoutParams", Type: reflect.TypeFor[PluginShareCheckoutParams]()},
 		{Name: "PluginShareDeleteParams", Type: reflect.TypeFor[PluginShareDeleteParams]()},
 		{Name: "PluginShareListParams", Type: reflect.TypeFor[PluginShareListParams]()},
+		{Name: "PluginListMarketplaceKind", Type: reflect.TypeFor[PluginListMarketplaceKind]()},
+		{Name: "PluginListParams", Type: reflect.TypeFor[PluginListParams]()},
 		{Name: "PluginReadParams", Type: reflect.TypeFor[PluginReadParams]()},
 		{Name: "PluginInstallParams", Type: reflect.TypeFor[PluginInstallParams]()},
 		{Name: "PluginInstalledParams", Type: reflect.TypeFor[PluginInstalledParams]()},
@@ -1050,6 +1052,8 @@ func wireSchemaDefinitions() Schema {
 	schemas["PluginShareCheckoutParams"] = pluginShareCheckoutParamSchema()
 	schemas["PluginShareDeleteParams"] = pluginShareDeleteParamSchema()
 	schemas["PluginShareListParams"] = pluginShareListParamSchema()
+	schemas["PluginListMarketplaceKind"] = pluginListMarketplaceKindSchema()
+	schemas["PluginListParams"] = pluginListParamSchema()
 	schemas["PluginReadParams"] = pluginReadParamSchema()
 	schemas["PluginInstallParams"] = pluginInstallParamSchema()
 	schemas["PluginInstalledParams"] = pluginInstalledParamSchema()

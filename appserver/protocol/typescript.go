@@ -915,6 +915,22 @@ cwds?: Array<AbsolutePathBuf> | null,
  * This is used by mention surfaces that intentionally expose install entrypoints.
  */
 installSuggestionPluginNames?: Array<string> | null, }`}
+		case "PluginListParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{
+/**
+ * Optional working directories used to discover repo marketplaces. When omitted,
+ * only home-scoped marketplaces and the official curated marketplace are considered.
+ */
+cwds?: Array<AbsolutePathBuf> | null,
+/**
+ * Optional marketplace kind filter. When omitted, only local marketplaces are queried, plus
+ * the default remote catalog when enabled by feature flag.
+ */
+marketplaceKinds?: Array<PluginListMarketplaceKind> | null,
+/**
+ * Whether the client requests a fresh remote plugin catalog fetch.
+ */
+forceRefetch?: boolean, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
 		case "PluginSkillReadParams":

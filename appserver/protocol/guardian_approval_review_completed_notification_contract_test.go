@@ -164,8 +164,8 @@ func TestGuardianApprovalReviewCompletedNotificationRemainsStandalone(t *testing
 			t.Fatalf("completed notification unexpectedly bound to item %s", binding.Kind)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 630 {
-		t.Fatalf("definition count = %d, want 630", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 632 {
+		t.Fatalf("definition count = %d, want 632", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

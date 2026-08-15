@@ -127,8 +127,8 @@ func TestListMcpServerStatusParamsRemainsStandalone(t *testing.T) {
 			t.Fatalf("ListMcpServerStatusParams unexpectedly bound: %#v", binding)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 630 {
-		t.Fatalf("definition count = %d, want 630", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 632 {
+		t.Fatalf("definition count = %d, want 632", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
