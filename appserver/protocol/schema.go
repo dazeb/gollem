@@ -415,6 +415,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "RateLimitSnapshot", Type: reflect.TypeFor[RateLimitSnapshot]()},
 		{Name: "RateLimitWindow", Type: reflect.TypeFor[RateLimitWindow]()},
 		{Name: "SkillMigration", Type: reflect.TypeFor[SkillMigration]()},
+		{Name: "SkillsListParams", Type: reflect.TypeFor[SkillsListParams]()},
 		{Name: "SpendControlLimitSnapshot", Type: reflect.TypeFor[SpendControlLimitSnapshot]()},
 		{Name: "SessionMigration", Type: reflect.TypeFor[SessionMigration]()},
 		{Name: "HookMigration", Type: reflect.TypeFor[HookMigration]()},
@@ -1032,6 +1033,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["McpServerMigration"] = mcpServerMigrationSchema()
 	schemas["PluginsMigration"] = pluginsMigrationSchema()
 	schemas["SkillMigration"] = skillMigrationSchema()
+	schemas["SkillsListParams"] = skillsListParamSchema()
 	schemas["SessionMigration"] = sessionMigrationSchema()
 	schemas["HookMigration"] = hookMigrationSchema()
 	schemas["SubagentMigration"] = subagentMigrationSchema()
