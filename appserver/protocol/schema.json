@@ -9130,6 +9130,17 @@
       ],
       "type": "object"
     },
+    "MarketplaceRemoveParams": {
+      "properties": {
+        "marketplaceName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "marketplaceName"
+      ],
+      "type": "object"
+    },
     "McpAuthStatus": {
       "enum": [
         "unsupported",
