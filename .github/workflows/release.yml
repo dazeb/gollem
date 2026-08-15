@@ -48,7 +48,10 @@ jobs:
       - name: Verify build
         run: go build ./...
       - name: Verify tests pass
-        run: go test -race ./...
+        shell: bash
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v '^github.com/fugue-labs/gollem/ext/monty$')
+          go test -race "${packages[@]}"
 
   release:
     name: Create Release

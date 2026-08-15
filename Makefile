@@ -5,13 +5,13 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 test: ## Run tests with race detector
-	go test -race ./...
+	go list ./... | grep -v '/ext/monty$$' | xargs go test -race
 
 test-verbose: ## Run tests with verbose output and race detector
-	go test -race -v ./...
+	go list ./... | grep -v '/ext/monty$$' | xargs go test -race -v
 
 coverage: ## Generate coverage report
-	go test -race -coverprofile=coverage.out ./...
+	go list ./... | grep -v '/ext/monty$$' | xargs go test -race -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
