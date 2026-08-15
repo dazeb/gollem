@@ -413,6 +413,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PluginShareTargetRole", Type: reflect.TypeFor[PluginShareTargetRole]()},
 		{Name: "PluginShareTarget", Type: reflect.TypeFor[PluginShareTarget]()},
 		{Name: "PluginShareSaveParams", Type: reflect.TypeFor[PluginShareSaveParams]()},
+		{Name: "PluginShareUpdateDiscoverability", Type: reflect.TypeFor[PluginShareUpdateDiscoverability]()},
+		{Name: "PluginShareUpdateTargetsParams", Type: reflect.TypeFor[PluginShareUpdateTargetsParams]()},
 		{Name: "PluginListMarketplaceKind", Type: reflect.TypeFor[PluginListMarketplaceKind]()},
 		{Name: "PluginListParams", Type: reflect.TypeFor[PluginListParams]()},
 		{Name: "PluginReadParams", Type: reflect.TypeFor[PluginReadParams]()},
@@ -1065,6 +1067,8 @@ func wireSchemaDefinitions() Schema {
 	schemas["PluginShareTargetRole"] = pluginShareTargetRoleSchema()
 	schemas["PluginShareTarget"] = pluginShareTargetSchema()
 	schemas["PluginShareSaveParams"] = pluginShareSaveParamsSchema()
+	schemas["PluginShareUpdateDiscoverability"] = pluginShareUpdateDiscoverabilitySchema()
+	schemas["PluginShareUpdateTargetsParams"] = pluginShareUpdateTargetsParamsSchema()
 	schemas["PluginListMarketplaceKind"] = pluginListMarketplaceKindSchema()
 	schemas["PluginListParams"] = pluginListParamSchema()
 	schemas["PluginReadParams"] = pluginReadParamSchema()

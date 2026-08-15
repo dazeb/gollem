@@ -163,8 +163,8 @@ func TestPluginShareSaveRemainsStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 640 {
-		t.Fatalf("definition count = %d, want 640", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 642 {
+		t.Fatalf("definition count = %d, want 642", got)
 	}
 }
 

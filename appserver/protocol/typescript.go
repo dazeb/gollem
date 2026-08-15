@@ -916,6 +916,8 @@ itemTypeResults: Array<ExternalAgentConfigImportHistoryRecordTypeResultParams>, 
 			definition = Schema{typeScriptRawTypeKeyword: `{ principalType: PluginSharePrincipalType, principalId: string, role: PluginShareTargetRole, }`}
 		case "PluginShareSaveParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ pluginPath: AbsolutePathBuf, remotePluginId?: string | null, discoverability?: PluginShareDiscoverability | null, shareTargets?: Array<PluginShareTarget> | null, }`}
+		case "PluginShareUpdateTargetsParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, discoverability: PluginShareUpdateDiscoverability, shareTargets: Array<PluginShareTarget>, }`}
 		case "PluginShareDeleteParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
 		case "PluginReadParams":
