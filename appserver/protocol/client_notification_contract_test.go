@@ -58,8 +58,8 @@ func TestClientNotificationRemainsStandaloneFromInitializedBinding(t *testing.T)
 	if !ok || info.Surface != SurfaceClientNotification || info.State != MethodImplemented {
 		t.Fatalf("initialized method = %#v, %v; want implemented client notification", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 603 {
-		t.Fatalf("definition count = %d, want 603", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 605 {
+		t.Fatalf("definition count = %d, want 605", got)
 	}
 }
 

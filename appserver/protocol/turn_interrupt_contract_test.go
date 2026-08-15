@@ -119,8 +119,8 @@ func TestTurnInterruptContractsRemainStandalone(t *testing.T) {
 	if !foundRuntimeBinding {
 		t.Error("turn/interrupt runtime binding missing")
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 603 {
-		t.Fatalf("definition count = %d, want 603", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 605 {
+		t.Fatalf("definition count = %d, want 605", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))

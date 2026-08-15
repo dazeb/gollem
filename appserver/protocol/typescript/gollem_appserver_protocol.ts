@@ -1089,6 +1089,22 @@ export type CommandExecutionOutputDeltaNotification = {
 
 export type CommandExecutionOutputDeltaNotificationParams = CommandExecutionOutputDeltaNotification;
 
+export type CommandExecutionRequestApprovalParams = {
+  "approvalId"?: string | null;
+  "command"?: string | null;
+  "commandActions"?: Array<CommandAction> | null;
+  "cwd"?: LegacyAppPathString | null;
+  "environmentId": string | null;
+  "itemId": string;
+  "networkApprovalContext"?: NetworkApprovalContext | null;
+  "proposedExecpolicyAmendment"?: Array<string> | null;
+  "proposedNetworkPolicyAmendments"?: Array<NetworkPolicyAmendment> | null;
+  "reason"?: string | null;
+  "startedAtMs": number;
+  "threadId": string;
+  "turnId": string;
+};
+
 export type CommandExecutionRequestApprovalResponse = {
   "decision": CommandExecutionApprovalDecision;
 };
@@ -1637,6 +1653,15 @@ export type FileChangePatchUpdatedNotification = {
 };
 
 export type FileChangePatchUpdatedNotificationParams = FileChangePatchUpdatedNotification;
+
+export type FileChangeRequestApprovalParams = {
+  "grantRoot"?: string | null;
+  "itemId": string;
+  "reason"?: string | null;
+  "startedAtMs": number;
+  "threadId": string;
+  "turnId": string;
+};
 
 export type FileChangeRequestApprovalResponse = {
   "decision": FileChangeApprovalDecision;
