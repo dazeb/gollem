@@ -234,8 +234,11 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 				t.Fatalf("decode server request: %v", err)
 			}
 			itemID, _ := params["itemId"].(string)
-			if itemID == "" || itemID == "call-runtime-interaction" || params["threadId"] != started.Thread.ID || params["turnId"] != started.Turn.ID {
+			if params["threadId"] != started.Thread.ID || params["turnId"] != started.Turn.ID {
 				t.Fatalf("server request correlation = %#v", params)
+			}
+			if tt.wantMethod != InteractionMCPElicitation && (itemID == "" || itemID == "call-runtime-interaction") {
+				t.Fatalf("server request item correlation = %#v", params)
 			}
 			if tt.wantMethod == InteractionToolCall &&
 				(params["callId"] != "call-runtime-interaction" || params["tool"] != "client.search" || params["namespace"] != nil) {
@@ -247,7 +250,8 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 					t.Fatalf("decode MCP elicitation params: %v", err)
 				}
 				if typed.Mode != protocol.McpServerElicitationModeForm || typed.ServerName != "repo" ||
-					typed.TurnID == nil || *typed.TurnID != started.Turn.ID || typed.ItemID != itemID {
+					typed.TurnID == nil || *typed.TurnID != started.Turn.ID ||
+					params["requestId"] != nil || params["itemId"] != nil || params["startedAtMs"] != nil || params["reason"] != nil {
 					t.Fatalf("public MCP elicitation correlation = %#v", typed)
 				}
 			}
@@ -260,7 +264,7 @@ func TestServerRuntimeClientToolAndMCPElicitationUseDurableCorrelation(t *testin
 				t.Fatalf("ListItems: %v", err)
 			}
 			toolItem := findRuntimeToolItem(t, items, tt.toolName, tt.argumentKey, tt.argumentValue)
-			if toolItem.Item.ID != itemID || toolItem.Status != runtimeToolStatusCompleted {
+			if (tt.wantMethod != InteractionMCPElicitation && toolItem.Item.ID != itemID) || toolItem.Status != runtimeToolStatusCompleted {
 				t.Fatalf("durable interaction item = %#v, request item %q", toolItem, itemID)
 			}
 		})

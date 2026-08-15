@@ -209,9 +209,6 @@ func (s *InteractionService) RequestMCPElicitation(ctx context.Context, req MCPE
 		Meta:            meta,
 		Message:         req.Message,
 		RequestedSchema: requestedSchemaJSON,
-		ServerID:        strings.TrimSpace(req.ServerID),
-		Schema:          schema,
-		Metadata:        cloneStringAnyMap(req.Metadata),
 	}
 	paramsJSON, err := json.Marshal(typedParams)
 	if err != nil {
@@ -229,7 +226,6 @@ func (s *InteractionService) RequestMCPElicitation(ctx context.Context, req MCPE
 		ThreadID: req.ThreadID,
 		TurnID:   req.TurnID,
 		ItemID:   req.ItemID,
-		Reason:   req.Message,
 		Params:   params,
 	})
 }
@@ -261,7 +257,7 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 		ItemID:    itemID,
 	}
 	payload := cloneStringAnyMap(req.Params)
-	if method != InteractionRequestUserInput {
+	if method != InteractionRequestUserInput && method != InteractionMCPElicitation {
 		payload["requestId"] = requestID
 	}
 	payload["threadId"] = meta.ThreadID
@@ -270,8 +266,10 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 	} else {
 		payload["turnId"] = meta.TurnID
 	}
-	payload["itemId"] = meta.ItemID
-	if method != InteractionRequestUserInput {
+	if method != InteractionMCPElicitation {
+		payload["itemId"] = meta.ItemID
+	}
+	if method != InteractionRequestUserInput && method != InteractionMCPElicitation {
 		payload["startedAtMs"] = time.Now().UnixMilli()
 	}
 	if method == InteractionToolCall {
@@ -280,7 +278,7 @@ func (s *InteractionService) Request(ctx context.Context, req InteractionRequest
 			payload["callId"] = firstNonEmpty(meta.ItemID, requestID)
 		}
 	}
-	if method != InteractionRequestUserInput && strings.TrimSpace(req.Reason) != "" {
+	if method != InteractionRequestUserInput && method != InteractionMCPElicitation && strings.TrimSpace(req.Reason) != "" {
 		payload["reason"] = strings.TrimSpace(req.Reason)
 	}
 

@@ -9524,25 +9524,10 @@
     "McpServerElicitationRequestParams": {
       "oneOf": [
         {
-          "additionalProperties": false,
           "properties": {
-            "_meta": {},
-            "itemId": {
-              "type": "string"
-            },
+            "_meta": true,
             "message": {
               "type": "string"
-            },
-            "metadata": {
-              "anyOf": [
-                {
-                  "additionalProperties": {},
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             },
             "mode": {
               "enum": [
@@ -9550,80 +9535,22 @@
               ],
               "type": "string"
             },
-            "reason": {
-              "type": "string"
-            },
-            "requestId": {
-              "type": "string"
-            },
             "requestedSchema": {
               "$ref": "#/$defs/McpElicitationSchema"
-            },
-            "schema": {
-              "anyOf": [
-                {
-                  "additionalProperties": {},
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "serverId": {
-              "type": "string"
-            },
-            "serverName": {
-              "type": "string"
-            },
-            "startedAtMs": {
-              "type": "integer"
-            },
-            "threadId": {
-              "type": "string"
-            },
-            "turnId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             }
           },
           "required": [
-            "threadId",
-            "turnId",
-            "serverName",
-            "mode",
-            "_meta",
             "message",
+            "mode",
             "requestedSchema"
           ],
           "type": "object"
         },
         {
-          "additionalProperties": false,
           "properties": {
-            "_meta": {},
-            "itemId": {
-              "type": "string"
-            },
+            "_meta": true,
             "message": {
               "type": "string"
-            },
-            "metadata": {
-              "anyOf": [
-                {
-                  "additionalProperties": {},
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             },
             "mode": {
               "enum": [
@@ -9631,81 +9558,23 @@
               ],
               "type": "string"
             },
-            "reason": {
-              "type": "string"
-            },
-            "requestId": {
-              "type": "string"
-            },
-            "requestedSchema": {},
-            "schema": {
-              "anyOf": [
-                {
-                  "additionalProperties": {},
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "serverId": {
-              "type": "string"
-            },
-            "serverName": {
-              "type": "string"
-            },
-            "startedAtMs": {
-              "type": "integer"
-            },
-            "threadId": {
-              "type": "string"
-            },
-            "turnId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
+            "requestedSchema": true
           },
           "required": [
-            "threadId",
-            "turnId",
-            "serverName",
-            "mode",
-            "_meta",
             "message",
+            "mode",
             "requestedSchema"
           ],
           "type": "object"
         },
         {
-          "additionalProperties": false,
           "properties": {
-            "_meta": {},
+            "_meta": true,
             "elicitationId": {
-              "type": "string"
-            },
-            "itemId": {
               "type": "string"
             },
             "message": {
               "type": "string"
-            },
-            "metadata": {
-              "anyOf": [
-                {
-                  "additionalProperties": {},
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             },
             "mode": {
               "enum": [
@@ -9713,77 +9582,57 @@
               ],
               "type": "string"
             },
-            "reason": {
-              "type": "string"
-            },
-            "requestId": {
-              "type": "string"
-            },
-            "schema": {
-              "anyOf": [
-                {
-                  "additionalProperties": {},
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "serverId": {
-              "type": "string"
-            },
-            "serverName": {
-              "type": "string"
-            },
-            "startedAtMs": {
-              "type": "integer"
-            },
-            "threadId": {
-              "type": "string"
-            },
-            "turnId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "url": {
               "type": "string"
             }
           },
           "required": [
-            "threadId",
-            "turnId",
-            "serverName",
-            "mode",
-            "_meta",
+            "elicitationId",
             "message",
-            "url",
-            "elicitationId"
+            "mode",
+            "url"
           ],
           "type": "object"
         }
-      ]
+      ],
+      "properties": {
+        "serverName": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "description": "Active Codex turn when this elicitation was observed, if app-server could correlate one.\n\nThis is nullable because MCP models elicitation as a standalone server-to-client request identified by the MCP server request id. It may be triggered during a turn, but turn context is app-server correlation rather than part of the protocol identity of the elicitation itself.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "serverName",
+        "threadId"
+      ],
+      "title": "McpServerElicitationRequestParams",
+      "type": "object"
     },
     "McpServerElicitationRequestResponse": {
-      "additionalProperties": false,
       "properties": {
-        "_meta": {},
+        "_meta": {
+          "description": "Optional client metadata for form-mode action handling."
+        },
         "action": {
           "$ref": "#/$defs/McpServerElicitationAction"
         },
-        "content": {}
+        "content": {
+          "description": "Structured user input for accepted elicitations, mirroring RMCP `CreateElicitationResult`.\n\nThis is nullable because decline/cancel responses have no content."
+        }
       },
       "required": [
-        "action",
-        "content",
-        "_meta"
+        "action"
       ],
+      "title": "McpServerElicitationRequestResponse",
       "type": "object"
     },
     "McpServerInfo": {

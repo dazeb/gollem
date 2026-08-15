@@ -44,19 +44,39 @@ func TestMcpElicitationSchemaAndBindingAreExact(t *testing.T) {
 		assertSchemaRequired(t, schema, name)
 	}
 	params := defs["McpServerElicitationRequestParams"].(Schema)
+	for _, name := range []string{"threadId", "serverName"} {
+		assertSchemaRequired(t, params, name)
+	}
+	if _, required := params["additionalProperties"]; required {
+		t.Fatalf("McpServerElicitationRequestParams unexpectedly closes the serde-open record: %#v", params)
+	}
 	variants, ok := params["oneOf"].([]any)
 	if !ok || len(variants) != 3 {
 		t.Fatalf("McpServerElicitationRequestParams oneOf = %#v", params["oneOf"])
 	}
 	for _, variant := range variants {
 		item := variant.(Schema)
-		for _, name := range []string{"threadId", "turnId", "serverName", "mode", "_meta", "message"} {
+		for _, name := range []string{"mode", "message"} {
 			assertSchemaRequired(t, item, name)
 		}
+		if _, required := item["additionalProperties"]; required {
+			t.Fatalf("McpServerElicitationRequestParams variant unexpectedly closes the serde-open record: %#v", item)
+		}
+	}
+	formProperties := variants[0].(Schema)["properties"].(Schema)
+	openAIFormProperties := variants[1].(Schema)["properties"].(Schema)
+	if formProperties["_meta"] != true || openAIFormProperties["_meta"] != true ||
+		openAIFormProperties["requestedSchema"] != true {
+		t.Fatalf("McpServerElicitationRequestParams JSON-value fields = %#v / %#v", formProperties, openAIFormProperties)
+	}
+	urlRequired := variants[2].(Schema)["required"].([]string)
+	if got, want := strings.Join(urlRequired, ","), "elicitationId,message,mode,url"; got != want {
+		t.Fatalf("URL request required order = %q, want %q", got, want)
 	}
 	response := defs["McpServerElicitationRequestResponse"].(Schema)
-	for _, name := range []string{"action", "content", "_meta"} {
-		assertSchemaRequired(t, response, name)
+	assertSchemaRequired(t, response, "action")
+	if _, required := response["additionalProperties"]; required {
+		t.Fatalf("McpServerElicitationRequestResponse unexpectedly closes the serde-open record: %#v", response)
 	}
 	enumSchema := defs["McpElicitationEnumSchema"].(Schema)
 	if variants, ok := enumSchema["anyOf"].([]any); !ok || len(variants) != 3 {
@@ -73,6 +93,19 @@ func TestMcpElicitationSchemaAndBindingAreExact(t *testing.T) {
 	bindings := WireTypeBindings()
 	assertBinding(t, bindings, "mcpServer/elicitation/request", SurfaceServerRequest, "McpServerElicitationRequestParams")
 	assertBinding(t, bindings, "mcpServer/elicitation/request", SurfaceServerRequest, "McpServerElicitationRequestResponse")
+	typescript, err := MarshalTypeScript()
+	if err != nil {
+		t.Fatalf("MarshalTypeScript: %v", err)
+	}
+	for _, declaration := range []string{
+		`export type McpServerElicitationRequestParams = { "threadId": string; "turnId": string | null; "serverName": string; } &`,
+		`"requestedSchema": JsonValue;`,
+		`export type McpServerElicitationRequestResponse = { "action": McpServerElicitationAction; "content": JsonValue | null; "_meta": JsonValue | null; };`,
+	} {
+		if !strings.Contains(string(typescript), declaration) {
+			t.Fatalf("generated TypeScript missing %q", declaration)
+		}
+	}
 }
 
 func TestMcpElicitationSchemaAcceptsEveryPublicPrimitiveVariant(t *testing.T) {
@@ -228,8 +261,8 @@ func TestMcpElicitationUnionWrappersAreStrict(t *testing.T) {
 
 func TestMcpServerElicitationParamsValidateAllModes(t *testing.T) {
 	valid := []string{
-		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"form","_meta":null,"message":"Choose","requestedSchema":{"type":"object","properties":{"scopes":{"type":"array","items":{"oneOf":[{"const":"read","title":"Read"}]}}}}}`,
-		`{"threadId":"thread-1","turnId":"turn-1","serverName":"repo","mode":"openai/form","_meta":{"source":"test"},"message":"Choose","requestedSchema":{"type":"custom"},"itemId":"item-1","schema":null,"metadata":null}`,
+		`{"threadId":"thread-1","serverName":"repo","mode":"form","message":"Choose","requestedSchema":{"type":"object","properties":{"scopes":{"type":"array","items":{"oneOf":[{"const":"read","title":"Read"}]}}}},"ignored":true}`,
+		`{"threadId":"thread-1","turnId":"turn-1","serverName":"repo","mode":"openai/form","_meta":{"source":"test"},"message":"Choose","requestedSchema":{"type":"custom"},"itemId":"legacy-is-ignored"}`,
 		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"url","_meta":null,"message":"Open","url":"https://example.com","elicitationId":"elicit-1"}`,
 	}
 	for _, input := range valid {
@@ -251,18 +284,25 @@ func TestMcpServerElicitationParamsValidateAllModes(t *testing.T) {
 			t.Errorf("form params were not canonicalized: %s", encoded)
 		}
 	}
+	var canonical McpServerElicitationRequestParams
+	if err := json.Unmarshal([]byte(`{"threadId":"thread-1","serverName":"repo","mode":"url","message":"Open","url":"https://example.com","elicitationId":"elicit-1","requestId":"legacy","extra":true}`), &canonical); err != nil {
+		t.Fatalf("source-open params: %v", err)
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		t.Fatalf("marshal source-open params: %v", err)
+	}
+	if strings.Contains(string(encoded), `"requestId"`) || strings.Contains(string(encoded), `"extra"`) ||
+		!strings.Contains(string(encoded), `"turnId":null`) || !strings.Contains(string(encoded), `"_meta":null`) {
+		t.Fatalf("source-open params canonicalized as %s", encoded)
+	}
 	invalid := []string{
 		`{}`,
-		`{"threadId":"thread-1","serverName":"repo","mode":"form","_meta":null,"message":"Choose","requestedSchema":{"type":"object","properties":{}}}`,
-		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"form","message":"Choose","requestedSchema":{"type":"object","properties":{}}}`,
 		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"form","_meta":null,"message":"Choose"}`,
 		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"form","_meta":null,"message":"Choose","requestedSchema":{"type":"object"}}`,
-		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"form","_meta":null,"message":"Choose","requestedSchema":{"type":"object","properties":{}},"url":"bad"}`,
 		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"url","_meta":null,"message":"Open","url":"https://example.com"}`,
 		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"other","_meta":null,"message":"Choose"}`,
-		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"url","_meta":null,"message":"Open","url":"https://example.com","elicitationId":"id","extra":true}`,
-		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"url","_meta":null,"message":"Open","url":"https://example.com","elicitationId":"id","metadata":[]}`,
-		`{"threadId":"thread-1","turnId":null,"serverName":"repo","mode":"url","_meta":null,"message":"Open","url":"https://example.com","elicitationId":"id","startedAtMs":null}`,
+		`{"threadId":"thread-1","serverName":"repo","mode":"url","message":"Open","url":"https://example.com","elicitationId":"id","threadId":"duplicate"}`,
 	}
 	for _, input := range invalid {
 		var params McpServerElicitationRequestParams
@@ -279,7 +319,7 @@ func TestMcpServerElicitationParamsValidateAllModes(t *testing.T) {
 	}
 }
 
-func TestMcpServerElicitationResponseIsStrictAndNonNullOnMarshal(t *testing.T) {
+func TestMcpServerElicitationResponseMatchesSourceSerde(t *testing.T) {
 	for _, input := range []string{
 		`{"action":"accept","content":{"choice":"safe"},"_meta":null}`,
 		`{"action":"decline","content":null,"_meta":{"reason":"policy"}}`,
@@ -291,13 +331,30 @@ func TestMcpServerElicitationResponseIsStrictAndNonNullOnMarshal(t *testing.T) {
 		}
 	}
 	for _, input := range []string{
+		`{"action":"accept"}`,
+		`{"action":"cancel","content":null,"_meta":null,"extra":true}`,
+	} {
+		var response McpServerElicitationRequestResponse
+		if err := json.Unmarshal([]byte(input), &response); err != nil {
+			t.Errorf("source-open Unmarshal(%s): %v", input, err)
+			continue
+		}
+		encoded, err := json.Marshal(response)
+		if err != nil {
+			t.Errorf("source-open Marshal(%s): %v", input, err)
+			continue
+		}
+		if string(encoded) != `{"action":"accept","content":null,"_meta":null}` &&
+			string(encoded) != `{"action":"cancel","content":null,"_meta":null}` {
+			t.Errorf("source-open response canonicalized as %s", encoded)
+		}
+	}
+	for _, input := range []string{
 		`[`,
 		`{}`,
-		`{"action":"accept","_meta":null}`,
-		`{"action":"accept","content":null}`,
 		`{"action":"approve","content":null,"_meta":null}`,
-		`{"action":"accept","content":null,"_meta":null,"extra":true}`,
 		`{"action":null,"content":null,"_meta":null}`,
+		`{"action":"accept","action":"cancel"}`,
 	} {
 		var response McpServerElicitationRequestResponse
 		if err := json.Unmarshal([]byte(input), &response); err == nil {

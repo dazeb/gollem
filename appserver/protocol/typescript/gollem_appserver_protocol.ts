@@ -2501,59 +2501,9 @@ export type McpResourceReadResponse = {
 
 export type McpServerElicitationAction = "accept" | "decline" | "cancel";
 
-export type McpServerElicitationRequestParams = {
-  "_meta": unknown;
-  "itemId"?: string;
-  "message": string;
-  "metadata"?: Record<string, unknown> | null;
-  "mode": "form";
-  "reason"?: string;
-  "requestId"?: string;
-  "requestedSchema": McpElicitationSchema;
-  "schema"?: Record<string, unknown> | null;
-  "serverId"?: string;
-  "serverName": string;
-  "startedAtMs"?: number;
-  "threadId": string;
-  "turnId": string | null;
-} | {
-  "_meta": unknown;
-  "itemId"?: string;
-  "message": string;
-  "metadata"?: Record<string, unknown> | null;
-  "mode": "openai/form";
-  "reason"?: string;
-  "requestId"?: string;
-  "requestedSchema": unknown;
-  "schema"?: Record<string, unknown> | null;
-  "serverId"?: string;
-  "serverName": string;
-  "startedAtMs"?: number;
-  "threadId": string;
-  "turnId": string | null;
-} | {
-  "_meta": unknown;
-  "elicitationId": string;
-  "itemId"?: string;
-  "message": string;
-  "metadata"?: Record<string, unknown> | null;
-  "mode": "url";
-  "reason"?: string;
-  "requestId"?: string;
-  "schema"?: Record<string, unknown> | null;
-  "serverId"?: string;
-  "serverName": string;
-  "startedAtMs"?: number;
-  "threadId": string;
-  "turnId": string | null;
-  "url": string;
-};
+export type McpServerElicitationRequestParams = { "threadId": string; "turnId": string | null; "serverName": string; } & ({ "mode": "form"; "_meta": JsonValue | null; "message": string; "requestedSchema": McpElicitationSchema; } | { "mode": "openai/form"; "_meta": JsonValue | null; "message": string; "requestedSchema": JsonValue; } | { "mode": "url"; "_meta": JsonValue | null; "message": string; "url": string; "elicitationId": string; });
 
-export type McpServerElicitationRequestResponse = {
-  "_meta": unknown;
-  "action": McpServerElicitationAction;
-  "content": unknown;
-};
+export type McpServerElicitationRequestResponse = { "action": McpServerElicitationAction; "content": JsonValue | null; "_meta": JsonValue | null; };
 
 export type McpServerInfo = {
   "description": string | null;

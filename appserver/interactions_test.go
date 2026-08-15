@@ -278,7 +278,7 @@ func TestInteractionMCPElicitationRequestUsesExactCanonicalForm(t *testing.T) {
 	}
 	if params.ThreadID != "thread-mcp" || params.TurnID == nil || *params.TurnID != "turn-mcp" ||
 		params.ServerName != "repo" || params.Mode != protocol.McpServerElicitationModeForm ||
-		params.ItemID != "item-mcp" || params.ServerID != "repo" || params.Message != "Choose access" ||
+		params.Message != "Choose access" ||
 		!strings.Contains(string(params.Meta), `"source":"runtime"`) ||
 		!strings.Contains(string(params.RequestedSchema), `"items":{"anyOf"`) {
 		t.Fatalf("MCP elicitation params = %#v, schema=%s", params, params.RequestedSchema)
@@ -311,7 +311,7 @@ func TestInteractionMCPElicitationRequestUsesExactCanonicalForm(t *testing.T) {
 	}
 }
 
-func TestInteractionMCPElicitationResponseUsesExactBoundedContract(t *testing.T) {
+func TestInteractionMCPElicitationResponseMatchesSourceSerde(t *testing.T) {
 	tests := []struct {
 		name     string
 		result   string
@@ -321,10 +321,10 @@ func TestInteractionMCPElicitationResponseUsesExactBoundedContract(t *testing.T)
 		{name: "decline", result: `{"action":"decline","content":null,"_meta":{"reason":"policy"}}`},
 		{name: "cancel", result: `{"action":"cancel","content":null,"_meta":null}`},
 		{name: "missing action", result: `{"content":null,"_meta":null}`, wantFail: true},
-		{name: "missing content", result: `{"action":"accept","_meta":null}`, wantFail: true},
-		{name: "missing meta", result: `{"action":"accept","content":null}`, wantFail: true},
+		{name: "missing content", result: `{"action":"accept","_meta":null}`},
+		{name: "missing meta", result: `{"action":"accept","content":null}`},
 		{name: "invalid action", result: `{"action":"approve","content":null,"_meta":null}`, wantFail: true},
-		{name: "unknown field", result: `{"action":"cancel","content":null,"_meta":null,"extra":true}`, wantFail: true},
+		{name: "unknown field", result: `{"action":"cancel","content":null,"_meta":null,"extra":true}`},
 		{
 			name:     "oversized",
 			result:   `{"action":"accept","content":{"value":"` + strings.Repeat("x", runtimeInteractionPayloadMaxBytes) + `"},"_meta":null}`,
