@@ -5384,6 +5384,88 @@
       ],
       "type": "object"
     },
+    "ExternalAgentConfigImportHistoryRecordParams": {
+      "properties": {
+        "itemTypeResults": {
+          "description": "Completed results grouped by imported item type.",
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportHistoryRecordTypeResultParams"
+          },
+          "type": "array"
+        },
+        "providerId": {
+          "description": "Opaque provider identifier for the externally completed import.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemTypeResults",
+        "providerId"
+      ],
+      "type": "object"
+    },
+    "ExternalAgentConfigImportHistoryRecordSuccessParams": {
+      "properties": {
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "itemType": {
+          "$ref": "#/$defs/ExternalAgentConfigMigrationItemType"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "default": null,
+          "description": "Original title for an imported session, when available.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "itemType"
+      ],
+      "type": "object"
+    },
+    "ExternalAgentConfigImportHistoryRecordTypeResultParams": {
+      "properties": {
+        "failures": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportItemTypeFailure"
+          },
+          "type": "array"
+        },
+        "itemType": {
+          "$ref": "#/$defs/ExternalAgentConfigMigrationItemType"
+        },
+        "successes": {
+          "items": {
+            "$ref": "#/$defs/ExternalAgentConfigImportHistoryRecordSuccessParams"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "failures",
+        "itemType",
+        "successes"
+      ],
+      "type": "object"
+    },
     "ExternalAgentConfigImportItemTypeFailure": {
       "additionalProperties": false,
       "properties": {

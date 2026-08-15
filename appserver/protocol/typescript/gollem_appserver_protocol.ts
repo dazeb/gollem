@@ -1510,6 +1510,24 @@ export type ExternalAgentConfigImportHistory = {
   "successes": Array<ExternalAgentConfigImportItemTypeSuccess>;
 };
 
+export type ExternalAgentConfigImportHistoryRecordParams = {
+/**
+ * Opaque provider identifier for the externally completed import.
+ */
+providerId: string,
+/**
+ * Completed results grouped by imported item type.
+ */
+itemTypeResults: Array<ExternalAgentConfigImportHistoryRecordTypeResultParams>, };
+
+export type ExternalAgentConfigImportHistoryRecordSuccessParams = { itemType: ExternalAgentConfigMigrationItemType, cwd: string | null, source: string | null, target: string | null,
+/**
+ * Original title for an imported session, when available.
+ */
+title?: string | null, };
+
+export type ExternalAgentConfigImportHistoryRecordTypeResultParams = { itemType: ExternalAgentConfigMigrationItemType, successes: Array<ExternalAgentConfigImportHistoryRecordSuccessParams>, failures: Array<ExternalAgentConfigImportItemTypeFailure>, };
+
 export type ExternalAgentConfigImportItemTypeFailure = {
   "cwd": string | null;
   "errorType": string | null;
