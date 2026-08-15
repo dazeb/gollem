@@ -53,8 +53,8 @@ func TestServerRequestSchemaAndBindingAreExact(t *testing.T) {
 			}
 		}
 	}
-	if got := len(defs); got != 606 {
-		t.Fatalf("definition count = %d, want 606", got)
+	if got := len(defs); got != 612 {
+		t.Fatalf("definition count = %d, want 612", got)
 	}
 	typescript, err := MarshalTypeScript()
 	if err != nil {
