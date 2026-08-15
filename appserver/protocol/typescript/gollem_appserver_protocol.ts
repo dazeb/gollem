@@ -739,6 +739,8 @@ export type AppsDefaultConfig = {
   "open_world_enabled": boolean;
 };
 
+export type AppsInstalledParams = { threadId?: string | null, forceRefresh?: boolean, };
+
 export type AppsListParams = {
   "cursor"?: string | null;
   "forceRefetch"?: boolean;
@@ -750,6 +752,8 @@ export type AppsListResponse = {
   "data": Array<AppInfo>;
   "nextCursor": string | null;
 };
+
+export type AppsReadParams = { appIds: Array<string>, threadId?: string | null, includeTools?: boolean, };
 
 export type AskForApproval = "untrusted" | "on-request" | {
   "granular": {
