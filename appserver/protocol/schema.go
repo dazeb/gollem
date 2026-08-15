@@ -1579,6 +1579,7 @@ func wireSchemaDefinitions() Schema {
 	setSchemaIntegerMinimum(schemas["McpElicitationUntitledMultiSelectEnumSchema"].(Schema), 0, "minItems", "maxItems")
 	schemas["McpServerElicitationAction"] = stringEnumSchema("accept", "decline", "cancel")
 	schemas["McpServerElicitationRequestParams"] = mcpServerElicitationRequestParamsSchema()
+	schemas["McpServerElicitationRequestResponse"] = mcpServerElicitationRequestResponseSchema()
 	schemas["NetworkPolicyRuleAction"] = stringEnumSchema(
 		string(NetworkPolicyRuleAllow), string(NetworkPolicyRuleDeny),
 	)
@@ -3305,53 +3306,66 @@ func sandboxPolicySchema() Schema {
 }
 
 func mcpServerElicitationRequestParamsSchema() Schema {
-	return Schema{"oneOf": []any{
-		mcpServerElicitationRequestVariantSchema("form"),
-		mcpServerElicitationRequestVariantSchema("openai/form"),
-		mcpServerElicitationRequestVariantSchema("url"),
-	}}
+	return Schema{
+		"type":  "object",
+		"title": "McpServerElicitationRequestParams",
+		"properties": Schema{
+			"threadId": Schema{"type": "string"},
+			"turnId": Schema{
+				"description": "Active Codex turn when this elicitation was observed, if app-server could correlate one.\n\nThis is nullable because MCP models elicitation as a standalone server-to-client request identified by the MCP server request id. It may be triggered during a turn, but turn context is app-server correlation rather than part of the protocol identity of the elicitation itself.",
+				"type":        []any{"string", "null"},
+			},
+			"serverName": Schema{"type": "string"},
+		},
+		"required": []string{"serverName", "threadId"},
+		"oneOf": []any{
+			mcpServerElicitationRequestVariantSchema("form"),
+			mcpServerElicitationRequestVariantSchema("openai/form"),
+			mcpServerElicitationRequestVariantSchema("url"),
+		},
+	}
 }
 
 func mcpServerElicitationRequestVariantSchema(mode string) Schema {
 	properties := Schema{
-		"threadId":    Schema{"type": "string"},
-		"turnId":      Schema{"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}}},
-		"serverName":  Schema{"type": "string"},
-		"mode":        Schema{"type": "string", "enum": []any{mode}},
-		"_meta":       Schema{},
-		"message":     Schema{"type": "string"},
-		"requestId":   Schema{"type": "string"},
-		"itemId":      Schema{"type": "string"},
-		"startedAtMs": Schema{"type": "integer"},
-		"serverId":    Schema{"type": "string"},
-		"schema": Schema{"anyOf": []any{
-			Schema{"type": "object", "additionalProperties": Schema{}},
-			Schema{"type": "null"},
-		}},
-		"metadata": Schema{"anyOf": []any{
-			Schema{"type": "object", "additionalProperties": Schema{}},
-			Schema{"type": "null"},
-		}},
-		"reason": Schema{"type": "string"},
+		"mode":    Schema{"type": "string", "enum": []any{mode}},
+		"_meta":   true,
+		"message": Schema{"type": "string"},
 	}
-	required := []string{"threadId", "turnId", "serverName", "mode", "_meta", "message"}
+	required := []string{"message", "mode"}
 	switch mode {
 	case "form":
 		properties["requestedSchema"] = Schema{"$ref": "#/$defs/McpElicitationSchema"}
 		required = append(required, "requestedSchema")
 	case "openai/form":
-		properties["requestedSchema"] = Schema{}
+		properties["requestedSchema"] = true
 		required = append(required, "requestedSchema")
 	case "url":
 		properties["url"] = Schema{"type": "string"}
 		properties["elicitationId"] = Schema{"type": "string"}
-		required = append(required, "url", "elicitationId")
+		required = []string{"elicitationId", "message", "mode", "url"}
 	}
 	return Schema{
-		"type":                 "object",
-		"properties":           properties,
-		"required":             required,
-		"additionalProperties": false,
+		"type":       "object",
+		"properties": properties,
+		"required":   required,
+	}
+}
+
+func mcpServerElicitationRequestResponseSchema() Schema {
+	return Schema{
+		"type":  "object",
+		"title": "McpServerElicitationRequestResponse",
+		"properties": Schema{
+			"action": Schema{"$ref": "#/$defs/McpServerElicitationAction"},
+			"content": Schema{
+				"description": "Structured user input for accepted elicitations, mirroring RMCP `CreateElicitationResult`.\n\nThis is nullable because decline/cancel responses have no content.",
+			},
+			"_meta": Schema{
+				"description": "Optional client metadata for form-mode action handling.",
+			},
+		},
+		"required": []string{"action"},
 	}
 }
 

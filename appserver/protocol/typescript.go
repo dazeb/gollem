@@ -862,6 +862,18 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = schema
 		}
 		switch name {
+		case "McpServerElicitationRequestParams":
+			// The raw schema mirrors serde's open, flattened record. ts-rs instead
+			// emits the exact closed intersection and makes Option fields nullable.
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "threadId": string; "turnId": string | null; "serverName": string; } & ({ "mode": "form"; "_meta": JsonValue | null; "message": string; "requestedSchema": McpElicitationSchema; } | { "mode": "openai/form"; "_meta": JsonValue | null; "message": string; "requestedSchema": JsonValue; } | { "mode": "url"; "_meta": JsonValue | null; "message": string; "url": string; "elicitationId": string; })`,
+			}
+		case "McpServerElicitationRequestResponse":
+			// serde accepts omitted optional values, but ts-rs exposes their
+			// canonical nullable representation in the public TypeScript binding.
+			definition = Schema{
+				typeScriptRawTypeKeyword: `{ "action": McpServerElicitationAction; "content": JsonValue | null; "_meta": JsonValue | null; }`,
+			}
 		case "DynamicToolFunctionSpec", "DynamicToolNamespaceSpec":
 			schema, _ := typeScriptSchema(definition)
 			schema["x-gollem-typescript-ignore-additional-properties"] = true

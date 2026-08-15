@@ -73,15 +73,7 @@ export const mcpElicitationFormRequest = {
         "email",
         "enabled"
       ]
-    },
-    "requestId": "interaction-1",
-    "itemId": "item-tool-1",
-    "startedAtMs": 1783715400000,
-    "serverId": "repo",
-    "metadata": {
-      "source": "runtime"
-    },
-    "reason": "Choose access"
+    }
   }
 } satisfies BoundRequest<"mcpServer/elicitation/request">;
 export const mcpElicitationFormRequestParams = mcpElicitationFormRequest.params satisfies McpServerElicitationRequestParams;

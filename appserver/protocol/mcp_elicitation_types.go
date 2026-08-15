@@ -21,6 +21,15 @@ const (
 	McpServerElicitationModeURL        = "url"
 )
 
+func validMcpServerElicitationAction(action McpServerElicitationAction) bool {
+	switch action {
+	case McpServerElicitationAccept, McpServerElicitationDecline, McpServerElicitationCancel:
+		return true
+	default:
+		return false
+	}
+}
+
 type McpElicitationObjectType string
 
 const McpElicitationObject McpElicitationObjectType = "object"
@@ -163,13 +172,6 @@ type McpServerElicitationRequestParams struct {
 	RequestedSchema json.RawMessage `json:"requestedSchema,omitempty"`
 	URL             string          `json:"url,omitempty"`
 	ElicitationID   string          `json:"elicitationId,omitempty"`
-	RequestID       string          `json:"requestId,omitempty"`
-	ItemID          string          `json:"itemId,omitempty"`
-	StartedAtMS     int64           `json:"startedAtMs,omitempty"`
-	ServerID        string          `json:"serverId,omitempty"`
-	Schema          map[string]any  `json:"schema,omitempty"`
-	Metadata        map[string]any  `json:"metadata,omitempty"`
-	Reason          string          `json:"reason,omitempty"`
 }
 
 type McpServerElicitationRequestResponse struct {
@@ -271,47 +273,127 @@ func (s *McpElicitationSchema) UnmarshalJSON(data []byte) error {
 }
 
 func (p McpServerElicitationRequestParams) MarshalJSON() ([]byte, error) {
-	type wire McpServerElicitationRequestParams
 	if len(p.Meta) == 0 {
 		p.Meta = json.RawMessage("null")
 	}
-	if p.Mode == McpServerElicitationModeForm {
+	switch p.Mode {
+	case McpServerElicitationModeForm:
 		canonical, err := canonicalMcpElicitationSchema(p.RequestedSchema)
 		if err != nil {
 			return nil, err
 		}
 		p.RequestedSchema = canonical
+		return json.Marshal(struct {
+			ThreadID        string          `json:"threadId"`
+			TurnID          *string         `json:"turnId"`
+			ServerName      string          `json:"serverName"`
+			Mode            string          `json:"mode"`
+			Meta            json.RawMessage `json:"_meta"`
+			Message         string          `json:"message"`
+			RequestedSchema json.RawMessage `json:"requestedSchema"`
+		}{p.ThreadID, p.TurnID, p.ServerName, p.Mode, p.Meta, p.Message, p.RequestedSchema})
+	case McpServerElicitationModeOpenAIForm:
+		if err := requireMcpElicitationJSONValue(p.RequestedSchema, "requestedSchema"); err != nil {
+			return nil, err
+		}
+		return json.Marshal(struct {
+			ThreadID        string          `json:"threadId"`
+			TurnID          *string         `json:"turnId"`
+			ServerName      string          `json:"serverName"`
+			Mode            string          `json:"mode"`
+			Meta            json.RawMessage `json:"_meta"`
+			Message         string          `json:"message"`
+			RequestedSchema json.RawMessage `json:"requestedSchema"`
+		}{p.ThreadID, p.TurnID, p.ServerName, p.Mode, p.Meta, p.Message, p.RequestedSchema})
+	case McpServerElicitationModeURL:
+		return json.Marshal(struct {
+			ThreadID      string          `json:"threadId"`
+			TurnID        *string         `json:"turnId"`
+			ServerName    string          `json:"serverName"`
+			Mode          string          `json:"mode"`
+			Meta          json.RawMessage `json:"_meta"`
+			Message       string          `json:"message"`
+			URL           string          `json:"url"`
+			ElicitationID string          `json:"elicitationId"`
+		}{p.ThreadID, p.TurnID, p.ServerName, p.Mode, p.Meta, p.Message, p.URL, p.ElicitationID})
+	default:
+		return nil, fmt.Errorf("unknown MCP elicitation mode %q", p.Mode)
 	}
-	data, err := json.Marshal(wire(p))
-	if err != nil {
-		return nil, err
-	}
-	if err := validateMcpServerElicitationParamsJSON(data); err != nil {
-		return nil, err
-	}
-	return data, nil
 }
 
 func (p *McpServerElicitationRequestParams) UnmarshalJSON(data []byte) error {
 	if p == nil {
 		return errors.New("decode MCP elicitation request params into nil receiver")
 	}
-	if err := validateMcpServerElicitationParamsJSON(data); err != nil {
+	const objectName = "MCP elicitation request params"
+	payload, err := decodeRustSerdeObject(
+		data, objectName,
+		"threadId", "turnId", "serverName", "mode", "_meta", "message", "requestedSchema", "url", "elicitationId",
+	)
+	if err != nil {
 		return err
 	}
-	type wire McpServerElicitationRequestParams
-	var decoded wire
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	threadID, err := decodeRequiredThreadItemValue[string](payload, objectName, "threadId")
+	if err != nil {
 		return err
 	}
-	if decoded.Mode == McpServerElicitationModeForm {
-		canonical, err := canonicalMcpElicitationSchema(decoded.RequestedSchema)
+	turnID, err := decodeOptionalNullableConfigValue[string](payload, objectName, "turnId")
+	if err != nil {
+		return err
+	}
+	serverName, err := decodeRequiredThreadItemValue[string](payload, objectName, "serverName")
+	if err != nil {
+		return err
+	}
+	mode, err := decodeRequiredThreadItemValue[string](payload, objectName, "mode")
+	if err != nil {
+		return err
+	}
+	meta, err := decodeOptionalNullableConfigValue[json.RawMessage](payload, objectName, "_meta")
+	if err != nil {
+		return err
+	}
+	message, err := decodeRequiredThreadItemValue[string](payload, objectName, "message")
+	if err != nil {
+		return err
+	}
+	decoded := McpServerElicitationRequestParams{
+		ThreadID: threadID, TurnID: turnID, ServerName: serverName, Mode: mode, Message: message,
+	}
+	if meta != nil {
+		decoded.Meta = append(json.RawMessage(nil), (*meta)...)
+	}
+	switch mode {
+	case McpServerElicitationModeForm:
+		requestedSchema, err := requiredMcpElicitationJSONValue(payload, objectName, "requestedSchema")
+		if err != nil {
+			return err
+		}
+		canonical, err := canonicalMcpElicitationSchema(requestedSchema)
 		if err != nil {
 			return err
 		}
 		decoded.RequestedSchema = canonical
+	case McpServerElicitationModeOpenAIForm:
+		requestedSchema, err := requiredMcpElicitationJSONValue(payload, objectName, "requestedSchema")
+		if err != nil {
+			return err
+		}
+		decoded.RequestedSchema = requestedSchema
+	case McpServerElicitationModeURL:
+		url, err := decodeRequiredThreadItemValue[string](payload, objectName, "url")
+		if err != nil {
+			return err
+		}
+		elicitationID, err := decodeRequiredThreadItemValue[string](payload, objectName, "elicitationId")
+		if err != nil {
+			return err
+		}
+		decoded.URL, decoded.ElicitationID = url, elicitationID
+	default:
+		return fmt.Errorf("unknown MCP elicitation mode %q", mode)
 	}
-	*p = McpServerElicitationRequestParams(decoded)
+	*p = decoded
 	return nil
 }
 
@@ -337,15 +419,27 @@ func (r *McpServerElicitationRequestResponse) UnmarshalJSON(data []byte) error {
 	if r == nil {
 		return errors.New("decode MCP elicitation response into nil receiver")
 	}
-	if err := validateMcpServerElicitationResponseJSON(data); err != nil {
+	const objectName = "MCP elicitation response"
+	payload, err := decodeRustSerdeObject(data, objectName, "action", "content", "_meta")
+	if err != nil {
 		return err
 	}
-	type wire McpServerElicitationRequestResponse
-	var decoded wire
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	action, err := decodeRequiredThreadItemValue[McpServerElicitationAction](payload, objectName, "action")
+	if err != nil {
 		return err
 	}
-	*r = McpServerElicitationRequestResponse(decoded)
+	if !validMcpServerElicitationAction(action) {
+		return fmt.Errorf("unknown MCP elicitation action %q", action)
+	}
+	content, err := decodeOptionalMcpElicitationJSONValue(payload, objectName, "content")
+	if err != nil {
+		return err
+	}
+	meta, err := decodeOptionalMcpElicitationJSONValue(payload, objectName, "_meta")
+	if err != nil {
+		return err
+	}
+	*r = McpServerElicitationRequestResponse{Action: action, Content: content, Meta: meta}
 	return nil
 }
 
@@ -669,70 +763,41 @@ func validateMcpElicitationMultiSelectObject(object map[string]json.RawMessage) 
 	return requiredMcpElicitationStringArray(items, "enum")
 }
 
-func validateMcpServerElicitationParamsJSON(data []byte) error {
-	object, err := decodeMcpElicitationObject(data)
-	if err != nil {
-		return fmt.Errorf("decode MCP elicitation request params: %w", err)
+func requiredMcpElicitationJSONValue(
+	payload map[string]json.RawMessage,
+	objectName, fieldName string,
+) (json.RawMessage, error) {
+	raw, ok := payload[fieldName]
+	if !ok {
+		return nil, fmt.Errorf("%s requires %s", objectName, fieldName)
 	}
-	for _, name := range []string{"threadId", "serverName", "mode", "message"} {
-		if _, err := requiredMcpElicitationString(object, name); err != nil {
-			return err
-		}
+	if err := requireMcpElicitationJSONValue(raw, fieldName); err != nil {
+		return nil, err
 	}
-	if raw, ok := object["turnId"]; !ok || (!isMcpElicitationNull(raw) && !isMcpElicitationString(raw)) {
-		return errors.New("MCP elicitation request requires nullable turnId")
+	return append(json.RawMessage(nil), raw...), nil
+}
+
+func decodeOptionalMcpElicitationJSONValue(
+	payload map[string]json.RawMessage,
+	objectName, fieldName string,
+) (json.RawMessage, error) {
+	raw, ok := payload[fieldName]
+	if !ok || isMcpElicitationNull(raw) {
+		return nil, nil
 	}
-	if _, ok := object["_meta"]; !ok {
-		return errors.New("MCP elicitation request requires _meta")
+	if err := requireMcpElicitationJSONValue(raw, fieldName); err != nil {
+		return nil, fmt.Errorf("decode %s %s: %w", objectName, fieldName, err)
 	}
-	mode, _ := requiredMcpElicitationString(object, "mode")
-	common := []string{"threadId", "turnId", "serverName", "mode", "_meta", "message", "requestId", "itemId", "startedAtMs", "serverId", "schema", "metadata", "reason"}
-	switch mode {
-	case "form":
-		if err := allowOnlyMcpElicitationFields(object, append(common, "requestedSchema")...); err != nil {
-			return err
-		}
-		raw, ok := object["requestedSchema"]
-		if !ok {
-			return errors.New("form MCP elicitation request requires requestedSchema")
-		}
-		if err := validateMcpElicitationSchemaJSON(raw); err != nil {
-			return err
-		}
-	case "openai/form":
-		if err := allowOnlyMcpElicitationFields(object, append(common, "requestedSchema")...); err != nil {
-			return err
-		}
-		if _, ok := object["requestedSchema"]; !ok {
-			return errors.New("openai/form MCP elicitation request requires requestedSchema")
-		}
-	case "url":
-		if err := allowOnlyMcpElicitationFields(object, append(common, "url", "elicitationId")...); err != nil {
-			return err
-		}
-		for _, name := range []string{"url", "elicitationId"} {
-			if _, err := requiredMcpElicitationString(object, name); err != nil {
-				return err
-			}
-		}
-	default:
-		return fmt.Errorf("unknown MCP elicitation mode %q", mode)
+	return append(json.RawMessage(nil), raw...), nil
+}
+
+func requireMcpElicitationJSONValue(raw json.RawMessage, fieldName string) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return fmt.Errorf("MCP elicitation requires %s", fieldName)
 	}
-	for _, name := range []string{"requestId", "itemId", "serverId", "reason"} {
-		if err := optionalMcpElicitationString(object, name); err != nil {
-			return err
-		}
-	}
-	if raw, ok := object["startedAtMs"]; ok && (isMcpElicitationNull(raw) || !isMcpElicitationInteger(raw)) {
-		return errors.New("MCP elicitation startedAtMs must be an integer")
-	}
-	for _, name := range []string{"schema", "metadata"} {
-		if raw, ok := object[name]; ok && !isMcpElicitationNull(raw) {
-			var value map[string]any
-			if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-				return fmt.Errorf("MCP elicitation %s must be an object or null", name)
-			}
-		}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return fmt.Errorf("MCP elicitation %s must be valid JSON: %w", fieldName, err)
 	}
 	return nil
 }
@@ -914,14 +979,4 @@ func decodeMcpElicitationString(raw json.RawMessage) (string, error) {
 
 func isMcpElicitationNull(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
-}
-
-func isMcpElicitationString(raw json.RawMessage) bool {
-	_, err := decodeMcpElicitationString(raw)
-	return err == nil
-}
-
-func isMcpElicitationInteger(raw json.RawMessage) bool {
-	var value int64
-	return json.Unmarshal(raw, &value) == nil
 }
