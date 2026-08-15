@@ -1177,6 +1177,20 @@ func wireSchemaDefinitions() Schema {
 		"reason":         Schema{"type": []any{"string", "null"}},
 		"parsedCmd":      Schema{"type": "array", "items": Schema{"$ref": "#/$defs/ParsedCommand"}},
 	}, []string{"callId", "command", "conversationId", "cwd", "parsedCmd"})
+	schemas["PermissionsRequestApprovalParams"] = sourceApprovalParamsSchema("PermissionsRequestApprovalParams", Schema{
+		"cwd":           Schema{"$ref": "#/$defs/AbsolutePathBuf"},
+		"environmentId": Schema{"default": nil, "type": []any{"string", "null"}},
+		"itemId":        Schema{"type": "string"},
+		"permissions":   Schema{"$ref": "#/$defs/RequestPermissionProfile"},
+		"reason":        Schema{"type": []any{"string", "null"}},
+		"startedAtMs": Schema{
+			"description": "Unix timestamp (in milliseconds) when this approval request started.",
+			"format":      "int64",
+			"type":        "integer",
+		},
+		"threadId": Schema{"type": "string"},
+		"turnId":   Schema{"type": "string"},
+	}, []string{"cwd", "itemId", "permissions", "startedAtMs", "threadId", "turnId"})
 	schemas["NetworkApprovalContext"] = closedThreadSessionParamSchema(Schema{
 		"host":     Schema{"type": "string"},
 		"protocol": Schema{"$ref": "#/$defs/NetworkApprovalProtocol"},

@@ -328,14 +328,57 @@ func (p *PermissionsRequestApprovalParams) UnmarshalJSON(data []byte) error {
 	if p == nil {
 		return errors.New("cannot unmarshal PermissionsRequestApprovalParams into nil receiver")
 	}
-	type wire PermissionsRequestApprovalParams
-	var value wire
-	if err := decodePermissionObject(data, &value,
-		"threadId", "turnId", "itemId", "startedAtMs", "cwd", "permissions",
-	); err != nil {
+	const objectName = "permissions request approval params"
+	payload, err := decodeRustSerdeObject(
+		data,
+		objectName,
+		"threadId", "turnId", "itemId", "environmentId", "startedAtMs", "cwd", "reason", "permissions",
+	)
+	if err != nil {
 		return err
 	}
-	*p = PermissionsRequestApprovalParams(value)
+	threadID, err := decodeRequiredThreadItemValue[string](payload, objectName, "threadId")
+	if err != nil {
+		return err
+	}
+	turnID, err := decodeRequiredThreadItemValue[string](payload, objectName, "turnId")
+	if err != nil {
+		return err
+	}
+	itemID, err := decodeRequiredThreadItemValue[string](payload, objectName, "itemId")
+	if err != nil {
+		return err
+	}
+	environmentID, err := decodeOptionalNullableConfigValue[string](payload, objectName, "environmentId")
+	if err != nil {
+		return err
+	}
+	startedAtMS, err := decodeRequiredThreadItemValue[int64](payload, objectName, "startedAtMs")
+	if err != nil {
+		return err
+	}
+	cwd, err := decodeRequiredThreadItemValue[AbsolutePathBuf](payload, objectName, "cwd")
+	if err != nil {
+		return err
+	}
+	reason, err := decodeOptionalNullableConfigValue[string](payload, objectName, "reason")
+	if err != nil {
+		return err
+	}
+	permissions, err := decodeRequiredThreadItemValue[RequestPermissionProfile](payload, objectName, "permissions")
+	if err != nil {
+		return err
+	}
+	*p = PermissionsRequestApprovalParams{
+		ThreadID:      threadID,
+		TurnID:        turnID,
+		ItemID:        itemID,
+		EnvironmentID: environmentID,
+		StartedAtMS:   startedAtMS,
+		CWD:           cwd,
+		Reason:        reason,
+		Permissions:   permissions,
+	}
 	return nil
 }
 

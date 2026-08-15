@@ -68,6 +68,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "GuardianApprovalReview" || name == "ParsedCommand" ||
 			name == "ProcessExitedNotification" || name == "ProcessOutputDeltaNotification" ||
 			name == "ProcessTerminalSize" ||
+			name == "PermissionsRequestApprovalParams" ||
 			name == "RateLimitResetCredit" || name == "RateLimitResetCreditsSummary" ||
 			name == "RateLimitSnapshot" || name == "RateLimitWindow" ||
 			name == "SendAddCreditsNudgeEmailParams" || name == "SendAddCreditsNudgeEmailResponse" ||
@@ -168,6 +169,11 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{"threadId", "turnId", "itemId", "startedAtMs", "environmentId"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "FileChangeRequestApprovalParams":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "PermissionsRequestApprovalParams":
+				schema["required"] = []string{
+					"threadId", "turnId", "itemId", "environmentId", "startedAtMs", "cwd", "reason", "permissions",
+				}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ChatgptAuthTokensRefreshParams":
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
@@ -427,6 +433,19 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
 				"grantRoot": nullableStringSchema(),
 				"reason":    nullableStringSchema(),
+			})
+		}
+		if name == "PermissionsRequestApprovalParams" {
+			// The source schema expresses nullable Options as JSON Schema type
+			// arrays. Normalize only the renderer copy to the ts-rs union shape.
+			schema, _ := typeScriptSchema(definition)
+			schema["required"] = []string{
+				"threadId", "turnId", "itemId", "environmentId", "startedAtMs", "cwd", "reason", "permissions",
+			}
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"environmentId": nullableStringSchema(),
+				"reason":        nullableStringSchema(),
 			})
 		}
 		if name == "ChatgptAuthTokensRefreshParams" {
