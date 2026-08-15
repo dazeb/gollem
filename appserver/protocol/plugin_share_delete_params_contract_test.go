@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-func TestPluginShareCheckoutParamsSchemaIsExact(t *testing.T) {
-	got := JSONSchema()["$defs"].(Schema)["PluginShareCheckoutParams"]
+func TestPluginShareDeleteParamsSchemaIsExact(t *testing.T) {
+	got := JSONSchema()["$defs"].(Schema)["PluginShareDeleteParams"]
 	want := Schema{
 		"properties": Schema{
 			"remotePluginId": Schema{"type": "string"},
@@ -17,37 +17,37 @@ func TestPluginShareCheckoutParamsSchemaIsExact(t *testing.T) {
 		"type":     "object",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("PluginShareCheckoutParams = %#v, want %#v", got, want)
+		t.Fatalf("PluginShareDeleteParams = %#v, want %#v", got, want)
 	}
 }
 
-func TestPluginShareCheckoutParamsPreserveSerdeWireForms(t *testing.T) {
-	assertPluginShareCheckoutRoundTrip(
+func TestPluginShareDeleteParamsPreserveSerdeWireForms(t *testing.T) {
+	assertPluginShareDeleteRoundTrip(
 		t,
 		`{"remotePluginId":" plugin-1 ","future":true}`,
 		`{"remotePluginId":" plugin-1 "}`,
 	)
 }
 
-func TestPluginShareCheckoutParamsRejectMalformedWireForms(t *testing.T) {
+func TestPluginShareDeleteParamsRejectMalformedWireForms(t *testing.T) {
 	for _, input := range []string{
 		``, `null`, `[]`, `"value"`, `1`, `true`, `{`, `{}`,
 		`{"remotePluginId":null}`, `{"remotePluginId":1}`, `{"remotePluginId":true}`,
 		`{"remotePluginId":"one","remotePluginId":"two"}`, `{"remotePluginId":"one"} {}`,
 	} {
-		assertJSONRejects[PluginShareCheckoutParams](t, input)
+		assertJSONRejects[PluginShareDeleteParams](t, input)
 	}
 }
 
-func TestPluginShareCheckoutParamsRemainStandalone(t *testing.T) {
-	var nilParams *PluginShareCheckoutParams
+func TestPluginShareDeleteParamsRemainStandalone(t *testing.T) {
+	var nilParams *PluginShareDeleteParams
 	if err := nilParams.UnmarshalJSON([]byte(`{"remotePluginId":"plugin-1"}`)); err == nil {
-		t.Fatal("nil PluginShareCheckoutParams receiver succeeded")
+		t.Fatal("nil PluginShareDeleteParams receiver succeeded")
 	}
 	for _, binding := range WireTypeBindings() {
 		for _, name := range append(append([]string(nil), binding.Params...), binding.Result...) {
-			if name == "PluginShareCheckoutParams" {
-				t.Fatalf("PluginShareCheckoutParams unexpectedly bound to %s", binding.Method)
+			if name == "PluginShareDeleteParams" {
+				t.Fatalf("PluginShareDeleteParams unexpectedly bound to %s", binding.Method)
 			}
 		}
 	}
@@ -56,20 +56,20 @@ func TestPluginShareCheckoutParamsRemainStandalone(t *testing.T) {
 	}
 }
 
-func TestPluginShareCheckoutParamsTypeScriptIsExact(t *testing.T) {
+func TestPluginShareDeleteParamsTypeScriptIsExact(t *testing.T) {
 	generated, err := MarshalTypeScript()
 	if err != nil {
 		t.Fatalf("MarshalTypeScript: %v", err)
 	}
-	want := `export type PluginShareCheckoutParams = { remotePluginId: string, };`
+	want := `export type PluginShareDeleteParams = { remotePluginId: string, };`
 	if !strings.Contains(string(generated), want) {
 		t.Errorf("generated TypeScript missing %q", want)
 	}
 }
 
-func assertPluginShareCheckoutRoundTrip(t *testing.T, input, want string) {
+func assertPluginShareDeleteRoundTrip(t *testing.T, input, want string) {
 	t.Helper()
-	var value PluginShareCheckoutParams
+	var value PluginShareDeleteParams
 	if err := json.Unmarshal([]byte(input), &value); err != nil {
 		t.Fatalf("Unmarshal(%s): %v", input, err)
 	}

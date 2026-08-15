@@ -406,6 +406,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "PlanDeltaNotification", Type: reflect.TypeFor[PlanDeltaNotification]()},
 		{Name: "PlanType", Type: reflect.TypeFor[PlanType]()},
 		{Name: "PluginShareCheckoutParams", Type: reflect.TypeFor[PluginShareCheckoutParams]()},
+		{Name: "PluginShareDeleteParams", Type: reflect.TypeFor[PluginShareDeleteParams]()},
 		{Name: "PluginShareListParams", Type: reflect.TypeFor[PluginShareListParams]()},
 		{Name: "PluginSkillReadParams", Type: reflect.TypeFor[PluginSkillReadParams]()},
 		{Name: "PluginUninstallParams", Type: reflect.TypeFor[PluginUninstallParams]()},
@@ -1044,6 +1045,7 @@ func wireSchemaDefinitions() Schema {
 	schemas["Tool"] = mcpToolSchema()
 	schemas["McpServerMigration"] = mcpServerMigrationSchema()
 	schemas["PluginShareCheckoutParams"] = pluginShareCheckoutParamSchema()
+	schemas["PluginShareDeleteParams"] = pluginShareDeleteParamSchema()
 	schemas["PluginShareListParams"] = pluginShareListParamSchema()
 	schemas["PluginSkillReadParams"] = pluginSkillReadParamSchema()
 	schemas["PluginUninstallParams"] = pluginUninstallParamSchema()
