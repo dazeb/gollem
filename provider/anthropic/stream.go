@@ -15,22 +15,23 @@ import (
 
 // streamedResponse implements core.StreamedResponse for Anthropic SSE streams.
 type streamedResponse struct {
-	reader     *bufio.Reader
-	body       io.ReadCloser
-	model      string
-	usage      core.Usage
-	parts      []core.ModelResponsePart
-	stopReason core.FinishReason
-	done       bool
-	streamErr  error // non-nil if server sent an error event mid-stream
+	reader          *bufio.Reader
+	body            io.ReadCloser
+	model           string
+	usage           core.Usage
+	parts           []core.ModelResponsePart
+	stopReason      core.FinishReason
+	done            bool
+	streamErr       error // non-nil if server sent an error event mid-stream
+	instrumentation *requestInstrumentation
 
 	// State for tracking current blocks being built.
 	currentParts map[int]core.ModelResponsePart
 	argsBuffers  map[int]*strings.Builder // accumulate tool call JSON across deltas
 }
 
-func newStreamedResponse(body io.ReadCloser, model string) *streamedResponse {
-	return &streamedResponse{
+func newStreamedResponse(body io.ReadCloser, model string, instrumentation ...*requestInstrumentation) *streamedResponse {
+	stream := &streamedResponse{
 		reader:       bufio.NewReader(body),
 		body:         body,
 		model:        model,
@@ -38,6 +39,10 @@ func newStreamedResponse(body io.ReadCloser, model string) *streamedResponse {
 		argsBuffers:  make(map[int]*strings.Builder),
 		stopReason:   core.FinishReasonStop,
 	}
+	if len(instrumentation) > 0 {
+		stream.instrumentation = instrumentation[0]
+	}
+	return stream
 }
 
 // sseEvent represents a parsed Server-Sent Event.
@@ -65,6 +70,7 @@ func (s *streamedResponse) Next() (core.ModelResponseStreamEvent, error) {
 			s.failStream(normalizeStreamReadError(err))
 			return nil, s.streamErr
 		}
+		s.instrumentation.recordFirstEvent()
 
 		gollemEvent, ok := s.processSSEEvent(event)
 		if ok {
@@ -204,6 +210,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 
 		switch delta.Delta.Type {
 		case "text_delta":
+			s.instrumentation.recordFirstToken()
 			// Update current text part.
 			if tp, ok := s.currentParts[delta.Index].(core.TextPart); ok {
 				tp.Content += delta.Delta.Text
@@ -215,6 +222,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 			}, true
 
 		case "input_json_delta":
+			s.instrumentation.recordFirstToken()
 			if buf, ok := s.argsBuffers[delta.Index]; ok {
 				buf.WriteString(delta.Delta.PartialJSON)
 			}
@@ -224,6 +232,7 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 			}, true
 
 		case "thinking_delta":
+			s.instrumentation.recordFirstToken()
 			if tp, ok := s.currentParts[delta.Index].(core.ThinkingPart); ok {
 				tp.Content += delta.Delta.Thinking
 				s.currentParts[delta.Index] = tp
@@ -290,12 +299,18 @@ func (s *streamedResponse) processSSEEvent(event *sseEvent) (core.ModelResponseS
 	case "message_stop":
 		s.done = true
 		s.finalizeAll()
+		s.instrumentation.recordUsage(s.usage)
+		s.instrumentation.recordTerminal()
+		s.instrumentation.finish()
 		return nil, false
 
 	case "error":
 		s.done = true
 		s.finalizeAll()
-		s.streamErr = errors.New("anthropic stream error (" + classifyProviderErrorBody(event.Data) + ")")
+		classification := classifyProviderErrorBody(event.Data)
+		s.streamErr = errors.New("anthropic stream error (" + classification + ")")
+		s.instrumentation.recordTerminalFailure(classification)
+		s.instrumentation.finish()
 		return nil, false
 
 	default:
@@ -312,6 +327,8 @@ func (s *streamedResponse) failStream(err error) {
 	s.done = true
 	s.finalizeAll()
 	s.streamErr = err
+	s.instrumentation.recordError(err)
+	s.instrumentation.finish()
 }
 
 func (s *streamedResponse) finalizeAll() {
@@ -355,6 +372,7 @@ func (s *streamedResponse) Usage() core.Usage {
 
 // Close releases resources.
 func (s *streamedResponse) Close() error {
+	s.instrumentation.finish()
 	return s.body.Close()
 }
 
