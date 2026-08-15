@@ -894,6 +894,8 @@ path?: AbsolutePathBuf | null,
 name?: string | null, enabled: boolean, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
+		case "PluginSkillReadParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ remoteMarketplaceName: string, remotePluginId: string, skillName: string, }`}
 		case "PluginUninstallParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ pluginId: string, }`}
 		case "MarketplaceAddParams":

@@ -88,8 +88,8 @@ func TestThreadApproveGuardianDeniedActionContractsRemainStandalone(t *testing.T
 	if !ok || info.Surface != SurfaceClientRequest || info.State != MethodDeferredStub {
 		t.Fatalf("guardian denied action method = %#v, %v; want deferred client request", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 624 {
-		t.Fatalf("definition count = %d, want 624", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 625 {
+		t.Fatalf("definition count = %d, want 625", got)
 	}
 }
 

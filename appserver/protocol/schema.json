@@ -12110,6 +12110,25 @@
     "PluginShareListParams": {
       "type": "object"
     },
+    "PluginSkillReadParams": {
+      "properties": {
+        "remoteMarketplaceName": {
+          "type": "string"
+        },
+        "remotePluginId": {
+          "type": "string"
+        },
+        "skillName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "remoteMarketplaceName",
+        "remotePluginId",
+        "skillName"
+      ],
+      "type": "object"
+    },
     "PluginUninstallParams": {
       "properties": {
         "pluginId": {
