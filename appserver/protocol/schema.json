@@ -12107,6 +12107,17 @@
       ],
       "type": "string"
     },
+    "PluginShareCheckoutParams": {
+      "properties": {
+        "remotePluginId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "remotePluginId"
+      ],
+      "type": "object"
+    },
     "PluginShareListParams": {
       "type": "object"
     },
