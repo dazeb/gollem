@@ -168,6 +168,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "CommandExecutionAction", Type: reflect.TypeFor[CommandExecutionAction]()},
 		{Name: "CommandExecutionApprovalDecision", Type: reflect.TypeFor[CommandExecutionApprovalDecision]()},
 		{Name: "CommandExecutionApprovalRequestParams", Type: reflect.TypeFor[CommandExecutionApprovalRequestParams]()},
+		{Name: "CommandExecutionRequestApprovalParams", Type: reflect.TypeFor[CommandExecutionRequestApprovalParams]()},
 		{Name: "CommandExecutionRequestApprovalResponse", Type: reflect.TypeFor[CommandExecutionRequestApprovalResponse]()},
 		{Name: "CommandExecutionItem", Type: reflect.TypeFor[CommandExecutionItem]()},
 		{Name: "CommandExecutionItemCompletedNotificationParams", Type: reflect.TypeFor[CommandExecutionItemCompletedNotificationParams]()},
@@ -227,6 +228,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "FileChangeOutputDeltaNotification", Type: reflect.TypeFor[FileChangeOutputDeltaNotification]()},
 		{Name: "FileChangeApprovalRequestParams", Type: reflect.TypeFor[FileChangeApprovalRequestParams]()},
 		{Name: "FileChangeApprovalDecision", Type: reflect.TypeFor[FileChangeApprovalDecision]()},
+		{Name: "FileChangeRequestApprovalParams", Type: reflect.TypeFor[FileChangeRequestApprovalParams]()},
 		{Name: "FileChangeRequestApprovalResponse", Type: reflect.TypeFor[FileChangeRequestApprovalResponse]()},
 		{Name: "FileChangeArtifactEvidence", Type: reflect.TypeFor[FileChangeArtifactEvidence]()},
 		{Name: "FileChangeRevertParams", Type: reflect.TypeFor[FileChangeRevertParams]()},
@@ -723,6 +725,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	schemas["JSONRPCMessage"] = jsonRPCMessageSchema()
+	for name, schema := range serverRequestApprovalParamSchemas() {
+		schemas[name] = schema
+	}
 	schemas["AccountTokenUsageDailyBucket"] = closedThreadSessionParamSchema(Schema{
 		"startDate": Schema{"type": "string"},
 		"tokens":    Schema{"type": "integer", "format": "int64"},

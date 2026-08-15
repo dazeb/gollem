@@ -158,6 +158,11 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{
 					"conversationId", "callId", "fileChanges", "reason", "grantRoot",
 				}
+			case "CommandExecutionRequestApprovalParams":
+				schema["required"] = []string{"threadId", "turnId", "itemId", "startedAtMs", "environmentId"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "FileChangeRequestApprovalParams":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ChatgptAuthTokensRefreshResponse":
 				schema["required"] = []string{
 					"accessToken", "chatgptAccountId", "chatgptPlanType",
@@ -382,6 +387,37 @@ func MarshalTypeScript() ([]byte, error) {
 		if name == "AppsListResponse" {
 			definition = typeScriptDefinitionWithPropertySchemas(definition, Schema{
 				"nextCursor": nullableStringSchema(),
+			})
+		}
+		if name == "CommandExecutionRequestApprovalParams" {
+			schema, _ := typeScriptSchema(definition)
+			schema["required"] = []string{"threadId", "turnId", "itemId", "startedAtMs", "environmentId"}
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"approvalId": nullableStringSchema(),
+				"command":    nullableStringSchema(),
+				"commandActions": Schema{"anyOf": []any{
+					Schema{"type": "array", "items": Schema{"$ref": "#/$defs/CommandAction"}},
+					Schema{"type": "null"},
+				}},
+				"environmentId": nullableStringSchema(),
+				"proposedExecpolicyAmendment": Schema{"anyOf": []any{
+					Schema{"type": "array", "items": Schema{"type": "string"}},
+					Schema{"type": "null"},
+				}},
+				"proposedNetworkPolicyAmendments": Schema{"anyOf": []any{
+					Schema{"type": "array", "items": Schema{"$ref": "#/$defs/NetworkPolicyAmendment"}},
+					Schema{"type": "null"},
+				}},
+				"reason": nullableStringSchema(),
+			})
+		}
+		if name == "FileChangeRequestApprovalParams" {
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"grantRoot": nullableStringSchema(),
+				"reason":    nullableStringSchema(),
 			})
 		}
 		if name == "CommandExecParams" {
