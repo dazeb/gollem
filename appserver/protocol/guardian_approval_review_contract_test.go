@@ -139,8 +139,8 @@ func TestGuardianApprovalReviewRemainsStandalone(t *testing.T) {
 			t.Fatalf("GuardianApprovalReview unexpectedly bound to item %s", binding.Kind)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 623 {
-		t.Fatalf("definition count = %d, want 623", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 624 {
+		t.Fatalf("definition count = %d, want 624", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
