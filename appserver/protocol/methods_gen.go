@@ -90,6 +90,7 @@ var methodRegistry = []MethodInfo{
 	{Method: "thread/archive", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:494, typescript:ClientRequest.ts"},
 	{Method: "thread/backgroundTerminals/clean", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:593"},
 	{Method: "thread/backgroundTerminals/list", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:599"},
+	{Method: "thread/backgroundTerminals/read", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "gollem extension: bounded terminal transcript"},
 	{Method: "thread/backgroundTerminals/terminate", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "protocol crate:common.rs:605"},
 	{Method: "thread/compact/start", Surface: SurfaceClientRequest, State: MethodImplemented, Source: "json schema:ClientRequest, protocol crate:common.rs:577, typescript:ClientRequest.ts"},
 	{Method: "thread/decrement_elicitation", Surface: SurfaceClientRequest, State: MethodBlocked, Source: "protocol crate:common.rs:523"},

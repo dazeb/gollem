@@ -611,6 +611,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 		return s.handleThreadNameSet(ctx, params)
 	case "thread/backgroundTerminals/list":
 		return s.handleBackgroundTerminalsList(ctx, params)
+	case "thread/backgroundTerminals/read":
+		return s.handleBackgroundTerminalRead(ctx, params)
 	case "thread/backgroundTerminals/terminate":
 		return s.handleBackgroundTerminalTerminate(ctx, params)
 	case "thread/backgroundTerminals/clean":
@@ -1291,6 +1293,34 @@ func (s *Server) handleBackgroundTerminalsList(ctx context.Context, raw json.Raw
 		SnapshotID:          snapshotID,
 		NextCursor:          nextCursor,
 		ObservedAt:          operationalObservedAt(),
+	}, nil
+}
+
+func (s *Server) handleBackgroundTerminalRead(ctx context.Context, raw json.RawMessage) (any, *protocol.Error) {
+	processSvc, rpcErr := s.requireProcess("thread/backgroundTerminals/read")
+	if rpcErr != nil {
+		return nil, rpcErr
+	}
+	var params protocol.BackgroundTerminalReadParams
+	if err := decodeOperationalParams(raw, &params); err != nil {
+		return nil, invalidParams("invalid background terminal read params", err)
+	}
+	if strings.TrimSpace(params.ID) == "" {
+		return nil, invalidParams("id is required", nil)
+	}
+	snapshot, err := processSvc.Snapshot(ctx, params.ID)
+	if err != nil {
+		return nil, mapError("thread/backgroundTerminals/read", err)
+	}
+	stdout, stdoutTruncated := operationalTerminalOutput(snapshot.Stdout, snapshot.StdoutTruncated)
+	stderr, stderrTruncated := operationalTerminalOutput(snapshot.Stderr, snapshot.StderrTruncated)
+	return protocol.BackgroundTerminalReadResponse{
+		Terminal:        operationalBackgroundTerminal(processSvc.Root(), snapshot),
+		StdoutBase64:    stdout,
+		StderrBase64:    stderr,
+		StdoutTruncated: stdoutTruncated,
+		StderrTruncated: stderrTruncated,
+		ObservedAt:      operationalObservedAt(),
 	}, nil
 }
 

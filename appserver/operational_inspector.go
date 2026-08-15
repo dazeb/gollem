@@ -20,11 +20,12 @@ import (
 )
 
 const (
-	operationalListDefaultLimit = 32
-	operationalListMaxLimit     = 32
-	operationalCursorMaxBytes   = 2048
-	operationalCommandMaxBytes  = 256
-	operationalTerminateDomain  = "gollem.background-terminal.terminate.v1\x00"
+	operationalListDefaultLimit       = 32
+	operationalListMaxLimit           = 32
+	operationalCursorMaxBytes         = 2048
+	operationalCommandMaxBytes        = 256
+	operationalTerminalOutputMaxBytes = 64 * 1024
+	operationalTerminateDomain        = "gollem.background-terminal.terminate.v1\x00"
 )
 
 type operationalCursor struct {
@@ -208,6 +209,14 @@ func operationalBackgroundTerminal(root string, snapshot *toolprocess.Snapshot) 
 		result.EndedAt = &endedAt
 	}
 	return result
+}
+
+func operationalTerminalOutput(value []byte, truncated bool) (string, bool) {
+	if len(value) > operationalTerminalOutputMaxBytes {
+		value = value[len(value)-operationalTerminalOutputMaxBytes:]
+		truncated = true
+	}
+	return base64.StdEncoding.EncodeToString(value), truncated
 }
 
 func operationalCommandLabel(snapshot *toolprocess.Snapshot) (string, bool, bool) {

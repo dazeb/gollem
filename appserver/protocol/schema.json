@@ -1654,6 +1654,51 @@
       ],
       "type": "object"
     },
+    "BackgroundTerminalReadParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "BackgroundTerminalReadResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "stderrBase64": {
+          "type": "string"
+        },
+        "stderrTruncated": {
+          "type": "boolean"
+        },
+        "stdoutBase64": {
+          "type": "string"
+        },
+        "stdoutTruncated": {
+          "type": "boolean"
+        },
+        "terminal": {
+          "$ref": "#/$defs/BackgroundTerminal"
+        }
+      },
+      "required": [
+        "terminal",
+        "stdoutBase64",
+        "stderrBase64",
+        "stdoutTruncated",
+        "stderrTruncated",
+        "observedAt"
+      ],
+      "type": "object"
+    },
     "BackgroundTerminalStatus": {
       "enum": [
         "running",
@@ -15851,6 +15896,7 @@
             "thread/archive",
             "thread/backgroundTerminals/clean",
             "thread/backgroundTerminals/list",
+            "thread/backgroundTerminals/read",
             "thread/backgroundTerminals/terminate",
             "thread/compact/start",
             "thread/decrement_elicitation",
@@ -25966,6 +26012,12 @@
       "source": "protocol crate:common.rs:599"
     },
     {
+      "method": "thread/backgroundTerminals/read",
+      "surface": "client-request",
+      "state": "implemented",
+      "source": "gollem extension: bounded terminal transcript"
+    },
+    {
       "method": "thread/backgroundTerminals/terminate",
       "surface": "client-request",
       "state": "implemented",
@@ -27226,6 +27278,16 @@
       ],
       "result": [
         "BackgroundTerminalListResponse"
+      ]
+    },
+    {
+      "method": "thread/backgroundTerminals/read",
+      "surface": "client-request",
+      "params": [
+        "BackgroundTerminalReadParams"
+      ],
+      "result": [
+        "BackgroundTerminalReadResponse"
       ]
     },
     {

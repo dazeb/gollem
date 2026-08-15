@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"bytes"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -45,6 +46,21 @@ func TestOperationalBackgroundTerminalProjectionIsBoundedAndRedacted(t *testing.
 	if shell.Command != "shell command" || shell.WorkDir != "." || !shell.CommandRedacted ||
 		!shell.MetadataTruncated || shell.ExitCode != nil {
 		t.Fatalf("shell terminal projection = %#v", shell)
+	}
+}
+
+func TestOperationalTerminalOutputUsesBoundedTail(t *testing.T) {
+	value := append(bytes.Repeat([]byte("a"), operationalTerminalOutputMaxBytes), []byte("tail")...)
+	encoded, truncated := operationalTerminalOutput(value, false)
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode terminal output: %v", err)
+	}
+	if !truncated || len(decoded) != operationalTerminalOutputMaxBytes || !bytes.HasSuffix(decoded, []byte("tail")) {
+		t.Fatalf("bounded terminal output = %d bytes, truncated=%t, suffix=%q", len(decoded), truncated, decoded[len(decoded)-4:])
+	}
+	if encoded, truncated := operationalTerminalOutput([]byte{0, 0xff}, false); truncated || encoded != "AP8=" {
+		t.Fatalf("binary terminal output = %q, truncated=%t", encoded, truncated)
 	}
 }
 
