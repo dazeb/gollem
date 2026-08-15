@@ -446,6 +446,9 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ExternalAgentConfigImportItemTypeFailure", Type: reflect.TypeFor[ExternalAgentConfigImportItemTypeFailure]()},
 		{Name: "ExternalAgentConfigImportItemTypeSuccess", Type: reflect.TypeFor[ExternalAgentConfigImportItemTypeSuccess]()},
 		{Name: "ExternalAgentConfigImportTypeResult", Type: reflect.TypeFor[ExternalAgentConfigImportTypeResult]()},
+		{Name: "ExternalAgentConfigImportHistoryRecordSuccessParams", Type: reflect.TypeFor[ExternalAgentConfigImportHistoryRecordSuccessParams]()},
+		{Name: "ExternalAgentConfigImportHistoryRecordTypeResultParams", Type: reflect.TypeFor[ExternalAgentConfigImportHistoryRecordTypeResultParams]()},
+		{Name: "ExternalAgentConfigImportHistoryRecordParams", Type: reflect.TypeFor[ExternalAgentConfigImportHistoryRecordParams]()},
 		{Name: "ExternalAgentConfigImportHistory", Type: reflect.TypeFor[ExternalAgentConfigImportHistory]()},
 		{Name: "ExternalAgentConfigImportHistoriesReadResponse", Type: reflect.TypeFor[ExternalAgentConfigImportHistoriesReadResponse]()},
 		{Name: "ExternalAgentConfigImportProgressNotification", Type: reflect.TypeFor[ExternalAgentConfigImportProgressNotification]()},
@@ -1088,6 +1091,9 @@ func wireSchemaDefinitions() Schema {
 	schemas["ExternalAgentConfigImportItemTypeFailure"] = externalAgentConfigImportItemTypeFailureSchema()
 	schemas["ExternalAgentConfigImportItemTypeSuccess"] = externalAgentConfigImportItemTypeSuccessSchema()
 	schemas["ExternalAgentConfigImportTypeResult"] = externalAgentConfigImportTypeResultSchema()
+	schemas["ExternalAgentConfigImportHistoryRecordSuccessParams"] = externalAgentConfigImportHistoryRecordSuccessParamsSchema()
+	schemas["ExternalAgentConfigImportHistoryRecordTypeResultParams"] = externalAgentConfigImportHistoryRecordTypeResultParamsSchema()
+	schemas["ExternalAgentConfigImportHistoryRecordParams"] = externalAgentConfigImportHistoryRecordParamsSchema()
 	schemas["ExternalAgentConfigImportHistory"] = externalAgentConfigImportHistorySchema()
 	schemas["ExternalAgentConfigImportHistoriesReadResponse"] = externalAgentConfigImportHistoriesReadResponseSchema()
 	schemas["ExternalAgentConfigImportProgressNotification"] = externalAgentConfigImportNotificationSchema()

@@ -69,8 +69,8 @@ func TestMcpServerStatusDetailRemainsStandalone(t *testing.T) {
 			t.Fatalf("McpServerStatusDetail unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 632 {
-		t.Fatalf("definition count = %d, want 632", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 635 {
+		t.Fatalf("definition count = %d, want 635", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

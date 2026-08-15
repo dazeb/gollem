@@ -892,6 +892,24 @@ path?: AbsolutePathBuf | null,
  * Name-based selector.
  */
 name?: string | null, enabled: boolean, }`}
+		case "ExternalAgentConfigImportHistoryRecordSuccessParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ itemType: ExternalAgentConfigMigrationItemType, cwd: string | null, source: string | null, target: string | null,
+/**
+ * Original title for an imported session, when available.
+ */
+title?: string | null, }`}
+		case "ExternalAgentConfigImportHistoryRecordTypeResultParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ itemType: ExternalAgentConfigMigrationItemType, successes: Array<ExternalAgentConfigImportHistoryRecordSuccessParams>, failures: Array<ExternalAgentConfigImportItemTypeFailure>, }`}
+		case "ExternalAgentConfigImportHistoryRecordParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{
+/**
+ * Opaque provider identifier for the externally completed import.
+ */
+providerId: string,
+/**
+ * Completed results grouped by imported item type.
+ */
+itemTypeResults: Array<ExternalAgentConfigImportHistoryRecordTypeResultParams>, }`}
 		case "PluginShareCheckoutParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
 		case "PluginShareDeleteParams":
