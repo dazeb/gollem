@@ -105,8 +105,8 @@ func TestAppListUpdatedNotificationRemainsStandaloneAndDeferred(t *testing.T) {
 	if !ok || method.Surface != SurfaceServerNotification || method.State != MethodDeferredStub {
 		t.Fatalf("app/list/updated = %#v, %v; want deferred server notification", method, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 635 {
-		t.Fatalf("definition count = %d, want 635", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 640 {
+		t.Fatalf("definition count = %d, want 640", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

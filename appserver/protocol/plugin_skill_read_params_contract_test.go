@@ -59,8 +59,8 @@ func TestPluginSkillReadParamsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 635 {
-		t.Fatalf("definition count = %d, want 635", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 640 {
+		t.Fatalf("definition count = %d, want 640", got)
 	}
 }
 

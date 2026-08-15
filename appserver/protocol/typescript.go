@@ -912,6 +912,10 @@ providerId: string,
 itemTypeResults: Array<ExternalAgentConfigImportHistoryRecordTypeResultParams>, }`}
 		case "PluginShareCheckoutParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
+		case "PluginShareTarget":
+			definition = Schema{typeScriptRawTypeKeyword: `{ principalType: PluginSharePrincipalType, principalId: string, role: PluginShareTargetRole, }`}
+		case "PluginShareSaveParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ pluginPath: AbsolutePathBuf, remotePluginId?: string | null, discoverability?: PluginShareDiscoverability | null, shareTargets?: Array<PluginShareTarget> | null, }`}
 		case "PluginShareDeleteParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
 		case "PluginReadParams":
