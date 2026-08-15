@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2170,6 +2171,104 @@ func TestServerProcessHandlers(t *testing.T) {
 	}))
 	if resizeResp.Error == nil || resizeResp.Error.Code != protocol.CodeMethodUnavailable {
 		t.Fatalf("resize error = %#v, want unavailable", resizeResp.Error)
+	}
+}
+
+func TestServerProcessPTYHandlers(t *testing.T) {
+	ctx := context.Background()
+	processSvc, err := toolprocess.NewService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	server := readyServer(WithProcess(processSvc))
+	probe, err := processSvc.Start(ctx, toolprocess.StartRequest{Command: "true", Shell: true, PTY: true})
+	if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.ENOTTY) || errors.Is(err, syscall.ENOSYS) {
+		t.Skipf("PTY allocation is unavailable in this environment: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("start PTY probe: %v", err)
+	}
+	if _, err := waitProcessSnapshot(t, processSvc, probe.ID); err != nil {
+		t.Fatalf("wait PTY probe: %v", err)
+	}
+
+	startResp := server.HandleRequest(ctx, request("process/spawn", map[string]any{
+		"command": "cat",
+		"pty":     true,
+		"ptySize": map[string]any{"rows": 24, "cols": 80},
+	}))
+	if startResp.Error != nil {
+		t.Fatalf("process/spawn PTY error: %v", startResp.Error)
+	}
+	var started struct {
+		Process processSnapshotResult `json:"process"`
+	}
+	decodeResult(t, startResp, &started)
+	if !started.Process.PTY || started.Process.PTYSize == nil ||
+		*started.Process.PTYSize != (toolprocess.TerminalSize{Rows: 24, Cols: 80}) {
+		t.Fatalf("process/spawn PTY result = %#v", started.Process)
+	}
+
+	resizeResp := server.HandleRequest(ctx, request("process/resizePty", map[string]any{
+		"id": started.Process.ID, "cols": 120, "rows": 40,
+	}))
+	if resizeResp.Error != nil {
+		t.Fatalf("process/resizePty error: %v", resizeResp.Error)
+	}
+	writeResp := server.HandleRequest(ctx, request("process/writeStdin", map[string]any{
+		"id": started.Process.ID, "data": "hello\n",
+	}))
+	if writeResp.Error != nil {
+		t.Fatalf("process/writeStdin PTY error: %v", writeResp.Error)
+	}
+	if err := processSvc.Kill(ctx, started.Process.ID); err != nil {
+		t.Fatalf("Kill PTY process: %v", err)
+	}
+	completed, err := waitProcessSnapshot(t, processSvc, started.Process.ID)
+	if err != nil {
+		t.Fatalf("wait PTY process: %v", err)
+	}
+	if !completed.PTY || completed.PTYSize != (toolprocess.TerminalSize{Rows: 40, Cols: 120}) ||
+		!strings.Contains(string(completed.Stdout), "hello") || len(completed.Stderr) != 0 {
+		t.Fatalf("completed PTY process = %#v", completed)
+	}
+
+	nonPTYResizeResp := server.HandleRequest(ctx, request("process/resizePty", map[string]any{
+		"id": "missing", "cols": 0, "rows": 24,
+	}))
+	if nonPTYResizeResp.Error == nil || nonPTYResizeResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("invalid PTY resize response = %#v", nonPTYResizeResp)
+	}
+}
+
+func TestProcessSnapshotResultPTYWireShape(t *testing.T) {
+	nonPTY, err := json.Marshal(processSnapshotResultFrom(&toolprocess.Snapshot{ID: "pipe"}))
+	if err != nil {
+		t.Fatalf("marshal non-PTY snapshot: %v", err)
+	}
+	var nonPTYFields map[string]json.RawMessage
+	if err := json.Unmarshal(nonPTY, &nonPTYFields); err != nil {
+		t.Fatalf("unmarshal non-PTY snapshot: %v", err)
+	}
+	if _, ok := nonPTYFields["ptySize"]; ok {
+		t.Fatalf("non-PTY snapshot leaked ptySize: %s", nonPTY)
+	}
+
+	ptySnapshot, err := json.Marshal(processSnapshotResultFrom(&toolprocess.Snapshot{
+		ID: "terminal", PTY: true, PTYSize: toolprocess.TerminalSize{Rows: 24, Cols: 80},
+	}))
+	if err != nil {
+		t.Fatalf("marshal PTY snapshot: %v", err)
+	}
+	var ptyFields struct {
+		PTY     bool                     `json:"pty"`
+		PTYSize toolprocess.TerminalSize `json:"ptySize"`
+	}
+	if err := json.Unmarshal(ptySnapshot, &ptyFields); err != nil {
+		t.Fatalf("unmarshal PTY snapshot: %v", err)
+	}
+	if !ptyFields.PTY || ptyFields.PTYSize != (toolprocess.TerminalSize{Rows: 24, Cols: 80}) {
+		t.Fatalf("PTY snapshot wire result = %s", ptySnapshot)
 	}
 }
 

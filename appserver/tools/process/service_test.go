@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -346,6 +347,75 @@ func TestServiceApprovalAuditAndResize(t *testing.T) {
 	}
 }
 
+func TestServicePTYAcceptsInputAndResize(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	started, err := svc.Start(ctx, StartRequest{
+		Command: "read -r line; printf 'got:%s\\n' \"$line\"",
+		Shell:   true,
+		PTY:     true,
+		PTYSize: TerminalSize{Rows: 24, Cols: 80},
+	})
+	if ptyUnavailable(err) {
+		t.Skipf("PTY allocation is unavailable in this environment: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("Start PTY: %v", err)
+	}
+	if !started.PTY || started.PTYSize != (TerminalSize{Rows: 24, Cols: 80}) {
+		t.Fatalf("started PTY snapshot = %+v", started)
+	}
+	if err := svc.ResizePTY(ctx, started.ID, 120, 40); err != nil {
+		t.Fatalf("ResizePTY: %v", err)
+	}
+	if err := svc.WriteStdin(ctx, started.ID, []byte("hello\n")); err != nil {
+		t.Fatalf("WriteStdin: %v", err)
+	}
+	done, err := waitWithTimeout(t, svc, started.ID)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if !done.PTY || done.PTYSize != (TerminalSize{Rows: 40, Cols: 120}) {
+		t.Fatalf("completed PTY snapshot = %+v", done)
+	}
+	if !strings.Contains(string(done.Stdout), "got:hello") {
+		t.Fatalf("PTY stdout = %q", done.Stdout)
+	}
+	if len(done.Stderr) != 0 {
+		t.Fatalf("PTY stderr = %q, want empty because PTY output is multiplexed", done.Stderr)
+	}
+	if err := svc.CloseStdin(ctx, started.ID); !errors.Is(err, ErrProcessNotRunning) {
+		t.Fatalf("CloseStdin after completion = %v, want ErrProcessNotRunning", err)
+	}
+}
+
+func TestServicePTYRejectsCloseStdinAndInvalidSize(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	started, err := svc.Start(ctx, StartRequest{Command: "sleep 30", Shell: true, PTY: true})
+	if ptyUnavailable(err) {
+		t.Skipf("PTY allocation is unavailable in this environment: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("Start PTY: %v", err)
+	}
+	defer func() {
+		_ = svc.Kill(context.Background(), started.ID)
+		_, _ = waitWithTimeout(t, svc, started.ID)
+	}()
+	if err := svc.CloseStdin(ctx, started.ID); !errors.Is(err, ErrPTYCloseStdin) {
+		t.Fatalf("CloseStdin PTY error = %v, want ErrPTYCloseStdin", err)
+	}
+	if err := svc.ResizePTY(ctx, started.ID, 0, 24); !errors.Is(err, ErrInvalidPTYSize) {
+		t.Fatalf("ResizePTY zero size error = %v, want ErrInvalidPTYSize", err)
+	}
+	if _, err := svc.Start(ctx, StartRequest{
+		Command: "printf ignored", Shell: true, PTY: true, PTYSize: TerminalSize{Rows: 0, Cols: 80},
+	}); !errors.Is(err, ErrInvalidPTYSize) {
+		t.Fatalf("Start partial PTY size error = %v, want ErrInvalidPTYSize", err)
+	}
+}
+
 func TestServiceListAndOutputLimit(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)
@@ -423,4 +493,8 @@ func waitWithTimeout(t *testing.T, svc *Service, id string) (*Snapshot, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return svc.Wait(ctx, id)
+}
+
+func ptyUnavailable(err error) bool {
+	return errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.ENOTTY) || errors.Is(err, syscall.ENOSYS)
 }

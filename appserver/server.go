@@ -2072,6 +2072,11 @@ func (s *Server) handleProcessStart(ctx context.Context, method string, raw json
 		Env:            params.Env,
 		Timeout:        time.Duration(params.TimeoutMillis) * time.Millisecond,
 		MaxOutputBytes: params.MaxOutputBytes,
+		PTY:            params.PTY,
+		PTYSize: toolprocess.TerminalSize{
+			Rows: params.EffectivePTYRows(),
+			Cols: params.EffectivePTYCols(),
+		},
 	})
 	if err != nil {
 		if registeredCommandExec {
@@ -2487,6 +2492,9 @@ func mapError(method string, err error) *protocol.Error {
 		errors.Is(err, toolprocess.ErrProcessNotFound),
 		errors.Is(err, toolprocess.ErrProcessNotRunning),
 		errors.Is(err, toolprocess.ErrProcessAlreadyExists),
+		errors.Is(err, toolprocess.ErrInvalidPTYSize),
+		errors.Is(err, toolprocess.ErrPTYUnsupported),
+		errors.Is(err, toolprocess.ErrPTYCloseStdin),
 		errors.Is(err, store.ErrThreadNotFound),
 		errors.Is(err, store.ErrTurnNotFound),
 		errors.Is(err, store.ErrItemNotFound),
@@ -2547,12 +2555,19 @@ func processSnapshotResultFrom(snapshot *toolprocess.Snapshot) processSnapshotRe
 	}
 	stdout, stdoutEncoding := encodeContent(snapshot.Stdout)
 	stderr, stderrEncoding := encodeContent(snapshot.Stderr)
+	var ptySize *toolprocess.TerminalSize
+	if snapshot.PTY {
+		size := snapshot.PTYSize
+		ptySize = &size
+	}
 	return processSnapshotResult{
 		ID:             snapshot.ID,
 		PID:            snapshot.PID,
 		Command:        snapshot.Command,
 		Args:           snapshot.Args,
 		Shell:          snapshot.Shell,
+		PTY:            snapshot.PTY,
+		PTYSize:        ptySize,
 		WorkDir:        snapshot.WorkDir,
 		Status:         snapshot.Status,
 		ExitCode:       snapshot.ExitCode,
@@ -2712,15 +2727,31 @@ type fileContentResult struct {
 }
 
 type processStartParams struct {
-	ID             string            `json:"id,omitempty"`
-	ProcessID      string            `json:"processId,omitempty"`
-	Command        string            `json:"command"`
-	Args           []string          `json:"args,omitempty"`
-	Shell          *bool             `json:"shell,omitempty"`
-	WorkDir        string            `json:"workDir,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	TimeoutMillis  int64             `json:"timeoutMillis,omitempty"`
-	MaxOutputBytes int               `json:"maxOutputBytes,omitempty"`
+	ID             string                        `json:"id,omitempty"`
+	ProcessID      string                        `json:"processId,omitempty"`
+	Command        string                        `json:"command"`
+	Args           []string                      `json:"args,omitempty"`
+	Shell          *bool                         `json:"shell,omitempty"`
+	WorkDir        string                        `json:"workDir,omitempty"`
+	Env            map[string]string             `json:"env,omitempty"`
+	TimeoutMillis  int64                         `json:"timeoutMillis,omitempty"`
+	MaxOutputBytes int                           `json:"maxOutputBytes,omitempty"`
+	PTY            bool                          `json:"pty,omitempty"`
+	PTYSize        *protocol.ProcessTerminalSize `json:"ptySize,omitempty"`
+}
+
+func (p processStartParams) EffectivePTYRows() int {
+	if p.PTYSize == nil {
+		return 0
+	}
+	return int(p.PTYSize.Rows)
+}
+
+func (p processStartParams) EffectivePTYCols() int {
+	if p.PTYSize == nil {
+		return 0
+	}
+	return int(p.PTYSize.Cols)
 }
 
 type processIDParams struct {
@@ -2744,21 +2775,23 @@ type processResizeParams struct {
 }
 
 type processSnapshotResult struct {
-	ID             string             `json:"id"`
-	PID            int                `json:"pid"`
-	Command        string             `json:"command"`
-	Args           []string           `json:"args,omitempty"`
-	Shell          bool               `json:"shell"`
-	WorkDir        string             `json:"workDir"`
-	Status         toolprocess.Status `json:"status"`
-	ExitCode       int                `json:"exitCode"`
-	StartedAt      time.Time          `json:"startedAt"`
-	EndedAt        time.Time          `json:"endedAt,omitempty"`
-	Error          string             `json:"error,omitempty"`
-	Stdout         string             `json:"stdout,omitempty"`
-	StdoutEncoding string             `json:"stdoutEncoding,omitempty"`
-	Stderr         string             `json:"stderr,omitempty"`
-	StderrEncoding string             `json:"stderrEncoding,omitempty"`
+	ID             string                    `json:"id"`
+	PID            int                       `json:"pid"`
+	Command        string                    `json:"command"`
+	Args           []string                  `json:"args,omitempty"`
+	Shell          bool                      `json:"shell"`
+	PTY            bool                      `json:"pty"`
+	PTYSize        *toolprocess.TerminalSize `json:"ptySize,omitempty"`
+	WorkDir        string                    `json:"workDir"`
+	Status         toolprocess.Status        `json:"status"`
+	ExitCode       int                       `json:"exitCode"`
+	StartedAt      time.Time                 `json:"startedAt"`
+	EndedAt        time.Time                 `json:"endedAt,omitempty"`
+	Error          string                    `json:"error,omitempty"`
+	Stdout         string                    `json:"stdout,omitempty"`
+	StdoutEncoding string                    `json:"stdoutEncoding,omitempty"`
+	Stderr         string                    `json:"stderr,omitempty"`
+	StderrEncoding string                    `json:"stderrEncoding,omitempty"`
 }
 
 type gitDiffParams struct {
