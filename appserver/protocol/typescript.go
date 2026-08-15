@@ -882,6 +882,16 @@ cwds?: Array<string>,
 forceReload?: boolean, }`}
 		case "SkillsExtraRootsSetParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ extraRoots: Array<AbsolutePathBuf>, }`}
+		case "SkillsConfigWriteParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{
+/**
+ * Path-based selector.
+ */
+path?: AbsolutePathBuf | null,
+/**
+ * Name-based selector.
+ */
+name?: string | null, enabled: boolean, }`}
 		case "McpServerElicitationRequestParams":
 			// The raw schema mirrors serde's open, flattened record. ts-rs instead
 			// emits the exact closed intersection and makes Option fields nullable.

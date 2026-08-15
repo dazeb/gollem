@@ -14837,6 +14837,35 @@
       ],
       "type": "object"
     },
+    "SkillsConfigWriteParams": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Name-based selector.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AbsolutePathBuf"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Path-based selector."
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
     "SkillsExtraRootsSetParams": {
       "properties": {
         "extraRoots": {

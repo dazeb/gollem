@@ -194,8 +194,8 @@ func TestThreadResumePaginationContractsRemainStandalone(t *testing.T) {
 	if _, ok := resume["properties"].(Schema)["initialTurnsPage"]; ok {
 		t.Fatal("ThreadResumeParams unexpectedly gained initialTurnsPage")
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 618 {
-		t.Fatalf("definition count = %d, want 618", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 619 {
+		t.Fatalf("definition count = %d, want 619", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))

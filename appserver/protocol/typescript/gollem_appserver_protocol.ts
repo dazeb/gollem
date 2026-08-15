@@ -3429,6 +3429,16 @@ export type SkillMigration = {
   "name": string;
 };
 
+export type SkillsConfigWriteParams = {
+/**
+ * Path-based selector.
+ */
+path?: AbsolutePathBuf | null,
+/**
+ * Name-based selector.
+ */
+name?: string | null, enabled: boolean, };
+
 export type SkillsExtraRootsSetParams = { extraRoots: Array<AbsolutePathBuf>, };
 
 export type SkillsListParams = {
