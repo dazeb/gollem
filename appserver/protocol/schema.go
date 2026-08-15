@@ -928,6 +928,11 @@ func wireSchemaDefinitions() Schema {
 		string(AddCreditsNudgeEmailStatusCooldownActive),
 	)
 	schemas["AgentPath"] = Schema{"type": "string"}
+	schemas["AttestationGenerateParams"] = Schema{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"title":   "AttestationGenerateParams",
+		"type":    "object",
+	}
 	schemas["AmazonBedrockCredentialSource"] = stringEnumSchema(
 		string(AmazonBedrockCredentialSourceCodexManaged),
 		string(AmazonBedrockCredentialSourceAWSManaged),

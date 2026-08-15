@@ -48,6 +48,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "AppsListParams" || name == "AppsListResponse" ||
 			name == "AppToolConfig" ||
 			name == "ApplyPatchApprovalParams" ||
+			name == "AttestationGenerateParams" ||
 			name == "ChatgptAuthTokensRefreshResponse" ||
 			name == "ConsumeAccountRateLimitResetCreditParams" ||
 			name == "ConsumeAccountRateLimitResetCreditResponse" || name == "CreditsSnapshot" ||
@@ -158,6 +159,10 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{
 					"conversationId", "callId", "fileChanges", "reason", "grantRoot",
 				}
+			case "AttestationGenerateParams":
+				// The source JSON Schema is open for serde compatibility while ts-rs
+				// exports the exact empty Rust record.
+				schema["additionalProperties"] = false
 			case "CommandExecutionRequestApprovalParams":
 				schema["required"] = []string{"threadId", "turnId", "itemId", "startedAtMs", "environmentId"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
