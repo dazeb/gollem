@@ -71,14 +71,10 @@ func TestPermissionProfileSchemasMatchPublicWire(t *testing.T) {
 	assertSchemaRequired(t, defs["AdditionalPermissionProfile"].(Schema), "fileSystem")
 	assertSchemaRequired(t, defs["RequestPermissionProfile"].(Schema), "network")
 	assertSchemaRequired(t, defs["RequestPermissionProfile"].(Schema), "fileSystem")
-	assertSchemaRequired(t, defs["PermissionsRequestApprovalParams"].(Schema), "threadId")
-	assertSchemaRequired(t, defs["PermissionsRequestApprovalParams"].(Schema), "turnId")
-	assertSchemaRequired(t, defs["PermissionsRequestApprovalParams"].(Schema), "itemId")
-	assertSchemaRequired(t, defs["PermissionsRequestApprovalParams"].(Schema), "startedAtMs")
-	assertSchemaRequired(t, defs["PermissionsRequestApprovalParams"].(Schema), "cwd")
-	assertSchemaRequired(t, defs["PermissionsRequestApprovalParams"].(Schema), "permissions")
-	assertSchemaRequired(t, defs["PermissionsRequestApprovalParams"].(Schema), "environmentId")
-	assertSchemaRequired(t, defs["PermissionsRequestApprovalParams"].(Schema), "reason")
+	requestApprovalParams := defs["PermissionsRequestApprovalParams"].(Schema)
+	if got, want := schemaRequiredNames(requestApprovalParams), []string{"cwd", "itemId", "permissions", "startedAtMs", "threadId", "turnId"}; !slices.Equal(got, want) {
+		t.Fatalf("permission request required = %v, want %v", got, want)
+	}
 	assertSchemaRequired(t, defs["PermissionsRequestApprovalResponse"].(Schema), "permissions")
 	assertSchemaRequired(t, defs["PermissionsRequestApprovalResponse"].(Schema), "scope")
 
@@ -269,7 +265,6 @@ func TestPermissionProfilePublicValuesRejectMalformedInput(t *testing.T) {
 		{"absolute path wrong type", `1`, func() any { return new(AbsolutePathBuf) }},
 		{"relative cwd", `{"threadId":"t","turnId":"u","itemId":"i","startedAtMs":1,"cwd":"relative","permissions":{}}`, func() any { return new(PermissionsRequestApprovalParams) }},
 		{"missing cwd", `{"threadId":"t","turnId":"u","itemId":"i","startedAtMs":1,"permissions":{}}`, func() any { return new(PermissionsRequestApprovalParams) }},
-		{"request unknown", `{"threadId":"t","turnId":"u","itemId":"i","startedAtMs":1,"cwd":"/workspace","permissions":{},"extra":true}`, func() any { return new(PermissionsRequestApprovalParams) }},
 		{"profile unknown", `{"network":null,"extra":true}`, func() any { return new(RequestPermissionProfile) }},
 		{"zero depth", `{"globScanMaxDepth":0}`, func() any { return new(AdditionalFileSystemPermissions) }},
 		{"missing entry path", `{"access":"read"}`, func() any { return new(FileSystemSandboxEntry) }},

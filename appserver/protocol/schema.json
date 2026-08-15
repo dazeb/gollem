@@ -12018,19 +12018,16 @@
       "type": "object"
     },
     "PermissionsRequestApprovalParams": {
-      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "cwd": {
           "$ref": "#/$defs/AbsolutePathBuf"
         },
         "environmentId": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "default": null,
+          "type": [
+            "string",
+            "null"
           ]
         },
         "itemId": {
@@ -12040,16 +12037,14 @@
           "$ref": "#/$defs/RequestPermissionProfile"
         },
         "reason": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "startedAtMs": {
+          "description": "Unix timestamp (in milliseconds) when this approval request started.",
+          "format": "int64",
           "type": "integer"
         },
         "threadId": {
@@ -12060,15 +12055,14 @@
         }
       },
       "required": [
-        "threadId",
-        "turnId",
-        "itemId",
-        "environmentId",
-        "startedAtMs",
         "cwd",
-        "reason",
-        "permissions"
+        "itemId",
+        "permissions",
+        "startedAtMs",
+        "threadId",
+        "turnId"
       ],
+      "title": "PermissionsRequestApprovalParams",
       "type": "object"
     },
     "PermissionsRequestApprovalResponse": {
