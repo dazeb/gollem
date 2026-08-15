@@ -127,6 +127,8 @@ func wireSchemaDefinitions() Schema {
 		{Name: "AppToolApproval", Type: reflect.TypeFor[AppToolApproval]()},
 		{Name: "AppToolConfig", Type: reflect.TypeFor[AppToolConfig]()},
 		{Name: "AppToolsConfig", Type: reflect.TypeFor[AppToolsConfig]()},
+		{Name: "AppsInstalledParams", Type: reflect.TypeFor[AppsInstalledParams]()},
+		{Name: "AppsReadParams", Type: reflect.TypeFor[AppsReadParams]()},
 		{Name: "AppsConfig", Type: reflect.TypeFor[AppsConfig]()},
 		{Name: "AppsDefaultConfig", Type: reflect.TypeFor[AppsDefaultConfig]()},
 		{Name: "AppsListParams", Type: reflect.TypeFor[AppsListParams]()},
@@ -861,6 +863,9 @@ func wireSchemaDefinitions() Schema {
 		},
 	}
 	schemas["AppToolsConfig"] = Schema{"type": "object"}
+	for name, schema := range appsDiscoveryParamSchemas() {
+		schemas[name] = schema
+	}
 	schemas["AppConfig"] = Schema{
 		"type": "object",
 		"properties": Schema{

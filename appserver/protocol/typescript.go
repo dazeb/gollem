@@ -862,6 +862,10 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = schema
 		}
 		switch name {
+		case "AppsInstalledParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ threadId?: string | null, forceRefresh?: boolean, }`}
+		case "AppsReadParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ appIds: Array<string>, threadId?: string | null, includeTools?: boolean, }`}
 		case "McpServerElicitationRequestParams":
 			// The raw schema mirrors serde's open, flattened record. ts-rs instead
 			// emits the exact closed intersection and makes Option fields nullable.
