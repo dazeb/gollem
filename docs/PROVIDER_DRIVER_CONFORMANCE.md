@@ -14,7 +14,7 @@ of behavior and must not enable a control solely on provider identity.
 | Function-tool request and normalized tool-call name, ID, and argument JSON | Proven | Proven | Proven | `provider/conformance` |
 | Streaming text and terminal usage | Proven | Proven | Proven | `provider/conformance` |
 | In-flight request cancellation | Proven | Proven | Proven | `provider/conformance` |
-| Structured output | Catalog-supported | Unsupported | Catalog-supported | Provider-specific tests; no common conformance claim yet |
+| Structured output | Proven native JSON-schema output | Unsupported | Proven schema-backed `final_result` tool output | `provider/conformance` runs native output mode through a typed agent and verifies the normalized result; fixtures assert OpenAI `response_format` and Anthropic's generated output tool schema |
 | Vision | Catalog-supported | Unsupported | Catalog-supported | Provider-specific tests; no common conformance claim yet |
 | Reasoning visibility | Proven where catalog-supported | Unsupported | Proven where catalog-supported | `provider/conformance` verifies native `ThinkingPart` start/delta events and final retention; local Chat Completions remains unsupported |
 | Prompt cache / Responses API | Catalog-supported where applicable | Unsupported | Catalog-supported where applicable | Provider-specific tests; no common conformance claim yet |

@@ -40,20 +40,21 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Name:                "native OpenAI",
 					Model:               openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
 					ReasoningModel:      openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-5")),
-					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
+					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   openAICancellationReady,
 					RequestTimeoutReady: openAITimeout.readyFor("gpt-4o"),
 					Expectations: conformance.Expectations{
-						ResponseText:      "openai response",
-						ToolName:          "conformance_echo",
-						ToolCallID:        "call_openai",
-						ToolArgumentsJSON: `{"value":"ok"}`,
-						StreamText:        "openai stream",
-						PartialText:       "openai partial",
-						DisconnectText:    "openai disconnect",
-						RetryText:         "openai retry",
-						StreamTimeoutText: "openai deadline",
-						ReasoningText:     "openai reasoning",
+						ResponseText:          "openai response",
+						ToolName:              "conformance_echo",
+						ToolCallID:            "call_openai",
+						ToolArgumentsJSON:     `{"value":"ok"}`,
+						StructuredOutputValue: "openai structured",
+						StreamText:            "openai stream",
+						PartialText:           "openai partial",
+						DisconnectText:        "openai disconnect",
+						RetryText:             "openai retry",
+						StreamTimeoutText:     "openai deadline",
+						ReasoningText:         "openai reasoning",
 					},
 				}, nil
 			},
@@ -97,20 +98,21 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Name:                "native Anthropic",
 					Model:               model,
 					ReasoningModel:      model,
-					Claims:              conformance.Claims{ToolCalls: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
+					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   anthropicCancellationReady,
 					RequestTimeoutReady: anthropicTimeout.readyFor(anthropic.ClaudeSonnet46),
 					Expectations: conformance.Expectations{
-						ResponseText:      "anthropic response",
-						ToolName:          "conformance_echo",
-						ToolCallID:        "call_anthropic",
-						ToolArgumentsJSON: `{"value":"ok"}`,
-						StreamText:        "anthropic stream",
-						PartialText:       "anthropic partial",
-						DisconnectText:    "anthropic disconnect",
-						RetryText:         "anthropic retry",
-						StreamTimeoutText: "anthropic deadline",
-						ReasoningText:     "anthropic reasoning",
+						ResponseText:          "anthropic response",
+						ToolName:              "conformance_echo",
+						ToolCallID:            "call_anthropic",
+						ToolArgumentsJSON:     `{"value":"ok"}`,
+						StructuredOutputValue: "anthropic structured",
+						StreamText:            "anthropic stream",
+						PartialText:           "anthropic partial",
+						DisconnectText:        "anthropic disconnect",
+						RetryText:             "anthropic retry",
+						StreamTimeoutText:     "anthropic deadline",
+						ReasoningText:         "anthropic reasoning",
 					},
 				}, nil
 			},
@@ -132,6 +134,14 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 
 func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	err := conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing structured-output fixture",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{StructuredOutput: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a structured-output claim without a typed expectation")
+	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
 		Name:   "missing tool fixture",
 		Model:  openai.New(openai.WithAPIKey("test-key")),
 		Claims: conformance.Claims{ToolCalls: true},
@@ -300,6 +310,24 @@ func TestVerifyMatchesTheExpectedToolCallAmongSameNamedCalls(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsStructuredOutputValueMismatch(t *testing.T) {
+	driver := conformance.Driver{
+		Name: "mismatched structured output",
+		Model: core.NewTestModel(
+			core.TextResponse(""),
+			core.TextResponse(`{"value":"other"}`),
+		),
+		Claims: conformance.Claims{StructuredOutput: true},
+		Expectations: conformance.Expectations{
+			StructuredOutputValue: "expected",
+		},
+	}
+	err := conformance.Verify(context.Background(), driver)
+	if err == nil || !strings.Contains(err.Error(), "structured output value") {
+		t.Fatalf("Verify structured-output mismatch error = %v, want typed value mismatch", err)
+	}
+}
+
 func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, retry *retryFixture, timeout *timeoutFixture) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -318,9 +346,10 @@ func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, r
 			t.Fatalf("read OpenAI request: %v", err)
 		}
 		var request struct {
-			Model  string          `json:"model"`
-			Stream bool            `json:"stream"`
-			Tools  json.RawMessage `json:"tools"`
+			Model          string          `json:"model"`
+			Stream         bool            `json:"stream"`
+			Tools          json.RawMessage `json:"tools"`
+			ResponseFormat json.RawMessage `json:"response_format"`
 		}
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatalf("decode OpenAI request: %v", err)
@@ -364,6 +393,12 @@ func openAIConformanceFixture(t *testing.T, cancellationReady chan<- struct{}, r
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprint(w, `{"id":"chatcmpl-retry","object":"chat.completion","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"openai retry"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+			return
+		}
+		if strings.Contains(string(body), "structured output conformance") {
+			assertOpenAIStructuredOutputFormat(t, request.ResponseFormat)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"id":"chatcmpl-structured","object":"chat.completion","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"{\"value\":\"openai structured\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
 			return
 		}
 		if request.Stream {
@@ -491,6 +526,12 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 			_, _ = fmt.Fprint(w, `{"id":"msg-retry","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"anthropic retry"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2}}`)
 			return
 		}
+		if strings.Contains(string(body), "structured output conformance") {
+			assertAnthropicStructuredOutputTool(t, request.Tools)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"id":"msg-structured","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"call_structured","name":"final_result","input":{"value":"anthropic structured"}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":2}}`)
+			return
+		}
 		if strings.Contains(string(body), "reasoning conformance") {
 			if !request.Stream {
 				t.Fatal("Anthropic reasoning request was not streaming")
@@ -555,6 +596,71 @@ data: {"type":"message_stop"}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"id":"msg-conformance","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"anthropic response"},{"type":"tool_use","id":"call_anthropic","name":"conformance_echo","input":{"value":"ok"}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":2}}`)
 	})
+}
+
+func assertOpenAIStructuredOutputFormat(t *testing.T, raw json.RawMessage) {
+	t.Helper()
+	var format struct {
+		Type       string          `json:"type"`
+		JSONSchema json.RawMessage `json:"json_schema"`
+	}
+	if err := json.Unmarshal(raw, &format); err != nil {
+		t.Fatalf("decode OpenAI response_format: %v", err)
+	}
+	if format.Type != "json_schema" {
+		t.Fatalf("OpenAI response_format type = %q, want json_schema", format.Type)
+	}
+	var schema struct {
+		Name   string          `json:"name"`
+		Schema json.RawMessage `json:"schema"`
+		Strict bool            `json:"strict"`
+	}
+	if err := json.Unmarshal(format.JSONSchema, &schema); err != nil {
+		t.Fatalf("decode OpenAI json_schema: %v", err)
+	}
+	if schema.Name != core.DefaultOutputToolName || !schema.Strict {
+		t.Fatalf("OpenAI json_schema = %#v, want strict %q schema", schema, core.DefaultOutputToolName)
+	}
+	assertStructuredOutputSchema(t, schema.Schema)
+}
+
+func assertAnthropicStructuredOutputTool(t *testing.T, raw json.RawMessage) {
+	t.Helper()
+	var tools []struct {
+		Name        string          `json:"name"`
+		InputSchema json.RawMessage `json:"input_schema"`
+	}
+	if err := json.Unmarshal(raw, &tools); err != nil {
+		t.Fatalf("decode Anthropic tools: %v", err)
+	}
+	for _, tool := range tools {
+		if tool.Name == core.DefaultOutputToolName {
+			assertStructuredOutputSchema(t, tool.InputSchema)
+			return
+		}
+	}
+	t.Fatalf("Anthropic structured-output request omitted %q tool: %s", core.DefaultOutputToolName, raw)
+}
+
+func assertStructuredOutputSchema(t *testing.T, raw json.RawMessage) {
+	t.Helper()
+	var schema struct {
+		Type       string                     `json:"type"`
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decode structured-output schema: %v", err)
+	}
+	if schema.Type != "object" || len(schema.Properties) != 1 || schema.Properties["value"] == nil || len(schema.Required) != 1 || schema.Required[0] != "value" {
+		t.Fatalf("unexpected structured-output schema: %s", raw)
+	}
+	var value struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(schema.Properties["value"], &value); err != nil || value.Type != "string" {
+		t.Fatalf("structured-output value schema = %s, want string", schema.Properties["value"])
+	}
 }
 
 func writeTruncatedSSE(w http.ResponseWriter, body string) {
