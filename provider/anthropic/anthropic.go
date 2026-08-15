@@ -145,6 +145,7 @@ type Provider struct {
 	maxTokens          int
 	disablePromptCache bool
 	disableToolSearch  bool
+	requestObserver    RequestObserver
 }
 
 // Option configures the Anthropic provider.
@@ -175,6 +176,16 @@ func WithBaseURL(url string) Option {
 func WithHTTPClient(c *http.Client) Option {
 	return func(p *Provider) {
 		p.httpClient = c
+	}
+}
+
+// WithRequestObserver installs a secret-safe per-request diagnostics callback.
+// It receives timing, bounded request shape, normalized usage, and sanitized
+// error information only; it never receives credentials, request content,
+// endpoints, headers, or raw provider error bodies.
+func WithRequestObserver(observer RequestObserver) Option {
+	return func(p *Provider) {
+		p.requestObserver = observer
 	}
 }
 
@@ -221,6 +232,9 @@ func New(opts ...Option) *Provider {
 	if p.apiKey == "" {
 		p.apiKey = os.Getenv("ANTHROPIC_API_KEY")
 	}
+	if p.requestObserver == nil && isTruthy(os.Getenv("ANTHROPIC_REQUEST_TRACE")) {
+		p.requestObserver = DefaultStderrRequestObserver()
+	}
 	return p
 }
 
@@ -231,54 +245,72 @@ func (p *Provider) ModelName() string {
 
 // Request sends messages to Anthropic and returns a complete response.
 func (p *Provider) Request(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (*core.ModelResponse, error) {
+	ri := newRequestInstrumentation(p.requestObserver, p.model)
+	defer ri.finish()
 	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, false, !p.disablePromptCache, p.disableToolSearch)
 	if err != nil {
+		ri.recordError(err)
 		return nil, fmt.Errorf("anthropic: failed to build request: %w", err)
 	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
+		ri.recordError(err)
 		return nil, fmt.Errorf("anthropic: failed to marshal request: %w", err)
 	}
+	ri.setRequestShape(len(body), len(req.System)+len(req.Messages))
 
-	resp, err := p.doRequest(ctx, body)
+	resp, err := p.doRequest(ctx, body, ri)
 	if err != nil {
+		ri.recordError(err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		ri.recordError(err)
 		return nil, fmt.Errorf("anthropic: failed to decode response: %w", err)
 	}
 
-	return parseResponse(&apiResp, p.model), nil
+	response := parseResponse(&apiResp, p.model)
+	ri.recordUsage(response.Usage)
+	ri.recordTerminal()
+	return response, nil
 }
 
 // RequestStream sends messages and returns a streaming response.
 func (p *Provider) RequestStream(ctx context.Context, messages []core.ModelMessage, settings *core.ModelSettings, params *core.ModelRequestParameters) (core.StreamedResponse, error) {
+	ri := newRequestInstrumentation(p.requestObserver, p.model)
 	req, err := buildRequest(messages, settings, params, p.model, p.maxTokens, true, !p.disablePromptCache, p.disableToolSearch)
 	if err != nil {
+		ri.recordError(err)
+		ri.finish()
 		return nil, fmt.Errorf("anthropic: failed to build request: %w", err)
 	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
+		ri.recordError(err)
+		ri.finish()
 		return nil, fmt.Errorf("anthropic: failed to marshal request: %w", err)
 	}
+	ri.setRequestShape(len(body), len(req.System)+len(req.Messages))
 
-	resp, err := p.doRequest(ctx, body) //nolint:bodyclose // Response body ownership transfers to streamedResponse.
+	resp, err := p.doRequest(ctx, body, ri) //nolint:bodyclose // Response body ownership transfers to streamedResponse.
 	if err != nil {
+		ri.recordError(err)
+		ri.finish()
 		return nil, err
 	}
 
-	return newStreamedResponse(resp.Body, p.model), nil
+	return newStreamedResponse(resp.Body, p.model, ri), nil
 }
 
 // doRequest sends a single HTTP request and returns the response or a typed
 // error. Retry logic is handled at the model level by modelutil.RetryModel,
 // which uses this error's RetryAfter field for backoff.
-func (p *Provider) doRequest(ctx context.Context, body []byte) (*http.Response, error) {
+func (p *Provider) doRequest(ctx context.Context, body []byte, ri *requestInstrumentation) (*http.Response, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+messagesEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: failed to create HTTP request: %w", err)
@@ -289,6 +321,7 @@ func (p *Provider) doRequest(ctx context.Context, body []byte) (*http.Response, 
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: HTTP request failed: %w", err)
 	}
+	ri.recordHeaders(resp.StatusCode)
 
 	if resp.StatusCode == http.StatusOK {
 		return resp, nil
@@ -296,6 +329,7 @@ func (p *Provider) doRequest(ctx context.Context, body []byte) (*http.Response, 
 
 	classification := readProviderErrorClassification(resp.Body)
 	resp.Body.Close()
+	ri.classifyHTTPResponse(resp.StatusCode, classification)
 
 	httpErr := sanitizedProviderHTTPError(resp.StatusCode, classification, p.model)
 
