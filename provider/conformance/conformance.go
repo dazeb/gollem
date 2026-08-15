@@ -24,6 +24,7 @@ type Claims struct {
 	ToolCalls           bool
 	StructuredOutput    bool
 	Vision              bool
+	CacheReadUsage      bool
 	Streaming           bool
 	Usage               bool
 	Cancellation        bool
@@ -40,7 +41,8 @@ type Claims struct {
 // produces. ToolName, ToolCallID, and ToolArgumentsJSON are required when
 // Claims.ToolCalls is true. StructuredOutputValue is required when
 // Claims.StructuredOutput is true. VisionText is required when Claims.Vision
-// is true. StreamText is required when
+// is true. CacheReadTokens is required when Claims.CacheReadUsage is true.
+// StreamText is required when
 // Claims.Streaming is true.
 type Expectations struct {
 	ResponseText          string
@@ -49,6 +51,7 @@ type Expectations struct {
 	ToolArgumentsJSON     string
 	StructuredOutputValue string
 	VisionText            string
+	CacheReadTokens       int
 	StreamText            string
 	PartialText           string
 	DisconnectText        string
@@ -92,6 +95,9 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if driver.Claims.Vision && strings.TrimSpace(driver.Expectations.VisionText) == "" {
 		return fmt.Errorf("provider conformance: %s vision fixture must expect a response", driver.Name)
+	}
+	if driver.Claims.CacheReadUsage && driver.Expectations.CacheReadTokens <= 0 {
+		return fmt.Errorf("provider conformance: %s cache-read fixture must expect positive cache-read tokens", driver.Name)
 	}
 	if driver.Claims.Streaming && strings.TrimSpace(driver.Expectations.StreamText) == "" {
 		return fmt.Errorf("provider conformance: %s streaming fixture must expect stream text", driver.Name)
@@ -144,6 +150,11 @@ func Verify(ctx context.Context, driver Driver) error {
 	}
 	if err := verifyResponse(driver, response, false); err != nil {
 		return err
+	}
+	if driver.Claims.CacheReadUsage {
+		if err := verifyCacheReadUsage(driver, response); err != nil {
+			return err
+		}
 	}
 	if driver.Claims.StructuredOutput {
 		if err := verifyStructuredOutput(ctx, driver); err != nil {
@@ -262,6 +273,21 @@ func verifyVision(ctx context.Context, driver Driver) error {
 	}
 	if got := response.TextContent(); got != driver.Expectations.VisionText {
 		return fmt.Errorf("provider conformance: %s vision text = %q, want %q", driver.Name, got, driver.Expectations.VisionText)
+	}
+	return nil
+}
+
+// verifyCacheReadUsage protects the provider-neutral accounting surface used
+// by cost tracking and quota reporting. It deliberately does not claim that
+// prompt-cache activation is portable across provider request APIs.
+func verifyCacheReadUsage(driver Driver, response *core.ModelResponse) error {
+	if got := response.Usage.CacheReadTokens; got != driver.Expectations.CacheReadTokens {
+		return fmt.Errorf(
+			"provider conformance: %s cache-read tokens = %d, want %d",
+			driver.Name,
+			got,
+			driver.Expectations.CacheReadTokens,
+		)
 	}
 	return nil
 }

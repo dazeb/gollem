@@ -40,7 +40,7 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Name:                "native OpenAI",
 					Model:               openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-4o")),
 					ReasoningModel:      openai.New(openai.WithAPIKey("test-openai-key"), openai.WithBaseURL(openAIServer.URL), openai.WithModel("gpt-5")),
-					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Vision: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
+					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Vision: true, CacheReadUsage: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   openAICancellationReady,
 					RequestTimeoutReady: openAITimeout.readyFor("gpt-4o"),
 					Expectations: conformance.Expectations{
@@ -50,6 +50,7 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 						ToolArgumentsJSON:     `{"value":"ok"}`,
 						StructuredOutputValue: "openai structured",
 						VisionText:            "openai vision",
+						CacheReadTokens:       2,
 						StreamText:            "openai stream",
 						PartialText:           "openai partial",
 						DisconnectText:        "openai disconnect",
@@ -99,7 +100,7 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 					Name:                "native Anthropic",
 					Model:               model,
 					ReasoningModel:      model,
-					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Vision: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
+					Claims:              conformance.Claims{ToolCalls: true, StructuredOutput: true, Vision: true, CacheReadUsage: true, Streaming: true, Usage: true, Cancellation: true, PartialStream: true, MalformedStream: true, DisconnectStream: true, Retryability: true, RequestTimeout: true, StreamTimeout: true, ReasoningVisibility: true},
 					CancellationReady:   anthropicCancellationReady,
 					RequestTimeoutReady: anthropicTimeout.readyFor(anthropic.ClaudeSonnet46),
 					Expectations: conformance.Expectations{
@@ -109,6 +110,7 @@ func TestDeterministicProviderDriverConformance(t *testing.T) {
 						ToolArgumentsJSON:     `{"value":"ok"}`,
 						StructuredOutputValue: "anthropic structured",
 						VisionText:            "anthropic vision",
+						CacheReadTokens:       2,
 						StreamText:            "anthropic stream",
 						PartialText:           "anthropic partial",
 						DisconnectText:        "anthropic disconnect",
@@ -150,6 +152,14 @@ func TestVerifyRejectsUnprovenClaims(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Verify accepted a vision claim without an expected response")
+	}
+	err = conformance.Verify(context.Background(), conformance.Driver{
+		Name:   "missing cache-read fixture",
+		Model:  openai.New(openai.WithAPIKey("test-key")),
+		Claims: conformance.Claims{CacheReadUsage: true},
+	})
+	if err == nil {
+		t.Fatal("Verify accepted a cache-read claim without expected tokens")
 	}
 	err = conformance.Verify(context.Background(), conformance.Driver{
 		Name:   "missing tool fixture",
@@ -433,7 +443,7 @@ data: [DONE]
 			t.Fatal("tool-capable request did not include tools")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"id":"chatcmpl-conformance","object":"chat.completion","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"openai response","tool_calls":[{"id":"call_openai","type":"function","function":{"name":"conformance_echo","arguments":"{\"value\":\"ok\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+		_, _ = fmt.Fprint(w, `{"id":"chatcmpl-conformance","object":"chat.completion","model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"openai response","tool_calls":[{"id":"call_openai","type":"function","function":{"name":"conformance_echo","arguments":"{\"value\":\"ok\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":2}}}`)
 	})
 }
 
@@ -616,7 +626,7 @@ data: {"type":"message_stop"}
 			t.Fatal("tool-capable request did not include tools")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"id":"msg-conformance","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"anthropic response"},{"type":"tool_use","id":"call_anthropic","name":"conformance_echo","input":{"value":"ok"}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":2}}`)
+		_, _ = fmt.Fprint(w, `{"id":"msg-conformance","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"anthropic response"},{"type":"tool_use","id":"call_anthropic","name":"conformance_echo","input":{"value":"ok"}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":2,"cache_read_input_tokens":2}}`)
 	})
 }
 

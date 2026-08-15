@@ -18,6 +18,7 @@ of behavior and must not enable a control solely on provider identity.
 | Vision image input | Proven | Unsupported | Proven | `provider/conformance` sends a deterministic PNG data URI through `core.ImagePart`, asserts each provider's native image wire format, and verifies the normalized response |
 | Reasoning visibility | Proven where catalog-supported | Unsupported | Proven where catalog-supported | `provider/conformance` verifies native `ThinkingPart` start/delta events and final retention; local Chat Completions remains unsupported |
 | Prompt cache / Responses API | Catalog-supported where applicable | Unsupported | Catalog-supported where applicable | Provider-specific tests; no common conformance claim yet |
+| Cache-read token accounting | Proven | Unsupported | Proven | `provider/conformance` verifies provider-reported cache reads normalize to `core.Usage.CacheReadTokens`; this is accounting evidence, not a portable prompt-cache activation control |
 | Malformed JSON stream event normalization | Proven | Proven | Proven | `provider/conformance` plus provider parser tests; returns `StreamProtocolError` without raw event data |
 | Abrupt EOF partial-stream result | Proven | Proven | Proven | `provider/conformance` plus provider parser tests; preserves partial response and returns `StreamIncompleteError` |
 | Read-error peer-disconnect classification | Proven | Proven | Proven | `provider/conformance` plus provider parser tests; returns source-free `StreamTransportError`, while context cancellation remains intact |
