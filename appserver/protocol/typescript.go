@@ -448,6 +448,31 @@ func MarshalTypeScript() ([]byte, error) {
 				"reason":        nullableStringSchema(),
 			})
 		}
+		if name == "ToolRequestUserInputParams" {
+			// The source schema expresses the deprecated optional timeout as a
+			// type array, while ts-rs exports a required nullable number.
+			schema, _ := typeScriptSchema(definition)
+			schema["required"] = []string{"threadId", "turnId", "itemId", "questions", "isBlocking", "autoResolutionMs"}
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"autoResolutionMs": nullableIntegerSchema(),
+			})
+		}
+		if name == "ToolRequestUserInputQuestion" {
+			// serde defaults these fields, while ts-rs requires their canonical
+			// serialized values. Preserve that distinction in the render copy.
+			schema, _ := typeScriptSchema(definition)
+			schema["required"] = []string{"id", "header", "question", "isOther", "isSecret", "options"}
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"options": nullableArrayRef("ToolRequestUserInputOption"),
+			})
+		}
+		if name == "ToolRequestUserInputOption" || name == "ToolRequestUserInputAnswer" || name == "ToolRequestUserInputResponse" {
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = schema
+		}
 		if name == "ChatgptAuthTokensRefreshParams" {
 			schema, _ := typeScriptSchema(definition)
 			schema["x-gollem-typescript-ignore-additional-properties"] = true

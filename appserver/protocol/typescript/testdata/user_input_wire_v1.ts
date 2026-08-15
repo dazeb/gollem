@@ -37,20 +37,8 @@ export const userInputRequest = {
         ]
       }
     ],
-    "autoResolutionMs": null,
-    "requestId": "interaction-1",
-    "startedAtMs": 1783715400000,
-    "prompt": "Choose a mode",
-    "placeholder": "safe",
-    "required": true,
-    "options": [
-      "safe",
-      "fast"
-    ],
-    "metadata": {
-      "source": "runtime"
-    },
-    "reason": "Choose a mode"
+    "isBlocking": true,
+    "autoResolutionMs": null
   }
 } satisfies BoundRequest<"item/tool/requestUserInput">;
 export const userInputRequestParams = userInputRequest.params satisfies ToolRequestUserInputParams;

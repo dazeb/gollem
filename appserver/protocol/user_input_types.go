@@ -1,15 +1,34 @@
 package protocol
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 )
 
 type ToolRequestUserInputOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description"`
+}
+
+func (o *ToolRequestUserInputOption) UnmarshalJSON(data []byte) error {
+	if o == nil {
+		return errors.New("decode tool request user input option into nil receiver")
+	}
+	const objectName = "tool request user input option"
+	payload, err := decodeRustSerdeObject(data, objectName, "label", "description")
+	if err != nil {
+		return err
+	}
+	label, err := decodeRequiredThreadItemValue[string](payload, objectName, "label")
+	if err != nil {
+		return err
+	}
+	description, err := decodeRequiredThreadItemValue[string](payload, objectName, "description")
+	if err != nil {
+		return err
+	}
+	*o = ToolRequestUserInputOption{Label: label, Description: description}
+	return nil
 }
 
 type ToolRequestUserInputQuestion struct {
@@ -21,22 +40,112 @@ type ToolRequestUserInputQuestion struct {
 	Options  []ToolRequestUserInputOption `json:"options"`
 }
 
-// ToolRequestUserInputParams is the public structured request. The trailing
-// fields preserve Gollem's v1 single-prompt request for existing clients.
+func (q *ToolRequestUserInputQuestion) UnmarshalJSON(data []byte) error {
+	if q == nil {
+		return errors.New("decode tool request user input question into nil receiver")
+	}
+	const objectName = "tool request user input question"
+	payload, err := decodeRustSerdeObject(data, objectName, "id", "header", "question", "isOther", "isSecret", "options")
+	if err != nil {
+		return err
+	}
+	id, err := decodeRequiredThreadItemValue[string](payload, objectName, "id")
+	if err != nil {
+		return err
+	}
+	header, err := decodeRequiredThreadItemValue[string](payload, objectName, "header")
+	if err != nil {
+		return err
+	}
+	question, err := decodeRequiredThreadItemValue[string](payload, objectName, "question")
+	if err != nil {
+		return err
+	}
+	isOther, err := decodeOptionalConfigBool(payload, objectName, "isOther")
+	if err != nil {
+		return err
+	}
+	isSecret, err := decodeOptionalConfigBool(payload, objectName, "isSecret")
+	if err != nil {
+		return err
+	}
+	options, err := decodeOptionalNullableConfigValue[[]ToolRequestUserInputOption](payload, objectName, "options")
+	if err != nil {
+		return err
+	}
+	*q = ToolRequestUserInputQuestion{
+		ID:       id,
+		Header:   header,
+		Question: question,
+		IsOther:  isOther,
+		IsSecret: isSecret,
+	}
+	if options != nil {
+		q.Options = *options
+	}
+	return nil
+}
+
+// ToolRequestUserInputParams is the public structured request.
 type ToolRequestUserInputParams struct {
 	ThreadID         string                         `json:"threadId"`
 	TurnID           string                         `json:"turnId"`
 	ItemID           string                         `json:"itemId"`
 	Questions        []ToolRequestUserInputQuestion `json:"questions" jsonschema:"nonnullable=true"`
+	IsBlocking       bool                           `json:"isBlocking"`
 	AutoResolutionMS *uint64                        `json:"autoResolutionMs"`
-	RequestID        string                         `json:"requestId,omitempty"`
-	StartedAtMS      int64                          `json:"startedAtMs,omitempty"`
-	Prompt           string                         `json:"prompt,omitempty"`
-	Placeholder      string                         `json:"placeholder,omitempty"`
-	Required         bool                           `json:"required,omitempty"`
-	Options          []string                       `json:"options,omitempty"`
-	Metadata         map[string]any                 `json:"metadata,omitempty"`
-	Reason           string                         `json:"reason,omitempty"`
+}
+
+func (p *ToolRequestUserInputParams) UnmarshalJSON(data []byte) error {
+	if p == nil {
+		return errors.New("decode tool request user input params into nil receiver")
+	}
+	const objectName = "tool request user input params"
+	payload, err := decodeRustSerdeObject(
+		data,
+		objectName,
+		"threadId", "turnId", "itemId", "questions", "isBlocking", "autoResolutionMs",
+	)
+	if err != nil {
+		return err
+	}
+	threadID, err := decodeRequiredThreadItemValue[string](payload, objectName, "threadId")
+	if err != nil {
+		return err
+	}
+	turnID, err := decodeRequiredThreadItemValue[string](payload, objectName, "turnId")
+	if err != nil {
+		return err
+	}
+	itemID, err := decodeRequiredThreadItemValue[string](payload, objectName, "itemId")
+	if err != nil {
+		return err
+	}
+	questions, err := decodeRequiredThreadItemValue[[]ToolRequestUserInputQuestion](payload, objectName, "questions")
+	if err != nil {
+		return err
+	}
+	isBlocking, err := decodeOptionalNullableConfigValue[bool](payload, objectName, "isBlocking")
+	if err != nil {
+		return err
+	}
+	autoResolutionMS, err := decodeOptionalNullableConfigValue[uint64](payload, objectName, "autoResolutionMs")
+	if err != nil {
+		return err
+	}
+	blocking := true
+	if isBlocking != nil {
+		blocking = *isBlocking
+	}
+	*p = ToolRequestUserInputParams{
+		ThreadID:         threadID,
+		TurnID:           turnID,
+		ItemID:           itemID,
+		Questions:        questions,
+		IsBlocking:       blocking,
+		AutoResolutionMS: autoResolutionMS,
+	}
+	return nil
 }
 
 type ToolRequestUserInputAnswer struct {
@@ -57,22 +166,14 @@ func (a *ToolRequestUserInputAnswer) UnmarshalJSON(data []byte) error {
 	if a == nil {
 		return errors.New("decode user input answer into nil receiver")
 	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(data, &payload); err != nil {
+	const objectName = "tool request user input answer"
+	payload, err := decodeRustSerdeObject(data, objectName, "answers")
+	if err != nil {
 		return err
 	}
-	for name := range payload {
-		if name != "answers" {
-			return fmt.Errorf("unknown user input answer field %q", name)
-		}
-	}
-	answersRaw := payload["answers"]
-	if len(answersRaw) == 0 || bytes.Equal(bytes.TrimSpace(answersRaw), []byte("null")) {
-		return errors.New("user input answer requires answers array")
-	}
-	var answers []string
-	if err := json.Unmarshal(answersRaw, &answers); err != nil {
-		return fmt.Errorf("decode user input answers: %w", err)
+	answers, err := decodeRequiredThreadItemValue[[]string](payload, objectName, "answers")
+	if err != nil {
+		return err
 	}
 	*a = ToolRequestUserInputAnswer{Answers: answers}
 	return nil
@@ -96,22 +197,14 @@ func (r *ToolRequestUserInputResponse) UnmarshalJSON(data []byte) error {
 	if r == nil {
 		return errors.New("decode user input response into nil receiver")
 	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(data, &payload); err != nil {
+	const objectName = "tool request user input response"
+	payload, err := decodeRustSerdeObject(data, objectName, "answers")
+	if err != nil {
 		return err
 	}
-	for name := range payload {
-		if name != "answers" {
-			return fmt.Errorf("unknown user input response field %q", name)
-		}
-	}
-	answersRaw := payload["answers"]
-	if len(answersRaw) == 0 || bytes.Equal(bytes.TrimSpace(answersRaw), []byte("null")) {
-		return errors.New("user input response requires answers object")
-	}
-	var answers map[string]ToolRequestUserInputAnswer
-	if err := json.Unmarshal(answersRaw, &answers); err != nil {
-		return fmt.Errorf("decode user input response answers: %w", err)
+	answers, err := decodeRequiredThreadItemValue[map[string]ToolRequestUserInputAnswer](payload, objectName, "answers")
+	if err != nil {
+		return err
 	}
 	*r = ToolRequestUserInputResponse{Answers: answers}
 	return nil
