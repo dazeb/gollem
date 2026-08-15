@@ -119,8 +119,8 @@ func TestAccountCreditNudgeValuesRemainStandaloneAndDeferred(t *testing.T) {
 	if !ok || method.Surface != SurfaceClientRequest || method.State != MethodDeferredStub {
 		t.Fatalf("account/sendAddCreditsNudgeEmail = %#v, %v; want deferred client request", method, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 627 {
-		t.Fatalf("definition count = %d, want 627", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 628 {
+		t.Fatalf("definition count = %d, want 628", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)

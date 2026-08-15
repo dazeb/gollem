@@ -107,8 +107,8 @@ func TestPermissionsRequestApprovalParamsRemainsStandalone(t *testing.T) {
 			t.Fatalf("PermissionsRequestApprovalParams unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(defs); got != 627 {
-		t.Fatalf("definition count = %d, want 627", got)
+	if got := len(defs); got != 628 {
+		t.Fatalf("definition count = %d, want 628", got)
 	}
 }
 

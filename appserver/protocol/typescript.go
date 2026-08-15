@@ -896,6 +896,8 @@ name?: string | null, enabled: boolean, }`}
 			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
 		case "PluginShareDeleteParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ remotePluginId: string, }`}
+		case "PluginReadParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ marketplacePath?: AbsolutePathBuf | null, remoteMarketplaceName?: string | null, pluginName: string, }`}
 		case "PluginShareListParams":
 			definition = Schema{typeScriptRawTypeKeyword: `Record<string, never>`}
 		case "PluginSkillReadParams":
