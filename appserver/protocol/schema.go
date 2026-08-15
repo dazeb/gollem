@@ -258,6 +258,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "GetAccountParams", Type: reflect.TypeFor[GetAccountParams]()},
 		{Name: "GetAccountRateLimitsResponse", Type: reflect.TypeFor[GetAccountRateLimitsResponse]()},
 		{Name: "GetAccountResponse", Type: reflect.TypeFor[GetAccountResponse]()},
+		{Name: "GetAccountTokenUsageParams", Type: reflect.TypeFor[GetAccountTokenUsageParams]()},
 		{Name: "GetAccountTokenUsageResponse", Type: reflect.TypeFor[GetAccountTokenUsageResponse]()},
 		{Name: "GetWorkspaceMessagesResponse", Type: reflect.TypeFor[GetWorkspaceMessagesResponse]()},
 		{Name: "FsReadDirectoryEntry", Type: reflect.TypeFor[FsReadDirectoryEntry]()},

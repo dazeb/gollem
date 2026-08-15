@@ -57,6 +57,12 @@ func TestAccountEnvelopeSchemasAreExact(t *testing.T) {
 		"GetAccountResponse": object(Schema{
 			"account": nullableRef("Account"), "requiresOpenaiAuth": Schema{"type": "boolean"},
 		}, "requiresOpenaiAuth"),
+		"GetAccountTokenUsageParams": object(Schema{
+			"threadId": Schema{
+				"description": "When present, read estimated usage for this thread instead of account-wide token activity.",
+				"type":        []any{"string", "null"},
+			},
+		}),
 		"GetAccountTokenUsageResponse": object(Schema{
 			"dailyUsageBuckets": Schema{
 				"items": Schema{"$ref": "#/$defs/AccountTokenUsageDailyBucket"},
@@ -149,6 +155,32 @@ func TestGetAccountParamsPreservesSerdeDefault(t *testing.T) {
 	}
 }
 
+func TestGetAccountTokenUsageParamsPreservesSerdeWireForms(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{`{}`, `{"threadId":null}`},
+		{`{"threadId":null}`, `{"threadId":null}`},
+		{`{"threadId":"thread-123"}`, `{"threadId":"thread-123"}`},
+		{`{"future":1,"future":2,"threadId":"thread-123"}`, `{"threadId":"thread-123"}`},
+	} {
+		var value GetAccountTokenUsageParams
+		if err := json.Unmarshal([]byte(tc.input), &value); err != nil {
+			t.Errorf("unmarshal %s: %v", tc.input, err)
+			continue
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil || string(encoded) != tc.want {
+			t.Errorf("round trip %s = %s, %v; want %s", tc.input, encoded, err, tc.want)
+		}
+	}
+	for _, input := range []string{
+		``, `null`, `[]`, `"value"`, `1`, `true`, `{`, `{"threadId":1}`,
+		`{"threadId":false}`, `{"threadId":{},"future":true}`,
+		`{"threadId":"one","threadId":"two"}`, `{} {}`, `{} x`,
+	} {
+		assertJSONRejects[GetAccountTokenUsageParams](t, input)
+	}
+}
+
 func TestAccountEnvelopeObjectsPreserveExactSerdeWireForms(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -215,6 +247,10 @@ func TestAccountEnvelopeNilReceiversAndInvalidMarshal(t *testing.T) {
 	checks := map[string]func() error{
 		"Account":          func() error { var v *Account; return v.UnmarshalJSON([]byte(`{"type":"apiKey"}`)) },
 		"GetAccountParams": func() error { var v *GetAccountParams; return v.UnmarshalJSON([]byte(`{}`)) },
+		"GetAccountTokenUsageParams": func() error {
+			var v *GetAccountTokenUsageParams
+			return v.UnmarshalJSON([]byte(`{}`))
+		},
 		"GetAccountResponse": func() error {
 			var v *GetAccountResponse
 			return v.UnmarshalJSON([]byte(`{"requiresOpenaiAuth":false}`))
@@ -243,7 +279,8 @@ func TestAccountEnvelopeNilReceiversAndInvalidMarshal(t *testing.T) {
 func TestAccountEnvelopeContractsRemainStandaloneAndDeferred(t *testing.T) {
 	names := []string{
 		"Account", "AccountUpdatedNotification", "GetAccountParams", "GetAccountResponse",
-		"GetAccountTokenUsageResponse", "SendAddCreditsNudgeEmailParams", "SendAddCreditsNudgeEmailResponse",
+		"GetAccountTokenUsageParams", "GetAccountTokenUsageResponse", "SendAddCreditsNudgeEmailParams",
+		"SendAddCreditsNudgeEmailResponse",
 	}
 	for _, binding := range WireTypeBindings() {
 		for _, name := range names {
@@ -268,8 +305,8 @@ func TestAccountEnvelopeContractsRemainStandaloneAndDeferred(t *testing.T) {
 			t.Errorf("%s = %#v, %v; want deferred %s", methodName, method, ok, surface)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 642 {
-		t.Fatalf("definition count = %d, want 642", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 643 {
+		t.Fatalf("definition count = %d, want 643", got)
 	}
 	if len(Methods()) != 226 || len(WireTypeBindings()) != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("counts = %d methods/%d method bindings/%d item bindings; want 226/80/5", len(Methods()), len(WireTypeBindings()), len(ItemPayloadBindings()))
@@ -287,6 +324,7 @@ func TestAccountEnvelopeTypeScriptIsExact(t *testing.T) {
 		"export type AccountUpdatedNotification = {\n  \"authMode\": AuthMode | null;\n  \"planType\": PlanType | null;\n};",
 		"export type GetAccountParams = {\n  \"refreshToken\"?: boolean;\n};",
 		"export type GetAccountResponse = {\n  \"account\": Account | null;\n  \"requiresOpenaiAuth\": boolean;\n};",
+		"export type GetAccountTokenUsageParams = {\n  \"threadId\"?: string | null;\n};",
 		"export type GetAccountTokenUsageResponse = {\n  \"dailyUsageBuckets\": Array<AccountTokenUsageDailyBucket> | null;\n  \"summary\": AccountTokenUsageSummary;\n};",
 		"export type SendAddCreditsNudgeEmailParams = {\n  \"creditType\": AddCreditsNudgeCreditType;\n};",
 		"export type SendAddCreditsNudgeEmailResponse = {\n  \"status\": AddCreditsNudgeEmailStatus;\n};",

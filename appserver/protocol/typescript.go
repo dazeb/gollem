@@ -53,7 +53,7 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "ConsumeAccountRateLimitResetCreditParams" ||
 			name == "ConsumeAccountRateLimitResetCreditResponse" || name == "CreditsSnapshot" ||
 			name == "GetAccountParams" || name == "GetAccountRateLimitsResponse" || name == "GetAccountResponse" ||
-			name == "GetAccountTokenUsageResponse" || name == "GetWorkspaceMessagesResponse" ||
+			name == "GetAccountTokenUsageParams" || name == "GetAccountTokenUsageResponse" || name == "GetWorkspaceMessagesResponse" ||
 			name == "MigrationDetails" ||
 			name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
@@ -200,6 +200,9 @@ func MarshalTypeScript() ([]byte, error) {
 			case "GetAccountResponse":
 				schema["required"] = []string{"account", "requiresOpenaiAuth"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "GetAccountTokenUsageParams":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["threadId"] = nullableStringSchema()
 			case "GetAccountTokenUsageResponse":
 				schema["required"] = []string{"dailyUsageBuckets", "summary"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
