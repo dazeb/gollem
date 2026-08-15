@@ -23,13 +23,16 @@ const (
 )
 
 // CacheEvent reports one cache lookup outcome for callers that need typed
-// telemetry.
+// telemetry. Provider-backed events may include normalized cache token usage;
+// response-cache events leave those fields zero.
 type CacheEvent struct {
-	Type     CacheEventType `json:"type"`
-	Key      string         `json:"key"`
-	Provider string         `json:"provider,omitempty"`
-	Model    string         `json:"model,omitempty"`
-	At       time.Time      `json:"at"`
+	Type             CacheEventType `json:"type"`
+	Key              string         `json:"key"`
+	Provider         string         `json:"provider,omitempty"`
+	Model            string         `json:"model,omitempty"`
+	CacheReadTokens  int            `json:"cacheReadTokens,omitempty"`
+	CacheWriteTokens int            `json:"cacheWriteTokens,omitempty"`
+	At               time.Time      `json:"at"`
 }
 
 // CachedModelOption configures a CachedModel wrapper.

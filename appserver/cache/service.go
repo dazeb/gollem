@@ -19,8 +19,8 @@ const (
 	defaultRecentEventLimit    = 200
 )
 
-// Service stores cache telemetry and runs deterministic normalization
-// benchmarks for app-server JSON-RPC handlers.
+// Service stores live provider-cache telemetry and runs deterministic
+// normalization benchmarks for app-server JSON-RPC handlers.
 type Service struct {
 	mu           sync.Mutex
 	total        counter
@@ -44,13 +44,16 @@ func NewService() *Service {
 
 // Event is the typed cache hit/miss telemetry shape surfaced by app-server.
 type Event struct {
-	Type      modelutil.CacheEventType `json:"type"`
-	Provider  string                   `json:"provider,omitempty"`
-	Model     string                   `json:"model,omitempty"`
-	Key       string                   `json:"key"`
-	Fixture   string                   `json:"fixture,omitempty"`
-	Iteration int                      `json:"iteration,omitempty"`
-	At        time.Time                `json:"at"`
+	Type             modelutil.CacheEventType `json:"type"`
+	Provider         string                   `json:"provider,omitempty"`
+	Model            string                   `json:"model,omitempty"`
+	Key              string                   `json:"key"`
+	Source           string                   `json:"source,omitempty"`
+	Fixture          string                   `json:"fixture,omitempty"`
+	Iteration        int                      `json:"iteration,omitempty"`
+	CacheReadTokens  int                      `json:"cacheReadTokens,omitempty"`
+	CacheWriteTokens int                      `json:"cacheWriteTokens,omitempty"`
+	At               time.Time                `json:"at"`
 }
 
 // StatsResponse is returned by cache/stats.
@@ -137,11 +140,37 @@ func (s *Service) RecordModelEvent(event modelutil.CacheEvent) {
 	}
 	provider := event.Provider
 	record := Event{
-		Type:     event.Type,
-		Provider: provider,
-		Model:    event.Model,
-		Key:      event.Key,
-		At:       event.At,
+		Type:             event.Type,
+		Provider:         provider,
+		Model:            event.Model,
+		Key:              event.Key,
+		Source:           "response-cache",
+		CacheReadTokens:  event.CacheReadTokens,
+		CacheWriteTokens: event.CacheWriteTokens,
+		At:               event.At,
+	}
+	if record.At.IsZero() {
+		record.At = time.Now().UTC()
+	}
+	s.recordEvents([]Event{record})
+}
+
+// RecordLiveProviderEvent records an actual completed provider request. Its
+// hit/miss outcome is based only on normalized provider usage: cached input
+// tokens prove a provider cache hit; an otherwise completed request is a miss.
+func (s *Service) RecordLiveProviderEvent(event modelutil.CacheEvent) {
+	if s == nil || event.Type == "" {
+		return
+	}
+	record := Event{
+		Type:             event.Type,
+		Provider:         event.Provider,
+		Model:            event.Model,
+		Key:              event.Key,
+		Source:           "provider-usage",
+		CacheReadTokens:  event.CacheReadTokens,
+		CacheWriteTokens: event.CacheWriteTokens,
+		At:               event.At,
 	}
 	if record.At.IsZero() {
 		record.At = time.Now().UTC()
@@ -285,6 +314,7 @@ func runProviderBenchmark(provider string, iterations int, target float64) (Prov
 					Provider:  provider,
 					Model:     fixture.model,
 					Key:       key,
+					Source:    "deterministic-fixture",
 					Fixture:   fixture.name,
 					Iteration: iteration,
 					At:        time.Now().UTC(),

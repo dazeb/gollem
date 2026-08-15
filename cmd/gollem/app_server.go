@@ -16,6 +16,7 @@ import (
 	"time"
 
 	appserver "github.com/fugue-labs/gollem/appserver"
+	appcache "github.com/fugue-labs/gollem/appserver/cache"
 	"github.com/fugue-labs/gollem/appserver/catalog"
 	appconfig "github.com/fugue-labs/gollem/appserver/config"
 	appmcp "github.com/fugue-labs/gollem/appserver/mcp"
@@ -332,9 +333,11 @@ func newCLIAppServerWithRuntimeFactoryAndSelectionValidation(
 	}
 	runtimeTools = append(runtimeTools, appserver.MCPRuntimeTools(mcpSvc, approvals)...)
 	runtimeTools = append(runtimeTools, appserver.InteractionRuntimeTools(interactionSvc)...)
+	cacheSvc := appcache.NewService()
 	runtimeSvc := appserver.NewRuntimeService(
 		appserver.WithRuntimeModelFactory(runtimeFactory),
 		appserver.WithRuntimeTools(runtimeTools...),
+		appserver.WithRuntimeCacheEventHandler(cacheSvc.RecordLiveProviderEvent),
 	)
 
 	version := gitCommit
@@ -366,6 +369,7 @@ func newCLIAppServerWithRuntimeFactoryAndSelectionValidation(
 		appserver.WithApprovalService(approvals),
 		appserver.WithInteractionService(interactionSvc),
 		appserver.WithRuntimeService(runtimeSvc),
+		appserver.WithCache(cacheSvc),
 		appserver.WithCatalog(catalogSvc),
 	}
 	if validateSelection {
