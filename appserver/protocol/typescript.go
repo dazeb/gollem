@@ -58,6 +58,11 @@ func MarshalTypeScript() ([]byte, error) {
 			name == "ThreadQueueChangedNotification" || name == "ThreadRevertedNotification" ||
 			name == "RemoteControlStatusChangedNotification" ||
 			name == "WindowsSandboxSetupCompletedNotification" || name == "WindowsWorldWritableWarningNotification" ||
+			name == "ThreadRealtimeAudioChunk" || name == "ThreadRealtimeClosedNotification" ||
+			name == "ThreadRealtimeErrorNotification" || name == "ThreadRealtimeItemAddedNotification" ||
+			name == "ThreadRealtimeOutputAudioDeltaNotification" || name == "ThreadRealtimeSdpNotification" ||
+			name == "ThreadRealtimeStartedNotification" || name == "ThreadRealtimeTranscriptDeltaNotification" ||
+			name == "ThreadRealtimeTranscriptDoneNotification" ||
 			name == "MigrationDetails" ||
 			name == "ExternalAgentConfigMigrationItem" ||
 			name == "ExternalAgentConfigImportItemTypeFailure" ||
@@ -226,6 +231,25 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["required"] = []string{"error", "mode", "success"}
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 				schema["properties"].(Schema)["error"] = nullableStringSchema()
+			case "ThreadRealtimeAudioChunk":
+				schema["required"] = []string{"data", "itemId", "numChannels", "sampleRate", "samplesPerChannel"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				properties := schema["properties"].(Schema)
+				properties["itemId"] = nullableStringSchema()
+				properties["samplesPerChannel"] = nullableIntegerSchema()
+			case "ThreadRealtimeClosedNotification":
+				schema["required"] = []string{"reason", "threadId"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["reason"] = nullableStringSchema()
+			case "ThreadRealtimeErrorNotification", "ThreadRealtimeOutputAudioDeltaNotification", "ThreadRealtimeSdpNotification", "ThreadRealtimeTranscriptDeltaNotification", "ThreadRealtimeTranscriptDoneNotification":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "ThreadRealtimeItemAddedNotification":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["item"] = Schema{"$ref": "#/$defs/JsonValue"}
+			case "ThreadRealtimeStartedNotification":
+				schema["required"] = []string{"realtimeSessionId", "threadId", "version"}
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
+				schema["properties"].(Schema)["realtimeSessionId"] = nullableStringSchema()
 			case "GetWorkspaceMessagesResponse":
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ExecCommandApprovalParams":

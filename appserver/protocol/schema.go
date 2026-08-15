@@ -714,6 +714,16 @@ func wireSchemaDefinitions() Schema {
 		{Name: "ThreadRevertedNotification", Type: reflect.TypeFor[ThreadRevertedNotification]()},
 		{Name: "WindowsSandboxSetupCompletedNotification", Type: reflect.TypeFor[WindowsSandboxSetupCompletedNotification]()},
 		{Name: "WindowsWorldWritableWarningNotification", Type: reflect.TypeFor[WindowsWorldWritableWarningNotification]()},
+		{Name: "RealtimeConversationVersion", Type: reflect.TypeFor[RealtimeConversationVersion]()},
+		{Name: "ThreadRealtimeAudioChunk", Type: reflect.TypeFor[ThreadRealtimeAudioChunk]()},
+		{Name: "ThreadRealtimeClosedNotification", Type: reflect.TypeFor[ThreadRealtimeClosedNotification]()},
+		{Name: "ThreadRealtimeErrorNotification", Type: reflect.TypeFor[ThreadRealtimeErrorNotification]()},
+		{Name: "ThreadRealtimeItemAddedNotification", Type: reflect.TypeFor[ThreadRealtimeItemAddedNotification]()},
+		{Name: "ThreadRealtimeOutputAudioDeltaNotification", Type: reflect.TypeFor[ThreadRealtimeOutputAudioDeltaNotification]()},
+		{Name: "ThreadRealtimeSdpNotification", Type: reflect.TypeFor[ThreadRealtimeSdpNotification]()},
+		{Name: "ThreadRealtimeStartedNotification", Type: reflect.TypeFor[ThreadRealtimeStartedNotification]()},
+		{Name: "ThreadRealtimeTranscriptDeltaNotification", Type: reflect.TypeFor[ThreadRealtimeTranscriptDeltaNotification]()},
+		{Name: "ThreadRealtimeTranscriptDoneNotification", Type: reflect.TypeFor[ThreadRealtimeTranscriptDoneNotification]()},
 		// Register exact public names after their aliases so nested schemas refer
 		// to the public names. JSON and TypeScript output remain key-sorted.
 		{Name: "ContextCompactedNotification", Type: reflect.TypeFor[ContextCompactedNotification]()},
@@ -1368,6 +1378,9 @@ func wireSchemaDefinitions() Schema {
 		schemas[name] = schema
 	}
 	for name, schema := range operationalNotificationLeafSchemas() {
+		schemas[name] = schema
+	}
+	for name, schema := range realtimeNotificationSchemas() {
 		schemas[name] = schema
 	}
 	for name, schema := range workspaceMessageSchemas() {

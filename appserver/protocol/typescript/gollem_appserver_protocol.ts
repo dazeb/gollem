@@ -3161,6 +3161,8 @@ export type RawResponseItemCompletedNotification = {
   "turnId": string;
 };
 
+export type RealtimeConversationVersion = "v1" | "v2" | "v3";
+
 export type ReasoningEffort = string;
 
 export type ReasoningEffortOption = {
@@ -4099,6 +4101,57 @@ export type ThreadReadResult = {
   "items"?: Array<TimelineItem>;
   "thread": ThreadRecord;
   "turns"?: Array<TurnRecord>;
+};
+
+export type ThreadRealtimeAudioChunk = {
+  "data": string;
+  "itemId": string | null;
+  "numChannels": number;
+  "sampleRate": number;
+  "samplesPerChannel": number | null;
+};
+
+export type ThreadRealtimeClosedNotification = {
+  "reason": string | null;
+  "threadId": string;
+};
+
+export type ThreadRealtimeErrorNotification = {
+  "message": string;
+  "threadId": string;
+};
+
+export type ThreadRealtimeItemAddedNotification = {
+  "item": JsonValue;
+  "threadId": string;
+};
+
+export type ThreadRealtimeOutputAudioDeltaNotification = {
+  "audio": ThreadRealtimeAudioChunk;
+  "threadId": string;
+};
+
+export type ThreadRealtimeSdpNotification = {
+  "sdp": string;
+  "threadId": string;
+};
+
+export type ThreadRealtimeStartedNotification = {
+  "realtimeSessionId": string | null;
+  "threadId": string;
+  "version": RealtimeConversationVersion;
+};
+
+export type ThreadRealtimeTranscriptDeltaNotification = {
+  "delta": string;
+  "role": string;
+  "threadId": string;
+};
+
+export type ThreadRealtimeTranscriptDoneNotification = {
+  "role": string;
+  "text": string;
+  "threadId": string;
 };
 
 export type ThreadRecord = {
