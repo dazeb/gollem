@@ -306,6 +306,7 @@ func wireSchemaDefinitions() Schema {
 		{Name: "LogoutAccountResponse", Type: reflect.TypeFor[LogoutAccountResponse]()},
 		{Name: "LocalShellAction", Type: reflect.TypeFor[LocalShellAction]()},
 		{Name: "LocalShellStatus", Type: reflect.TypeFor[LocalShellStatus]()},
+		{Name: "MarketplaceAddParams", Type: reflect.TypeFor[MarketplaceAddParams]()},
 		{Name: "MarketplaceRemoveParams", Type: reflect.TypeFor[MarketplaceRemoveParams]()},
 		{Name: "ManagedHooksRequirements", Type: reflect.TypeFor[ManagedHooksRequirements]()},
 		{Name: "MCPContent", Type: reflect.TypeFor[MCPContent]()},
@@ -1008,6 +1009,7 @@ func wireSchemaDefinitions() Schema {
 	)
 	schemas["LoginAccountParams"] = loginAccountParamsSchema()
 	schemas["LoginAccountResponse"] = loginAccountResponseSchema()
+	schemas["MarketplaceAddParams"] = marketplaceAddParamSchema()
 	schemas["MarketplaceRemoveParams"] = marketplaceRemoveParamSchema()
 	schemas["McpAuthStatus"] = stringEnumSchema(
 		string(McpAuthStatusUnsupported), string(McpAuthStatusNotLoggedIn),

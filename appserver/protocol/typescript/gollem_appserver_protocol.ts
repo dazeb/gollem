@@ -2358,6 +2358,8 @@ export type ManagedHooksRequirements = {
   "windowsManagedDir": string | null;
 };
 
+export type MarketplaceAddParams = { source: string, refName?: string | null, sparsePaths?: Array<string> | null, };
+
 export type MarketplaceRemoveParams = { marketplaceName: string, };
 
 export type McpAuthStatus = "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth";

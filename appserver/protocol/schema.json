@@ -9130,6 +9130,32 @@
       ],
       "type": "object"
     },
+    "MarketplaceAddParams": {
+      "properties": {
+        "refName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "sparsePaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
     "MarketplaceRemoveParams": {
       "properties": {
         "marketplaceName": {

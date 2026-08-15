@@ -40,8 +40,8 @@ func TestPluginShareListParamsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 621 {
-		t.Fatalf("definition count = %d, want 621", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 622 {
+		t.Fatalf("definition count = %d, want 622", got)
 	}
 }
 
