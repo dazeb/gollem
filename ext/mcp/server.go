@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -336,6 +337,7 @@ func (s *Server) cacheableLocked() CacheableResult {
 func (s *Server) AddTool(tool Tool, handler ServerToolHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	tool.InputSchema = completeToolInputSchema(tool.InputSchema)
 	for i := range s.tools {
 		if s.tools[i].definition.Name == tool.Name {
 			s.tools[i] = serverTool{definition: tool, handler: handler}
@@ -344,6 +346,131 @@ func (s *Server) AddTool(tool Tool, handler ServerToolHandler) {
 	}
 	s.tools = append(s.tools, serverTool{definition: tool, handler: handler})
 }
+
+// completeToolInputSchema fills in a missing root `type: "object"` on a tool's
+// raw JSON Schema. MCP requires the tool input schema to be an object schema,
+// and strict clients (e.g. the TypeScript SDK's ListToolsResultSchema) reject
+// a schema whose root omits `type`. Servers that register tools with bare
+// `{"properties":…}` schemas (sleepy.run) were rejected by such clients over
+// the stateless protocol; completing the schema at registration preserves
+// every existing key while satisfying them.
+//
+// Policy:
+//   - an empty or whitespace-only input, or the literal JSON null, becomes
+//     {"type":"object"} (a tool with no declared input takes no arguments),
+//     matching the client-side decodeToolSchema default for both shapes;
+//   - a root that already declares "type", that is not a JSON object (array,
+//     string, number, boolean), or that is malformed, is left as-is;
+//   - a bare {} (the common no-argument tool shape) completes like an empty
+//     schema;
+//   - a root whose keys are not ALL object-applicable or annotation keywords
+//     is left as-is: injecting "object" into a schema also governed by value
+//     keywords (enum, const, minimum, pattern, items, if/then/else, …) or
+//     combinators ($ref, oneOf, anyOf, allOf, not) could change its meaning
+//     or make it unsatisfiable, and such a root is already non-conformant as
+//     an MCP tool input schema, so the server author must fix it explicitly.
+//
+// Completion therefore applies only to schemas that are already purely
+// object-shaped: a JSON object root without "type" whose every key is an
+// object-applicable keyword or an annotation. Those roots describe object
+// arguments today; adding the root type changes nothing for object
+// instances — the only instances an MCP tool call carries.
+func completeToolInputSchema(raw json.RawMessage) json.RawMessage {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return json.RawMessage(`{"type":"object"}`)
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil || root == nil {
+		if root == nil && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return json.RawMessage(`{"type":"object"}`)
+		}
+		return raw // not an object schema; leave untouched
+	}
+	if _, ok := root["type"]; ok {
+		return raw
+	}
+	if !objectOnly(root) {
+		return raw
+	}
+	out := make(map[string]json.RawMessage, len(root)+1)
+	out["type"] = json.RawMessage(`"object"`)
+	for k, v := range root {
+		out[k] = v
+	}
+	// json.Marshal cannot fail here: every value was produced by a successful
+	// Unmarshal of the input, so each RawMessage is valid JSON by construction.
+	data, _ := json.Marshal(out)
+	return data
+}
+
+// objectApplicableKeywords lists the JSON Schema keywords that constrain only
+// object instances. Completing the root type of a schema made solely from
+// these (plus annotations) cannot change its meaning for objects.
+var objectApplicableKeywords = []string{
+	"additionalProperties",
+	"dependencies",
+	"dependentRequired",
+	"dependentSchemas",
+	"maxProperties",
+	"minProperties",
+	"patternProperties",
+	"properties",
+	"propertyNames",
+	"required",
+	"unevaluatedProperties",
+}
+
+// annotationKeywords are informational and place no instance constraints.
+var annotationKeywords = []string{
+	"$comment",
+	"$defs",
+	"$id",
+	"$schema",
+	"default",
+	"definitions",
+	"deprecated",
+	"description",
+	"examples",
+	"readOnly",
+	"title",
+	"writeOnly",
+}
+
+// objectOnly reports whether every root key is an object-applicable keyword
+// or an annotation, with an empty root counting as object-shaped. A bare {}
+// is the common no-argument tool shape and completes like an empty schema;
+// a schema made only of annotations but with no object keyword says nothing
+// specific about shape, so it passes through untouched.
+func objectOnly(root map[string]json.RawMessage) bool {
+	if len(root) == 0 {
+		return true
+	}
+	allowed := make(map[string]bool, len(objectApplicableKeywords)+len(annotationKeywords))
+	for _, key := range objectApplicableKeywords {
+		allowed[key] = true
+	}
+	for _, key := range annotationKeywords {
+		allowed[key] = true
+	}
+	hasObject := false
+	for key := range root {
+		if !allowed[key] {
+			return false
+		}
+		if _, ok := allowedObjectKeyword[key]; ok {
+			hasObject = true
+		}
+	}
+	return hasObject
+}
+
+var allowedObjectKeyword = func() map[string]bool {
+	m := make(map[string]bool, len(objectApplicableKeywords))
+	for _, key := range objectApplicableKeywords {
+		m[key] = true
+	}
+	return m
+}()
 
 // SetResources configures server resources and the optional read handler.
 func (s *Server) SetResources(resources []Resource, templates []ResourceTemplate, reader ResourceReadHandler) {

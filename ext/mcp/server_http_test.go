@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -354,4 +355,45 @@ func doHTTP(t *testing.T, req *http.Request) *jsonRPCResponse {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	return &out
+}
+
+func TestHTTPServerTransportToolSchemaRootTypeCompletion(t *testing.T) {
+	server := NewServer(WithServerInfo(ServerInfo{Name: "schema-test", Version: "1.0.0"}))
+	server.AddTool(Tool{
+		Name:        "sloppy",
+		Description: "schema whose root omits type",
+		InputSchema: json.RawMessage(`{"properties":{"run_id":{"type":"string"}},"required":["run_id"]}`),
+	}, func(_ context.Context, _ *RequestContext, _ map[string]any) (*ToolResult, error) {
+		return textToolResult("ok"), nil
+	})
+	transport := NewHTTPServerTransport(server)
+	httpServer := httptest.NewServer(transport)
+	defer httpServer.Close()
+
+	listResp := postJSON(t, httpServer.URL, jsonRPCMessage{
+		JSONRPC: "2.0",
+		ID:      rawJSONID(1),
+		Method:  "tools/list",
+		Params:  mustRawJSON(statelessParams(nil)),
+	})
+	if listResp.Error != nil {
+		t.Fatalf("tools/list error: %+v", listResp.Error)
+	}
+	var list struct {
+		Tools []struct {
+			InputSchema map[string]json.RawMessage `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(listResp.Result, &list); err != nil {
+		t.Fatalf("failed to parse tools/list result: %v", err)
+	}
+	if len(list.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(list.Tools))
+	}
+	if got := string(list.Tools[0].InputSchema["type"]); got != `"object"` {
+		t.Fatalf(`expected root schema type "object", got %s`, got)
+	}
+	if got := string(list.Tools[0].InputSchema["properties"]); !strings.Contains(got, "run_id") {
+		t.Fatalf("expected original properties preserved, got %s", got)
+	}
 }
