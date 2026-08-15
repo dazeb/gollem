@@ -1555,6 +1555,8 @@ export type ExternalAgentConfigMigrationItem = {
 
 export type ExternalAgentConfigMigrationItemType = "AGENTS_MD" | "CONFIG" | "SKILLS" | "PLUGINS" | "MCP_SERVER_CONFIG" | "SUBAGENTS" | "HOOKS" | "COMMANDS" | "SESSIONS";
 
+export type FeedbackUploadParams = { classification: string, reason?: string | null, threadId?: string | null, includeLogs?: boolean, extraLogFiles?: Array<string> | null, tags?: { [key in string]?: string } | null, };
+
 export type FileChange = {
   "content": string;
   "type": "add";

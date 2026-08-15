@@ -72,8 +72,8 @@ func TestTerminalInteractionNotificationRemainsStandalone(t *testing.T) {
 	if !ok || info.Surface != SurfaceServerNotification || info.State != MethodBlocked {
 		t.Fatalf("terminal interaction method = %#v, %v; want blocked server notification", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 614 {
-		t.Fatalf("definition count = %d, want 614", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 615 {
+		t.Fatalf("definition count = %d, want 615", got)
 	}
 	generated, err := MarshalTypeScript()
 	if err != nil {

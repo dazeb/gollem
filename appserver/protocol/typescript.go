@@ -866,6 +866,8 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = Schema{typeScriptRawTypeKeyword: `{ threadId?: string | null, forceRefresh?: boolean, }`}
 		case "AppsReadParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ appIds: Array<string>, threadId?: string | null, includeTools?: boolean, }`}
+		case "FeedbackUploadParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ classification: string, reason?: string | null, threadId?: string | null, includeLogs?: boolean, extraLogFiles?: Array<string> | null, tags?: { [key in string]?: string } | null, }`}
 		case "McpServerElicitationRequestParams":
 			// The raw schema mirrors serde's open, flattened record. ts-rs instead
 			// emits the exact closed intersection and makes Option fields nullable.
