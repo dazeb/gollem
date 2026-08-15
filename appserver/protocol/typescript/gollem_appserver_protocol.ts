@@ -1917,6 +1917,10 @@ export type GetAccountResponse = {
   "requiresOpenaiAuth": boolean;
 };
 
+export type GetAccountTokenUsageParams = {
+  "threadId"?: string | null;
+};
+
 export type GetAccountTokenUsageResponse = {
   "dailyUsageBuckets": Array<AccountTokenUsageDailyBucket> | null;
   "summary": AccountTokenUsageSummary;

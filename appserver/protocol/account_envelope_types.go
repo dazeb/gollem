@@ -146,6 +146,34 @@ func (r *GetAccountResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// GetAccountTokenUsageParams scopes a usage read to one thread when present.
+type GetAccountTokenUsageParams struct {
+	ThreadID *string `json:"threadId,omitempty"`
+}
+
+func (p GetAccountTokenUsageParams) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ThreadID *string `json:"threadId"`
+	}{ThreadID: p.ThreadID})
+}
+
+func (p *GetAccountTokenUsageParams) UnmarshalJSON(data []byte) error {
+	if p == nil {
+		return errors.New("decode get-account token-usage params into nil receiver")
+	}
+	const objectName = "get-account token-usage params"
+	payload, err := decodeRustSerdeObject(data, objectName, "threadId")
+	if err != nil {
+		return err
+	}
+	threadID, err := decodeOptionalNullableConfigValue[string](payload, objectName, "threadId")
+	if err != nil {
+		return err
+	}
+	*p = GetAccountTokenUsageParams{ThreadID: threadID}
+	return nil
+}
+
 // AccountUpdatedNotification is exact standalone account metadata.
 type AccountUpdatedNotification struct {
 	AuthMode *AuthMode `json:"authMode,omitempty"`
@@ -294,6 +322,12 @@ func accountEnvelopeSchemas() map[string]Schema {
 			"type": "boolean",
 		}}),
 		"GetAccountResponse": object(Schema{"account": nullableRef("Account"), "requiresOpenaiAuth": Schema{"type": "boolean"}}, "requiresOpenaiAuth"),
+		"GetAccountTokenUsageParams": object(Schema{
+			"threadId": Schema{
+				"description": "When present, read estimated usage for this thread instead of account-wide token activity.",
+				"type":        []any{"string", "null"},
+			},
+		}),
 		"GetAccountTokenUsageResponse": object(Schema{
 			"dailyUsageBuckets": Schema{"items": Schema{"$ref": "#/$defs/AccountTokenUsageDailyBucket"}, "type": []any{"array", "null"}},
 			"summary":           Schema{"$ref": "#/$defs/AccountTokenUsageSummary"},
@@ -309,6 +343,8 @@ var (
 	_ json.Unmarshaler = (*GetAccountParams)(nil)
 	_ json.Marshaler   = GetAccountResponse{}
 	_ json.Unmarshaler = (*GetAccountResponse)(nil)
+	_ json.Marshaler   = GetAccountTokenUsageParams{}
+	_ json.Unmarshaler = (*GetAccountTokenUsageParams)(nil)
 	_ json.Marshaler   = AccountUpdatedNotification{}
 	_ json.Unmarshaler = (*AccountUpdatedNotification)(nil)
 	_ json.Marshaler   = GetAccountTokenUsageResponse{}
