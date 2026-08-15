@@ -3004,7 +3004,17 @@ export type PluginShareCheckoutParams = { remotePluginId: string, };
 
 export type PluginShareDeleteParams = { remotePluginId: string, };
 
+export type PluginShareDiscoverability = "LISTED" | "UNLISTED" | "PRIVATE";
+
 export type PluginShareListParams = Record<string, never>;
+
+export type PluginSharePrincipalType = "user" | "group" | "workspace";
+
+export type PluginShareSaveParams = { pluginPath: AbsolutePathBuf, remotePluginId?: string | null, discoverability?: PluginShareDiscoverability | null, shareTargets?: Array<PluginShareTarget> | null, };
+
+export type PluginShareTarget = { principalType: PluginSharePrincipalType, principalId: string, role: PluginShareTargetRole, };
+
+export type PluginShareTargetRole = "reader" | "editor";
 
 export type PluginSkillReadParams = { remoteMarketplaceName: string, remotePluginId: string, skillName: string, };
 
