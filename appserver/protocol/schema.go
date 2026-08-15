@@ -115,6 +115,8 @@ func wireSchemaDefinitionTypes() []wireSchemaDefinition {
 		{Name: "BackgroundTerminal", Type: reflect.TypeFor[BackgroundTerminal]()},
 		{Name: "BackgroundTerminalCleanResponse", Type: reflect.TypeFor[BackgroundTerminalCleanResponse]()},
 		{Name: "BackgroundTerminalListResponse", Type: reflect.TypeFor[BackgroundTerminalListResponse]()},
+		{Name: "BackgroundTerminalReadParams", Type: reflect.TypeFor[BackgroundTerminalReadParams]()},
+		{Name: "BackgroundTerminalReadResponse", Type: reflect.TypeFor[BackgroundTerminalReadResponse]()},
 		{Name: "BackgroundTerminalStatus", Type: reflect.TypeFor[BackgroundTerminalStatus]()},
 		{Name: "BackgroundTerminalTerminateParams", Type: reflect.TypeFor[BackgroundTerminalTerminateParams]()},
 		{Name: "BackgroundTerminalTerminateResponse", Type: reflect.TypeFor[BackgroundTerminalTerminateResponse]()},

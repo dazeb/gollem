@@ -384,6 +384,7 @@ forwarded to a provider.
 ## Version 1 Operational Inspector Bindings
 
 `thread/backgroundTerminals/list`,
+`thread/backgroundTerminals/read`,
 `thread/backgroundTerminals/terminate`,
 `thread/backgroundTerminals/clean`, `git/status`, and `git/worktree/list` use
 exported request and response contracts. List responses are ordered by their
@@ -396,7 +397,12 @@ states.
 Background-terminal records retain the historical id aliases, but expose only
 a command label, workspace-relative directory, lifecycle state, timestamps,
 exit code, and argument count. Arguments, environment, captured output, nested
-native process snapshots, and raw errors are intentionally omitted. Git status
+native process snapshots, and raw errors are intentionally omitted. An explicit
+terminal read accepts one current process id and returns separate base64-encoded
+stdout and stderr tails, capped at 64 KiB per stream. The transcript exists
+only in the active Gollem process memory: clients must not add it to inventory
+records or durable desktop state, and a daemon restart makes it unavailable.
+Git status
 omits raw porcelain output and returns bounded structured entries. Worktree
 metadata is bounded, while desktop clients remain responsible for retaining
 native paths in their privileged process and projecting opaque ids to an

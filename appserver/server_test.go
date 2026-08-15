@@ -2391,6 +2391,18 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	if _, err := waitProcessSnapshot(t, processSvc, doneStarted.Process.ID); err != nil {
 		t.Fatalf("wait completed process: %v", err)
 	}
+	readResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/read", map[string]any{
+		"id": doneStarted.Process.ID,
+	}))
+	if readResp.Error != nil {
+		t.Fatalf("thread/backgroundTerminals/read error: %v", readResp.Error)
+	}
+	var transcript protocol.BackgroundTerminalReadResponse
+	decodeResult(t, readResp, &transcript)
+	if transcript.Terminal.ID != doneStarted.Process.ID || transcript.StdoutBase64 != "ZG9uZQ==" ||
+		transcript.StderrBase64 != "" || transcript.StdoutTruncated || transcript.StderrTruncated || transcript.ObservedAt.IsZero() {
+		t.Fatalf("background terminal transcript = %#v", transcript)
+	}
 
 	listResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", map[string]any{"limit": 1}))
 	if listResp.Error != nil {
@@ -2460,6 +2472,23 @@ func TestServerBackgroundTerminalHandlers(t *testing.T) {
 	missingIDResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/terminate", nil))
 	if missingIDResp.Error == nil || missingIDResp.Error.Code != protocol.CodeInvalidParams {
 		t.Fatalf("missing id terminate response = %#v, want invalid params", missingIDResp)
+	}
+	missingReadIDResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/read", nil))
+	if missingReadIDResp.Error == nil || missingReadIDResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing id read response = %#v, want invalid params", missingReadIDResp)
+	}
+	unknownReadIDResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/read", map[string]any{
+		"id": "missing",
+	}))
+	if unknownReadIDResp.Error == nil || unknownReadIDResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("unknown id read response = %#v, want invalid params", unknownReadIDResp)
+	}
+	unknownReadParamsResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/read", map[string]any{
+		"id":      doneStarted.Process.ID,
+		"unknown": true,
+	}))
+	if unknownReadParamsResp.Error == nil || unknownReadParamsResp.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("unknown read params response = %#v, want invalid params", unknownReadParamsResp)
 	}
 	unknownListResp := server.HandleRequest(ctx, request("thread/backgroundTerminals/list", map[string]any{"unknown": true}))
 	if unknownListResp.Error == nil || unknownListResp.Error.Code != protocol.CodeInvalidParams {

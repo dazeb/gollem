@@ -79,6 +79,25 @@ type BackgroundTerminalTerminateResponse struct {
 	Terminal BackgroundTerminal `json:"terminal"`
 }
 
+// BackgroundTerminalReadParams identifies one terminal from the current
+// in-memory process inventory. The identity is intentionally not durable.
+type BackgroundTerminalReadParams struct {
+	ID string `json:"id"`
+}
+
+// BackgroundTerminalReadResponse contains only the bounded tail currently
+// retained by the running Gollem process. Output is base64 encoded so the wire
+// contract is safe for arbitrary process bytes. It is never added to terminal
+// inventory records or persisted by this method.
+type BackgroundTerminalReadResponse struct {
+	Terminal        BackgroundTerminal `json:"terminal"`
+	StdoutBase64    string             `json:"stdoutBase64"`
+	StderrBase64    string             `json:"stderrBase64"`
+	StdoutTruncated bool               `json:"stdoutTruncated"`
+	StderrTruncated bool               `json:"stderrTruncated"`
+	ObservedAt      time.Time          `json:"observedAt"`
+}
+
 type BackgroundTerminalCleanResponse struct {
 	Removed             []BackgroundTerminal `json:"removed" jsonschema:"nonnullable=true"`
 	BackgroundTerminals []BackgroundTerminal `json:"backgroundTerminals" jsonschema:"nonnullable=true"`

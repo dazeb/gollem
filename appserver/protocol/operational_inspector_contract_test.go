@@ -12,6 +12,8 @@ func TestOperationalInspectorBindingsAreExact(t *testing.T) {
 	bindings := WireTypeBindings()
 	assertBinding(t, bindings, "thread/backgroundTerminals/list", SurfaceClientRequest, "OperationalListParams")
 	assertBinding(t, bindings, "thread/backgroundTerminals/list", SurfaceClientRequest, "BackgroundTerminalListResponse")
+	assertBinding(t, bindings, "thread/backgroundTerminals/read", SurfaceClientRequest, "BackgroundTerminalReadParams")
+	assertBinding(t, bindings, "thread/backgroundTerminals/read", SurfaceClientRequest, "BackgroundTerminalReadResponse")
 	assertBinding(t, bindings, "thread/backgroundTerminals/terminate", SurfaceClientRequest, "BackgroundTerminalTerminateParams")
 	assertBinding(t, bindings, "thread/backgroundTerminals/terminate", SurfaceClientRequest, "BackgroundTerminalTerminateResponse")
 	assertBinding(t, bindings, "thread/backgroundTerminals/clean", SurfaceClientRequest, "BackgroundTerminalCleanResponse")
@@ -26,6 +28,8 @@ func TestOperationalInspectorBindingsAreExact(t *testing.T) {
 		"BackgroundTerminal",
 		"BackgroundTerminalStatus",
 		"BackgroundTerminalListResponse",
+		"BackgroundTerminalReadParams",
+		"BackgroundTerminalReadResponse",
 		"BackgroundTerminalTerminateParams",
 		"BackgroundTerminalTerminateResponse",
 		"BackgroundTerminalCleanResponse",
@@ -98,7 +102,9 @@ func TestOperationalInspectorTypeScriptExportsBoundMethods(t *testing.T) {
 	source := string(generated)
 	for _, want := range []string{
 		`"thread/backgroundTerminals/list": OperationalListParams;`,
+		`"thread/backgroundTerminals/read": BackgroundTerminalReadParams;`,
 		`"thread/backgroundTerminals/terminate": BackgroundTerminalTerminateParams;`,
+		`"thread/backgroundTerminals/read": BackgroundTerminalReadResponse;`,
 		`"thread/backgroundTerminals/clean": BackgroundTerminalCleanResponse;`,
 		`"git/status": GitStatusResponse;`,
 		`"git/worktree/list": GitWorktreeListResponse;`,
