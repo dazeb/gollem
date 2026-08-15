@@ -14,6 +14,8 @@ func TestOperationalInspectorBindingsAreExact(t *testing.T) {
 	assertBinding(t, bindings, "thread/backgroundTerminals/list", SurfaceClientRequest, "BackgroundTerminalListResponse")
 	assertBinding(t, bindings, "thread/backgroundTerminals/read", SurfaceClientRequest, "BackgroundTerminalReadParams")
 	assertBinding(t, bindings, "thread/backgroundTerminals/read", SurfaceClientRequest, "BackgroundTerminalReadResponse")
+	assertBinding(t, bindings, "thread/backgroundTerminals/write", SurfaceClientRequest, "BackgroundTerminalWriteParams")
+	assertBinding(t, bindings, "thread/backgroundTerminals/write", SurfaceClientRequest, "BackgroundTerminalWriteResponse")
 	assertBinding(t, bindings, "thread/backgroundTerminals/terminate", SurfaceClientRequest, "BackgroundTerminalTerminateParams")
 	assertBinding(t, bindings, "thread/backgroundTerminals/terminate", SurfaceClientRequest, "BackgroundTerminalTerminateResponse")
 	assertBinding(t, bindings, "thread/backgroundTerminals/clean", SurfaceClientRequest, "BackgroundTerminalCleanResponse")
@@ -30,6 +32,8 @@ func TestOperationalInspectorBindingsAreExact(t *testing.T) {
 		"BackgroundTerminalListResponse",
 		"BackgroundTerminalReadParams",
 		"BackgroundTerminalReadResponse",
+		"BackgroundTerminalWriteParams",
+		"BackgroundTerminalWriteResponse",
 		"BackgroundTerminalTerminateParams",
 		"BackgroundTerminalTerminateResponse",
 		"BackgroundTerminalCleanResponse",
@@ -105,6 +109,8 @@ func TestOperationalInspectorTypeScriptExportsBoundMethods(t *testing.T) {
 		`"thread/backgroundTerminals/read": BackgroundTerminalReadParams;`,
 		`"thread/backgroundTerminals/terminate": BackgroundTerminalTerminateParams;`,
 		`"thread/backgroundTerminals/read": BackgroundTerminalReadResponse;`,
+		`"thread/backgroundTerminals/write": BackgroundTerminalWriteParams;`,
+		`"thread/backgroundTerminals/write": BackgroundTerminalWriteResponse;`,
 		`"thread/backgroundTerminals/clean": BackgroundTerminalCleanResponse;`,
 		`"git/status": GitStatusResponse;`,
 		`"git/worktree/list": GitWorktreeListResponse;`,

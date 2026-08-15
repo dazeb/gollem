@@ -70,8 +70,8 @@ func TestFeedbackUploadParamsRemainStandalone(t *testing.T) {
 			}
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 669 {
-		t.Fatalf("definition count = %d, want 669", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 671 {
+		t.Fatalf("definition count = %d, want 671", got)
 	}
 }
 

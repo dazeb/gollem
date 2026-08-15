@@ -1747,6 +1747,47 @@
       ],
       "type": "object"
     },
+    "BackgroundTerminalWriteParams": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "input"
+      ],
+      "type": "object"
+    },
+    "BackgroundTerminalWriteResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "terminal": {
+          "$ref": "#/$defs/BackgroundTerminal"
+        },
+        "writtenBytes": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ok",
+        "terminal",
+        "writtenBytes",
+        "observedAt"
+      ],
+      "type": "object"
+    },
     "ByteRange": {
       "additionalProperties": false,
       "properties": {
@@ -15898,6 +15939,7 @@
             "thread/backgroundTerminals/list",
             "thread/backgroundTerminals/read",
             "thread/backgroundTerminals/terminate",
+            "thread/backgroundTerminals/write",
             "thread/compact/start",
             "thread/decrement_elicitation",
             "thread/delete",
@@ -26024,6 +26066,12 @@
       "source": "protocol crate:common.rs:605"
     },
     {
+      "method": "thread/backgroundTerminals/write",
+      "surface": "client-request",
+      "state": "implemented",
+      "source": "gollem extension: bounded terminal input"
+    },
+    {
       "method": "thread/compact/start",
       "surface": "client-request",
       "state": "implemented",
@@ -27298,6 +27346,16 @@
       ],
       "result": [
         "BackgroundTerminalTerminateResponse"
+      ]
+    },
+    {
+      "method": "thread/backgroundTerminals/write",
+      "surface": "client-request",
+      "params": [
+        "BackgroundTerminalWriteParams"
+      ],
+      "result": [
+        "BackgroundTerminalWriteResponse"
       ]
     },
     {

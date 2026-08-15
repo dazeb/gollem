@@ -74,8 +74,8 @@ func TestJSONRPCMessageRemainsStandalone(t *testing.T) {
 			t.Fatalf("JSONRPCMessage unexpectedly bound to %s", binding.Method)
 		}
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 669 {
-		t.Fatalf("definition count = %d, want 669", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 671 {
+		t.Fatalf("definition count = %d, want 671", got)
 	}
 }
 

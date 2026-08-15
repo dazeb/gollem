@@ -197,11 +197,11 @@ func TestPublicParentLifecycleNotificationTypeScriptAndBindingsRemainStandalone(
 			t.Errorf("generated TypeScript missing %q", want)
 		}
 	}
-	if len(JSONSchema()["$defs"].(Schema)) != 669 {
-		t.Fatalf("definition count = %d, want 669", len(JSONSchema()["$defs"].(Schema)))
+	if len(JSONSchema()["$defs"].(Schema)) != 671 {
+		t.Fatalf("definition count = %d, want 671", len(JSONSchema()["$defs"].(Schema)))
 	}
-	if len(WireTypeBindings()) != 82 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 82/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
+	if len(WireTypeBindings()) != 83 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 83/5", len(WireTypeBindings()), len(ItemPayloadBindings()))
 	}
 	names := []string{
 		"ThreadStartedNotification", "ThreadStatusChangedNotification",

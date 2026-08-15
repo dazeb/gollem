@@ -98,6 +98,24 @@ type BackgroundTerminalReadResponse struct {
 	ObservedAt      time.Time          `json:"observedAt"`
 }
 
+// BackgroundTerminalWriteParams delivers one bounded UTF-8 text input to a
+// currently running terminal in the active Gollem process. The input is never
+// retained or echoed by this operational receipt.
+type BackgroundTerminalWriteParams struct {
+	ID    string `json:"id"`
+	Input string `json:"input"`
+}
+
+// BackgroundTerminalWriteResponse acknowledges one accepted input without
+// returning the input itself. The terminal remains in-memory-only and can
+// become unavailable after a Gollem restart.
+type BackgroundTerminalWriteResponse struct {
+	OK           bool               `json:"ok"`
+	Terminal     BackgroundTerminal `json:"terminal"`
+	WrittenBytes int                `json:"writtenBytes"`
+	ObservedAt   time.Time          `json:"observedAt"`
+}
+
 type BackgroundTerminalCleanResponse struct {
 	Removed             []BackgroundTerminal `json:"removed" jsonschema:"nonnullable=true"`
 	BackgroundTerminals []BackgroundTerminal `json:"backgroundTerminals" jsonschema:"nonnullable=true"`

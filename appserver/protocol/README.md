@@ -385,7 +385,7 @@ forwarded to a provider.
 
 `thread/backgroundTerminals/list`,
 `thread/backgroundTerminals/read`,
-`thread/backgroundTerminals/terminate`,
+`thread/backgroundTerminals/terminate`, `thread/backgroundTerminals/write`,
 `thread/backgroundTerminals/clean`, `git/status`, and `git/worktree/list` use
 exported request and response contracts. List responses are ordered by their
 underlying service, capped at 32 records per page, and carry an observed time,
@@ -402,6 +402,12 @@ terminal read accepts one current process id and returns separate base64-encoded
 stdout and stderr tails, capped at 64 KiB per stream. The transcript exists
 only in the active Gollem process memory: clients must not add it to inventory
 records or durable desktop state, and a daemon restart makes it unavailable.
+An explicit terminal write accepts only a current running process id plus up to
+8 KiB of non-empty UTF-8 text. It returns a metadata-only receipt with the
+accepted byte count and never echoes or persists submitted input. The generic
+raw-id process write endpoint remains separate; privileged desktop clients
+must retain native terminal identities and expose only opaque identifiers to
+their renderer.
 Git status
 omits raw porcelain output and returns bounded structured entries. Worktree
 metadata is bounded, while desktop clients remain responsible for retaining
