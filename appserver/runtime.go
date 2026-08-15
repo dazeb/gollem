@@ -12,6 +12,7 @@ import (
 	"github.com/fugue-labs/gollem/appserver/protocol"
 	"github.com/fugue-labs/gollem/appserver/store"
 	"github.com/fugue-labs/gollem/core"
+	"github.com/fugue-labs/gollem/modelutil"
 )
 
 var (
@@ -39,6 +40,11 @@ type RuntimeModelFactory func(context.Context, RuntimeModelSelection) (core.Mode
 
 type RuntimeOption func(*RuntimeService)
 
+// RuntimeCacheEventHandler receives cache outcomes observed from completed
+// streamed provider requests. It is intentionally telemetry-only: app-server
+// turns remain streamed and are never replayed from a response cache.
+type RuntimeCacheEventHandler func(modelutil.CacheEvent)
+
 func WithRuntimeModelFactory(factory RuntimeModelFactory) RuntimeOption {
 	return func(s *RuntimeService) {
 		s.modelFactory = factory
@@ -57,6 +63,14 @@ func WithRuntimeModel(model core.Model, info RuntimeModelInfo) RuntimeOption {
 	})
 }
 
+// WithRuntimeCacheEventHandler records provider-reported cache outcomes from
+// live streamed turns. A nil handler leaves runtime behavior unchanged.
+func WithRuntimeCacheEventHandler(handler RuntimeCacheEventHandler) RuntimeOption {
+	return func(s *RuntimeService) {
+		s.cacheEventHandler = handler
+	}
+}
+
 // WithRuntimeTools registers provider-neutral core tools for app-server turns.
 // Tool handlers are shared across turns and should be safe for concurrent use.
 func WithRuntimeTools(tools ...core.Tool) RuntimeOption {
@@ -67,13 +81,14 @@ func WithRuntimeTools(tools ...core.Tool) RuntimeOption {
 }
 
 type RuntimeService struct {
-	startMu      sync.Mutex
-	mu           sync.Mutex
-	modelFactory RuntimeModelFactory
-	tools        []core.Tool
-	active       map[string]*activeRuntimeTurn
-	shuttingDown bool
-	wg           sync.WaitGroup
+	startMu           sync.Mutex
+	mu                sync.Mutex
+	modelFactory      RuntimeModelFactory
+	tools             []core.Tool
+	cacheEventHandler RuntimeCacheEventHandler
+	active            map[string]*activeRuntimeTurn
+	shuttingDown      bool
+	wg                sync.WaitGroup
 }
 
 func NewRuntimeService(opts ...RuntimeOption) *RuntimeService {
@@ -466,6 +481,9 @@ func (s *RuntimeService) run(ctx context.Context, st store.Store, notifier runti
 	defer closeRuntimeModel(model)
 	if info.Model == "" && model != nil {
 		info.Model = model.ModelName()
+	}
+	if s.cacheEventHandler != nil {
+		model = newRuntimeCacheTelemetryModel(model, info, s.cacheEventHandler)
 	}
 
 	bus := core.NewEventBus()
