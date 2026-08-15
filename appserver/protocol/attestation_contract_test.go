@@ -11,8 +11,9 @@ import (
 func TestAttestationContractsSchemaIsExact(t *testing.T) {
 	defs := JSONSchema()["$defs"].(Schema)
 	wantParams := Schema{
-		"type":                 "object",
-		"additionalProperties": false,
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"title":   "AttestationGenerateParams",
+		"type":    "object",
 	}
 	if got := defs["AttestationGenerateParams"]; !reflect.DeepEqual(got, wantParams) {
 		t.Fatalf("AttestationGenerateParams = %#v, want %#v", got, wantParams)
