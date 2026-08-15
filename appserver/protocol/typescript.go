@@ -163,6 +163,8 @@ func MarshalTypeScript() ([]byte, error) {
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "FileChangeRequestApprovalParams":
 				schema["x-gollem-typescript-ignore-additional-properties"] = true
+			case "ChatgptAuthTokensRefreshParams":
+				schema["x-gollem-typescript-ignore-additional-properties"] = true
 			case "ChatgptAuthTokensRefreshResponse":
 				schema["required"] = []string{
 					"accessToken", "chatgptAccountId", "chatgptPlanType",
@@ -418,6 +420,13 @@ func MarshalTypeScript() ([]byte, error) {
 			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
 				"grantRoot": nullableStringSchema(),
 				"reason":    nullableStringSchema(),
+			})
+		}
+		if name == "ChatgptAuthTokensRefreshParams" {
+			schema, _ := typeScriptSchema(definition)
+			schema["x-gollem-typescript-ignore-additional-properties"] = true
+			definition = typeScriptDefinitionWithPropertySchemas(schema, Schema{
+				"previousAccountId": nullableStringSchema(),
 			})
 		}
 		if name == "CommandExecParams" {

@@ -948,20 +948,30 @@ func wireSchemaDefinitions() Schema {
 		string(CancelLoginAccountStatusCanceled),
 		string(CancelLoginAccountStatusNotFound),
 	)
-	schemas["ChatgptAuthTokensRefreshReason"] = stringEnumSchema(
-		string(ChatgptAuthTokensRefreshReasonUnauthorized),
-	)
-	schemas["ChatgptAuthTokensRefreshParams"] = closedThreadSessionParamSchema(Schema{
-		"reason": Schema{"$ref": "#/$defs/ChatgptAuthTokensRefreshReason"},
-		"previousAccountId": Schema{
-			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
-			"description": "Workspace/account identifier that Codex was previously using.\n\n" +
-				"Clients that manage multiple accounts/workspaces can use this as a hint to " +
-				"refresh the token for the correct workspace.\n\n" +
-				"This may be `null` when the prior auth state did not include a workspace " +
-				"identifier (`chatgpt_account_id`).",
+	schemas["ChatgptAuthTokensRefreshReason"] = Schema{
+		"oneOf": []any{Schema{
+			"description": "Codex attempted a backend request and received `401 Unauthorized`.",
+			"enum":        []any{string(ChatgptAuthTokensRefreshReasonUnauthorized)},
+			"type":        "string",
+		}},
+	}
+	schemas["ChatgptAuthTokensRefreshParams"] = Schema{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"properties": Schema{
+			"reason": Schema{"$ref": "#/$defs/ChatgptAuthTokensRefreshReason"},
+			"previousAccountId": Schema{
+				"description": "Workspace/account identifier that Codex was previously using.\n\n" +
+					"Clients that manage multiple accounts/workspaces can use this as a hint to " +
+					"refresh the token for the correct workspace.\n\n" +
+					"This may be `null` when the prior auth state did not include a workspace " +
+					"identifier (`chatgpt_account_id`).",
+				"type": []any{"string", "null"},
+			},
 		},
-	}, []string{"reason"})
+		"required": []string{"reason"},
+		"title":    "ChatgptAuthTokensRefreshParams",
+		"type":     "object",
+	}
 	schemas["ChatgptAuthTokensRefreshResponse"] = closedThreadSessionParamSchema(Schema{
 		"accessToken":      Schema{"type": "string"},
 		"chatgptAccountId": Schema{"type": "string"},

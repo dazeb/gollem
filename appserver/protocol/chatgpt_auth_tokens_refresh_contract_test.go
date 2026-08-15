@@ -10,19 +10,34 @@ import (
 
 func TestChatgptAuthTokensRefreshSchemasAreExact(t *testing.T) {
 	defs := JSONSchema()["$defs"].(Schema)
-	assertStringEnum(t, defs["ChatgptAuthTokensRefreshReason"], "unauthorized")
+	reason := Schema{
+		"oneOf": []any{Schema{
+			"description": "Codex attempted a backend request and received `401 Unauthorized`.",
+			"enum":        []any{"unauthorized"},
+			"type":        "string",
+		}},
+	}
+	if !reflect.DeepEqual(defs["ChatgptAuthTokensRefreshReason"], reason) {
+		t.Fatalf("ChatgptAuthTokensRefreshReason = %#v, want %#v", defs["ChatgptAuthTokensRefreshReason"], reason)
+	}
 
-	params := closedThreadSessionParamSchema(Schema{
-		"reason": Schema{"$ref": "#/$defs/ChatgptAuthTokensRefreshReason"},
-		"previousAccountId": Schema{
-			"anyOf": []any{Schema{"type": "string"}, Schema{"type": "null"}},
-			"description": "Workspace/account identifier that Codex was previously using.\n\n" +
-				"Clients that manage multiple accounts/workspaces can use this as a hint to " +
-				"refresh the token for the correct workspace.\n\n" +
-				"This may be `null` when the prior auth state did not include a workspace " +
-				"identifier (`chatgpt_account_id`).",
+	params := Schema{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"properties": Schema{
+			"reason": Schema{"$ref": "#/$defs/ChatgptAuthTokensRefreshReason"},
+			"previousAccountId": Schema{
+				"description": "Workspace/account identifier that Codex was previously using.\n\n" +
+					"Clients that manage multiple accounts/workspaces can use this as a hint to " +
+					"refresh the token for the correct workspace.\n\n" +
+					"This may be `null` when the prior auth state did not include a workspace " +
+					"identifier (`chatgpt_account_id`).",
+				"type": []any{"string", "null"},
+			},
 		},
-	}, []string{"reason"})
+		"required": []string{"reason"},
+		"title":    "ChatgptAuthTokensRefreshParams",
+		"type":     "object",
+	}
 	if !reflect.DeepEqual(defs["ChatgptAuthTokensRefreshParams"], params) {
 		t.Fatalf("ChatgptAuthTokensRefreshParams = %#v, want %#v", defs["ChatgptAuthTokensRefreshParams"], params)
 	}
@@ -56,10 +71,10 @@ func TestChatgptAuthTokensRefreshRecordsAcceptSerdeWireForms(t *testing.T) {
 		input string
 		want  string
 	}{
-		{`{"reason":"unauthorized"}`, `{"previousAccountId":null,"reason":"unauthorized"}`},
-		{`{"reason":"unauthorized","previousAccountId":null}`, `{"previousAccountId":null,"reason":"unauthorized"}`},
-		{`{"reason":"unauthorized","previousAccountId":""}`, `{"previousAccountId":"","reason":"unauthorized"}`},
-		{`{"unknown":"ignored","reason":"unauthorized","previousAccountId":" workspace "}`, `{"previousAccountId":" workspace ","reason":"unauthorized"}`},
+		{`{"reason":"unauthorized"}`, `{"reason":"unauthorized","previousAccountId":null}`},
+		{`{"reason":"unauthorized","previousAccountId":null}`, `{"reason":"unauthorized","previousAccountId":null}`},
+		{`{"reason":"unauthorized","previousAccountId":""}`, `{"reason":"unauthorized","previousAccountId":""}`},
+		{`{"unknown":"ignored","reason":"unauthorized","previousAccountId":" workspace "}`, `{"reason":"unauthorized","previousAccountId":" workspace "}`},
 	} {
 		var params ChatgptAuthTokensRefreshParams
 		if err := json.Unmarshal([]byte(tc.input), &params); err != nil {
