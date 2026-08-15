@@ -12110,6 +12110,17 @@
     "PluginShareListParams": {
       "type": "object"
     },
+    "PluginUninstallParams": {
+      "properties": {
+        "pluginId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pluginId"
+      ],
+      "type": "object"
+    },
     "PluginsMigration": {
       "additionalProperties": false,
       "properties": {
