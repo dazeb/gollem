@@ -17,6 +17,7 @@ const (
 	defaultBenchmarkIterations = 2
 	defaultBenchmarkTarget     = 0.90
 	defaultRecentEventLimit    = 200
+	maxStatsRecentEvents       = 64
 )
 
 // Service stores live provider-cache telemetry and runs deterministic
@@ -259,12 +260,16 @@ func (s *Service) recordEvents(events []Event) {
 }
 
 func (s *Service) statsLocked() StatsResponse {
+	recentEvents := s.recentEvents
+	if len(recentEvents) > maxStatsRecentEvents {
+		recentEvents = recentEvents[len(recentEvents)-maxStatsRecentEvents:]
+	}
 	response := StatsResponse{
 		TotalRequests: s.total.Hits + s.total.Misses,
 		Hits:          s.total.Hits,
 		Misses:        s.total.Misses,
 		HitRate:       hitRate(s.total.Hits, s.total.Misses),
-		RecentEvents:  append([]Event(nil), s.recentEvents...),
+		RecentEvents:  append([]Event(nil), recentEvents...),
 	}
 	providers := make([]string, 0, len(s.providers))
 	for provider := range s.providers {

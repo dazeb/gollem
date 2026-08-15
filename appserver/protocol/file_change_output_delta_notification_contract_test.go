@@ -100,14 +100,14 @@ func TestFileChangeOutputDeltaNotificationRemainsDeprecatedAndStandalone(t *test
 	if !ok || info.State != MethodBlocked {
 		t.Fatalf("item/fileChange/outputDelta = %#v, %v; want blocked", info, ok)
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 663 {
-		t.Fatalf("definition count = %d, want 663", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 667 {
+		t.Fatalf("definition count = %d, want 667", got)
 	}
 	if got := len(Methods()); got != 226 {
 		t.Fatalf("methods = %d, want 226", got)
 	}
-	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
-		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))
+	if got := len(WireTypeBindings()); got != 81 || len(ItemPayloadBindings()) != 5 {
+		t.Fatalf("bindings = %d methods/%d items, want 81/5", got, len(ItemPayloadBindings()))
 	}
 }
 

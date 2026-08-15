@@ -18,6 +18,7 @@ type ItemPayloadBinding struct {
 
 var wireTypeBindings = []WireTypeBinding{
 	{Method: "approval/respond", Surface: SurfaceGollemExtension, Params: []string{"ApprovalRespondParams"}, Result: []string{"ApprovalRespondResult"}},
+	{Method: "cache/stats", Surface: SurfaceGollemExtension, Result: []string{"CacheStatsResponse"}},
 	{Method: "command/exec/outputDelta", Surface: SurfaceServerNotification, Params: []string{"CommandExecOutputDeltaNotification"}},
 	{Method: "command/exec/resize", Surface: SurfaceClientRequest, Params: []string{"CommandExecResizeParams"}, Result: []string{"CommandExecResizeResponse"}},
 	{Method: "command/exec/terminate", Surface: SurfaceClientRequest, Params: []string{"CommandExecTerminateParams"}, Result: []string{"CommandExecTerminateResponse"}},

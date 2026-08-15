@@ -1851,9 +1851,9 @@ func TestServerCacheHandlers(t *testing.T) {
 	if statsResp.Error != nil {
 		t.Fatalf("cache/stats error: %v", statsResp.Error)
 	}
-	var initial appcache.StatsResponse
+	var initial protocol.CacheStatsResponse
 	decodeResult(t, statsResp, &initial)
-	if initial.TotalRequests != 0 {
+	if initial.TotalRequests != 0 || initial.Providers == nil {
 		t.Fatalf("initial cache stats = %#v", initial)
 	}
 
@@ -1893,10 +1893,19 @@ func TestServerCacheHandlers(t *testing.T) {
 	if afterResp.Error != nil {
 		t.Fatalf("cache/stats after benchmark error: %v", afterResp.Error)
 	}
-	var after appcache.StatsResponse
+	var after protocol.CacheStatsResponse
 	decodeResult(t, afterResp, &after)
 	if after.TotalRequests != benchmark.Totals.TotalRequests || after.HitRate < 0.90 {
 		t.Fatalf("cache stats after benchmark = %#v, benchmark = %#v", after, benchmark.Totals)
+	}
+	if len(after.RecentEvents) != len(benchmark.Events) {
+		t.Fatalf("cache stats events = %#v, benchmark events = %#v", after.RecentEvents, benchmark.Events)
+	}
+	if got, want := after.RecentEvents[0].Key, benchmark.Events[0].Key; got != want {
+		t.Fatalf("cache stats event key = %q, want %q", got, want)
+	}
+	if got, want := after.RecentEvents[0].Type, protocol.CacheEventType(benchmark.Events[0].Type); got != want {
+		t.Fatalf("cache stats event type = %q, want %q", got, want)
 	}
 }
 
