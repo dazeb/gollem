@@ -898,6 +898,8 @@ name?: string | null, enabled: boolean, }`}
 			definition = Schema{typeScriptRawTypeKeyword: `{ source: string, refName?: string | null, sparsePaths?: Array<string> | null, }`}
 		case "MarketplaceRemoveParams":
 			definition = Schema{typeScriptRawTypeKeyword: `{ marketplaceName: string, }`}
+		case "MarketplaceUpgradeParams":
+			definition = Schema{typeScriptRawTypeKeyword: `{ marketplaceName?: string | null, }`}
 		case "McpServerElicitationRequestParams":
 			// The raw schema mirrors serde's open, flattened record. ts-rs instead
 			// emits the exact closed intersection and makes Option fields nullable.

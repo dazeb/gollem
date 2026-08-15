@@ -164,8 +164,8 @@ func TestTurnSteerContractsAreBoundToLiveRuntime(t *testing.T) {
 	if !found {
 		t.Fatal("turn/steer runtime binding missing")
 	}
-	if got := len(JSONSchema()["$defs"].(Schema)); got != 622 {
-		t.Fatalf("definition count = %d, want 622", got)
+	if got := len(JSONSchema()["$defs"].(Schema)); got != 623 {
+		t.Fatalf("definition count = %d, want 623", got)
 	}
 	if got := len(WireTypeBindings()); got != 80 || len(ItemPayloadBindings()) != 5 {
 		t.Fatalf("bindings = %d methods/%d items, want 80/5", got, len(ItemPayloadBindings()))
